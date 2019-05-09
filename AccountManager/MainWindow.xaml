@@ -1,12 +1,45 @@
-﻿<Window x:Class="AccountManager.MainWindow"
+﻿<metro:MetroWindow x:Class="AccountManager.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:AccountManager"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+        TextElement.FontWeight="Medium"
+        TextElement.FontSize="14"
+        TextOptions.TextFormattingMode="Ideal"
+        TextOptions.TextRenderingMode="Auto"
+        Background="{DynamicResource MaterialDesignPaper}"
+        FontFamily="{DynamicResource MaterialDesignFont}"
+        xmlns:metro="http://metro.mahapps.com/winfx/xaml/controls"
+                   xmlns:menu="clr-namespace:AccountManager.Menu"
+                   GlowBrush="{DynamicResource AccentColorBrush}"
+        BorderThickness="1"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="SMA Account Manager"
+        WindowState="Maximized">
+
+    
     <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200"/> <!-- The menu bar -->
+            <ColumnDefinition Width="*"/> <!-- This is the main content -->
+            <ColumnDefinition Width="5"/> 
+            <ColumnDefinition Width="400"/> <!-- The log viewer -->
+        </Grid.ColumnDefinitions>
+
+        <menu:Menu Grid.Column="0"/>
         
+
+        <Grid Grid.Column="1" x:Name="GridMain" Background="Magenta">
+            <Label Content="test test test test test test"/>
+        </Grid>
+
+        <GridSplitter Grid.Column="2" Width="5" HorizontalAlignment="Stretch"/>
+
+        <Grid Grid.Column="3" Background="Green">
+            
+        </Grid>
     </Grid>
-</Window>
+</metro:MetroWindow>

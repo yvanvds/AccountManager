@@ -12,20 +12,17 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
-using MahApps.Metro.Controls;
 
-namespace AccountManager
+namespace AccountManager.Menu
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// Interaction logic for Menu.xaml
     /// </summary>
-    public partial class MainWindow : MetroWindow
+    public partial class Menu : UserControl
     {
-        public MainWindow()
+        public Menu()
         {
             InitializeComponent();
         }
-
-        
     }
 }

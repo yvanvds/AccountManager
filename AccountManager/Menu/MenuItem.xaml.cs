@@ -12,20 +12,21 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
-using MahApps.Metro.Controls;
 
-namespace AccountManager
+namespace AccountManager.Menu
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// Interaction logic for MenuItem.xaml
     /// </summary>
-    public partial class MainWindow : MetroWindow
+    public partial class MenuItem : ListViewItem
     {
-        public MainWindow()
+        public MenuItem()
         {
             InitializeComponent();
+            this.DataContext = this;
         }
 
-        
+        public string Title { get; set; }
+        public string Icon { get; set; }
     }
 }
