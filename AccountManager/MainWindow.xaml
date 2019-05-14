@@ -14,6 +14,7 @@
         FontFamily="{DynamicResource MaterialDesignFont}"
         xmlns:metro="http://metro.mahapps.com/winfx/xaml/controls"
                    xmlns:menu="clr-namespace:AccountManager.Menu"
+                   xmlns:log="clr-namespace:AccountManager.Log"
                    GlowBrush="{DynamicResource AccentColorBrush}"
         BorderThickness="1"
         mc:Ignorable="d"
@@ -30,16 +31,15 @@
         </Grid.ColumnDefinitions>
 
         <menu:Menu Grid.Column="0"/>
-        
 
-        <Grid Grid.Column="1" x:Name="GridMain" Background="Magenta">
-            <Label Content="test test test test test test"/>
+
+        <Grid Grid.Column="1" x:Name="Content" Background="Magenta">
         </Grid>
 
         <GridSplitter Grid.Column="2" Width="5" HorizontalAlignment="Stretch"/>
 
-        <Grid Grid.Column="3" Background="Green">
+        <log:Log x:Name="Log" Grid.Column="3">
             
-        </Grid>
+        </log:Log>
     </Grid>
 </metro:MetroWindow>

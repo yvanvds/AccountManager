@@ -20,9 +20,35 @@ namespace AccountManager.Menu
     /// </summary>
     public partial class Menu : UserControl
     {
+
         public Menu()
         {
             InitializeComponent();
+        }
+
+        private void DashboardButton_Click(object sender, RoutedEventArgs e)
+        {
+            MainWindow.Instance.Navigate(new Dashboard.DashboardPage());
+        }
+
+        private void GroupsButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private void UsersButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private void PasswordsButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private void SettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            MainWindow.Instance.Navigate(new Settings.SettingsPage());
         }
     }
 }

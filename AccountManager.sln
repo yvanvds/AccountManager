@@ -5,6 +5,10 @@ VisualStudioVersion = 15.0.28307.421
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AccountManager", "AccountManager\AccountManager.csproj", "{BAE736D4-5EB6-4A4E-86CB-58122443ED84}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AbstractAccountApi", "..\AbstractAccountApi\AbstractAccountApi\AbstractAccountApi.csproj", "{3D771CCF-96A7-4FFA-82E5-4BA9D870DCBB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WisaApi", "..\WisaApi\WisaApi\WisaApi.csproj", "{41FC79AE-A749-416C-A137-C026AB4FAE1A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +19,14 @@ Global
 		{BAE736D4-5EB6-4A4E-86CB-58122443ED84}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BAE736D4-5EB6-4A4E-86CB-58122443ED84}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BAE736D4-5EB6-4A4E-86CB-58122443ED84}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3D771CCF-96A7-4FFA-82E5-4BA9D870DCBB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3D771CCF-96A7-4FFA-82E5-4BA9D870DCBB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D771CCF-96A7-4FFA-82E5-4BA9D870DCBB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3D771CCF-96A7-4FFA-82E5-4BA9D870DCBB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{41FC79AE-A749-416C-A137-C026AB4FAE1A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{41FC79AE-A749-416C-A137-C026AB4FAE1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{41FC79AE-A749-416C-A137-C026AB4FAE1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{41FC79AE-A749-416C-A137-C026AB4FAE1A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

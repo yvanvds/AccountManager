@@ -12,28 +12,17 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
-using MahApps.Metro.Controls;
 
-namespace AccountManager
+namespace AccountManager.Settings
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// Interaction logic for SettingsPage.xaml
     /// </summary>
-    public partial class MainWindow : MetroWindow
+    public partial class SettingsPage : UserControl
     {
-        static public MainWindow Instance;
-        
-
-        public MainWindow()
+        public SettingsPage()
         {
             InitializeComponent();
-            Instance = this;
-        }
-
-        public void Navigate(UserControl page)
-        {
-            Content.Children.Clear();
-            Content.Children.Add(page);
         }
     }
 }

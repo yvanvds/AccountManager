@@ -13,20 +13,16 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 
-namespace AccountManager.Menu
+namespace AccountManager.Dashboard
 {
     /// <summary>
-    /// Interaction logic for MenuItem.xaml
+    /// Interaction logic for DashboardPage.xaml
     /// </summary>
-    public partial class MenuItem : ListViewItem
+    public partial class DashboardPage : UserControl
     {
-        public MenuItem()
+        public DashboardPage()
         {
             InitializeComponent();
-            this.DataContext = this;
         }
-
-        public string Title { get; set; }
-        public string Icon { get; set; }
     }
 }
