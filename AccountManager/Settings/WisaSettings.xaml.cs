@@ -13,6 +13,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using static Utils.ObservableProperties;
 
 namespace AccountManager.Settings
 {
@@ -21,7 +22,8 @@ namespace AccountManager.Settings
     /// </summary>
     public partial class WisaSettings : UserControl
     {
-        public bool ShowConnectButtonIndicator { get; set; } = false;
+        public Prop<bool> ShowConnectButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowSchoolReloadButtonIndicator { get; set; } = new Prop<bool> { Value = false };
 
         PackIcon ConnectButtonIcon;
 
@@ -31,6 +33,8 @@ namespace AccountManager.Settings
         {
             InitializeComponent();
             MainGrid.DataContext = this;
+            testWisaConnection();
+            SchoolList.ItemsSource = WisaApi.Schools.All;
         }
 
         private async void TestConnectButton_Click(object sender, RoutedEventArgs e) 
@@ -38,17 +42,35 @@ namespace AccountManager.Settings
             
             Data.Instance.SetWisaCredentials();
             var button = sender as Button;
-            ShowConnectButtonIndicator = true;
-            button.GetBindingExpression(ButtonProgressAssist.IsIndicatorVisibleProperty).UpdateSource();
-            bool result = await WisaApi.Connector.TestConnection();
-            if (!result) ConnectButtonIcon.Kind = PackIconKind.CloudOffOutline;
-            else ConnectButtonIcon.Kind = PackIconKind.CloudTick;
-            //ShowConnectButtonIndicator = false;
+            ShowConnectButtonIndicator.Value = true;
+            await testWisaConnection();
+            ShowConnectButtonIndicator.Value = false;
         }
 
         private void ConnectButtonIconControl_Loaded(object sender, RoutedEventArgs e)
         {
+            // the icon is inside a data template, so we need a reference to change it later
             ConnectButtonIcon = sender as PackIcon;
+        }
+
+        private async Task testWisaConnection()
+        {
+            bool result = await WisaApi.Connector.TestConnection();
+            if (!result) ConnectButtonIcon.Kind = PackIconKind.CloudOffOutline;
+            else ConnectButtonIcon.Kind = PackIconKind.CloudTick;
+        }
+
+        private async void ReloadSchoolsButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowSchoolReloadButtonIndicator.Value = true;
+            Data.Instance.SetWisaCredentials();
+            await Data.Instance.ReloadWisaSchools();
+            ShowSchoolReloadButtonIndicator.Value = false;
+        }
+
+        private void SelectSchoolButton_Click(object sender, RoutedEventArgs e)
+        {
+            Data.Instance.saveWisaSchoolsToJSON();
         }
     }
 }

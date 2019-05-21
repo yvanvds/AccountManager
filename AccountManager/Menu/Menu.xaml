@@ -29,14 +29,14 @@
         <Button Grid.Row="0" Height="50" Margin="0" Style="{StaticResource MaterialDesignFlatButton}" HorizontalContentAlignment="Left" x:Name="DashboardButton" Click="DashboardButton_Click">
             <StackPanel Orientation="Horizontal">
                 <materialDesign:PackIcon Grid.Column="0" Kind="ViewDashboard" Height="25" Width="50"/>
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="15">Dashboard</TextBlock>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="15">Overzicht</TextBlock>
             </StackPanel>
         </Button>
 
         <Button Grid.Row="1" Height="50" Margin="0" Style="{StaticResource MaterialDesignFlatButton}" HorizontalContentAlignment="Left" x:Name="GroupsButton" Click="GroupsButton_Click">
             <StackPanel Orientation="Horizontal">
                 <materialDesign:PackIcon Grid.Column="0" Kind="UserGroup" Height="25" Width="50"/>
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="15">Groups</TextBlock>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="15">Klassen</TextBlock>
             </StackPanel>
         </Button>
 

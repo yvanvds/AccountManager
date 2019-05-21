@@ -33,7 +33,7 @@ namespace AccountManager.Menu
 
         private void GroupsButton_Click(object sender, RoutedEventArgs e)
         {
-
+            MainWindow.Instance.Navigate(new Groups.GroupsPage());
         }
 
         private void UsersButton_Click(object sender, RoutedEventArgs e)

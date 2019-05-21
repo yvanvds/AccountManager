@@ -39,7 +39,7 @@
                                 Click="TestConnectButton_Click"
                                 Grid.Column="3"
                                 Style="{StaticResource MaterialDesignFloatingActionMiniDarkButton}"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowConnectButtonIndicator}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding DataContext.ShowConnectButtonIndicator.Value, ElementName=MainGrid}"
                                 materialDesign:ButtonProgressAssist.IndicatorForeground="LimeGreen"
                                 materialDesign:ButtonProgressAssist.Value="-1"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True">
@@ -72,15 +72,55 @@
 
 
         <StackPanel Grid.Column="1" Orientation="Vertical">
-            <GroupBox Margin="16">
+            <GroupBox Margin="16" MaxHeight="500">
                 <GroupBox.HeaderTemplate>
                     <DataTemplate>
-                        <StackPanel Orientation="Horizontal">
-                            <materialDesign:PackIcon Kind="School" Height="32" Width="32" VerticalAlignment="Center" />
-                            <TextBlock Margin="8,0,0,0" VerticalAlignment="Center" Style="{StaticResource MaterialDesignSubheadingTextBlock}" Text="Scholen"/>
-                        </StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="40"/>
+                            </Grid.ColumnDefinitions>
+                            <materialDesign:PackIcon Grid.Column="0" Kind="School" Height="32" Width="32" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" Style="{StaticResource MaterialDesignSubheadingTextBlock}" Text="Scholen"/>
+
+                            <Button
+                                x:Name="ReloadSchoolsButton"
+                                Click="ReloadSchoolsButton_Click"
+                                Grid.Column="3"
+                                Style="{StaticResource MaterialDesignFloatingActionMiniDarkButton}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding DataContext.ShowSchoolReloadButtonIndicator.Value, ElementName=MainGrid}"
+                                materialDesign:ButtonProgressAssist.IndicatorForeground="LimeGreen"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                ToolTip="Scholen opnieuw laden uit WISA"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True">
+                                <materialDesign:PackIcon x:Name="ReloadSchoolsButtonIconControl" Kind="Reload" Height="30" Width="30"/>
+                            </Button>
+                        </Grid>
                     </DataTemplate>
                 </GroupBox.HeaderTemplate>
+                <ListView x:Name="SchoolList">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Select">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ToggleButton
+                                          Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                          ToolTip="Gegevens van deze school gebruiken"
+                                          IsChecked="{Binding IsActive}" 
+                                          Click="SelectSchoolButton_Click"
+                                          />               
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Naam" DisplayMemberBinding="{Binding Name}"/>
+                            <GridViewColumn Header="Bescrhijving" DisplayMemberBinding="{Binding Description}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+                
             </GroupBox>
         </StackPanel>
     </Grid>

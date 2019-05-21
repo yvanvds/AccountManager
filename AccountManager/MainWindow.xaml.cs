@@ -28,6 +28,7 @@ namespace AccountManager
         {
             InitializeComponent();
             Instance = this;
+            Data.Instance.LoadFileContentOnStartup();
         }
 
         public void Navigate(UserControl page)

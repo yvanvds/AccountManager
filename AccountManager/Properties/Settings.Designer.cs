@@ -94,5 +94,28 @@ namespace AccountManager.Properties {
                 this["WisaConnectionTested"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        public global::System.DateTime WisaWorkDate {
+            get {
+                return ((global::System.DateTime)(this["WisaWorkDate"]));
+            }
+            set {
+                this["WisaWorkDate"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("True")]
+        public bool WisaWorkDateNow {
+            get {
+                return ((bool)(this["WisaWorkDateNow"]));
+            }
+            set {
+                this["WisaWorkDateNow"] = value;
+            }
+        }
     }
 }

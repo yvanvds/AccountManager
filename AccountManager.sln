@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AbstractAccountApi", "..\Ab
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WisaApi", "..\WisaApi\WisaApi\WisaApi.csproj", "{41FC79AE-A749-416C-A137-C026AB4FAE1A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartschoolApi", "..\SmartschoolApi\SmartschoolApi\SmartschoolApi.csproj", "{970EBA52-DF3C-480C-9474-D55D27E80F59}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,10 @@ Global
 		{41FC79AE-A749-416C-A137-C026AB4FAE1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{41FC79AE-A749-416C-A137-C026AB4FAE1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{41FC79AE-A749-416C-A137-C026AB4FAE1A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{970EBA52-DF3C-480C-9474-D55D27E80F59}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{970EBA52-DF3C-480C-9474-D55D27E80F59}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{970EBA52-DF3C-480C-9474-D55D27E80F59}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{970EBA52-DF3C-480C-9474-D55D27E80F59}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
