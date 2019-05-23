@@ -17,6 +17,7 @@ namespace AccountManager
         string appFolder;
         const string wisaSchoolsFile = "wisaSchools.json";
         const string wisaClassFile = "wisaClasses.json";
+        const string wisaStudentsFile = "wisaStudents.json";
 
         private Data()
         {
@@ -64,6 +65,14 @@ namespace AccountManager
                 string content = File.ReadAllText(wisaClassLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
                 WisaApi.ClassGroups.FromJson(newObj);
+            }
+
+            var wisaStudentLocation = Path.Combine(appFolder, wisaStudentsFile);
+            if (File.Exists(wisaStudentLocation))
+            {
+                string content = File.ReadAllText(wisaStudentLocation);
+                var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
+                WisaApi.Students.FromJson(newObj);
             }
         }
 
@@ -213,8 +222,11 @@ namespace AccountManager
             }
         }
 
-        public async Task ReloadWisaClassgroups(DateTime? workDate = null)
+        public async Task ReloadWisaClassgroups()
         {
+            // check date
+            DateTime workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate; 
+
             // reload list of classes
             WisaApi.ClassGroups.Clear();
             foreach(var school in WisaApi.Schools.All)
@@ -229,6 +241,25 @@ namespace AccountManager
             saveWisaClassGroupsToJSON();
         }
 
+        public async Task ReloadWisaStudents()
+        {
+            // check date
+            DateTime workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
+
+            // reload list of classes
+            WisaApi.Students.Clear();
+            foreach (var school in WisaApi.Schools.All)
+            {
+                if (school.IsActive)
+                {
+                    bool success = await WisaApi.Students.AddSchool(school, workDate);
+                    if (!success) return;
+                }
+            }
+            WisaApi.Students.Sort();
+            saveWisaStudentsToJSON();
+        }
+
         public void saveWisaSchoolsToJSON()
         {
             var json = WisaApi.Schools.ToJson();
@@ -240,6 +271,13 @@ namespace AccountManager
         {
             var json = WisaApi.ClassGroups.ToJson();
             var location = Path.Combine(appFolder, wisaClassFile);
+            File.WriteAllText(location, json.ToString());
+        }
+
+        public void saveWisaStudentsToJSON()
+        {
+            var json = WisaApi.Students.ToJson();
+            var location = Path.Combine(appFolder, wisaStudentsFile);
             File.WriteAllText(location, json.ToString());
         }
         #endregion WISA

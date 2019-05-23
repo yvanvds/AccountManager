@@ -38,7 +38,7 @@ namespace AccountManager.Menu
 
         private void UsersButton_Click(object sender, RoutedEventArgs e)
         {
-
+            MainWindow.Instance.Navigate(new Accounts.AccountsPage());
         }
 
         private void PasswordsButton_Click(object sender, RoutedEventArgs e)
