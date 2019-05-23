@@ -21,6 +21,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
+        <!-- Top Row -->
         <GroupBox Grid.Row="0" Header="Wisa Groepen op Werkdatum">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -29,36 +30,37 @@
                     <ColumnDefinition Width="340"/>
                     <ColumnDefinition Width="75"/>
                 </Grid.ColumnDefinitions>
+                
+                <!-- Werkdatum -->
                 <materialDesign:Card Grid.Column="0" Height="100">
                     <StackPanel>
-                        <TextBlock Margin="16 16 12 8" FontSize="16">
+                        <TextBlock Margin="16" FontSize="16">
                             Werkdatum
                         </TextBlock>
+                        <StackPanel Orientation="Horizontal">
+                            <ToggleButton Margin="16 4 16 0"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
+                                ToolTip="MaterialDesignSwitchDarkToggleButton"
+                                IsChecked="{Binding Data.WisaWorkDateNow}"/>
+                            <Label Margin="0 0 16 0" Content="Vandaag"
+                                   Visibility="{c:Binding Path=!Data.WisaWorkDateNow, FalseToVisibility=Collapsed}"/>
 
-                        <RadioButton IsChecked="{c:Binding Path=Data.WisaWorkDateNow, Mode=TwoWay}" GroupName="werkdatum" Margin="16 4 16 0" Style="{DynamicResource MaterialDesignUserForegroundRadioButton}">
-                            Vandaag
-                        </RadioButton>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="130"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <RadioButton  GroupName="werkdatum" Margin="16 4 16 16" Style="{DynamicResource MaterialDesignUserForegroundRadioButton}">
-                                Aangepast
-                            </RadioButton>
-                            <DatePicker  Grid.Column="1"  Margin="0 -24 8 0"
+                            <DatePicker SelectedDate="{Binding Path=Data.WisaWorkDate, Mode=TwoWay}" Margin="0 -12 8 0"
                               materialDesign:HintAssist.Hint="Pick Date"
-                              Style="{StaticResource MaterialDesignFloatingHintDatePicker}" />
-                        </Grid>
-                        
+                              Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
+                              Visibility="{c:Binding Path=Data.WisaWorkDateNow, FalseToVisibility=Collapsed}"/>
+                        </StackPanel>
                     </StackPanel>
                 </materialDesign:Card>
+
+                <!-- Counter -->
                 <materialDesign:Card Grid.Column="1" Margin="16 0 0 0" Height="100">
                     <StackPanel>
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Klassen" HorizontalAlignment="Center"/>
                         <Label Margin="16 4 16 0" Content="{Binding GroupCount.Value}" FontSize="40" HorizontalContentAlignment="Center"/>
                     </StackPanel>
                 </materialDesign:Card>
+
+                <!-- Filter -->
                 <materialDesign:Card Grid.Column="2" Margin="16 0 0 0" Height="100">
                     <StackPanel>
                         <TextBlock Margin="16 16 12 8" FontSize="16" Text="Filter"/>
@@ -79,6 +81,8 @@
                         </StackPanel>
                     </StackPanel>
                 </materialDesign:Card>
+
+                <!-- Reload Button -->
                 <Button
                                 x:Name="ReloadGroupsButton"
                                 Click="ReloadGroupsButton_Click"
@@ -95,6 +99,7 @@
             </Grid>
         </GroupBox>
 
+        <!-- Bottom Row / Class List -->
         <DataGrid Grid.Row="1" Margin="0 8 0 0" x:Name="GroupList"
               CanUserSortColumns="True"
               CanUserAddRows="False"
