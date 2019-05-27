@@ -117,5 +117,123 @@ namespace AccountManager.Properties {
                 this["WisaWorkDateNow"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string SmartschoolURI {
+            get {
+                return ((string)(this["SmartschoolURI"]));
+            }
+            set {
+                this["SmartschoolURI"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string SmartschoolPassphrase {
+            get {
+                return ((string)(this["SmartschoolPassphrase"]));
+            }
+            set {
+                this["SmartschoolPassphrase"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string SmartschoolTestUser {
+            get {
+                return ((string)(this["SmartschoolTestUser"]));
+            }
+            set {
+                this["SmartschoolTestUser"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("Unknown")]
+        public global::AbstractAccountApi.ConfigState SmartschoolConnectionTested {
+            get {
+                return ((global::AbstractAccountApi.ConfigState)(this["SmartschoolConnectionTested"]));
+            }
+            set {
+                this["SmartschoolConnectionTested"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string SmartschoolStudentGroup {
+            get {
+                return ((string)(this["SmartschoolStudentGroup"]));
+            }
+            set {
+                this["SmartschoolStudentGroup"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string SmartschoolStaffGroup {
+            get {
+                return ((string)(this["SmartschoolStaffGroup"]));
+            }
+            set {
+                this["SmartschoolStaffGroup"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool SmartschoolUseGrades {
+            get {
+                return ((bool)(this["SmartschoolUseGrades"]));
+            }
+            set {
+                this["SmartschoolUseGrades"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool SmartschoolUseYears {
+            get {
+                return ((bool)(this["SmartschoolUseYears"]));
+            }
+            set {
+                this["SmartschoolUseYears"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        public global::System.Collections.Specialized.StringCollection SmartschoolGrades {
+            get {
+                return ((global::System.Collections.Specialized.StringCollection)(this["SmartschoolGrades"]));
+            }
+            set {
+                this["SmartschoolGrades"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        public global::System.Collections.Specialized.StringCollection SmartschoolYears {
+            get {
+                return ((global::System.Collections.Specialized.StringCollection)(this["SmartschoolYears"]));
+            }
+            set {
+                this["SmartschoolYears"] = value;
+            }
+        }
     }
 }

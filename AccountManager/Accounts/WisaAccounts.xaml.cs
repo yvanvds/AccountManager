@@ -14,7 +14,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using WisaApi;
-using static Utils.ObservableProperties;
+using static AbstractAccountApi.ObservableProperties;
 
 namespace AccountManager.Accounts
 {

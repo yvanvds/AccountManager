@@ -21,25 +21,30 @@
         Title="SMA Account Manager"
         WindowState="Maximized">
 
-    
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="200"/> <!-- The menu bar -->
-            <ColumnDefinition Width="*"/> <!-- This is the main content -->
-            <ColumnDefinition Width="5"/> 
-            <ColumnDefinition Width="400"/> <!-- The log viewer -->
-        </Grid.ColumnDefinitions>
 
-        <menu:Menu Grid.Column="0"/>
+    <materialDesign:DialogHost Identifier="RootDialog">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="200"/>
+                <!-- The menu bar -->
+                <ColumnDefinition Width="*"/>
+                <!-- This is the main content -->
+                <ColumnDefinition Width="5"/>
+                <ColumnDefinition Width="400"/>
+                <!-- The log viewer -->
+            </Grid.ColumnDefinitions>
+
+            <menu:Menu Grid.Column="0"/>
 
 
-        <Grid Grid.Column="1" x:Name="Content" Background="Magenta">
+            <Grid Grid.Column="1" x:Name="Content" Background="Magenta">
+            </Grid>
+
+            <GridSplitter Grid.Column="2" Width="5" HorizontalAlignment="Stretch"/>
+
+            <log:Log x:Name="Log" Grid.Column="3">
+
+            </log:Log>
         </Grid>
-
-        <GridSplitter Grid.Column="2" Width="5" HorizontalAlignment="Stretch"/>
-
-        <log:Log x:Name="Log" Grid.Column="3">
-            
-        </log:Log>
-    </Grid>
+    </materialDesign:DialogHost>
 </metro:MetroWindow>

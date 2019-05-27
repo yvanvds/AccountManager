@@ -34,7 +34,7 @@
                 <Label Content="Google"/>
             </TabItem>
             <TabItem Header="Smartschool">
-                <Label Content="Smartschool"/>
+                <local:SmartschoolAccounts/>
             </TabItem>
         </dragablz:TabablzControl>
     </Grid>

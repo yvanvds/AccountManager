@@ -13,5 +13,12 @@ namespace AccountManager
     /// </summary>
     public partial class App : Application
     {
+        private void Application_Exit(object sender, ExitEventArgs e)
+        {
+            if(Data.Instance.ConfigChanged)
+            {
+                Data.Instance.SaveConfig();
+            }
+        }
     }
 }

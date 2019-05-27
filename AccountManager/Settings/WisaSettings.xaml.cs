@@ -13,7 +13,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
-using static Utils.ObservableProperties;
+using static AbstractAccountApi.ObservableProperties;
 
 namespace AccountManager.Settings
 {
@@ -41,7 +41,6 @@ namespace AccountManager.Settings
         {
             
             Data.Instance.SetWisaCredentials();
-            var button = sender as Button;
             ShowConnectButtonIndicator.Value = true;
             await testWisaConnection();
             ShowConnectButtonIndicator.Value = false;
