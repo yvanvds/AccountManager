@@ -27,12 +27,12 @@
             <TabItem Header="AD">
                 <Label Content="AD"/>
             </TabItem>
-            <TabItem Header="OpenLdap">
+            <!--<TabItem Header="OpenLdap">
                 <Label Content="OPpenLDA"/>
-            </TabItem>
-            <TabItem Header="Google">
+            </TabItem>-->
+            <!--<TabItem Header="Google">
                 <Label Content="Google"/>
-            </TabItem>
+            </TabItem>-->
             <TabItem Header="Smartschool">
                 <local:SmartschoolGroups/>
             </TabItem>

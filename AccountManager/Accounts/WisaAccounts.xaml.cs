@@ -18,7 +18,7 @@ using static AbstractAccountApi.ObservableProperties;
 
 namespace AccountManager.Accounts
 {
-    enum FilterType
+    enum WisaFilterType
     {
         Name,
         FirstName,
@@ -38,7 +38,7 @@ namespace AccountManager.Accounts
         public Prop<Student> SelectedStudent { get; set; } = new Prop<Student> { Value = null };
         public Prop<string> SelectedTitle { get; set; } = new Prop<string> { Value = "Geen actieve selectie" };
 
-        private FilterType FilterType { get; set; } = FilterType.Name;
+        private WisaFilterType FilterType { get; set; } = WisaFilterType.Name;
         private string Filter { get; set; } = String.Empty;
 
         public WisaAccounts()
@@ -52,15 +52,15 @@ namespace AccountManager.Accounts
         private void CreateSelection()
         {
             accounts.Clear();
-            var selectedFilter = Filter.Length == 0 ? FilterType.None : FilterType;
+            var selectedFilter = Filter.Length == 0 ? WisaFilterType.None : FilterType;
             foreach (var account in WisaApi.Students.All)
             {
                 switch(selectedFilter)
                 {
-                    case FilterType.None: accounts.Add(account); break;
-                    case FilterType.Name: if (account.Name.Contains(Filter)) accounts.Add(account); break;
-                    case FilterType.FirstName: if (account.FirstName.Contains(Filter)) accounts.Add(account); break;
-                    case FilterType.ClassGroup: if (account.ClassGroup.Contains(Filter)) accounts.Add(account); break;
+                    case WisaFilterType.None: accounts.Add(account); break;
+                    case WisaFilterType.Name: if (account.Name.Contains(Filter)) accounts.Add(account); break;
+                    case WisaFilterType.FirstName: if (account.FirstName.Contains(Filter)) accounts.Add(account); break;
+                    case WisaFilterType.ClassGroup: if (account.ClassGroup.Contains(Filter)) accounts.Add(account); break;
                 }
             }
             AccountCount.Value = accounts.Count.ToString();
@@ -69,9 +69,9 @@ namespace AccountManager.Accounts
         private void FilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             var index = (sender as ComboBox).SelectedIndex;
-            if (index == 0) FilterType = FilterType.Name;
-            else if (index == 1) FilterType = FilterType.FirstName;
-            else FilterType = FilterType.ClassGroup;
+            if (index == 0) FilterType = WisaFilterType.Name;
+            else if (index == 1) FilterType = WisaFilterType.FirstName;
+            else FilterType = WisaFilterType.ClassGroup;
             CreateSelection();
         }
 

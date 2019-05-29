@@ -15,7 +15,7 @@ namespace AccountManager
         const string wisaClassFile = "wisaClasses.json";
         const string wisaStudentsFile = "wisaStudents.json";
 
-        private void loadWisaData(JObject obj)
+        private void loadWisaConfig(JObject obj)
         {
             wisaServer = obj.ContainsKey("server") ? obj["server"].ToString() : "";
             wisaPort = obj.ContainsKey("port") ? obj["port"].ToString() : "";

@@ -86,6 +86,9 @@
     <Compile Include="Accounts\AccountsPage.xaml.cs">
       <DependentUpon>AccountsPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Accounts\GoogleAccounts.xaml.cs">
+      <DependentUpon>GoogleAccounts.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Accounts\SmartschoolAccounts.xaml.cs">
       <DependentUpon>SmartschoolAccounts.xaml</DependentUpon>
     </Compile>
@@ -96,6 +99,7 @@
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
     <Compile Include="Data\Data.cs" />
+    <Compile Include="Data\GoogleData.cs" />
     <Compile Include="Data\SmartschoolData.cs" />
     <Compile Include="Data\WisaData.cs" />
     <Compile Include="Dialogs\ImportRuleSelectDialog.xaml.cs">
@@ -117,6 +121,9 @@
     <Compile Include="Groups\WisaGroups.xaml.cs">
       <DependentUpon>WisaGroups.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Settings\GoogleSettings.xaml.cs">
+      <DependentUpon>GoogleSettings.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Settings\SettingsPage.xaml.cs">
       <DependentUpon>SettingsPage.xaml</DependentUpon>
     </Compile>
@@ -127,6 +134,10 @@
       <DependentUpon>WisaSettings.xaml</DependentUpon>
     </Compile>
     <Page Include="Accounts\AccountsPage.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Accounts\GoogleAccounts.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -190,6 +201,10 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Settings\GoogleSettings.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Settings\SettingsPage.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -237,6 +252,10 @@
     <ProjectReference Include="..\..\AbstractAccountApi\AbstractAccountApi\AbstractAccountApi.csproj">
       <Project>{3d771ccf-96a7-4ffa-82e5-4ba9d870dcbb}</Project>
       <Name>AbstractAccountApi</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\GoogleApi\GoogleApi\GoogleApi.csproj">
+      <Project>{c31bcf41-a3f1-49da-b82c-37cacb6be218}</Project>
+      <Name>GoogleApi</Name>
     </ProjectReference>
     <ProjectReference Include="..\..\SmartschoolApi\SmartschoolApi\SmartschoolApi.csproj">
       <Project>{970eba52-df3c-480c-9474-d55d27e80f59}</Project>

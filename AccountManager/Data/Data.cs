@@ -36,11 +36,15 @@ namespace AccountManager
                 JObject config = JObject.Parse(content);
                 if(config.ContainsKey("Wisa"))
                 {
-                    loadWisaData(config["Wisa"] as JObject);
+                    loadWisaConfig(config["Wisa"] as JObject);
                 }
                 if(config.ContainsKey("Smartschool"))
                 {
                     loadSmartschoolConfig(config["Smartschool"] as JObject);
+                }
+                if(config.ContainsKey("Google"))
+                {
+                    loadGoogleConfig(config["Google"] as JObject);
                 }
             }
         }
@@ -49,6 +53,7 @@ namespace AccountManager
         {
             loadWisaFileContent();
             loadSmartschoolFileContent();
+            loadGoogleFileContent();
         }
 
         public void SaveConfig()
@@ -56,6 +61,7 @@ namespace AccountManager
             JObject config = new JObject();
             config["Wisa"] = saveWisaConfig();
             config["Smartschool"] = saveSmartschoolConfig();
+            config["Google"] = saveGoogleConfig();
             File.WriteAllText(configFile, config.ToString());
             ConfigChanged = false;
         }
