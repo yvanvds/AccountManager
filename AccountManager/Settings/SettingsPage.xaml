@@ -25,7 +25,7 @@
                 <local:WisaSettings/>
             </TabItem>
             <TabItem Header="AD">
-                <Label Content="AD"/>
+                <local:ADSettings/>
             </TabItem>
             <!--<TabItem Header="OpenLdap">
                 <Label Content="OPpenLDA"/>

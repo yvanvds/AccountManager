@@ -98,6 +98,7 @@
     <Compile Include="Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Data\ADData.cs" />
     <Compile Include="Data\Data.cs" />
     <Compile Include="Data\GoogleData.cs" />
     <Compile Include="Data\SmartschoolData.cs" />
@@ -120,6 +121,9 @@
     </Compile>
     <Compile Include="Groups\WisaGroups.xaml.cs">
       <DependentUpon>WisaGroups.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Settings\ADSettings.xaml.cs">
+      <DependentUpon>ADSettings.xaml</DependentUpon>
     </Compile>
     <Compile Include="Settings\GoogleSettings.xaml.cs">
       <DependentUpon>GoogleSettings.xaml</DependentUpon>
@@ -201,6 +205,10 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Settings\ADSettings.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Settings\GoogleSettings.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -252,6 +260,10 @@
     <ProjectReference Include="..\..\AbstractAccountApi\AbstractAccountApi\AbstractAccountApi.csproj">
       <Project>{3d771ccf-96a7-4ffa-82e5-4ba9d870dcbb}</Project>
       <Name>AbstractAccountApi</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\..\DirectoryApi\DirectoryApi\DirectoryApi.csproj">
+      <Project>{2ad599a0-047d-4c1c-ad54-1a5416782a7a}</Project>
+      <Name>DirectoryApi</Name>
     </ProjectReference>
     <ProjectReference Include="..\..\GoogleApi\GoogleApi\GoogleApi.csproj">
       <Project>{c31bcf41-a3f1-49da-b82c-37cacb6be218}</Project>

@@ -188,16 +188,16 @@ namespace AccountManager
             get { return smartschoolUseGrades; }
             set {
                 smartschoolUseGrades = value;
-                updateGrades();
+                updateSmartschoolGrades();
             }
         }
 
         private string[] smartschoolGrades = new string[3];
-        public string SmartschoolGrade1 { get => smartschoolGrades[0]; set { smartschoolGrades[0] = value.Trim(); updateGrades(); } }
-        public string SmartschoolGrade2 { get => smartschoolGrades[1]; set { smartschoolGrades[1] = value.Trim(); updateGrades(); } }
-        public string SmartschoolGrade3 { get => smartschoolGrades[2]; set { smartschoolGrades[2] = value.Trim(); updateGrades(); } }
+        public string SmartschoolGrade1 { get => smartschoolGrades[0]; set { smartschoolGrades[0] = value.Trim(); updateSmartschoolGrades(); } }
+        public string SmartschoolGrade2 { get => smartschoolGrades[1]; set { smartschoolGrades[1] = value.Trim(); updateSmartschoolGrades(); } }
+        public string SmartschoolGrade3 { get => smartschoolGrades[2]; set { smartschoolGrades[2] = value.Trim(); updateSmartschoolGrades(); } }
 
-        private void updateGrades()
+        private void updateSmartschoolGrades()
         {
             var grades = new StringCollection();
             grades.AddRange(smartschoolGrades);
@@ -221,20 +221,20 @@ namespace AccountManager
             set
             {
                 smartschoolUseYears = value;
-                updateYears();
+                updateSmartschoolYears();
             }
         }
 
         private string[] smartschoolYears = new string[7];
-        public string SmartschoolYear1 { get => smartschoolYears[0]; set { smartschoolYears[0] = value.Trim(); updateYears(); } }
-        public string SmartschoolYear2 { get => smartschoolYears[1]; set { smartschoolYears[1] = value.Trim(); updateYears(); } }
-        public string SmartschoolYear3 { get => smartschoolYears[2]; set { smartschoolYears[2] = value.Trim(); updateYears(); } }
-        public string SmartschoolYear4 { get => smartschoolYears[3]; set { smartschoolYears[3] = value.Trim(); updateYears(); } }
-        public string SmartschoolYear5 { get => smartschoolYears[4]; set { smartschoolYears[4] = value.Trim(); updateYears(); } }
-        public string SmartschoolYear6 { get => smartschoolYears[5]; set { smartschoolYears[5] = value.Trim(); updateYears(); } }
-        public string SmartschoolYear7 { get => smartschoolYears[6]; set { smartschoolYears[6] = value.Trim(); updateYears(); } }
+        public string SmartschoolYear1 { get => smartschoolYears[0]; set { smartschoolYears[0] = value.Trim(); updateSmartschoolYears(); } }
+        public string SmartschoolYear2 { get => smartschoolYears[1]; set { smartschoolYears[1] = value.Trim(); updateSmartschoolYears(); } }
+        public string SmartschoolYear3 { get => smartschoolYears[2]; set { smartschoolYears[2] = value.Trim(); updateSmartschoolYears(); } }
+        public string SmartschoolYear4 { get => smartschoolYears[3]; set { smartschoolYears[3] = value.Trim(); updateSmartschoolYears(); } }
+        public string SmartschoolYear5 { get => smartschoolYears[4]; set { smartschoolYears[4] = value.Trim(); updateSmartschoolYears(); } }
+        public string SmartschoolYear6 { get => smartschoolYears[5]; set { smartschoolYears[5] = value.Trim(); updateSmartschoolYears(); } }
+        public string SmartschoolYear7 { get => smartschoolYears[6]; set { smartschoolYears[6] = value.Trim(); updateSmartschoolYears(); } }
 
-        private void updateYears()
+        private void updateSmartschoolYears()
         {
             var years = new StringCollection();
             years.AddRange(smartschoolYears);

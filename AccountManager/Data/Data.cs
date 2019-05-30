@@ -46,6 +46,10 @@ namespace AccountManager
                 {
                     loadGoogleConfig(config["Google"] as JObject);
                 }
+                if(config.ContainsKey("AD"))
+                {
+                    loadADConfig(config["AD"] as JObject);
+                }
             }
         }
 
@@ -62,6 +66,7 @@ namespace AccountManager
             config["Wisa"] = saveWisaConfig();
             config["Smartschool"] = saveSmartschoolConfig();
             config["Google"] = saveGoogleConfig();
+            config["AD"] = saveADConfig();
             File.WriteAllText(configFile, config.ToString());
             ConfigChanged = false;
         }
