@@ -265,6 +265,10 @@
       <Project>{2ad599a0-047d-4c1c-ad54-1a5416782a7a}</Project>
       <Name>DirectoryApi</Name>
     </ProjectReference>
+    <ProjectReference Include="..\..\GoogleApi\GoogleApi.csproj">
+      <Project>{c31bcf41-a3f1-49da-b82c-37cacb6be218}</Project>
+      <Name>GoogleApi</Name>
+    </ProjectReference>
     <ProjectReference Include="..\..\SmartschoolApi\SmartschoolApi\SmartschoolApi.csproj">
       <Project>{970eba52-df3c-480c-9474-d55d27e80f59}</Project>
       <Name>SmartschoolApi</Name>
