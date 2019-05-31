@@ -86,6 +86,9 @@
     <Compile Include="Accounts\AccountsPage.xaml.cs">
       <DependentUpon>AccountsPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Accounts\ADAccounts.xaml.cs">
+      <DependentUpon>ADAccounts.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Accounts\GoogleAccounts.xaml.cs">
       <DependentUpon>GoogleAccounts.xaml</DependentUpon>
     </Compile>
@@ -112,6 +115,9 @@
     </Compile>
     <Compile Include="Dialogs\SS_DiscardSubGroupEditor.xaml.cs">
       <DependentUpon>SS_DiscardSubGroupEditor.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Groups\ADGroups.xaml.cs">
+      <DependentUpon>ADGroups.xaml</DependentUpon>
     </Compile>
     <Compile Include="Groups\GroupsPage.xaml.cs">
       <DependentUpon>GroupsPage.xaml</DependentUpon>
@@ -141,6 +147,10 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Accounts\ADAccounts.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Accounts\GoogleAccounts.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -166,6 +176,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Dialogs\SS_DiscardSubGroupEditor.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Groups\ADGroups.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

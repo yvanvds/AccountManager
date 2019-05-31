@@ -58,6 +58,7 @@ namespace AccountManager
             loadWisaFileContent();
             loadSmartschoolFileContent();
             loadGoogleFileContent();
+            loadADFileContent();
         }
 
         public void SaveConfig()

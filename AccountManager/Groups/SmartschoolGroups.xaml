@@ -87,7 +87,7 @@
             <TreeView Grid.Column="0" x:Name="GroupTree" SelectedItemChanged="GroupTree_SelectedItemChanged"
                 MinWidth="220">
                 <TreeView.ItemTemplate>
-                    <HierarchicalDataTemplate DataType="{x:Type local:Group}" ItemsSource="{Binding Children}">
+                    <HierarchicalDataTemplate DataType="{x:Type local:SSGroup}" ItemsSource="{Binding Children}">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="{Binding Icon}"/>
                             <TextBlock Text="{Binding Header}" Margin="3 2" />

@@ -25,7 +25,7 @@
                 <local:WisaGroups/>
             </TabItem>
             <TabItem Header="AD">
-                <Label Content="AD"/>
+                <local:ADGroups/>
             </TabItem>
             <!--<TabItem Header="OpenLdap">
                 <Label Content="OPpenLDA"/>

@@ -54,17 +54,17 @@ namespace AccountManager.Groups
             GroupTree.Items.Clear();
             if(Select == Select.All)
             {
-                GroupTree.Items.Add(new Group(SmartschoolApi.GroupManager.Root));
+                GroupTree.Items.Add(new SSGroup(SmartschoolApi.GroupManager.Root));
                 GroupCount.Value = SmartschoolApi.GroupManager.Root.Count.ToString();
             } else if (Select == Select.Staff)
             {
                 IGroup root = SmartschoolApi.GroupManager.Root.Find("Personeel");
-                GroupTree.Items.Add(new Group(root));
+                GroupTree.Items.Add(new SSGroup(root));
                 GroupCount.Value = root.Count.ToString();
             } else
             {
                 IGroup root = SmartschoolApi.GroupManager.Root.Find("Leerlingen");
-                GroupTree.Items.Add(new Group(root));
+                GroupTree.Items.Add(new SSGroup(root));
                 GroupCount.Value = root.Count.ToString();
             }
             
@@ -74,7 +74,7 @@ namespace AccountManager.Groups
         {
             if (GroupTree.SelectedItem != null)
             {
-                SelectedGroup.Value = (GroupTree.SelectedItem as Group).Base;
+                SelectedGroup.Value = (GroupTree.SelectedItem as SSGroup).Base;
             }
             else SelectedGroup.Value = null;
         }
@@ -105,17 +105,17 @@ namespace AccountManager.Groups
         Students,
     }
 
-    class Group
+    class SSGroup
     {
-        public ObservableCollection<Group> Children { get; set; }
+        public ObservableCollection<SSGroup> Children { get; set; }
         public IGroup Base;
         public string Header { get; set; } = "No Groups Found";
         public string Icon { get; set; } = "QuestionMarkBox";
 
-        public Group(IGroup Base)
+        public SSGroup(IGroup Base)
         {
             this.Base = Base;
-            Children = new ObservableCollection<Group>();
+            Children = new ObservableCollection<SSGroup>();
 
             if (Base == null) return;
 
@@ -131,7 +131,7 @@ namespace AccountManager.Groups
             if (Base.Children == null) return;
             foreach(var group in Base.Children)
             {
-                Children.Add(new Group(group));
+                Children.Add(new SSGroup(group));
             }
         }
     }

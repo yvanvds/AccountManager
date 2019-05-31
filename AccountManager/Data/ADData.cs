@@ -1,8 +1,10 @@
 ﻿using AbstractAccountApi;
+using DirectoryApi;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -11,6 +13,11 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
+        public List<ClassGroup> ADGroups => DirectoryApi.ClassGroupManager.All;
+
+        const string adGroupsFile = "directoryGroups.json";
+        const string adAccountsFile = "directoryAccounts.json";
+
         private void loadADConfig(JObject obj)
         {
             adDomain = obj.ContainsKey("domain") ? obj["domain"].ToString() : "";
@@ -56,6 +63,27 @@ namespace AccountManager
             result["grades"] = new JArray(adGrades);
             result["years"] = new JArray(adYears);
             return result;
+        }
+
+        private void loadADFileContent()
+        {
+            SetADCredentials();
+
+            var adGroupsLocation = Path.Combine(appFolder, adGroupsFile);
+            if(File.Exists(adGroupsLocation))
+            {
+                string content = File.ReadAllText(adGroupsLocation);
+                var newObj = JObject.Parse(content);
+                DirectoryApi.ClassGroupManager.FromJson(newObj);
+            }
+
+            var adAccountsLocation = Path.Combine(appFolder, adAccountsFile);
+            if(File.Exists(adAccounts))
+            {
+                string content = File.ReadAllText(adAccountsLocation);
+                var newObj = JObject.Parse(content);
+                DirectoryApi.AccountManager.FromJson(newObj);
+            }
         }
 
         public bool SetADCredentials()
@@ -195,11 +223,31 @@ namespace AccountManager
 
             if(adUseYears)
             {
-                DirectoryApi.Connector.StudentYear = adYears;
+                Connector.StudentYear = adYears;
             } else
             {
-                DirectoryApi.Connector.StudentYear = new string[0];
+                Connector.StudentYear = new string[0];
             }
+        }
+
+        public async Task ReloadADClassGroups()
+        {
+            await ClassGroupManager.Load();
+            ClassGroupManager.Sort();
+
+            var json = ClassGroupManager.ToJson();
+            var location = Path.Combine(appFolder, adGroupsFile);
+            File.WriteAllText(location, json.ToString());
+        }
+
+        public async Task ReloadADAccounts()
+        {
+            await DirectoryApi.AccountManager.LoadStaff();
+            await DirectoryApi.AccountManager.LoadStudents();
+
+            var json = DirectoryApi.AccountManager.ToJson();
+            var location = Path.Combine(appFolder, adAccountsFile);
+            File.WriteAllText(location, json.ToString());
         }
     }
 }
