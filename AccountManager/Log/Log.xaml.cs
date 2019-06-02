@@ -104,7 +104,7 @@ namespace AccountManager.Log
                 Content = message,
                 Error = false,
             });
-            Application.Current.Dispatcher.Invoke(new Action(() => Rebuild()));
+            Application.Current.Dispatcher.Invoke(new System.Action(() => Rebuild()));
         }
 
         public void AddError(Origin origin, string message)
@@ -115,7 +115,7 @@ namespace AccountManager.Log
                 Content = message,
                 Error = true,
             });
-            Application.Current.Dispatcher.Invoke(new Action(() => Rebuild()));
+            Application.Current.Dispatcher.Invoke(new System.Action(() => Rebuild()));
         }
 
         private void OriginSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)

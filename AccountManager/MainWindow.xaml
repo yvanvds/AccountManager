@@ -19,6 +19,7 @@
         BorderThickness="1"
         mc:Ignorable="d"
         Title="SMA Account Manager"
+                   Loaded="MetroWindow_Loaded"
         WindowState="Maximized">
 
 
@@ -37,7 +38,18 @@
             <menu:Menu Grid.Column="0"/>
 
 
-            <Grid Grid.Column="1" x:Name="Content" Background="Magenta">
+            <Grid Grid.Column="1" x:Name="Content" Background="LightGray">
+                <StackPanel VerticalAlignment="Center">
+                    <Label Content="Loading..." HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="50" Foreground="DarkGray"/>
+                    <ProgressBar
+                      Margin="32"
+                      Height="70"
+                      Width="70"
+                      Style="{StaticResource MaterialDesignCircularProgressBar}"
+                      Value="0"
+                      IsIndeterminate="True" />     
+                </StackPanel>
+                
             </Grid>
 
             <GridSplitter Grid.Column="2" Width="5" HorizontalAlignment="Stretch"/>

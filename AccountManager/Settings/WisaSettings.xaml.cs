@@ -1,4 +1,5 @@
-﻿using MaterialDesignThemes.Wpf;
+﻿using AbstractAccountApi;
+using MaterialDesignThemes.Wpf;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -28,6 +29,9 @@ namespace AccountManager.Settings
         PackIcon ConnectButtonIcon;
 
         public Data Data { get => Data.Instance; }
+
+        private Dialogs.ImportRuleSelectDialog importRuleSelectDialog;
+        private Dialogs.IRuleEditor importRuleEditor;
 
         public WisaSettings()
         {
@@ -70,6 +74,65 @@ namespace AccountManager.Settings
         private void SelectSchoolButton_Click(object sender, RoutedEventArgs e)
         {
             Data.Instance.saveWisaSchoolsToJSON();
+        }
+
+        private async void AddRuleButton_Click(object sender, RoutedEventArgs e)
+        {
+            importRuleSelectDialog = new Dialogs.ImportRuleSelectDialog(AbstractAccountApi.RuleType.WISA_Import);
+            await DialogHost.Show(
+                importRuleSelectDialog,
+                "RootDialog",
+                closeAddRuleEventHandler
+            );
+        }
+
+        private void closeAddRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
+        {
+            var result = eventArgs.Parameter as string;
+            if (result == "true")
+            {
+                var rule = Data.Instance.AddWisaImportRule(importRuleSelectDialog.SelectedRule);
+                eventArgs.Handled = true;
+            }
+        }
+
+        private async void RuleEditButton_Click(object sender, RoutedEventArgs e)
+        {
+            var rule = (e.Source as Button).DataContext as IRule;
+            await OpenRuleEditor(rule);
+        }
+
+        private async Task OpenRuleEditor(IRule rule)
+        {
+            importRuleEditor = null;
+            switch (rule.Rule)
+            {
+                case Rule.WI_ReplaceInstitution: importRuleEditor = new Dialogs.WI_ReplaceInstitute(rule); break;
+            }
+            if (importRuleEditor != null)
+            {
+                await DialogHost.Show(
+                    importRuleEditor,
+                    "RootDialog",
+                    closeEditRuleEventHandler
+                );
+            }
+        }
+
+        private void closeEditRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
+        {
+            var result = eventArgs.Parameter as string;
+            if (result.Equals("true", StringComparison.CurrentCultureIgnoreCase))
+            {
+                Data.Instance.ConfigChanged = true;
+            }
+        }
+
+        private void RuleDeleteButton_Click(object sender, RoutedEventArgs e)
+        {
+            var rule = (e.Source as Button).DataContext as IRule;
+            Data.Instance.SmartschoolImportRules.Remove(rule);
+            Data.Instance.ConfigChanged = true;
         }
     }
 }

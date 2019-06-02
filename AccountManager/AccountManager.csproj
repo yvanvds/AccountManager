@@ -98,12 +98,24 @@
     <Compile Include="Accounts\WisaAccounts.xaml.cs">
       <DependentUpon>WisaAccounts.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Action\AddClassGroupToDirectory.cs" />
+    <Compile Include="Action\AddClassGroupToSmartschool.cs" />
+    <Compile Include="Action\DoNotImportClassGroupFromSmartschool.cs" />
+    <Compile Include="Action\DoNotImportFromWisa.cs" />
+    <Compile Include="Action\EmptyClassGroupToSmartschool.cs" />
+    <Compile Include="Action\ModifySmartschoolData.cs" />
+    <Compile Include="Action\NoActionNeeded.cs" />
+    <Compile Include="Action\RemoveDirectoryClassGroup.cs" />
+    <Compile Include="Action\RemoveEmptyDirectoryClassGroup.cs" />
+    <Compile Include="Action\IAction.cs" />
     <Compile Include="Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
     <Compile Include="Data\ADData.cs" />
     <Compile Include="Data\Data.cs" />
     <Compile Include="Data\GoogleData.cs" />
+    <Compile Include="Data\LinkedGroup.cs" />
+    <Compile Include="Data\LinkedGroups.cs" />
     <Compile Include="Data\SmartschoolData.cs" />
     <Compile Include="Data\WisaData.cs" />
     <Compile Include="Dialogs\ImportRuleSelectDialog.xaml.cs">
@@ -116,11 +128,17 @@
     <Compile Include="Dialogs\SS_DiscardSubGroupEditor.xaml.cs">
       <DependentUpon>SS_DiscardSubGroupEditor.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Dialogs\WI_ReplaceInstitute.xaml.cs">
+      <DependentUpon>WI_ReplaceInstitute.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Groups\ADGroups.xaml.cs">
       <DependentUpon>ADGroups.xaml</DependentUpon>
     </Compile>
     <Compile Include="Groups\GroupsPage.xaml.cs">
       <DependentUpon>GroupsPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Groups\Overview.xaml.cs">
+      <DependentUpon>Overview.xaml</DependentUpon>
     </Compile>
     <Compile Include="Groups\SmartschoolGroups.xaml.cs">
       <DependentUpon>SmartschoolGroups.xaml</DependentUpon>
@@ -179,11 +197,19 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Dialogs\WI_ReplaceInstitute.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Groups\ADGroups.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Groups\GroupsPage.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Groups\Overview.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

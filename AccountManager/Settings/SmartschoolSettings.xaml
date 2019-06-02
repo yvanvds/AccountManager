@@ -87,7 +87,6 @@
                         </Grid>
                     </DataTemplate>
                 </GroupBox.HeaderTemplate>
-
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding Path=Data.SmartschoolImportRules}" Grid.IsSharedSizeScope="True" Margin="12 0 12 0">
                         <ItemsControl.ItemTemplate>

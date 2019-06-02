@@ -17,9 +17,9 @@
              mc:Ignorable="d" 
              d:DesignHeight="450" d:DesignWidth="800">
     <Grid>
-        <dragablz:TabablzControl FixedHeaderCount="6">
+        <dragablz:TabablzControl x:Name="TabControl" FixedHeaderCount="6">
             <TabItem Header="Overview">
-                <Label Content="Overview"/>
+                <local:Overview/>
             </TabItem>
             <TabItem Header="Wisa">
                 <local:WisaGroups/>
@@ -27,12 +27,6 @@
             <TabItem Header="AD">
                 <local:ADGroups/>
             </TabItem>
-            <!--<TabItem Header="OpenLdap">
-                <Label Content="OPpenLDA"/>
-            </TabItem>-->
-            <!--<TabItem Header="Google">
-                <Label Content="Google"/>
-            </TabItem>-->
             <TabItem Header="Smartschool">
                 <local:SmartschoolGroups/>
             </TabItem>

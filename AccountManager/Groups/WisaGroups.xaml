@@ -40,14 +40,14 @@
                         <StackPanel Orientation="Horizontal">
                             <ToggleButton Margin="16 4 16 0"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
                                 ToolTip="MaterialDesignSwitchDarkToggleButton"
-                                IsChecked="{Binding Data.WisaWorkDateNow}"/>
+                                IsChecked="{c:Binding Path=Data.WisaWorkDateNow, Mode=TwoWay}"/>
                             <Label Margin="0 0 16 0" Content="Vandaag"
-                                   Visibility="{c:Binding Path=!Data.WisaWorkDateNow, FalseToVisibility=Collapsed}"/>
+                                   Visibility="{c:Binding Path=Data.WisaWorkDateNow, FalseToVisibility=Collapsed}"/>
 
                             <DatePicker SelectedDate="{Binding Path=Data.WisaWorkDate, Mode=TwoWay}" Margin="0 -12 8 0"
                               materialDesign:HintAssist.Hint="Pick Date"
                               Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
-                              Visibility="{c:Binding Path=Data.WisaWorkDateNow, FalseToVisibility=Collapsed}"/>
+                              Visibility="{c:Binding Path=!Data.WisaWorkDateNow, FalseToVisibility=Collapsed}"/>
                         </StackPanel>
                     </StackPanel>
                 </materialDesign:Card>

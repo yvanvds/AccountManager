@@ -28,13 +28,24 @@ namespace AccountManager
         {
             InitializeComponent();
             Instance = this;
+        }
+
+        private async Task LoadContent()
+        {
             Data.Instance.LoadFileContentOnStartup();
+            await LinkedGroups.ReLink();
+            Navigate(new Dashboard.DashboardPage());
         }
 
         public void Navigate(UserControl page)
         {
             Content.Children.Clear();
             Content.Children.Add(page);
+        }
+
+        private async void MetroWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            await LoadContent();
         }
     }
 }

@@ -21,9 +21,23 @@ namespace AccountManager.Groups
     /// </summary>
     public partial class GroupsPage : UserControl
     {
-        public GroupsPage()
+        public enum Tab {
+            Overview,
+            Wisa,
+            Smartschool,
+            Directory,
+        }
+
+        public GroupsPage(Tab activeTab = Tab.Overview)
         {
             InitializeComponent();
+            switch(activeTab)
+            {
+                case Tab.Overview: TabControl.SelectedIndex = 0; break;
+                case Tab.Wisa: TabControl.SelectedIndex = 1; break;
+                case Tab.Directory: TabControl.SelectedIndex = 2; break;
+                case Tab.Smartschool: TabControl.SelectedIndex = 3; break;
+            }
         }
 
         public void CalendarDialogOpenedEventHandler(object sender, DialogOpenedEventArgs eventArgs)

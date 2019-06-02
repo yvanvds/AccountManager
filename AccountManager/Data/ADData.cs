@@ -78,7 +78,7 @@ namespace AccountManager
             }
 
             var adAccountsLocation = Path.Combine(appFolder, adAccountsFile);
-            if(File.Exists(adAccounts))
+            if(File.Exists(adAccountsLocation))
             {
                 string content = File.ReadAllText(adAccountsLocation);
                 var newObj = JObject.Parse(content);

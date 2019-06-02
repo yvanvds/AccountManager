@@ -2,6 +2,7 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -11,6 +12,8 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
+        public ObservableCollection<IRule> WisaImportRules { get; set; } = new ObservableCollection<IRule>(); 
+
         const string wisaSchoolsFile = "wisaSchools.json";
         const string wisaClassFile = "wisaClasses.json";
         const string wisaStudentsFile = "wisaStudents.json";
@@ -35,6 +38,20 @@ namespace AccountManager
             {
                 wisaWorkDate = obj.ContainsKey("workDate") ? obj["workDate"].ToObject<DateTime>() : DateTime.Now;
             }
+
+            if (obj.ContainsKey("importRules"))
+            {
+                var arr = obj["importRules"] as JArray;
+                foreach (var item in arr)
+                {
+                    var data = item as JObject;
+                    Rule rule = (Rule)data["Rule"].ToObject(typeof(Rule));
+                    switch (rule)
+                    {
+                        case Rule.WI_ReplaceInstitution: WisaImportRules.Add(new WisaApi.Rules.ReplaceInstitute(data)); break;
+                    }
+                }
+            }
         }
 
         private JObject saveWisaConfig()
@@ -48,6 +65,17 @@ namespace AccountManager
             result["connectionTested"] = wisaConnectionTested.ToString();
             result["workDateNow"] = wisaWorkDateNow;
             result["workDate"] = wisaWorkDate;
+
+            if(WisaImportRules.Count > 0)
+            {
+                var arr = new JArray();
+                foreach(var rule in WisaImportRules)
+                {
+                    arr.Add(rule.ToJson());
+                }
+                result["importRules"] = arr;
+            }
+
             return result;
         }
 
@@ -238,8 +266,26 @@ namespace AccountManager
                     if (!success) return;
                 }
             }
+            WisaApi.ClassGroups.ApplyImportRules(WisaImportRules.ToList());
             WisaApi.ClassGroups.Sort();
             saveWisaClassGroupsToJSON();
+        }
+
+        public IRule AddWisaImportRule(Rule rule)
+        {
+            IRule newRule = null;
+
+            switch(rule)
+            {
+                case Rule.WI_ReplaceInstitution: newRule = new WisaApi.Rules.ReplaceInstitute(); break;
+            }
+
+            if(newRule != null)
+            {
+                WisaImportRules.Add(newRule);
+                ConfigChanged = true;
+            }
+            return newRule;
         }
 
         public async Task ReloadWisaStudents()
