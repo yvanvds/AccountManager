@@ -40,7 +40,7 @@
                         <StackPanel Orientation="Horizontal">
                             <ToggleButton Margin="16 4 16 0"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
                                 ToolTip="MaterialDesignSwitchDarkToggleButton"
-                                IsChecked="{c:Binding Path=Data.WisaWorkDateNow, Mode=TwoWay}"/>
+                                IsChecked="{c:Binding !Data.WisaWorkDateNow, Mode=TwoWay}"/>
                             <Label Margin="0 0 16 0" Content="Vandaag"
                                    Visibility="{c:Binding Path=Data.WisaWorkDateNow, FalseToVisibility=Collapsed}"/>
 

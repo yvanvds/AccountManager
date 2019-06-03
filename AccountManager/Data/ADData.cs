@@ -234,17 +234,25 @@ namespace AccountManager
         {
             await ClassGroupManager.Load();
             ClassGroupManager.Sort();
-
-            var json = ClassGroupManager.ToJson();
-            var location = Path.Combine(appFolder, adGroupsFile);
-            File.WriteAllText(location, json.ToString());
+            SaveADGroupsToFile();
         }
 
         public async Task ReloadADAccounts()
         {
             await DirectoryApi.AccountManager.LoadStaff();
             await DirectoryApi.AccountManager.LoadStudents();
+            SaveADAccountsToFile();
+        }
 
+        public void SaveADGroupsToFile()
+        {
+            var json = ClassGroupManager.ToJson();
+            var location = Path.Combine(appFolder, adGroupsFile);
+            File.WriteAllText(location, json.ToString());
+        }
+
+        public void SaveADAccountsToFile()
+        {
             var json = DirectoryApi.AccountManager.ToJson();
             var location = Path.Combine(appFolder, adAccountsFile);
             File.WriteAllText(location, json.ToString());

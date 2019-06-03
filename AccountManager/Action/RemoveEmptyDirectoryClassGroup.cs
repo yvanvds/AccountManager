@@ -21,7 +21,8 @@ namespace AccountManager.Action
         public async Task Apply(LinkedGroup linkedGroup)
         {
             InProgress.Value = true;
-            await Task.Delay(1000);
+            await DirectoryApi.ClassGroupManager.Delete(group);
+            Data.Instance.SaveADGroupsToFile();
             InProgress.Value = false;
         }
 

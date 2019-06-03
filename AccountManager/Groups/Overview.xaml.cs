@@ -89,6 +89,8 @@ namespace AccountManager.Groups
         {
             IAction action = (e.Source as Button).DataContext as IAction;
             await action.Apply(SelectedGroup.Value);
+            await LinkedGroups.ReLink();
+            CreateCollection();
         }
     }
 }
