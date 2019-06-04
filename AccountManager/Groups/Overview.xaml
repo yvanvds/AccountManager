@@ -45,7 +45,7 @@
                   SelectedCellsChanged="GroupList_SelectedCellsChanged">
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding Name}" Header="Klas" IsReadOnly="True" />
-                    
+
                     <DataGridTemplateColumn Header="Wisa" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>

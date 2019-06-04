@@ -92,19 +92,25 @@
     <Compile Include="Accounts\GoogleAccounts.xaml.cs">
       <DependentUpon>GoogleAccounts.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Accounts\Overview.xaml.cs">
+      <DependentUpon>Overview.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Accounts\SmartschoolAccounts.xaml.cs">
       <DependentUpon>SmartschoolAccounts.xaml</DependentUpon>
     </Compile>
     <Compile Include="Accounts\WisaAccounts.xaml.cs">
       <DependentUpon>WisaAccounts.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Action\AccountAction.cs" />
     <Compile Include="Action\AddClassGroupToDirectory.cs" />
     <Compile Include="Action\AddClassGroupToSmartschool.cs" />
     <Compile Include="Action\DoNotImportClassGroupFromSmartschool.cs" />
     <Compile Include="Action\DoNotImportFromWisa.cs" />
     <Compile Include="Action\EmptyClassGroupToSmartschool.cs" />
     <Compile Include="Action\ModifySmartschoolData.cs" />
+    <Compile Include="Action\NoAccountActionNeeded.cs" />
     <Compile Include="Action\NoActionNeeded.cs" />
+    <Compile Include="Action\RemoveAccountFromGoogle.cs" />
     <Compile Include="Action\RemoveDirectoryClassGroup.cs" />
     <Compile Include="Action\RemoveEmptyDirectoryClassGroup.cs" />
     <Compile Include="Action\IAction.cs" />
@@ -114,6 +120,8 @@
     <Compile Include="Data\ADData.cs" />
     <Compile Include="Data\Data.cs" />
     <Compile Include="Data\GoogleData.cs" />
+    <Compile Include="Data\LinkedAccount.cs" />
+    <Compile Include="Data\LinkedAccounts.cs" />
     <Compile Include="Data\LinkedGroup.cs" />
     <Compile Include="Data\LinkedGroups.cs" />
     <Compile Include="Data\SmartschoolData.cs" />
@@ -164,6 +172,7 @@
     <Compile Include="Settings\WisaSettings.xaml.cs">
       <DependentUpon>WisaSettings.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Utils\StringExtensions.cs" />
     <Page Include="Accounts\AccountsPage.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -173,6 +182,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Accounts\GoogleAccounts.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Accounts\Overview.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

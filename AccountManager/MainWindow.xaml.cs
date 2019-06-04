@@ -34,6 +34,7 @@ namespace AccountManager
         {
             Data.Instance.LoadFileContentOnStartup();
             await LinkedGroups.ReLink();
+            await LinkedAccounts.ReLink();
             Navigate(new Dashboard.DashboardPage());
         }
 

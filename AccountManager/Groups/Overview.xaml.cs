@@ -41,7 +41,7 @@ namespace AccountManager.Groups
             Groups.Clear();
             List<LinkedGroup> groups = LinkedGroups.List.Values.ToList();
             groups.Sort((a, b) => a.Name.CompareTo(b.Name));
-            foreach(var group in LinkedGroups.List.Values)
+            foreach(var group in groups)
             {
                 if (showGoodGroups) Groups.Add(group);
                 else if (!group.GroupOK) Groups.Add(group);
