@@ -108,6 +108,7 @@ namespace AccountManager.Settings
             switch (rule.Rule)
             {
                 case Rule.WI_ReplaceInstitution: importRuleEditor = new Dialogs.WI_ReplaceInstitute(rule); break;
+                case Rule.WI_DontImportClass: importRuleEditor = new Dialogs.WI_DontImportClass(rule); break;
             }
             if (importRuleEditor != null)
             {

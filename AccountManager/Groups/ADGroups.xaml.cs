@@ -33,7 +33,7 @@ namespace AccountManager.Groups
         public ADGroups()
         {
             InitializeComponent();
-            GroupCount.Value = DirectoryApi.ClassGroupManager.Count(true).ToString();
+            GroupCount.Value = ClassGroupManager.Count(true).ToString();
             MainGrid.DataContext = this;
             BuildGroupTree();
         }
@@ -43,7 +43,8 @@ namespace AccountManager.Groups
             ShowGroupsReloadButtonIndicator.Value = true;
             Data.Instance.SetADCredentials();
             await Data.Instance.ReloadADClassGroups();
-            GroupCount.Value = DirectoryApi.ClassGroupManager.Count(true).ToString();
+            await LinkedGroups.ReLink();
+            GroupCount.Value = ClassGroupManager.Count(true).ToString();
             BuildGroupTree();
             ShowGroupsReloadButtonIndicator.Value = false;
         }

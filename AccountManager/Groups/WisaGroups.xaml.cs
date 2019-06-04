@@ -71,6 +71,7 @@ namespace AccountManager.Groups
             ShowGroupsReloadButtonIndicator.Value = true;
             Data.Instance.SetWisaCredentials();
             await Data.Instance.ReloadWisaClassgroups();
+            await LinkedGroups.ReLink();
             CreateSelection();
             ShowGroupsReloadButtonIndicator.Value = false;
         }

@@ -19,7 +19,11 @@ namespace AccountManager.Action
 
         public async Task Apply(LinkedGroup linkedGroup)
         {
-            
+            InProgress.Value = true;
+            WisaApi.Rules.DontImportClass rule = Data.Instance.AddWisaImportRule(Rule.WI_DontImportClass) as WisaApi.Rules.DontImportClass;
+            rule.setConfig(0, linkedGroup.wisaGroup.Name);
+            await Data.Instance.ReloadWisaClassgroups();
+            InProgress.Value = false;
         }
 
         public DoNotImportFromWisa(WisaApi.ClassGroup group)

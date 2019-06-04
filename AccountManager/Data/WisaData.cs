@@ -49,6 +49,7 @@ namespace AccountManager
                     switch (rule)
                     {
                         case Rule.WI_ReplaceInstitution: WisaImportRules.Add(new WisaApi.Rules.ReplaceInstitute(data)); break;
+                        case Rule.WI_DontImportClass: WisaImportRules.Add(new WisaApi.Rules.DontImportClass(data)); break;
                     }
                 }
             }
@@ -278,6 +279,7 @@ namespace AccountManager
             switch(rule)
             {
                 case Rule.WI_ReplaceInstitution: newRule = new WisaApi.Rules.ReplaceInstitute(); break;
+                case Rule.WI_DontImportClass: newRule = new WisaApi.Rules.DontImportClass(); break;
             }
 
             if(newRule != null)

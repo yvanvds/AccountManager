@@ -43,6 +43,7 @@ namespace AccountManager.Groups
             ShowGroupsReloadButtonIndicator.Value = true;
             Data.Instance.SetSmartschoolCredentials();
             await Data.Instance.ReloadSmartschool();
+            await LinkedGroups.ReLink();
             GroupCount.Value = SmartschoolApi.GroupManager.Count(false).ToString();
             BuildGroupTree();
 

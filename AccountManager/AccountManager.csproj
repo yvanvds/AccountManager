@@ -128,6 +128,9 @@
     <Compile Include="Dialogs\SS_DiscardSubGroupEditor.xaml.cs">
       <DependentUpon>SS_DiscardSubGroupEditor.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Dialogs\WI_DontImportClass.xaml.cs">
+      <DependentUpon>WI_DontImportClass.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Dialogs\WI_ReplaceInstitute.xaml.cs">
       <DependentUpon>WI_ReplaceInstitute.xaml</DependentUpon>
     </Compile>
@@ -194,6 +197,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Dialogs\SS_DiscardSubGroupEditor.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Dialogs\WI_DontImportClass.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
