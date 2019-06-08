@@ -1,5 +1,5 @@
-﻿using AbstractAccountApi;
-using DirectoryApi;
+﻿using AccountApi;
+using AccountApi.Directory;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -13,12 +13,12 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
-        public List<ClassGroup> ADGroups => DirectoryApi.ClassGroupManager.All;
+        public List<AccountApi.Directory.ClassGroup> ADGroups => AccountApi.Directory.ClassGroupManager.All;
 
         const string adGroupsFile = "directoryGroups.json";
         const string adAccountsFile = "directoryAccounts.json";
 
-        private void loadADConfig(JObject obj)
+        private void LoadADConfig(JObject obj)
         {
             adDomain = obj.ContainsKey("domain") ? obj["domain"].ToString() : "";
             adAccounts = obj.ContainsKey("accounts") ? obj["accounts"].ToString() : "";
@@ -45,27 +45,29 @@ namespace AccountManager
                 }
             }
 
-            updateADGrades();
-            updateADYears();
+            UpdateADGrades();
+            UpdateADYears();
         }
 
-        public JObject saveADConfig()
+        public JObject SaveADConfig()
         {
-            JObject result = new JObject();
-            result["domain"] = adDomain;
-            result["accounts"] = adAccounts;
-            result["classes"] = adClasses;
-            result["students"] = adStudents;
-            result["staff"] = adStaff;
-            result["connectionTested"] = adConnectionTested.ToString();
-            result["useGrades"] = adUseGrades;
-            result["useYears"] = adUseYears;
-            result["grades"] = new JArray(adGrades);
-            result["years"] = new JArray(adYears);
+            JObject result = new JObject
+            {
+                ["domain"] = adDomain,
+                ["accounts"] = adAccounts,
+                ["classes"] = adClasses,
+                ["students"] = adStudents,
+                ["staff"] = adStaff,
+                ["connectionTested"] = adConnectionTested.ToString(),
+                ["useGrades"] = adUseGrades,
+                ["useYears"] = adUseYears,
+                ["grades"] = new JArray(adGrades),
+                ["years"] = new JArray(adYears)
+            };
             return result;
         }
 
-        private void loadADFileContent()
+        private void LoadADFileContent()
         {
             SetADCredentials();
 
@@ -74,7 +76,7 @@ namespace AccountManager
             {
                 string content = File.ReadAllText(adGroupsLocation);
                 var newObj = JObject.Parse(content);
-                DirectoryApi.ClassGroupManager.FromJson(newObj);
+                AccountApi.Directory.ClassGroupManager.FromJson(newObj);
             }
 
             var adAccountsLocation = Path.Combine(appFolder, adAccountsFile);
@@ -82,13 +84,13 @@ namespace AccountManager
             {
                 string content = File.ReadAllText(adAccountsLocation);
                 var newObj = JObject.Parse(content);
-                DirectoryApi.AccountManager.FromJson(newObj);
+                AccountApi.Directory.AccountManager.FromJson(newObj);
             }
         }
 
         public bool SetADCredentials()
         {
-            return DirectoryApi.Connector.Init(adDomain, adAccounts, adClasses, adStudents, adStaff, MainWindow.Instance.Log);
+            return AccountApi.Directory.Connector.Init(adDomain, adAccounts, adClasses, adStudents, adStaff, MainWindow.Instance.Log);
         }
 
         //public async Task<bool> TestADConnection()
@@ -170,16 +172,16 @@ namespace AccountManager
             set
             {
                 adUseGrades = value;
-                updateADGrades();
+                UpdateADGrades();
             }
         }
 
         private string[] adGrades = new string[3];
-        public string ADGrade1 { get => adGrades[0]; set { adGrades[0] = value.Trim(); updateADGrades(); } }
-        public string ADGrade2 { get => adGrades[1]; set { adGrades[1] = value.Trim(); updateADGrades(); } }
-        public string ADGrade3 { get => adGrades[2]; set { adGrades[2] = value.Trim(); updateADGrades(); } }
+        public string ADGrade1 { get => adGrades[0]; set { adGrades[0] = value.Trim(); UpdateADGrades(); } }
+        public string ADGrade2 { get => adGrades[1]; set { adGrades[1] = value.Trim(); UpdateADGrades(); } }
+        public string ADGrade3 { get => adGrades[2]; set { adGrades[2] = value.Trim(); UpdateADGrades(); } }
 
-        private void updateADGrades()
+        private void UpdateADGrades()
         {
             var grades = new StringCollection();
             grades.AddRange(adGrades);
@@ -187,10 +189,10 @@ namespace AccountManager
 
             if(ADUseGrades)
             {
-                DirectoryApi.Connector.StudentGrade = adGrades;
+                AccountApi.Directory.Connector.StudentGrade = adGrades;
             } else
             {
-                DirectoryApi.Connector.StudentGrade = new string[0];
+                AccountApi.Directory.Connector.StudentGrade = new string[0];
             }
         }
 
@@ -202,20 +204,20 @@ namespace AccountManager
             set
             {
                 adUseYears = value;
-                updateADYears();
+                UpdateADYears();
             }
         }
 
         private string[] adYears = new string[7];
-        public string ADYear1 { get => adYears[0]; set { adYears[0] = value.Trim(); updateADYears(); } }
-        public string ADYear2 { get => adYears[1]; set { adYears[1] = value.Trim(); updateADYears(); } }
-        public string ADYear3 { get => adYears[2]; set { adYears[2] = value.Trim(); updateADYears(); } }
-        public string ADYear4 { get => adYears[3]; set { adYears[3] = value.Trim(); updateADYears(); } }
-        public string ADYear5 { get => adYears[4]; set { adYears[4] = value.Trim(); updateADYears(); } }
-        public string ADYear6 { get => adYears[5]; set { adYears[5] = value.Trim(); updateADYears(); } }
-        public string ADYear7 { get => adYears[6]; set { adYears[6] = value.Trim(); updateADYears(); } }
+        public string ADYear1 { get => adYears[0]; set { adYears[0] = value.Trim(); UpdateADYears(); } }
+        public string ADYear2 { get => adYears[1]; set { adYears[1] = value.Trim(); UpdateADYears(); } }
+        public string ADYear3 { get => adYears[2]; set { adYears[2] = value.Trim(); UpdateADYears(); } }
+        public string ADYear4 { get => adYears[3]; set { adYears[3] = value.Trim(); UpdateADYears(); } }
+        public string ADYear5 { get => adYears[4]; set { adYears[4] = value.Trim(); UpdateADYears(); } }
+        public string ADYear6 { get => adYears[5]; set { adYears[5] = value.Trim(); UpdateADYears(); } }
+        public string ADYear7 { get => adYears[6]; set { adYears[6] = value.Trim(); UpdateADYears(); } }
 
-        private void updateADYears()
+        private void UpdateADYears()
         {
             var years = new StringCollection();
             years.AddRange(adYears);
@@ -239,8 +241,8 @@ namespace AccountManager
 
         public async Task ReloadADAccounts()
         {
-            await DirectoryApi.AccountManager.LoadStaff();
-            await DirectoryApi.AccountManager.LoadStudents();
+            await AccountApi.Directory.AccountManager.LoadStaff();
+            await AccountApi.Directory.AccountManager.LoadStudents();
             SaveADAccountsToFile();
         }
 
@@ -253,7 +255,7 @@ namespace AccountManager
 
         public void SaveADAccountsToFile()
         {
-            var json = DirectoryApi.AccountManager.ToJson();
+            var json = AccountApi.Directory.AccountManager.ToJson();
             var location = Path.Combine(appFolder, adAccountsFile);
             File.WriteAllText(location, json.ToString());
         }

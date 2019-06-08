@@ -9,23 +9,23 @@ namespace AccountManager
 {
     public class LinkedGroup
     {
-        public WisaApi.ClassGroup wisaGroup = null;
-        public DirectoryApi.ClassGroup directoryGroup = null;
-        public SmartschoolApi.Group smartschoolGroup = null;
+        public AccountApi.Wisa.ClassGroup wisaGroup = null;
+        public AccountApi.Directory.ClassGroup directoryGroup = null;
+        public AccountApi.Smartschool.Group smartschoolGroup = null;
 
-        public List<IAction> Actions = new List<IAction>();
+        public List<GroupAction> Actions = new List<GroupAction>();
 
-        public LinkedGroup(WisaApi.ClassGroup group)
+        public LinkedGroup(AccountApi.Wisa.ClassGroup group)
         {
             wisaGroup = group;
         }
 
-        public LinkedGroup(DirectoryApi.ClassGroup group)
+        public LinkedGroup(AccountApi.Directory.ClassGroup group)
         {
             directoryGroup = group;
         }
 
-        public LinkedGroup(SmartschoolApi.Group group)
+        public LinkedGroup(AccountApi.Smartschool.Group group)
         {
             smartschoolGroup = group;
         }
@@ -101,14 +101,14 @@ namespace AccountManager
             {
                 if(directoryGroup == null && smartschoolGroup == null)
                 {
-                    Actions.Add(new DoNotImportFromWisa(wisaGroup));
+                    Actions.Add(new DoNotImportFromWisa());
                 }
                 if(smartschoolGroup == null)
                 {
                     if (wisaGroup.ContainsStudents())
                     {
                         // add to smartschool
-                        Actions.Add(new AddClassGroupToSmartschool(wisaGroup));
+                        Actions.Add(new AddClassGroupToSmartschool());
                     } else
                     {
                         // cannot add an empty group to smartschool
@@ -118,23 +118,23 @@ namespace AccountManager
 
                 if(directoryGroup == null)
                 {
-                    Actions.Add(new AddClassGroupToDirectory(wisaGroup));
+                    Actions.Add(new AddClassGroupToDirectory());
                 }
             }
             // check if group only exists in directory
             else if(directoryGroup != null && wisaGroup == null && smartschoolGroup == null)
             {
-                if(DirectoryApi.AccountManager.ContainsStudents(directoryGroup)) {
+                if(AccountApi.Directory.AccountManager.ContainsStudents(directoryGroup)) {
                     Actions.Add(new RemoveDirectoryClassGroup());
                 } else
                 {
-                    Actions.Add(new RemoveEmptyDirectoryClassGroup(directoryGroup));
+                    Actions.Add(new RemoveEmptyDirectoryClassGroup());
                 }
             }
             // 
             else if (smartschoolGroup != null && wisaGroup == null && directoryGroup == null)
             {
-                Actions.Add(new DoNotImportClassGroupFromSmartschool(smartschoolGroup));
+                Actions.Add(new DoNotImportClassGroupFromSmartschool());
             }
         }
 

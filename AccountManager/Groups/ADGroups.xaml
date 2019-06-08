@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
              xmlns:local="clr-namespace:AccountManager.Groups"
+             xmlns:display="clr-namespace:AccountManager.DisplayItems"
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              TextElement.Foreground="{DynamicResource MaterialDesignBody}"
              TextElement.FontWeight="Medium"
@@ -63,7 +64,7 @@
             <TreeView Grid.Column="0" x:Name="GroupTree" SelectedItemChanged="GroupTree_SelectedItemChanged"
                 MinWidth="220">
                 <TreeView.ItemTemplate>
-                    <HierarchicalDataTemplate DataType="{x:Type local:ADGroup}" ItemsSource="{Binding Children}">
+                    <HierarchicalDataTemplate DataType="{x:Type display:ADGroup}" ItemsSource="{Binding Children}">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="{Binding Icon}"/>
                             <TextBlock Text="{Binding Header}" Margin="3 2" />

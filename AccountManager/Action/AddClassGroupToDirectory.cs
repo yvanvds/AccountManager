@@ -7,26 +7,19 @@ using AbstractAccountApi;
 
 namespace AccountManager.Action
 {
-    class AddClassGroupToDirectory : IAction
+    public class AddClassGroupToDirectory : GroupAction
     {
-        public string Description => "Voeg deze klas toe aan Active Directory.";
-
-        public bool CanBeApplied => true;
-
-        public string Header => "Klas toevoegen aan Active Directory";
-
-        public ObservableProperties.Prop<bool> InProgress { get; set; } = new ObservableProperties.Prop<bool>() { Value = false };
-
-        public async Task Apply(LinkedGroup linkedGroup)
+        public override Task Apply(LinkedGroup linkedGroup)
         {
             throw new NotImplementedException();
         }
 
-        public AddClassGroupToDirectory(WisaApi.ClassGroup group)
+        public AddClassGroupToDirectory() : base(
+            "Klas toevoegen aan Active Directory",
+            "Voeg deze klas toe aan Active Directory.",
+            true)
         {
-            this.group = group;
-        }
 
-        private WisaApi.ClassGroup group;
+        }
     }
 }

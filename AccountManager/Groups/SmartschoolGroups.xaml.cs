@@ -1,4 +1,4 @@
-﻿using AbstractAccountApi;
+﻿using AccountApi;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -33,7 +33,7 @@ namespace AccountManager.Groups
         public SmartschoolGroups()
         {
             InitializeComponent();
-            GroupCount.Value = SmartschoolApi.GroupManager.Count(false).ToString();
+            GroupCount.Value = AccountApi.Smartschool.GroupManager.Count(false).ToString();
             MainGrid.DataContext = this;
             BuildGroupTree();
         }
@@ -44,7 +44,7 @@ namespace AccountManager.Groups
             Data.Instance.SetSmartschoolCredentials();
             await Data.Instance.ReloadSmartschool();
             await LinkedGroups.ReLink();
-            GroupCount.Value = SmartschoolApi.GroupManager.Count(false).ToString();
+            GroupCount.Value = AccountApi.Smartschool.GroupManager.Count(false).ToString();
             BuildGroupTree();
 
             ShowGroupsReloadButtonIndicator.Value = false;
@@ -55,16 +55,16 @@ namespace AccountManager.Groups
             GroupTree.Items.Clear();
             if(Select == Select.All)
             {
-                GroupTree.Items.Add(new SSGroup(SmartschoolApi.GroupManager.Root));
-                GroupCount.Value = SmartschoolApi.GroupManager.Root.Count.ToString();
+                GroupTree.Items.Add(new SSGroup(AccountApi.Smartschool.GroupManager.Root));
+                GroupCount.Value = AccountApi.Smartschool.GroupManager.Root.Count.ToString();
             } else if (Select == Select.Staff)
             {
-                IGroup root = SmartschoolApi.GroupManager.Root.Find("Personeel");
+                IGroup root = AccountApi.Smartschool.GroupManager.Root.Find("Personeel");
                 GroupTree.Items.Add(new SSGroup(root));
                 GroupCount.Value = root.Count.ToString();
             } else
             {
-                IGroup root = SmartschoolApi.GroupManager.Root.Find("Leerlingen");
+                IGroup root = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
                 GroupTree.Items.Add(new SSGroup(root));
                 GroupCount.Value = root.Count.ToString();
             }

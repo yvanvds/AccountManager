@@ -42,14 +42,14 @@ namespace AccountManager
 
         public static Task ReLink()
         {
-            return Task.Run(() => reLink());
+            return Task.Run(() => DoRelink());
         }
 
-        private static void reLink()
+        private static void DoRelink()
         {
 
             List.Clear();
-            foreach(var group in WisaApi.ClassGroups.All)
+            foreach(var group in AccountApi.Wisa.ClassGroupManager.All)
             {
                 if(List.ContainsKey(group.Name))
                 {
@@ -60,17 +60,17 @@ namespace AccountManager
                 }  
             }
 
-            foreach(var group in DirectoryApi.ClassGroupManager.All)
+            foreach(var group in AccountApi.Directory.ClassGroupManager.All)
             {
 
-                addDirectoryChildGroups(group);
+                AddDirectoryChildGroups(group);
             }
 
             // only compare class groups
-            SmartschoolApi.Group students = (SmartschoolApi.Group)SmartschoolApi.GroupManager.Root.Find("Leerlingen");
+            AccountApi.Smartschool.Group students = (AccountApi.Smartschool.Group)AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
             if(students != null)
             {
-                addSmartschoolChildGroups(students);
+                AddSmartschoolChildGroups(students);
             }
             
 
@@ -108,7 +108,7 @@ namespace AccountManager
             }
         }
 
-        private static void addSmartschoolChildGroups(SmartschoolApi.Group group)
+        private static void AddSmartschoolChildGroups(AccountApi.Smartschool.Group group)
         {
             if(group.Official)
             {
@@ -126,11 +126,11 @@ namespace AccountManager
             if(group.Children != null) foreach(var child in group.Children)
             {
                 if(child != null)
-                addSmartschoolChildGroups(child as SmartschoolApi.Group);
+                AddSmartschoolChildGroups(child as AccountApi.Smartschool.Group);
             }
         }
 
-        private static void addDirectoryChildGroups(DirectoryApi.ClassGroup group)
+        private static void AddDirectoryChildGroups(AccountApi.Directory.ClassGroup group)
         {
             if(!group.IsContainer)
             {
@@ -145,7 +145,7 @@ namespace AccountManager
             }
             foreach(var child in group.Children)
             {
-                addDirectoryChildGroups(child);
+                AddDirectoryChildGroups(child);
             }
         }
     }

@@ -1,4 +1,5 @@
 ﻿using AbstractAccountApi;
+using AccountApi;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -43,12 +44,12 @@ namespace AccountManager.Accounts
             AccountTree.Items.Clear();
             if (Select == Select.Staff)
             {
-                IGroup root = SmartschoolApi.GroupManager.Root.Find("Personeel");
+                IGroup root = AccountApi.Smartschool.GroupManager.Root.Find("Personeel");
                 currentRoot = new Group(root);
             }
             else
             {
-                IGroup root = SmartschoolApi.GroupManager.Root.Find("Leerlingen");
+                IGroup root = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
                 currentRoot = new Group(root);
             }
             foreach (var child in currentRoot.Children)

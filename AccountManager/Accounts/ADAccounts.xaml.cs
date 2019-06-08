@@ -33,8 +33,8 @@ namespace AccountManager.Accounts
         public Prop<string> AccountCount { get; set; } = new Prop<string> { Value = "0" };
         public Data Data { get => Data.Instance; }
 
-        public ObservableCollection<DirectoryApi.Account> accounts = new ObservableCollection<DirectoryApi.Account>();
-        public Prop<DirectoryApi.Account> SelectedAccount { get; set; } = new Prop<DirectoryApi.Account> { Value = null };
+        public ObservableCollection<AccountApi.Directory.Account> accounts = new ObservableCollection<AccountApi.Directory.Account>();
+        public Prop<AccountApi.Directory.Account> SelectedAccount { get; set; } = new Prop<AccountApi.Directory.Account> { Value = null };
         public Prop<string> SelectedTitle { get; set; } = new Prop<string> { Value = "Geen actieve selectie" };
 
         private ADFilterType FilterType { get; set; } = ADFilterType.Name;
@@ -66,7 +66,7 @@ namespace AccountManager.Accounts
             accounts.Clear();
             var selectedFilter = Filter.Length == 0 ? ADFilterType.None : FilterType;
 
-            var list = showStaff ? DirectoryApi.AccountManager.Staff : DirectoryApi.AccountManager.Students;
+            var list = showStaff ? AccountApi.Directory.AccountManager.Staff : AccountApi.Directory.AccountManager.Students;
 
             foreach(var account in list)
             {
@@ -115,7 +115,7 @@ namespace AccountManager.Accounts
 
         private void AccountList_SelectedCellsChanged(object sender, SelectedCellsChangedEventArgs e)
         {
-            SelectedAccount.Value = (sender as DataGrid).SelectedItem as DirectoryApi.Account;
+            SelectedAccount.Value = (sender as DataGrid).SelectedItem as AccountApi.Directory.Account;
             if (SelectedAccount.Value != null)
             {
                 SelectedTitle.Value = SelectedAccount.Value.FullName;

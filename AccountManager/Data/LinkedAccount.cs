@@ -9,29 +9,29 @@ namespace AccountManager
 {
     public class LinkedAccount
     {
-        public WisaApi.Student wisaAccount = null;
-        public DirectoryApi.Account directoryAccount = null;
-        public SmartschoolApi.Account smartschoolAccount = null;
-        public GoogleApi.Account googleAccount = null;
+        public AccountApi.Wisa.Student wisaAccount = null;
+        public AccountApi.Directory.Account directoryAccount = null;
+        public AccountApi.Smartschool.Account smartschoolAccount = null;
+        public AccountApi.Google.Account googleAccount = null;
 
         public List<AccountAction> Actions = new List<AccountAction>();
 
-        public LinkedAccount(WisaApi.Student account)
+        public LinkedAccount(AccountApi.Wisa.Student account)
         {
             wisaAccount = account;
         }
 
-        public LinkedAccount(DirectoryApi.Account account)
+        public LinkedAccount(AccountApi.Directory.Account account)
         {
             directoryAccount = account;
         }
 
-        public LinkedAccount(SmartschoolApi.Account account)
+        public LinkedAccount(AccountApi.Smartschool.Account account)
         {
             smartschoolAccount = account;
         }
 
-        public LinkedAccount(GoogleApi.Account account)
+        public LinkedAccount(AccountApi.Google.Account account)
         {
             googleAccount = account;
         }

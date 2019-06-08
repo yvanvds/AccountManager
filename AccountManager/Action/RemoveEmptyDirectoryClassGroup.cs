@@ -7,30 +7,21 @@ using System.Threading.Tasks;
 
 namespace AccountManager.Action
 {
-    class RemoveEmptyDirectoryClassGroup : IAction
+    class RemoveEmptyDirectoryClassGroup : GroupAction
     {
-        public string Header => "Lege Active Directory Klas Verwijderen";
-
-        public string Description => "Deze klas is leeg en bestaat enkel in Active Directory. " +
-            "De klas kan verwijderd worden.";
-
-        public bool CanBeApplied => true;
-
-        public ObservableProperties.Prop<bool> InProgress { get; set; } = new ObservableProperties.Prop<bool>() { Value = false };
-
-        public async Task Apply(LinkedGroup linkedGroup)
+        public override async Task Apply(LinkedGroup linkedGroup)
         {
             InProgress.Value = true;
-            await DirectoryApi.ClassGroupManager.Delete(group);
+            await AccountApi.Directory.ClassGroupManager.Delete(linkedGroup.directoryGroup);
             Data.Instance.SaveADGroupsToFile();
             InProgress.Value = false;
         }
 
-        public RemoveEmptyDirectoryClassGroup(DirectoryApi.ClassGroup group)
-        {
-            this.group = group;
-        }
-
-        private DirectoryApi.ClassGroup group;
+        public RemoveEmptyDirectoryClassGroup() : base(
+            "Lege Active Directory Klas Verwijderen",
+            "Deze klas is leeg en bestaat enkel in Active Directory. " +
+            "De klas kan verwijderd worden.",
+            true)
+        {}
     }
 }

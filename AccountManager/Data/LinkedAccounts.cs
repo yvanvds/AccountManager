@@ -49,13 +49,13 @@ namespace AccountManager
 
         public static Task ReLink()
         {
-            return Task.Run(() => reLink());
+            return Task.Run(() => DoRelink());
         }
 
-        private static void reLink()
+        private static void DoRelink()
         {
             List.Clear();
-            foreach(var account in DirectoryApi.AccountManager.Students)
+            foreach(var account in AccountApi.Directory.AccountManager.Students)
             {
                 if(List.ContainsKey(account.UID))
                 {
@@ -66,7 +66,7 @@ namespace AccountManager
                 }
             }
 
-            foreach(var account in GoogleApi.AccountManager.All.Values)
+            foreach(var account in AccountApi.Google.AccountManager.All.Values)
             {
                 if(!account.IsStaff)
                 {
@@ -80,15 +80,15 @@ namespace AccountManager
                 }
             }
 
-            var lln = SmartschoolApi.GroupManager.Root.Find("Leerlingen");
+            var lln = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
             if(lln != null)
             {
                 AddSmartschoolAccounts(lln);
             }
 
-            foreach(var account in WisaApi.Students.All)
+            foreach(var account in AccountApi.Wisa.Students.All)
             {
-                DirectoryApi.Account match = DirectoryApi.AccountManager.GetStudentByWisaID(account.WisaID);
+                AccountApi.Directory.Account match = AccountApi.Directory.AccountManager.GetStudentByWisaID(account.WisaID);
                 if(match != null)
                 {
                     if (List.ContainsKey(match.UID))
@@ -146,16 +146,16 @@ namespace AccountManager
             }
         }
 
-        private static void AddSmartschoolAccounts(IGroup group)
+        private static void AddSmartschoolAccounts(AccountApi.IGroup group)
         {
             foreach(var account in group.Accounts)
             {
                 if(List.ContainsKey(account.UID))
                 {
-                    List[account.UID].smartschoolAccount = account as SmartschoolApi.Account;
+                    List[account.UID].smartschoolAccount = account as AccountApi.Smartschool.Account;
                 } else
                 {
-                    List.Add(account.UID, new LinkedAccount(account as SmartschoolApi.Account));
+                    List.Add(account.UID, new LinkedAccount(account as AccountApi.Smartschool.Account));
                 }
             }
 

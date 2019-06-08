@@ -27,9 +27,6 @@
             <TabItem Header="AD">
                 <local:ADAccounts/>
             </TabItem>
-            <!--<TabItem Header="OpenLdap">
-                <Label Content="OPpenLDA"/>
-            </TabItem>-->
             <TabItem Header="Google">
                 <local:GoogleAccounts></local:GoogleAccounts>
             </TabItem>

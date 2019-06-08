@@ -48,7 +48,7 @@ namespace AccountManager.Settings
         {
             ShowConnectButtonIndicator.Value = true;
             Data.Instance.SetGoogleCredentials();
-            if(Data.Instance.GoogleConnectionTested == AbstractAccountApi.ConfigState.OK)
+            if(Data.Instance.GoogleConnectionTested == AccountApi.ConfigState.OK)
             {
                 ConnectButtonIcon.Kind = PackIconKind.CloudTick;
             } else
@@ -65,9 +65,11 @@ namespace AccountManager.Settings
 
         private void OpenFile_Click(object sender, RoutedEventArgs e)
         {
-            OpenFileDialog openFileDialog = new OpenFileDialog();
-            openFileDialog.Filter = "Json Files (*.json)|*.json|All Files (*.*)|*.*";
-            if(openFileDialog.ShowDialog() == true)
+            OpenFileDialog openFileDialog = new OpenFileDialog
+            {
+                Filter = "Json Files (*.json)|*.json|All Files (*.*)|*.*"
+            };
+            if (openFileDialog.ShowDialog() == true)
             {
                 string content = File.ReadAllText(openFileDialog.FileName);
                 Data.SetGoogleSecret(content);

@@ -1,4 +1,5 @@
 ﻿using AbstractAccountApi;
+using AccountApi;
 using MaterialDesignThemes.Wpf;
 using System;
 using System.Collections.Generic;
@@ -49,11 +50,11 @@ namespace AccountManager.Settings
         {
             Data.Instance.SetSmartschoolCredentials();
             ShowConnectButtonIndicator.Value = true;
-            await testSmartschoolConnection();
+            await TestSmartschoolConnection();
             ShowConnectButtonIndicator.Value = false;
         }
 
-        private async Task testSmartschoolConnection()
+        private async Task TestSmartschoolConnection()
         {
             bool result = await Data.Instance.TestSmartschoolConnection();
             if (!result) ConnectButtonIcon.Kind = PackIconKind.CloudOffOutline;
@@ -62,16 +63,16 @@ namespace AccountManager.Settings
 
         private async void AddRuleButton_Click(object sender, RoutedEventArgs e)
         {
-            importRuleSelectDialog = new Dialogs.ImportRuleSelectDialog(AbstractAccountApi.RuleType.SS_Import);
+            importRuleSelectDialog = new Dialogs.ImportRuleSelectDialog(AccountApi.RuleType.SS_Import);
             await DialogHost.Show(
                 importRuleSelectDialog, 
                 "RootDialog", 
-                closeAddRuleEventHandler
+                CloseAddRuleEventHandler
             );
             
         }
 
-        private void closeAddRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
+        private void CloseAddRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
         {
             var result = eventArgs.Parameter as string;
             if(result == "true")
@@ -100,12 +101,12 @@ namespace AccountManager.Settings
                 await DialogHost.Show(
                     importRuleEditor,
                     "RootDialog",
-                    closeEditRuleEventHandler
+                    CloseEditRuleEventHandler
                 );
             }
         }
 
-        private void closeEditRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
+        private void CloseEditRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
         {
             var result = eventArgs.Parameter as string;
             if (result.Equals("true", StringComparison.CurrentCultureIgnoreCase))

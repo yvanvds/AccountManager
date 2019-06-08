@@ -1,0 +1,1367 @@
+<?xml version="1.0" encoding="utf-8"?>
+<wsdl:definitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:soap-enc="http://schemas.xmlsoap.org/soap/encoding/" xmlns="http://schemas.xmlsoap.org/wsdl/" name="\Smsc\Legacy\Webservices\Models\V3" targetNamespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/">
+  <wsdl:types>
+    <xsd:schema targetNamespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" />
+  </wsdl:types>
+  <wsdl:message name="saveUserIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="internnumber" type="xsd:string" />
+    <wsdl:part name="username" type="xsd:string" />
+    <wsdl:part name="passwd1" type="xsd:string" />
+    <wsdl:part name="passwd2" type="xsd:string" />
+    <wsdl:part name="passwd3" type="xsd:string" />
+    <wsdl:part name="name" type="xsd:string" />
+    <wsdl:part name="surname" type="xsd:string" />
+    <wsdl:part name="extranames" type="xsd:string" />
+    <wsdl:part name="initials" type="xsd:string" />
+    <wsdl:part name="sex" type="xsd:string" />
+    <wsdl:part name="birthday" type="xsd:string" />
+    <wsdl:part name="birthplace" type="xsd:string" />
+    <wsdl:part name="birthcountry" type="xsd:string" />
+    <wsdl:part name="address" type="xsd:string" />
+    <wsdl:part name="postalcode" type="xsd:string" />
+    <wsdl:part name="location" type="xsd:string" />
+    <wsdl:part name="country" type="xsd:string" />
+    <wsdl:part name="email" type="xsd:string" />
+    <wsdl:part name="mobilephone" type="xsd:string" />
+    <wsdl:part name="homephone" type="xsd:string" />
+    <wsdl:part name="fax" type="xsd:string" />
+    <wsdl:part name="prn" type="xsd:string" />
+    <wsdl:part name="stamboeknummer" type="xsd:string" />
+    <wsdl:part name="basisrol" type="xsd:string" />
+    <wsdl:part name="untis" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveUserOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveClassIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="name" type="xsd:string" />
+    <wsdl:part name="desc" type="xsd:string" />
+    <wsdl:part name="code" type="xsd:string" />
+    <wsdl:part name="parent" type="xsd:string" />
+    <wsdl:part name="untis" type="xsd:string" />
+    <wsdl:part name="instituteNumber" type="xsd:string" />
+    <wsdl:part name="adminNumber" type="xsd:string" />
+    <wsdl:part name="schoolYearDate" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveClassOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveGroupIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="name" type="xsd:string" />
+    <wsdl:part name="desc" type="xsd:string" />
+    <wsdl:part name="code" type="xsd:string" />
+    <wsdl:part name="parent" type="xsd:string" />
+    <wsdl:part name="untis" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveGroupOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getAllAccountsIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="code" type="xsd:string" />
+    <wsdl:part name="recursive" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAllAccountsOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getAllAccountsExtendedIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="code" type="xsd:string" />
+    <wsdl:part name="recursive" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAllAccountsExtendedOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getAllGroupsAndClassesIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAllGroupsAndClassesOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="addCourseIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="coursename" type="xsd:string" />
+    <wsdl:part name="coursedesc" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="addCourseOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="addCourseTeacherIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="coursename" type="xsd:string" />
+    <wsdl:part name="coursedesc" type="xsd:string" />
+    <wsdl:part name="internnummer" type="xsd:string" />
+    <wsdl:part name="userlist" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="addCourseTeacherOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="addCourseStudentsIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="coursename" type="xsd:string" />
+    <wsdl:part name="coursedesc" type="xsd:string" />
+    <wsdl:part name="groupIds" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="addCourseStudentsOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getCoursesIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getCoursesOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="delUserIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="officialDate" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="delUserOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveUserParameterIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="paramName" type="xsd:string" />
+    <wsdl:part name="paramValue" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveUserParameterOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getClassListIn">
+    <wsdl:part name="accesscode" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getClassListOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getClassListJsonIn">
+    <wsdl:part name="accesscode" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getClassListJsonOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveClassListIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="serializedList" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveClassListOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveClassListJsonIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="jsonList" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveClassListJsonOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="delClassIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="code" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="delClassOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveUserToClassesIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="csvList" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveUserToClassesOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="removeUserFromGroupIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="class" type="xsd:string" />
+    <wsdl:part name="officialDate" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="removeUserFromGroupOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="clearGroupIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="group" type="xsd:string" />
+    <wsdl:part name="officialDate" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="clearGroupOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveUserToClassIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="class" type="xsd:string" />
+    <wsdl:part name="officialDate" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveUserToClassOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveUserToClassesAndGroupsIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="csvList" type="xsd:string" />
+    <wsdl:part name="keepOld" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="saveUserToClassesAndGroupsOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="setAccountStatusIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="accountStatus" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="setAccountStatusOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="setAccountPhotoIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="photo" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="setAccountPhotoOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getAccountPhotoIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAccountPhotoOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="replaceInumIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="oldInum" type="xsd:string" />
+    <wsdl:part name="newInum" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="replaceInumOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="forcePasswordResetIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="accountType" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="forcePasswordResetOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="savePasswordIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="password" type="xsd:string" />
+    <wsdl:part name="accountType" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="savePasswordOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="sendMsgIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="title" type="xsd:string" />
+    <wsdl:part name="body" type="xsd:string" />
+    <wsdl:part name="senderIdentifier" type="xsd:string" />
+    <wsdl:part name="attachments" type="xsd:anyType" />
+    <wsdl:part name="coaccount" type="xsd:int" />
+    <wsdl:part name="copyToLVS" type="xsd:boolean" />
+  </wsdl:message>
+  <wsdl:message name="sendMsgOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getSkoreClassTeacherCourseRelationIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getSkoreClassTeacherCourseRelationOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="unregisterStudentIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="officialDate" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="unregisterStudentOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getClassTeachersIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="getAllOwners" type="xsd:boolean" />
+  </wsdl:message>
+  <wsdl:message name="getClassTeachersOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsByDateIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="date" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsByDateOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsWithInternalNumberByDateIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="date" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsWithInternalNumberByDateOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsWithUsernameByDateIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="date" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsWithUsernameByDateOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsByDateAndGroupIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="date" type="xsd:string" />
+    <wsdl:part name="code" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsByDateAndGroupOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsWithAliasByDateIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="date" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsWithAliasByDateOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="schoolYear" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getAbsentsOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserDetailsIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserDetailsOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserDetailsByNumberIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="number" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserDetailsByNumberOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserDetailsByUsernameIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="username" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserDetailsByUsernameOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserOfficialClassIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="date" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getUserOfficialClassOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveSignatureIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="accountType" type="xsd:int" />
+    <wsdl:part name="signature" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveSignatureOut">
+    <wsdl:part name="return" type="xsd:boolean" />
+  </wsdl:message>
+  <wsdl:message name="getStudentCareerIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getStudentCareerOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="deactivateTwoFactorAuthenticationIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="accountType" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="deactivateTwoFactorAuthenticationOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="returnErrorCodesIn" />
+  <wsdl:message name="returnCsvErrorCodesIn" />
+  <wsdl:message name="returnCsvErrorCodesOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="returnJsonErrorCodesIn" />
+  <wsdl:message name="returnJsonErrorCodesOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="startSkoreSyncIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="startSkoreSyncOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="checkStatusIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="serviceId" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="checkStatusOut">
+    <wsdl:part name="return" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="changeUsernameIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="internNumber" type="xsd:string" />
+    <wsdl:part name="newUsername" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="changeUsernameOut">
+    <wsdl:part name="return" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="changeInternNumberIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="username" type="xsd:string" />
+    <wsdl:part name="newInternNumber" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="changeInternNumberOut">
+    <wsdl:part name="return" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="changeGroupOwnersIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="code" type="xsd:string" />
+    <wsdl:part name="userlist" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="changeGroupOwnersOut">
+    <wsdl:part name="return" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="removeCoAccountIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="userIdentifier" type="xsd:string" />
+    <wsdl:part name="accountType" type="xsd:int" />
+  </wsdl:message>
+  <wsdl:message name="removeCoAccountOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="getSchoolyearDataOfClassIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="classCode" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="getSchoolyearDataOfClassOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:message name="saveSchoolyearDataOfClassIn">
+    <wsdl:part name="accesscode" type="xsd:string" />
+    <wsdl:part name="classCode" type="xsd:string" />
+    <wsdl:part name="date" type="xsd:string" />
+    <wsdl:part name="instituteNumber" type="xsd:string" />
+    <wsdl:part name="administrativeGroupNumber" type="xsd:string" />
+    <wsdl:part name="residence" type="xsd:string" />
+    <wsdl:part name="domain" type="xsd:string" />
+  </wsdl:message>
+  <wsdl:message name="saveSchoolyearDataOfClassOut">
+    <wsdl:part name="return" type="xsd:anyType" />
+  </wsdl:message>
+  <wsdl:portType name="V3Port">
+    <wsdl:operation name="saveUser">
+      <documentation>Voeg een nieuwe gebruiker toe, of wijzig een bestaande gebruiker
+&lt;code&gt;
+$result = $client-&gt;saveUser('webserviceswachtwoord','98754284','jmorren','kxes9875','','','jonas','morren','','','m','01-12-1998','Genk','België','Kapelstraat 61','3600','Genk','België','jonas.morren@gmail.com','0492123456','','','98.12.01-102-14','','leerling','695421');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveUserIn" />
+      <wsdl:output message="tns:saveUserOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveClass">
+      <documentation>Voeg een klas toe of wijzig een bestaande klas
+&lt;code&gt;
+$result = $client-&gt;saveClass('webserviceswachtwoord','6AB2','6AB2 is een opsplitsing van 6AB','6AB2','6AB','6AB2','098877','20644');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveClassIn" />
+      <wsdl:output message="tns:saveClassOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveGroup">
+      <documentation>Voeg een groep toe of wijzig een bestaande groep
+&lt;code&gt;
+$result = $client-&gt;saveGroup('webserviceswachtwoord','6AB2','6AB2 is een opsplitsing van 6AB','6AB2','6AB','6AB2');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveGroupIn" />
+      <wsdl:output message="tns:saveGroupOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAllAccounts">
+      <documentation>Voornaam, naam, gebruikersnaam en internnummer ophalen van gebruikers in een bepaalde groep
+&lt;code&gt;
+$result = $client-&gt;getAllAccounts('webserviceswachtwoord','Beheerders','0');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:getAllAccountsIn" />
+      <wsdl:output message="tns:getAllAccountsOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAllAccountsExtended">
+      <documentation>Alle gegevens ophalen van de gebruikers in een bepaalde groep (recursief indien gewenst)</documentation>
+      <wsdl:input message="tns:getAllAccountsExtendedIn" />
+      <wsdl:output message="tns:getAllAccountsExtendedOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAllGroupsAndClasses">
+      <documentation>Vraag al de groepen en klassen van het smartschool platform op
+&lt;code&gt;
+$result = $client-&gt;getAllGroupsAndClasses('webserviceswachtwoord');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:getAllGroupsAndClassesIn" />
+      <wsdl:output message="tns:getAllGroupsAndClassesOut" />
+    </wsdl:operation>
+    <wsdl:operation name="addCourse">
+      <documentation>Voeg een vak toe
+&lt;code&gt;
+$result = $client-&gt;addCourse('webserviceswachtwoord', 'Geschiedenis 6A1', 'Geschiedenis 6dejaars A1');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:addCourseIn" />
+      <wsdl:output message="tns:addCourseOut" />
+    </wsdl:operation>
+    <wsdl:operation name="addCourseTeacher">
+      <documentation>Voeg een vakleerkracht en co-leerkrachten toe aan een bepaald vak
+&lt;code&gt;
+$result = $client-&gt;addCourseTeacher('webserviceswachtwoord','Geschiedenis 6A1','Geschiedenis 6dejaars A1','ppeters','jmorren,gvanven');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:addCourseTeacherIn" />
+      <wsdl:output message="tns:addCourseTeacherOut" />
+    </wsdl:operation>
+    <wsdl:operation name="addCourseStudents">
+      <documentation>Voeg bepaalde klassen toe aan een bepaald vak
+&lt;code&gt;
+$result = $client-&gt;addCourseStudents('webserviceswachtwoord','Geschiedenis 6A1','Geschiedenis 6dejaars A1','6A1,6A2');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:addCourseStudentsIn" />
+      <wsdl:output message="tns:addCourseStudentsOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getCourses">
+      <documentation>Vraag alle vakken van het platform op
+&lt;code&gt;
+$result = $client-&gt;getCourses('webserviceswachtwoord');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:getCoursesIn" />
+      <wsdl:output message="tns:getCoursesOut" />
+    </wsdl:operation>
+    <wsdl:operation name="delUser">
+      <documentation>Verwijder een specifieke gebruiker
+&lt;code&gt;
+$result = $client-&gt;delUser('webserviceswachtwoord','jmorren', '2012-08-31');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:delUserIn" />
+      <wsdl:output message="tns:delUserOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveUserParameter">
+      <documentation>Bewaar een bepaalde parameter voor een bepaalde gebruiker
+&lt;code&gt;
+$result = $client-&gt;saveUserParameter('webserviceswachtwoord','ppeters','Code schoolpasje','56987');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveUserParameterIn" />
+      <wsdl:output message="tns:saveUserParameterOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getClassList">
+      <documentation>Vraag een lijst met alle klassen op
+&lt;code&gt;
+$result = $client-&gt;getClassList('webserviceswachtwoord');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:getClassListIn" />
+      <wsdl:output message="tns:getClassListOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getClassListJson">
+      <documentation>Vraag een lijst met alle klassen op
+&lt;code&gt;
+$result = $client-&gt;getClassList('webserviceswachtwoord');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:getClassListJsonIn" />
+      <wsdl:output message="tns:getClassListJsonOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveClassList">
+      <documentation>Update een lijst van klassen
+&lt;code&gt;
+$serializedArray = serialize(
+                           array(
+                               array('id' =&gt; '964','name' =&gt; '1Ab','desc' =&gt; '1Ab', 'code' =&gt; '1Ab'),
+                               array('id' =&gt; '965','name' =&gt; '2Ab','desc' =&gt; '2Ab', 'code' =&gt; '21Ab')
+                           )
+                       );
+$result = $client-&gt;saveClassList('webserviceswachtwoord',$serializedArray);
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveClassListIn" />
+      <wsdl:output message="tns:saveClassListOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveClassListJson">
+      <documentation>Update een lijst van klassen
+&lt;code&gt;
+$jsonList = json_encode(
+						array(
+							array('id' =&gt; '964','name' =&gt; '1Ab','desc' =&gt; '1Ab', 'code' =&gt; '1Ab'),
+							array('id' =&gt; '965','name' =&gt; '2Ab','desc' =&gt; '2Ab', 'code' =&gt; '21Ab')
+						)
+					);
+$result = $client-&gt;saveClassList('webserviceswachtwoord',$jsonList);
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveClassListJsonIn" />
+      <wsdl:output message="tns:saveClassListJsonOut" />
+    </wsdl:operation>
+    <wsdl:operation name="delClass">
+      <documentation>Verwijder een bepaalde klas of groep
+&lt;code&gt;
+$result = $client-&gt;delClass('webserviceswachtwoord','6Ab');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:delClassIn" />
+      <wsdl:output message="tns:delClassOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveUserToClasses">
+      <documentation>Bepaal de groep en klas lidmaatschap van een bepaalde gebruiker
+&lt;code&gt;
+$result = $client-&gt;saveUserToClasses('webserviceswachtwoord','jmorren','1Ab,leerlingen');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveUserToClassesIn" />
+      <wsdl:output message="tns:saveUserToClassesOut" />
+    </wsdl:operation>
+    <wsdl:operation name="removeUserFromGroup">
+      <documentation>Verwijder de gebruiker uit 1 specificieke groep of klas
+&lt;code&gt;
+$result = $client-&gt;removeUserFromGroup('webserviceswachtwoord','jmorren','1Ab');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:removeUserFromGroupIn" />
+      <wsdl:output message="tns:removeUserFromGroupOut" />
+    </wsdl:operation>
+    <wsdl:operation name="clearGroup">
+      <documentation>Maak een groep leeg
+&lt;code&gt;
+$result = $client-&gt;clearGroup('webserviceswachtwoord','1Ab');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:clearGroupIn" />
+      <wsdl:output message="tns:clearGroupOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveUserToClass">
+      <documentation>Verplaats de gebruiker naar 1 specificieke groep of klas
+&lt;code&gt;
+$result = $client-&gt;saveUserToClass('webserviceswachtwoord','jmorren','1Ab');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveUserToClassIn" />
+      <wsdl:output message="tns:saveUserToClassOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveUserToClassesAndGroups">
+      <documentation>Bepaal de groep en klas lidmaatschap van een bepaalde gebruiker
+&lt;code&gt;
+$result = $client-&gt;saveUserToClassesAndGroup('webserviceswachtwoord','jmorren','1Ab,leerlingen');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:saveUserToClassesAndGroupsIn" />
+      <wsdl:output message="tns:saveUserToClassesAndGroupsOut" />
+    </wsdl:operation>
+    <wsdl:operation name="setAccountStatus">
+      <documentation>Stel de status van een bepaalde accountin
+&lt;code&gt;
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'enabled');
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'actief');
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'active');
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'disabled');
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'inactief');
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'inactive');
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'administrative');
+$result = $client-&gt;setAccountStatus('webserviceswachtwoord', 'admin', 'administratief');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:setAccountStatusIn" />
+      <wsdl:output message="tns:setAccountStatusOut" />
+    </wsdl:operation>
+    <wsdl:operation name="setAccountPhoto">
+      <documentation>Stel de foto in voor een bepaalde account
+&lt;code&gt;
+$result = $client-&gt;setAccountPhoto('webserviceswachtwoord','admin',$base64encodedImageData);
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:setAccountPhotoIn" />
+      <wsdl:output message="tns:setAccountPhotoOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAccountPhoto">
+      <documentation>Vraag de foto op van een bepaalde account
+&lt;code&gt;
+$result = $client-&gt;getAccountPhoto('webserviceswachtwoord','admin');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:getAccountPhotoIn" />
+      <wsdl:output message="tns:getAccountPhotoOut" />
+    </wsdl:operation>
+    <wsdl:operation name="replaceInum">
+      <documentation>Vervang de interne nummer van een bepaalde gebruiker
+&lt;code&gt;
+$result = $client-&gt;replaceInum('webserviceswachtwoord','09874','09875');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:replaceInumIn" />
+      <wsdl:output message="tns:replaceInumOut" />
+    </wsdl:operation>
+    <wsdl:operation name="forcePasswordReset">
+      <documentation>Forceer dat een bepaalde hoofd- of co-account zijn/haar wachtwoord moet wijzigen bij de volgende aanmelding
+&lt;code&gt;
+$result = $client-&gt;forcePasswordReset('webserviceswachtwoord','admin','0');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:forcePasswordResetIn" />
+      <wsdl:output message="tns:forcePasswordResetOut" />
+    </wsdl:operation>
+    <wsdl:operation name="savePassword">
+      <documentation>Stel het wachtwoord in voor een bepaalde hoofd- of co-account
+&lt;code&gt;
+$result = $client-&gt;savePassword('webserviceswachtwoord','admin','bdes5987','0');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:savePasswordIn" />
+      <wsdl:output message="tns:savePasswordOut" />
+    </wsdl:operation>
+    <wsdl:operation name="sendMsg">
+      <documentation>Stuur een bericht naar een bepaalde gebruiker
+&lt;code&gt;
+$result = $client-&gt;sendMsg('webserviceswachtwoord','admin','Dit is een test', '&lt;p&gt;Dit is de body van het testbericht (html-formaat)&lt;/p&gt;');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:sendMsgIn" />
+      <wsdl:output message="tns:sendMsgOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getSkoreClassTeacherCourseRelation">
+      <documentation>Skore export. Geeft de koppeling tussen klassen, leerkrachten en vakken weer.</documentation>
+      <wsdl:input message="tns:getSkoreClassTeacherCourseRelationIn" />
+      <wsdl:output message="tns:getSkoreClassTeacherCourseRelationOut" />
+    </wsdl:operation>
+    <wsdl:operation name="unregisterStudent">
+      <documentation>Leerling uitschrijven. De officiele datum kan optioneel meegeleverd worden.</documentation>
+      <wsdl:input message="tns:unregisterStudentIn" />
+      <wsdl:output message="tns:unregisterStudentOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getClassTeachers">
+      <documentation>Lijst van klastitularissen</documentation>
+      <wsdl:input message="tns:getClassTeachersIn" />
+      <wsdl:output message="tns:getClassTeachersOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsByDate">
+      <documentation>Return all absents for a specific date</documentation>
+      <wsdl:input message="tns:getAbsentsByDateIn" />
+      <wsdl:output message="tns:getAbsentsByDateOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsWithInternalNumberByDate">
+      <documentation>Return all absents by internal number for a specific date</documentation>
+      <wsdl:input message="tns:getAbsentsWithInternalNumberByDateIn" />
+      <wsdl:output message="tns:getAbsentsWithInternalNumberByDateOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsWithUsernameByDate">
+      <documentation>Return all absents by username for a specific date</documentation>
+      <wsdl:input message="tns:getAbsentsWithUsernameByDateIn" />
+      <wsdl:output message="tns:getAbsentsWithUsernameByDateOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsByDateAndGroup">
+      <documentation>Return all absents of a given group for a specific date</documentation>
+      <wsdl:input message="tns:getAbsentsByDateAndGroupIn" />
+      <wsdl:output message="tns:getAbsentsByDateAndGroupOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsWithAliasByDate">
+      <documentation>Return all absents with aliasses for a specific date</documentation>
+      <wsdl:input message="tns:getAbsentsWithAliasByDateIn" />
+      <wsdl:output message="tns:getAbsentsWithAliasByDateOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getAbsents">
+      <documentation>Return all absents for a specific user for a specific schoolyear</documentation>
+      <wsdl:input message="tns:getAbsentsIn" />
+      <wsdl:output message="tns:getAbsentsOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getUserDetails">
+      <documentation>Get the details of a specific user</documentation>
+      <wsdl:input message="tns:getUserDetailsIn" />
+      <wsdl:output message="tns:getUserDetailsOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getUserDetailsByNumber">
+      <documentation>Get the details of a specific user by number</documentation>
+      <wsdl:input message="tns:getUserDetailsByNumberIn" />
+      <wsdl:output message="tns:getUserDetailsByNumberOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getUserDetailsByUsername">
+      <documentation>Get the details of a specific user by username</documentation>
+      <wsdl:input message="tns:getUserDetailsByUsernameIn" />
+      <wsdl:output message="tns:getUserDetailsByUsernameOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getUserOfficialClass">
+      <documentation>Get official class of a user, optionally at a specific time (yyyy-mm-dd)</documentation>
+      <wsdl:input message="tns:getUserOfficialClassIn" />
+      <wsdl:output message="tns:getUserOfficialClassOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveSignature">
+      <documentation>Save the signature of a specific user identifier with the userIdentifier</documentation>
+      <wsdl:input message="tns:saveSignatureIn" />
+      <wsdl:output message="tns:saveSignatureOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getStudentCareer">
+      <documentation>Geeft de volledige schoolloopbaan van de leerling terug in JSON-formaat</documentation>
+      <wsdl:input message="tns:getStudentCareerIn" />
+      <wsdl:output message="tns:getStudentCareerOut" />
+    </wsdl:operation>
+    <wsdl:operation name="deactivateTwoFactorAuthentication">
+      <documentation>Deactiveer two factor authenticatie voor een gebruiker
+&lt;code&gt;
+$result = $client-&gt;deactivateTwoFactorAuthentication('webserviceswachtwoord','admin','0');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:deactivateTwoFactorAuthenticationIn" />
+      <wsdl:output message="tns:deactivateTwoFactorAuthenticationOut" />
+    </wsdl:operation>
+    <wsdl:operation name="returnErrorCodes">
+      <documentation>Get all the errorcode</documentation>
+      <wsdl:input message="tns:returnErrorCodesIn" />
+    </wsdl:operation>
+    <wsdl:operation name="returnCsvErrorCodes">
+      <documentation>Haal alle errorcodes in een csv lijst
+&lt;code&gt;
+$result = $client-&gt;returnCsvErrorCodes();
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:returnCsvErrorCodesIn" />
+      <wsdl:output message="tns:returnCsvErrorCodesOut" />
+    </wsdl:operation>
+    <wsdl:operation name="returnJsonErrorCodes">
+      <documentation>Haal alle errorcodes in json formaat
+&lt;code&gt;
+$result = $client-&gt;returnJsonErrorCodes();
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:returnJsonErrorCodesIn" />
+      <wsdl:output message="tns:returnJsonErrorCodesOut" />
+    </wsdl:operation>
+    <wsdl:operation name="startSkoreSync">
+      <documentation>Start the sync between Smartschool and Skore</documentation>
+      <wsdl:input message="tns:startSkoreSyncIn" />
+      <wsdl:output message="tns:startSkoreSyncOut" />
+    </wsdl:operation>
+    <wsdl:operation name="checkStatus">
+      <documentation>Check status of a async service between Smartschool and Skore</documentation>
+      <wsdl:input message="tns:checkStatusIn" />
+      <wsdl:output message="tns:checkStatusOut" />
+    </wsdl:operation>
+    <wsdl:operation name="changeUsername">
+      <documentation>Change the username of a user with a specific intern number</documentation>
+      <wsdl:input message="tns:changeUsernameIn" />
+      <wsdl:output message="tns:changeUsernameOut" />
+    </wsdl:operation>
+    <wsdl:operation name="changeInternNumber">
+      <documentation>Change the intern number of a user with a specific username</documentation>
+      <wsdl:input message="tns:changeInternNumberIn" />
+      <wsdl:output message="tns:changeInternNumberOut" />
+    </wsdl:operation>
+    <wsdl:operation name="changeGroupOwners">
+      <documentation>Change the owners of a group (klastitularissen)</documentation>
+      <wsdl:input message="tns:changeGroupOwnersIn" />
+      <wsdl:output message="tns:changeGroupOwnersOut" />
+    </wsdl:operation>
+    <wsdl:operation name="removeCoAccount">
+      <documentation>Verwijder de co-account van een gebruiker
+&lt;code&gt;
+$result = $client-&gt;removeCoAccount('webserviceswachtwoord','admin','1');
+&lt;/code&gt;</documentation>
+      <wsdl:input message="tns:removeCoAccountIn" />
+      <wsdl:output message="tns:removeCoAccountOut" />
+    </wsdl:operation>
+    <wsdl:operation name="getSchoolyearDataOfClass">
+      <documentation>Alle schooljaar data ophalen van de gegeven klas</documentation>
+      <wsdl:input message="tns:getSchoolyearDataOfClassIn" />
+      <wsdl:output message="tns:getSchoolyearDataOfClassOut" />
+    </wsdl:operation>
+    <wsdl:operation name="saveSchoolyearDataOfClass">
+      <documentation>Verander de schooljaar data voor een schooljaar van de gegeven klas</documentation>
+      <wsdl:input message="tns:saveSchoolyearDataOfClassIn" />
+      <wsdl:output message="tns:saveSchoolyearDataOfClassOut" />
+    </wsdl:operation>
+  </wsdl:portType>
+  <wsdl:binding name="V3Binding" type="tns:V3Port">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="rpc" />
+    <wsdl:operation name="saveUser">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveUser" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveClass">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveClass" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveGroup">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveGroup" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAllAccounts">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAllAccounts" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAllAccountsExtended">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAllAccountsExtended" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAllGroupsAndClasses">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAllGroupsAndClasses" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="addCourse">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#addCourse" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="addCourseTeacher">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#addCourseTeacher" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="addCourseStudents">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#addCourseStudents" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getCourses">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getCourses" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="delUser">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#delUser" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveUserParameter">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveUserParameter" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getClassList">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getClassList" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getClassListJson">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getClassListJson" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveClassList">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveClassList" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveClassListJson">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveClassListJson" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="delClass">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#delClass" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveUserToClasses">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveUserToClasses" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="removeUserFromGroup">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#removeUserFromGroup" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="clearGroup">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#clearGroup" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveUserToClass">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveUserToClass" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveUserToClassesAndGroups">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveUserToClassesAndGroups" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="setAccountStatus">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#setAccountStatus" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="setAccountPhoto">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#setAccountPhoto" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAccountPhoto">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAccountPhoto" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="replaceInum">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#replaceInum" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="forcePasswordReset">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#forcePasswordReset" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="savePassword">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#savePassword" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="sendMsg">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#sendMsg" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getSkoreClassTeacherCourseRelation">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getSkoreClassTeacherCourseRelation" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="unregisterStudent">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#unregisterStudent" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getClassTeachers">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getClassTeachers" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsByDate">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAbsentsByDate" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsWithInternalNumberByDate">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAbsentsWithInternalNumberByDate" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsWithUsernameByDate">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAbsentsWithUsernameByDate" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsByDateAndGroup">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAbsentsByDateAndGroup" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAbsentsWithAliasByDate">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAbsentsWithAliasByDate" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getAbsents">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getAbsents" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getUserDetails">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getUserDetails" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getUserDetailsByNumber">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getUserDetailsByNumber" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getUserDetailsByUsername">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getUserDetailsByUsername" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getUserOfficialClass">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getUserOfficialClass" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveSignature">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveSignature" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getStudentCareer">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getStudentCareer" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="deactivateTwoFactorAuthentication">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#deactivateTwoFactorAuthentication" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="returnErrorCodes">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#returnErrorCodes" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+    </wsdl:operation>
+    <wsdl:operation name="returnCsvErrorCodes">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#returnCsvErrorCodes" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="returnJsonErrorCodes">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#returnJsonErrorCodes" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="startSkoreSync">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#startSkoreSync" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="checkStatus">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#checkStatus" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="changeUsername">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#changeUsername" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="changeInternNumber">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#changeInternNumber" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="changeGroupOwners">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#changeGroupOwners" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="removeCoAccount">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#removeCoAccount" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="getSchoolyearDataOfClass">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#getSchoolyearDataOfClass" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="saveSchoolyearDataOfClass">
+      <soap:operation soapAction="https://sanctamaria-aarschot.smartschool.be/Webservices/V3#saveSchoolyearDataOfClass" />
+      <wsdl:input>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:input>
+      <wsdl:output>
+        <soap:body use="encoded" namespace="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+  <wsdl:service name="V3Service">
+    <wsdl:port name="V3Port" binding="tns:V3Binding">
+      <soap:address location="https://sanctamaria-aarschot.smartschool.be/Webservices/V3" />
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>

@@ -13,7 +13,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
-using WisaApi;
 using static AbstractAccountApi.ObservableProperties;
 
 namespace AccountManager.Accounts
@@ -34,8 +33,8 @@ namespace AccountManager.Accounts
         public Prop<string> AccountCount { get; set; } = new Prop<string> { Value = "0" };
         public Data Data { get => Data.Instance; }
 
-        public ObservableCollection<Student> accounts = new ObservableCollection<Student>();
-        public Prop<Student> SelectedStudent { get; set; } = new Prop<Student> { Value = null };
+        public ObservableCollection<AccountApi.Wisa.Student> accounts = new ObservableCollection<AccountApi.Wisa.Student>();
+        public Prop<AccountApi.Wisa.Student> SelectedStudent { get; set; } = new Prop<AccountApi.Wisa.Student> { Value = null };
         public Prop<string> SelectedTitle { get; set; } = new Prop<string> { Value = "Geen actieve selectie" };
 
         private WisaFilterType FilterType { get; set; } = WisaFilterType.Name;
@@ -53,7 +52,7 @@ namespace AccountManager.Accounts
         {
             accounts.Clear();
             var selectedFilter = Filter.Length == 0 ? WisaFilterType.None : FilterType;
-            foreach (var account in WisaApi.Students.All)
+            foreach (var account in AccountApi.Wisa.Students.All)
             {
                 switch(selectedFilter)
                 {
@@ -99,7 +98,7 @@ namespace AccountManager.Accounts
 
         private void AccountList_SelectedCellsChanged(object sender, SelectedCellsChangedEventArgs e)
         {
-            SelectedStudent.Value = (sender as DataGrid).SelectedItem as Student;
+            SelectedStudent.Value = (sender as DataGrid).SelectedItem as AccountApi.Wisa.Student;
             if (SelectedStudent.Value != null)
             {
                 SelectedTitle.Value = SelectedStudent.Value.FirstName + " " + SelectedStudent.Value.Name;

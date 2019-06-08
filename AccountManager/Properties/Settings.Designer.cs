@@ -86,9 +86,9 @@ namespace AccountManager.Properties {
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
         [global::System.Configuration.DefaultSettingValueAttribute("Unknown")]
-        public global::AbstractAccountApi.ConfigState WisaConnectionTested {
+        public global::AccountApi.ConfigState WisaConnectionTested {
             get {
-                return ((global::AbstractAccountApi.ConfigState)(this["WisaConnectionTested"]));
+                return ((global::AccountApi.ConfigState)(this["WisaConnectionTested"]));
             }
             set {
                 this["WisaConnectionTested"] = value;
@@ -157,9 +157,9 @@ namespace AccountManager.Properties {
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
         [global::System.Configuration.DefaultSettingValueAttribute("Unknown")]
-        public global::AbstractAccountApi.ConfigState SmartschoolConnectionTested {
+        public global::AccountApi.ConfigState SmartschoolConnectionTested {
             get {
-                return ((global::AbstractAccountApi.ConfigState)(this["SmartschoolConnectionTested"]));
+                return ((global::AccountApi.ConfigState)(this["SmartschoolConnectionTested"]));
             }
             set {
                 this["SmartschoolConnectionTested"] = value;

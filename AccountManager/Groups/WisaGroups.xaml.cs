@@ -13,7 +13,6 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
-using WisaApi;
 using static AbstractAccountApi.ObservableProperties;
 
 namespace AccountManager.Groups
@@ -33,7 +32,7 @@ namespace AccountManager.Groups
         public Prop<string> GroupCount { get; set; } = new Prop<string> { Value = "0" };
         public Data Data { get => Data.Instance; }
 
-        private ObservableCollection<ClassGroup> groups = new ObservableCollection<ClassGroup>();
+        private ObservableCollection<AccountApi.Wisa.ClassGroup> groups = new ObservableCollection<AccountApi.Wisa.ClassGroup>();
 
         private FilterType FilterType { get; set; } = FilterType.Name;
         private string Filter { get; set; } = String.Empty;
@@ -50,7 +49,7 @@ namespace AccountManager.Groups
         private void CreateSelection()
         {
             groups.Clear();
-            foreach(var group in WisaApi.ClassGroups.All)
+            foreach(var group in AccountApi.Wisa.ClassGroupManager.All)
             {
                 if(Filter == string.Empty)
                 {

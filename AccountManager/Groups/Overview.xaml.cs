@@ -25,7 +25,7 @@ namespace AccountManager.Groups
     {
         public ObservableCollection<LinkedGroup> Groups = new ObservableCollection<LinkedGroup>();
         Prop<LinkedGroup> SelectedGroup = new Prop<LinkedGroup>() { Value = null };
-        public ObservableCollection<IAction> Actions = new ObservableCollection<IAction>();
+        public ObservableCollection<GroupAction> Actions = new ObservableCollection<GroupAction>();
         private bool showGoodGroups = true;
 
         public Overview()
@@ -87,7 +87,7 @@ namespace AccountManager.Groups
 
         private async void ActionButton_Click(object sender, RoutedEventArgs e)
         {
-            IAction action = (e.Source as Button).DataContext as IAction;
+            GroupAction action = (e.Source as Button).DataContext as GroupAction;
             await action.Apply(SelectedGroup.Value);
             await LinkedGroups.ReLink();
             CreateCollection();

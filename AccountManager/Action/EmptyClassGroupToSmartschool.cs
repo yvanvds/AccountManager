@@ -7,19 +7,18 @@ using System.Threading.Tasks;
 
 namespace AccountManager.Action
 {
-    class EmptyClassGroupToSmartschool : IAction
+    class EmptyClassGroupToSmartschool : GroupAction
     {
-        public string Header => "Lege Klas toevoegen aan Smartschool";
+        public override Task Apply(LinkedGroup linkedGroup)
+        {
+            throw new NotImplementedException();
+        }
 
-        public string Description => "Je kan geen lege klassen toevoegen aan Smartschool. " +
+        public EmptyClassGroupToSmartschool() : base(
+            "Lege Klas toevoegen aan Smartschool",
             "Als de klas niet meer nodig is in Wisa, kan je die manueel verwijderen. Je kan ook wachten tot de Wisa klas " +
-            "leerlingen bevat.";
-
-        public ObservableProperties.Prop<bool> InProgress { get; set; } = new ObservableProperties.Prop<bool>() { Value = false };
-
-        public bool CanBeApplied => false;
-
-        public async Task Apply(LinkedGroup linkedGroup)
+            "leerlingen bevat.",
+            false)
         {
 
         }

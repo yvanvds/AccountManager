@@ -21,19 +21,19 @@ namespace AccountManager.Dialogs
     /// </summary>
     public partial class ImportRuleSelectDialog : UserControl
     {
-        public Dictionary<AbstractAccountApi.Rule, string> Rules { get; set; }
-        public AbstractAccountApi.Rule SelectedRule { get; set; }
+        public Dictionary<AccountApi.Rule, string> Rules { get; set; }
+        public AccountApi.Rule SelectedRule { get; set; }
 
-        public ImportRuleSelectDialog(AbstractAccountApi.RuleType ruleType)
+        public ImportRuleSelectDialog(AccountApi.RuleType ruleType)
         {
             InitializeComponent();
             switch(ruleType)
             {
-                case AbstractAccountApi.RuleType.SS_Import:
-                    Rules = SmartschoolApi.Rules.Rules.ImportRules;
+                case AccountApi.RuleType.SS_Import:
+                    Rules = AccountApi.Rules.ImportRules.SmartschoolRules;
                     break;
-                case AbstractAccountApi.RuleType.WISA_Import:
-                    Rules = WisaApi.Rules.Rules.ImportRules;
+                case AccountApi.RuleType.WISA_Import:
+                    Rules = AccountApi.Rules.ImportRules.WisaRules;
                     break;
             }
             SelectedRule = Rules.First().Key;
@@ -42,7 +42,7 @@ namespace AccountManager.Dialogs
 
         private void RulePicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            SelectedRule = (AbstractAccountApi.Rule)((e.Source as ComboBox).SelectedValue);
+            SelectedRule = (AccountApi.Rule)((e.Source as ComboBox).SelectedValue);
         }
     }
 }

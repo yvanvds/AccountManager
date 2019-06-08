@@ -36,38 +36,38 @@ namespace AccountManager
                 JObject config = JObject.Parse(content);
                 if(config.ContainsKey("Wisa"))
                 {
-                    loadWisaConfig(config["Wisa"] as JObject);
+                    LoadWisaConfig(config["Wisa"] as JObject);
                 }
                 if(config.ContainsKey("Smartschool"))
                 {
-                    loadSmartschoolConfig(config["Smartschool"] as JObject);
+                    LoadSmartschoolConfig(config["Smartschool"] as JObject);
                 }
                 if(config.ContainsKey("Google"))
                 {
-                    loadGoogleConfig(config["Google"] as JObject);
+                    LoadGoogleConfig(config["Google"] as JObject);
                 }
                 if(config.ContainsKey("AD"))
                 {
-                    loadADConfig(config["AD"] as JObject);
+                    LoadADConfig(config["AD"] as JObject);
                 }
             }
         }
 
         public void LoadFileContentOnStartup()
         {
-            loadWisaFileContent();
-            loadSmartschoolFileContent();
-            loadGoogleFileContent();
-            loadADFileContent();
+            LoadWisaFileContent();
+            LoadSmartschoolFileContent();
+            LoadGoogleFileContent();
+            LoadADFileContent();
         }
 
         public void SaveConfig()
         {
             JObject config = new JObject();
-            config["Wisa"] = saveWisaConfig();
-            config["Smartschool"] = saveSmartschoolConfig();
-            config["Google"] = saveGoogleConfig();
-            config["AD"] = saveADConfig();
+            config["Wisa"] = SaveWisaConfig();
+            config["Smartschool"] = SaveSmartschoolConfig();
+            config["Google"] = SaveGoogleConfig();
+            config["AD"] = SaveADConfig();
             File.WriteAllText(configFile, config.ToString());
             ConfigChanged = false;
         }

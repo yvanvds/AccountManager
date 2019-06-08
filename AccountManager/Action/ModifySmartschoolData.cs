@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace AccountManager.Action
 {
-    class ModifySmartschoolData : IAction
+    class ModifySmartschoolData : GroupAction
     {
         public enum Fields
         {
@@ -19,9 +19,7 @@ namespace AccountManager.Action
 
         public List<Fields> List = new List<Fields>();
 
-        public string Header => "Wijzig de Smartschool Groep";
-
-        public string Description
+        public new string Description
         {
             get
             {
@@ -35,12 +33,16 @@ namespace AccountManager.Action
                 return result;
             }
         }
- 
-        public bool CanBeApplied => true;
 
-        public ObservableProperties.Prop<bool> InProgress { get; set; } = new ObservableProperties.Prop<bool>() { Value = false };
+        public ModifySmartschoolData() : base(
+            "Wijzig de Smartschool Groep",
+            "...",
+            true)
+        {
 
-        public async Task Apply(LinkedGroup linkedGroup)
+        }
+
+        public override async Task Apply(LinkedGroup linkedGroup)
         {
             InProgress.Value = true;
             foreach(var field in List)
@@ -57,7 +59,7 @@ namespace AccountManager.Action
                         break;
                 }
             }
-            await SmartschoolApi.GroupManager.Save(linkedGroup.smartschoolGroup);
+            await AccountApi.Smartschool.GroupManager.Save(linkedGroup.smartschoolGroup);
             InProgress.Value = false;
         }
     }

@@ -1,4 +1,5 @@
 ﻿using AbstractAccountApi;
+using AccountApi;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -14,7 +15,7 @@ namespace AccountManager
     {
         const string googleAccountsFile = "googleAccounts.json";
 
-        private void loadGoogleConfig(JObject obj)
+        private void LoadGoogleConfig(JObject obj)
         {
             googleAppName = obj.ContainsKey("appName") ? obj["appName"].ToString() : "";
             googleAppDomain = obj.ContainsKey("appDomain") ? obj["appDomain"].ToString() : "";
@@ -24,19 +25,21 @@ namespace AccountManager
             googleApiToken = obj.ContainsKey("apiToken") ? obj["apiToken"].ToString() : "";
         }
 
-        private JObject saveGoogleConfig()
+        private JObject SaveGoogleConfig()
         {
-            JObject result = new JObject();
-            result["appName"] = googleAppName;
-            result["appDomain"] = googleAppDomain;
-            result["admin"] = googleAdmin;
-            result["apiKey"] = googleApiKey;
-            result["apiID"] = googleApiID;
-            result["apiToken"] = googleApiToken;
+            JObject result = new JObject
+            {
+                ["appName"] = googleAppName,
+                ["appDomain"] = googleAppDomain,
+                ["admin"] = googleAdmin,
+                ["apiKey"] = googleApiKey,
+                ["apiID"] = googleApiID,
+                ["apiToken"] = googleApiToken
+            };
             return result;
         }
 
-        private void loadGoogleFileContent()
+        private void LoadGoogleFileContent()
         {
             SetGoogleCredentials();
 
@@ -45,7 +48,7 @@ namespace AccountManager
             {
                 string content = File.ReadAllText(accountLocation);
                 var newObj = JObject.Parse(content);
-                GoogleApi.AccountManager.FromJson(newObj);
+                AccountApi.Google.AccountManager.FromJson(newObj);
             }
         }
 
@@ -131,7 +134,7 @@ namespace AccountManager
         public void SetGoogleCredentials()
         {
             googleConnectionTested = ConfigState.InProgress;
-            bool result = GoogleApi.Connector.Init(
+            bool result = AccountApi.Google.Connector.Init(
                 googleAppName, 
                 googleAdmin, 
                 googleAppDomain, 
@@ -151,10 +154,10 @@ namespace AccountManager
 
         public async Task ReloadGoogleAccounts()
         {
-            GoogleApi.AccountManager.ClearAll();
-            await GoogleApi.AccountManager.ReloadAll();
+            AccountApi.Google.AccountManager.ClearAll();
+            await AccountApi.Google.AccountManager.ReloadAll();
 
-            var json = GoogleApi.AccountManager.ToJson();
+            var json = AccountApi.Google.AccountManager.ToJson();
             var location = Path.Combine(appFolder, googleAccountsFile);
             File.WriteAllText(location, json.ToString());
         }

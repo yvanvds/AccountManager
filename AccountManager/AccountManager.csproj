@@ -113,7 +113,7 @@
     <Compile Include="Action\RemoveAccountFromGoogle.cs" />
     <Compile Include="Action\RemoveDirectoryClassGroup.cs" />
     <Compile Include="Action\RemoveEmptyDirectoryClassGroup.cs" />
-    <Compile Include="Action\IAction.cs" />
+    <Compile Include="Action\GroupAction.cs" />
     <Compile Include="Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
@@ -142,6 +142,8 @@
     <Compile Include="Dialogs\WI_ReplaceInstitute.xaml.cs">
       <DependentUpon>WI_ReplaceInstitute.xaml</DependentUpon>
     </Compile>
+    <Compile Include="DisplayItems\ADGroup.cs" />
+    <Compile Include="DisplayItems\StudentPasswordItem.cs" />
     <Compile Include="Groups\ADGroups.xaml.cs">
       <DependentUpon>ADGroups.xaml</DependentUpon>
     </Compile>
@@ -156,6 +158,15 @@
     </Compile>
     <Compile Include="Groups\WisaGroups.xaml.cs">
       <DependentUpon>WisaGroups.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Passwords\PasswordPage.xaml.cs">
+      <DependentUpon>PasswordPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Passwords\StaffPasswords.xaml.cs">
+      <DependentUpon>StaffPasswords.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Passwords\StudentPasswords.xaml.cs">
+      <DependentUpon>StudentPasswords.xaml</DependentUpon>
     </Compile>
     <Compile Include="Settings\ADSettings.xaml.cs">
       <DependentUpon>ADSettings.xaml</DependentUpon>
@@ -265,6 +276,18 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Passwords\PasswordPage.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Passwords\StaffPasswords.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Passwords\StudentPasswords.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Settings\ADSettings.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -317,27 +340,10 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\AbstractAccountApi\AbstractAccountApi\AbstractAccountApi.csproj">
-      <Project>{3d771ccf-96a7-4ffa-82e5-4ba9d870dcbb}</Project>
-      <Name>AbstractAccountApi</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\..\DirectoryApi\DirectoryApi\DirectoryApi.csproj">
-      <Project>{2ad599a0-047d-4c1c-ad54-1a5416782a7a}</Project>
-      <Name>DirectoryApi</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\..\GoogleApi\GoogleApi.csproj">
-      <Project>{c31bcf41-a3f1-49da-b82c-37cacb6be218}</Project>
-      <Name>GoogleApi</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\..\SmartschoolApi\SmartschoolApi\SmartschoolApi.csproj">
-      <Project>{970eba52-df3c-480c-9474-d55d27e80f59}</Project>
-      <Name>SmartschoolApi</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\..\WisaApi\WisaApi\WisaApi.csproj">
-      <Project>{41fc79ae-a749-416c-a137-c026ab4fae1a}</Project>
-      <Name>WisaApi</Name>
+    <ProjectReference Include="..\AccountApi\AccountApi.csproj">
+      <Project>{3bcc599d-59f5-49fd-8076-050eeca20ee7}</Project>
+      <Name>AccountApi</Name>
     </ProjectReference>
   </ItemGroup>
-  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

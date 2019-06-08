@@ -1,0 +1,12 @@
+﻿<?xml version='1.0' encoding='utf-8'?>
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)" GeneratedClassNamespace="AccountApi.Properties" GeneratedClassName="Settings">
+  <Profiles />
+  <Settings>
+    <Setting Name="AccountApi_SS_V3Service" Type="(Web Service URL)" Scope="Application">
+      <Value Profile="(Default)">https://sanctamaria-aarschot.smartschool.be/Webservices/V3</Value>
+    </Setting>
+    <Setting Name="AccountApi_WISA_WisaAPIServiceService" Type="(Web Service URL)" Scope="Application">
+      <Value Profile="(Default)" />
+    </Setting>
+  </Settings>
+</SettingsFile>

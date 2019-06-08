@@ -7,18 +7,17 @@ using System.Threading.Tasks;
 
 namespace AccountManager.Action
 {
-    class NoActionNeeded : IAction
+    class NoActionNeeded : GroupAction
     {
-        public string Header => "Geen Actie Nodig";
-        public string Description => "Deze groepen zijn in sync. Het is niet nodig om ze aan te passen.";
+        public NoActionNeeded() : base(
+            "Geen Actie Nodig",
+            "Deze groepen zijn in sync. Het is niet nodig om ze aan te passen.",
+            false)
+        { }
 
-        public bool CanBeApplied => false;
-
-        public ObservableProperties.Prop<bool> InProgress { get; set; } = new ObservableProperties.Prop<bool>() { Value = false };
-
-        public async Task Apply(LinkedGroup linkedGroup)
+        public override Task Apply(LinkedGroup linkedGroup)
         {
-            
+            throw new NotImplementedException();
         }
     }
 }

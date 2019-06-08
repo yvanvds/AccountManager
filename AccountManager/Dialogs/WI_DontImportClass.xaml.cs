@@ -1,4 +1,5 @@
 ﻿using AbstractAccountApi;
+using AccountApi;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -31,12 +32,12 @@ namespace AccountManager.Dialogs
             InitializeComponent();
             Rule = rule;
             DataContext = this;
-            ClassName.Value = rule.getConfig(0);
+            ClassName.Value = rule.GetConfig(0);
         }
 
         private void AcceptButton_Click(object sender, RoutedEventArgs e)
         {
-            Rule.setConfig(0, ClassName.Value.Trim());
+            Rule.SetConfig(0, ClassName.Value.Trim());
         }
     }
 }

@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<definitions xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:ro="urn:WisaAPIService" xmlns:tns="http://tempuri.org/" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" name="WisaAPIService" targetNamespace="http://tempuri.org/" xmlns="http://schemas.xmlsoap.org/wsdl/">
+  <types>
+    <xs:schema xmlns="urn:WisaAPIService" targetNamespace="urn:WisaAPIService">
+      <xs:complexType name="TWISAAPICredentials">
+        <xs:sequence>
+          <xs:element name="Username" type="xs:string" />
+          <xs:element name="Password" type="xs:string" />
+          <xs:element name="Database" type="xs:string" />
+        </xs:sequence>
+      </xs:complexType>
+      <xs:complexType name="TWISAAPIParamValue">
+        <xs:sequence>
+          <xs:element name="Name" type="xs:string" />
+          <xs:element name="Value" type="xs:string" />
+        </xs:sequence>
+      </xs:complexType>
+      <xs:complexType name="TWISAAPIParamValues">
+        <xs:complexContent mixed="false">
+          <xs:restriction base="soapenc:Array">
+            <xs:sequence />
+            <xs:attribute xmlns:n1="http://schemas.xmlsoap.org/wsdl/" n1:arrayType="ro:TWISAAPIParamValue[]" ref="soapenc:arrayType" />
+          </xs:restriction>
+        </xs:complexContent>
+      </xs:complexType>
+    </xs:schema>
+  </types>
+  <message name="GetExportDataRequest">
+    <part name="Credentials" type="ro:TWISAAPICredentials" />
+    <part name="QueryCode" type="xs:string" />
+    <part name="Format" type="xs:string" />
+    <part name="Params" type="ro:TWISAAPIParamValues" />
+    <part name="Options" type="xs:string" />
+  </message>
+  <message name="GetExportDataResponse">
+    <part name="Result" type="xs:base64Binary" />
+  </message>
+  <message name="GetCSVDataRequest">
+    <part name="Credentials" type="ro:TWISAAPICredentials" />
+    <part name="QueryCode" type="xs:string" />
+    <part name="Params" type="ro:TWISAAPIParamValues" />
+    <part name="Header" type="xs:boolean" />
+    <part name="Separator" type="xs:string" />
+    <part name="Options" type="xs:string" />
+  </message>
+  <message name="GetCSVDataResponse">
+    <part name="Result" type="xs:base64Binary" />
+  </message>
+  <message name="GetXMLDataRequest">
+    <part name="Credentials" type="ro:TWISAAPICredentials" />
+    <part name="QueryCode" type="xs:string" />
+    <part name="Params" type="ro:TWISAAPIParamValues" />
+    <part name="XMLFormat" type="xs:int" />
+    <part name="Options" type="xs:string" />
+  </message>
+  <message name="GetXMLDataResponse">
+    <part name="Result" type="xs:base64Binary" />
+  </message>
+  <portType name="WisaAPIService">
+    <operation name="GetExportData">
+      <input message="tns:GetExportDataRequest" />
+      <output message="tns:GetExportDataResponse" />
+    </operation>
+    <operation name="GetCSVData">
+      <input message="tns:GetCSVDataRequest" />
+      <output message="tns:GetCSVDataResponse" />
+    </operation>
+    <operation name="GetXMLData">
+      <input message="tns:GetXMLDataRequest" />
+      <output message="tns:GetXMLDataResponse" />
+    </operation>
+  </portType>
+  <binding name="WisaAPIServiceBinding" type="tns:WisaAPIService">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="rpc" />
+    <operation name="GetExportData">
+      <soap:operation soapAction="urn:WisaAPIService-WisaAPIService#GetExportData" style="rpc" />
+      <input message="tns:GetExportDataRequest">
+        <soap:body use="encoded" namespace="urn:WisaAPIService-WisaAPIService" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </input>
+      <output message="tns:GetExportDataResponse">
+        <soap:body use="encoded" namespace="urn:WisaAPIService-WisaAPIService" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </output>
+    </operation>
+    <operation name="GetCSVData">
+      <soap:operation soapAction="urn:WisaAPIService-WisaAPIService#GetCSVData" style="rpc" />
+      <input message="tns:GetCSVDataRequest">
+        <soap:body use="encoded" namespace="urn:WisaAPIService-WisaAPIService" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </input>
+      <output message="tns:GetCSVDataResponse">
+        <soap:body use="encoded" namespace="urn:WisaAPIService-WisaAPIService" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </output>
+    </operation>
+    <operation name="GetXMLData">
+      <soap:operation soapAction="urn:WisaAPIService-WisaAPIService#GetXMLData" style="rpc" />
+      <input message="tns:GetXMLDataRequest">
+        <soap:body use="encoded" namespace="urn:WisaAPIService-WisaAPIService" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </input>
+      <output message="tns:GetXMLDataResponse">
+        <soap:body use="encoded" namespace="urn:WisaAPIService-WisaAPIService" encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" />
+      </output>
+    </operation>
+  </binding>
+  <service name="WisaAPIServiceService">
+    <documentation>Service WisaAPIService. This service has been automatically generated using the RODL template you can find in the Templates directory.</documentation>
+    <port name="WisaAPIServicePort" binding="tns:WisaAPIServiceBinding">
+      <soap:address location="" />
+    </port>
+  </service>
+</definitions>

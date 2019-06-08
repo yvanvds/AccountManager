@@ -1,5 +1,4 @@
-﻿using AbstractAccountApi;
-using DirectoryApi;
+﻿using AccountApi;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -33,7 +32,7 @@ namespace AccountManager.Groups
         public ADGroups()
         {
             InitializeComponent();
-            GroupCount.Value = ClassGroupManager.Count(true).ToString();
+            GroupCount.Value = AccountApi.Directory.ClassGroupManager.Count(true).ToString();
             MainGrid.DataContext = this;
             BuildGroupTree();
         }
@@ -44,7 +43,7 @@ namespace AccountManager.Groups
             Data.Instance.SetADCredentials();
             await Data.Instance.ReloadADClassGroups();
             await LinkedGroups.ReLink();
-            GroupCount.Value = ClassGroupManager.Count(true).ToString();
+            GroupCount.Value = AccountApi.Directory.ClassGroupManager.Count(true).ToString();
             BuildGroupTree();
             ShowGroupsReloadButtonIndicator.Value = false;
         }
@@ -54,9 +53,9 @@ namespace AccountManager.Groups
             GroupTree.Items.Clear();
             foreach(var group in Data.Instance.ADGroups)
             {
-                GroupTree.Items.Add(new ADGroup(group));
+                GroupTree.Items.Add(new DisplayItems.ADGroup(group));
             }
-            GroupCount.Value = DirectoryApi.ClassGroupManager.Count(true).ToString();
+            GroupCount.Value = AccountApi.Directory.ClassGroupManager.Count(true).ToString();
         }
 
         private void GroupTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
@@ -65,32 +64,4 @@ namespace AccountManager.Groups
         }
     }
 
-    class ADGroup
-    {
-        public ObservableCollection<ADGroup> Children { get; set; }
-        public ClassGroup Base;
-        public string Header { get; set; } = "No Groups Found";
-        public string Icon { get; set; } = "QuestionMarkBox";
-
-        public ADGroup(ClassGroup Base)
-        {
-            this.Base = Base;
-            Children = new ObservableCollection<ADGroup>();
-
-            Header = Base.Name;
-
-            if (Base == null) return;
-            if(Base.Children.Count == 0)
-            {
-                Icon = "Class";
-            } else
-            {
-                Icon = "UserGroup";
-                foreach(var group in Base.Children)
-                {
-                    Children.Add(new ADGroup(group));
-                }
-            }
-        }
-    }
 }

@@ -1,4 +1,5 @@
 ﻿using AbstractAccountApi;
+using AccountApi;
 using MaterialDesignThemes.Wpf;
 using System;
 using System.Collections.Generic;
@@ -37,8 +38,8 @@ namespace AccountManager.Settings
         {
             InitializeComponent();
             MainGrid.DataContext = this;
-            testWisaConnection();
-            SchoolList.ItemsSource = WisaApi.Schools.All;
+            TestWisaConnection();
+            SchoolList.ItemsSource = AccountApi.Wisa.SchoolManager.All;
         }
 
         private async void TestConnectButton_Click(object sender, RoutedEventArgs e) 
@@ -46,7 +47,7 @@ namespace AccountManager.Settings
             
             Data.Instance.SetWisaCredentials();
             ShowConnectButtonIndicator.Value = true;
-            await testWisaConnection();
+            await TestWisaConnection();
             ShowConnectButtonIndicator.Value = false;
         }
 
@@ -56,9 +57,9 @@ namespace AccountManager.Settings
             ConnectButtonIcon = sender as PackIcon;
         }
 
-        private async Task testWisaConnection()
+        private async Task TestWisaConnection()
         {
-            bool result = await WisaApi.Connector.TestConnection();
+            bool result = await AccountApi.Wisa.Connector.TestConnection();
             if (!result) ConnectButtonIcon.Kind = PackIconKind.CloudOffOutline;
             else ConnectButtonIcon.Kind = PackIconKind.CloudTick;
         }
@@ -73,20 +74,20 @@ namespace AccountManager.Settings
 
         private void SelectSchoolButton_Click(object sender, RoutedEventArgs e)
         {
-            Data.Instance.saveWisaSchoolsToJSON();
+            Data.Instance.SaveWisaSchoolsToJSON();
         }
 
         private async void AddRuleButton_Click(object sender, RoutedEventArgs e)
         {
-            importRuleSelectDialog = new Dialogs.ImportRuleSelectDialog(AbstractAccountApi.RuleType.WISA_Import);
+            importRuleSelectDialog = new Dialogs.ImportRuleSelectDialog(AccountApi.RuleType.WISA_Import);
             await DialogHost.Show(
                 importRuleSelectDialog,
                 "RootDialog",
-                closeAddRuleEventHandler
+                CloseAddRuleEventHandler
             );
         }
 
-        private void closeAddRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
+        private void CloseAddRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
         {
             var result = eventArgs.Parameter as string;
             if (result == "true")
@@ -115,12 +116,12 @@ namespace AccountManager.Settings
                 await DialogHost.Show(
                     importRuleEditor,
                     "RootDialog",
-                    closeEditRuleEventHandler
+                    CloseEditRuleEventHandler
                 );
             }
         }
 
-        private void closeEditRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
+        private void CloseEditRuleEventHandler(object sender, DialogClosingEventArgs eventArgs)
         {
             var result = eventArgs.Parameter as string;
             if (result.Equals("true", StringComparison.CurrentCultureIgnoreCase))

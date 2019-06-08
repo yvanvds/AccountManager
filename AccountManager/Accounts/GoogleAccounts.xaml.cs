@@ -33,8 +33,8 @@ namespace AccountManager.Accounts
         public Prop<string> AccountCount { get; set; } = new Prop<string> { Value = "0" };
         public Data Data { get => Data.Instance; }
 
-        public ObservableCollection<GoogleApi.Account> accounts = new ObservableCollection<GoogleApi.Account>();
-        public Prop<GoogleApi.Account> SelectedAccount { get; set; } = new Prop<GoogleApi.Account> { Value = null };
+        public ObservableCollection<AccountApi.Google.Account> accounts = new ObservableCollection<AccountApi.Google.Account>();
+        public Prop<AccountApi.Google.Account> SelectedAccount { get; set; } = new Prop<AccountApi.Google.Account> { Value = null };
         public Prop<string> SelectedTitle { get; set; } = new Prop<string> { Value = "Geen actieve selectie" };
 
         private GoogleFilterType FilterType { get; set; } = GoogleFilterType.FamilyName;
@@ -56,13 +56,13 @@ namespace AccountManager.Accounts
             accounts.Clear();
             var selectedFilter = Filter.Length == 0 ? GoogleFilterType.None : FilterType;
 
-            if (GoogleApi.AccountManager.All == null)
+            if (AccountApi.Google.AccountManager.All == null)
             {
                 AccountCount.Value = "0";
                 return;
             }
 
-            foreach(var account in GoogleApi.AccountManager.All.Values.OrderBy(d => d.FamilyName))
+            foreach(var account in AccountApi.Google.AccountManager.All.Values.OrderBy(d => d.FamilyName))
             {
                 switch(selectedFilter)
                 {
@@ -100,7 +100,7 @@ namespace AccountManager.Accounts
 
         private void AccountList_SelectedCellsChanged(object sender, SelectedCellsChangedEventArgs e)
         {
-            SelectedAccount.Value = (sender as DataGrid).SelectedItem as GoogleApi.Account;
+            SelectedAccount.Value = (sender as DataGrid).SelectedItem as AccountApi.Google.Account;
             if (SelectedAccount.Value != null)
             {
                 SelectedTitle.Value = SelectedAccount.Value.FullName;

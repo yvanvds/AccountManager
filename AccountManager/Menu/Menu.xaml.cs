@@ -43,7 +43,7 @@ namespace AccountManager.Menu
 
         private void PasswordsButton_Click(object sender, RoutedEventArgs e)
         {
-
+            MainWindow.Instance.Navigate(new Passwords.PasswordPage());
         }
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)

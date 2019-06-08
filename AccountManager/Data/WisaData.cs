@@ -1,4 +1,5 @@
 ﻿using AbstractAccountApi;
+using AccountApi;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -18,7 +19,7 @@ namespace AccountManager
         const string wisaClassFile = "wisaClasses.json";
         const string wisaStudentsFile = "wisaStudents.json";
 
-        private void loadWisaConfig(JObject obj)
+        private void LoadWisaConfig(JObject obj)
         {
             wisaServer = obj.ContainsKey("server") ? obj["server"].ToString() : "";
             wisaPort = obj.ContainsKey("port") ? obj["port"].ToString() : "";
@@ -48,26 +49,28 @@ namespace AccountManager
                     Rule rule = (Rule)data["Rule"].ToObject(typeof(Rule));
                     switch (rule)
                     {
-                        case Rule.WI_ReplaceInstitution: WisaImportRules.Add(new WisaApi.Rules.ReplaceInstitute(data)); break;
-                        case Rule.WI_DontImportClass: WisaImportRules.Add(new WisaApi.Rules.DontImportClass(data)); break;
+                        case Rule.WI_ReplaceInstitution: WisaImportRules.Add(new AccountApi.Rules.ReplaceInstitute(data)); break;
+                        case Rule.WI_DontImportClass: WisaImportRules.Add(new AccountApi.Rules.DontImportClass(data)); break;
                     }
                 }
             }
         }
 
-        private JObject saveWisaConfig()
+        private JObject SaveWisaConfig()
         {
-            JObject result = new JObject();
-            result["server"] = wisaServer;
-            result["port"] = wisaPort;
-            result["database"] = wisaDatabase;
-            result["user"] = wisaUser;
-            result["password"] = wisaPassword;
-            result["connectionTested"] = wisaConnectionTested.ToString();
-            result["workDateNow"] = wisaWorkDateNow;
-            result["workDate"] = wisaWorkDate;
+            JObject result = new JObject
+            {
+                ["server"] = wisaServer,
+                ["port"] = wisaPort,
+                ["database"] = wisaDatabase,
+                ["user"] = wisaUser,
+                ["password"] = wisaPassword,
+                ["connectionTested"] = wisaConnectionTested.ToString(),
+                ["workDateNow"] = wisaWorkDateNow,
+                ["workDate"] = wisaWorkDate
+            };
 
-            if(WisaImportRules.Count > 0)
+            if (WisaImportRules.Count > 0)
             {
                 var arr = new JArray();
                 foreach(var rule in WisaImportRules)
@@ -80,7 +83,7 @@ namespace AccountManager
             return result;
         }
 
-        private void loadWisaFileContent()
+        private void LoadWisaFileContent()
         {
             SetWisaCredentials();
 
@@ -89,7 +92,7 @@ namespace AccountManager
             {
                 string content = File.ReadAllText(wisaSchoolsLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
-                WisaApi.Schools.FromJson(newObj);
+                AccountApi.Wisa.SchoolManager.FromJson(newObj);
             }
 
             var wisaClassLocation = Path.Combine(appFolder, wisaClassFile);
@@ -97,7 +100,7 @@ namespace AccountManager
             {
                 string content = File.ReadAllText(wisaClassLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
-                WisaApi.ClassGroups.FromJson(newObj);
+                AccountApi.Wisa.ClassGroupManager.FromJson(newObj);
             }
 
             var wisaStudentLocation = Path.Combine(appFolder, wisaStudentsFile);
@@ -105,7 +108,7 @@ namespace AccountManager
             {
                 string content = File.ReadAllText(wisaStudentLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
-                WisaApi.Students.FromJson(newObj);
+                AccountApi.Wisa.Students.FromJson(newObj);
             }
         }
 
@@ -219,7 +222,7 @@ namespace AccountManager
             }
 
 
-            WisaApi.Connector.Init(
+            AccountApi.Wisa.Connector.Init(
                 WisaServer, port, WisaUser, WisaPassword, WisaDatabase, MainWindow.Instance.Log
             );
         }
@@ -228,19 +231,19 @@ namespace AccountManager
         {
             // remember which schools are selected
             List<int> selected = new List<int>();
-            foreach (var school in WisaApi.Schools.All)
+            foreach (var school in AccountApi.Wisa.SchoolManager.All)
             {
                 if (school.IsActive) selected.Add(school.ID);
             }
 
             // reload list of schools
-            bool result = await WisaApi.Schools.Load();
+            bool result = await AccountApi.Wisa.SchoolManager.Load();
 
             // only save changes if the request succeeded
             if (result)
             {
                 // set to selected if the previous had them selected
-                foreach (var school in WisaApi.Schools.All)
+                foreach (var school in AccountApi.Wisa.SchoolManager.All)
                 {
                     if (selected.Contains(school.ID))
                     {
@@ -248,7 +251,7 @@ namespace AccountManager
                     }
                 }
                 // save to disk
-                saveWisaSchoolsToJSON();
+                SaveWisaSchoolsToJSON();
             }
         }
 
@@ -258,18 +261,18 @@ namespace AccountManager
             DateTime workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
 
             // reload list of classes
-            WisaApi.ClassGroups.Clear();
-            foreach (var school in WisaApi.Schools.All)
+            AccountApi.Wisa.ClassGroupManager.Clear();
+            foreach (var school in AccountApi.Wisa.SchoolManager.All)
             {
                 if (school.IsActive)
                 {
-                    bool success = await WisaApi.ClassGroups.AddSchool(school, workDate);
+                    bool success = await AccountApi.Wisa.ClassGroupManager.AddSchool(school, workDate);
                     if (!success) return;
                 }
             }
-            WisaApi.ClassGroups.ApplyImportRules(WisaImportRules.ToList());
-            WisaApi.ClassGroups.Sort();
-            saveWisaClassGroupsToJSON();
+            AccountApi.Wisa.ClassGroupManager.ApplyImportRules(WisaImportRules.ToList());
+            AccountApi.Wisa.ClassGroupManager.Sort();
+            SaveWisaClassGroupsToJSON();
         }
 
         public IRule AddWisaImportRule(Rule rule)
@@ -278,8 +281,8 @@ namespace AccountManager
 
             switch(rule)
             {
-                case Rule.WI_ReplaceInstitution: newRule = new WisaApi.Rules.ReplaceInstitute(); break;
-                case Rule.WI_DontImportClass: newRule = new WisaApi.Rules.DontImportClass(); break;
+                case Rule.WI_ReplaceInstitution: newRule = new AccountApi.Rules.ReplaceInstitute(); break;
+                case Rule.WI_DontImportClass: newRule = new AccountApi.Rules.DontImportClass(); break;
             }
 
             if(newRule != null)
@@ -296,36 +299,36 @@ namespace AccountManager
             DateTime workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
 
             // reload list of classes
-            WisaApi.Students.Clear();
-            foreach (var school in WisaApi.Schools.All)
+            AccountApi.Wisa.Students.Clear();
+            foreach (var school in AccountApi.Wisa.SchoolManager.All)
             {
                 if (school.IsActive)
                 {
-                    bool success = await WisaApi.Students.AddSchool(school, workDate);
+                    bool success = await AccountApi.Wisa.Students.AddSchool(school, workDate);
                     if (!success) return;
                 }
             }
-            WisaApi.Students.Sort();
-            saveWisaStudentsToJSON();
+            AccountApi.Wisa.Students.Sort();
+            SaveWisaStudentsToJSON();
         }
 
-        public void saveWisaSchoolsToJSON()
+        public void SaveWisaSchoolsToJSON()
         {
-            var json = WisaApi.Schools.ToJson();
+            var json = AccountApi.Wisa.SchoolManager.ToJson();
             var location = Path.Combine(appFolder, wisaSchoolsFile);
             File.WriteAllText(location, json.ToString());
         }
 
-        public void saveWisaClassGroupsToJSON()
+        public void SaveWisaClassGroupsToJSON()
         {
-            var json = WisaApi.ClassGroups.ToJson();
+            var json = AccountApi.Wisa.ClassGroupManager.ToJson();
             var location = Path.Combine(appFolder, wisaClassFile);
             File.WriteAllText(location, json.ToString());
         }
 
-        public void saveWisaStudentsToJSON()
+        public void SaveWisaStudentsToJSON()
         {
-            var json = WisaApi.Students.ToJson();
+            var json = AccountApi.Wisa.Students.ToJson();
             var location = Path.Combine(appFolder, wisaStudentsFile);
             File.WriteAllText(location, json.ToString());
         }
