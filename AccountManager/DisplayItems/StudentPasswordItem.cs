@@ -27,5 +27,14 @@ namespace AccountManager.DisplayItems
         public Prop<bool> SmartschoolCo4Password { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolCo5Password { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolCo6Password { get; set; } = new Prop<bool>() { Value = false };
+
+        public string NewDirectoryPassword = string.Empty;
+        public string NewSmartschoolPassword = string.Empty;
+        public string NewSmartschoolCo1Password = string.Empty;
+        public string NewSmartschoolCo2Password = string.Empty;
+        public string NewSmartschoolCo3Password = string.Empty;
+        public string NewSmartschoolCo4Password = string.Empty;
+        public string NewSmartschoolCo5Password = string.Empty;
+        public string NewSmartschoolCo6Password = string.Empty;
     }
 }

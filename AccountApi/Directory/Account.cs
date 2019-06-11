@@ -118,6 +118,20 @@ namespace AccountApi.Directory
             parent.Close();
         }
 
+        public void SetPassword(string password)
+        {
+            var entry = GetEntry(uid);
+            try
+            {
+                entry.Password = password;
+                entry.CommitChanges();
+            }
+            catch(Exception e)
+            {
+                Connector.Log.AddError(Origin.Directory, e.Message);
+            }
+        }
+
         private static DirectoryEntry GetEntry(string uid)
         {
             return null;

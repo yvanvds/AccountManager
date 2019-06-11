@@ -129,6 +129,26 @@ namespace AccountApi.Smartschool
             return null;
         }
 
+        public IAccount FindAccount(string uid)
+        {
+            if(Accounts != null)
+                foreach(var account in Accounts)
+                {
+                    if (account.UID == uid) return account;
+                }
+
+            if(Children != null)
+            {
+                foreach(var child in Children)
+                {
+                    var result = child.FindAccount(uid);
+                    if (result != null) return result;
+                }
+            }
+
+            return null;
+        }
+
         public bool HasParent(string name)
         {
             if (Parent == null) return false;

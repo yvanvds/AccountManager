@@ -26,6 +26,7 @@ namespace AccountApi
         List<IAccount> Accounts { set; get; }
 
         IGroup Find(string name);
+        IAccount FindAccount(string uid);
         bool HasParent(string name);
         int Count { get; }
         int CountClassGroupsOnly { get; }

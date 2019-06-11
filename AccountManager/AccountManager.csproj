@@ -118,12 +118,15 @@
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
     <Compile Include="Data\ADData.cs" />
+    <Compile Include="Data\CoPassword.cs" />
     <Compile Include="Data\Data.cs" />
     <Compile Include="Data\GoogleData.cs" />
     <Compile Include="Data\LinkedAccount.cs" />
     <Compile Include="Data\LinkedAccounts.cs" />
     <Compile Include="Data\LinkedGroup.cs" />
     <Compile Include="Data\LinkedGroups.cs" />
+    <Compile Include="Data\Password.cs" />
+    <Compile Include="Data\Passwords.cs" />
     <Compile Include="Data\SmartschoolData.cs" />
     <Compile Include="Data\WisaData.cs" />
     <Compile Include="Dialogs\ImportRuleSelectDialog.xaml.cs">

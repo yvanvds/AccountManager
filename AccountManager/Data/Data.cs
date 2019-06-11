@@ -51,6 +51,8 @@ namespace AccountManager
                     LoadADConfig(config["AD"] as JObject);
                 }
             }
+
+
         }
 
         public void LoadFileContentOnStartup()
@@ -59,6 +61,7 @@ namespace AccountManager
             LoadSmartschoolFileContent();
             LoadGoogleFileContent();
             LoadADFileContent();
+            LoadPasswordFileContent();
         }
 
         public void SaveConfig()
@@ -70,6 +73,8 @@ namespace AccountManager
             config["AD"] = SaveADConfig();
             File.WriteAllText(configFile, config.ToString());
             ConfigChanged = false;
+
+            SavePasswordFileContent();
         }
     }
 }
