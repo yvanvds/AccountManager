@@ -132,6 +132,28 @@ namespace AccountManager
                 FindActionsForMissingAccounts();
                 accountOK = false;
             }
+
+            if(wisaAccount != null && directoryAccount !=  null)
+            {
+                if(wisaAccount.ClassGroup != directoryAccount.ClassGroup)
+                {
+                    Actions.Add(new MoveDirectoryClassGroup());
+                    directoryStatusIcon = "AlertCircleOutline";
+                    directoryStatusIcon = "Orange";
+                    accountOK = false;
+                }
+            }
+
+            if (wisaAccount != null && smartschoolAccount != null)
+            {
+                if(wisaAccount.ClassGroup != smartschoolAccount.Group)
+                {
+                    Actions.Add(new MoveToSmartschoolClassGroup());
+                    smartschoolStatusIcon = "AlertCircleOutline";
+                    smartschoolStatusColor = "Orange";
+                    accountOK = false;
+                }
+            }
         }
 
         private void FindActionsForMissingAccounts()

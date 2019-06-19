@@ -93,6 +93,7 @@
                   SelectedCellsChanged="AccountList_SelectedCellsChanged">
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding Name}" Header="Naam" IsReadOnly="True" />
+                    <DataGridTextColumn Binding="{Binding ClassGroup}" Header="Klas" IsReadOnly="True"/>
 
                     <DataGridTemplateColumn Header="Wisa" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
@@ -151,7 +152,7 @@
                                             Click="ActionButton_Click"
                                             Visibility="{Binding CanBeApplied, Converter={StaticResource VisibleIfTrueConverter}}"
                                           Style="{StaticResource MaterialDesignFloatingActionButton}"
-                                          materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding InProgress.Value}"
+                                          materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding InProgress.Value, Mode=TwoWay}"
                                           materialDesign:ButtonProgressAssist.Value="-1"
                                           materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                           >

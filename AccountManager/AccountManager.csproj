@@ -123,6 +123,8 @@
     <Compile Include="Action\DoNotImportFromWisa.cs" />
     <Compile Include="Action\EmptyClassGroupToSmartschool.cs" />
     <Compile Include="Action\ModifySmartschoolData.cs" />
+    <Compile Include="Action\MoveDirectoryClassGroup.cs" />
+    <Compile Include="Action\MoveToSmartschoolClassGroup.cs" />
     <Compile Include="Action\NoAccountActionNeeded.cs" />
     <Compile Include="Action\NoActionNeeded.cs" />
     <Compile Include="Action\RemoveAccountFromDirectory.cs" />

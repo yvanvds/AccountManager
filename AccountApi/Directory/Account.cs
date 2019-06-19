@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.DirectoryServices;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -113,6 +114,24 @@ namespace AccountApi.Directory
             var entry = GetEntry(uid);
             if(entry != null)
             {
+                string home = string.Empty ;
+                if (entry.Properties["HomeDirectory"] != null)
+                {
+                    if (entry.Properties["HomeDirectory"].Value != null)
+                        home = entry.Properties["HomeDirectory"].Value.ToString();
+                }
+                if(home != string.Empty)
+                {
+                    try
+                    {
+                        var dir = new DirectoryInfo(home);
+                        dir.Delete(true);
+                    } catch(Exception e)
+                    {
+                        Connector.Log.AddError(Origin.Directory, e.Message);
+                    }
+                    
+                }
                 var parent = entry.Parent;
                 if (parent != null)
                 {
@@ -137,6 +156,16 @@ namespace AccountApi.Directory
             {
                 Connector.Log.AddError(Origin.Directory, e.Message);
             }
+        }
+
+        public void MoveToClassGroup(DirectoryEntry newParent, string ClassGroup)
+        {
+            var entry = GetEntry(UID);
+            classGroup = ClassGroup;
+            entry.Properties["smaClass"].Value = ClassGroup;
+            entry.MoveTo(newParent);
+            entry.CommitChanges();
+            entry.Close();
         }
 
         private static DirectoryEntry GetEntry(string uid)

@@ -88,9 +88,11 @@ namespace AccountManager.Groups
         private async void ActionButton_Click(object sender, RoutedEventArgs e)
         {
             GroupAction action = (e.Source as Button).DataContext as GroupAction;
+            action.InProgress.Value = true;
             await action.Apply(SelectedGroup.Value);
             await LinkedGroups.ReLink();
             CreateCollection();
+            action.InProgress.Value = false;
         }
     }
 }

@@ -302,6 +302,9 @@ namespace AccountApi.Smartschool
             {
                 Error.AddError(iResult);
                 return false;
+            } else
+            {
+                account.Group = group.Name;
             }
             return true;
         }

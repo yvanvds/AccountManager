@@ -18,7 +18,7 @@ namespace AccountManager.Action
 
         public async override Task Apply(LinkedAccount linkedAccount)
         {
-            linkedAccount.directoryAccount.Delete();
+            await AccountApi.Directory.AccountManager.DeleteStudent(linkedAccount.directoryAccount);
         }
     }
 }

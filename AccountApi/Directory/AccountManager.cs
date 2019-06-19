@@ -197,6 +197,46 @@ namespace AccountApi.Directory
             return null;
         }
 
+        public static async Task DeleteStudent(Account account)
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    account.Delete();
+                    Students.Remove(account);
+                }
+                catch (Exception e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                }
+            }); 
+        }
+
+        public static async Task MoveStudentToClass(Account account, string ClassGroup)
+        {
+            await Task.Run(() =>
+            {
+                string path = Connector.GetPath(AccountRole.Student, ClassGroup);
+                if (path == null)
+                {
+                    Connector.Log.AddError(Origin.Directory, "unable to move account to " + ClassGroup);
+                    return;
+                }
+                Connector.CreateOUIfneeded(path);
+
+                DirectoryEntry newParent = Connector.GetEntry(path);
+                if (newParent == null)
+                {
+                    Connector.Log.AddError(Origin.Directory, "cannot get path: " + path);
+                    return;
+                }
+
+                account.MoveToClassGroup(newParent, ClassGroup);
+            });
+            
+        }
+
         public static async Task<Account> Create(string firstname, string lastname, string WisaID, AccountRole role, string classgroup = "")
         {
             return await Task.Run(() =>

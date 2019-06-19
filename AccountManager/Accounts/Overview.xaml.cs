@@ -1,4 +1,5 @@
 ﻿using AccountManager.Action;
+using MaterialDesignThemes.Wpf;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -130,10 +131,12 @@ namespace AccountManager.Accounts
 
         private async void ActionButton_Click(object sender, RoutedEventArgs e)
         {
+            ButtonProgressAssist.SetIsIndicatorVisible((e.Source as DependencyObject), true);
             AccountAction action = (e.Source as Button).DataContext as AccountAction;
             await action.Apply(SelectedAccount.Value);
             await LinkedAccounts.ReLink();
             await CreateCollection();
+            ButtonProgressAssist.SetIsIndicatorVisible((e.Source as DependencyObject), true);
         }
     }
 }
