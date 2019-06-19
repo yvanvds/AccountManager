@@ -15,9 +15,9 @@ namespace AccountManager.Action
         {
         }
 
-        public override Task Apply(LinkedAccount linkedAccount)
+        public async override Task Apply(LinkedAccount linkedAccount)
         {
-            throw new NotImplementedException();
+            await AccountApi.Google.AccountManager.Delete(linkedAccount.googleAccount.Mail);
         }
     }
 }

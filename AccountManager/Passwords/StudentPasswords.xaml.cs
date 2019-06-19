@@ -1,4 +1,5 @@
 ﻿using AbstractAccountApi;
+using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -360,14 +361,28 @@ namespace AccountManager.Passwords
             item.SmartschoolCo6Password.Value = checkbox.IsChecked ?? false;
         }
 
-        private async void SaveToCsvButton_Click(object sender, RoutedEventArgs e)
+        private void SaveToCsvButton_Click(object sender, RoutedEventArgs e)
         {
+            var dialog = new SaveFileDialog();
+            dialog.Filter = "csv file (.csv)|*.csv";
 
+            if (dialog.ShowDialog() == true)
+            {
+                Data.Instance.SaveCoPasswords(dialog.FileName);    
+            }
+            UpdateButtons();
         }
 
         private async void PrintButton_Click(object sender, RoutedEventArgs e)
         {
+            var dialog = new SaveFileDialog();
+            dialog.Filter = "pdf file (.pdf)|*.pdf";
 
+            if (dialog.ShowDialog() == true)
+            {
+                await Data.Instance.SavePasswordsToPdf(dialog.FileName);
+            }
+            UpdateButtons();
         }
     }
 }

@@ -264,5 +264,14 @@ namespace AccountApi.Directory
                 return null;
             }
         }
+
+        public static DirectoryEntry GetEntryByUID(string uid)
+        {
+            DirectorySearcher search = new DirectorySearcher();
+            search.Filter = String.Format("(SAMAccountName={0})", uid);
+            SearchResult result = search.FindOne();
+            if (result == null) return null;
+            return result.GetDirectoryEntry();
+        }
     }
 }

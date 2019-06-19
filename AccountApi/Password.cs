@@ -14,18 +14,11 @@ namespace AccountApi
 
             // start with a capital
             password[0] = CAPITALS[random.Next(CAPITALS.Length)];
-
-            // add 5 charactes (uppercase and lowercase mixed, no i, I, l, L, o, O)
-            for (int charPos = 1; charPos < 6; charPos++)
-            {
-                password[charPos] = CHARACTERS[random.Next(CHARACTERS.Length)];
-
-                // make sure that no 3 sequential chars are the same
-                bool identical = charPos > 2 && password[charPos] == password[charPos - 1]
-                    && password[charPos - 1] == password[charPos - 2];
-
-                if (identical) charPos--;
-            }
+            password[1] = VOWELS[random.Next(VOWELS.Length)];
+            password[2] = CONSONANTS[random.Next(CONSONANTS.Length)];
+            password[3] = VOWELS[random.Next(VOWELS.Length)];
+            password[4] = CONSONANTS[random.Next(CONSONANTS.Length)];
+            password[5] = VOWELS[random.Next(VOWELS.Length)];
 
             // add a number in range 2 to 9 (zero and one are not included because they are easily confused with o and i)
             password[6] = (char)(48 + random.Next(2, 10));
@@ -43,9 +36,8 @@ namespace AccountApi
 
         static private Random random = new Random();
 
-        static readonly string CAPITALS = "ABCDEFGHJKMNPQRSTUVWXYZ";
-        static readonly string CHARACTERS = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ";
-
-        
+        static readonly string CAPITALS = "BCDFGHJKMNPQRSTVWXZ";
+        static readonly string VOWELS = "aeiouy";
+        static readonly string CONSONANTS = "bcdfghjkmnpqrstvwxz";
     }
 }

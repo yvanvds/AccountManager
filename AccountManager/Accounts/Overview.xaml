@@ -118,13 +118,13 @@
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
 
-                    <DataGridTemplateColumn Header="Google" IsReadOnly="True">
+                    <!--<DataGridTemplateColumn Header="Google" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <materialDesign:PackIcon Kind="{Binding GoogleStatusIcon}" Foreground="{Binding GoogleStatusColor}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>
+                    </DataGridTemplateColumn>-->
 
                 </DataGrid.Columns>
             </DataGrid>

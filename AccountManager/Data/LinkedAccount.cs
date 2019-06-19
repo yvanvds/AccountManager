@@ -122,7 +122,9 @@ namespace AccountManager
                 googleStatusColor = "DarkGreen";
             }
 
-            if (wisaAccount != null && directoryAccount != null && smartschoolAccount != null && googleAccount != null)
+            
+
+            if (wisaAccount != null && directoryAccount != null && smartschoolAccount != null)// don't include google anymore && googleAccount != null)
             {
                 accountOK = true;
             } else
@@ -138,6 +140,12 @@ namespace AccountManager
             if (wisaAccount == null && directoryAccount == null && smartschoolAccount == null && googleAccount != null)
             {
                 Actions.Add(new RemoveAccountFromGoogle());
+            }
+
+            // if account is only on directory, suggest removal
+            else if (wisaAccount == null && directoryAccount != null && smartschoolAccount == null)
+            {
+                Actions.Add(new RemoveAccountFromDirectory());
             }
         }
 

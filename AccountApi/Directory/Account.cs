@@ -111,11 +111,18 @@ namespace AccountApi.Directory
         public void Delete()
         {
             var entry = GetEntry(uid);
-            var parent = entry.Parent;
-            parent.Children.Remove(entry);
-            parent.CommitChanges();
-            entry.Close();
-            parent.Close();
+            if(entry != null)
+            {
+                var parent = entry.Parent;
+                if (parent != null)
+                {
+                    parent.Children.Remove(entry);
+                    parent.CommitChanges();
+                    parent.Close();
+                }
+                entry.Close();
+            }
+            
         }
 
         public void SetPassword(string password)
@@ -134,7 +141,7 @@ namespace AccountApi.Directory
 
         private static DirectoryEntry GetEntry(string uid)
         {
-            return null;
+            return Connector.GetEntryByUID(uid);
         }
     }
 }

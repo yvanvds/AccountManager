@@ -20,6 +20,16 @@ namespace AccountManager
         public string Co5 { get; set; }
         public string Co6 { get; set; }
 
+        public static string GetHeaders()
+        {
+            return "Gebruikersnaam;Naam;Klas;CoAccount1;CoAccount2;CoAccount3;CoAccount4;CoAccount5;CoAccount6";
+        }
+
+        public string GetAsCSV()
+        {
+            return AccountName + ";" + Name + ";" + ClassGroup + ";" + Co1 + ";" + Co2 + ";" + Co3 + ";" + Co4 + ";" + Co5 + ";" + Co6;
+        }
+
         public CoPassword(string AccountName, string Name, string ClassGroup)
         {
             this.AccountName = AccountName;
