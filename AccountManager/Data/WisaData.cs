@@ -51,6 +51,7 @@ namespace AccountManager
                     {
                         case Rule.WI_ReplaceInstitution: WisaImportRules.Add(new AccountApi.Rules.ReplaceInstitute(data)); break;
                         case Rule.WI_DontImportClass: WisaImportRules.Add(new AccountApi.Rules.DontImportClass(data)); break;
+                        case Rule.WI_MarkAsVirtual: WisaImportRules.Add(new AccountApi.Rules.MarkAsVirtual(data)); break;
                     }
                 }
             }
@@ -283,6 +284,7 @@ namespace AccountManager
             {
                 case Rule.WI_ReplaceInstitution: newRule = new AccountApi.Rules.ReplaceInstitute(); break;
                 case Rule.WI_DontImportClass: newRule = new AccountApi.Rules.DontImportClass(); break;
+                case Rule.WI_MarkAsVirtual: newRule = new AccountApi.Rules.MarkAsVirtual(); break;
             }
 
             if(newRule != null)

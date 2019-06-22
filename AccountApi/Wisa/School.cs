@@ -24,6 +24,8 @@ namespace AccountApi.Wisa
         public string Name { get => name; }
         public string Description { get => description; }
 
+        public bool IsVirtual { get; set; }
+
         public bool IsActive { get; set; } = false;
 
         public JObject ToJson()
@@ -33,7 +35,8 @@ namespace AccountApi.Wisa
                 ["ID"] = ID,
                 ["Name"] = Name,
                 ["Description"] = Description,
-                ["IsActive"] = IsActive
+                ["IsActive"] = IsActive,
+                ["IsVirtual"] = IsVirtual,
             };
             return result;
         }
@@ -44,6 +47,7 @@ namespace AccountApi.Wisa
             name = obj["Name"].ToString();
             description = obj["Description"].ToString();
             IsActive = Convert.ToBoolean(obj["IsActive"]);
+            IsVirtual = obj.ContainsKey("IsVirtual") ? Convert.ToBoolean(obj["IsVirtual"]) : false;
         }
     }
 }

@@ -23,7 +23,7 @@
         </Grid.RowDefinitions>
 
         <Label Grid.Row="0" Margin="8" FontWeight="Bold" FontSize="20" Content="{Binding Path=Rule.Header}"/>
-        <Label Grid.Row="1" Margin="8" FontWeight="Light" Content="{Binding Path=Rule.Description}"/>
+        <TextBlock Grid.Row="1" Margin="8" FontWeight="Light"  TextWrapping="Wrap" Text="{Binding Path=Rule.Description}"/>
 
         <TextBox Grid.Row="2" Margin="16" 
                  Text="{Binding Path=ClassName.Value, Mode=TwoWay}" 

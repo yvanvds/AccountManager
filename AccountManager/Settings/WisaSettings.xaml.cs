@@ -99,6 +99,7 @@ namespace AccountManager.Settings
             {
                 case Rule.WI_ReplaceInstitution: importRuleEditor = new Dialogs.WI_ReplaceInstitute(rule); break;
                 case Rule.WI_DontImportClass: importRuleEditor = new Dialogs.WI_DontImportClass(rule); break;
+                case Rule.WI_MarkAsVirtual: importRuleEditor = new Dialogs.WI_MarkAsVirtual(rule); break;
             }
             if (importRuleEditor != null)
             {

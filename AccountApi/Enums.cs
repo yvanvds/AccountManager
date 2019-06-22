@@ -76,6 +76,7 @@ namespace AccountApi
         // Wisa Import Rules
         WI_ReplaceInstitution,
         WI_DontImportClass,
+        WI_MarkAsVirtual,
     }
 
     public enum RuleType
@@ -88,5 +89,6 @@ namespace AccountApi
     {
         Discard,
         Modify,
+        WorkDate,
     }
 }

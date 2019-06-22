@@ -12,6 +12,7 @@ namespace AccountApi.Rules
         {
             { Rule.WI_ReplaceInstitution, "Wijzig Instellingsnummer"},
             { Rule.WI_DontImportClass, "Klas niet Importeren" },
+            { Rule.WI_MarkAsVirtual, "School Markeren als Virtueel" },
         };
 
         public static Dictionary<Rule, string> SmartschoolRules = new Dictionary<Rule, string>()
