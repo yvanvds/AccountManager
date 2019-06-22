@@ -26,7 +26,7 @@ namespace AccountApi.Rules
         private string description;
         public string Description => description;
 
-        public Prop<string> ShortInfo { get; set; } = new Prop<string> { Value = "Instellingsnummer: " };
+        public Prop<string> ShortInfo { get; set; } = new Prop<string> { Value = "School: " };
 
         public bool Enabled { get; set; }
 
@@ -43,13 +43,12 @@ namespace AccountApi.Rules
         public void SetConfig(int ID, string data)
         {
             if (ID == 0) schoolCode = data;
-            this.ShortInfo.Value = "Instellingsnummer: " + schoolCode;
+            this.ShortInfo.Value = "School: " + schoolCode;
         }
 
         public bool ShouldApply(object obj)
         {
-            var school = obj as Wisa.School;
-            return (school.ID.Equals(schoolCode));
+            return true; // not relevant here
         }
 
         public JObject ToJson()
@@ -71,7 +70,7 @@ namespace AccountApi.Rules
         {
             SetDefaults();
             this.schoolCode = obj.ContainsKey("SchoolCode") ? obj["SchoolCode"].ToString() : "";
-            this.ShortInfo.Value = "Instellingsnummer: " + schoolCode;
+            this.ShortInfo.Value = "School: " + schoolCode;
         }
 
         private void SetDefaults()
@@ -79,7 +78,7 @@ namespace AccountApi.Rules
             rule = Rule.WI_MarkAsVirtual;
             ruleType = RuleType.WISA_Import;
             ruleAction = RuleAction.WorkDate;
-            header = "Markeer de instelling als virtueel";
+            header = "Markeer de school als virtueel";
             description = "Virtuele scholen kunnen een aangepaste werkdatum gebruiken. Dit helpt om inschrijvingen voor het volgende schooljaar in orde te brengen.";
         }
 

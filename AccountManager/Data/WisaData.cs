@@ -259,7 +259,7 @@ namespace AccountManager
         public async Task ReloadWisaClassgroups()
         {
             // check date
-            DateTime workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
+            DateTime workDate = DateTime.Now;
 
             // reload list of classes
             AccountApi.Wisa.ClassGroupManager.Clear();
@@ -267,6 +267,14 @@ namespace AccountManager
             {
                 if (school.IsActive)
                 {
+                    foreach(var rule in WisaImportRules)
+                    {
+                        if(rule.Rule == Rule.WI_MarkAsVirtual && rule.GetConfig(0) == school.Name)
+                        {
+                            workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
+                        }
+                    }
+
                     bool success = await AccountApi.Wisa.ClassGroupManager.AddSchool(school, workDate);
                     if (!success) return;
                 }
@@ -298,7 +306,7 @@ namespace AccountManager
         public async Task ReloadWisaStudents()
         {
             // check date
-            DateTime workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
+            DateTime workDate = DateTime.Now;
 
             // reload list of classes
             AccountApi.Wisa.Students.Clear();
@@ -306,10 +314,32 @@ namespace AccountManager
             {
                 if (school.IsActive)
                 {
+                    foreach (var rule in WisaImportRules)
+                    {
+                        if (rule.Rule == Rule.WI_MarkAsVirtual && rule.GetConfig(0) == school.Name)
+                        {
+                            workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
+                        }
+                    }
+
                     bool success = await AccountApi.Wisa.Students.AddSchool(school, workDate);
                     if (!success) return;
                 }
             }
+
+            // remove students in discarded classgroups from this list
+            for(int i = AccountApi.Wisa.Students.All.Count - 1; i >= 0; i--)
+            {
+                foreach(var rule in WisaImportRules)
+                {
+                    if(rule.Rule == Rule.WI_DontImportClass && rule.GetConfig(0) == AccountApi.Wisa.Students.All[i].ClassGroup)
+                    {
+                        AccountApi.Wisa.Students.All.RemoveAt(i);
+                        break;
+                    }
+                }
+            }
+
             AccountApi.Wisa.Students.Sort();
             SaveWisaStudentsToJSON();
         }

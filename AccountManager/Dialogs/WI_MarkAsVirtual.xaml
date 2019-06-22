@@ -27,7 +27,7 @@
 
         <TextBox Grid.Row="2" Margin="16" TextWrapping="Wrap"
                  Text="{Binding Path=SchoolCode.Value, Mode=TwoWay}" 
-                 materialDesign:HintAssist.Hint="Instellingsnummer"
+                 materialDesign:HintAssist.Hint="Naam School"
                  Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
 
         <Grid Grid.Row="3">
