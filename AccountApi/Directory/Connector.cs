@@ -92,6 +92,7 @@ namespace AccountApi.Directory
         {
             firstname = firstname.Trim().ToLower();
             lastname = lastname.Trim().ToLower();
+            lastname = Regex.Replace(lastname, @"\s+", "");
 
             Regex rgx = new Regex("[^a-zA-Z]");
             firstname = rgx.Replace(firstname, "");
@@ -109,6 +110,17 @@ namespace AccountApi.Directory
 
             string id = lastname.Substring(pos, length);
             id += firstname[0];
+
+            id = id.Replace('à', 'a');
+            id = id.Replace('á', 'a');
+            id = id.Replace('ä', 'a');
+            id = id.Replace('è', 'e');
+            id = id.Replace('é', 'e');
+            id = id.Replace('ë', 'e');
+            id = id.Replace('ï', 'i');
+            id = id.Replace('ò', 'o');
+            id = id.Replace('ó', 'o');
+            id = id.Replace('ö', 'o');
 
             int counter = 0;
 

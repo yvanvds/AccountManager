@@ -117,6 +117,7 @@
       <DependentUpon>WisaAccounts.xaml</DependentUpon>
     </Compile>
     <Compile Include="Action\AccountAction.cs" />
+    <Compile Include="Action\AddAccountToDirectoryAndSmartschool.cs" />
     <Compile Include="Action\AddClassGroupToDirectory.cs" />
     <Compile Include="Action\AddClassGroupToSmartschool.cs" />
     <Compile Include="Action\DoNotImportClassGroupFromSmartschool.cs" />

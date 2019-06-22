@@ -154,6 +154,8 @@ namespace AccountManager
                     accountOK = false;
                 }
             }
+
+            
         }
 
         private void FindActionsForMissingAccounts()
@@ -168,6 +170,12 @@ namespace AccountManager
             else if (wisaAccount == null && directoryAccount != null && smartschoolAccount == null)
             {
                 Actions.Add(new RemoveAccountFromDirectory());
+            }
+
+            // if account is only on wisa, add on directory and smartschool
+            if (wisaAccount != null && directoryAccount == null && smartschoolAccount == null)
+            {
+                Actions.Add(new AddAccountToDirectoryAndSmartschool());
             }
         }
 
