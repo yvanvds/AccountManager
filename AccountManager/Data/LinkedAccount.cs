@@ -146,7 +146,8 @@ namespace AccountManager
 
             if (wisaAccount != null && smartschoolAccount != null)
             {
-                if(wisaAccount.ClassGroup != smartschoolAccount.Group)
+               
+                if(!wisaAccount.ClassGroup.Contains("ANS") && !wisaAccount.ClassGroup.Contains("BNS") && wisaAccount.ClassGroup != smartschoolAccount.Group)
                 {
                     Actions.Add(new MoveToSmartschoolClassGroup());
                     smartschoolStatusIcon = "AlertCircleOutline";
@@ -155,7 +156,19 @@ namespace AccountManager
                 }
             }
 
-            
+            if(directoryAccount != null)
+            {
+                var action = new ModifyDirectoryData();
+                if (directoryAccount.CN != directoryAccount.DesiredCN()) action.List.Add(ModifyDirectoryData.Fields.CommonName);
+
+                if(action.List.Count > 0)
+                {
+                    directoryStatusIcon = "CircleEditOutline";
+                    directoryStatusColor = "Chocolate";
+                    Actions.Add(action);
+                    accountOK = false;
+                }
+            }
         }
 
         private void FindActionsForMissingAccounts()
@@ -176,7 +189,24 @@ namespace AccountManager
             if (wisaAccount != null && directoryAccount == null && smartschoolAccount == null)
             {
                 Actions.Add(new AddAccountToDirectoryAndSmartschool());
+
+            // if account exists on wisa and directory, add to smartschool
+            } else if (wisaAccount != null && directoryAccount != null && smartschoolAccount == null)
+            {
+                Actions.Add(new AddAccountToSmartschool());
             }
+        }
+
+        public AccountAction GetSameAction(AccountAction action)
+        {
+            foreach(var act in Actions)
+            {
+                if(act.AccountActionType == action.AccountActionType)
+                {
+                    return act;
+                }
+            }
+            return null;
         }
 
         public bool WisaLinked => wisaAccount != null;

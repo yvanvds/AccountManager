@@ -70,7 +70,7 @@
                     <GridViewColumn
         DisplayMemberBinding="{Binding Source}"
         Header="Source" />
-                    <GridViewColumn Header="Message">
+                    <GridViewColumn Header="Message" Width="400">
                         <GridViewColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding Content}" Foreground="{Binding Color}"></TextBlock>

@@ -76,5 +76,12 @@ namespace AccountManager
 
             SavePasswordFileContent();
         }
+
+        public void SaveContent()
+        {
+            SaveADAccountsToFile();
+            SaveADGroupsToFile();
+            SaveSmartschoolAccount();
+        }
     }
 }

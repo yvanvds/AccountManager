@@ -328,6 +328,11 @@ namespace AccountManager
             }
             AccountApi.Smartschool.GroupManager.Root.Sort();
 
+            SaveSmartschoolAccount();
+        }
+
+        public void SaveSmartschoolAccount()
+        {
             var json = AccountApi.Smartschool.GroupManager.ToJson(true);
             var location = Path.Combine(appFolder, smartschoolGroupsFile);
             File.WriteAllText(location, json.ToString());

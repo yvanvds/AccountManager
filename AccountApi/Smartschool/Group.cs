@@ -272,15 +272,30 @@ namespace AccountApi.Smartschool
         /// <returns></returns>
         public async Task LoadAccounts()
         {
-            var jsonResult = await Task.Run(
-             () => Connector.service.getAllAccountsExtended(Connector.password, Name, "0")
-            );
+            object jsonResult = null;
+
+            await Task.Run(
+            () =>
+            {
+                try
+                {
+                    jsonResult = Connector.service.getAllAccountsExtended(Connector.password, Code, "0");
+
+                }
+                catch (Exception e)
+                {
+                    Error.AddError(e.Message);
+                }
+            });
+            
+            
 
             if (jsonResult is int)
             {
                 // probably just a group without direct accounts
                 if ((int)jsonResult == 19)
                 {
+                    Error.AddMessage("No Direct Accounts in " + Name);
                     return;
                 }
                 else
@@ -297,10 +312,28 @@ namespace AccountApi.Smartschool
                 Accounts.Clear();
                 foreach (var account in details)
                 {
-                    Accounts.Add(new Account());
-                    Accounts.Last().Group = Name;
+                    Account newAccount = new Account();
+                    newAccount.Group = Name;
+                    AccountManager.LoadFromJSON(newAccount, account);
 
-                    AccountManager.LoadFromJSON(Accounts.Last(), account);
+                    IAccount duplicate = null;
+                    if (Children != null)
+                    {
+                        foreach (var child in Children)
+                        {
+                            var result = child.FindAccount(newAccount.UID);
+                            if (result != null)
+                            {
+                                duplicate = result;
+                                break;
+                            }
+                        }
+                    }
+
+                    if(duplicate == null)
+                    {
+                        Accounts.Add(newAccount);
+                    }
                 }
 
                 Error.AddMessage("Added " + Accounts.Count.ToString() + " Accounts to " + Name);

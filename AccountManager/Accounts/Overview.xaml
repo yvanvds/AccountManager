@@ -147,6 +147,10 @@
                                         <StackPanel Grid.Column="0">
                                             <TextBlock Text="{Binding Header}" FontSize="20" Foreground="Chocolate" Margin="0 0 0 8"/>
                                             <TextBlock Text="{Binding Description}" FontWeight="Light" TextWrapping="Wrap"/>
+                                            <StackPanel Orientation="Horizontal" Visibility="{Binding CanBeAppliedToAll, Converter={StaticResource VisibleIfTrueConverter}}">
+                                                <CheckBox IsChecked="{Binding ApplyToAll.Value, Mode=TwoWay}"/>
+                                                <Label Content="Apply to All"/>
+                                            </StackPanel>
                                         </StackPanel>
                                         <Button Grid.Column="1"
                                             Click="ActionButton_Click"

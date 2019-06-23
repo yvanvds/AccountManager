@@ -9,6 +9,7 @@ namespace AccountManager.Action
     class MoveDirectoryClassGroup : AccountAction
     {
         public MoveDirectoryClassGroup() : base(
+            AccountActionType.MoveDirectoryClassGroup,
             "Wijzig Klas in Active Directory",
             "De klas van dit account komt niet overeen met de gegevens in Wisa",
             true)

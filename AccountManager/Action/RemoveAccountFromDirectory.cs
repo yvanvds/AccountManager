@@ -9,6 +9,7 @@ namespace AccountManager.Action
     class RemoveAccountFromDirectory : AccountAction
     {
         public RemoveAccountFromDirectory() : base(
+            AccountActionType.RemoveFromDirectory,
             "Verwijder Active Directory Account",
             "Dit account bestaat enkel in Active Directory. Waarschijnlijk kan het verwijderd worden.",
             true)

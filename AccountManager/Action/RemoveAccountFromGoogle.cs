@@ -9,6 +9,7 @@ namespace AccountManager.Action
     public class RemoveAccountFromGoogle : AccountAction
     {
         public RemoveAccountFromGoogle() : base(
+            AccountActionType.RemoveFromGoogle,
             "Verwijder Google Account", 
             "Dit account bestaat enkel bij Google. Waarschijnlijk mag dit verwijderd worden.", 
             true)
