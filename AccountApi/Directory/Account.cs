@@ -22,6 +22,7 @@ namespace AccountApi.Directory
             wisaName = entry.Properties.Contains("smawisaname") ? entry.Properties["smawisaname"].Value.ToString() : "";
             classGroup = entry.Properties.Contains("smaClass") ? entry.Properties["smaClass"].Value.ToString() : "";
             state = entry.Properties.Contains("userAccountControl") ? (int)entry.Properties["userAccountControl"].Value : 0;
+            cn = entry.Properties.Contains("cn") ? entry.Properties["cn"].Value.ToString() : "";
         }
 
         public Account(JObject obj)
@@ -35,6 +36,7 @@ namespace AccountApi.Directory
             wisaName = obj.ContainsKey("wisaName") ? obj["wisaName"].ToString() : "";
             classGroup = obj.ContainsKey("classGroup") ? obj["classGroup"].ToString() : "";
             state = obj.ContainsKey("state") ? Convert.ToInt32(obj["state"]) : 0;
+            cn = obj.ContainsKey("cn") ? obj["cn"].ToString() : "";
         }
 
         public JObject ToJson()
@@ -49,7 +51,8 @@ namespace AccountApi.Directory
                 ["wisaID"] = wisaID,
                 ["wisaName"] = wisaName,
                 ["classGroup"] = classGroup,
-                ["state"] = state
+                ["state"] = state,
+                ["cn"] = CN,
             };
             return result;
         }
@@ -65,6 +68,24 @@ namespace AccountApi.Directory
 
         private string fullName;
         public string FullName { get => fullName; }
+
+        private string cn;
+        public string CN {
+            get => cn;
+            set
+            {
+                cn = value;
+                try
+                {
+                    var entry = GetEntry(uid);
+                    entry.Rename("CN=" + cn);
+                    entry.CommitChanges();
+                    entry.Close();
+                }
+                catch (Exception) { }
+                
+            }
+        }
 
         private string mailAlias;
         public string MailAlias { get => mailAlias; }
@@ -171,6 +192,11 @@ namespace AccountApi.Directory
         private static DirectoryEntry GetEntry(string uid)
         {
             return Connector.GetEntryByUID(uid);
+        }
+
+        public string DesiredCN()
+        {
+            return fullName + " (" + uid + ")";
         }
     }
 }

@@ -9,6 +9,7 @@ namespace AccountManager.Action
     public class NoAccountActionNeeded : AccountAction
     {
         public NoAccountActionNeeded() : base(
+            AccountActionType.NoAction,
             "Geen Actie Nodig", "Dit account voldoet aan alle regels.", false)
         {
         }

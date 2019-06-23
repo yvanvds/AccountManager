@@ -23,7 +23,7 @@
         <!-- Left Side -->
         <Grid Grid.Column="0">
             <Grid.RowDefinitions>
-                <RowDefinition Height="400"/>
+                <RowDefinition Height="450"/>
                 <RowDefinition/>
             </Grid.RowDefinitions>
             
@@ -62,6 +62,7 @@
                     <TextBox Text="{Binding Path=Data.ADClasses, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Klassen" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                     <TextBox Text="{Binding Path=Data.ADStudents, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Leerling Accounts" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                     <TextBox Text="{Binding Path=Data.ADStaff, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Personeel Accocunts" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Path=Data.AzureDomain, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Azure Domain" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                 </StackPanel>
             </GroupBox>
 

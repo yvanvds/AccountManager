@@ -91,6 +91,7 @@ namespace AccountApi.Smartschool
                 Error.AddError(iResult);
                 return false;
             }
+
             return true;
         }
 

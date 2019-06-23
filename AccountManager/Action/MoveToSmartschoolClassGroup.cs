@@ -9,6 +9,7 @@ namespace AccountManager.Action
     class MoveToSmartschoolClassGroup : AccountAction
     {
         public MoveToSmartschoolClassGroup() : base(
+            AccountActionType.MoveSmartschoolClassGroup,
             "Wijzig Klas in Smartschool",
             "De klas van dit account komt niet overeen met de klas in Wisa",
             true)

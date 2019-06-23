@@ -117,11 +117,14 @@
       <DependentUpon>WisaAccounts.xaml</DependentUpon>
     </Compile>
     <Compile Include="Action\AccountAction.cs" />
+    <Compile Include="Action\AddAccountToDirectoryAndSmartschool.cs" />
+    <Compile Include="Action\AddAccountToSmartschool.cs" />
     <Compile Include="Action\AddClassGroupToDirectory.cs" />
     <Compile Include="Action\AddClassGroupToSmartschool.cs" />
     <Compile Include="Action\DoNotImportClassGroupFromSmartschool.cs" />
     <Compile Include="Action\DoNotImportFromWisa.cs" />
     <Compile Include="Action\EmptyClassGroupToSmartschool.cs" />
+    <Compile Include="Action\ModifyDirectoryData.cs" />
     <Compile Include="Action\ModifySmartschoolData.cs" />
     <Compile Include="Action\MoveDirectoryClassGroup.cs" />
     <Compile Include="Action\MoveToSmartschoolClassGroup.cs" />

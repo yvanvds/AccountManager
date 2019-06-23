@@ -25,6 +25,8 @@ namespace AccountManager
             adClasses = obj.ContainsKey("classes") ? obj["classes"].ToString() : "";
             adStudents = obj.ContainsKey("students") ? obj["students"].ToString() : "";
             adStaff = obj.ContainsKey("staff") ? obj["staff"].ToString() : "";
+            azureDomain = obj.ContainsKey("azure") ? obj["azure"].ToString() : "";
+
             adConnectionTested = obj.ContainsKey("connectionTested") ? obj["connectionTested"].ToObject<ConfigState>() : ConfigState.Failed;
             adUseGrades = obj.ContainsKey("useGrades") ? obj["useGrades"].ToObject<bool>() : false;
             adUseYears = obj.ContainsKey("useYears") ? obj["useYears"].ToObject<bool>() : false;
@@ -62,7 +64,8 @@ namespace AccountManager
                 ["useGrades"] = adUseGrades,
                 ["useYears"] = adUseYears,
                 ["grades"] = new JArray(adGrades),
-                ["years"] = new JArray(adYears)
+                ["years"] = new JArray(adYears),
+                ["azure"] = azureDomain,
             };
             return result;
         }
@@ -90,6 +93,7 @@ namespace AccountManager
 
         public bool SetADCredentials()
         {
+            Connector.AzureDomain = azureDomain;
             return AccountApi.Directory.Connector.Init(adDomain, adAccounts, adClasses, adStudents, adStaff, MainWindow.Instance.Log);
         }
 
@@ -150,6 +154,16 @@ namespace AccountManager
             {
                 adStaff = value.Trim();
                 ADConnectionTested = ConfigState.Unknown;
+            }
+        }
+
+        private string azureDomain;
+        public string AzureDomain
+        {
+            get => azureDomain;
+            set
+            {
+                azureDomain = value.Trim();
             }
         }
 

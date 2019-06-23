@@ -133,7 +133,26 @@ namespace AccountManager.Accounts
         {
             ButtonProgressAssist.SetIsIndicatorVisible((e.Source as DependencyObject), true);
             AccountAction action = (e.Source as Button).DataContext as AccountAction;
-            await action.Apply(SelectedAccount.Value);
+            if(action.CanBeAppliedToAll && action.ApplyToAll.Value)
+            {
+                var items = AccountList.ItemsSource;
+                foreach(var item in items)
+                {
+                    var account = item as LinkedAccount;
+                    var sameAction = account.GetSameAction(action);
+                    if(sameAction != null)
+                    {
+                        await sameAction.Apply(account);
+                        
+                    }
+                    
+                }
+                MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Other, "Alle Acties werden uitgevoerd.");
+            } else
+            {
+                await action.Apply(SelectedAccount.Value);
+            }
+                        
             await LinkedAccounts.ReLink();
             await CreateCollection();
             ButtonProgressAssist.SetIsIndicatorVisible((e.Source as DependencyObject), true);
