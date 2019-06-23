@@ -24,6 +24,9 @@ namespace AccountManager.Dashboard
         public Prop<bool> ShowLinkButtonIndicator { get; set; } = new Prop<bool> { Value = false };
         public Prop<bool> ShowAccountLinkButtonIndicator { get; set; } = new Prop<bool> { Value = false };
 
+        public Prop<bool> ShowWissaClassGroupSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowWissaAccountSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+
         public Data Data { get => Data.Instance; }
 
         public Prop<string> TotalWisaGroups { get; set; } = new Prop<string> { Value = "n/a" };
@@ -59,6 +62,24 @@ namespace AccountManager.Dashboard
             DataContext = this;
             updateClassValues();
             updateStudentValues();
+
+            UpdateSyncDates();
+        }
+
+        private void UpdateSyncDates()
+        {
+            wisaAccountSyncLabel.Content = Data.Instance.LastWisaAccountSync.ToString();
+            wisaAccountSyncLabel.Foreground = GetColor(Data.Instance.LastWisaAccountSync);
+            wisaClassgroupSyncLabel.Content = Data.Instance.LastWisaClassgroupSync.ToString();
+            wisaClassgroupSyncLabel.Foreground = GetColor(Data.Instance.LastWisaClassgroupSync);
+        }
+
+        private Brush GetColor(DateTime date)
+        {
+            int diff = (DateTime.Now - date).Days;
+            if (diff == 0) return (SolidColorBrush)new BrushConverter().ConvertFromString("DarkGreen");
+            if (diff == 1) return (SolidColorBrush)new BrushConverter().ConvertFromString("Orange");
+            return (SolidColorBrush)new BrushConverter().ConvertFromString("DarkRed");
         }
 
         private async void LinkButton_Click(object sender, RoutedEventArgs e)
@@ -118,6 +139,55 @@ namespace AccountManager.Dashboard
             UnlinkedSmartschoolStudentLabel.Foreground = new SolidColorBrush(LinkedAccounts.UnlinkedSmartschoolAccounts == 0 ? Colors.DarkGreen : Colors.DarkRed);
             UnlinkedWisaStudentLabel.Foreground = new SolidColorBrush(LinkedAccounts.UnlinkedWisaAccounts == 0 ? Colors.DarkGreen : Colors.DarkRed);
             UnlinkedGoogleStudentLabel.Foreground = new SolidColorBrush(LinkedAccounts.UnlinkedGoogleAccounts == 0 ? Colors.DarkGreen : Colors.DarkRed);
+        }
+
+        private async void WisaClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowWissaClassGroupSyncButtonIndicator.Value = true;
+            Data.Instance.SetWisaCredentials();
+            await Data.Instance.ReloadWisaClassgroups();
+            await LinkedGroups.ReLink();
+            ShowWissaClassGroupSyncButtonIndicator.Value = false;
+            UpdateSyncDates();
+        }
+
+        private async void DirectoryClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+            
+        }
+
+        private void DirectoryAccountSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private void SsClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private void SsAccountSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private void GoogleClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private void GoogleAccountSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
+        private async void WisaAccountSyncButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowWissaAccountSyncButtonIndicator.Value = true;
+            Data.Instance.SetWisaCredentials();
+            await Data.Instance.ReloadWisaStudents();
+            ShowWissaAccountSyncButtonIndicator.Value = false;
+            UpdateSyncDates();
         }
     }
 }

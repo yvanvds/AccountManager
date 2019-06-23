@@ -13,6 +13,12 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
+        private DateTime lastAccountSync;
+        public DateTime LastWisaAccountSync => lastAccountSync;
+
+        private DateTime lastClassgroupSync;
+        public DateTime LastWisaClassgroupSync => lastClassgroupSync;
+
         public ObservableCollection<IRule> WisaImportRules { get; set; } = new ObservableCollection<IRule>(); 
 
         const string wisaSchoolsFile = "wisaSchools.json";
@@ -102,6 +108,7 @@ namespace AccountManager
                 string content = File.ReadAllText(wisaClassLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
                 AccountApi.Wisa.ClassGroupManager.FromJson(newObj);
+                lastClassgroupSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
 
             var wisaStudentLocation = Path.Combine(appFolder, wisaStudentsFile);
@@ -110,6 +117,7 @@ namespace AccountManager
                 string content = File.ReadAllText(wisaStudentLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
                 AccountApi.Wisa.Students.FromJson(newObj);
+                lastAccountSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
         }
 
@@ -281,6 +289,8 @@ namespace AccountManager
             }
             AccountApi.Wisa.ClassGroupManager.ApplyImportRules(WisaImportRules.ToList());
             AccountApi.Wisa.ClassGroupManager.Sort();
+            lastClassgroupSync = DateTime.Now;
+
             SaveWisaClassGroupsToJSON();
         }
 
@@ -341,6 +351,8 @@ namespace AccountManager
             }
 
             AccountApi.Wisa.Students.Sort();
+            lastAccountSync = DateTime.Now;
+
             SaveWisaStudentsToJSON();
         }
 
@@ -354,6 +366,8 @@ namespace AccountManager
         public void SaveWisaClassGroupsToJSON()
         {
             var json = AccountApi.Wisa.ClassGroupManager.ToJson();
+            json["lastSync"] = LastWisaClassgroupSync;
+
             var location = Path.Combine(appFolder, wisaClassFile);
             File.WriteAllText(location, json.ToString());
         }
@@ -361,6 +375,8 @@ namespace AccountManager
         public void SaveWisaStudentsToJSON()
         {
             var json = AccountApi.Wisa.Students.ToJson();
+            json["lastSync"] = LastWisaAccountSync;
+
             var location = Path.Combine(appFolder, wisaStudentsFile);
             File.WriteAllText(location, json.ToString());
         }
