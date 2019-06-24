@@ -14,6 +14,9 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
+        private DateTime lastSmartschoolAccountSync;
+        public DateTime LastSmartschoolAccountSync => lastSmartschoolAccountSync;
+
         public ObservableCollection<IRule> SmartschoolImportRules { get; set; } = new ObservableCollection<IRule>();
 
         public IGroup SmartschoolGroups => AccountApi.Smartschool.GroupManager.Root;
@@ -111,6 +114,7 @@ namespace AccountManager
                 string content = File.ReadAllText(smartschoolGroupsLocation);
                 var newObj = JObject.Parse(content);
                 AccountApi.Smartschool.GroupManager.FromJson(newObj);
+                lastSmartschoolAccountSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
         }
 
@@ -327,6 +331,7 @@ namespace AccountManager
                 }
             }
             AccountApi.Smartschool.GroupManager.Root.Sort();
+            lastSmartschoolAccountSync = DateTime.Now;
 
             SaveSmartschoolAccount();
         }
@@ -334,6 +339,8 @@ namespace AccountManager
         public void SaveSmartschoolAccount()
         {
             var json = AccountApi.Smartschool.GroupManager.ToJson(true);
+            json["lastSync"] = LastSmartschoolAccountSync;
+
             var location = Path.Combine(appFolder, smartschoolGroupsFile);
             File.WriteAllText(location, json.ToString());
         }

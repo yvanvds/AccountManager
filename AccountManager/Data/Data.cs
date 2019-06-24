@@ -82,6 +82,7 @@ namespace AccountManager
             SaveADAccountsToFile();
             SaveADGroupsToFile();
             SaveSmartschoolAccount();
+            SaveGoogleAccountsToFile();
         }
     }
 }
