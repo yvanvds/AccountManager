@@ -198,6 +198,9 @@
     <Compile Include="Settings\ADSettings.xaml.cs">
       <DependentUpon>ADSettings.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Settings\GeneralSettings.xaml.cs">
+      <DependentUpon>GeneralSettings.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Settings\GoogleSettings.xaml.cs">
       <DependentUpon>GoogleSettings.xaml</DependentUpon>
     </Compile>
@@ -320,6 +323,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Settings\ADSettings.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Settings\GeneralSettings.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
