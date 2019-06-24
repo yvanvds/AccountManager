@@ -19,7 +19,7 @@
     <Grid>
         <dragablz:TabablzControl FixedHeaderCount="10">
             <TabItem Header="General">
-                <Label Content="General"/>
+                <local:GeneralSettings/>
             </TabItem>
             <TabItem Header="Wisa">
                 <local:WisaSettings/>

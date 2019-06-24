@@ -32,27 +32,30 @@ namespace AccountManager
 
             if(File.Exists(configFile))
             {
-                string content = File.ReadAllText(configFile);
-                JObject config = JObject.Parse(content);
-                if(config.ContainsKey("Wisa"))
-                {
-                    LoadWisaConfig(config["Wisa"] as JObject);
-                }
-                if(config.ContainsKey("Smartschool"))
-                {
-                    LoadSmartschoolConfig(config["Smartschool"] as JObject);
-                }
-                if(config.ContainsKey("Google"))
-                {
-                    LoadGoogleConfig(config["Google"] as JObject);
-                }
-                if(config.ContainsKey("AD"))
-                {
-                    LoadADConfig(config["AD"] as JObject);
-                }
+                LoadConfig(configFile);
             }
+        }
 
-
+        public void LoadConfig(string FileName)
+        {
+            string content = File.ReadAllText(FileName);
+            JObject config = JObject.Parse(content);
+            if (config.ContainsKey("Wisa"))
+            {
+                LoadWisaConfig(config["Wisa"] as JObject);
+            }
+            if (config.ContainsKey("Smartschool"))
+            {
+                LoadSmartschoolConfig(config["Smartschool"] as JObject);
+            }
+            if (config.ContainsKey("Google"))
+            {
+                LoadGoogleConfig(config["Google"] as JObject);
+            }
+            if (config.ContainsKey("AD"))
+            {
+                LoadADConfig(config["AD"] as JObject);
+            }
         }
 
         public void LoadFileContentOnStartup()
@@ -66,12 +69,17 @@ namespace AccountManager
 
         public void SaveConfig()
         {
+            SaveConfig(configFile);
+        }
+
+        public void SaveConfig(string fileName)
+        {
             JObject config = new JObject();
             config["Wisa"] = SaveWisaConfig();
             config["Smartschool"] = SaveSmartschoolConfig();
             config["Google"] = SaveGoogleConfig();
             config["AD"] = SaveADConfig();
-            File.WriteAllText(configFile, config.ToString());
+            File.WriteAllText(fileName, config.ToString());
             ConfigChanged = false;
 
             SavePasswordFileContent();
