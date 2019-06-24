@@ -13,11 +13,11 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
-        private DateTime lastAccountSync;
-        public DateTime LastWisaAccountSync => lastAccountSync;
+        private DateTime lastWisaAccountSync;
+        public DateTime LastWisaAccountSync => lastWisaAccountSync;
 
-        private DateTime lastClassgroupSync;
-        public DateTime LastWisaClassgroupSync => lastClassgroupSync;
+        private DateTime lastWisaClassgroupSync;
+        public DateTime LastWisaClassgroupSync => lastWisaClassgroupSync;
 
         public ObservableCollection<IRule> WisaImportRules { get; set; } = new ObservableCollection<IRule>(); 
 
@@ -108,7 +108,7 @@ namespace AccountManager
                 string content = File.ReadAllText(wisaClassLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
                 AccountApi.Wisa.ClassGroupManager.FromJson(newObj);
-                lastClassgroupSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
+                lastWisaClassgroupSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
 
             var wisaStudentLocation = Path.Combine(appFolder, wisaStudentsFile);
@@ -117,7 +117,7 @@ namespace AccountManager
                 string content = File.ReadAllText(wisaStudentLocation);
                 var newObj = Newtonsoft.Json.Linq.JObject.Parse(content);
                 AccountApi.Wisa.Students.FromJson(newObj);
-                lastAccountSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
+                lastWisaAccountSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
         }
 
@@ -289,7 +289,7 @@ namespace AccountManager
             }
             AccountApi.Wisa.ClassGroupManager.ApplyImportRules(WisaImportRules.ToList());
             AccountApi.Wisa.ClassGroupManager.Sort();
-            lastClassgroupSync = DateTime.Now;
+            lastWisaClassgroupSync = DateTime.Now;
 
             SaveWisaClassGroupsToJSON();
         }
@@ -351,7 +351,7 @@ namespace AccountManager
             }
 
             AccountApi.Wisa.Students.Sort();
-            lastAccountSync = DateTime.Now;
+            lastWisaAccountSync = DateTime.Now;
 
             SaveWisaStudentsToJSON();
         }

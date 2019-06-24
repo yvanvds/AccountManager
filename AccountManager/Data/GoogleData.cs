@@ -13,6 +13,9 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
+        private DateTime lastGoogleAccountSync;
+        public DateTime LastGoogleAccountSync => lastGoogleAccountSync;
+
         const string googleAccountsFile = "googleAccounts.json";
 
         private void LoadGoogleConfig(JObject obj)
@@ -49,6 +52,7 @@ namespace AccountManager
                 string content = File.ReadAllText(accountLocation);
                 var newObj = JObject.Parse(content);
                 AccountApi.Google.AccountManager.FromJson(newObj);
+                lastGoogleAccountSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
         }
 
@@ -156,8 +160,14 @@ namespace AccountManager
         {
             AccountApi.Google.AccountManager.ClearAll();
             await AccountApi.Google.AccountManager.ReloadAll();
+            lastGoogleAccountSync = DateTime.Now;
+            SaveGoogleAccountsToFile();
+        }
 
+        public void SaveGoogleAccountsToFile()
+        {
             var json = AccountApi.Google.AccountManager.ToJson();
+            json["lastSync"] = LastGoogleAccountSync;
             var location = Path.Combine(appFolder, googleAccountsFile);
             File.WriteAllText(location, json.ToString());
         }

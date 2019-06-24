@@ -24,8 +24,12 @@ namespace AccountManager.Dashboard
         public Prop<bool> ShowLinkButtonIndicator { get; set; } = new Prop<bool> { Value = false };
         public Prop<bool> ShowAccountLinkButtonIndicator { get; set; } = new Prop<bool> { Value = false };
 
-        public Prop<bool> ShowWissaClassGroupSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
-        public Prop<bool> ShowWissaAccountSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowWisaClassGroupSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowWisaAccountSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowSmartschoolAccountSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowDirectoryClassGroupSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowDirectoryAccountSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
+        public Prop<bool> ShowGoogleAccountSyncButtonIndicator { get; set; } = new Prop<bool> { Value = false };
 
         public Data Data { get => Data.Instance; }
 
@@ -72,6 +76,17 @@ namespace AccountManager.Dashboard
             wisaAccountSyncLabel.Foreground = GetColor(Data.Instance.LastWisaAccountSync);
             wisaClassgroupSyncLabel.Content = Data.Instance.LastWisaClassgroupSync.ToString();
             wisaClassgroupSyncLabel.Foreground = GetColor(Data.Instance.LastWisaClassgroupSync);
+
+            directoryAccountSyncLabel.Content = Data.Instance.LastDirectoryAccountSync.ToString();
+            directoryAccountSyncLabel.Foreground = GetColor(Data.Instance.LastDirectoryAccountSync);
+            directoryClassgroupSyncLabel.Content = Data.Instance.LastDirectoryClassgroupSync.ToString();
+            directoryClassgroupSyncLabel.Foreground = GetColor(Data.Instance.LastDirectoryClassgroupSync);
+
+            ssAccountSyncLabel.Content = Data.Instance.LastSmartschoolAccountSync.ToString();
+            ssAccountSyncLabel.Foreground = GetColor(Data.Instance.LastSmartschoolAccountSync);
+
+            googleAccountSyncLabel.Content = Data.Instance.LastGoogleAccountSync.ToString();
+            googleAccountSyncLabel.Foreground = GetColor(Data.Instance.LastGoogleAccountSync);
         }
 
         private Brush GetColor(DateTime date)
@@ -143,50 +158,56 @@ namespace AccountManager.Dashboard
 
         private async void WisaClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
         {
-            ShowWissaClassGroupSyncButtonIndicator.Value = true;
+            ShowWisaClassGroupSyncButtonIndicator.Value = true;
             Data.Instance.SetWisaCredentials();
             await Data.Instance.ReloadWisaClassgroups();
-            await LinkedGroups.ReLink();
-            ShowWissaClassGroupSyncButtonIndicator.Value = false;
+            ShowWisaClassGroupSyncButtonIndicator.Value = false;
             UpdateSyncDates();
         }
 
         private async void DirectoryClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
         {
-            
+            ShowDirectoryClassGroupSyncButtonIndicator.Value = true;
+            Data.Instance.SetADCredentials();
+            await Data.Instance.ReloadADClassGroups();
+            ShowDirectoryClassGroupSyncButtonIndicator.Value = false;
+            UpdateSyncDates();
         }
 
-        private void DirectoryAccountSyncButton_Click(object sender, RoutedEventArgs e)
+        private async void DirectoryAccountSyncButton_Click(object sender, RoutedEventArgs e)
         {
-
+            ShowDirectoryAccountSyncButtonIndicator.Value = true;
+            Data.Instance.SetADCredentials();
+            await Data.Instance.ReloadADAccounts();
+            ShowDirectoryAccountSyncButtonIndicator.Value = false;
+            UpdateSyncDates();
         }
 
-        private void SsClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
+        private async void SsAccountSyncButton_Click(object sender, RoutedEventArgs e)
         {
-
+            ShowSmartschoolAccountSyncButtonIndicator.Value = true;
+            Data.Instance.SetSmartschoolCredentials();
+            await Data.Instance.ReloadSmartschool();
+            ShowSmartschoolAccountSyncButtonIndicator.Value = false;
+            UpdateSyncDates();
         }
 
-        private void SsAccountSyncButton_Click(object sender, RoutedEventArgs e)
+
+        private async void GoogleAccountSyncButton_Click(object sender, RoutedEventArgs e)
         {
-
-        }
-
-        private void GoogleClassgroupSyncButton_Click(object sender, RoutedEventArgs e)
-        {
-
-        }
-
-        private void GoogleAccountSyncButton_Click(object sender, RoutedEventArgs e)
-        {
-
+            ShowGoogleAccountSyncButtonIndicator.Value = true;
+            Data.Instance.SetGoogleCredentials();
+            await Data.Instance.ReloadGoogleAccounts();
+            ShowGoogleAccountSyncButtonIndicator.Value = false;
+            UpdateSyncDates();
         }
 
         private async void WisaAccountSyncButton_Click(object sender, RoutedEventArgs e)
         {
-            ShowWissaAccountSyncButtonIndicator.Value = true;
+            ShowWisaAccountSyncButtonIndicator.Value = true;
             Data.Instance.SetWisaCredentials();
             await Data.Instance.ReloadWisaStudents();
-            ShowWissaAccountSyncButtonIndicator.Value = false;
+            ShowWisaAccountSyncButtonIndicator.Value = false;
             UpdateSyncDates();
         }
     }

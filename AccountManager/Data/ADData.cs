@@ -13,6 +13,12 @@ namespace AccountManager
 {
     public sealed partial class Data
     {
+        private DateTime lastDirectoryAccountSync;
+        public DateTime LastDirectoryAccountSync => lastDirectoryAccountSync;
+
+        private DateTime lastDirectoryClassgroupSync;
+        public DateTime LastDirectoryClassgroupSync => lastDirectoryClassgroupSync;
+
         public List<AccountApi.Directory.ClassGroup> ADGroups => AccountApi.Directory.ClassGroupManager.All;
 
         const string adGroupsFile = "directoryGroups.json";
@@ -80,6 +86,7 @@ namespace AccountManager
                 string content = File.ReadAllText(adGroupsLocation);
                 var newObj = JObject.Parse(content);
                 AccountApi.Directory.ClassGroupManager.FromJson(newObj);
+                lastDirectoryClassgroupSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
 
             var adAccountsLocation = Path.Combine(appFolder, adAccountsFile);
@@ -88,6 +95,7 @@ namespace AccountManager
                 string content = File.ReadAllText(adAccountsLocation);
                 var newObj = JObject.Parse(content);
                 AccountApi.Directory.AccountManager.FromJson(newObj);
+                lastDirectoryAccountSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
         }
 
@@ -250,6 +258,7 @@ namespace AccountManager
         {
             await ClassGroupManager.Load();
             ClassGroupManager.Sort();
+            lastDirectoryClassgroupSync = DateTime.Now;
             SaveADGroupsToFile();
         }
 
@@ -257,12 +266,14 @@ namespace AccountManager
         {
             await AccountApi.Directory.AccountManager.LoadStaff();
             await AccountApi.Directory.AccountManager.LoadStudents();
+            lastDirectoryAccountSync = DateTime.Now;
             SaveADAccountsToFile();
         }
 
         public void SaveADGroupsToFile()
         {
             var json = ClassGroupManager.ToJson();
+            json["lastSync"] = LastDirectoryClassgroupSync;
             var location = Path.Combine(appFolder, adGroupsFile);
             File.WriteAllText(location, json.ToString());
         }
@@ -270,6 +281,7 @@ namespace AccountManager
         public void SaveADAccountsToFile()
         {
             var json = AccountApi.Directory.AccountManager.ToJson();
+            json["lastSync"] = LastDirectoryAccountSync;
             var location = Path.Combine(appFolder, adAccountsFile);
             File.WriteAllText(location, json.ToString());
         }
