@@ -438,6 +438,7 @@ namespace AccountApi.Smartschool
             account.HomePhone = json.Telefoonnummer;
             account.Fax = json.Fax;
             account.Mail = json.Emailadres;
+            account.Status = json.Status;
         }
     }
 }

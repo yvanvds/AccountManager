@@ -316,6 +316,12 @@ namespace AccountApi.Smartschool
                     newAccount.Group = Name;
                     AccountManager.LoadFromJSON(newAccount, account);
 
+                    if(account.Status == "uitgeschakeld")
+                    {
+                        // don't add this account
+                        continue;
+                    }
+
                     IAccount duplicate = null;
                     if (Children != null)
                     {

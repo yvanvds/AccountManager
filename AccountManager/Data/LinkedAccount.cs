@@ -159,7 +159,10 @@ namespace AccountManager
             if(directoryAccount != null)
             {
                 var action = new ModifyDirectoryData();
-                if (directoryAccount.CN != directoryAccount.DesiredCN()) action.List.Add(ModifyDirectoryData.Fields.CommonName);
+                if (directoryAccount.CN != directoryAccount.DesiredCN())
+                {
+                    action.List.Add(ModifyDirectoryData.Fields.CommonName);
+                }
 
                 if(action.List.Count > 0)
                 {

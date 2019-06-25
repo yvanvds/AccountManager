@@ -39,6 +39,7 @@ namespace AccountApi
         string MailAlias { set; get; }
 
         string Group { get; set; }
+        string Status { get; set; }
 
         JObject ToJson();
         bool Equals(IAccount other);

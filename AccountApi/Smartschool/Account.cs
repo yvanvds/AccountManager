@@ -141,6 +141,7 @@ namespace AccountApi.Smartschool
         /// </summary>
         public string Group { get; set; } = String.Empty;
 
+        public string Status { get; set; } = string.Empty;
 
         /// <summary>
         /// Create a JSON JObject containing the data in this account.
@@ -175,7 +176,8 @@ namespace AccountApi.Smartschool
                 ["Street"] = Street,
                 ["SurName"] = SurName,
                 ["UID"] = UID,
-                ["UntisID"] = UntisID
+                ["UntisID"] = UntisID,
+                ["Status"] = Status,
             };
             return result;
         }
@@ -224,6 +226,7 @@ namespace AccountApi.Smartschool
             SurName = obj["SurName"].ToString();
             UID = obj["UID"].ToString();
             UntisID = obj["UntisID"].ToString();
+            Status = obj.ContainsKey("Status") ? obj["Status"].ToString() : string.Empty;
         }
 
         public bool Equals(IAccount other)

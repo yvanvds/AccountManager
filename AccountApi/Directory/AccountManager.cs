@@ -21,7 +21,7 @@ namespace AccountApi.Directory
             {
                 DirectorySearcher search = Connector.GetSearcher(Connector.StudentPath);
                 search.Filter = "(ObjectClass=*)";
-                search.SizeLimit = 20000;
+                search.PageSize = 10000;
                 search.PropertiesToLoad.Clear();
                 search.PropertiesToLoad.Add("sAMAccountName");
                 search.PropertiesToLoad.Add("givenName");
@@ -54,6 +54,7 @@ namespace AccountApi.Directory
                     Students.Add(new Account(entry));
                     count++;
                 }
+                results.Dispose();
 
                 Connector.Log.AddMessage(Origin.Directory, "Added " + count.ToString() + " Student Accounts");
                 return true;
@@ -264,7 +265,8 @@ namespace AccountApi.Directory
                 int PWD_NOTREQUIRED = 0x20;
                 try
                 {
-                    childEntry = ouEntry.Children.Add($"CN={uid}", "user");
+                    var cn = firstname + " " + lastname + " (" + uid + ")";
+                    childEntry = ouEntry.Children.Add($"CN={cn}", "user");
                     childEntry.Properties["sAMAccountName"].Value = uid;
                     childEntry.Properties["userAccountControl"].Value = NORMAL_ACCOUNT | PWD_NOTREQUIRED;
                     childEntry.CommitChanges();
