@@ -112,7 +112,7 @@ namespace AccountManager
 
             foreach (var group in List.Values)
             {
-                bool incomplete = (group.wisaAccount == null || group.smartschoolAccount == null || group.directoryAccount == null || group.googleAccount == null);
+                bool incomplete = (group.wisaAccount == null || group.smartschoolAccount == null || group.directoryAccount == null);
                 if (group.wisaAccount != null)
                 {
                     totalWisaAccounts++;

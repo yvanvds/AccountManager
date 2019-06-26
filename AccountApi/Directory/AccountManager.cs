@@ -32,6 +32,7 @@ namespace AccountApi.Directory
                 search.PropertiesToLoad.Add("smawisaname");
                 search.PropertiesToLoad.Add("smaClass");
                 search.PropertiesToLoad.Add("userAccountControl");
+                search.PropertiesToLoad.Add("employeeID");
                 SearchResultCollection results;
 
                 try

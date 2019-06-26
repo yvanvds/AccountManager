@@ -222,6 +222,17 @@ namespace AccountApi.Directory
             }
         }
 
+        public static AccountRole GetRoleFromPath(string path)
+        {
+            if (path.Contains("OU=" + DirectorOU)) return AccountRole.Director;
+            if (path.Contains("OU=" + AdminOU)) return AccountRole.IT;
+            if (path.Contains("OU=" + SupportOU)) return AccountRole.Support;
+            if (path.Contains("OU=" + TeacherOU)) return AccountRole.Teacher;
+            if (path.Contains(studentPath)) return AccountRole.Student;
+
+            return AccountRole.Other;
+        }
+
         public static string GetStudentpath(string group)
         {
             string path = null;

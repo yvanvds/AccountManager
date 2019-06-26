@@ -38,8 +38,7 @@
                                 ToolTip="MaterialDesignSwitchDarkToggleButton"
                                   x:Name="ShowProblemsOnly"
                                   Checked="ShowProblemsOnly_Checked"
-                                  Unchecked="ShowProblemsOnly_Unchecked"
-                                IsChecked="{Binding ShowOnlyProblemAccounts}"/>
+                                  Unchecked="ShowProblemsOnly_Unchecked"/>
                     <TextBlock Margin="16 0 16 16" TextWrapping="Wrap" FontWeight="Light">Toon Enkel Accounts met Opmerkingen</TextBlock>
                 </StackPanel>
             </materialDesign:Card>

@@ -19,6 +19,7 @@ namespace AccountManager
         string configFile;
 
         public bool ConfigChanged { get; set; }
+        public bool ShowDebugInterface { get; set; }
 
         private Data()
         {
@@ -40,6 +41,10 @@ namespace AccountManager
         {
             string content = File.ReadAllText(FileName);
             JObject config = JObject.Parse(content);
+            if(config.ContainsKey("global"))
+            {
+                LoadGlobalConfig(config["global"] as JObject);
+            }
             if (config.ContainsKey("Wisa"))
             {
                 LoadWisaConfig(config["Wisa"] as JObject);
@@ -75,6 +80,7 @@ namespace AccountManager
         public void SaveConfig(string fileName)
         {
             JObject config = new JObject();
+            config["global"] = SaveGlobalConfig();
             config["Wisa"] = SaveWisaConfig();
             config["Smartschool"] = SaveSmartschoolConfig();
             config["Google"] = SaveGoogleConfig();
@@ -83,6 +89,20 @@ namespace AccountManager
             ConfigChanged = false;
 
             SavePasswordFileContent();
+        }
+
+        private JObject SaveGlobalConfig()
+        {
+            JObject result = new JObject
+            {
+                ["debugmode"] = ShowDebugInterface,
+            };
+            return result;
+        }
+
+        private void LoadGlobalConfig(JObject obj)
+        {
+            ShowDebugInterface = obj.ContainsKey("debugmode") ? Convert.ToBoolean(obj["debugmode"]) : false;
         }
 
         public void SaveContent()

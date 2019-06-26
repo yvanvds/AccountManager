@@ -23,7 +23,7 @@
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="300"/>
-                <ColumnDefinition/>
+                <ColumnDefinition Width="300"/>
             </Grid.ColumnDefinitions>
             <GroupBox Header="Settings" Margin="16">
                 <StackPanel Orientation="Vertical">
@@ -46,6 +46,20 @@
                                 Click="ImportButton_Click"
                                 Margin="8" />
                 </StackPanel>
+            </GroupBox>
+
+            <GroupBox Grid.Column="1" Margin="16" Header="Preferences">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="50"/>
+                        <RowDefinition/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Margin="8" VerticalAlignment="Top">
+                        <ToggleButton IsChecked="{Binding Path=Data.ShowDebugInterface, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource MaterialDesignSwitchToggleButton}" ToolTip="Default ToggleButton Style" />
+                        <Label Content="Show Advanced Interface"/>
+                    </StackPanel>
+                </Grid>
+                
             </GroupBox>
         </Grid>
         

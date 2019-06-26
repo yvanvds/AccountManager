@@ -16,21 +16,22 @@
              xmlns:metro="http://metro.mahapps.com/winfx/xaml/controls"
              mc:Ignorable="d" 
              d:DesignHeight="450" d:DesignWidth="800">
+
     <Grid>
-        <dragablz:TabablzControl FixedHeaderCount="6">
-            <TabItem Header="Overview">
+        <dragablz:TabablzControl x:Name="Tabs" FixedHeaderCount="6">
+            <TabItem Header="Overview" >
                 <local:Overview/>
             </TabItem>
-            <TabItem Header="Wisa">
+            <TabItem x:Name="WisaTab" Header="Wisa">
                 <local:WisaAccounts/>
             </TabItem>
-            <TabItem Header="AD">
+            <TabItem x:Name="ADTab" Header="AD">
                 <local:ADAccounts/>
             </TabItem>
-            <TabItem Header="Google">
+            <TabItem x:Name="GoogleTab" Header="Google">
                 <local:GoogleAccounts></local:GoogleAccounts>
             </TabItem>
-            <TabItem Header="Smartschool">
+            <TabItem x:Name="SmartschoolTab" Header="Smartschool">
                 <local:SmartschoolAccounts/>
             </TabItem>
         </dragablz:TabablzControl>

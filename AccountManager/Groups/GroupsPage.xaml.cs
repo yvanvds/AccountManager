@@ -38,6 +38,14 @@ namespace AccountManager.Groups
                 case Tab.Directory: TabControl.SelectedIndex = 2; break;
                 case Tab.Smartschool: TabControl.SelectedIndex = 3; break;
             }
+
+            if(!Data.Instance.ShowDebugInterface)
+            {
+                TabControl.SelectedIndex = 0;
+                TabControl.Items.Remove(WisaTab);
+                TabControl.Items.Remove(ADTab);
+                TabControl.Items.Remove(SmartschoolTab);
+            }
         }
 
         public void CalendarDialogOpenedEventHandler(object sender, DialogOpenedEventArgs eventArgs)

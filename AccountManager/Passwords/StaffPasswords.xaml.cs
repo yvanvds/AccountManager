@@ -36,6 +36,12 @@ namespace AccountManager.Passwords
         public Prop<AccountApi.Directory.Account> SelectedAccount { get; set; } = new Prop<AccountApi.Directory.Account> { Value = null };
         public Prop<string> SelectedTitle { get; set; } = new Prop<string> { Value = "Geen actieve selectie" };
 
+        public Prop<string> SelectedFirstName { get; set; } = new Prop<string> { Value = "" };
+        public Prop<string> SelectedLastName { get; set; } = new Prop<string> { Value = "" };
+        public Prop<float> SelectedGender { get; set; } = new Prop<float> { Value = 0.5f };
+        public Prop<string> SelectedCopyCode { get; set; } = new Prop<string> { Value = "" };
+        public Prop<string> SelectedGroup { get; set; } = new Prop<string> { Value = "" };
+
         private ADFilterType FilterType { get; set; } = ADFilterType.Name;
         private string Filter { get; set; } = String.Empty;
 
@@ -67,7 +73,12 @@ namespace AccountManager.Passwords
 
         private void AccountList_SelectedCellsChanged(object sender, SelectedCellsChangedEventArgs e)
         {
-
+            SelectedAccount.Value = ((sender as DataGrid).SelectedItem as AccountApi.Directory.Account);
+            SelectedTitle.Value = SelectedAccount.Value.FullName;
+            SelectedFirstName.Value = SelectedAccount.Value.FirstName;
+            SelectedLastName.Value = SelectedAccount.Value.LastName;
+            SelectedCopyCode.Value = SelectedAccount.Value.CopyCode.ToString();
+            //SelectedGroup.Value = SelectedAccount.Value.ClassGroup;
         }
 
         private void FilterText_TextChanged(object sender, TextChangedEventArgs e)
@@ -82,7 +93,7 @@ namespace AccountManager.Passwords
 
         private void FilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-
+            
         }
     }
 }

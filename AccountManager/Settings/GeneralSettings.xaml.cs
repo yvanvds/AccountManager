@@ -21,9 +21,12 @@ namespace AccountManager.Settings
     /// </summary>
     public partial class GeneralSettings : UserControl
     {
+        public Data Data { get => Data.Instance; }
+
         public GeneralSettings()
         {
             InitializeComponent();
+            MainGrid.DataContext = this;
         }
 
         private void ExportButton_Click(object sender, RoutedEventArgs e)

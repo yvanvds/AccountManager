@@ -21,7 +21,9 @@ namespace AccountApi.Directory
             wisaID = entry.Properties.Contains("smaWisaID") ? entry.Properties["smaWisaID"].Value.ToString() : "";
             wisaName = entry.Properties.Contains("smawisaname") ? entry.Properties["smawisaname"].Value.ToString() : "";
             classGroup = entry.Properties.Contains("smaClass") ? entry.Properties["smaClass"].Value.ToString() : "";
+            copyCode = entry.Properties.Contains("employeeID") ? Convert.ToInt32(entry.Properties["employeeID"].Value) : 0;
             state = entry.Properties.Contains("userAccountControl") ? (int)entry.Properties["userAccountControl"].Value : 0;
+            role = Connector.GetRoleFromPath(entry.Path);
             cn = entry.Properties.Contains("cn") ? entry.Properties["cn"].Value.ToString() : "";
         }
 
@@ -36,6 +38,16 @@ namespace AccountApi.Directory
             wisaName = obj.ContainsKey("wisaName") ? obj["wisaName"].ToString() : "";
             classGroup = obj.ContainsKey("classGroup") ? obj["classGroup"].ToString() : "";
             state = obj.ContainsKey("state") ? Convert.ToInt32(obj["state"]) : 0;
+            copyCode = obj.ContainsKey("copyCode") ? Convert.ToInt32(obj["copyCode"]) : 0;
+            string sRole = obj.ContainsKey("role") ? obj["role"].ToString() : "";
+            switch(sRole)
+            {
+                case "Teacher": role = AccountRole.Teacher; break;
+                case "Director": role = AccountRole.Director; break;
+                case "Support": role = AccountRole.Support; break;
+                case "IT": role = AccountRole.IT; break;
+                default: role = AccountRole.Other; break;
+            } 
             cn = obj.ContainsKey("cn") ? obj["cn"].ToString() : "";
         }
 
@@ -52,6 +64,8 @@ namespace AccountApi.Directory
                 ["wisaName"] = wisaName,
                 ["classGroup"] = classGroup,
                 ["state"] = state,
+                ["copyCode"] = copyCode,
+                ["role"] = role.ToString(),
                 ["cn"] = CN,
             };
             return result;
@@ -99,6 +113,21 @@ namespace AccountApi.Directory
         private string classGroup;
         public string ClassGroup { get => classGroup; }
 
+        private int copyCode;
+        public int CopyCode {
+            get => copyCode;
+            set
+            {
+                var entry = GetEntry(uid);
+                copyCode = value;
+                entry.Properties["employeeID"].Value = copyCode.ToString();
+                entry.CommitChanges();
+                entry.Close();
+            }
+        }
+
+
+
         int state;
         internal int State
         {
@@ -107,9 +136,30 @@ namespace AccountApi.Directory
             set
             {
                 var entry = GetEntry(uid);
+                state = value;
                 entry.Properties["userAccountControl"].Value = value;
                 entry.CommitChanges();
                 entry.Close();
+            }
+        }
+
+        AccountRole role;
+        public AccountRole Role
+        {
+            get => role;
+            set
+            {
+                if(value != AccountRole.Student)
+                {
+                    // never change a student to something else
+                    var entry = GetEntry(UID);
+                    role = value;
+                    string path = Connector.GetPath(role);
+                    var parent = Connector.GetEntry(path);
+                    entry.MoveTo(parent);
+                    entry.CommitChanges();
+                    entry.Close();
+                }
             }
         }
 
