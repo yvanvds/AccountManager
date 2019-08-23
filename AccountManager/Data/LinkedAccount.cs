@@ -139,7 +139,7 @@ namespace AccountManager
                 {
                     Actions.Add(new MoveDirectoryClassGroup());
                     directoryStatusIcon = "AlertCircleOutline";
-                    directoryStatusIcon = "Orange";
+                    directoryStatusColor = "Orange";
                     accountOK = false;
                 }
             }
@@ -166,8 +166,8 @@ namespace AccountManager
 
                 if(action.List.Count > 0)
                 {
-                    directoryStatusIcon = "CircleEditOutline";
-                    directoryStatusColor = "Chocolate";
+                    directoryStatusIcon = "AlertCircleOutline";
+                    directoryStatusIcon = "Orange";
                     Actions.Add(action);
                     accountOK = false;
                 }
@@ -186,6 +186,11 @@ namespace AccountManager
             else if (wisaAccount == null && directoryAccount != null && smartschoolAccount == null)
             {
                 Actions.Add(new RemoveAccountFromDirectory());
+            }
+            // if account is not in wisa, suggest removal
+            else if (wisaAccount == null && directoryAccount != null && smartschoolAccount != null)
+            {
+                Actions.Add(new RemoveAccountFromDirectoryAndSmartschool());
             }
 
             // if account is only on wisa, add on directory and smartschool

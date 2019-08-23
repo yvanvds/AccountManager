@@ -12,6 +12,7 @@ namespace AccountManager.Action
         MoveSmartschoolClassGroup,
         RemoveFromDirectory,
         RemoveFromGoogle,
+        RemoveFromDirectoryAndSmartschool,
         NoAction,
     }
 

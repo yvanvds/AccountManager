@@ -214,7 +214,7 @@ namespace AccountApi.Smartschool
                 Error.AddError(iResult);
                 return false;
             }
-
+            Connector.Log.AddMessage(Origin.Smartschool, account.GivenName + " " + account.SurName + " is deactivated");
             return true;
         }
 
@@ -351,7 +351,15 @@ namespace AccountApi.Smartschool
         /// <returns>awaitable true/false result</returns>
         public static async Task<bool> Delete(IAccount account)
         {
-            return await Delete(account, DateTime.MinValue);
+            var result = await Delete(account, DateTime.MinValue);
+            if (result)
+            {
+                Connector.Log.AddMessage(Origin.Smartschool, "Account for " + account.GivenName + " " + account.SurName + " Deleted");
+            } else
+            {
+                Connector.Log.AddError(Origin.Smartschool, "Failed to delete " + account.GivenName + " " + account.SurName);
+            }
+            return result;
         }
 
         /// <summary>

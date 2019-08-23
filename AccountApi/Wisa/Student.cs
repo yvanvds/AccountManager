@@ -64,6 +64,8 @@ namespace AccountApi.Wisa
         /// </summary>
         public string FirstName { get => firstname; }
 
+        public string FullName { get => firstname + " " + name; }
+
         /// <summary>
         /// The student's date of birth
         /// </summary>

@@ -214,6 +214,25 @@ namespace AccountApi.Google
             return v;
         }
 
+        public static Account Find(string UID)
+        {
+            if (All.ContainsKey(UID)) return All[UID];
+            return null;
+        }
+
+        public static async Task<bool> Delete(Account account)
+        {
+            var result = await Delete(account.Mail);
+            if(result)
+            {
+                Connector.Log.AddMessage(Origin.Google, "Deleted " + account.UID);
+            } else
+            {
+                Connector.Log.AddError(Origin.Google, "Unable to delete " + account.UID);
+            }
+            return result;
+        }
+
         public static async Task<bool> Delete(string mailAddress)
         {
             var request = Connector.service.Users.Delete(mailAddress);

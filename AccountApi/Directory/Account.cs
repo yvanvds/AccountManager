@@ -21,6 +21,7 @@ namespace AccountApi.Directory
             wisaID = entry.Properties.Contains("smaWisaID") ? entry.Properties["smaWisaID"].Value.ToString() : "";
             wisaName = entry.Properties.Contains("smawisaname") ? entry.Properties["smawisaname"].Value.ToString() : "";
             classGroup = entry.Properties.Contains("smaClass") ? entry.Properties["smaClass"].Value.ToString() : "";
+            gender = entry.Properties.Contains("smaGender") ? entry.Properties["smaGender"].Value.ToString() : "not set";
             copyCode = entry.Properties.Contains("employeeID") ? Convert.ToInt32(entry.Properties["employeeID"].Value) : 0;
             state = entry.Properties.Contains("userAccountControl") ? (int)entry.Properties["userAccountControl"].Value : 0;
             role = Connector.GetRoleFromPath(entry.Path);
@@ -37,6 +38,7 @@ namespace AccountApi.Directory
             wisaID = obj.ContainsKey("wisaID") ? obj["wisaID"].ToString() : "";
             wisaName = obj.ContainsKey("wisaName") ? obj["wisaName"].ToString() : "";
             classGroup = obj.ContainsKey("classGroup") ? obj["classGroup"].ToString() : "";
+            gender = obj.ContainsKey("gender") ? obj["gender"].ToString() : "not set";
             state = obj.ContainsKey("state") ? Convert.ToInt32(obj["state"]) : 0;
             copyCode = obj.ContainsKey("copyCode") ? Convert.ToInt32(obj["copyCode"]) : 0;
             string sRole = obj.ContainsKey("role") ? obj["role"].ToString() : "";
@@ -65,6 +67,7 @@ namespace AccountApi.Directory
                 ["classGroup"] = classGroup,
                 ["state"] = state,
                 ["copyCode"] = copyCode,
+                ["gender"] = gender,
                 ["role"] = role.ToString(),
                 ["cn"] = CN,
             };
@@ -75,13 +78,53 @@ namespace AccountApi.Directory
         public string UID { get => uid; }
 
         private string firstName;
-        public string FirstName { get => firstName; }
+        public string FirstName
+        {
+            get => firstName;
+            set
+            {
+                var entry = GetEntry(uid);
+                firstName = value;
+                fullName = firstName + " " + LastName;
+                entry.Properties["givenName"].Value = firstName;
+                entry.Properties["displayname"].Value = fullName;
+                entry.CommitChanges();
+                entry.Close();
+            }
+        }
 
         private string lastName;
-        public string LastName { get => lastName; }
+        public string LastName
+        {
+            get => lastName;
+            set
+            {
+                var entry = GetEntry(uid);
+                lastName = value;
+                fullName = firstName + " " + LastName;
+                entry.Properties["sn"].Value = lastName;
+                entry.Properties["displayname"].Value = fullName;
+                entry.CommitChanges();
+                entry.Close();
+            }
+        }
 
         private string fullName;
         public string FullName { get => fullName; }
+
+        private string gender;
+        public string Gender
+        {
+            get => gender;
+            set
+            {
+                var entry = GetEntry(uid);
+                gender = value;
+                entry.Properties["smaGender"].Value = gender;
+                entry.CommitChanges();
+                entry.Close();
+            }
+        }
 
         private string cn;
         public string CN {
@@ -234,6 +277,7 @@ namespace AccountApi.Directory
             var entry = GetEntry(UID);
             classGroup = ClassGroup;
             entry.Properties["smaClass"].Value = ClassGroup;
+            entry.CommitChanges();
             entry.MoveTo(newParent);
             entry.CommitChanges();
             entry.Close();

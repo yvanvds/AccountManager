@@ -131,6 +131,7 @@
     <Compile Include="Action\NoAccountActionNeeded.cs" />
     <Compile Include="Action\NoActionNeeded.cs" />
     <Compile Include="Action\RemoveAccountFromDirectory.cs" />
+    <Compile Include="Action\RemoveAccountFromDirectoryAndSmartschool.cs" />
     <Compile Include="Action\RemoveAccountFromGoogle.cs" />
     <Compile Include="Action\RemoveDirectoryClassGroup.cs" />
     <Compile Include="Action\RemoveEmptyDirectoryClassGroup.cs" />

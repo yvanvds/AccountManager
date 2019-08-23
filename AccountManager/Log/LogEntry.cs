@@ -25,7 +25,7 @@ namespace AccountManager.Log
                     case Origin.Wisa: return "WI";
                     case Origin.Smartschool: return "SS";
                     case Origin.Google: return "GO";
-                    default: return "?";
+                    default: return "-";
                 }
             }
         }

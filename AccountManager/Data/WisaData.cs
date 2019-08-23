@@ -324,13 +324,13 @@ namespace AccountManager
             {
                 if (school.IsActive)
                 {
-                    foreach (var rule in WisaImportRules)
-                    {
-                        if (rule.Rule == Rule.WI_MarkAsVirtual && rule.GetConfig(0) == school.Name)
-                        {
+                    //foreach (var rule in WisaImportRules)
+                    //{
+                    //    if (rule.Rule == Rule.WI_MarkAsVirtual && rule.GetConfig(0) == school.Name)
+                    //    {
                             workDate = WisaWorkDateNow ? DateTime.Now : WisaWorkDate;
-                        }
-                    }
+                    //    }
+                    //}
 
                     bool success = await AccountApi.Wisa.Students.AddSchool(school, workDate);
                     if (!success) return;

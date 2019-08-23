@@ -285,11 +285,19 @@ namespace AccountApi.Smartschool
         /// <returns>True on success. Else false.</returns>
         public static async Task<bool> MoveUserToClass(IAccount account, IGroup group, DateTime date)
         {
+            if(account == null)
+            {
+                Connector.Log.AddError(Origin.Smartschool, "Groups API: account object is null");
+                return false;
+            }
             if (group.Type != GroupType.Class || !group.Official)
             {
                 Connector.Log.AddError(Origin.Smartschool, "Groups API: You can only move users to official classes");
                 return false;
             }
+
+            var oldParent = Root.Find(account.Group);
+
             var result = await Task.Run(() => Connector.service.saveUserToClass(
               Connector.password,
               account.UID,
@@ -304,7 +312,23 @@ namespace AccountApi.Smartschool
                 return false;
             } else
             {
-                account.Group = group.Name;
+                // update temporary local DB
+                if(account.Group != group.Name)
+                {
+                    if (oldParent != null)
+                    {
+                        if (oldParent.Accounts.Contains(account)) {
+                            oldParent.Accounts.Remove(account);
+                        }
+                    }
+                    var newParent = Root.Find(group.Name);
+                    if (newParent != null && !newParent.Accounts.Contains(account))
+                    {
+                        newParent.Accounts.Add(account);
+                    }
+                    account.Group = group.Name;
+                }
+                
             }
             return true;
         }

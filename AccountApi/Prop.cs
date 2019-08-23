@@ -96,6 +96,11 @@ namespace AbstractAccountApi
             }
         }
 
+        public class PropBool : Prop<bool>
+        {
+            public bool Inverted => !_value;
+        }
+
         /// <summary>
         /// a double type
         /// </summary>

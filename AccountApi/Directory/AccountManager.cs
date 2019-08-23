@@ -31,6 +31,7 @@ namespace AccountApi.Directory
                 search.PropertiesToLoad.Add("smaWisaID");
                 search.PropertiesToLoad.Add("smawisaname");
                 search.PropertiesToLoad.Add("smaClass");
+                search.PropertiesToLoad.Add("samGender");
                 search.PropertiesToLoad.Add("userAccountControl");
                 search.PropertiesToLoad.Add("employeeID");
                 SearchResultCollection results;
@@ -54,6 +55,10 @@ namespace AccountApi.Directory
                     if (entry.Name.StartsWith("OU")) continue;
                     Students.Add(new Account(entry));
                     count++;
+                    if (count % 50 == 0)
+                    {
+                        Connector.Log.AddMessage(Origin.Directory, "Added " + count.ToString() + " Student Accounts");
+                    }
                 }
                 results.Dispose();
 
@@ -93,6 +98,10 @@ namespace AccountApi.Directory
                     if (entry.Name.StartsWith("OU")) continue;
                     Staff.Add(new Account(entry));
                     count++;
+                    if(count % 50 == 0)
+                    {
+                        Connector.Log.AddMessage(Origin.Directory, "Added " + count.ToString() + " Staff Accounts");
+                    }
                 }
 
                 Connector.Log.AddMessage(Origin.Directory, "Added " + count.ToString() + " Staff Accounts");
@@ -199,6 +208,23 @@ namespace AccountApi.Directory
             return null;
         }
 
+        public static async Task DeleteStaff(Account account)
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    account.Delete();
+                    Staff.Remove(account);
+                    Connector.Log.AddMessage(Origin.Directory, account.FullName + ": account deleted");
+                }
+                catch (Exception e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                }
+            });
+        }
+
         public static async Task DeleteStudent(Account account)
         {
             await Task.Run(() =>
@@ -207,6 +233,7 @@ namespace AccountApi.Directory
                 {
                     account.Delete();
                     Students.Remove(account);
+                    Connector.Log.AddMessage(Origin.Directory, account.FullName + ": account deleted");
                 }
                 catch (Exception e)
                 {
@@ -215,15 +242,15 @@ namespace AccountApi.Directory
             }); 
         }
 
-        public static async Task MoveStudentToClass(Account account, string ClassGroup)
+        public static async Task<bool> MoveStudentToClass(Account account, string ClassGroup)
         {
-            await Task.Run(() =>
+            return await Task.Run(() =>
             {
                 string path = Connector.GetPath(AccountRole.Student, ClassGroup);
                 if (path == null)
                 {
                     Connector.Log.AddError(Origin.Directory, "unable to move account to " + ClassGroup);
-                    return;
+                    return false;
                 }
                 Connector.CreateOUIfneeded(path);
 
@@ -231,10 +258,11 @@ namespace AccountApi.Directory
                 if (newParent == null)
                 {
                     Connector.Log.AddError(Origin.Directory, "cannot get path: " + path);
-                    return;
+                    return false;
                 }
 
                 account.MoveToClassGroup(newParent, ClassGroup);
+                return true;
             });
             
         }

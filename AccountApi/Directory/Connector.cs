@@ -29,11 +29,11 @@ namespace AccountApi.Directory
         private static string staffPath;
         internal static string StaffPath { get => staffPath; }
 
-        public static string TeacherOU;
-        public static string SupportOU;
-        public static string DirectorOU;
-        public static string AdminOU;
-        public static string OtherOU;
+        public static string TeacherOU = "Leerkrachten";
+        public static string SupportOU = "Secretariaat";
+        public static string DirectorOU = "Directie";
+        public static string AdminOU = "IT";
+        public static string OtherOU = "Andere";
 
         public static string[] StudentGrade;
         public static string[] StudentYear;

@@ -22,9 +22,14 @@ namespace AccountManager.Action
         {
             var wisa = linkedAccount.wisaAccount;
             var directory = linkedAccount.directoryAccount;
-            
+
+            await Add(linkedAccount, wisa, directory);
+        }
+
+        public static async Task Add(LinkedAccount linkedAccount, AccountApi.Wisa.Student wisa, AccountApi.Directory.Account directory)
+        {
             var ssAccount = new AccountApi.Smartschool.Account();
-            
+
             ssAccount.UID = directory.UID;
             ssAccount.RegisterID = wisa.StateID;
             try
@@ -49,20 +54,32 @@ namespace AccountManager.Action
             ssAccount.City = wisa.City;
             ssAccount.Mail = directory.UID + "@" + AccountApi.Directory.Connector.AzureDomain;
             ssAccount.MailAlias = directory.MailAlias;
-            
 
-            await AccountApi.Smartschool.AccountManager.Save(ssAccount, "FakeP4ssword");
+
+            var result = await AccountApi.Smartschool.AccountManager.Save(ssAccount, "FakeP4ssword");
+            if (!result)
+            {
+                MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to add " + wisa.FullName);
+                return;
+            } else
+            {
+
+                linkedAccount.smartschoolAccount = ssAccount;
+                MainWindow.Instance.Log.AddMessage(Origin.Smartschool, "Added account for " + wisa.FullName);
+            }
+           
+
             IGroup classgroup;
             if (wisa.ClassGroup.Contains("ANS") || wisa.ClassGroup.Contains("BNS"))
             {
                 classgroup = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
-            } else 
+            }
+            else
             {
                 classgroup = AccountApi.Smartschool.GroupManager.Root.Find(wisa.ClassGroup);
             }
 
-            if(classgroup != null)
-            classgroup.Accounts.Add(ssAccount);
+            await MoveToSmartschoolClassGroup.Move(linkedAccount, classgroup);
         }
     }
 }

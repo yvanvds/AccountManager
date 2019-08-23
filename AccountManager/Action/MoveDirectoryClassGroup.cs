@@ -12,12 +12,19 @@ namespace AccountManager.Action
             AccountActionType.MoveDirectoryClassGroup,
             "Wijzig Klas in Active Directory",
             "De klas van dit account komt niet overeen met de gegevens in Wisa",
-            true)
+            true, true)
         { }
 
         public async override Task Apply(LinkedAccount linkedAccount)
         {
-            await AccountApi.Directory.AccountManager.MoveStudentToClass(linkedAccount.directoryAccount, linkedAccount.wisaAccount.ClassGroup);
+            bool result = await AccountApi.Directory.AccountManager.MoveStudentToClass(linkedAccount.directoryAccount, linkedAccount.wisaAccount.ClassGroup);
+            if(result)
+            {
+                MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Directory, linkedAccount.wisaAccount.FullName + " moved to " + linkedAccount.wisaAccount.ClassGroup);
+            } else
+            {
+                MainWindow.Instance.Log.AddError(AccountApi.Origin.Directory, "Failed to move " + linkedAccount.wisaAccount.FullName + " to " + linkedAccount.wisaAccount.ClassGroup);
+            }
         }
     }
 }
