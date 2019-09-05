@@ -16,7 +16,7 @@ namespace AccountManager.Action
         {
         }
 
-        public async override Task Apply(LinkedAccount linkedAccount)
+        public async override Task Apply(LinkedAccount linkedAccount, DateTime deletionDate)
         {
             await AccountApi.Google.AccountManager.Delete(linkedAccount.googleAccount.Mail);
         }

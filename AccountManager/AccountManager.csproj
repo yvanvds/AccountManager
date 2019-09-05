@@ -14,6 +14,24 @@
     <WarningLevel>4</WarningLevel>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
+    <IsWebBootstrapper>false</IsWebBootstrapper>
+    <PublishUrl>\\fssupport\SupportShare\AccountManager 2\</PublishUrl>
+    <Install>true</Install>
+    <InstallFrom>Unc</InstallFrom>
+    <UpdateEnabled>false</UpdateEnabled>
+    <UpdateMode>Foreground</UpdateMode>
+    <UpdateInterval>7</UpdateInterval>
+    <UpdateIntervalUnits>Days</UpdateIntervalUnits>
+    <UpdatePeriodically>false</UpdatePeriodically>
+    <UpdateRequired>false</UpdateRequired>
+    <MapFileExtensions>true</MapFileExtensions>
+    <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
+    <WebPage>publish.htm</WebPage>
+    <ApplicationRevision>6</ApplicationRevision>
+    <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
+    <UseApplicationTrust>false</UseApplicationTrust>
+    <PublishWizardCompleted>true</PublishWizardCompleted>
+    <BootstrapperEnabled>true</BootstrapperEnabled>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -33,6 +51,18 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ManifestCertificateThumbprint>18B427697221821CEACDA3B2EFFA6CA83BC0C638</ManifestCertificateThumbprint>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ManifestKeyFile>AccountManager_TemporaryKey.pfx</ManifestKeyFile>
+  </PropertyGroup>
+  <PropertyGroup>
+    <GenerateManifests>true</GenerateManifests>
+  </PropertyGroup>
+  <PropertyGroup>
+    <SignManifests>true</SignManifests>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="CalcBinding, Version=2.5.1.0, Culture=neutral, processorArchitecture=MSIL">
@@ -121,11 +151,17 @@
     <Compile Include="Action\AddAccountToSmartschool.cs" />
     <Compile Include="Action\AddClassGroupToDirectory.cs" />
     <Compile Include="Action\AddClassGroupToSmartschool.cs" />
+    <Compile Include="Action\AddUserToADStudentGroup.cs" />
+    <Compile Include="Action\DeleteSmartschoolAccount.cs" />
     <Compile Include="Action\DoNotImportClassGroupFromSmartschool.cs" />
     <Compile Include="Action\DoNotImportFromWisa.cs" />
     <Compile Include="Action\EmptyClassGroupToSmartschool.cs" />
+    <Compile Include="Action\ModifyAccountID.cs" />
     <Compile Include="Action\ModifyDirectoryData.cs" />
     <Compile Include="Action\ModifySmartschoolData.cs" />
+    <Compile Include="Action\ModifySmartschoolStemID.cs" />
+    <Compile Include="Action\ModifySmartschoolStudentAddress.cs" />
+    <Compile Include="Action\ModifyStudentHomeDir.cs" />
     <Compile Include="Action\MoveDirectoryClassGroup.cs" />
     <Compile Include="Action\MoveToSmartschoolClassGroup.cs" />
     <Compile Include="Action\NoAccountActionNeeded.cs" />
@@ -136,6 +172,7 @@
     <Compile Include="Action\RemoveDirectoryClassGroup.cs" />
     <Compile Include="Action\RemoveEmptyDirectoryClassGroup.cs" />
     <Compile Include="Action\GroupAction.cs" />
+    <Compile Include="Action\UnregisterSmartschoolAccount.cs" />
     <Compile Include="Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
@@ -369,6 +406,7 @@
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
+    <None Include="AccountManager_TemporaryKey.pfx" />
     <None Include="packages.config" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
@@ -383,6 +421,18 @@
       <Project>{3bcc599d-59f5-49fd-8076-050eeca20ee7}</Project>
       <Name>AccountApi</Name>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <BootstrapperPackage Include=".NETFramework,Version=v4.7">
+      <Visible>False</Visible>
+      <ProductName>Microsoft .NET Framework 4.7 %28x86 and x64%29</ProductName>
+      <Install>true</Install>
+    </BootstrapperPackage>
+    <BootstrapperPackage Include="Microsoft.Net.Framework.3.5.SP1">
+      <Visible>False</Visible>
+      <ProductName>.NET Framework 3.5 SP1</ProductName>
+      <Install>false</Install>
+    </BootstrapperPackage>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

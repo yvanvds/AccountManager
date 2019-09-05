@@ -71,12 +71,11 @@ namespace AccountManager
             }
         }
 
-        private bool accountOK;
-        public bool AccountOK => accountOK;
+        public bool AccountOK { get; set; }
 
         public void Compare()
         {
-            accountOK = false;
+            AccountOK = false;
 
             if (wisaAccount == null)
             {
@@ -126,11 +125,12 @@ namespace AccountManager
 
             if (wisaAccount != null && directoryAccount != null && smartschoolAccount != null)// don't include google anymore && googleAccount != null)
             {
-                accountOK = true;
+                AccountOK = true;
+                FindActionsForLinkedAccounts();
             } else
             {
                 FindActionsForMissingAccounts();
-                accountOK = false;
+                AccountOK = false;
             }
 
             if(wisaAccount != null && directoryAccount !=  null)
@@ -140,19 +140,18 @@ namespace AccountManager
                     Actions.Add(new MoveDirectoryClassGroup());
                     directoryStatusIcon = "AlertCircleOutline";
                     directoryStatusColor = "Orange";
-                    accountOK = false;
+                    AccountOK = false;
                 }
             }
 
             if (wisaAccount != null && smartschoolAccount != null)
-            {
-               
+            {          
                 if(!wisaAccount.ClassGroup.Contains("ANS") && !wisaAccount.ClassGroup.Contains("BNS") && wisaAccount.ClassGroup != smartschoolAccount.Group)
                 {
                     Actions.Add(new MoveToSmartschoolClassGroup());
                     smartschoolStatusIcon = "AlertCircleOutline";
                     smartschoolStatusColor = "Orange";
-                    accountOK = false;
+                    AccountOK = false;
                 }
             }
 
@@ -169,7 +168,7 @@ namespace AccountManager
                     directoryStatusIcon = "AlertCircleOutline";
                     directoryStatusIcon = "Orange";
                     Actions.Add(action);
-                    accountOK = false;
+                    AccountOK = false;
                 }
             }
         }
@@ -183,14 +182,24 @@ namespace AccountManager
             }
 
             // if account is only on directory, suggest removal
-            else if (wisaAccount == null && directoryAccount != null && smartschoolAccount == null)
+            else
             {
-                Actions.Add(new RemoveAccountFromDirectory());
-            }
-            // if account is not in wisa, suggest removal
-            else if (wisaAccount == null && directoryAccount != null && smartschoolAccount != null)
-            {
-                Actions.Add(new RemoveAccountFromDirectoryAndSmartschool());
+                if (wisaAccount == null && directoryAccount != null)
+                {
+                    Actions.Add(new RemoveAccountFromDirectory());
+                }
+                // if account is only on smartschool, suggest removal or diable
+                if (wisaAccount == null && smartschoolAccount != null)
+                {
+                    if (smartschoolAccount.Status == "actief") {
+                        Actions.Add(new UnregisterSmartschoolAccount());
+                    } else
+                    {
+                        MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Smartschool, "niet actief");
+                    }
+                    Actions.Add(new DeleteSmartschoolAccount(smartschoolAccount.Status != "actief"));
+
+                }
             }
 
             // if account is only on wisa, add on directory and smartschool
@@ -204,6 +213,18 @@ namespace AccountManager
                 Actions.Add(new AddAccountToSmartschool());
             }
         }
+
+        // searches for differences between accounts if they all exist
+        void FindActionsForLinkedAccounts()
+        {
+            ModifySmartschoolStudentAddress.ApplyIfNeeded(this);
+            AddUserToADStudentGroup.ApplyIfNeeded(this);
+            ModifyStudentHomeDir.ApplyIfNeeded(this);
+            ModifyAccountID.ApplyIfNeeded(this);
+            ModifySmartschoolStemID.ApplyIfNeeded(this);
+        }
+
+        
 
         public AccountAction GetSameAction(AccountAction action)
         {
@@ -223,27 +244,58 @@ namespace AccountManager
         public bool GoogleLinked => googleAccount != null;
 
         private string wisaStatusIcon;
-        public string WisaStatusIcon => wisaStatusIcon;
+        public string WisaStatusIcon {
+            get => wisaStatusIcon;
+            set => wisaStatusIcon = value;
+        }
 
         private string wisaStatusColor;
-        public string WisaStatusColor => wisaStatusColor;
+        public string WisaStatusColor
+        {
+            get => wisaStatusColor;
+            set => wisaStatusColor = value;
+        }
 
         private string directoryStatusIcon;
-        public string DirectoryStatusIcon => directoryStatusIcon;
+        public string DirectoryStatusIcon
+        {
+            get => directoryStatusIcon;
+            set => directoryStatusIcon = value;
+        }
 
         private string directoryStatusColor;
-        public string DirectoryStatusColor => directoryStatusColor;
+        public string DirectoryStatusColor
+        {
+            get => directoryStatusColor;
+            set => directoryStatusColor = value;
+        }
 
         private string smartschoolStatusIcon;
-        public string SmartschoolStatusIcon => smartschoolStatusIcon;
+        public string SmartschoolStatusIcon
+        {
+            get => smartschoolStatusIcon;
+            set => smartschoolStatusIcon = value;
+        }
 
         private string smartschoolStatusColor;
-        public string SmartschoolStatusColor => smartschoolStatusColor;
+        public string SmartschoolStatusColor
+        {
+            get => smartschoolStatusColor;
+            set => smartschoolStatusColor = value;
+        }
 
         private string googleStatusIcon;
-        public string GoogleStatusIcon => googleStatusIcon;
+        public string GoogleStatusIcon
+        {
+            get => googleStatusIcon;
+            set => googleStatusIcon = value;
+        }
 
         private string googleStatusColor;
-        public string GoogleStatusColor => googleStatusColor;
+        public string GoogleStatusColor
+        {
+            get => googleStatusColor;
+            set => googleStatusColor = value;
+        }
     }
 }

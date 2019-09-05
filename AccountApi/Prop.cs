@@ -63,7 +63,7 @@ namespace AbstractAccountApi
             public T Value
             {
                 get { return _value; }
-                set { _value = value; NotifyPropertyChanged(); }
+                set { _value = value; action?.Invoke(); NotifyPropertyChanged(); }
             }
 
             public static bool operator ==(Prop<T> self, T other)
@@ -94,6 +94,10 @@ namespace AbstractAccountApi
                 hashCode = hashCode * -1521134295 + EqualityComparer<T>.Default.GetHashCode(Value);
                 return hashCode;
             }
+
+            private Action action = null;
+            public void SetAction(Action action) { this.action = action; }
+
         }
 
         public class PropBool : Prop<bool>

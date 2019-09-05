@@ -11,7 +11,7 @@ namespace AccountApi.Smartschool
     {
         /// <summary>
         /// Saves an account to smartschool. This can be used to create a new user as well as update an
-        /// existing user, but the account values must be complete. Also a new password must be provided. There are other methods to do a partial
+        /// existing user, but the account values must be complete. Also a new password must be provided (but can be empty for existing accounts). There are other methods to do a partial
         /// user update.
         /// </summary>
         /// <param name="account">The account to send to smartschool.</param>
@@ -214,6 +214,7 @@ namespace AccountApi.Smartschool
                 Error.AddError(iResult);
                 return false;
             }
+            account.Status = "is deactivated";
             Connector.Log.AddMessage(Origin.Smartschool, account.GivenName + " " + account.SurName + " is deactivated");
             return true;
         }
@@ -399,6 +400,14 @@ namespace AccountApi.Smartschool
             account.UID = json.Gebruikersnaam;
             account.AccountID = json.Internnummer ?? "";
             account.RegisterID = json.Rijksregisternummer;
+            try
+            {
+                account.StemID = Convert.ToInt32(json.Stamboeknummer);
+            } catch (Exception)
+            {
+                // ignore this Connector.Log.AddError(Origin.Smartschool, "Ongeldig stamboeknummer bij account " + json.Gebruikersnaam);
+            }
+            
 
             if (json.Basisrol == "1")
             {

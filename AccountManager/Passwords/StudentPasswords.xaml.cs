@@ -219,7 +219,7 @@ namespace AccountManager.Passwords
                 if(item.DirectoryPassword.Value == true)
                 {
                     item.NewDirectoryPassword = AccountApi.Password.Create();
-                    //item.Account.SetPassword(item.NewDirectoryPassword);
+                    item.Account.SetPassword(item.NewDirectoryPassword);
                 }
 
                 var ssAccount = AccountApi.Smartschool.GroupManager.Root.FindAccount(item.UserName);
@@ -229,43 +229,43 @@ namespace AccountManager.Passwords
                     if (item.SmartschoolPassword.Value == true)
                     {
                         item.NewSmartschoolPassword = AccountApi.Password.Create();
-                        //await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolPassword, AccountApi.AccountType.Student);
+                        await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolPassword, AccountApi.AccountType.Student);
                     }
 
                     if (item.SmartschoolCo1Password.Value == true)
                     {
                         item.NewSmartschoolCo1Password = AccountApi.Password.Create();
-                        //await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo1Password, AccountApi.AccountType.CoAccount1);
+                        await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo1Password, AccountApi.AccountType.CoAccount1);
                     }
 
                     if (item.SmartschoolCo2Password.Value == true)
                     {
                         item.NewSmartschoolCo2Password = AccountApi.Password.Create();
-                        //await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo2Password, AccountApi.AccountType.CoAccount2);
+                        await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo2Password, AccountApi.AccountType.CoAccount2);
                     }
 
                     if (item.SmartschoolCo3Password.Value == true)
                     {
                         item.NewSmartschoolCo3Password = AccountApi.Password.Create();
-                        //await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo3Password, AccountApi.AccountType.CoAccount3);
+                        await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo3Password, AccountApi.AccountType.CoAccount3);
                     }
 
                     if (item.SmartschoolCo4Password.Value == true)
                     {
                         item.NewSmartschoolCo4Password = AccountApi.Password.Create();
-                        //await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo4Password, AccountApi.AccountType.CoAccount4);
+                        await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo4Password, AccountApi.AccountType.CoAccount4);
                     }
 
                     if (item.SmartschoolCo5Password.Value == true)
                     {
                         item.NewSmartschoolCo5Password = AccountApi.Password.Create();
-                        //await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo5Password, AccountApi.AccountType.CoAccount5);
+                        await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo5Password, AccountApi.AccountType.CoAccount5);
                     }
 
                     if (item.SmartschoolCo6Password.Value == true)
                     {
                         item.NewSmartschoolCo6Password = AccountApi.Password.Create();
-                        //await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo6Password, AccountApi.AccountType.CoAccount6);
+                        await AccountApi.Smartschool.AccountManager.SetPassword(ssAccount, item.NewSmartschoolCo6Password, AccountApi.AccountType.CoAccount6);
                     }
                 } else
                 {

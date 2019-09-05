@@ -21,6 +21,9 @@ namespace AccountManager
         public bool ConfigChanged { get; set; }
         public bool ShowDebugInterface { get; set; }
 
+        private bool configReady = false;
+        public bool ConfigReady => configReady;
+
         private Data()
         {
             appFolder = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -34,6 +37,7 @@ namespace AccountManager
             if(File.Exists(configFile))
             {
                 LoadConfig(configFile);
+                configReady = true;
             }
         }
 

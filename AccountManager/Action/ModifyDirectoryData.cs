@@ -39,7 +39,7 @@ namespace AccountManager.Action
 
         }
 
-        public override async Task Apply(LinkedAccount linkedAccount)
+        public override async Task Apply(LinkedAccount linkedAccount, DateTime deletionDate)
         {
             InProgress.Value = true;
 

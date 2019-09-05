@@ -139,6 +139,9 @@
                         <RowDefinition Height="30"/>
                         <RowDefinition Height="30"/>
 
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+
                     </Grid.RowDefinitions>
                     <Label Grid.Row="0" Grid.Column="0" Content="Voornaam" FontWeight="Bold"/>
                     <Label Grid.Row="0" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.FirstName}"/>
@@ -167,6 +170,13 @@
 
                     <Label Grid.Row="9" Grid.Column="0" Content="Klas" FontWeight="Bold"/>
                     <Label Grid.Row="9" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.ClassGroup}"/>
+
+                    <Label Grid.Row="10" Grid.Column="0" Content="HomeDrive" FontWeight="Bold"/>
+                    <Label Grid.Row="10" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.HomeDrive}"/>
+
+                    <Label Grid.Row="11" Grid.Column="0" Content="HomeDirectory" FontWeight="Bold"/>
+                    <Label Grid.Row="11" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.HomeDirectory}"/>
+
                 </Grid>
             </GroupBox>
         </Grid>

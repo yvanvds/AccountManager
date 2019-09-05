@@ -47,6 +47,8 @@ namespace AccountManager
 
         private static void DoRelink()
         {
+            if (!Data.Instance.ConfigReady) return;
+            if (AccountApi.Smartschool.GroupManager.Root == null) return;
 
             List.Clear();
             foreach(var group in AccountApi.Wisa.ClassGroupManager.All)

@@ -26,6 +26,18 @@ namespace AccountApi.Directory
             state = entry.Properties.Contains("userAccountControl") ? (int)entry.Properties["userAccountControl"].Value : 0;
             role = Connector.GetRoleFromPath(entry.Path);
             cn = entry.Properties.Contains("cn") ? entry.Properties["cn"].Value.ToString() : "";
+
+            groups = new List<string>();
+            if (entry.Properties.Contains("memberOf"))
+            {
+                foreach (string group in entry.Properties["memberOf"])
+                {
+                    groups.Add(group);
+                }
+            }
+
+            homeDrive = entry.Properties.Contains("HomeDrive") ? entry.Properties["HomeDrive"].Value.ToString() : "";
+            homeDirectory = entry.Properties.Contains("HomeDirectory") ? entry.Properties["HomeDirectory"].Value.ToString() : "";
         }
 
         public Account(JObject obj)
@@ -41,9 +53,14 @@ namespace AccountApi.Directory
             gender = obj.ContainsKey("gender") ? obj["gender"].ToString() : "not set";
             state = obj.ContainsKey("state") ? Convert.ToInt32(obj["state"]) : 0;
             copyCode = obj.ContainsKey("copyCode") ? Convert.ToInt32(obj["copyCode"]) : 0;
+
+            homeDrive = obj.ContainsKey("homeDrive") ? obj["homeDrive"].ToString() : "";
+            homeDirectory = obj.ContainsKey("homeDirectory") ? obj["homeDirectory"].ToString() : "";
+
             string sRole = obj.ContainsKey("role") ? obj["role"].ToString() : "";
             switch(sRole)
             {
+                case "Student": role = AccountRole.Student; break;
                 case "Teacher": role = AccountRole.Teacher; break;
                 case "Director": role = AccountRole.Director; break;
                 case "Support": role = AccountRole.Support; break;
@@ -51,17 +68,34 @@ namespace AccountApi.Directory
                 default: role = AccountRole.Other; break;
             } 
             cn = obj.ContainsKey("cn") ? obj["cn"].ToString() : "";
+
+            groups = new List<string>();
+            if (obj.ContainsKey("groups"))
+            {
+                JArray jGroups = obj["groups"] as JArray;
+                
+                foreach(var group in jGroups)
+                {
+                    groups.Add(group.ToString());
+                }
+            }
         }
 
         public JObject ToJson()
         {
+            var jGroups = new JArray();
+            foreach(var group in groups)
+            {
+                jGroups.Add(group);
+            }
+
             var result = new JObject
             {
                 ["uid"] = uid,
                 ["firstName"] = firstName,
                 ["lastName"] = lastName,
                 ["fullName"] = fullName,
-                ["mailAlais"] = mailAlias,
+                ["mailAlias"] = mailAlias,
                 ["wisaID"] = wisaID,
                 ["wisaName"] = wisaName,
                 ["classGroup"] = classGroup,
@@ -70,6 +104,9 @@ namespace AccountApi.Directory
                 ["gender"] = gender,
                 ["role"] = role.ToString(),
                 ["cn"] = CN,
+                ["groups"] = jGroups,
+                ["homeDrive"] = homeDrive,
+                ["homeDirectory"] = homeDirectory, 
             };
             return result;
         }
@@ -144,6 +181,72 @@ namespace AccountApi.Directory
             }
         }
 
+        private List<string> groups = new List<string>();
+        public List<string> Groups
+        {
+            get => groups;
+        }
+        public async Task AddToGroup(string groupPath)
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    DirectoryEntry groupEntry = Connector.GetEntry(groupPath);
+                    if (groupEntry != null)
+                    {
+                        var user = GetEntry(uid);
+                        string path = user.Properties["distinguishedName"].Value.ToString();
+                        groupEntry.Properties["member"].Add(path);
+                        groupEntry.CommitChanges();
+                        Connector.Log.AddMessage(Origin.Directory, fullName + " is now part of group: " + groupEntry.Path);
+                        groupEntry.Close();
+                        user.Close();
+                        groups.Add(groupPath);
+                    }
+                    else
+                    {
+                        Connector.Log.AddError(Origin.Directory, "Cannot add a member to an unknown group.");
+                    }
+                }
+                catch (Exception e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                }
+            });
+            
+        }
+
+        public async Task RemoveFromGroup(string groupPath)
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    DirectoryEntry groupEntry = Connector.GetEntry(groupPath);
+                    if (groupEntry != null)
+                    {
+                        var user = GetEntry(uid);
+                        string path = user.Properties["distinguishedName"].Value.ToString();
+                        groupEntry.Properties["member"].Remove(path);
+                        groupEntry.CommitChanges();
+                        groupEntry.Close();
+                        user.Close();
+                        groups.Remove(groupPath);
+                    }
+                    else
+                    {
+                        Connector.Log.AddError(Origin.Directory, "Cannot remove a member from an unknown group.");
+                    }
+                }
+                catch (Exception e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                }
+            });
+           
+        }
+
         private string mailAlias;
         public string MailAlias { get => mailAlias; }
 
@@ -155,6 +258,70 @@ namespace AccountApi.Directory
 
         private string classGroup;
         public string ClassGroup { get => classGroup; }
+
+        private string homeDrive;
+        public string HomeDrive { get => homeDrive; }
+
+        private string homeDirectory;
+        public string HomeDirectory { get => homeDirectory; }
+
+        public bool HasCorrectHome()
+        {
+            switch (Role)
+            {
+                case AccountRole.Student:
+                    if (homeDrive != "L:") return false;
+                    if (homeDirectory != "\\\\fsstudents\\homes\\" + uid) return false;
+                    break;
+                case AccountRole.IT:
+                case AccountRole.Support:
+                case AccountRole.Director:
+                    if (homeDrive != "H:") return false;
+                    if (homeDirectory != "\\\\Datacenter1\\SupportHomes\\" + uid) return false;
+                    break;
+                case AccountRole.Teacher:
+                    if (homeDrive != "H:") return false;
+                    if (homeDirectory != "\\\\fsteachers\\homes\\" + uid) return false;
+                    break;
+            }
+            return true;
+        }
+
+        public async Task SetHome()
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    var entry = GetEntry(uid);
+                    switch (Role)
+                    {
+                        case AccountRole.Student:
+                            homeDrive = "L:";
+                            homeDirectory = "\\\\fsstudents\\homes\\" + uid;
+                            break;
+                        case AccountRole.IT:
+                        case AccountRole.Support:
+                        case AccountRole.Director:
+                            homeDrive = "H:";
+                            homeDirectory = "\\\\Datacenter1\\SupportHomes\\" + uid;
+                            break;
+                        case AccountRole.Teacher:
+                            homeDrive = "H:";
+                            homeDirectory = "\\\\fsteachers\\homes\\" + uid;
+                            break;
+                    }
+                    entry.Properties["HomeDrive"].Value = homeDrive;
+                    entry.Properties["HomeDirectory"].Value = homeDirectory;
+                    entry.CommitChanges();
+                    entry.Close();
+
+                } catch(Exception e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                }
+            });
+        }
 
         private int copyCode;
         public int CopyCode {
@@ -263,7 +430,8 @@ namespace AccountApi.Directory
             var entry = GetEntry(uid);
             try
             {
-                entry.Password = password;
+                //entry.Password = password;
+                entry.Invoke("SetPassword", new object[] { password });
                 entry.CommitChanges();
             }
             catch(Exception e)

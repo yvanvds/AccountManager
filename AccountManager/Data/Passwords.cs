@@ -111,6 +111,20 @@ namespace AccountManager
                 titleStyle.Font.Size = 16;
                 titleStyle.Font.Bold = true;
                 titleStyle.ParagraphFormat.SpaceAfter = 12;
+                var border = new Border();
+                border.Width = "1pt";
+                border.Color = Colors.Black;
+                titleStyle.ParagraphFormat.Borders.Bottom = border;
+
+                var subTitleStyle = document.Styles["Heading2"];
+                subTitleStyle.Font.Name = "Tahoma";
+                subTitleStyle.Font.Size = 14;
+                subTitleStyle.Font.Bold = true;
+                subTitleStyle.ParagraphFormat.SpaceAfter = 10;
+                var zeroborder = new Border();
+                zeroborder.Width = "0pt";
+                zeroborder.Color = Colors.White;
+                subTitleStyle.ParagraphFormat.Borders.Bottom = zeroborder;
 
                 var normalStyle = document.Styles["Normal"];
                 normalStyle.Font.Name = "Times New Roman";
@@ -128,20 +142,35 @@ namespace AccountManager
                     var section = document.AddSection();
                     section.AddParagraph("Account voor " + pw.Name + " - " + pw.ClassGroup, "Heading1");
 
-                    var line1 = section.AddParagraph("Je gebruikersnaam is ", "Normal");
-                    line1.AddFormattedText(pw.AccountName, TextFormat.Bold);
-                    line1.AddFormattedText(". Hiermee kan je inloggen op de computers in de school, op smartschool en bij Office365. " +
-                        "Je gebruikt daarbij het volgende wachtwoord:");
+                    section.AddParagraph("Login Gegevens", "Heading2");
+                    section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
+                    section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
 
-                    section.AddParagraph(pw.ADPassword, "PasswordStyle");
+                    section.AddParagraph("Met deze gegevens kan je inloggen op de pc's op school. Je kan er ook mee " +
+                        "inloggen op het Smifi-L wifi netwerk.", "Normal");
 
-                    var line2 = section.AddParagraph("Om in te loggen op smartschool heb je een ander wachtwoord nodig:", "Normal");
+                    section.AddParagraph("Office365", "Heading2");
+                    section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
+                        "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
+                        + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
+                    section.AddParagraph("Login     : " + pw.AccountName + "@smaschool.be", "PasswordStyle");
+                    section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
 
-                    section.AddParagraph(pw.SSPassword, "PasswordStyle");
+                    if(pw.SSPassword.Length > 0)
+                    {
+                        section.AddParagraph("Smartschool", "Heading2");
+                        section.AddParagraph("Inloggen op smartschool doe je met dezelfde login, maar met het volgende wachtwoord:", "Normal");
+                        section.AddParagraph(pw.SSPassword, "PasswordStyle");
+                        section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen. Je kan dan"
+                            + " het wachtwoord bovenaan ingegeven, zodat je overal hetzelfde wachtwoord kan gebruiken.", "Normal");
 
-                    var line3 = section.AddParagraph("Op smartschool moet je je wachtwoord aanpassen wanneer je voor het eerst inlogt. " +
-                        "Je kan zo je wachtwoord gelijkstellen aan het eerste wachtwoord.",
-                        "Normal");
+                    }
+
+                    section.AddParagraph("Privacy", "Heading2");
+                    section.AddParagraph("Je account is strikt persoonlijk. Indien je je account doorgeeft aan anderen, dan ben jij " +
+                        "verantwoordelijk voor hun acties op het netwerk. Laat dit blad dus niet rondslingeren maar leer je login " +
+                        "en wachtwoord vanbuiten. Zou je je wachtwoord vergeten, dan kan je een nieuw wachtwoord krijgen op Secretariaat 1.", "Normal");
+                    section.AddParagraph("Geef nooit (NOOIT!) je wachtwoord door, ook niet aan leerkrachten.");
                 }
 
                 var pdfRenderer = new PdfDocumentRenderer();

@@ -18,7 +18,7 @@ namespace AccountManager.Action
 
         }
 
-        public async override Task Apply(LinkedAccount linkedAccount)
+        public async override Task Apply(LinkedAccount linkedAccount, DateTime deletionDate)
         {
             var wisa = linkedAccount.wisaAccount;
             var directory = await AccountApi.Directory.AccountManager.Create(wisa.FirstName, wisa.Name, wisa.WisaID, AccountRole.Student, wisa.ClassGroup);

@@ -15,7 +15,7 @@ namespace AccountManager.Action
             true, true)
         { }
 
-        public async override Task Apply(LinkedAccount linkedAccount)
+        public async override Task Apply(LinkedAccount linkedAccount, DateTime deletionDate)
         {
             bool result = await AccountApi.Directory.AccountManager.MoveStudentToClass(linkedAccount.directoryAccount, linkedAccount.wisaAccount.ClassGroup);
             if(result)

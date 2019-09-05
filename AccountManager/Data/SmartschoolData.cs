@@ -339,10 +339,13 @@ namespace AccountManager
         public void SaveSmartschoolAccount()
         {
             var json = AccountApi.Smartschool.GroupManager.ToJson(true);
-            json["lastSync"] = LastSmartschoolAccountSync;
+            if (json != null)
+            {
+                json["lastSync"] = LastSmartschoolAccountSync;
 
-            var location = Path.Combine(appFolder, smartschoolGroupsFile);
-            File.WriteAllText(location, json.ToString());
+                var location = Path.Combine(appFolder, smartschoolGroupsFile);
+                File.WriteAllText(location, json.ToString());
+            }
         }
     }
 }

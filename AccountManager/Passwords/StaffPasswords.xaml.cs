@@ -36,6 +36,7 @@ namespace AccountManager.Passwords
         public Prop<float> SelectedGender { get; set; } = new Prop<float> { Value = 0.5f };
         public Prop<string> SelectedCopyCode { get; set; } = new Prop<string> { Value = "" };
         public Prop<string> SelectedGroup { get; set; } = new Prop<string> { Value = "" };
+
         public PropBool IsNewAccount { get; set; } = new PropBool { Value = false };
 
         enum FilterType
@@ -56,6 +57,9 @@ namespace AccountManager.Passwords
             MainGrid.DataContext = this;
             CreateCollection();
             AccountList.ItemsSource = accounts;
+
+            SelectedFirstName.SetAction(SetButtonStates);
+            SelectedLastName.SetAction(SetButtonStates);
         }
 
         private void CreateCollection()
@@ -97,8 +101,8 @@ namespace AccountManager.Passwords
         private void AddAccountButton_Click(object sender, RoutedEventArgs e)
         {
             DeselectAccount();
-            CreateCopyCodeButton.IsEnabled = true;
-            CreateLoginButton.IsEnabled = true;
+            IsNewAccount.Value = true;
+            SetButtonStates();
         }
 
         private void SelectAccount()
@@ -131,18 +135,8 @@ namespace AccountManager.Passwords
                 SelectedGender.Value = 5f;
             }
             IsNewAccount.Value = false;
-            SaveButton.IsEnabled = false;
-            DeleteButton.IsEnabled = true;
 
-            if(SelectedCopyCode == "0")
-            {
-                CreateCopyCodeButton.IsEnabled = true;
-            } else
-            {
-                CreateCopyCodeButton.IsEnabled = false;
-            }
-            
-            CreateLoginButton.IsEnabled = false;
+            SetButtonStates();
         }
 
         private void DeselectAccount()
@@ -156,10 +150,7 @@ namespace AccountManager.Passwords
             AccountRole.SelectedIndex = -1;
 
             SelectedGender.Value = 5f;
-
-            IsNewAccount.Value = true;
-            SaveButton.IsEnabled = false;
-            DeleteButton.IsEnabled = false;
+            SetButtonStates();
         }
 
         private void FilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -172,19 +163,14 @@ namespace AccountManager.Passwords
             CreateCollection();
         }
 
-        private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            SaveButton.IsEnabled = true;
-        }
-
         private void AccountRole_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            SaveButton.IsEnabled = true;
+            SetButtonStates();
         }
 
         private void Slider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            SaveButton.IsEnabled = true;
+            SetButtonStates();
         }
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
@@ -225,8 +211,9 @@ namespace AccountManager.Passwords
                     SelectedAccount.Value.Gender = gender;
                 }
 
-                SaveButton.IsEnabled = false;
+                
             }
+            SetButtonStates();
         }
 
         private async void DeleteButton_Click(object sender, RoutedEventArgs e)
@@ -249,6 +236,7 @@ namespace AccountManager.Passwords
             DeselectAccount();
 
             CreateCollection();
+            SetButtonStates();
         }
 
         private void CreateCopyCodeButton_Click(object sender, RoutedEventArgs e)
@@ -267,20 +255,82 @@ namespace AccountManager.Passwords
             }
             SelectedCopyCode.Value = code.ToString();
 
-            if(!IsNewAccount.Value)
-            {
-                SaveButton.IsEnabled = true;
-            }
+            SetButtonStates();
         }
 
         private void CreateLoginButton_Click(object sender, RoutedEventArgs e)
         {
 
+            SetButtonStates();
         }
 
         void SetButtonStates()
         {
+            if (SelectedAccount.Value == null && IsNewAccount.Value == false)
+            {
+                DetailsPanel.Visibility = Visibility.Hidden;
+                return;
+            }
 
+            DetailsPanel.Visibility = Visibility.Visible;
+
+            if(IsNewAccount.Value == true)
+            {
+                PCPasswordButton.IsEnabled = false;
+                SSPasswordButton.IsEnabled = false;
+                AllPasswordButton.IsEnabled = false;
+
+                DeleteButton.IsEnabled = false;
+
+                if(SelectedLogin.Value == "" && SelectedFirstName.Value.Length > 0 && SelectedLastName.Value.Length > 0)
+                {
+                    CreateLoginButton.IsEnabled = true;
+                } else
+                {
+                    CreateLoginButton.IsEnabled = false;
+                }
+
+                if (SelectedCopyCode.Value == "0" || SelectedCopyCode.Value == "")
+                {
+                    CreateCopyCodeButton.IsEnabled = true;
+                }
+                else
+                {
+                    CreateCopyCodeButton.IsEnabled = false;
+                }
+
+                bool readyToSave = true;
+                if (SelectedFirstName.Value.Length == 0) readyToSave = false;
+                if (SelectedLastName.Value.Length == 0) readyToSave = false;
+                if (SelectedLogin.Value.Length == 0) readyToSave = false;
+                if (SelectedCopyCode.Value.Length == 0) readyToSave = false;
+                if (AccountRole.SelectedIndex == -1) readyToSave = false;
+
+                SaveButton.IsEnabled = readyToSave;
+            } else
+            {
+                PCPasswordButton.IsEnabled = true;
+                SSPasswordButton.IsEnabled = true;
+                AllPasswordButton.IsEnabled = true;
+
+                DeleteButton.IsEnabled = true;
+
+                CreateLoginButton.IsEnabled = false;
+                if(SelectedCopyCode.Value == "0" || SelectedCopyCode.Value == "")
+                {
+                    CreateCopyCodeButton.IsEnabled = true;
+                } else
+                {
+                    CreateCopyCodeButton.IsEnabled = false;
+                }
+
+                bool readyToSave = false;
+                if (SelectedFirstName.Value != SelectedAccount.Value.FirstName) readyToSave = true;
+                if (SelectedLastName.Value != SelectedAccount.Value.LastName) readyToSave = true;
+                if (SelectedCopyCode.Value != SelectedAccount.Value.CopyCode.ToString()) readyToSave = true;
+
+                SaveButton.IsEnabled = readyToSave;
+            }
         }
     }
 }

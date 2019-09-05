@@ -224,11 +224,11 @@ namespace AccountApi.Directory
 
         public static AccountRole GetRoleFromPath(string path)
         {
-            if (path.Contains("OU=" + DirectorOU)) return AccountRole.Director;
-            if (path.Contains("OU=" + AdminOU)) return AccountRole.IT;
-            if (path.Contains("OU=" + SupportOU)) return AccountRole.Support;
-            if (path.Contains("OU=" + TeacherOU)) return AccountRole.Teacher;
-            if (path.Contains(studentPath)) return AccountRole.Student;
+            if (path.ToUpper().Contains("OU=" + DirectorOU.ToUpper())) return AccountRole.Director;
+            if (path.ToUpper().Contains("OU=" + AdminOU.ToUpper())) return AccountRole.IT;
+            if (path.ToUpper().Contains("OU=" + SupportOU.ToUpper())) return AccountRole.Support;
+            if (path.ToUpper().Contains("OU=" + TeacherOU.ToUpper())) return AccountRole.Teacher;
+            if (path.ToUpper().Contains(studentPath.ToUpper())) return AccountRole.Student;
 
             return AccountRole.Other;
         }

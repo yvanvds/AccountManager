@@ -14,7 +14,7 @@ namespace AccountManager.Action
         {
         }
 
-        public override Task Apply(LinkedAccount linkedAccount)
+        public override Task Apply(LinkedAccount linkedAccount, DateTime deletionDate)
         {
             throw new NotImplementedException();
         }

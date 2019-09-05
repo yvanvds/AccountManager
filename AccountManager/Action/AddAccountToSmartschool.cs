@@ -18,7 +18,7 @@ namespace AccountManager.Action
 
         }
 
-        public async override Task Apply(LinkedAccount linkedAccount)
+        public async override Task Apply(LinkedAccount linkedAccount, DateTime deletionDate)
         {
             var wisa = linkedAccount.wisaAccount;
             var directory = linkedAccount.directoryAccount;

@@ -34,6 +34,7 @@ namespace AccountApi.Directory
                 search.PropertiesToLoad.Add("samGender");
                 search.PropertiesToLoad.Add("userAccountControl");
                 search.PropertiesToLoad.Add("employeeID");
+                search.PropertiesToLoad.Add("memberOf");
                 SearchResultCollection results;
 
                 try

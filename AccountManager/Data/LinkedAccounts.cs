@@ -54,6 +54,9 @@ namespace AccountManager
 
         private static void DoRelink()
         {
+            if (!Data.Instance.ConfigReady) return;
+            if (AccountApi.Smartschool.GroupManager.Root == null) return;
+
             List.Clear();
             foreach(var account in AccountApi.Directory.AccountManager.Students)
             {
@@ -112,6 +115,7 @@ namespace AccountManager
 
             foreach (var group in List.Values)
             {
+                if (group == null) continue;
                 bool incomplete = (group.wisaAccount == null || group.smartschoolAccount == null || group.directoryAccount == null);
                 if (group.wisaAccount != null)
                 {

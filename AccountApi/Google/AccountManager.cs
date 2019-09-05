@@ -294,11 +294,15 @@ namespace AccountApi.Google
         {
             JObject result = new JObject();
             JArray arr = new JArray();
-            foreach (var user in allUsers.Values)
+            if(allUsers != null)
             {
-                arr.Add(user.ToJson());
+                foreach (var user in allUsers.Values)
+                {
+                    arr.Add(user.ToJson());
+                }
+                result["accounts"] = arr;
             }
-            result["accounts"] = arr;
+            
             return result;
         }
 

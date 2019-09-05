@@ -1,4 +1,5 @@
-﻿using System.Threading.Tasks;
+﻿using System;
+using System.Threading.Tasks;
 using static AbstractAccountApi.ObservableProperties;
 
 namespace AccountManager.Action
@@ -8,11 +9,18 @@ namespace AccountManager.Action
         AddToDirectoryAndSmartschool,
         AddToSmartschool,
         ModifyDirectoryData,
+        ModifySmartschoolAddress,
         MoveDirectoryClassGroup,
         MoveSmartschoolClassGroup,
         RemoveFromDirectory,
         RemoveFromGoogle,
         RemoveFromDirectoryAndSmartschool,
+        RemoveFromSmartschool,
+        DisableInSmartschool,
+        AddToADStudentGroup,
+        ModifyStudentHomeDir,
+        ModifyAccountID,
+        ModifySmartschoolStemID,
         NoAction,
     }
 
@@ -37,7 +45,7 @@ namespace AccountManager.Action
 
         public Prop<bool> InProgress { get; set; } = new Prop<bool>() { Value = false };
 
-        public abstract Task Apply(LinkedAccount linkedAccount);
+        public abstract Task Apply(LinkedAccount linkedAccount, DateTime deletionDate);
 
         public AccountAction(AccountActionType accountActionType, string header, string description, bool canBeApplied, bool canBeAppliedToAll = false)
         {

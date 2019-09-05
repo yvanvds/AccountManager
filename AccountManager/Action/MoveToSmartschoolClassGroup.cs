@@ -17,7 +17,7 @@ namespace AccountManager.Action
 
         }
 
-        public async override Task Apply(LinkedAccount linkedAccount)
+        public async override Task Apply(LinkedAccount linkedAccount, DateTime deletionDate)
         {
             var group = AccountApi.Smartschool.GroupManager.Root.Find(linkedAccount.wisaAccount.ClassGroup);
             await Move(linkedAccount, group);           

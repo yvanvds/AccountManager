@@ -23,6 +23,8 @@ namespace AccountManager.Accounts
 
         public Prop<bool> Working { get; set; } = new Prop<bool>() { Value = false };
 
+        public DateTime StudentDeleteDate = DateTime.Now;
+
         enum FilterType
         {
             Name,
@@ -142,7 +144,7 @@ namespace AccountManager.Accounts
                     var sameAction = account.GetSameAction(action);
                     if(sameAction != null)
                     {
-                        await sameAction.Apply(account);
+                        await sameAction.Apply(account, StudentDeleteDate);
                         
                     }
                     
@@ -150,7 +152,7 @@ namespace AccountManager.Accounts
                 MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Other, "Alle Acties werden uitgevoerd.");
             } else
             {
-                await action.Apply(SelectedAccount.Value);
+                await action.Apply(SelectedAccount.Value, StudentDeleteDate);
             }
                         
             await LinkedAccounts.ReLink();
