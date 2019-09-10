@@ -19,6 +19,7 @@ namespace AccountManager.Action
         DisableInSmartschool,
         AddToADStudentGroup,
         ModifyStudentHomeDir,
+        CreateHomedir,
         ModifyAccountID,
         ModifySmartschoolStemID,
         NoAction,

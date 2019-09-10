@@ -186,6 +186,8 @@ namespace AccountManager
             }
         }
 
+        public bool ADCheckHomeDirs { get; set; } = false;
+
         private bool adUseGrades;
 
         public bool ADUseGrades

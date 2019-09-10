@@ -222,6 +222,7 @@ namespace AccountManager
             ModifyStudentHomeDir.ApplyIfNeeded(this);
             ModifyAccountID.ApplyIfNeeded(this);
             ModifySmartschoolStemID.ApplyIfNeeded(this);
+            CreateHomeDir.ApplyIfNeeded(this);
         }
 
         

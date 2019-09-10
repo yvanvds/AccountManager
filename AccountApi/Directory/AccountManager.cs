@@ -2,7 +2,9 @@
 using System;
 using System.Collections.Generic;
 using System.DirectoryServices;
+using System.IO;
 using System.Linq;
+using System.Security.AccessControl;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -268,9 +270,58 @@ namespace AccountApi.Directory
             
         }
 
-        public static async Task<Account> Create(string firstname, string lastname, string WisaID, AccountRole role, string classgroup = "")
+        public static async Task<bool> CreateHomeDir(Account account)
         {
             return await Task.Run(() =>
+            {
+                try
+                {
+                    if (!System.IO.Directory.Exists(account.HomeDirectory))
+                    {
+                        System.IO.Directory.CreateDirectory(account.HomeDirectory);
+                    }
+
+                    FileSystemRights rights = FileSystemRights.FullControl;
+                    InheritanceFlags flags = new InheritanceFlags();
+                    flags = InheritanceFlags.None;
+
+                    FileSystemAccessRule accessRule = new FileSystemAccessRule(account.UID, rights, flags, PropagationFlags.NoPropagateInherit, AccessControlType.Allow);
+                    DirectoryInfo dInfo = new DirectoryInfo(account.HomeDirectory);
+                    DirectorySecurity dSec = dInfo.GetAccessControl();
+
+                    bool modified;
+                    dSec.ModifyAccessRule(AccessControlModification.Set, accessRule, out modified);
+
+                    InheritanceFlags iFlags = new InheritanceFlags();
+                    iFlags = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+
+                    FileSystemAccessRule accessRule2 = new FileSystemAccessRule(account.UID, rights, iFlags, PropagationFlags.InheritOnly, AccessControlType.Allow);
+                    dSec.ModifyAccessRule(AccessControlModification.Add, accessRule2, out modified);
+
+                    dInfo.SetAccessControl(dSec);
+                    return true;
+                } catch(Exception e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                    if (System.IO.Directory.Exists(account.HomeDirectory))
+                    {
+                        try
+                        {
+                            System.IO.Directory.Delete(account.HomeDirectory);
+                        } catch(Exception ex)
+                        {
+                            Connector.Log.AddError(Origin.Directory, ex.Message);
+                        }
+                        
+                    }
+                    return false;
+                }
+            });
+        }
+
+        public static async Task<Account> Create(string firstname, string lastname, string WisaID, AccountRole role, string classgroup = "")
+        {
+            return await Task.Run(async () =>
             {
                 string uid = Connector.CreateNewID(firstname, lastname);
                 string alias = Connector.CreateNewAlias(firstname, lastname);
@@ -335,13 +386,34 @@ namespace AccountApi.Directory
 
                 if (role == AccountRole.Student)
                 {
-                    Students.Add(new Account(childEntry));
-                    return Students.Last();
+                    var account = new Account(childEntry);
+                    await account.SetHome();
+                    await account.AddToGroup("CN=Students,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                    await CreateHomeDir(account);
+                    Students.Add(account);
+                    return account;
                 }
                 else
                 {
-                    Staff.Add(new Account(childEntry));
-                    return Staff.Last();
+                    var account = new Account(childEntry);
+                    await account.SetHome();
+
+                    switch(role) {
+                        case AccountRole.Director:
+                            await account.AddToGroup("CN=Directors,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                            await account.AddToGroup("CN=Support,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                            break;
+                        case AccountRole.Support:
+                            await account.AddToGroup("CN=Support,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                            break;
+                        case AccountRole.Teacher:
+                            await account.AddToGroup("CN=Teachers,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                            break;
+                    }
+
+                    await CreateHomeDir(account);
+                    Staff.Add(account);
+                    return account;
                 }
             });
 

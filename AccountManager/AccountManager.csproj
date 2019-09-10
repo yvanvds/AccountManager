@@ -152,6 +152,7 @@
     <Compile Include="Action\AddClassGroupToDirectory.cs" />
     <Compile Include="Action\AddClassGroupToSmartschool.cs" />
     <Compile Include="Action\AddUserToADStudentGroup.cs" />
+    <Compile Include="Action\CreateHomeDir.cs" />
     <Compile Include="Action\DeleteSmartschoolAccount.cs" />
     <Compile Include="Action\DoNotImportClassGroupFromSmartschool.cs" />
     <Compile Include="Action\DoNotImportFromWisa.cs" />
