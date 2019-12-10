@@ -27,12 +27,12 @@ namespace AccountManager
 
         private void LoadWisaConfig(JObject obj)
         {
-            wisaServer = obj.ContainsKey("server") ? obj["server"].ToString() : "";
+            wisaServer = obj.ContainsKey("server") ? obj["server"].ToObject<string>() : "";
             wisaPort = obj.ContainsKey("port") ? obj["port"].ToString() : "";
             wisaDatabase = obj.ContainsKey("database") ? obj["database"].ToString() : "";
             wisaUser = obj.ContainsKey("user") ? obj["user"].ToString() : "";
             wisaPassword = obj.ContainsKey("password") ? obj["password"].ToString() : "";
-            wisaConnectionTested = obj.ContainsKey("connectionTested") ? obj["connectionTested"].ToObject<ConfigState>() : ConfigState.Unknown;
+            wisaConnectionTested = obj.ContainsKey("connectionTested") ? obj["connectionTested"].ToObject<ConnectionState>() : ConnectionState.Unknown;
             wisaWorkDateNow = obj.ContainsKey("workDateNow") ? obj["workDateNow"].ToObject<bool>() : true;
 
             // if WisaWorkDateNow is true, the current date is used as 'werkdatum'
@@ -129,7 +129,7 @@ namespace AccountManager
             set
             {
                 wisaServer = value.Trim();
-                WisaConnectionTested = ConfigState.Unknown;
+                WisaConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -141,7 +141,7 @@ namespace AccountManager
             set
             {
                 wisaPort = value.Trim();
-                WisaConnectionTested = ConfigState.Unknown;
+                WisaConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -153,7 +153,7 @@ namespace AccountManager
             set
             {
                 wisaDatabase = value.Trim();
-                WisaConnectionTested = ConfigState.Unknown;
+                WisaConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -165,7 +165,7 @@ namespace AccountManager
             set
             {
                 wisaUser = value.Trim();
-                WisaConnectionTested = ConfigState.Unknown;
+                WisaConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -177,13 +177,13 @@ namespace AccountManager
             set
             {
                 wisaPassword = value.Trim();
-                WisaConnectionTested = ConfigState.Unknown;
+                WisaConnectionTested = ConnectionState.Unknown;
             }
         }
 
-        private ConfigState wisaConnectionTested;
+        private ConnectionState wisaConnectionTested;
 
-        public ConfigState WisaConnectionTested
+        public ConnectionState WisaConnectionTested
         {
             get { return wisaConnectionTested; }
             set

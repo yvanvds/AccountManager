@@ -33,7 +33,7 @@ namespace AccountManager
             adStaff = obj.ContainsKey("staff") ? obj["staff"].ToString() : "";
             azureDomain = obj.ContainsKey("azure") ? obj["azure"].ToString() : "";
 
-            adConnectionTested = obj.ContainsKey("connectionTested") ? obj["connectionTested"].ToObject<ConfigState>() : ConfigState.Failed;
+            adConnectionTested = obj.ContainsKey("connectionTested") ? obj["connectionTested"].ToObject<ConnectionState>() : ConnectionState.Failed;
             adUseGrades = obj.ContainsKey("useGrades") ? obj["useGrades"].ToObject<bool>() : false;
             adUseYears = obj.ContainsKey("useYears") ? obj["useYears"].ToObject<bool>() : false;
             if(obj.ContainsKey("grades"))
@@ -117,7 +117,7 @@ namespace AccountManager
             set
             {
                 adDomain = value.Trim();
-                ADConnectionTested = ConfigState.Unknown;
+                ADConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -128,7 +128,7 @@ namespace AccountManager
             set
             {
                 adAccounts = value.Trim();
-                ADConnectionTested = ConfigState.Unknown;
+                ADConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -139,7 +139,7 @@ namespace AccountManager
             set
             {
                 adClasses = value.Trim();
-                ADConnectionTested = ConfigState.Unknown;
+                ADConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -150,7 +150,7 @@ namespace AccountManager
             set
             {
                 adStudents = value.Trim();
-                ADConnectionTested = ConfigState.Unknown;
+                ADConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -161,7 +161,7 @@ namespace AccountManager
             set
             {
                 adStaff = value.Trim();
-                ADConnectionTested = ConfigState.Unknown;
+                ADConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -175,8 +175,8 @@ namespace AccountManager
             }
         }
 
-        private ConfigState adConnectionTested;
-        public ConfigState ADConnectionTested
+        private ConnectionState adConnectionTested;
+        public ConnectionState ADConnectionTested
         {
             get => adConnectionTested;
             set

@@ -13,7 +13,7 @@ namespace AccountManager.Action
         {
             InProgress.Value = true;
             await AccountApi.Directory.ClassGroupManager.Delete(linkedGroup.directoryGroup);
-            Data.Instance.SaveADGroupsToFile();
+            // Data.Instance.SaveADGroupsToFile();
             InProgress.Value = false;
         }
 

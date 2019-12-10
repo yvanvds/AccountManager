@@ -1,0 +1,199 @@
+﻿<UserControl x:Class="AccountManager.Views.Accounts.Overview"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:AccountManager.Views.Accounts"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:c="clr-namespace:CalcBinding;assembly=CalcBinding"
+             TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+             TextElement.FontWeight="Medium"
+             TextElement.FontSize="14"
+             TextOptions.TextFormattingMode="Ideal"
+             TextOptions.TextRenderingMode="Auto"
+             Background="{DynamicResource MaterialDesignPaper}"
+             FontFamily="{DynamicResource MaterialDesignFont}"
+             mc:Ignorable="d" 
+             Loaded="UserControl_Loaded"
+             d:DesignHeight="450" d:DesignWidth="1200">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="VisibleIfTrueConverter" />
+    </UserControl.Resources>
+    <Grid x:Name="MainGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="116"/>
+            <RowDefinition Height="5"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="200"/>
+                <ColumnDefinition Width="180"/>
+                <ColumnDefinition Width="350"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+            <materialDesign:Card Grid.Column="0" Height="100" Margin="8">
+                <StackPanel>
+                    <ToggleButton HorizontalAlignment="Left" Margin="16"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
+                                ToolTip="MaterialDesignSwitchDarkToggleButton"
+                                  x:Name="ShowProblemsOnly"
+                                  Checked="ShowProblemsOnly_Checked"
+                                  Unchecked="ShowProblemsOnly_Unchecked"/>
+                    <TextBlock Margin="16 0 16 16" TextWrapping="Wrap" FontWeight="Light">Toon Enkel Accounts met Opmerkingen</TextBlock>
+                </StackPanel>
+            </materialDesign:Card>
+
+            <!-- Counter -->
+            <materialDesign:Card Grid.Column="1" Margin="8" Height="100">
+                <StackPanel>
+                    <TextBlock Margin="16 16 12 0" FontSize="16" Text="Accounts" HorizontalAlignment="Center"/>
+                    <Label Margin="16 4 16 0" Content="{Binding Path=AccountCount.Value}" FontSize="40" HorizontalContentAlignment="Center"/>
+                </StackPanel>
+            </materialDesign:Card>
+
+            <!-- Account Filter -->
+            <materialDesign:Card Grid.Column="2" Margin="8" Height="100">
+                <StackPanel>
+                    <TextBlock Margin="16 16 12 8" FontSize="16" Text="Filter"/>
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="Filter" Margin="16 16 0 0"/>
+                        <ComboBox x:Name="FilterCombo" Width="100" SelectionChanged="FilterCombo_SelectionChanged"  materialDesign:HintAssist.Hint="Target" Margin="16 0 0 0"  Style="{StaticResource MaterialDesignFloatingHintComboBox}">
+                            <ComboBoxItem IsSelected="True">
+                                Naam
+                            </ComboBoxItem>
+                            <ComboBoxItem>
+                                Klas
+                            </ComboBoxItem>
+                        </ComboBox>
+                        <TextBox x:Name="FilterText" TextChanged="FilterText_TextChanged"  materialDesign:HintAssist.Hint="Filter" Margin="16 0 0 0" Width="120" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                        <Button x:Name="FilterDeleteButton" Click="FilterDeleteButton_Click"  Margin="0 0 0 0" Padding="8 10 0 0" Style="{StaticResource MaterialDesignFlatButton}" ToolTip="Reset Filter">
+                            <materialDesign:PackIcon Kind="Delete" Height="24" Width="24" />
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </materialDesign:Card>
+
+            <!-- Werkdatum -->
+            <materialDesign:Card Grid.Column="3" Height="100" Margin="8">
+                <StackPanel>
+                    <TextBlock Margin="16" FontSize="16">
+                            Datum Uitschrijving
+                    </TextBlock>
+                    <StackPanel Orientation="Horizontal">
+                        <DatePicker SelectedDate="{Binding Path=StudentDeleteDate, Mode=TwoWay}" Margin="16 0" Width="200"
+                              materialDesign:HintAssist.Hint="Pick Date"
+                              Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
+                              />
+                    </StackPanel>
+                </StackPanel>
+            </materialDesign:Card>
+        </Grid>
+
+        <ProgressBar Grid.Row="1" IsIndeterminate="{Binding Working.Value, Mode=TwoWay}"/>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition/>
+                <ColumnDefinition/>
+            </Grid.ColumnDefinitions>
+
+            <DataGrid Grid.Row="1" Margin="16 0 16 16" x:Name="AccountList"
+                  CanUserSortColumns="True"
+                  CanUserAddRows="False"
+                  AutoGenerateColumns="False"
+                  SelectionMode="Single"
+                  materialDesign:DataGridAssist.CellPadding="13 8 8 8"
+                  materialDesign:DataGridAssist.ColumnHeaderPadding="8"
+                  SelectedCellsChanged="AccountList_SelectedCellsChanged">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Binding="{Binding Name}" Header="Naam" IsReadOnly="True" />
+                    <DataGridTextColumn Binding="{Binding ClassGroup}" Header="Klas" IsReadOnly="True"/>
+
+                    <DataGridTemplateColumn Header="Wisa" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <materialDesign:PackIcon Kind="{Binding WisaStatusIcon}" Foreground="{Binding WisaStatusColor}"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <DataGridTemplateColumn Header="Directory" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <materialDesign:PackIcon Kind="{Binding DirectoryStatusIcon}" Foreground="{Binding DirectoryStatusColor}"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <DataGridTemplateColumn Header="Smartschool" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <materialDesign:PackIcon Kind="{Binding SmartschoolStatusIcon}" Foreground="{Binding SmartschoolStatusColor}"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!--<DataGridTemplateColumn Header="Google" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <materialDesign:PackIcon Kind="{Binding GoogleStatusIcon}" Foreground="{Binding GoogleStatusColor}"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>-->
+
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <GroupBox Grid.Column="1" x:Name="ActionsBox">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="ActionsViewer" Grid.IsSharedSizeScope="True">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <materialDesign:Card Margin="8" Padding="8">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition MinHeight="80"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="80"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="{Binding Header}" FontSize="20" Foreground="Chocolate" Margin="0 0 0 8"/>
+                                            <TextBlock Text="{Binding Description}" FontWeight="Light" TextWrapping="Wrap"/>
+                                            <StackPanel Orientation="Horizontal" Visibility="{Binding CanBeAppliedToAll, Converter={StaticResource VisibleIfTrueConverter}}">
+                                                <CheckBox IsChecked="{Binding ApplyToAll.Value, Mode=TwoWay}"/>
+                                                <Label Content="Apply to All"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                            Click="ActionButton_Click"
+                                            Visibility="{Binding CanBeApplied, Converter={StaticResource VisibleIfTrueConverter}}"
+                                          Style="{StaticResource MaterialDesignFloatingActionButton}"
+                                          materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding InProgress.Value, Mode=TwoWay}"
+                                          materialDesign:ButtonProgressAssist.Value="-1"
+                                          materialDesign:ButtonProgressAssist.IsIndeterminate="True"
+                                          >
+                                            <materialDesign:PackIcon Kind="Play">
+                                                <materialDesign:PackIcon.LayoutTransform>
+                                                    <ScaleTransform CenterX="0.5" CenterY="0.5" ScaleX="2" ScaleY="2"/>
+                                                </materialDesign:PackIcon.LayoutTransform>
+                                            </materialDesign:PackIcon>
+                                        </Button>
+                                    </Grid>
+
+
+                                </materialDesign:Card>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </GroupBox>
+        </Grid>
+
+        
+
+    
+    </Grid>
+</UserControl>

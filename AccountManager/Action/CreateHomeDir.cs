@@ -32,7 +32,7 @@ namespace AccountManager.Action
 
         public static void ApplyIfNeeded(LinkedAccount account)
         {
-            if (Data.Instance.ADCheckHomeDirs == false) return;
+            if (State.App.Instance.AD.CheckHomeDirs.Value == false) return;
             if (account.directoryAccount.HomeDirectory.Length > 0 && !System.IO.Directory.Exists(account.directoryAccount.HomeDirectory))
             {
                 account.DirectoryStatusIcon = "AlertCircleOutline";

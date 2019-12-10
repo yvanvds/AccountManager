@@ -140,14 +140,14 @@ namespace AccountApi.Directory
             Students.Clear();
             Staff.Clear();
 
-            var students = obj["Students"].ToArray();
-            foreach (var student in students)
+            var students = obj["Students"]?.ToArray();
+            if (students != null) foreach (var student in students)
             {
                 Students.Add(new Account(student as JObject));
             }
 
-            var staff = obj["Staff"].ToArray();
-            foreach (var account in staff)
+            var staff = obj["Staff"]?.ToArray();
+            if (staff != null) foreach (var account in staff)
             {
                 Staff.Add(new Account(account as JObject));
             }

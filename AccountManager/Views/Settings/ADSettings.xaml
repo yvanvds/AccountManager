@@ -1,0 +1,137 @@
+﻿<UserControl x:Class="AccountManager.Views.Settings.ADSettings"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:AccountManager.Views.Settings"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+             TextElement.FontWeight="Medium"
+             TextElement.FontSize="14"
+             TextOptions.TextFormattingMode="Ideal"
+             TextOptions.TextRenderingMode="Auto"
+             Background="{DynamicResource MaterialDesignPaper}"
+             FontFamily="{DynamicResource MaterialDesignFont}"
+             mc:Ignorable="d" 
+             d:DesignHeight="850" d:DesignWidth="800"
+             x:Name="Control">
+    <Grid x:Name="MainGrid">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition/>
+            <ColumnDefinition/>
+        </Grid.ColumnDefinitions>
+        
+        <!-- Left Side -->
+        <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="450"/>
+                <RowDefinition/>
+            </Grid.RowDefinitions>
+            
+            <!-- Connection -->
+            <GroupBox Grid.Row="0" Margin="16">
+                <GroupBox.HeaderTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="40"/>
+                            </Grid.ColumnDefinitions>
+                            <materialDesign:PackIcon Grid.Column="0" Kind="Server" Height="32" Width="32" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" Style="{StaticResource MaterialDesignSubheadingTextBlock}" Text="Verbinding"/>
+
+                            <Button
+                                Command="{Binding DataContext.TestConnectionCommand, ElementName=Control}"
+                                Grid.Column="3"
+                                Style="{StaticResource MaterialDesignFloatingActionMiniDarkButton}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding DataContext.ShowConnectIndicator, ElementName=Control}"
+                                materialDesign:ButtonProgressAssist.IndicatorForeground="LimeGreen"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True">
+                                <materialDesign:PackIcon Kind="{Binding DataContext.ConnectIcon, ElementName=Control}" Height="30" Width="30"/>
+                            </Button>
+                        </Grid>
+                    </DataTemplate>
+                </GroupBox.HeaderTemplate>
+
+                <StackPanel Orientation="Vertical">
+                    <TextBox Text="{Binding Path=Domain, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Active Directory Domain" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Path=AccountRoot, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Active Directory Accounts Path" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Path=ClassesRoot, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Klassen" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Path=StudentRoot, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Leerling Accounts" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Path=StaffRoot, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Personeel Accocunts" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Path=AzureDomain, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Azure Domain" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                </StackPanel>
+            </GroupBox>
+
+        </Grid>
+        <StackPanel Orientation="Vertical" Grid.Column="1">
+            <GroupBox Margin="0 16 16 16">
+                <GroupBox.HeaderTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="40"/>
+                            </Grid.ColumnDefinitions>
+                            <materialDesign:PackIcon Grid.Column="0" Kind="UserGroupOutline" Height="32" Width="32" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" Style="{StaticResource MaterialDesignSubheadingTextBlock}" Text="Groepering"/>
+                        </Grid>
+                    </DataTemplate>
+                </GroupBox.HeaderTemplate>
+
+                <StackPanel Orientation="Vertical">
+                    <StackPanel Orientation="Horizontal" Margin="8">
+                        <ToggleButton IsChecked="{Binding UseGrades, Mode=TwoWay}" Style="{StaticResource MaterialDesignSwitchToggleButton}" ToolTip="Default ToggleButton Style" />
+                        <Label Content="Groeperen per Graad"/>
+                    </StackPanel>
+                    <TextBox Text="{Binding Grade1, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Eerste Graad" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Grade2, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Tweede Graad" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Grade3, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Derde Graad" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+
+                    <StackPanel Orientation="Horizontal" Margin="8">
+                        <ToggleButton IsChecked="{Binding UseYears, Mode=TwoWay}" Style="{StaticResource MaterialDesignSwitchToggleButton}" ToolTip="Default ToggleButton Style" />
+                        <Label Content="Groeperen per Jaar"/>
+                    </StackPanel>
+                    <TextBox Text="{Binding Year1, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Eerste Jaar" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Year2, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Tweede Jaar" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Year3, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Derde Jaar" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Year4, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Vierde Jaar" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Year5, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Vijfde Jaar" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Year6, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Zesde Jaar" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Year7, Mode=TwoWay}" Margin="8 4 8 4" materialDesign:HintAssist.Hint="Directory Naam voor Zevende Jaar" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Margin="0 16 16 16">
+                <GroupBox.HeaderTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40"/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="40"/>
+                            </Grid.ColumnDefinitions>
+                            <materialDesign:PackIcon Grid.Column="0" Kind="Settings" Height="32" Width="32" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" Style="{StaticResource MaterialDesignSubheadingTextBlock}" Text="Extra"/>
+                        </Grid>
+                    </DataTemplate>
+                </GroupBox.HeaderTemplate>
+
+                <StackPanel Orientation="Vertical">
+                    <StackPanel Orientation="Horizontal" Margin="8">
+                        <ToggleButton IsChecked="{Binding CheckHomeDirs, Mode=TwoWay}" Style="{StaticResource MaterialDesignSwitchToggleButton}" ToolTip="Default ToggleButton Style" />
+                        <Label Content="Controleer HomeDirs (traag)"/>
+                    </StackPanel>
+                    
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+        
+    </Grid>
+</UserControl>

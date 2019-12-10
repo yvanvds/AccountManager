@@ -64,7 +64,7 @@ namespace AccountManager
             set
             {
                 googleAppName = value.Trim();
-                GoogleConnectionTested = ConfigState.Unknown;
+                GoogleConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -76,7 +76,7 @@ namespace AccountManager
             set
             {
                 googleAppDomain = value.Trim();
-                GoogleConnectionTested = ConfigState.Unknown;
+                GoogleConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -88,7 +88,7 @@ namespace AccountManager
             set
             {
                 googleAdmin =  value.Trim();
-                GoogleConnectionTested = ConfigState.Unknown;
+                GoogleConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -104,7 +104,7 @@ namespace AccountManager
                 googleApiKey = values.private_key;
                 googleApiID = values.client_id;
                 googleApiToken = values.token_uri;
-                GoogleConnectionTested = ConfigState.Unknown;
+                GoogleConnectionTested = ConnectionState.Unknown;
             }
             catch (Exception e)
             {
@@ -123,9 +123,9 @@ namespace AccountManager
             }
         }
 
-        private ConfigState googleConnectionTested;
+        private ConnectionState googleConnectionTested;
 
-        public ConfigState GoogleConnectionTested
+        public ConnectionState GoogleConnectionTested
         {
             get { return googleConnectionTested; }
             set
@@ -137,7 +137,7 @@ namespace AccountManager
 
         public void SetGoogleCredentials()
         {
-            googleConnectionTested = ConfigState.InProgress;
+            googleConnectionTested = ConnectionState.InProgress;
             bool result = AccountApi.Google.Connector.Init(
                 googleAppName, 
                 googleAdmin, 
@@ -149,10 +149,10 @@ namespace AccountManager
             );
             if(result)
             {
-                googleConnectionTested = ConfigState.OK;
+                googleConnectionTested = ConnectionState.OK;
             } else
             {
-                googleConnectionTested = ConfigState.Failed;
+                googleConnectionTested = ConnectionState.Failed;
             }
         }
 

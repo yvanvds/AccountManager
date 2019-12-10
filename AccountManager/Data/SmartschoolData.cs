@@ -29,10 +29,10 @@ namespace AccountManager
             smartschoolPassphrase = obj.ContainsKey("passphrase") ? obj["passphrase"].ToString() : "";
             smartschoolTestUser = obj.ContainsKey("testuser") ? obj["testuser"].ToString() : "";
             if (obj.ContainsKey("connectionTested")) {
-                smartschoolConnectionTested = obj["connectionTested"].ToObject <ConfigState>();
+                smartschoolConnectionTested = obj["connectionTested"].ToObject <ConnectionState>();
             } else
             {
-                smartschoolConnectionTested = ConfigState.Failed;
+                smartschoolConnectionTested = ConnectionState.Failed;
             }
 
             smartschoolStudentGroup = obj.ContainsKey("studentGroup") ? obj["studentGroup"].ToString() : "";
@@ -118,9 +118,9 @@ namespace AccountManager
             }
         }
 
-        private AccountApi.ConfigState smartschoolConnectionTested;
+        private AccountApi.ConnectionState smartschoolConnectionTested;
 
-        public AccountApi.ConfigState SmartschoolConnectionTested
+        public AccountApi.ConnectionState SmartschoolConnectionTested
         {
             get { return smartschoolConnectionTested; }
             set {
@@ -138,7 +138,7 @@ namespace AccountManager
             get { return smartschoolURI; }
             set {
                 smartschoolURI = value.Trim();
-                SmartschoolConnectionTested = ConfigState.Unknown;
+                SmartschoolConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -149,7 +149,7 @@ namespace AccountManager
             get { return smartschoolPassphrase; }
             set {
                 smartschoolPassphrase = value.Trim();
-                SmartschoolConnectionTested = ConfigState.Unknown;
+                SmartschoolConnectionTested = ConnectionState.Unknown;
             }
         }
 
@@ -160,7 +160,7 @@ namespace AccountManager
             get { return smartschoolTestUser; }
             set {
                 smartschoolTestUser = value.Trim();
-                SmartschoolConnectionTested = ConfigState.Unknown;
+                SmartschoolConnectionTested = ConnectionState.Unknown;
             }
         }
 

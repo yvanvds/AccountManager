@@ -1,0 +1,88 @@
+﻿<UserControl x:Class="AccountManager.Views.Settings.GeneralSettings"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+             xmlns:c="clr-namespace:CalcBinding;assembly=CalcBinding"
+             TextElement.FontWeight="Medium"
+             TextElement.FontSize="14"
+             TextOptions.TextFormattingMode="Ideal"
+             TextOptions.TextRenderingMode="Auto"
+             Background="{DynamicResource MaterialDesignPaper}"
+             FontFamily="{DynamicResource MaterialDesignFont}"
+             mc:Ignorable="d" 
+             d:DesignHeight="450" d:DesignWidth="1200">
+    <Grid x:Name="MainGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="200"/>
+            <RowDefinition/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300"/>
+                <ColumnDefinition Width="300"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+            <GroupBox Header="Settings" Margin="16">
+                <StackPanel Orientation="Vertical">
+                    <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                                Grid.Column="0" Grid.Row="4"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True"
+                                Content="Export Settings"
+                                x:Name="exportButton"
+                                Command="{Binding ExportCommand}"
+                                Margin="8" />
+                    <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                                Grid.Column="0" Grid.Row="4"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True"
+                                Content="Import Settings"
+                                x:Name="importButton"
+                                Command="{Binding ImportCommand}"
+                                Margin="8" />
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Grid.Column="1" Margin="16" Header="Preferences">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="50"/>
+                        <RowDefinition/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Margin="8" VerticalAlignment="Top">
+                        <ToggleButton IsChecked="{Binding DebugMode, Mode=TwoWay}" Style="{StaticResource MaterialDesignSwitchToggleButton}" ToolTip="Default ToggleButton Style" />
+                        <Label Content="Show Advanced Interface"/>
+                    </StackPanel>
+                </Grid>
+                
+            </GroupBox>
+
+            <!-- Werkdatum -->
+            <GroupBox Grid.Column="2" Header="Wisa Werkdatum" Margin="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="50"/>
+                        <RowDefinition/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton Margin="16 4 16 0"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
+                                ToolTip="MaterialDesignSwitchDarkToggleButton"
+                                IsChecked="{c:Binding !WorkDateIsNow, Mode=TwoWay}"/>
+                        <Label Margin="0 0 16 0" Content="Vandaag"
+                                   Visibility="{c:Binding WorkDateIsNow, FalseToVisibility=Collapsed}"/>
+
+                        <DatePicker SelectedDate="{Binding WorkDate, Mode=TwoWay}" Margin="0 -12 8 0"
+                              materialDesign:HintAssist.Hint="Pick Date"
+                              Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
+                              Visibility="{c:Binding WorkDateIsNow, FalseToVisibility=Collapsed}"/>
+                    </StackPanel>
+                </Grid>
+            </GroupBox>
+        </Grid>
+        
+    </Grid>
+</UserControl>

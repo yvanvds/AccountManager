@@ -49,7 +49,7 @@ namespace AccountApi
         Class,
     }
 
-    public enum ConfigState
+    public enum ConnectionState
     {
         Unknown,
         InProgress,

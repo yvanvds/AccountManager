@@ -14,9 +14,9 @@ namespace AccountManager.Action
         public override async Task Apply(LinkedGroup linkedGroup)
         {
             InProgress.Value = true;
-            AccountApi.Rules.DontImportClass rule = Data.Instance.AddWisaImportRule(Rule.WI_DontImportClass) as AccountApi.Rules.DontImportClass;
+            AccountApi.Rules.DontImportClass rule = State.App.Instance.Wisa.AddimportRule(Rule.WI_DontImportClass) as AccountApi.Rules.DontImportClass;
             rule.SetConfig(0, linkedGroup.wisaGroup.Name);
-            await Data.Instance.ReloadWisaClassgroups();
+            await State.App.Instance.Wisa.Groups.Load();
             InProgress.Value = false;
         }
 

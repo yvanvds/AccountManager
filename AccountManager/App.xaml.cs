@@ -15,12 +15,12 @@ namespace AccountManager
     {
         private void Application_Exit(object sender, ExitEventArgs e)
         {
-            if(Data.Instance.ConfigChanged)
-            {
-                Data.Instance.SaveConfig();
-            }
+            //if(Data.Instance.ConfigChanged)
+            //{
+            //    Data.Instance.SaveConfig();
+            //}
 
-            Data.Instance.SaveContent();
+            //Data.Instance.SaveContent();
         }
     }
 }

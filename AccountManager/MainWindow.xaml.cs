@@ -28,14 +28,14 @@ namespace AccountManager
         {
             InitializeComponent();
             Instance = this;
+            State.App.Instance.Initialize();
         }
 
         private async Task LoadContent()
         {
-            Data.Instance.LoadFileContentOnStartup();
             await LinkedGroups.ReLink();
             await LinkedAccounts.ReLink();
-            Navigate(new Dashboard.DashboardPage());
+            Navigate(new Views.Dashboard.DashboardPage());
         }
 
         public void Navigate(UserControl page)
