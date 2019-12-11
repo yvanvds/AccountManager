@@ -16,9 +16,9 @@ namespace AccountManager.ViewModels.Dashboard
         State.Smartschool.SmartschoolState Smartschool;
 
         public IAsyncCommand SyncWisaGroupsCommand { get; private set; }
-        public IAsyncCommand SyncDirectoryGroupsCommand { get; private set; }
+        public IAsyncCommand SyncADGroupsCommand { get; private set; }
         public IAsyncCommand SyncWisaAccountsCommand { get; private set; }
-        public IAsyncCommand SyncDirectoryAccountsCommand { get; private set; }
+        public IAsyncCommand SyncADAccountsCommand { get; private set; }
         public IAsyncCommand SyncSmartschoolAccountsCommand { get; private set; }
         public IAsyncCommand SyncGoogleAccountsCommand { get; private set; }
 
@@ -36,13 +36,51 @@ namespace AccountManager.ViewModels.Dashboard
             Smartschool.AddObserver(this);
 
             SyncWisaGroupsCommand = new RelayAsyncCommand(SyncWisaGroups);
-            SyncDirectoryGroupsCommand = new RelayAsyncCommand(SyncDirectoryGroups);
-
+            SyncADGroupsCommand = new RelayAsyncCommand(SyncDirectoryGroups);
+            SyncWisaAccountsCommand = new RelayAsyncCommand(SyncWisaAccounts);
+            SyncADAccountsCommand = new RelayAsyncCommand(SyncDirectoryAccounts);
+            SyncSmartschoolAccountsCommand = new RelayAsyncCommand(SyncSmartschoolAccounts);
+            SyncGoogleAccountsCommand = new RelayAsyncCommand(SyncGoogleAccounts);
         }
 
-        private Task SyncDirectoryGroups()
+        private async Task SyncGoogleAccounts()
         {
-            throw new NotImplementedException();
+            IndicatorGoogleAccount = true;
+            Google.Connect();
+            await Google.Accounts.Load();
+            IndicatorGoogleAccount = false;
+        }
+
+        private async Task SyncSmartschoolAccounts()
+        {
+            IndicatorSmartschoolAccount = true;
+            Smartschool.Connect();
+            await Smartschool.Groups.Load();
+            IndicatorSmartschoolAccount = false;
+        }
+
+        private async Task SyncDirectoryAccounts()
+        {
+            IndicatorADAccount = true;
+            AD.Connect();
+            await AD.Accounts.Load();
+            IndicatorADAccount = false;
+        }
+
+        private async Task SyncWisaAccounts()
+        {
+            IndicatorWisaAccount = true;
+            Wisa.Connect();
+            await Wisa.Students.Load();
+            IndicatorWisaAccount = false;
+        }
+
+        private async Task SyncDirectoryGroups()
+        {
+            IndicatorADGroup = true;
+            AD.Connect();
+            await AD.Groups.Load();
+            IndicatorADGroup = false;
         }
 
         private async Task SyncWisaGroups()
@@ -55,6 +93,7 @@ namespace AccountManager.ViewModels.Dashboard
 
         public event PropertyChangedEventHandler PropertyChanged = (sender, e) => { };
 
+        #region WisaProps
         public DateTime WisaGroupDate { get => Wisa.Groups.LastSync; }
         public string WisaGroupColor { get => GetColor(Wisa.Groups.LastSync); }
 
@@ -69,10 +108,100 @@ namespace AccountManager.ViewModels.Dashboard
             }
         }
 
+        public DateTime WisaAccountDate { get => Wisa.Students.LastSync; }
+        public string WisaAccountColor { get => GetColor(Wisa.Students.LastSync); }
+
+        bool indicatorWisaAccount = false;
+        public bool IndicatorWisaAccount
+        {
+            get => indicatorWisaAccount;
+            set
+            {
+                indicatorWisaAccount = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorWisaAccount)));
+            }
+        }
+        #endregion
+
+        #region ADProps
+        public DateTime ADGroupDate { get => AD.Groups.LastSync; }
+        public string ADGroupColor { get => GetColor(AD.Groups.LastSync); }
+
+        bool indicatorADGroup = false;
+        public bool IndicatorADGroup
+        {
+            get => indicatorADGroup;
+            set
+            {
+                indicatorADGroup = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorADGroup)));
+            }
+        }
+
+        public DateTime ADAccountDate { get => AD.Accounts.LastSync; }
+        public string ADAccountColor { get => GetColor(AD.Accounts.LastSync); }
+
+        bool indicatorADAccount = false;
+        public bool IndicatorADAccount
+        {
+            get => indicatorADAccount;
+            set
+            {
+                indicatorADAccount = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorADAccount)));
+            }
+        }
+        #endregion
+
+        #region SmartschoolProps
+        public DateTime SmartschoolAccountDate { get => Smartschool.Groups.LastSync; }
+        public string SmartschoolAccountColor { get => GetColor(Smartschool.Groups.LastSync); }
+
+        bool indicatorSmartschoolAccount = false;
+        public bool IndicatorSmartschoolAccount
+        {
+            get => indicatorSmartschoolAccount;
+            set
+            {
+                indicatorSmartschoolAccount = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorSmartschoolAccount)));
+            }
+        }
+        #endregion
+
+        #region GoogleProps
+        public DateTime GoogleAccountDate { get => Google.Accounts.LastSync; }
+        public string GoogleAccountColor { get => GetColor(Google.Accounts.LastSync); }
+
+        bool indicatorGoogleAccount = false;
+        public bool IndicatorGoogleAccount
+        {
+            get => indicatorGoogleAccount;
+            set
+            {
+                indicatorGoogleAccount = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorGoogleAccount)));
+            }
+        }
+        #endregion
+
         public void OnStateChanges()
         {
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(WisaGroupDate)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(WisaGroupColor)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(WisaAccountDate)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(WisaAccountColor)));
+
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(ADGroupDate)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(ADGroupColor)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(ADAccountDate)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(ADAccountColor)));
+
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(SmartschoolAccountDate)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(SmartschoolAccountColor)));
+
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountDate)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountColor)));
         }
 
         private string GetColor(DateTime date)

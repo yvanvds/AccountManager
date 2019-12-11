@@ -41,7 +41,7 @@ namespace AccountManager.Views.Groups
         {
             ShowGroupsReloadButtonIndicator.Value = true;
             await AppState.AD.Groups.Load();
-            await LinkedGroups.ReLink();
+            await State.App.Instance.Linked.Groups.ReLink();
             GroupCount.Value = AccountApi.Directory.ClassGroupManager.Count(true).ToString();
             BuildGroupTree();
             ShowGroupsReloadButtonIndicator.Value = false;

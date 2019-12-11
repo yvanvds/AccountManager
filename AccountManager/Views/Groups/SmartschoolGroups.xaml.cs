@@ -42,7 +42,7 @@ namespace AccountManager.Views.Groups
         {
             ShowGroupsReloadButtonIndicator.Value = true;
             await AppState.Smartschool.LoadContent();
-            await LinkedGroups.ReLink();
+            await State.App.Instance.Linked.Groups.ReLink();
             GroupCount.Value = AccountApi.Smartschool.GroupManager.Count(false).ToString();
             BuildGroupTree();
 

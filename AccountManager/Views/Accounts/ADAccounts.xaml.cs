@@ -33,9 +33,10 @@ namespace AccountManager.Views.Accounts
         public ADAccounts()
         {
             InitializeComponent();
-            MainGrid.DataContext = this;
-            CreateSelection();
-            AccountList.ItemsSource = accounts;
+            DataContext = new ViewModels.Accounts.ADAccounts();
+            // MainGrid.DataContext = this;
+            // CreateSelection();
+            // AccountList.ItemsSource = accounts;
         }
 
         private void StudentButton_Click(object sender, RoutedEventArgs e)
@@ -95,7 +96,7 @@ namespace AccountManager.Views.Accounts
         private void FilterDeleteButton_Click(object sender, RoutedEventArgs e)
         {
             Filter = string.Empty;
-            FilterText.Text = string.Empty;
+            // FilterText.Text = string.Empty;
             CreateSelection();
         }
 

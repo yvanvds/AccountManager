@@ -27,7 +27,9 @@ namespace AccountManager.State
 
         Settings.SettingsState settingsState = new Settings.SettingsState();
         public Settings.SettingsState Settings => settingsState;
-          
+
+        Linked.LinkedState linkedState = new Linked.LinkedState();
+        public Linked.LinkedState Linked => linkedState;
 
         private App()
         {

@@ -21,6 +21,7 @@ namespace AccountManager.State.AD
             await AccountApi.Directory.AccountManager.LoadStudents();
             lastSync = DateTime.Now;
             SaveToJson();
+            App.Instance.AD.UpdateObservers();
         }
 
         public void LoadFromJson()

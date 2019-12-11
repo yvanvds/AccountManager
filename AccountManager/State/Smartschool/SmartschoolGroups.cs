@@ -50,6 +50,8 @@ namespace AccountManager.State.Smartschool
             lastSync = DateTime.Now;
 
             SaveToJson();
+
+            App.Instance.Smartschool.UpdateObservers();
         }
 
         public void LoadFromJson()
@@ -62,6 +64,7 @@ namespace AccountManager.State.Smartschool
                 AccountApi.Smartschool.GroupManager.FromJson(newObj);
                 lastSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
+            App.Instance.Smartschool.UpdateObservers();
         }
 
         public void SaveToJson()

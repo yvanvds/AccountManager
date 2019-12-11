@@ -32,10 +32,10 @@
                 <!-- Selection -->
                 <materialDesign:Card Grid.Column="0" Height="100">
                     <StackPanel>
-                        <CheckBox Margin="16" x:Name="StaffCheckbox" Checked="StaffCheckbox_Checked" Unchecked="StaffCheckbox_Unchecked" IsChecked="{Binding Path=StaffChecked, Mode=TwoWay}" Style="{StaticResource MaterialDesignCheckBox}">
+                        <CheckBox Margin="16" x:Name="StaffCheckbox" IsChecked="{Binding IncludeStaff, Mode=TwoWay}" Style="{StaticResource MaterialDesignCheckBox}">
                             Toon Personeel
                         </CheckBox>
-                        <CheckBox Margin="16 0 16 16" x:Name="OtherCheckbox" Checked="OtherCheckbox_Checked" Unchecked="OtherCheckbox_Unchecked" IsChecked="{Binding Path=OtherChecked, Mode=TwoWay}" Style="{StaticResource MaterialDesignCheckBox}">
+                        <CheckBox Margin="16 0 16 16" x:Name="OtherCheckbox" IsChecked="{Binding IncludeOther, Mode=TwoWay}" Style="{StaticResource MaterialDesignCheckBox}">
                             Toon Andere Accounts
                         </CheckBox>
                     </StackPanel>
@@ -45,7 +45,7 @@
                 <materialDesign:Card Grid.Column="1" Margin="16 0 0 0" Height="100">
                     <StackPanel>
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Accounts" HorizontalAlignment="Center"/>
-                        <Label Margin="16 4 16 0" Content="{Binding AccountCount.Value}" FontSize="40" HorizontalContentAlignment="Center"/>
+                        <Label Margin="16 4 16 0" Content="{Binding Accounts.Count}" FontSize="40" HorizontalContentAlignment="Center"/>
                     </StackPanel>
                 </materialDesign:Card>
 
@@ -55,19 +55,15 @@
                         <TextBlock Margin="16 16 12 8" FontSize="16" Text="Filter"/>
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="Filter" Margin="16 16 0 0"/>
-                            <ComboBox x:Name="FilterCombo" Width="100" SelectionChanged="FilterCombo_SelectionChanged"  materialDesign:HintAssist.Hint="Target" Margin="16 0 0 0"  Style="{StaticResource MaterialDesignFloatingHintComboBox}">
-                                <ComboBoxItem IsSelected="True">
-                                    Naam
-                                </ComboBoxItem>
-                                <ComboBoxItem>
-                                    Voornaam
-                                </ComboBoxItem>
-                                <ComboBoxItem>
-                                    User ID
-                                </ComboBoxItem>
+                            <ComboBox Width="100" 
+                                      materialDesign:HintAssist.Hint="Target" 
+                                      Margin="16 0 0 0"  
+                                      Style="{StaticResource MaterialDesignFloatingHintComboBox}"
+                                      ItemsSource="{Binding FilterTypes}"
+                                      SelectedItem="{Binding SelectedFilter, Mode=TwoWay}">
                             </ComboBox>
-                            <TextBox x:Name="FilterText" TextChanged="FilterText_TextChanged"  materialDesign:HintAssist.Hint="Filter" Margin="16 0 0 0" Width="120" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
-                            <Button x:Name="FilterDeleteButton" Click="FilterDeleteButton_Click"  Margin="0 0 0 0" Padding="8 10 0 0" Style="{StaticResource MaterialDesignFlatButton}" ToolTip="Reset Filter">
+                            <TextBox Text="{Binding FilterText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"  materialDesign:HintAssist.Hint="Filter" Margin="16 0 0 0" Width="120" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                            <Button Command="{Binding ClearFilterCommand}"  Margin="0 0 0 0" Padding="8 10 0 0" Style="{StaticResource MaterialDesignFlatButton}" ToolTip="Reset Filter">
                                 <materialDesign:PackIcon Kind="Delete" Height="24" Width="24" />
                             </Button>
                         </StackPanel>
@@ -76,8 +72,7 @@
 
                 <!-- Reload Button -->
                 <Button
-                                x:Name="ReloadAccountButton"
-                                Click="ReloadAccountButton_Click"
+                                Command="{Binding ReloadCommand}"
                                 Grid.Column="3"
                                 Margin="16 0 0 0"
                                 Style="{StaticResource MaterialDesignFloatingActionMiniDarkButton}"
@@ -96,24 +91,24 @@
                 <ColumnDefinition Width="400"/>
                 <ColumnDefinition/>
             </Grid.ColumnDefinitions>
-            
-            <DataGrid Grid.Column="0" Margin="0 8 0 0" x:Name="AccountList"
+
+            <DataGrid Grid.Column="0" Margin="0 8 0 0" ItemsSource="{Binding Accounts}"
                CanUserSortColumns="True"
                CanUserAddRows="False"
                AutoGenerateColumns="False"
                SelectionMode="Single"
                materialDesign:DataGridAssist.CellPadding="13 8 8 8"
                materialDesign:DataGridAssist.ColumnHeaderPadding="8"
-               SelectedCellsChanged="AccountList_SelectedCellsChanged">
+               SelectedItem="{Binding SelectedAccount, Mode=OneWayToSource}">
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding FamilyName}" Header="Naam" IsReadOnly="True" />
                     <DataGridTextColumn Binding="{Binding GivenName}" Header="Voornaam" IsReadOnly="True"/>
-                    <DataGridTextColumn Binding="{Binding UID}" Header="User ID" IsReadOnly="True"/>
+                    <DataGridTextColumn Binding="{Binding UID}" Header="Gebruikersnaam" IsReadOnly="True"/>
                 </DataGrid.Columns>
             </DataGrid> 
             
             <!-- Account Detail -->
-            <GroupBox Grid.Column="1" Header="{Binding Path=SelectedTitle.Value}">
+            <GroupBox Grid.Column="1" Header="{Binding Path=SelectedAccountTitle }">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="160"/>
@@ -131,22 +126,22 @@
                     </Grid.RowDefinitions>
 
                     <Label Grid.Row="0" Grid.Column="0" Content="Voornaam" FontWeight="Bold"/>
-                    <Label Grid.Row="0" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.GivenName}"/>
+                    <Label Grid.Row="0" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.GivenName}"/>
 
                     <Label Grid.Row="1" Grid.Column="0" Content="Naam" FontWeight="Bold"/>
-                    <Label Grid.Row="1" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.FamilyName}"/>
+                    <Label Grid.Row="1" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.FamilyName}"/>
 
                     <Label Grid.Row="2" Grid.Column="0" Content="Gebruikersnaam" FontWeight="Bold"/>
-                    <Label Grid.Row="2" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.UID}"/>
+                    <Label Grid.Row="2" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.UID}"/>
 
                     <Label Grid.Row="3" Grid.Column="0" Content="Mail ID" FontWeight="Bold"/>
-                    <Label Grid.Row="3" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.Mail}"/>
+                    <Label Grid.Row="3" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Mail}"/>
 
                     <Label Grid.Row="4" Grid.Column="0" Content="Mail Alias" FontWeight="Bold"/>
-                    <Label Grid.Row="4" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.MailAlias}"/>
+                    <Label Grid.Row="4" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.MailAlias}"/>
 
                     <Label Grid.Row="5" Grid.Column="0" Content="Personeel" FontWeight="Bold"/>
-                    <Label Grid.Row="5" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.IsStaff}"/>
+                    <Label Grid.Row="5" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.IsStaff}"/>
                 </Grid>
                 
             </GroupBox>

@@ -45,195 +45,104 @@
                                 Command="{Binding SyncWisaGroupsCommand}"
                             
                                 Margin="2,0" />
-                    
-                    <Label x:Name="wisaAccountSyncLabel" Content="Date"/>
-                    
+
+                    <TextBlock
+                        Text="{Binding WisaAccountDate, StringFormat='{}{0:dd MMM yy - HH:mm}'}"
+                        Foreground="{Binding WisaAccountColor}"
+                        Margin="4"/>
+
                     <Button Style="{StaticResource MaterialDesignRaisedButton}"
                                 Grid.Column="0" Grid.Row="4"
                                 materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowWisaAccountSyncButtonIndicator.Value}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorWisaAccount}"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                 Content="Sync Accounts"
-                            x:Name="wisaAccountSyncButton"
-                                Click="WisaAccountSyncButton_Click"
+                                Command="{Binding SyncWisaAccountsCommand}"
+                            
                                 Margin="2,0" />
                 </StackPanel>
             </GroupBox>
 
             <GroupBox Grid.Column="1" Header="Directory Sync"  Margin="0 0 8 0">
                 <StackPanel Orientation="Vertical">
-                    <Label x:Name="directoryClassgroupSyncLabel" Content="Date"/>
+                    <TextBlock
+                        Text="{Binding ADGroupDate, StringFormat='{}{0:dd MMM yy - HH:mm}'}"
+                        Foreground="{Binding ADGroupColor}"
+                        Margin="4"/>
+
                     <Button Style="{StaticResource MaterialDesignRaisedButton}"
                                 Grid.Column="0" Grid.Row="4"
                                 materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowDirectoryClassGroupSyncButtonIndicator.Value}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorADGroup}"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                 Content="Sync Klassen"
-                            x:Name="directoryClassgroupSyncButton"
-                                Click="DirectoryClassgroupSyncButton_Click"
+                                Command="{Binding SyncADGroupsCommand}"
+                            
                                 Margin="2,0" />
-                    <Label x:Name="directoryAccountSyncLabel" Content="Date"/>
+
+                    <TextBlock
+                        Text="{Binding ADAccountDate, StringFormat='{}{0:dd MMM yy - HH:mm}'}"
+                        Foreground="{Binding ADAccountColor}"
+                        Margin="4"/>
+
                     <Button Style="{StaticResource MaterialDesignRaisedButton}"
                                 Grid.Column="0" Grid.Row="4"
                                 materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowDirectoryAccountSyncButtonIndicator.Value}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorADAccount}"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                 Content="Sync Accounts"
-                            x:Name="directoryAccountSyncButton"
-                                Click="DirectoryAccountSyncButton_Click"
+                                Command="{Binding SyncADAccountsCommand}"
+                            
                                 Margin="2,0" />
                 </StackPanel>
             </GroupBox>
 
             <GroupBox Grid.Column="2" Header="Smartschool Sync"  Margin="0 0 8 0">
                 <StackPanel Orientation="Vertical">
-                    <Label x:Name="ssAccountSyncLabel" Content="Date"/>
+
+                    <TextBlock
+                        Text="{Binding SmartschoolAccountDate, StringFormat='{}{0:dd MMM yy - HH:mm}'}"
+                        Foreground="{Binding SmartschoolAccountColor}"
+                        Margin="4"/>
+
                     <Button Style="{StaticResource MaterialDesignRaisedButton}"
                                 Grid.Column="0" Grid.Row="4"
                                 materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowSmartschoolAccountSyncButtonIndicator.Value}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorSmartschoolAccount}"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                 Content="Sync Accounts"
-                                x:Name="ssAccountSyncButton"
-                                Click="SsAccountSyncButton_Click"
+                                Command="{Binding SyncSmartschoolAccountsCommand}"
+                            
                                 Margin="2,0" />
+                   
                 </StackPanel>
             </GroupBox>
 
             <GroupBox Grid.Column="3" Header="Google Sync">
                 <StackPanel Orientation="Vertical">
-                    <Label x:Name="googleAccountSyncLabel" Content="Date"/>
+
+                    <TextBlock
+                        Text="{Binding GoogleAccountDate, StringFormat='{}{0:dd MMM yy - HH:mm}'}"
+                        Foreground="{Binding GoogleAccountColor}"
+                        Margin="4"/>
+
                     <Button Style="{StaticResource MaterialDesignRaisedButton}"
                                 Grid.Column="0" Grid.Row="4"
                                 materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowGoogleAccountSyncButtonIndicator.Value}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorGoogleAccount}"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                 Content="Sync Accounts"
-                            x:Name="googleAccountSyncButton"
-                                Click="GoogleAccountSyncButton_Click"
+                                Command="{Binding SyncGoogleAccountsCommand}"
+                            
                                 Margin="2,0" />
+
                 </StackPanel>
             </GroupBox>
             
         </Grid>
-        <GroupBox Grid.Row="1" Header="Klassen" Margin="0 16 0 0" >
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition/>
-                    <ColumnDefinition/>
-                </Grid.ColumnDefinitions>
 
-                <Grid Grid.Column="0">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition/>
-                            <ColumnDefinition/>
-                            <ColumnDefinition/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="70"/>
-                        </Grid.RowDefinitions>
+        <local:LinkedGroups Grid.Row="1" Margin="0 16 0 0"/>
 
-
-                        <Label Grid.Column="0" Grid.Row="1" Content="Total"/>
-                        <Label Grid.Column="0" Grid.Row="2" Content="Linked"/>
-                        <Label Grid.Column="0" Grid.Row="3" Content="Unlinked"/>
-
-                        <Label Grid.Column="1" Grid.Row="0" Content="Wisa"/>
-                        <Label Grid.Column="2" Grid.Row="0" Content="Directory"/>
-                        <Label Grid.Column="3" Grid.Row="0" Content="Smartschool"/>
-
-                        <Label Grid.Column="1" Grid.Row="1" Content="{Binding TotalWisaGroups.Value}"/>
-                        <Label Grid.Column="1" Grid.Row="2" Content="{Binding LinkedWisaGroups.Value}"/>
-                        <Label x:Name="UnlinkedWisaLabel" Grid.Column="1" Grid.Row="3" Content="{Binding UnlinkedWisaGroups.Value}"/>
-
-                        <Label Grid.Column="2" Grid.Row="1" Content="{Binding TotalDirectoryGroups.Value}"/>
-                        <Label Grid.Column="2" Grid.Row="2" Content="{Binding LinkedDirectoryGroups.Value}"/>
-                        <Label x:Name="UnlinkedDirectoryLabel" Grid.Column="2" Grid.Row="3" Content="{Binding UnlinkedDirectoryGroups.Value}"/>
-
-                        <Label Grid.Column="3" Grid.Row="1" Content="{Binding TotalSmartschoolGroups.Value}"/>
-                        <Label Grid.Column="3" Grid.Row="2" Content="{Binding LinkedSmartschoolGroups.Value}"/>
-                        <Label x:Name="UnlinkedSmartschoolLabel" Grid.Column="3" Grid.Row="3" Content="{Binding UnlinkedSmartschoolGroups.Value}"/>
-
-                        <Button Style="{StaticResource MaterialDesignRaisedButton}"
-                                Grid.Column="0" Grid.Row="4"
-                                materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowLinkButtonIndicator.Value}"
-                                materialDesign:ButtonProgressAssist.IsIndeterminate="True"
-                                Content="Opnieuw Linken"
-                                Click="LinkButton_Click"
-                                Margin="2,0" />
-                    </Grid>
-                </Grid>
-            </Grid>
-        </GroupBox>
-
-        <GroupBox Grid.Row="2" Margin="0 16 0 0" Header="Leerlingen">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition/>
-                    <ColumnDefinition/>
-                </Grid.ColumnDefinitions>
-
-                <Grid Grid.Column="0">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition/>
-                            <ColumnDefinition/>
-                            <ColumnDefinition/>
-                            <ColumnDefinition/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="30"/>
-                            <RowDefinition Height="70"/>
-                        </Grid.RowDefinitions>
-
-
-                        <Label Grid.Column="0" Grid.Row="1" Content="Total"/>
-                        <Label Grid.Column="0" Grid.Row="2" Content="Linked"/>
-                        <Label Grid.Column="0" Grid.Row="3" Content="Unlinked"/>
-
-                        <Label Grid.Column="1" Grid.Row="0" Content="Wisa"/>
-                        <Label Grid.Column="2" Grid.Row="0" Content="Directory"/>
-                        <Label Grid.Column="3" Grid.Row="0" Content="Smartschool"/>
-                        <Label Grid.Column="4" Grid.Row="0" Content="Google"/>
-
-                        <Label Grid.Column="1" Grid.Row="1" Content="{Binding TotalWisaAccounts.Value}"/>
-                        <Label Grid.Column="1" Grid.Row="2" Content="{Binding LinkedWisaAccounts.Value}"/>
-                        <Label x:Name="UnlinkedWisaStudentLabel" Grid.Column="1" Grid.Row="3" Content="{Binding UnlinkedWisaAccounts.Value}"/>
-
-                        <Label Grid.Column="2" Grid.Row="1" Content="{Binding TotalDirectoryAccounts.Value}"/>
-                        <Label Grid.Column="2" Grid.Row="2" Content="{Binding LinkedDirectoryAccounts.Value}"/>
-                        <Label x:Name="UnlinkedDirectoryStudentLabel" Grid.Column="2" Grid.Row="3" Content="{Binding UnlinkedDirectoryAccounts.Value}"/>
-
-                        <Label Grid.Column="3" Grid.Row="1" Content="{Binding TotalSmartschoolAccounts.Value}"/>
-                        <Label Grid.Column="3" Grid.Row="2" Content="{Binding LinkedSmartschoolAccounts.Value}"/>
-                        <Label x:Name="UnlinkedSmartschoolStudentLabel" Grid.Column="3" Grid.Row="3" Content="{Binding UnlinkedSmartschoolAccounts.Value}"/>
-
-                        <Label Grid.Column="4" Grid.Row="1" Content="{Binding TotalGoogleAccounts.Value}"/>
-                        <Label Grid.Column="4" Grid.Row="2" Content="{Binding LinkedGoogleAccounts.Value}"/>
-                        <Label x:Name="UnlinkedGoogleStudentLabel" Grid.Column="4" Grid.Row="3" Content="{Binding UnlinkedGoogleAccounts.Value}"/>
-                        
-                        <Button Style="{StaticResource MaterialDesignRaisedButton}"
-                                Grid.Column="0" Grid.Row="4"
-                                materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding ShowAccountLinkButtonIndicator.Value}"
-                                materialDesign:ButtonProgressAssist.IsIndeterminate="True"
-                                Content="Opnieuw Linken"
-                                Click="AccountLinkButton_Click"
-                                Margin="2,0" />
-                    </Grid>
-                </Grid>
-            </Grid>
-        </GroupBox>
+        <local:LinkedAccounts Grid.Row="2" Margin="0 16 0 0"/>
     </Grid>
 </UserControl>

@@ -49,7 +49,7 @@
                     <DataGridTemplateColumn Header="Wisa" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding WisaStatusIcon}" Foreground="{Binding WisaStatusColor}"/>
+                                <materialDesign:PackIcon Kind="{Binding Wisa.Icon}" Foreground="{Binding Wisa.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -57,7 +57,7 @@
                     <DataGridTemplateColumn Header="Directory" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding DirectoryStatusIcon}" Foreground="{Binding DirectoryStatusColor}"/>
+                                <materialDesign:PackIcon Kind="{Binding Directory.Icon}" Foreground="{Binding Directory.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -65,7 +65,7 @@
                     <DataGridTemplateColumn Header="Smartschool" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding SmartschoolStatusIcon}" Foreground="{Binding SmartschoolStatusColor}"/>
+                                <materialDesign:PackIcon Kind="{Binding Smartschool.Icon}" Foreground="{Binding Smartschool.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>

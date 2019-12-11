@@ -21,6 +21,8 @@ namespace AccountManager.State.Google
             await AccountApi.Google.AccountManager.ReloadAll();
             lastSync = DateTime.Now;
             SaveToJson();
+
+            App.Instance.Google.UpdateObservers();
         }
 
         public void LoadFromJson()
@@ -33,6 +35,7 @@ namespace AccountManager.State.Google
                 AccountApi.Google.AccountManager.FromJson(newObj);
                 lastSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
             }
+            App.Instance.Google.UpdateObservers();
         }
 
         public void SaveToJson()

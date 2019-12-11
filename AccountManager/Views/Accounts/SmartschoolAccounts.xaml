@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
              xmlns:local="clr-namespace:AccountManager.Views.Accounts"
+             xmlns:model="clr-namespace:AccountManager.ViewModels.Accounts"
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              TextElement.Foreground="{DynamicResource MaterialDesignBody}"
              TextElement.FontWeight="Medium"
@@ -36,12 +37,20 @@
                             <RowDefinition/>
                             <RowDefinition/>
                         </Grid.RowDefinitions>
-                        <Button Grid.Row="0" Style="{StaticResource MaterialDesignRaisedDarkButton}" ToolTip="Toon Leerlingen" x:Name="StudentButton" Click="StudentButton_Click">
-                            LEERLINGEN
-                        </Button>
-                        <Button Grid.Row="1" Style="{StaticResource MaterialDesignRaisedDarkButton}" ToolTip="Toon Personeel" x:Name="StaffButton" Click="StaffButton_Click">
-                            PERSONEEL
-                        </Button>
+                        <RadioButton Grid.Row="0" 
+                                     Content="Leerlingen"
+                                     Command="{Binding SetTargetCommand}"
+                                     CommandParameter="Leerlingen"
+                                     Margin="0 8"
+                                     IsChecked="true"
+                                     />
+
+                        <RadioButton Grid.Row="1" 
+                                     Content="Personeel"
+                                     Command="{Binding SetTargetCommand}"
+                                     CommandParameter="Personeel"
+                                     Margin="0 8"
+                                     />
                     </Grid>
                 </materialDesign:Card>
 
@@ -49,18 +58,17 @@
                 <materialDesign:Card Grid.Column="1" Margin="16 0 0 0" Height="100">
                     <StackPanel>
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Accounts" HorizontalAlignment="Center"/>
-                        <Label Margin="16 4 16 0" Content="{Binding AccountCount.Value}" FontSize="40" HorizontalContentAlignment="Center"/>
+                        <Label Margin="16 4 16 0" Content="{Binding NumAccounts}" FontSize="40" HorizontalContentAlignment="Center"/>
                     </StackPanel>
                 </materialDesign:Card>
 
                 <!-- Reload Button -->
                 <Button
-                                x:Name="ReloadAccountButton"
-                                Click="ReloadAccountButton_Click"
+                                Command="{Binding ReloadCommand}"
                                 Grid.Column="3"
                                 Margin="16 0 0 0"
                                 Style="{StaticResource MaterialDesignFloatingActionMiniDarkButton}"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding DataContext.ShowGroupsReloadButtonIndicator.Value, ElementName=MainGrid}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding Indicator}"
                                 materialDesign:ButtonProgressAssist.IndicatorForeground="LimeGreen"
                                 materialDesign:ButtonProgressAssist.Value="-1"
                                 ToolTip="Gegevens opnieuw laden uit Smartschool"
@@ -76,9 +84,9 @@
                 <ColumnDefinition/>
             </Grid.ColumnDefinitions>
 
-            <TreeView Grid.Column="0" x:Name="AccountTree" SelectedItemChanged="AccountTree_SelectedItemChanged">
+            <TreeView Grid.Column="0" x:Name="AccountTree" ItemsSource="{Binding Tree}" SelectedItemChanged="SelectedItemChanged">
                 <TreeView.Resources>
-                    <HierarchicalDataTemplate DataType="{x:Type local:Group}" ItemsSource="{Binding Children}">
+                    <HierarchicalDataTemplate DataType="{x:Type model:TreeGroup}" ItemsSource="{Binding Children}">
                         <materialDesign:Badged Margin="0 8 0 0" Padding="0 -8 32 0" Badge="{Binding CountAccount}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -90,7 +98,7 @@
                             </Grid>
                         </materialDesign:Badged>
                     </HierarchicalDataTemplate>
-                    <DataTemplate DataType="{x:Type local:Account}">
+                    <DataTemplate DataType="{x:Type model:TreeAccount}">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="{Binding Icon}"/>
                             <TextBlock Text="{Binding Header}" Margin="3 2"/>
@@ -100,7 +108,7 @@
                 </TreeView.Resources>
             </TreeView>
     
-            <GroupBox Grid.Column="1" Header="{Binding SelectedAccount.Value.SurName}">
+            <GroupBox Grid.Column="1" Header="{Binding SelectedAccount.Header}">
                 <ScrollViewer>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -142,86 +150,86 @@
                         </Grid.RowDefinitions>
 
                         <Label Grid.Row="0" Grid.Column="0" Content="Familienaam"/>
-                        <Label Grid.Row="0" Grid.Column="1" Content="{Binding SelectedAccount.Value.SurName}" FontWeight="Light"/>
+                        <Label Grid.Row="0" Grid.Column="1" Content="{Binding SelectedAccount.Base.SurName}" FontWeight="Light"/>
 
                         <Label Grid.Row="1" Grid.Column="0" Content="Voornaam"/>
-                        <Label Grid.Row="1" Grid.Column="1" Content="{Binding SelectedAccount.Value.GivenName}" FontWeight="Light"/>
+                        <Label Grid.Row="1" Grid.Column="1" Content="{Binding SelectedAccount.Base.GivenName}" FontWeight="Light"/>
 
                         <Label Grid.Row="2" Grid.Column="0" Content="Extra Naam"/>
-                        <Label Grid.Row="2" Grid.Column="1" Content="{Binding SelectedAccount.Value.ExtraNames}" FontWeight="Light"/>
+                        <Label Grid.Row="2" Grid.Column="1" Content="{Binding SelectedAccount.Base.ExtraNames}" FontWeight="Light"/>
 
                         <Label Grid.Row="3" Grid.Column="0" Content="Initialen"/>
-                        <Label Grid.Row="3" Grid.Column="1" Content="{Binding SelectedAccount.Value.Initials}" FontWeight="Light"/>
+                        <Label Grid.Row="3" Grid.Column="1" Content="{Binding SelectedAccount.Base.Initials}" FontWeight="Light"/>
 
                         <Label Grid.Row="4" Grid.Column="0" Content="Gender"/>
-                        <Label Grid.Row="4" Grid.Column="1" Content="{Binding SelectedAccount.Value.Gender}" FontWeight="Light"/>
+                        <Label Grid.Row="4" Grid.Column="1" Content="{Binding SelectedAccount.Base.Gender}" FontWeight="Light"/>
 
                         <Label Grid.Row="5" Grid.Column="0" Content="Geboortedatum"/>
-                        <Label Grid.Row="5" Grid.Column="1" Content="{Binding SelectedAccount.Value.Birthday }" FontWeight="Light"/>
+                        <Label Grid.Row="5" Grid.Column="1" Content="{Binding SelectedAccount.Base.Birthday }" FontWeight="Light"/>
 
                         <Label Grid.Row="6" Grid.Column="0" Content="Geboorteplaats"/>
-                        <Label Grid.Row="6" Grid.Column="1" Content="{Binding SelectedAccount.Value.BirthPlace}" FontWeight="Light"/>
+                        <Label Grid.Row="6" Grid.Column="1" Content="{Binding SelectedAccount.Base.BirthPlace}" FontWeight="Light"/>
 
                         <Label Grid.Row="7" Grid.Column="0" Content="Geboorteland"/>
-                        <Label Grid.Row="7" Grid.Column="1" Content="{Binding SelectedAccount.Value.BirthCountry }" FontWeight="Light"/>
+                        <Label Grid.Row="7" Grid.Column="1" Content="{Binding SelectedAccount.Base.BirthCountry }" FontWeight="Light"/>
 
                         <Separator Grid.Row="8" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
 
                         <Label Grid.Row="9" Grid.Column="0" Content="Straat"/>
-                        <Label Grid.Row="9" Grid.Column="1" Content="{Binding SelectedAccount.Value.Street }" FontWeight="Light"/>
+                        <Label Grid.Row="9" Grid.Column="1" Content="{Binding SelectedAccount.Base.Street }" FontWeight="Light"/>
 
                         <Label Grid.Row="10" Grid.Column="0" Content="Huisnummer"/>
-                        <Label Grid.Row="10" Grid.Column="1" Content="{Binding SelectedAccount.Value.HouseNumber }" FontWeight="Light"/>
+                        <Label Grid.Row="10" Grid.Column="1" Content="{Binding SelectedAccount.Base.HouseNumber }" FontWeight="Light"/>
 
                         <Label Grid.Row="11" Grid.Column="0" Content="Busnummer"/>
-                        <Label Grid.Row="11" Grid.Column="1" Content="{Binding SelectedAccount.Value.HouseNumberAdd }" FontWeight="Light"/>
+                        <Label Grid.Row="11" Grid.Column="1" Content="{Binding SelectedAccount.Base.HouseNumberAdd }" FontWeight="Light"/>
 
                         <Label Grid.Row="12" Grid.Column="0" Content="Postcode"/>
-                        <Label Grid.Row="12" Grid.Column="1" Content="{Binding SelectedAccount.Value.PostalCode }" FontWeight="Light"/>
+                        <Label Grid.Row="12" Grid.Column="1" Content="{Binding SelectedAccount.Base.PostalCode }" FontWeight="Light"/>
 
                         <Label Grid.Row="13" Grid.Column="0" Content="Woonplaats"/>
-                        <Label Grid.Row="13" Grid.Column="1" Content="{Binding SelectedAccount.Value.City }" FontWeight="Light"/>
+                        <Label Grid.Row="13" Grid.Column="1" Content="{Binding SelectedAccount.Base.City }" FontWeight="Light"/>
 
                         <Label Grid.Row="14" Grid.Column="0" Content="Country"/>
-                        <Label Grid.Row="14" Grid.Column="1" Content="{Binding SelectedAccount.Value.Country }" FontWeight="Light"/>
+                        <Label Grid.Row="14" Grid.Column="1" Content="{Binding SelectedAccount.Base.Country }" FontWeight="Light"/>
 
                         <Label Grid.Row="15" Grid.Column="0" Content="GSM Nummer"/>
-                        <Label Grid.Row="15" Grid.Column="1" Content="{Binding SelectedAccount.Value.MobilePhone }" FontWeight="Light"/>
+                        <Label Grid.Row="15" Grid.Column="1" Content="{Binding SelectedAccount.Base.MobilePhone }" FontWeight="Light"/>
 
                         <Label Grid.Row="16" Grid.Column="0" Content="Telefoonnummer"/>
-                        <Label Grid.Row="16" Grid.Column="1" Content="{Binding SelectedAccount.Value.HomePhone }" FontWeight="Light"/>
+                        <Label Grid.Row="16" Grid.Column="1" Content="{Binding SelectedAccount.Base.HomePhone }" FontWeight="Light"/>
 
                         <Label Grid.Row="17" Grid.Column="0" Content="Fax"/>
-                        <Label Grid.Row="17" Grid.Column="1" Content="{Binding SelectedAccount.Value.Fax }" FontWeight="Light"/>
+                        <Label Grid.Row="17" Grid.Column="1" Content="{Binding SelectedAccount.Base.Fax }" FontWeight="Light"/>
 
                         <Label Grid.Row="18" Grid.Column="0" Content="Mail"/>
-                        <Label Grid.Row="18" Grid.Column="1" Content="{Binding SelectedAccount.Value.Mail }" FontWeight="Light"/>
+                        <Label Grid.Row="18" Grid.Column="1" Content="{Binding SelectedAccount.Base.Mail }" FontWeight="Light"/>
 
                         <Label Grid.Row="19" Grid.Column="0" Content="Mail Alias"/>
-                        <Label Grid.Row="19" Grid.Column="1" Content="{Binding SelectedAccount.Value.MailAlias }" FontWeight="Light"/>
+                        <Label Grid.Row="19" Grid.Column="1" Content="{Binding SelectedAccount.Base.MailAlias }" FontWeight="Light"/>
 
                         <Separator Grid.Row="20" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
 
                         <Label Grid.Row="21" Grid.Column="0" Content="Groep"/>
-                        <Label Grid.Row="21" Grid.Column="1" Content="{Binding SelectedAccount.Value.Group }" FontWeight="Light"/>
+                        <Label Grid.Row="21" Grid.Column="1" Content="{Binding SelectedAccount.Base.Group }" FontWeight="Light"/>
 
                         <Label Grid.Row="22" Grid.Column="0" Content="Gebruikersnaam"/>
-                        <Label Grid.Row="22" Grid.Column="1" Content="{Binding SelectedAccount.Value.UID }" FontWeight="Light"/>
+                        <Label Grid.Row="22" Grid.Column="1" Content="{Binding SelectedAccount.Base.UID }" FontWeight="Light"/>
 
                         <Label Grid.Row="23" Grid.Column="0" Content="Intern Nummer"/>
-                        <Label Grid.Row="23" Grid.Column="1" Content="{Binding SelectedAccount.Value.AccountID }" FontWeight="Light"/>
+                        <Label Grid.Row="23" Grid.Column="1" Content="{Binding SelectedAccount.Base.AccountID }" FontWeight="Light"/>
 
                         <Label Grid.Row="24" Grid.Column="0" Content="Rijksregisternummer"/>
-                        <Label Grid.Row="24" Grid.Column="1" Content="{Binding SelectedAccount.Value.RegisterID }" FontWeight="Light"/>
+                        <Label Grid.Row="24" Grid.Column="1" Content="{Binding SelectedAccount.Base.RegisterID }" FontWeight="Light"/>
 
                         <Label Grid.Row="25" Grid.Column="0" Content="Untis ID"/>
-                        <Label Grid.Row="25" Grid.Column="1" Content="{Binding SelectedAccount.Value.UntisID }" FontWeight="Light"/>
+                        <Label Grid.Row="25" Grid.Column="1" Content="{Binding SelectedAccount.Base.UntisID }" FontWeight="Light"/>
 
                         <Label Grid.Row="26" Grid.Column="0" Content="Stamboeknummer"/>
-                        <Label Grid.Row="26" Grid.Column="1" Content="{Binding SelectedAccount.Value.StemID }" FontWeight="Light"/>
+                        <Label Grid.Row="26" Grid.Column="1" Content="{Binding SelectedAccount.Base.StemID }" FontWeight="Light"/>
 
                         <Label Grid.Row="27" Grid.Column="0" Content="Rol"/>
-                        <Label Grid.Row="27" Grid.Column="1" Content="{Binding SelectedAccount.Value.Role }" FontWeight="Light"/>
+                        <Label Grid.Row="27" Grid.Column="1" Content="{Binding SelectedAccount.Base.Role }" FontWeight="Light"/>
                     </Grid>
                 </ScrollViewer>
                 

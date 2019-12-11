@@ -44,7 +44,7 @@ namespace AccountManager.Utils
 
         public void Save(ref JObject target)
         {
-            target[key] = value.ToString();
+            target[key] = value?.ToString();
         }
     }
 }

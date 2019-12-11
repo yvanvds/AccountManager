@@ -70,7 +70,7 @@ namespace AccountManager.Views.Groups
             ShowGroupsReloadButtonIndicator.Value = true;
             AppState.Wisa.Connect();
             await AppState.Wisa.Groups.Load();
-            await LinkedGroups.ReLink();
+            await State.App.Instance.Linked.Groups.ReLink();
             CreateSelection();
             ShowGroupsReloadButtonIndicator.Value = false;
         }

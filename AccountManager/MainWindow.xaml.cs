@@ -33,8 +33,8 @@ namespace AccountManager
 
         private async Task LoadContent()
         {
-            await LinkedGroups.ReLink();
-            await LinkedAccounts.ReLink();
+            await State.App.Instance.Linked.Groups.ReLink();
+            await State.App.Instance.Linked.Accounts.ReLink();
             Navigate(new Views.Dashboard.DashboardPage());
         }
 

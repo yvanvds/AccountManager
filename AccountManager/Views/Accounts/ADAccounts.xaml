@@ -14,7 +14,7 @@
              FontFamily="{DynamicResource MaterialDesignFont}"
              mc:Ignorable="d" 
              d:DesignHeight="450" d:DesignWidth="800">
-    <Grid x:Name="MainGrid">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="160"/>
             <RowDefinition Height="*"/>
@@ -36,12 +36,20 @@
                             <RowDefinition/>
                             <RowDefinition/>
                         </Grid.RowDefinitions>
-                        <Button Grid.Row="0" Style="{StaticResource MaterialDesignRaisedDarkButton}" ToolTip="Toon Leerlingen" x:Name="StudentButton" Click="StudentButton_Click">
-                            LEERLINGEN
-                        </Button>
-                        <Button Grid.Row="1" Style="{StaticResource MaterialDesignRaisedDarkButton}" ToolTip="Toon Personeel" x:Name="StaffButton" Click="StaffButton_Click">
-                            PERSONEEL
-                        </Button>
+                        <RadioButton Grid.Row="0" 
+                                     Content="Leerlingen"
+                                     Command="{Binding SetTargetCommand}"
+                                     CommandParameter="Leerlingen"
+                                     Margin="0 8"
+                                     IsChecked="true"
+                                     />
+
+                        <RadioButton Grid.Row="1" 
+                                     Content="Personeel"
+                                     Command="{Binding SetTargetCommand}"
+                                     CommandParameter="Personeel"
+                                     Margin="0 8"
+                                     />
                     </Grid>
                 </materialDesign:Card>
 
@@ -49,7 +57,7 @@
                 <materialDesign:Card Grid.Column="1" Margin="16 0 0 0" Height="100">
                     <StackPanel>
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Accounts" HorizontalAlignment="Center"/>
-                        <Label Margin="16 4 16 0" Content="{Binding AccountCount.Value}" FontSize="40" HorizontalContentAlignment="Center"/>
+                        <Label Margin="16 4 16 0" Content="{Binding Accounts.Count}" FontSize="40" HorizontalContentAlignment="Center"/>
                     </StackPanel>
                 </materialDesign:Card>
 
@@ -59,19 +67,19 @@
                         <TextBlock Margin="16 16 12 8" FontSize="16" Text="Filter"/>
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="Filter" Margin="16 16 0 0"/>
-                            <ComboBox x:Name="FilterCombo" Width="100" SelectionChanged="FilterCombo_SelectionChanged"  materialDesign:HintAssist.Hint="Target" Margin="16 0 0 0"  Style="{StaticResource MaterialDesignFloatingHintComboBox}">
-                                <ComboBoxItem IsSelected="True">
-                                    Naam
-                                </ComboBoxItem>
-                                <ComboBoxItem>
-                                    Voornaam
-                                </ComboBoxItem>
-                                <ComboBoxItem>
-                                    Gebruikersnaam
-                                </ComboBoxItem>
+                            <ComboBox Width="100" 
+                                      materialDesign:HintAssist.Hint="Target" 
+                                      Margin="16 0 0 0"  
+                                      Style="{StaticResource MaterialDesignFloatingHintComboBox}"
+                                      ItemsSource="{Binding FilterTypes}"
+                                      SelectedItem="{Binding SelectedFilter, Mode=TwoWay}">
                             </ComboBox>
-                            <TextBox x:Name="FilterText" TextChanged="FilterText_TextChanged"  materialDesign:HintAssist.Hint="Filter" Margin="16 0 0 0" Width="120" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
-                            <Button x:Name="FilterDeleteButton" Click="FilterDeleteButton_Click"  Margin="0 0 0 0" Padding="8 10 0 0" Style="{StaticResource MaterialDesignFlatButton}" ToolTip="Reset Filter">
+                            <TextBox Text="{Binding FilterText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"  materialDesign:HintAssist.Hint="Filter" Margin="16 0 0 0" Width="120" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                            <Button 
+                                Margin="0 0 0 0" Padding="8 10 0 0" 
+                                Style="{StaticResource MaterialDesignFlatButton}" 
+                                ToolTip="Reset Filter"
+                                Command="{Binding ClearFilterCommand}">
                                 <materialDesign:PackIcon Kind="Delete" Height="24" Width="24" />
                             </Button>
                         </StackPanel>
@@ -80,12 +88,11 @@
                 
                 <!-- Reload Button -->
                 <Button
-                                x:Name="ReloadAccountButton"
-                                Click="ReloadAccountButton_Click"
+                                Command="{Binding ReloadCommand}"
                                 Grid.Column="3"
                                 Margin="16 0 0 0"
                                 Style="{StaticResource MaterialDesignFloatingActionMiniDarkButton}"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding DataContext.ShowGroupsReloadButtonIndicator.Value, ElementName=MainGrid}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding Indicator}"
                                 materialDesign:ButtonProgressAssist.IndicatorForeground="LimeGreen"
                                 materialDesign:ButtonProgressAssist.Value="-1"
                                 ToolTip="Gegevens opnieuw laden uit Smartschool"
@@ -102,7 +109,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- List of Accounts -->
-            <DataGrid Grid.Column="0" Margin="0 8 0 0" x:Name="AccountList"
+            <DataGrid Grid.Column="0" Margin="0 8 0 0" ItemsSource="{Binding Accounts}"
               CanUserSortColumns="True"
               CanUserAddRows="False"
               AutoGenerateColumns="False"
@@ -110,7 +117,7 @@
               materialDesign:DataGridAssist.CellPadding="13 8 8 8"
               materialDesign:DataGridAssist.ColumnHeaderPadding="8"
                       
-                  SelectedCellsChanged="AccountList_SelectedCellsChanged">
+              SelectedItem="{Binding SelectedAccount, Mode=OneWayToSource}">
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding LastName}" Header="Naam" IsReadOnly="True" />
                     <DataGridTextColumn Binding="{Binding FirstName}" Header="Voornaam" IsReadOnly="True"/>
@@ -119,7 +126,7 @@
             </DataGrid>
 
             <!-- Account Detail -->
-            <GroupBox Grid.Column="1" Header="{Binding Path=SelectedTitle.Value}">
+            <GroupBox Grid.Column="1" Header="{Binding SelectedAccountTitle }">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="160"/>
@@ -144,38 +151,38 @@
 
                     </Grid.RowDefinitions>
                     <Label Grid.Row="0" Grid.Column="0" Content="Voornaam" FontWeight="Bold"/>
-                    <Label Grid.Row="0" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.FirstName}"/>
+                    <Label Grid.Row="0" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.FirstName}"/>
                     
                     <Label Grid.Row="1" Grid.Column="0" Content="Naam" FontWeight="Bold"/>
-                    <Label Grid.Row="1" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.LastName}"/>
+                    <Label Grid.Row="1" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.LastName}"/>
 
                     <Label Grid.Row="2" Grid.Column="0" Content="Volledige Naam" FontWeight="Bold"/>
-                    <Label Grid.Row="2" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.FullName}"/>
+                    <Label Grid.Row="2" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.FullName}"/>
 
                     <Separator Grid.Row="3" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
 
                     <Label Grid.Row="4" Grid.Column="0" Content="Gebruikersnaam" FontWeight="Bold"/>
-                    <Label Grid.Row="4" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.UID}"/>
+                    <Label Grid.Row="4" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.UID}"/>
 
                     <Label Grid.Row="5" Grid.Column="0" Content="Wisa ID" FontWeight="Bold"/>
-                    <Label Grid.Row="5" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.WisaID}"/>
+                    <Label Grid.Row="5" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.WisaID}"/>
 
                     <Label Grid.Row="6" Grid.Column="0" Content="Wisa Naam" FontWeight="Bold"/>
-                    <Label Grid.Row="6" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.WisaName}"/>
+                    <Label Grid.Row="6" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.WisaName}"/>
 
                     <Separator Grid.Row="7" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
 
                     <Label Grid.Row="8" Grid.Column="0" Content="Mail Alias" FontWeight="Bold"/>
-                    <Label Grid.Row="8" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.MailAlias}"/>
+                    <Label Grid.Row="8" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.MailAlias}"/>
 
                     <Label Grid.Row="9" Grid.Column="0" Content="Klas" FontWeight="Bold"/>
-                    <Label Grid.Row="9" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.ClassGroup}"/>
+                    <Label Grid.Row="9" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.ClassGroup}"/>
 
                     <Label Grid.Row="10" Grid.Column="0" Content="HomeDrive" FontWeight="Bold"/>
-                    <Label Grid.Row="10" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.HomeDrive}"/>
+                    <Label Grid.Row="10" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.HomeDrive}"/>
 
                     <Label Grid.Row="11" Grid.Column="0" Content="HomeDirectory" FontWeight="Bold"/>
-                    <Label Grid.Row="11" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Value.HomeDirectory}"/>
+                    <Label Grid.Row="11" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.HomeDirectory}"/>
 
                 </Grid>
             </GroupBox>

@@ -1,4 +1,4 @@
-﻿using AccountManager.Action;
+﻿using AccountManager.Action.Group;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -23,8 +23,8 @@ namespace AccountManager.Views.Groups
     /// </summary>
     public partial class Overview : UserControl
     {
-        public ObservableCollection<LinkedGroup> Groups = new ObservableCollection<LinkedGroup>();
-        Prop<LinkedGroup> SelectedGroup = new Prop<LinkedGroup>() { Value = null };
+        public ObservableCollection<State.Linked.LinkedGroup> Groups = new ObservableCollection<State.Linked.LinkedGroup>();
+        Prop<State.Linked.LinkedGroup> SelectedGroup = new Prop<State.Linked.LinkedGroup>() { Value = null };
         public ObservableCollection<GroupAction> Actions = new ObservableCollection<GroupAction>();
         private bool showGoodGroups = true;
 
@@ -39,20 +39,20 @@ namespace AccountManager.Views.Groups
         private void CreateCollection()
         {
             Groups.Clear();
-            List<LinkedGroup> groups = LinkedGroups.List.Values.ToList();
+            List<State.Linked.LinkedGroup> groups = State.App.Instance.Linked.Groups.List.Values.ToList();
             groups.Sort((a, b) => a.Name.CompareTo(b.Name));
             foreach(var group in groups)
             {
                 if (showGoodGroups) Groups.Add(group);
-                else if (!group.GroupOK) Groups.Add(group);
+                else if (!group.OK) Groups.Add(group);
             }
         }
 
         private void GroupList_SelectedCellsChanged(object sender, SelectedCellsChangedEventArgs e)
         {
-            if(GroupList.SelectedItem is LinkedGroup)
+            if(GroupList.SelectedItem is State.Linked.LinkedGroup)
             {
-                SelectedGroup.Value = GroupList.SelectedItem as LinkedGroup;
+                SelectedGroup.Value = GroupList.SelectedItem as State.Linked.LinkedGroup;
                 ActionsBox.Header = SelectedGroup.Value.Name + " - Mogelijke Acties";
                 Actions.Clear();
                 foreach(var action in SelectedGroup.Value.Actions)
@@ -90,7 +90,7 @@ namespace AccountManager.Views.Groups
             GroupAction action = (e.Source as Button).DataContext as GroupAction;
             action.InProgress.Value = true;
             await action.Apply(SelectedGroup.Value);
-            await LinkedGroups.ReLink();
+            await State.App.Instance.Linked.Groups.ReLink();
             CreateCollection();
             action.InProgress.Value = false;
         }

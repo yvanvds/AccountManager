@@ -14,7 +14,7 @@
              Background="{DynamicResource MaterialDesignPaper}"
              FontFamily="{DynamicResource MaterialDesignFont}"
              mc:Ignorable="d" 
-             Loaded="UserControl_Loaded"
+             x:Name="Control"
              d:DesignHeight="450" d:DesignWidth="1200">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="VisibleIfTrueConverter" />
@@ -37,9 +37,7 @@
                 <StackPanel>
                     <ToggleButton HorizontalAlignment="Left" Margin="16"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
                                 ToolTip="MaterialDesignSwitchDarkToggleButton"
-                                  x:Name="ShowProblemsOnly"
-                                  Checked="ShowProblemsOnly_Checked"
-                                  Unchecked="ShowProblemsOnly_Unchecked"/>
+                                  IsChecked="{Binding ShowOnlyProblemAccounts, Mode=TwoWay}"/>
                     <TextBlock Margin="16 0 16 16" TextWrapping="Wrap" FontWeight="Light">Toon Enkel Accounts met Opmerkingen</TextBlock>
                 </StackPanel>
             </materialDesign:Card>
@@ -48,7 +46,7 @@
             <materialDesign:Card Grid.Column="1" Margin="8" Height="100">
                 <StackPanel>
                     <TextBlock Margin="16 16 12 0" FontSize="16" Text="Accounts" HorizontalAlignment="Center"/>
-                    <Label Margin="16 4 16 0" Content="{Binding Path=AccountCount.Value}" FontSize="40" HorizontalContentAlignment="Center"/>
+                    <Label Margin="16 4 16 0" Content="{Binding Accounts.Count}" FontSize="40" HorizontalContentAlignment="Center"/>
                 </StackPanel>
             </materialDesign:Card>
 
@@ -58,16 +56,15 @@
                     <TextBlock Margin="16 16 12 8" FontSize="16" Text="Filter"/>
                     <StackPanel Orientation="Horizontal">
                         <materialDesign:PackIcon Kind="Filter" Margin="16 16 0 0"/>
-                        <ComboBox x:Name="FilterCombo" Width="100" SelectionChanged="FilterCombo_SelectionChanged"  materialDesign:HintAssist.Hint="Target" Margin="16 0 0 0"  Style="{StaticResource MaterialDesignFloatingHintComboBox}">
-                            <ComboBoxItem IsSelected="True">
-                                Naam
-                            </ComboBoxItem>
-                            <ComboBoxItem>
-                                Klas
-                            </ComboBoxItem>
+                        <ComboBox Width="100" 
+                                      materialDesign:HintAssist.Hint="Target" 
+                                      Margin="16 0 0 0"  
+                                      Style="{StaticResource MaterialDesignFloatingHintComboBox}"
+                                      ItemsSource="{Binding FilterTypes}"
+                                      SelectedItem="{Binding SelectedFilter, Mode=TwoWay}">
                         </ComboBox>
-                        <TextBox x:Name="FilterText" TextChanged="FilterText_TextChanged"  materialDesign:HintAssist.Hint="Filter" Margin="16 0 0 0" Width="120" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
-                        <Button x:Name="FilterDeleteButton" Click="FilterDeleteButton_Click"  Margin="0 0 0 0" Padding="8 10 0 0" Style="{StaticResource MaterialDesignFlatButton}" ToolTip="Reset Filter">
+                        <TextBox Text="{Binding FilterText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"  materialDesign:HintAssist.Hint="Filter" Margin="16 0 0 0" Width="120" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                        <Button Command="{Binding ClearFilterCommand}"  Margin="0 0 0 0" Padding="8 10 0 0" Style="{StaticResource MaterialDesignFlatButton}" ToolTip="Reset Filter">
                             <materialDesign:PackIcon Kind="Delete" Height="24" Width="24" />
                         </Button>
                     </StackPanel>
@@ -81,7 +78,7 @@
                             Datum Uitschrijving
                     </TextBlock>
                     <StackPanel Orientation="Horizontal">
-                        <DatePicker SelectedDate="{Binding Path=StudentDeleteDate, Mode=TwoWay}" Margin="16 0" Width="200"
+                        <DatePicker SelectedDate="{Binding StudentDeleteDate, Mode=TwoWay}" Margin="16 0" Width="200"
                               materialDesign:HintAssist.Hint="Pick Date"
                               Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
                               />
@@ -90,22 +87,20 @@
             </materialDesign:Card>
         </Grid>
 
-        <ProgressBar Grid.Row="1" IsIndeterminate="{Binding Working.Value, Mode=TwoWay}"/>
-
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition/>
                 <ColumnDefinition/>
             </Grid.ColumnDefinitions>
 
-            <DataGrid Grid.Row="1" Margin="16 0 16 16" x:Name="AccountList"
+            <DataGrid Grid.Row="1" Margin="16 0 16 16" ItemsSource="{Binding Accounts}"
                   CanUserSortColumns="True"
                   CanUserAddRows="False"
                   AutoGenerateColumns="False"
                   SelectionMode="Single"
                   materialDesign:DataGridAssist.CellPadding="13 8 8 8"
                   materialDesign:DataGridAssist.ColumnHeaderPadding="8"
-                  SelectedCellsChanged="AccountList_SelectedCellsChanged">
+                  SelectedItem="{Binding SelectedAccount, Mode=OneWayToSource}">
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding Name}" Header="Naam" IsReadOnly="True" />
                     <DataGridTextColumn Binding="{Binding ClassGroup}" Header="Klas" IsReadOnly="True"/>
@@ -113,7 +108,7 @@
                     <DataGridTemplateColumn Header="Wisa" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding WisaStatusIcon}" Foreground="{Binding WisaStatusColor}"/>
+                                <materialDesign:PackIcon Kind="{Binding Wisa.Icon}" Foreground="{Binding Wisa.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -121,7 +116,7 @@
                     <DataGridTemplateColumn Header="Directory" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding DirectoryStatusIcon}" Foreground="{Binding DirectoryStatusColor}"/>
+                                <materialDesign:PackIcon Kind="{Binding Directory.Icon}" Foreground="{Binding Directory.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -129,7 +124,7 @@
                     <DataGridTemplateColumn Header="Smartschool" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding SmartschoolStatusIcon}" Foreground="{Binding SmartschoolStatusColor}"/>
+                                <materialDesign:PackIcon Kind="{Binding Smartschool.Icon}" Foreground="{Binding Smartschool.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -145,9 +140,9 @@
                 </DataGrid.Columns>
             </DataGrid>
 
-            <GroupBox Grid.Column="1" x:Name="ActionsBox">
+            <GroupBox Grid.Column="1">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl x:Name="ActionsViewer" Grid.IsSharedSizeScope="True">
+                    <ItemsControl ItemsSource="{Binding Actions}" Grid.IsSharedSizeScope="True">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <materialDesign:Card Margin="8" Padding="8">
@@ -168,10 +163,11 @@
                                             </StackPanel>
                                         </StackPanel>
                                         <Button Grid.Column="1"
-                                            Click="ActionButton_Click"
+                                                Command="{Binding DataContext.DoAccountActionCommand, ElementName=Control}"
+                                                CommandParameter="{Binding}"
                                             Visibility="{Binding CanBeApplied, Converter={StaticResource VisibleIfTrueConverter}}"
                                           Style="{StaticResource MaterialDesignFloatingActionButton}"
-                                          materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding InProgress.Value, Mode=TwoWay}"
+                                          materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding Indicator}"
                                           materialDesign:ButtonProgressAssist.Value="-1"
                                           materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                           >
