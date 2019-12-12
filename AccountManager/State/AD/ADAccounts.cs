@@ -39,7 +39,7 @@ namespace AccountManager.State.AD
 
         public void SaveToJson()
         {
-            var json = AccountApi.Directory.ClassGroupManager.ToJson();
+            var json = AccountApi.Directory.AccountManager.ToJson();
             json["lastSync"] = lastSync;
             var location = Path.Combine(App.GetAppFolder(), fileName);
             File.WriteAllText(location, json.ToString());
