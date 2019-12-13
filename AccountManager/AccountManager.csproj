@@ -139,7 +139,12 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
-    <Compile Include="Action\Account\AccountActionParser.cs" />
+    <Compile Include="Action\StaffAccount\AccountAction.cs" />
+    <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />
+    <Compile Include="Action\StaffAccount\RemoveFromDirectory.cs" />
+    <Compile Include="Action\StaffAccount\RemoveFromGoogle.cs" />
+    <Compile Include="Action\StaffAccount\StaffMemberActionParser.cs" />
+    <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
     <Compile Include="Exporters\Passwords\Manager.cs" />
@@ -155,22 +160,27 @@
     <Compile Include="Action\Group\GroupActionParser.cs" />
     <Compile Include="State\Linked\AccountStatus.cs" />
     <Compile Include="State\Linked\GroupStatus.cs" />
+    <Compile Include="State\Linked\LinkedStaffMembers.cs" />
+    <Compile Include="State\Linked\LinkedStaffMember.cs" />
     <Compile Include="State\Linked\LinkedState.cs" />
     <Compile Include="State\Settings\SettingsState.cs" />
     <Compile Include="State\Smartschool\SmartschoolState.cs" />
     <Compile Include="State\Smartschool\SmartschoolGroups.cs" />
     <Compile Include="State\Wisa\WisaGroups.cs" />
     <Compile Include="State\Wisa\WisaSchools.cs" />
+    <Compile Include="State\Wisa\WisaStaff.cs" />
     <Compile Include="State\Wisa\WisaState.cs" />
     <Compile Include="State\Wisa\WisaStudents.cs" />
     <Compile Include="Utils\ConfigValue.cs" />
+    <Compile Include="Utils\FlowTableCreator.cs" />
     <Compile Include="Utils\JsonConverter.cs" />
     <Compile Include="Utils\Set.cs" />
     <Compile Include="Utils\TaskUtils.cs" />
     <Compile Include="ViewModels\Accounts\AccountsPage.cs" />
     <Compile Include="ViewModels\Accounts\ADAccounts.cs" />
     <Compile Include="ViewModels\Accounts\GoogleAccounts.cs" />
-    <Compile Include="ViewModels\Accounts\Overview.cs" />
+    <Compile Include="ViewModels\Accounts\StaffOverview.cs" />
+    <Compile Include="ViewModels\Accounts\StudentOverview.cs" />
     <Compile Include="ViewModels\Accounts\SmartschoolAccounts.cs" />
     <Compile Include="ViewModels\Accounts\WisaAccounts.cs" />
     <Compile Include="ViewModels\Base\BaseViewModel.cs" />
@@ -180,6 +190,7 @@
     <Compile Include="ViewModels\Dashboard\DashboardPage.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedAccounts.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedGroups.cs" />
+    <Compile Include="ViewModels\Dashboard\LinkedStaffMembers.cs" />
     <Compile Include="ViewModels\Settings\ADSettings.cs" />
     <Compile Include="ViewModels\Settings\GeneralSettings.cs" />
     <Compile Include="ViewModels\Settings\GoogleSettings.cs" />
@@ -194,8 +205,11 @@
     <Compile Include="Views\Accounts\GoogleAccounts.xaml.cs">
       <DependentUpon>GoogleAccounts.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Views\Accounts\Overview.xaml.cs">
-      <DependentUpon>Overview.xaml</DependentUpon>
+    <Compile Include="Views\Accounts\StaffOverview.xaml.cs">
+      <DependentUpon>StaffOverview.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Accounts\StudentOverview.xaml.cs">
+      <DependentUpon>StudentOverview.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Accounts\SmartschoolAccounts.xaml.cs">
       <DependentUpon>SmartschoolAccounts.xaml</DependentUpon>
@@ -203,34 +217,34 @@
     <Compile Include="Views\Accounts\WisaAccounts.xaml.cs">
       <DependentUpon>WisaAccounts.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Action\Account\AccountAction.cs" />
-    <Compile Include="Action\Account\AddToDirectoryAndSmartschool.cs" />
-    <Compile Include="Action\Account\AddToSmartschool.cs" />
+    <Compile Include="Action\StudentAccount\AccountAction.cs" />
+    <Compile Include="Action\StudentAccount\AddToDirectoryAndSmartschool.cs" />
+    <Compile Include="Action\StudentAccount\AddToSmartschool.cs" />
     <Compile Include="Action\Group\AddToDirectory.cs" />
     <Compile Include="Action\Group\AddToSmartschool.cs" />
-    <Compile Include="Action\Account\AddToADStudentGroup.cs" />
-    <Compile Include="Action\Account\CreateHomeDir.cs" />
-    <Compile Include="Action\Account\DeleteFromSmartschool.cs" />
+    <Compile Include="Action\StudentAccount\AddToADStudentGroup.cs" />
+    <Compile Include="Action\StudentAccount\CreateHomeDir.cs" />
+    <Compile Include="Action\StudentAccount\DeleteFromSmartschool.cs" />
     <Compile Include="Action\Group\DoNotImportFromSmartschool.cs" />
     <Compile Include="Action\Group\DoNotImportFromWisa.cs" />
     <Compile Include="Action\Group\CreateInSmartschool.cs" />
-    <Compile Include="Action\Account\ModifyAccountID.cs" />
-    <Compile Include="Action\Account\ModifyDirectoryData.cs" />
+    <Compile Include="Action\StudentAccount\ModifyAccountID.cs" />
+    <Compile Include="Action\StudentAccount\ModifyDirectoryData.cs" />
     <Compile Include="Action\Group\ModifySmartschoolData.cs" />
-    <Compile Include="Action\Account\ModifySmartschoolStemID.cs" />
-    <Compile Include="Action\Account\ModifySmartschoolStudentAddress.cs" />
-    <Compile Include="Action\Account\ModifyStudentHomeDir.cs" />
-    <Compile Include="Action\Account\MoveDirectoryClassGroup.cs" />
-    <Compile Include="Action\Account\MoveToSmartschoolClassGroup.cs" />
-    <Compile Include="Action\Account\NoActionNeeded.cs" />
+    <Compile Include="Action\StudentAccount\ModifySmartschoolStemID.cs" />
+    <Compile Include="Action\StudentAccount\ModifySmartschoolStudentAddress.cs" />
+    <Compile Include="Action\StudentAccount\ModifyStudentHomeDir.cs" />
+    <Compile Include="Action\StudentAccount\MoveDirectoryClassGroup.cs" />
+    <Compile Include="Action\StudentAccount\MoveToSmartschoolClassGroup.cs" />
+    <Compile Include="Action\StudentAccount\NoActionNeeded.cs" />
     <Compile Include="Action\Group\NoActionNeeded.cs" />
-    <Compile Include="Action\Account\RemoveFromDirectory.cs" />
-    <Compile Include="Action\Account\RemoveFromDirectoryAndSmartschool.cs" />
-    <Compile Include="Action\Account\RemoveFromGoogle.cs" />
+    <Compile Include="Action\StudentAccount\RemoveFromDirectory.cs" />
+    <Compile Include="Action\StudentAccount\RemoveFromDirectoryAndSmartschool.cs" />
+    <Compile Include="Action\StudentAccount\RemoveFromGoogle.cs" />
     <Compile Include="Action\Group\RemoveFromDirectory.cs" />
     <Compile Include="Action\Group\RemoveEmptyFromDirectory.cs" />
     <Compile Include="Action\Group\GroupAction.cs" />
-    <Compile Include="Action\Account\UnregisterSmartschool.cs" />
+    <Compile Include="Action\StudentAccount\UnregisterSmartschool.cs" />
     <Compile Include="Views\Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
@@ -246,10 +260,16 @@
     <Compile Include="Views\Dashboard\LinkedGroups.xaml.cs">
       <DependentUpon>LinkedGroups.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Views\Dashboard\LinkedStaffMembers.xaml.cs">
+      <DependentUpon>LinkedStaffMembers.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\Dialogs\ImportRuleSelectDialog.xaml.cs">
       <DependentUpon>ImportRuleSelectDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Dialogs\IRuleEditor.cs" />
+    <Compile Include="Views\Dialogs\ShowActionDetails.xaml.cs">
+      <DependentUpon>ShowActionDetails.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\Dialogs\SS_DiscardGroupEditor.xaml.cs">
       <DependentUpon>SS_DiscardGroupEditor.xaml</DependentUpon>
     </Compile>
@@ -322,7 +342,11 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Views\Accounts\Overview.xaml">
+    <Page Include="Views\Accounts\StaffOverview.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Accounts\StudentOverview.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -346,7 +370,15 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Views\Dashboard\LinkedStaffMembers.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Views\Dialogs\ImportRuleSelectDialog.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Dialogs\ShowActionDetails.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

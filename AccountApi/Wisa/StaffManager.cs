@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Newtonsoft.Json.Linq;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -64,8 +65,13 @@ namespace AccountApi.Wisa
 
                     try
                     {
-                        all.Add(new Staff(line));
-                        count++;
+                        var staff = new Staff(line);
+                        if(!exists(staff))
+                        {
+                            all.Add(staff);
+                            count++;
+                        }
+                        
                     }
                     catch (Exception e)
                     {
@@ -77,6 +83,37 @@ namespace AccountApi.Wisa
 
             Connector.Log?.AddMessage(Origin.Wisa, "Loading " + count.ToString() + " staff members from " + school.Name + " succeeded.");
             return true;
+        }
+
+        private static bool exists(Staff staff)
+        {
+            foreach(var s in all)
+            {
+                if (s.CODE.Equals(staff.CODE)) return true;
+            }
+            return false;
+        }
+
+        public static JObject ToJson()
+        {
+            JObject result = new JObject();
+            var accounts = new JArray();
+            foreach (var account in All)
+            {
+                accounts.Add(account.ToJson());
+            }
+            result["Accounts"] = accounts;
+            return result;
+        }
+
+        public static void FromJson(JObject obj)
+        {
+            all.Clear();
+            var accounts = obj["Accounts"].ToArray();
+            foreach (var account in accounts)
+            {
+                all.Add(new Staff(account as JObject));
+            }
         }
     }
 }

@@ -30,22 +30,22 @@ namespace AccountApi.Wisa
         public Student(string data, int schoolID)
         {
             string[] values = data.Split(',');
-            classGroup = values[0];
-            name = values[1];
-            firstname = values[2];
-            dateOfBirth = DateTime.ParseExact(values[3], "d/M/yyyy", CultureInfo.InvariantCulture);
-            wisaID = values[4];
-            stemID = values[5];
-            gender = values[6].Equals("M") ? GenderType.Male : GenderType.Female;
-            stateID = values[7];
-            placeOfBirth = values[8];
-            nationality = values[9];
-            street = values[10];
-            houseNumber = values[11];
-            houseNumberAdd = values[12];
-            postalCode = values[13];
-            city = values[14];
-            classChange = DateTime.ParseExact(values[15], "d/M/yyyy", CultureInfo.InvariantCulture);
+            classGroup = values[0].Trim();
+            name = values[1].Trim();
+            firstname = values[2].Trim();
+            dateOfBirth = DateTime.ParseExact(values[3].Trim(), "d/M/yyyy", CultureInfo.InvariantCulture);
+            wisaID = values[4].Trim();
+            stemID = values[5].Trim();
+            gender = values[6].Trim().Equals("M") ? GenderType.Male : GenderType.Female;
+            stateID = values[7].Trim();
+            placeOfBirth = values[8].Trim();
+            nationality = values[9].Trim();
+            street = values[10].Trim();
+            houseNumber = values[11].Trim();
+            houseNumberAdd = values[12].Trim();
+            postalCode = values[13].Trim();
+            city = values[14].Trim();
+            classChange = DateTime.ParseExact(values[15].Trim(), "d/M/yyyy", CultureInfo.InvariantCulture);
             SchoolID = schoolID;
         }
 

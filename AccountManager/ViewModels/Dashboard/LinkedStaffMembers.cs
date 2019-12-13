@@ -7,12 +7,12 @@ using System.Threading.Tasks;
 
 namespace AccountManager.ViewModels.Dashboard
 {
-    class LinkedAccounts : INotifyPropertyChanged, State.IStateObserver
+    class LinkedStaffMembers : INotifyPropertyChanged, State.IStateObserver
     {
         State.Linked.LinkedState state;
         public IAsyncCommand SyncCommand { get; private set; }
 
-        public LinkedAccounts()
+        public LinkedStaffMembers()
         {
             state = State.App.Instance.Linked;
             state.AddObserver(this);
@@ -23,11 +23,11 @@ namespace AccountManager.ViewModels.Dashboard
         private async Task Sync()
         {
             Indicator = true;
-            await State.App.Instance.Linked.Accounts.ReLink().ConfigureAwait(false);
+            await State.App.Instance.Linked.Staff.ReLink().ConfigureAwait(false);
             Indicator = false;
         }
 
-        ~LinkedAccounts()
+        ~LinkedStaffMembers()
         {
             state.RemoveObserver(this);
         }
@@ -45,22 +45,22 @@ namespace AccountManager.ViewModels.Dashboard
             }
         }
 
-        public int TotalWisaAccounts => state.Accounts.TotalWisaAccounts;
-        public int TotalDirectoryAccounts => state.Accounts.TotalDirectoryAccounts;
-        public int TotalSmartschoolAccounts => state.Accounts.TotalSmartschoolAccounts;
-        public int TotalGoogleAccounts => state.Accounts.TotalGoogleAccounts;
-        public int UnlinkedWisaAccounts => state.Accounts.UnlinkedWisaAccounts;
-        public int UnlinkedDirectoryAccounts => state.Accounts.UnlinkedDirectoryAccounts;
-        public int UnlinkedSmartschoolAccounts => state.Accounts.UnlinkedSmartschoolAccounts;
-        public int UnlinkedGoogleAccounts => state.Accounts.UnlinkedGoogleAccounts;
-        public int LinkedWisaAccounts => state.Accounts.LinkedWisaAccounts;
-        public int LinkedDirectoryAccounts => state.Accounts.LinkedDirectoryAccounts;
-        public int LinkedSmartschoolAccounts => state.Accounts.LinkedSmartschoolAccounts;
-        public int LinkedGoogleAccounts => state.Accounts.LinkedGoogleAccounts;
-        public string UnlinkedDirectoryColor => state.Accounts.UnlinkedDirectoryAccounts == 0 ? "DarkGreen" : "DarkRed";
-        public string UnlinkedSmartschoolColor => state.Accounts.UnlinkedSmartschoolAccounts == 0 ? "DarkGreen" : "DarkRed";
-        public string UnlinkedWisaColor => state.Accounts.UnlinkedWisaAccounts == 0 ? "DarkGreen" : "DarkRed";
-        public string UnlinkedGoogleColor => state.Accounts.UnlinkedGoogleAccounts == 0 ? "DarkGreen" : "DarkRed";
+        public int TotalWisaAccounts => state.Staff.TotalWisaAccounts;
+        public int TotalDirectoryAccounts => state.Staff.TotalDirectoryAccounts;
+        public int TotalSmartschoolAccounts => state.Staff.TotalSmartschoolAccounts;
+        public int TotalGoogleAccounts => state.Staff.TotalGoogleAccounts;
+        public int UnlinkedWisaAccounts => state.Staff.UnlinkedWisaAccounts;
+        public int UnlinkedDirectoryAccounts => state.Staff.UnlinkedDirectoryAccounts;
+        public int UnlinkedSmartschoolAccounts => state.Staff.UnlinkedSmartschoolAccounts;
+        public int UnlinkedGoogleAccounts => state.Staff.UnlinkedGoogleAccounts;
+        public int LinkedWisaAccounts => state.Staff.LinkedWisaAccounts;
+        public int LinkedDirectoryAccounts => state.Staff.LinkedDirectoryAccounts;
+        public int LinkedSmartschoolAccounts => state.Staff.LinkedSmartschoolAccounts;
+        public int LinkedGoogleAccounts => state.Staff.LinkedGoogleAccounts;
+        public string UnlinkedDirectoryColor => state.Staff.UnlinkedDirectoryAccounts == 0 ? "DarkGreen" : "DarkRed";
+        public string UnlinkedSmartschoolColor => state.Staff.UnlinkedSmartschoolAccounts == 0 ? "DarkGreen" : "DarkRed";
+        public string UnlinkedWisaColor => state.Staff.UnlinkedWisaAccounts == 0 ? "DarkGreen" : "DarkRed";
+        public string UnlinkedGoogleColor => state.Staff.UnlinkedGoogleAccounts == 0 ? "DarkGreen" : "DarkRed";
 
         public void OnStateChanges()
         {

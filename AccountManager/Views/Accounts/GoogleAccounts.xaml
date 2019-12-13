@@ -76,7 +76,7 @@
                                 Grid.Column="3"
                                 Margin="16 0 0 0"
                                 Style="{StaticResource MaterialDesignFloatingActionMiniDarkButton}"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding DataContext.ShowAccountsReloadButtonIndicator.Value, ElementName=MainGrid}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding Indicator}"
                                 materialDesign:ButtonProgressAssist.IndicatorForeground="LimeGreen"
                                 materialDesign:ButtonProgressAssist.Value="-1"
                                 ToolTip="Gegevens opnieuw laden uit Google"

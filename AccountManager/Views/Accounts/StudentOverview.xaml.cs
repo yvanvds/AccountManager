@@ -14,17 +14,17 @@ namespace AccountManager.Views.Accounts
     /// <summary>
     /// Interaction logic for Overview.xaml
     /// </summary>
-    public partial class Overview : UserControl
+    public partial class StudentOverview : UserControl
     {
         
         public Prop<bool> Working { get; set; } = new Prop<bool>() { Value = false };
 
 
-        public Overview()
+        public StudentOverview()
         {
             InitializeComponent();
             
-            DataContext = new ViewModels.Accounts.Overview();
+            DataContext = new ViewModels.Accounts.StudentOverview();
         }
 
         //private async void ActionButton_Click(object sender, RoutedEventArgs e)

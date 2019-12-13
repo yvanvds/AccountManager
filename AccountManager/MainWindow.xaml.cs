@@ -21,21 +21,31 @@ namespace AccountManager
     /// </summary>
     public partial class MainWindow : MetroWindow
     {
-        static public MainWindow Instance;
-        
+        static public MainWindow Instance { get; private set; }
 
         public MainWindow()
         {
             InitializeComponent();
             Instance = this;
             State.App.Instance.Initialize();
+
+            State.App.Instance.Google.Connect();
+            State.App.Instance.Wisa.Connect();
+            State.App.Instance.Smartschool.Connect();
+            State.App.Instance.AD.Connect();
         }
 
         private async Task LoadContent()
         {
-            await State.App.Instance.Linked.Groups.ReLink();
-            await State.App.Instance.Linked.Accounts.ReLink();
-            Navigate(new Views.Dashboard.DashboardPage());
+            await State.App.Instance.Linked.Groups.ReLink().ConfigureAwait(false);
+            await State.App.Instance.Linked.Accounts.ReLink().ConfigureAwait(false);
+            await State.App.Instance.Linked.Staff.ReLink().ConfigureAwait(false);
+
+            Application.Current.Dispatcher.Invoke((System.Action)delegate
+            {
+                Navigate(new Views.Dashboard.DashboardPage());
+            });
+            
         }
 
         public void Navigate(UserControl page)
@@ -46,7 +56,7 @@ namespace AccountManager
 
         private async void MetroWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            await LoadContent();
+            await LoadContent().ConfigureAwait(false);
         }
     }
 }

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AccountManager.Action.Account
+namespace AccountManager.Action.StudentAccount
 {
     class DeleteFromSmartschool : AccountAction
     {

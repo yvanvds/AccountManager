@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AccountManager.Action.Account
+namespace AccountManager.Action.StudentAccount
 {
     class UnregisterSmartschool : AccountAction
     {
@@ -20,12 +20,10 @@ namespace AccountManager.Action.Account
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (!account.Wisa.Exists && account.Smartschool.Exists && account.Smartschool.Account.Status == "actief") 
+            if (!account.Wisa.Exists && account.Smartschool.Exists && account.Smartschool.Account.Status == "actief")
             {
                 account.Actions.Add(new UnregisterSmartschool());
             }
         }
     }
-
-    
 }

@@ -68,7 +68,7 @@ namespace AccountManager.ViewModels.Settings
                 await DialogHost.Show(
                     editor,
                     "RootDialog"
-                );
+                ).ConfigureAwait(false);
             }
         }
 
@@ -87,7 +87,7 @@ namespace AccountManager.ViewModels.Settings
                         eventArgs.Handled = true;
                     }
                 }
-            );
+            ).ConfigureAwait(false);
         }
 
         private async Task TestConnection()

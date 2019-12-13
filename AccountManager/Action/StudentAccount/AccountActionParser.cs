@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AccountManager.Action.Account
+namespace AccountManager.Action.StudentAccount
 {
     public static class AccountActionParser
     {
@@ -27,7 +27,8 @@ namespace AccountManager.Action.Account
                 AddToDirectoryAndSmartschool.Evaluate(account);
                 RemoveFromDirectoryAndSmartschool.Evaluate(account);
                 account.OK = false;
-            } else
+            }
+            else
             {
                 ModifySmartschoolStudentAddress.Evaluate(account);
                 AddToADStudentGroup.Evaluate(account);

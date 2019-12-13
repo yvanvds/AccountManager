@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="AccountManager.Views.Accounts.Overview"
+﻿<UserControl x:Class="AccountManager.Views.Accounts.StaffOverview"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
@@ -15,17 +15,16 @@
              FontFamily="{DynamicResource MaterialDesignFont}"
              mc:Ignorable="d" 
              x:Name="Control"
-             d:DesignHeight="450" d:DesignWidth="1200">
+             d:DesignHeight="450" d:DesignWidth="800">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="VisibleIfTrueConverter" />
     </UserControl.Resources>
-    <Grid x:Name="MainGrid">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="116"/>
             <RowDefinition Height="5"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="200"/>
@@ -33,6 +32,7 @@
                 <ColumnDefinition Width="350"/>
                 <ColumnDefinition Width="300"/>
             </Grid.ColumnDefinitions>
+
             <materialDesign:Card Grid.Column="0" Height="100" Margin="8">
                 <StackPanel>
                     <ToggleButton HorizontalAlignment="Left" Margin="16"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
@@ -71,20 +71,6 @@
                 </StackPanel>
             </materialDesign:Card>
 
-            <!-- Werkdatum -->
-            <materialDesign:Card Grid.Column="3" Height="100" Margin="8">
-                <StackPanel>
-                    <TextBlock Margin="16" FontSize="16">
-                            Datum Uitschrijving
-                    </TextBlock>
-                    <StackPanel Orientation="Horizontal">
-                        <DatePicker SelectedDate="{Binding StudentDeleteDate, Mode=TwoWay}" Margin="16 0" Width="200"
-                              materialDesign:HintAssist.Hint="Pick Date"
-                              Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
-                              />
-                    </StackPanel>
-                </StackPanel>
-            </materialDesign:Card>
         </Grid>
 
         <Grid Grid.Row="2">
@@ -100,10 +86,9 @@
                   SelectionMode="Single"
                   materialDesign:DataGridAssist.CellPadding="13 8 8 8"
                   materialDesign:DataGridAssist.ColumnHeaderPadding="8"
-                  SelectedItem="{Binding SelectedAccount, Mode=OneWayToSource}">
+                  CurrentItem="{Binding SelectedAccount, Mode=TwoWay}">
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding Name}" Header="Naam" IsReadOnly="True" />
-                    <DataGridTextColumn Binding="{Binding ClassGroup}" Header="Klas" IsReadOnly="True"/>
 
                     <DataGridTemplateColumn Header="Wisa" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
@@ -129,18 +114,18 @@
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
 
-                    <!--<DataGridTemplateColumn Header="Google" IsReadOnly="True">
+                    <DataGridTemplateColumn Header="Google" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding GoogleStatusIcon}" Foreground="{Binding GoogleStatusColor}"/>
+                                <materialDesign:PackIcon Kind="{Binding Google.Icon}" Foreground="{Binding Google.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>-->
+                    </DataGridTemplateColumn>
 
                 </DataGrid.Columns>
             </DataGrid>
 
-            <GroupBox Grid.Column="1">
+            <GroupBox Grid.Column="1" Header="{Binding SelectedAccountHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <ItemsControl ItemsSource="{Binding Actions}" Grid.IsSharedSizeScope="True">
                         <ItemsControl.ItemTemplate>
@@ -157,9 +142,18 @@
                                         <StackPanel Grid.Column="0">
                                             <TextBlock Text="{Binding Header}" FontSize="20" Foreground="Chocolate" Margin="0 0 0 8"/>
                                             <TextBlock Text="{Binding Description}" FontWeight="Light" TextWrapping="Wrap"/>
-                                            <StackPanel Orientation="Horizontal" Visibility="{Binding CanBeAppliedToAll, Converter={StaticResource VisibleIfTrueConverter}}">
-                                                <CheckBox IsChecked="{Binding ApplyToAll.Value, Mode=TwoWay}"/>
-                                                <Label Content="Apply to All"/>
+                                            <StackPanel Orientation="Horizontal">
+                                                <StackPanel Orientation="Horizontal" Visibility="{Binding CanShowDetails, Converter={StaticResource VisibleIfTrueConverter}}">
+                                                    <Button Style="{StaticResource MaterialDesignFlatButton}"
+                                                            Command="{Binding DataContext.ViewDetailsActionCommand, ElementName=Control}"
+                                                            CommandParameter="{Binding}">
+                                                        DETAILS
+                                                    </Button>
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Visibility="{Binding CanBeAppliedToAll, Converter={StaticResource VisibleIfTrueConverter}}">
+                                                    <CheckBox IsChecked="{Binding ApplyToAll.Value, Mode=TwoWay}"/>
+                                                    <Label Content="Apply to All"/>
+                                                </StackPanel>
                                             </StackPanel>
                                         </StackPanel>
                                         <Button Grid.Column="1"
@@ -186,10 +180,8 @@
                     </ItemsControl>
                 </ScrollViewer>
             </GroupBox>
+            
         </Grid>
-
         
-
-    
     </Grid>
 </UserControl>

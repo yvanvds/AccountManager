@@ -211,6 +211,27 @@ namespace AccountApi.Directory
             return null;
         }
 
+        public static Account GetStaffmemberByWisaID(string wisaID)
+        {
+            foreach (var account in Staff)
+            {
+                if (account.WisaName == wisaID) return account;
+            }
+            return null;
+        }
+
+        public static Account GetStaffmemberByName(string firstName, string lastName)
+        {
+            foreach (var account in Staff)
+            {
+                if (account.FirstName.Equals(firstName, StringComparison.CurrentCultureIgnoreCase) && account.LastName.Equals(lastName, StringComparison.CurrentCultureIgnoreCase))
+                {
+                    return account;
+                }
+            }
+            return null;
+        }
+
         public static async Task DeleteStaff(Account account)
         {
             await Task.Run(() =>

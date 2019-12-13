@@ -11,6 +11,7 @@ namespace AccountManager.State.Linked
     {
         public Groups Groups = new Groups();
         public Accounts Accounts = new Accounts();
+        public LinkedStaffMembers Staff = new LinkedStaffMembers();
 
         public override void LoadConfig(JObject obj)
         {

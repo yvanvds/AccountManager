@@ -47,7 +47,7 @@ namespace AccountManager.ViewModels.Dashboard
         {
             IndicatorGoogleAccount = true;
             Google.Connect();
-            await Google.Accounts.Load();
+            await Google.Accounts.Load().ConfigureAwait(false);
             IndicatorGoogleAccount = false;
         }
 
@@ -55,7 +55,7 @@ namespace AccountManager.ViewModels.Dashboard
         {
             IndicatorSmartschoolAccount = true;
             Smartschool.Connect();
-            await Smartschool.Groups.Load();
+            await Smartschool.Groups.Load().ConfigureAwait(false);
             IndicatorSmartschoolAccount = false;
         }
 
@@ -63,7 +63,7 @@ namespace AccountManager.ViewModels.Dashboard
         {
             IndicatorADAccount = true;
             AD.Connect();
-            await AD.Accounts.Load();
+            await AD.Accounts.Load().ConfigureAwait(false);
             IndicatorADAccount = false;
         }
 
@@ -71,7 +71,8 @@ namespace AccountManager.ViewModels.Dashboard
         {
             IndicatorWisaAccount = true;
             Wisa.Connect();
-            await Wisa.Students.Load();
+            await Wisa.Students.Load().ConfigureAwait(false);
+            await Wisa.Staff.Load().ConfigureAwait(false);
             IndicatorWisaAccount = false;
         }
 
@@ -79,7 +80,7 @@ namespace AccountManager.ViewModels.Dashboard
         {
             IndicatorADGroup = true;
             AD.Connect();
-            await AD.Groups.Load();
+            await AD.Groups.Load().ConfigureAwait(false);
             IndicatorADGroup = false;
         }
 
@@ -87,7 +88,7 @@ namespace AccountManager.ViewModels.Dashboard
         {
             IndicatorWisaGroup = true;
             Wisa.Connect();
-            await Wisa.Groups.Load();
+            await Wisa.Groups.Load().ConfigureAwait(false);
             IndicatorWisaGroup = false;
         }
 

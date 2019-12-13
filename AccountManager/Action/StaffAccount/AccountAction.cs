@@ -1,11 +1,14 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Documents;
 using static AbstractAccountApi.ObservableProperties;
 
-namespace AccountManager.Action.Account
+namespace AccountManager.Action.StaffAccount
 {
-
     public abstract class AccountAction : INotifyPropertyChanged
     {
         private string header;
@@ -20,8 +23,10 @@ namespace AccountManager.Action.Account
         private bool canBeAppliedToAll = false;
         public bool CanBeAppliedToAll => canBeAppliedToAll;
 
-        public Prop<bool> ApplyToAll { get; set; } = new Prop<bool>() { Value = false };
+        public bool CanShowDetails { get; protected set; } = false;
 
+        public Prop<bool> ApplyToAll { get; set; } = new Prop<bool>() { Value = false };
+        
         bool indicator = false;
         public bool Indicator
         {
@@ -33,7 +38,9 @@ namespace AccountManager.Action.Account
             }
         }
 
-        public abstract Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate);
+        public virtual FlowDocument GetDetails(State.Linked.LinkedStaffMember account) { return null; }
+
+        public abstract Task Apply(State.Linked.LinkedStaffMember linkedAccount);
 
         public event PropertyChangedEventHandler PropertyChanged = (sender, e) => { };
 

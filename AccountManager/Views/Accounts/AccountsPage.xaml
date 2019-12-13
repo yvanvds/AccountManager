@@ -18,9 +18,12 @@
              d:DesignHeight="450" d:DesignWidth="800">
 
     <Grid>
-        <dragablz:TabablzControl x:Name="Tabs" FixedHeaderCount="6">
-            <TabItem Header="Overview">
-                <local:Overview/>
+        <dragablz:TabablzControl x:Name="Tabs" FixedHeaderCount="7">
+            <TabItem Header="Leerlingen">
+                <local:StudentOverview/>
+            </TabItem>
+            <TabItem Header="Personeel">
+                <local:StaffOverview/>
             </TabItem>
             <TabItem x:Name="WisaTab" Header="Wisa">
                 <local:WisaAccounts/>

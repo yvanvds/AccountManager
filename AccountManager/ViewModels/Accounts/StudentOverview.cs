@@ -1,6 +1,7 @@
-﻿using AccountManager.Action.Account;
+﻿using AccountManager.Action.StudentAccount;
 using AccountManager.State;
 using AccountManager.State.Linked;
+using MaterialDesignThemes.Wpf;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -12,28 +13,29 @@ using System.Windows.Input;
 
 namespace AccountManager.ViewModels.Accounts
 {
-    class Overview : INotifyPropertyChanged, IStateObserver
+    class StudentOverview : INotifyPropertyChanged, IStateObserver
     {
         State.Linked.LinkedState state;
 
         public ICommand ClearFilterCommand { get; private set; }
         public IAsyncCommand<AccountAction> DoAccountActionCommand { get; private set; }
+        public IAsyncCommand<AccountAction> ViewDetailsActionCommand { get; private set; }
 
         #region constructor
-        public Overview()
+        public StudentOverview()
         {
             state = State.App.Instance.Linked;
             state.AddObserver(this);
 
             ClearFilterCommand = new RelayCommand(clearFilter);
             DoAccountActionCommand = new RelayAsyncCommand<AccountAction>(doAccountAction);
-
+            ViewDetailsActionCommand = new RelayAsyncCommand<AccountAction>(viewDetailsAction);
             updateList();
         }
 
         
 
-        ~Overview()
+        ~StudentOverview()
         {
             state.RemoveObserver(this);
         }
@@ -59,27 +61,35 @@ namespace AccountManager.ViewModels.Accounts
                 }
             }
             Accounts = accounts;
+            if (SelectedAccount != null) foreach(var account in Accounts)
+            {
+                if (account.UID == SelectedAccount.UID)
+                {
+                    SelectedAccount = account;
+                    break;
+                }
+            }
         }
 
         private void evaluateAccount()
         {
+            var actions = new List<AccountAction>();
             if (SelectedAccount == null)
             {
                 SelectedAccountHeader = "Selecteer een Account";
-                Actions.Clear();
             } else
             {
                 SelectedAccountHeader = SelectedAccount.Name + " - Mogelijke Acties";
-                Actions.Clear();
                 foreach(var action in SelectedAccount.Actions)
                 {
-                    Actions.Add(action);
+                    actions.Add(action);
                 }
 
-                if (Actions.Count == 0)
+                if (actions.Count == 0)
                 {
-                    Actions.Add(new NoActionNeeded());
+                    actions.Add(new NoActionNeeded());
                 }
+                Actions = actions;
             }
         }
 
@@ -108,6 +118,15 @@ namespace AccountManager.ViewModels.Accounts
             await State.App.Instance.Linked.Accounts.ReLink().ConfigureAwait(false);
             updateList();
             action.Indicator = false;
+        }
+        private async Task viewDetailsAction(AccountAction action)
+        {
+            if (action.CanShowDetails)
+            {
+                var document = action.GetDetails(SelectedAccount);
+                var dialog = new Views.Dialogs.ShowActionDetails(document);
+                await DialogHost.Show(dialog, "RootDialog").ConfigureAwait(false);
+            }
         }
 
         private void clearFilter()
@@ -145,9 +164,13 @@ namespace AccountManager.ViewModels.Accounts
             get => selectedAccount;
             set
             {
-                selectedAccount = value;
-                PropertyChanged(this, new PropertyChangedEventArgs(nameof(SelectedAccount)));
-                evaluateAccount();
+                if (value != null)
+                {
+                    selectedAccount = value;
+                    PropertyChanged(this, new PropertyChangedEventArgs(nameof(SelectedAccount)));
+                    evaluateAccount();
+                }
+                
             }
         }
 
@@ -164,7 +187,15 @@ namespace AccountManager.ViewModels.Accounts
 
         public DateTime StudentDeleteDate { get; set; } = DateTime.Now;
 
-        public ObservableCollection<AccountAction> Actions { get; set; } = new ObservableCollection<AccountAction>();
+        private List<AccountAction> actions;
+        public List<AccountAction> Actions {
+            get => actions;
+            set
+            {
+                actions = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(Actions)));
+            }
+        }
 
         bool indicator = false;
         public bool Indicator

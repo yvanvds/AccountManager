@@ -11,7 +11,15 @@ namespace AccountManager.Utils
     {
         public static T LoadToVar<T>(JObject source, string key, T ifEmpty)
         {
-            return source.ContainsKey(key) ? source[key].ToObject<T>() : ifEmpty;
+            T result = default(T);
+            try
+            {
+                result = source.ContainsKey(key) ? source[key].ToObject<T>() : ifEmpty;
+            } catch(Exception ex)
+            {
+                MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Other, ex.Message);
+            }
+            return result;
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Newtonsoft.Json.Linq;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -15,13 +16,31 @@ namespace AccountApi.Wisa
         public Staff(string data)
         {
             string[] values = data.Split(',');
-            code = values[0];
-            firstName = values[1];
-            lastName = values[2];
+            code = values[0].Trim();
+            firstName = values[1].Trim();
+            lastName = values[2].Trim();
         }
 
         public string CODE { get => code; }
         public string FirstName { get => firstName; }
         public string LastName { get => lastName; }
+
+        public JObject ToJson()
+        {
+            JObject result = new JObject
+            {
+                ["Code"] = CODE,
+                ["FirstName"] = FirstName,
+                ["LastName"] = LastName,
+            };
+            return result;
+        }
+
+        public Staff(JObject obj)
+        {
+            code = obj["Code"].ToString();
+            firstName = obj["FirstName"].ToString();
+            lastName = obj["LastName"].ToString();
+        }
     }
 }

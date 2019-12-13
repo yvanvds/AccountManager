@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AccountManager.Action.Account
+namespace AccountManager.Action.StudentAccount
 {
     class ModifyDirectoryData : AccountAction
     {
@@ -65,7 +65,7 @@ namespace AccountManager.Action.Account
             var action = new ModifyDirectoryData();
             if (account.Directory.Account.CN != account.Directory.Account.DesiredCN())
             {
-                action.List.Add(ModifyDirectoryData.Fields.CommonName);
+                action.List.Add(Fields.CommonName);
             }
 
             if (action.List.Count > 0)

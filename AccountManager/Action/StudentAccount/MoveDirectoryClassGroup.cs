@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AccountManager.Action.Account
+namespace AccountManager.Action.StudentAccount
 {
     class MoveDirectoryClassGroup : AccountAction
     {
@@ -29,7 +29,7 @@ namespace AccountManager.Action.Account
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if(account.Wisa.Account.ClassGroup != account.Directory.Account.ClassGroup)
+            if (account.Wisa.Account.ClassGroup != account.Directory.Account.ClassGroup)
             {
                 account.Actions.Add(new MoveDirectoryClassGroup());
                 account.Directory.FlagWarning();

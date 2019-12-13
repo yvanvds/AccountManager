@@ -1,5 +1,5 @@
-﻿using AbstractAccountApi;
-using AccountManager.Action.StudentAccount;
+﻿using AccountApi;
+using AccountManager.Action.StaffAccount;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,9 +8,9 @@ using System.Threading.Tasks;
 
 namespace AccountManager.State.Linked
 {
-    public class Accounts
+    public class LinkedStaffMembers
     {
-        public Dictionary<string, LinkedAccount> List = new Dictionary<string, LinkedAccount>();
+        public Dictionary<string, LinkedStaffMember> List = new Dictionary<string, LinkedStaffMember>();
 
         int totalWisaAccounts = 0;
         public int TotalWisaAccounts => totalWisaAccounts;
@@ -56,60 +56,74 @@ namespace AccountManager.State.Linked
 
         private void DoRelink()
         {
-            //if (!Data.Instance.ConfigReady) return;
-            if (AccountApi.Smartschool.GroupManager.Root == null) return;
-
             List.Clear();
-            foreach(var account in AccountApi.Directory.AccountManager.Students)
+            foreach (var account in AccountApi.Directory.AccountManager.Staff)
             {
-                if(List.ContainsKey(account.UID))
+                if (List.ContainsKey(account.UID))
                 {
                     List[account.UID].Directory.Account = account;
-                } else
+                }
+                else
                 {
-                    List.Add(account.UID, new LinkedAccount(account));
+                    List.Add(account.UID, new LinkedStaffMember(account));
                 }
             }
 
-            foreach(var account in AccountApi.Google.AccountManager.All.Values)
+            foreach (var account in AccountApi.Google.AccountManager.All.Values)
             {
-                if(!account.IsStaff)
+                if (account.IsStaff)
                 {
-                    if(List.ContainsKey(account.UID))
+                    if (List.ContainsKey(account.UID))
                     {
                         List[account.UID].Google.Account = account;
-                    } else
+                    }
+                    else
                     {
-                        List.Add(account.UID, new LinkedAccount(account));
+                        List.Add(account.UID, new LinkedStaffMember(account));
                     }
                 }
             }
 
-            var lln = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
-            if(lln != null)
+            var staff = AccountApi.Smartschool.GroupManager.Root.Find("Personeel");
+            if (staff != null)
             {
-                AddSmartschoolAccounts(lln);
+                addSmartschoolAccounts(staff);
             }
 
-            foreach(var account in AccountApi.Wisa.Students.All)
+            foreach (var account in AccountApi.Wisa.StaffManager.All)
             {
-                AccountApi.Directory.Account match = AccountApi.Directory.AccountManager.GetStudentByWisaID(account.WisaID);
-                if(match != null)
+                AccountApi.Directory.Account match = AccountApi.Directory.AccountManager.GetStaffmemberByWisaID(account.CODE);
+                if (match == null) match = AccountApi.Directory.AccountManager.GetStaffmemberByName(account.FirstName, account.LastName);
+
+                if (match != null)
                 {
-                    if (List.ContainsKey(match.UID))
+                    if (List.ContainsKey(match.UID) && !List[match.UID].Wisa.Exists)
                     {
                         List[match.UID].Wisa.Account = account;
                     }
                     else
                     {
-                        List.Add(match.UID, new LinkedAccount(account));
+                        List.Add("WISA-" + account.CODE, new LinkedStaffMember(account));
                     }
-                } else
-                {
-                    List.Add(account.WisaID, new LinkedAccount(account));
                 }
+                else List.Add("WISA-" + account.CODE, new LinkedStaffMember(account));
             }
 
+            countAccounts();
+
+            addActions();
+        }
+
+        private void addActions()
+        {
+            foreach(var account in List.Values)
+            {
+                StaffMemberActionParser.AddActions(account);
+            }
+        }
+
+        private void countAccounts()
+        {
             // count 
             totalWisaAccounts = totalDirectoryAccounts = totalSmartschoolAccounts = totalGoogleAccounts = 0;
             unlinkedWisaAccounts = unlinkedDirectoryAccounts = unlinkedSmartschoolAccounts = unlinkedGoogleAccounts = 0;
@@ -118,7 +132,7 @@ namespace AccountManager.State.Linked
             foreach (var group in List.Values)
             {
                 if (group == null) continue;
-                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Directory.Exists);
+                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Directory.Exists || !group.Google.Exists);
                 if (group.Wisa.Exists)
                 {
                     totalWisaAccounts++;
@@ -144,32 +158,27 @@ namespace AccountManager.State.Linked
                     else linkedGoogleAccounts++;
                 }
             }
-
-            // add actions
-            foreach (var account in List.Values)
-            {
-                AccountActionParser.AddActions(account);
-            }
         }
 
-        private void AddSmartschoolAccounts(AccountApi.IGroup group)
+        private void addSmartschoolAccounts(IGroup staff)
         {
-            foreach(var account in group.Accounts)
+            foreach (var account in staff.Accounts)
             {
-                if(List.ContainsKey(account.UID))
+                if (List.ContainsKey(account.UID))
                 {
                     List[account.UID].Smartschool.Account = account as AccountApi.Smartschool.Account;
-                } else
+                }
+                else
                 {
-                    List.Add(account.UID, new LinkedAccount(account as AccountApi.Smartschool.Account));
+                    List.Add(account.UID, new LinkedStaffMember(account as AccountApi.Smartschool.Account));
                 }
             }
 
-            if(group.Children != null)
-            foreach(var child in group.Children)
-            {
-                AddSmartschoolAccounts(child);
-            }
+            if (staff.Children != null)
+                foreach (var child in staff.Children)
+                {
+                    addSmartschoolAccounts(child);
+                }
         }
     }
 }

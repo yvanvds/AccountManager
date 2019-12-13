@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AccountManager.Action.Account
+namespace AccountManager.Action.StaffAccount
 {
     public class NoActionNeeded : AccountAction
     {
@@ -13,7 +13,7 @@ namespace AccountManager.Action.Account
         {
         }
 
-        public override Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
+        public override Task Apply(State.Linked.LinkedStaffMember linkedAccount)
         {
             throw new NotImplementedException();
         }

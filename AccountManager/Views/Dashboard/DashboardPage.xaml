@@ -19,6 +19,7 @@
             <RowDefinition Height="170"/>
             <RowDefinition Height="240"/>
             <RowDefinition Height="256"/>
+            <RowDefinition Height="256"/>
             <RowDefinition/>
         </Grid.RowDefinitions>
         <Grid Grid.Row="0">
@@ -144,5 +145,7 @@
         <local:LinkedGroups Grid.Row="1" Margin="0 16 0 0"/>
 
         <local:LinkedAccounts Grid.Row="2" Margin="0 16 0 0"/>
+
+        <local:LinkedStaffMembers Grid.Row="3" Margin="0 16 0 0"/>
     </Grid>
 </UserControl>

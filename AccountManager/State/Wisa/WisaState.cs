@@ -24,9 +24,10 @@ namespace AccountManager.State.Wisa
 
         public ObservableCollection<IRule> ImportRules { get; set; } = new ObservableCollection<IRule>();
 
-        public WisaSchools Schools = new WisaSchools();
-        public WisaGroups Groups = new WisaGroups();
-        public WisaStudents Students = new WisaStudents();
+        public WisaSchools Schools { get; } = new WisaSchools();
+        public WisaGroups Groups { get; } = new WisaGroups();
+        public WisaStudents Students { get; } = new WisaStudents();
+        public WisaStaff Staff { get; } = new WisaStaff();
 
         public WisaState()
         {
@@ -103,9 +104,10 @@ namespace AccountManager.State.Wisa
         public override async Task LoadContent()
         {
             Connect();
-            await Schools.Load();
-            await Groups.Load();
-            await Students.Load();
+            await Schools.Load().ConfigureAwait(false);
+            await Groups.Load().ConfigureAwait(false);
+            await Students.Load().ConfigureAwait(false);
+            await Staff.Load().ConfigureAwait(false);
         }
 
         public override void LoadLocalContent()
@@ -113,6 +115,7 @@ namespace AccountManager.State.Wisa
             Schools.LoadFromJson();
             Groups.LoadFromJson();
             Students.LoadFromJson();
+            Staff.LoadFromJson();
         }
 
         public override void SaveContent()
@@ -120,6 +123,7 @@ namespace AccountManager.State.Wisa
             Schools.SaveToJson();
             Groups.SaveToJson();
             Students.SaveToJson();
+            Staff.SaveToJson();
         }
 
         public void Connect()
