@@ -59,14 +59,27 @@ namespace AccountManager.State.Linked
             List.Clear();
             foreach (var account in AccountApi.Directory.AccountManager.Staff)
             {
-                if (List.ContainsKey(account.UID))
+                bool import = true;
+                foreach(var rule in App.Instance.AD.ImportRules)
                 {
-                    List[account.UID].Directory.Account = account;
+                    if (rule.Rule == Rule.AD_DontImportUser && rule.ShouldApply(account))
+                    {
+                        import = false;
+                        break;
+                    }
                 }
-                else
+
+                if(import)
                 {
-                    List.Add(account.UID, new LinkedStaffMember(account));
-                }
+                    if (List.ContainsKey(account.UID))
+                    {
+                        List[account.UID].Directory.Account = account;
+                    }
+                    else
+                    {
+                        List.Add(account.UID, new LinkedStaffMember(account));
+                    }
+                }  
             }
 
             foreach (var account in AccountApi.Google.AccountManager.All.Values)
@@ -90,6 +103,7 @@ namespace AccountManager.State.Linked
                 addSmartschoolAccounts(staff);
             }
 
+            AccountApi.Wisa.StaffManager.ApplyImportRules(App.Instance.Wisa.ImportRules.ToList());
             foreach (var account in AccountApi.Wisa.StaffManager.All)
             {
                 AccountApi.Directory.Account match = AccountApi.Directory.AccountManager.GetStaffmemberByWisaID(account.CODE);

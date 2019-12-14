@@ -36,7 +36,7 @@ namespace AccountManager.State.Wisa
                         }
                     }
 
-                    bool success = await AccountApi.Wisa.ClassGroupManager.AddSchool(school, workDate);
+                    bool success = await AccountApi.Wisa.ClassGroupManager.AddSchool(school, workDate).ConfigureAwait(false);
                     if (!success) return;
                 }
             }

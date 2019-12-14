@@ -22,7 +22,13 @@ namespace AccountManager.Action.StaffAccount
             {
                 RemoveFromGoogle.Evaluate(account);
                 RemoveFromDirectory.Evaluate(account);
+                DontImportFromAD.Evaluate(account);
+                DontImportFromWisa.Evaluate(account);
                 account.OK = false;
+            } else
+            {
+                UpdateWisaName.Evaluate(account);
+                AddToADStaffGroup.Evaluate(account);
             }
         }
     }

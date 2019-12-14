@@ -17,8 +17,11 @@ namespace AccountManager.State.AD
 
         public async Task Load()
         {
-            await AccountApi.Directory.AccountManager.LoadStaff();
-            await AccountApi.Directory.AccountManager.LoadStudents();
+            await AccountApi.Directory.AccountManager.LoadStaff().ConfigureAwait(false);
+            await AccountApi.Directory.AccountManager.LoadStudents().ConfigureAwait(false);
+
+            AccountApi.Directory.AccountManager.ApplyImportRules(App.Instance.AD.ImportRules.ToList());
+
             lastSync = DateTime.Now;
             SaveToJson();
             App.Instance.AD.UpdateObservers();

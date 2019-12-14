@@ -3,6 +3,7 @@ using AccountManager.Utils;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Linq;
 using System.Text;
@@ -23,6 +24,8 @@ namespace AccountManager.State.AD
 
         public ConfigValue<bool> UseGrades;
         public ConfigValue<bool> UseYears;
+
+        public ObservableCollection<IRule> ImportRules { get; set; } = new ObservableCollection<IRule>();
 
         private string[] grades = new string[3];
         public string Grade1 { get => grades[0]; set { grades[0] = value.Trim(); updateGrades(); } }
@@ -71,7 +74,7 @@ namespace AccountManager.State.AD
             if (obj.ContainsKey("grades"))
             {
                 var grades = (obj["grades"] as JArray);
-                for (int i = 0; i < grades.Count && i < this.grades.Count(); i++)
+                for (int i = 0; i < grades.Count && i < this.grades.Length; i++)
                 {
                     this.grades[i] = grades[i].ToString();
                 }
@@ -80,7 +83,7 @@ namespace AccountManager.State.AD
             if (obj.ContainsKey("years"))
             {
                 var years = (obj["years"] as JArray);
-                for (int i = 0; i < years.Count && i < this.years.Count(); i++)
+                for (int i = 0; i < years.Count && i < this.years.Length; i++)
                 {
                     this.years[i] = years[i].ToString();
                 }
@@ -88,6 +91,20 @@ namespace AccountManager.State.AD
 
             updateGrades();
             updateYears();
+
+            if (obj.ContainsKey("importRules"))
+            {
+                var arr = obj["importRules"] as JArray;
+                foreach(var item in arr)
+                {
+                    var data = item as JObject;
+                    Rule rule = (Rule)data["Rule"].ToObject(typeof(Rule));
+                    switch (rule)
+                    {
+                        case Rule.AD_DontImportUser: ImportRules.Add(new AccountApi.Rules.DontImportUserFromAD(data)); break;
+                    }
+                }
+            }
         }
 
         public override JObject SaveConfig()
@@ -106,6 +123,16 @@ namespace AccountManager.State.AD
             result["grades"] = new JArray(grades);
             result["years"] = new JArray(years);
 
+            if (ImportRules.Count > 0)
+            {
+                var arr = new JArray();
+                foreach (var rule in ImportRules)
+                {
+                    arr.Add(rule.ToJson());
+                }
+                result["importRules"] = arr;
+            }
+
             return result;
         }
 
@@ -113,8 +140,8 @@ namespace AccountManager.State.AD
         {
             if(Connect())
             {
-                await Groups.Load();
-                await Accounts.Load();
+                await Groups.Load().ConfigureAwait(false);
+                await Accounts.Load().ConfigureAwait(false);
             }
         }
 
@@ -138,6 +165,22 @@ namespace AccountManager.State.AD
             );
         }
 
+        public IRule AddimportRule(Rule rule)
+        {
+            IRule newRule = null;
+
+            switch (rule)
+            {
+                case Rule.AD_DontImportUser: newRule = new AccountApi.Rules.DontImportUserFromAD(); break;
+            }
+
+            if (newRule != null)
+            {
+                ImportRules.Add(newRule);
+            }
+            return newRule;
+        }
+
         public void UpdateConnectionState(ConnectionState state)
         {
             Connection.Value = state;
@@ -151,7 +194,7 @@ namespace AccountManager.State.AD
             }
             else
             {
-                AccountApi.Directory.Connector.StudentGrade = new string[0];
+                AccountApi.Directory.Connector.StudentGrade = Array.Empty<string>();
             }
 
             UpdateObservers();
@@ -165,7 +208,7 @@ namespace AccountManager.State.AD
             }
             else
             {
-                AccountApi.Directory.Connector.StudentYear = new string[0];
+                AccountApi.Directory.Connector.StudentYear = Array.Empty<string>();
             }
 
             UpdateObservers();

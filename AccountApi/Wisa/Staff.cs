@@ -17,8 +17,8 @@ namespace AccountApi.Wisa
         {
             string[] values = data.Split(',');
             code = values[0].Trim();
-            firstName = values[1].Trim();
-            lastName = values[2].Trim();
+            lastName = values[1].Trim();
+            firstName = values[2].Trim();
         }
 
         public string CODE { get => code; }

@@ -62,6 +62,7 @@ namespace AccountManager.State.Linked
             List.Clear();
             foreach(var account in AccountApi.Directory.AccountManager.Students)
             {
+
                 if(List.ContainsKey(account.UID))
                 {
                     List[account.UID].Directory.Account = account;

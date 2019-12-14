@@ -13,12 +13,18 @@ namespace AccountApi.Rules
             { Rule.WI_ReplaceInstitution, "Wijzig Instellingsnummer"},
             { Rule.WI_DontImportClass, "Klas niet Importeren" },
             { Rule.WI_MarkAsVirtual, "School Markeren als Virtueel" },
+            { Rule.WI_DontImportUser, "Account niet Importeren" },
         };
 
         public static Dictionary<Rule, string> SmartschoolRules = new Dictionary<Rule, string>()
         {
             { Rule.SS_DiscardGroup, "Negeer Groep" },
             { Rule.SS_NoSubGroups, "Negeer SubGroepen" },
+        };
+
+        public static Dictionary<Rule, string> DirectoryRules = new Dictionary<Rule, string>()
+        {
+            { Rule.AD_DontImportUser, "Negeer Account" },
         };
     }
 }

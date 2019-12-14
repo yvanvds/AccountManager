@@ -30,6 +30,7 @@ namespace AccountManager.State.Wisa
                 }
             }
 
+            AccountApi.Wisa.StaffManager.ApplyImportRules(App.Instance.Wisa.ImportRules.ToList());
             List.Sort((a, b) => a.CODE.CompareTo(b.CODE));
             lastSync = DateTime.Now;
 

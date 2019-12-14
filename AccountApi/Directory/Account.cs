@@ -254,7 +254,9 @@ namespace AccountApi.Directory
         public string WisaID { get => wisaID; }
 
         private string wisaName;
-        public string WisaName { get => wisaName; }
+        public string WisaName { 
+            get => wisaName; 
+        }
 
         private string classGroup;
         public string ClassGroup { get => classGroup; }
@@ -320,6 +322,18 @@ namespace AccountApi.Directory
                 {
                     Connector.Log.AddError(Origin.Directory, e.Message);
                 }
+            });
+        }
+
+        public async Task SetWisaName(string name)
+        {
+            await Task.Run(() =>
+            {
+                var entry = GetEntry(uid);
+                wisaName = name;
+                entry.Properties["smawisaname"].Value = wisaName;
+                entry.CommitChanges();
+                entry.Close();
             });
         }
 

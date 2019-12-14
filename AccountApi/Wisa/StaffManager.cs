@@ -66,6 +66,7 @@ namespace AccountApi.Wisa
                     try
                     {
                         var staff = new Staff(line);
+
                         if(!exists(staff))
                         {
                             all.Add(staff);
@@ -113,6 +114,24 @@ namespace AccountApi.Wisa
             foreach (var account in accounts)
             {
                 all.Add(new Staff(account as JObject));
+            }
+        }
+
+        public static void ApplyImportRules(List<IRule> rules)
+        {
+            for(int account = all.Count -1; account >= 0; account--)
+            {
+                for(int i = 0; i < rules.Count; i++)
+                {
+                    if (rules[i].Rule == Rule.WI_DontImportUser)
+                    {
+                        if (rules[i].ShouldApply(all[account]))
+                        {
+                            all.RemoveAt(account);
+                            break;
+                        }
+                    }
+                }
             }
         }
     }

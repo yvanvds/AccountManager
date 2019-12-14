@@ -77,12 +77,17 @@ namespace AccountApi
         WI_ReplaceInstitution,
         WI_DontImportClass,
         WI_MarkAsVirtual,
+        WI_DontImportUser,
+
+        // Directory Import Rules
+        AD_DontImportUser,
     }
 
     public enum RuleType
     {
         SS_Import,
         WISA_Import,
+        AD_Import,
     }
 
     public enum RuleAction

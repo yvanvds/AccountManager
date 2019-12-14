@@ -140,10 +140,14 @@
       <SubType>Designer</SubType>
     </ApplicationDefinition>
     <Compile Include="Action\StaffAccount\AccountAction.cs" />
+    <Compile Include="Action\StaffAccount\AddToADStaffGroup.cs" />
+    <Compile Include="Action\StaffAccount\DontImportFromAD.cs" />
+    <Compile Include="Action\StaffAccount\DontImportFromWisa.cs" />
     <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromDirectory.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromGoogle.cs" />
     <Compile Include="Action\StaffAccount\StaffMemberActionParser.cs" />
+    <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
@@ -263,6 +267,9 @@
     <Compile Include="Views\Dashboard\LinkedStaffMembers.xaml.cs">
       <DependentUpon>LinkedStaffMembers.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Views\Dialogs\AD_DontImportUser.xaml.cs">
+      <DependentUpon>AD_DontImportUser.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\Dialogs\ImportRuleSelectDialog.xaml.cs">
       <DependentUpon>ImportRuleSelectDialog.xaml</DependentUpon>
     </Compile>
@@ -278,6 +285,9 @@
     </Compile>
     <Compile Include="Views\Dialogs\WI_DontImportClass.xaml.cs">
       <DependentUpon>WI_DontImportClass.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Dialogs\WI_DontImportUser.xaml.cs">
+      <DependentUpon>WI_DontImportUser.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Dialogs\WI_MarkAsVirtual.xaml.cs">
       <DependentUpon>WI_MarkAsVirtual.xaml</DependentUpon>
@@ -374,6 +384,10 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Views\Dialogs\AD_DontImportUser.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Views\Dialogs\ImportRuleSelectDialog.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -391,6 +405,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Dialogs\WI_DontImportClass.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Dialogs\WI_DontImportUser.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

@@ -105,7 +105,7 @@ namespace AccountManager.ViewModels.Accounts
             {
                 await action.Apply(SelectedAccount).ConfigureAwait(false);
             }
-            await State.App.Instance.Linked.Accounts.ReLink().ConfigureAwait(false);
+            await State.App.Instance.Linked.Staff.ReLink().ConfigureAwait(false);
             updateList();
             action.Indicator = false;
         }

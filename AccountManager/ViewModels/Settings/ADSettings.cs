@@ -1,6 +1,9 @@
-﻿using MaterialDesignThemes.Wpf;
+﻿using AccountApi;
+using AccountManager.Views.Dialogs;
+using MaterialDesignThemes.Wpf;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Text;
@@ -13,13 +16,22 @@ namespace AccountManager.ViewModels.Settings
     {
         State.AD.ADState state;
         public IAsyncCommand TestConnectionCommand { get; set; }
+        public IAsyncCommand AddRuleCommand { get; private set; }
+        public IAsyncCommand<IRule> EditRuleCommand { get; set; }
+        public ICommand DeleteRuleCommand { get; set; }
 
         public ADSettings()
         {
             state = State.App.Instance.AD;
             this.TestConnectionCommand = new RelayAsyncCommand(TestConnection);
+            this.AddRuleCommand = new RelayAsyncCommand(AddRule);
+            this.EditRuleCommand = new RelayAsyncCommand<IRule>(EditRule);
+            this.DeleteRuleCommand = new RelayCommand<IRule>(DeleteRule);
         }
 
+
+
+        #region commands
         private async Task TestConnection()
         {
             ShowConnectIndicator = true;
@@ -29,12 +41,50 @@ namespace AccountManager.ViewModels.Settings
                 bool result = state.Connect();
                 if (!result) ConnectIcon = PackIconKind.CloudOffOutline;
                 else ConnectIcon = PackIconKind.CloudTick;
-            });
+            }).ConfigureAwait(false);
 
             ShowConnectIndicator = false;
         }
 
-        #region commands
+        private void DeleteRule(IRule parameter)
+        {
+            state.ImportRules.Remove(parameter);
+        }
+
+        private async Task EditRule(IRule parameter)
+        {
+            IRuleEditor editor = null;
+
+            switch (parameter.Rule)
+            {
+                case Rule.AD_DontImportUser: editor = new AD_DontImportUser(parameter); break;
+            }
+            if (editor != null)
+            {
+                await DialogHost.Show(
+                    editor,
+                    "RootDialog"
+                ).ConfigureAwait(false);
+            }
+        }
+
+        private async Task AddRule()
+        {
+            var dialog = new ImportRuleSelectDialog(AccountApi.RuleType.AD_Import);
+            await DialogHost.Show(
+                dialog,
+                "RootDialog",
+                (sender, eventArgs) =>
+                {
+                    var result = eventArgs.Parameter as string;
+                    if (result == "true")
+                    {
+                        var rule = state.AddimportRule(dialog.SelectedRule);
+                        eventArgs.Handled = true;
+                    }
+                }
+            ).ConfigureAwait(false);
+        }
 
         #endregion
 
@@ -262,6 +312,11 @@ namespace AccountManager.ViewModels.Settings
                 connectIcon = value;
                 PropertyChanged(this, new PropertyChangedEventArgs(nameof(ConnectIcon)));
             }
+        }
+
+        public ObservableCollection<AccountApi.IRule> ImportRules
+        {
+            get => state.ImportRules;
         }
 
         #endregion

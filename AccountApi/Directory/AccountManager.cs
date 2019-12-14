@@ -439,5 +439,34 @@ namespace AccountApi.Directory
             });
 
         }
+
+        public static void ApplyImportRules(List<IRule> rules)
+        {
+            for(int account = Students.Count -1; account >= 0; account--)
+            {
+                for(int i = 0; i < rules.Count; i++)
+                {
+                    if (rules[i].RuleAction == RuleAction.Modify) rules[i].Modify(Students[account]);
+                    else if (rules[i].RuleAction == RuleAction.Discard)
+                    {
+                        Students.RemoveAt(account);
+                        break;
+                    }
+                }
+            }
+
+            for(int account = Staff.Count - 1; account >= 0; account--)
+            {
+                for (int i = 0; i < rules.Count; i++)
+                {
+                    if (rules[i].RuleAction == RuleAction.Modify) rules[i].Modify(Staff[account]);
+                    else if (rules[i].RuleAction == RuleAction.Discard)
+                    {
+                        Staff.RemoveAt(account);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }

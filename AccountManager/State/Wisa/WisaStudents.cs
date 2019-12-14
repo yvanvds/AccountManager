@@ -26,7 +26,7 @@ namespace AccountManager.State.Wisa
                 {
                     var workDate = App.Instance.Wisa.WorkDateIsNow.Value ? DateTime.Now : App.Instance.Wisa.WorkDate.Value;
 
-                    bool success = await AccountApi.Wisa.Students.AddSchool(school, workDate);
+                    bool success = await AccountApi.Wisa.Students.AddSchool(school, workDate).ConfigureAwait(false);
                     if (!success) return;
                 }
             }

@@ -52,8 +52,8 @@ namespace AccountManager.State.Linked
         {
             get
             {
-                if (Wisa.Account != null) return Wisa.Account.LastName + " " + Wisa.Account.FirstName;
-                if (Smartschool.Account != null) return Smartschool.Account.SurName + " " + Smartschool.Account.GivenName;
+                if (Wisa.Account != null) return Wisa.Account.FirstName + " " + Wisa.Account.LastName;
+                if (Smartschool.Account != null) return Smartschool.Account.GivenName + " " + Smartschool.Account.SurName;
                 if (Directory.Account != null) return Directory.Account.FullName;
                 if (Google.Account != null) return Google.Account.FullName;
                 return "No User Name";

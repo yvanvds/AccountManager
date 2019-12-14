@@ -90,6 +90,8 @@
     </Compile>
     <Compile Include="Rules\DiscardSmartschoolGroup.cs" />
     <Compile Include="Rules\DontImportClass.cs" />
+    <Compile Include="Rules\DontImportUserFromAD.cs" />
+    <Compile Include="Rules\DontImportUserFromWisa.cs" />
     <Compile Include="Rules\MarkAsVirtual.cs" />
     <Compile Include="Rules\NoSmartschoolSubgroups.cs" />
     <Compile Include="Rules\ReplaceInstitute.cs" />

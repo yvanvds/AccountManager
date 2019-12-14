@@ -154,6 +154,7 @@ namespace AccountManager.State.Wisa
                 case Rule.WI_ReplaceInstitution: newRule = new AccountApi.Rules.ReplaceInstitute(); break;
                 case Rule.WI_DontImportClass: newRule = new AccountApi.Rules.DontImportClass(); break;
                 case Rule.WI_MarkAsVirtual: newRule = new AccountApi.Rules.MarkAsVirtual(); break;
+                case Rule.WI_DontImportUser: newRule = new AccountApi.Rules.DontImportUserFromWisa(); break;
             }
 
             if (newRule != null)

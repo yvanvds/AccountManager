@@ -44,7 +44,7 @@ namespace AccountManager.ViewModels.Settings
         {
             ShowReloadIndicator = true;
             state.Connect();
-            await state.Schools.Load();
+            await state.Schools.Load().ConfigureAwait(false);
             ShowReloadIndicator = false;
         }
 
@@ -62,6 +62,7 @@ namespace AccountManager.ViewModels.Settings
                 case Rule.WI_ReplaceInstitution: editor = new WI_ReplaceInstitute(parameter); break;
                 case Rule.WI_DontImportClass: editor = new WI_DontImportClass(parameter); break;
                 case Rule.WI_MarkAsVirtual: editor = new WI_MarkAsVirtual(parameter); break;
+                case Rule.WI_DontImportUser: editor = new WI_DontImportUser(parameter); break;
             }
             if (editor != null)
             {
