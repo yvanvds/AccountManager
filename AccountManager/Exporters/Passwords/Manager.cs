@@ -77,7 +77,7 @@ namespace AccountManager.Exporters.Passwords
 
         public async Task Export()
         {
-            await Export(fileName);
+            await Export(fileName).ConfigureAwait(false);
         }
 
         public async Task Export(string fileName)
@@ -85,11 +85,11 @@ namespace AccountManager.Exporters.Passwords
 
             if (typeof(T) == typeof(AccountPassword))
             {
-                await exportToPDF(fileName);
+                await exportToPDF(fileName).ConfigureAwait(false);
             }
             else if (typeof(T) == typeof(CoAccountPassword))
             {
-                await exportToCSV(fileName);
+                await exportToCSV(fileName).ConfigureAwait(false);
             }
         }
 
@@ -107,7 +107,7 @@ namespace AccountManager.Exporters.Passwords
                 File.WriteAllLines(fileName, content);
 
                 List.Clear();
-            });
+            }).ConfigureAwait(false);
         }
 
         public async Task exportToPDF(string fileName)
@@ -155,22 +155,26 @@ namespace AccountManager.Exporters.Passwords
 
                     section.AddParagraph("Login Gegevens", "Heading2");
                     section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
-                    section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
 
-                    section.AddParagraph("Met deze gegevens kan je inloggen op de pc's op school. Je kan er ook mee " +
-                        "inloggen op het Smifi-L wifi netwerk.", "Normal");
+                    if (pw.ADPassword.Length > 0)
+                    {
+                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
 
-                    section.AddParagraph("Office365", "Heading2");
-                    section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
-                        "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
-                        + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
-                    section.AddParagraph("Login     : " + pw.AccountName + "@smaschool.be", "PasswordStyle");
-                    section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
+                        section.AddParagraph("Met deze gegevens kan je inloggen op de pc's op school. Je kan er ook mee " +
+                            "inloggen op het Smifi-L wifi netwerk.", "Normal");
+
+                        section.AddParagraph("Office365", "Heading2");
+                        section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
+                            "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
+                            + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
+                        section.AddParagraph("Login     : " + pw.AccountName + "@smaschool.be", "PasswordStyle");
+                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
+                    }
 
                     if (pw.SSPassword.Length > 0)
                     {
                         section.AddParagraph("Smartschool", "Heading2");
-                        section.AddParagraph("Inloggen op smartschool doe je met dezelfde login, maar met het volgende wachtwoord:", "Normal");
+                        section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
                         section.AddParagraph(pw.SSPassword, "PasswordStyle");
                         section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen. Je kan dan"
                             + " het wachtwoord bovenaan ingegeven, zodat je overal hetzelfde wachtwoord kan gebruiken.", "Normal");
@@ -199,7 +203,7 @@ namespace AccountManager.Exporters.Passwords
                 }
 
                 Process.Start(fileName);
-            });
+            }).ConfigureAwait(false);
         }
     }
 }
