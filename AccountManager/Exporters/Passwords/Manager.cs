@@ -114,38 +114,7 @@ namespace AccountManager.Exporters.Passwords
         {
             await Task.Run(() =>
             {
-                var document = new Document();
-
-                var titleStyle = document.Styles["Heading1"];
-                titleStyle.Font.Name = "Tahoma";
-                titleStyle.Font.Size = 16;
-                titleStyle.Font.Bold = true;
-                titleStyle.ParagraphFormat.SpaceAfter = 12;
-                var border = new Border();
-                border.Width = "1pt";
-                border.Color = Colors.Black;
-                titleStyle.ParagraphFormat.Borders.Bottom = border;
-
-                var subTitleStyle = document.Styles["Heading2"];
-                subTitleStyle.Font.Name = "Tahoma";
-                subTitleStyle.Font.Size = 14;
-                subTitleStyle.Font.Bold = true;
-                subTitleStyle.ParagraphFormat.SpaceAfter = 10;
-                var zeroborder = new Border();
-                zeroborder.Width = "0pt";
-                zeroborder.Color = Colors.White;
-                subTitleStyle.ParagraphFormat.Borders.Bottom = zeroborder;
-
-                var normalStyle = document.Styles["Normal"];
-                normalStyle.Font.Name = "Times New Roman";
-                normalStyle.Font.Size = 12;
-                normalStyle.ParagraphFormat.SpaceAfter = 6;
-
-                var passwordStyle = document.Styles.AddStyle("PasswordStyle", "Normal");
-                passwordStyle.Font.Name = "Courier New";
-                passwordStyle.Font.Size = 10;
-                passwordStyle.ParagraphFormat.SpaceBefore = 12;
-                passwordStyle.ParagraphFormat.SpaceAfter = 12;
+                var document = createDocument();
 
                 foreach (var password in List)
                 {
@@ -204,6 +173,110 @@ namespace AccountManager.Exporters.Passwords
 
                 Process.Start(fileName);
             }).ConfigureAwait(false);
+
+            
+        }
+
+        public async Task ExportStaffPasswordToPDF(string name, string username, string networkPassword = null, string smartschoolPassword = null)
+        {
+            await Task.Run(() =>
+            {
+                var document = createDocument();
+
+                var section = document.AddSection();
+                section.AddParagraph("Account voor " + name, "Heading1");
+
+                section.AddParagraph("Login Gegevens", "Heading2");
+                section.AddParagraph("Login     : " + username, "PasswordStyle");
+
+                if (networkPassword != null)
+                {
+                    section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
+
+                    section.AddParagraph("Met deze gegevens kan je inloggen op de pc's op school. Je kan er ook mee " +
+                        "inloggen op het Smifi-P wifi netwerk.", "Normal");
+
+                    section.AddParagraph("Office365", "Heading2");
+                    section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
+                        "communicatie met de school en je leerlingen verloopt steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
+                        + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
+                    section.AddParagraph("Login     : " + username + "@smaschool.be", "PasswordStyle");
+                    section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
+                }
+
+                if (smartschoolPassword != null)
+                {
+                    section.AddParagraph("Smartschool", "Heading2");
+                    section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
+                    section.AddParagraph(smartschoolPassword, "PasswordStyle");
+                    section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen.", "Normal");
+
+                }
+
+                section.AddParagraph("Privacy", "Heading2");
+                section.AddParagraph("Je account is strikt persoonlijk. Indien je je account doorgeeft aan anderen, dan ben jij " +
+                    "verantwoordelijk voor hun acties op het netwerk. Laat dit blad dus niet rondslingeren maar leer je login " +
+                    "en wachtwoord vanbuiten. Zou je je wachtwoord vergeten, dan kan je een nieuw wachtwoord krijgen op Secretariaat 1.", "Normal");
+                section.AddParagraph("Geef nooit (NOOIT!) je wachtwoord door, ook niet aan collegas.");
+
+
+                var pdfRenderer = new PdfDocumentRenderer();
+                pdfRenderer.Document = document;
+                pdfRenderer.RenderDocument();
+
+                string fileName = username + ".pdf";
+                try
+                {
+                    pdfRenderer.PdfDocument.Save(fileName);
+                    List.Clear();
+                }
+                catch (Exception)
+                {
+                    MainWindow.Instance.Log.AddError(AccountApi.Origin.Other, "Unable to save to file: " + fileName);
+                }
+
+                Process.Start(fileName);
+            }).ConfigureAwait(false);
+
+
+        }
+
+        Document createDocument()
+        {
+            var document = new Document();
+
+            var titleStyle = document.Styles["Heading1"];
+            titleStyle.Font.Name = "Tahoma";
+            titleStyle.Font.Size = 16;
+            titleStyle.Font.Bold = true;
+            titleStyle.ParagraphFormat.SpaceAfter = 12;
+            var border = new Border();
+            border.Width = "1pt";
+            border.Color = Colors.Black;
+            titleStyle.ParagraphFormat.Borders.Bottom = border;
+
+            var subTitleStyle = document.Styles["Heading2"];
+            subTitleStyle.Font.Name = "Tahoma";
+            subTitleStyle.Font.Size = 14;
+            subTitleStyle.Font.Bold = true;
+            subTitleStyle.ParagraphFormat.SpaceAfter = 10;
+            var zeroborder = new Border();
+            zeroborder.Width = "0pt";
+            zeroborder.Color = Colors.White;
+            subTitleStyle.ParagraphFormat.Borders.Bottom = zeroborder;
+
+            var normalStyle = document.Styles["Normal"];
+            normalStyle.Font.Name = "Times New Roman";
+            normalStyle.Font.Size = 12;
+            normalStyle.ParagraphFormat.SpaceAfter = 6;
+
+            var passwordStyle = document.Styles.AddStyle("PasswordStyle", "Normal");
+            passwordStyle.Font.Name = "Courier New";
+            passwordStyle.Font.Size = 10;
+            passwordStyle.ParagraphFormat.SpaceBefore = 12;
+            passwordStyle.ParagraphFormat.SpaceAfter = 12;
+
+            return document;
         }
     }
 }

@@ -234,11 +234,11 @@ namespace AccountApi.Directory
 
         public static async Task DeleteStaff(Account account)
         {
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
                 try
                 {
-                    account.Delete();
+                    await account.Delete();
                     Staff.Remove(account);
                     Connector.Log.AddMessage(Origin.Directory, account.FullName + ": account deleted");
                 }
@@ -251,11 +251,11 @@ namespace AccountApi.Directory
 
         public static async Task DeleteStudent(Account account)
         {
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
                 try
                 {
-                    account.Delete();
+                    await account.Delete();
                     Students.Remove(account);
                     Connector.Log.AddMessage(Origin.Directory, account.FullName + ": account deleted");
                 }
@@ -447,7 +447,7 @@ namespace AccountApi.Directory
                 for(int i = 0; i < rules.Count; i++)
                 {
                     if (rules[i].RuleAction == RuleAction.Modify) rules[i].Modify(Students[account]);
-                    else if (rules[i].RuleAction == RuleAction.Discard)
+                    else if (rules[i].RuleAction == RuleAction.Discard && rules[i].ShouldApply(Students[account]))
                     {
                         Students.RemoveAt(account);
                         break;
@@ -460,7 +460,7 @@ namespace AccountApi.Directory
                 for (int i = 0; i < rules.Count; i++)
                 {
                     if (rules[i].RuleAction == RuleAction.Modify) rules[i].Modify(Staff[account]);
-                    else if (rules[i].RuleAction == RuleAction.Discard)
+                    else if (rules[i].RuleAction == RuleAction.Discard && rules[i].ShouldApply(Staff[account]))
                     {
                         Staff.RemoveAt(account);
                         break;

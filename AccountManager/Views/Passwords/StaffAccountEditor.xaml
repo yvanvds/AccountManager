@@ -1,0 +1,145 @@
+﻿<UserControl x:Class="AccountManager.Views.Passwords.StaffAccountEditor"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:AccountManager.Views.Passwords"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+             TextElement.FontWeight="Medium"
+             TextElement.FontSize="14"
+             TextOptions.TextFormattingMode="Ideal"
+             TextOptions.TextRenderingMode="Auto"
+             Background="{DynamicResource MaterialDesignPaper}"
+             FontFamily="{DynamicResource MaterialDesignFont}"
+             mc:Ignorable="d" 
+             d:DesignHeight="650" d:DesignWidth="850">
+    <Grid>
+        <GroupBox Grid.Column="1" Grid.Row="1" Header="{Binding Title}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="325"/>
+                    <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="200"/>
+                    <RowDefinition Height="150"/>
+                    <RowDefinition Height="300"/>
+                </Grid.RowDefinitions>
+
+                <materialDesign:Card Grid.Row="0" Grid.Column="0" Margin="16" Height="160">
+                    <StackPanel>
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Naam"/>
+
+                        <TextBox Margin="16 16 16 0" Text="{Binding FirstName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  materialDesign:HintAssist.Hint="Voornaam"
+                                  Style="{StaticResource MaterialDesignFloatingHintTextBox}"/>
+                        <TextBox Margin="16" Text="{Binding LastName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  materialDesign:HintAssist.Hint="Naam"
+                                  Style="{StaticResource MaterialDesignFloatingHintTextBox}"/>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <materialDesign:Card Grid.Row="0" Grid.Column="1" Margin="16" Height="160">
+                    <StackPanel>
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Identificatie"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Margin="16 16 16 0" Text="{Binding UID}"
+  materialDesign:HintAssist.Hint="Gebruikersnaam"
+  Width="200"  />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox Margin="16 16 16 0" Text="{Binding CopyCode, Mode=TwoWay}"
+  materialDesign:HintAssist.Hint="Copy Code"
+  Style="{StaticResource MaterialDesignFloatingHintTextBox}" Width="200" IsEnabled="{Binding CopyCodeEnabled}" />
+                            <Button VerticalAlignment="Bottom" Width="200">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Create"/>
+                                    <TextBlock Margin="8 0 0 0">Maak een Copy Code</TextBlock>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <materialDesign:Card Grid.Row="1" Grid.ColumnSpan="2" Margin="16">
+
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Extra Gegevens"/>
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox Width="200" Margin="16"
+                                      SelectedIndex="{Binding RoleIndex, Mode=TwoWay}"
+  materialDesign:HintAssist.Hint="Groep"
+  Style="{StaticResource MaterialDesignFloatingHintComboBox}">
+                                <ComboBoxItem>
+                                    Leerkrachten
+                                </ComboBoxItem>
+                                <ComboBoxItem>
+                                    Secretariaat
+                                </ComboBoxItem>
+                                <ComboBoxItem>
+                                    IT - Admin
+                                </ComboBoxItem>
+                                <ComboBoxItem>
+                                    Directie
+                                </ComboBoxItem>
+                            </ComboBox>
+
+                            <TextBlock Margin="32 16" FontSize="16" Text="Gender" VerticalAlignment="Center"/>
+                            <materialDesign:PackIcon Kind="GenderFemale" HorizontalAlignment="Center" VerticalAlignment="Center" Height="40" Width="40"/>
+                            <Slider Width="200" VerticalAlignment="Bottom" Margin="16" Value="{Binding Gender, Mode=TwoWay}"/>
+                            <materialDesign:PackIcon Kind="GenderMale" HorizontalAlignment="Center" VerticalAlignment="Center"  Height="40" Width="40"/>
+
+                        </StackPanel>
+                    </StackPanel>
+                </materialDesign:Card>
+                <materialDesign:Card Grid.Row="2" Grid.Column="0" Margin="16">
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Wachtwoorden"/>
+
+                        <Button  x:Name="PCPasswordButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" Command="{Binding NewNetworkPasswordCommand}">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="PasswordReset"/>
+                                <TextBlock Margin="8 0 0 0">Nieuw Netwerk Wachtwoord</TextBlock>
+                            </StackPanel>
+                        </Button>
+
+                        <Button  x:Name="SSPasswordButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" Command="{Binding NewSmartschoolCommand}">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="PasswordReset"/>
+                                <TextBlock Margin="8 0 0 0">Nieuw Smartschool Wachtwoord</TextBlock>
+                            </StackPanel>
+                        </Button>
+
+                        <Button x:Name="AllPasswordButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" Command="{Binding NewPasswordsCommand}">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="PasswordReset"/>
+                                <TextBlock Margin="8 0 0 0">Alle Wachtwoorden Vernieuwen</TextBlock>
+                            </StackPanel>
+                        </Button>
+
+                    </StackPanel>
+                </materialDesign:Card>
+                <materialDesign:Card Grid.Row="2" Grid.Column="1" Margin="16">
+                    <StackPanel Orientation="Vertical">
+                        <Button Style="{StaticResource MaterialDesignRaisedAccentButton}" x:Name="SaveButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" IsEnabled="{Binding SaveEnabled}" Command="{Binding SaveCommand}" Margin="16 16">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="ContentSave"/>
+                                <TextBlock Margin="8 0 0 0">Wijzigingen Opslaan</TextBlock>
+                            </StackPanel>
+                        </Button>
+                        <Button Background="Red" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="16 16" IsEnabled="{Binding DeleteEnabled}" Command="{Binding DeleteCommand}">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="DeleteForever"/>
+                                <TextBlock Margin="8 0 0 0">Verwijderen</TextBlock>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                </materialDesign:Card>
+            </Grid>
+        </GroupBox>
+    </Grid>
+</UserControl>

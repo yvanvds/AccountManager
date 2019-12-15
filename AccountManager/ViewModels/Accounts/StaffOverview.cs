@@ -51,14 +51,17 @@ namespace AccountManager.ViewModels.Accounts
                 }
             }
             Accounts = accounts;
+            bool found = false;
             if (SelectedAccount != null) foreach (var account in Accounts)
             {
                 if (account.UID == SelectedAccount.UID)
                 {
                     SelectedAccount = account;
+                        found = true;
                     break;
                 }
             }
+            if (!found) SelectedAccount = null;
         }
 
         private void evaluateAccount()
