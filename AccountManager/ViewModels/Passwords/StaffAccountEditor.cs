@@ -33,29 +33,38 @@ namespace AccountManager.ViewModels.Passwords
         private async Task NewPasswords()
         {
             if (account == null) return;
-            var password = AccountApi.Password.Create();
-            account.SetPassword(password);
-
-            var google = AccountApi.Google.AccountManager.Find(account.UID);
-            if (google != null)
+      
+            AllPWIndicator = true;
+            await Task.Run(async () =>
             {
-                await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
-            }
+                var password = AccountApi.Password.Create();
+                account.SetPassword(password);
 
-            string ssPassword = null;
-            var smartschool = AccountApi.Smartschool.GroupManager.Root.FindAccount(account.UID);
-            if (smartschool != null)
-            {
-                ssPassword = Password.Create();
-                await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, ssPassword, AccountType.Student).ConfigureAwait(false);
-            }
+                var google = AccountApi.Google.AccountManager.Find(account.UID);
+                if (google != null)
+                {
+                    await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
+                }
 
-            await Exporters.PasswordManager.Instance.Accounts.ExportStaffPasswordToPDF(account.FullName, account.UID, password, ssPassword).ConfigureAwait(false);
+                string ssPassword = null;
+                var smartschool = AccountApi.Smartschool.GroupManager.Root.FindAccount(account.UID);
+                if (smartschool != null)
+                {
+                    ssPassword = Password.Create();
+                    await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, ssPassword, AccountType.Student).ConfigureAwait(false);
+                }
+
+                await Exporters.PasswordManager.Instance.Accounts.ExportStaffPasswordToPDF(account.FullName, account.UID, password, ssPassword).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+
+            
+            AllPWIndicator = false;
         }
 
         private async Task NewSmartschoolPassword()
         {
             if (account == null) return;
+            SmartschoolPWIndicator = true;
             var password = AccountApi.Password.Create();
 
             var smartschool = AccountApi.Smartschool.GroupManager.Root.FindAccount(account.UID);
@@ -65,11 +74,13 @@ namespace AccountManager.ViewModels.Passwords
 
                 await Exporters.PasswordManager.Instance.Accounts.ExportStaffPasswordToPDF(account.FullName, account.UID, null, password).ConfigureAwait(false);
             }
+            SmartschoolPWIndicator = false;
         }
 
         private async Task NewNetworkPassword()
         {
             if (account == null) return;
+            NetworkPWIndicator = true;
             var password = AccountApi.Password.Create();
             account.SetPassword(password);
 
@@ -80,6 +91,7 @@ namespace AccountManager.ViewModels.Passwords
             }
 
             await Exporters.PasswordManager.Instance.Accounts.ExportStaffPasswordToPDF(account.FullName, account.UID, password).ConfigureAwait(false);
+            NetworkPWIndicator = false;
         }
 
 
@@ -281,6 +293,39 @@ namespace AccountManager.ViewModels.Passwords
             {
                 deleteEnabled = value;
                 PropertyChanged(this, new PropertyChangedEventArgs(nameof(DeleteEnabled)));
+            }
+        }
+
+        private bool networkPWIndicator = false;
+        public bool NetworkPWIndicator
+        {
+            get => networkPWIndicator;
+            set
+            {
+                networkPWIndicator = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(NetworkPWIndicator)));
+            }
+        }
+
+        private bool smartschoolPWIndicator = false;
+        public bool SmartschoolPWIndicator
+        {
+            get => smartschoolPWIndicator;
+            set
+            {
+                smartschoolPWIndicator = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(SmartschoolPWIndicator)));
+            }
+        }
+
+        private bool allPWIndicator = false;
+        public bool AllPWIndicator
+        {
+            get => allPWIndicator;
+            set
+            {
+                allPWIndicator = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(AllPWIndicator)));
             }
         }
     }

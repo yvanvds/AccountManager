@@ -51,9 +51,9 @@
 
                         <StackPanel Orientation="Horizontal">
                             <TextBox Margin="16 16 16 0" Text="{Binding CopyCode, Mode=TwoWay}"
-  materialDesign:HintAssist.Hint="Copy Code"
-  Style="{StaticResource MaterialDesignFloatingHintTextBox}" Width="200" IsEnabled="{Binding CopyCodeEnabled}" />
-                            <Button VerticalAlignment="Bottom" Width="200">
+                                materialDesign:HintAssist.Hint="Copy Code"
+                                Style="{StaticResource MaterialDesignFloatingHintTextBox}" Width="200" IsEnabled="False" />
+                            <Button VerticalAlignment="Bottom" Width="200" IsEnabled="{Binding CopyCodeEnabled}" Command="{Binding CopyCodeCommand}">
                                 <StackPanel Orientation="Horizontal">
                                     <materialDesign:PackIcon Kind="Create"/>
                                     <TextBlock Margin="8 0 0 0">Maak een Copy Code</TextBlock>
@@ -99,21 +99,34 @@
                     <StackPanel Orientation="Vertical">
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Wachtwoorden"/>
 
-                        <Button  x:Name="PCPasswordButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" Command="{Binding NewNetworkPasswordCommand}">
+                        <Button  
+                            VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" 
+                            Command="{Binding NewNetworkPasswordCommand}"
+                            materialDesign:ButtonProgressAssist.Value="-1"
+                            materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding NetworkPWIndicator}"
+                            materialDesign:ButtonProgressAssist.IsIndeterminate="True">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="PasswordReset"/>
                                 <TextBlock Margin="8 0 0 0">Nieuw Netwerk Wachtwoord</TextBlock>
                             </StackPanel>
                         </Button>
 
-                        <Button  x:Name="SSPasswordButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" Command="{Binding NewSmartschoolCommand}">
+                        <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" 
+                                Command="{Binding NewSmartschoolCommand}"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding SmartschoolPWIndicator}"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="PasswordReset"/>
                                 <TextBlock Margin="8 0 0 0">Nieuw Smartschool Wachtwoord</TextBlock>
                             </StackPanel>
                         </Button>
 
-                        <Button x:Name="AllPasswordButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" Command="{Binding NewPasswordsCommand}">
+                        <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" 
+                                Command="{Binding NewPasswordsCommand}"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding AllPWIndicator}"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="PasswordReset"/>
                                 <TextBlock Margin="8 0 0 0">Alle Wachtwoorden Vernieuwen</TextBlock>
