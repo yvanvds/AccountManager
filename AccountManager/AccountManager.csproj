@@ -21,6 +21,8 @@
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
     <IsWebBootstrapper>false</IsWebBootstrapper>
+    <NuGetPackageImportStamp>
+    </NuGetPackageImportStamp>
     <PublishUrl>\\fssupport\SupportShare\AccountManager 2\</PublishUrl>
     <Install>true</Install>
     <InstallFrom>Unc</InstallFrom>
@@ -33,13 +35,11 @@
     <MapFileExtensions>true</MapFileExtensions>
     <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>6</ApplicationRevision>
+    <ApplicationRevision>7</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <NuGetPackageImportStamp>
-    </NuGetPackageImportStamp>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -71,6 +71,12 @@
   </PropertyGroup>
   <PropertyGroup>
     <SignManifests>false</SignManifests>
+  </PropertyGroup>
+  <PropertyGroup>
+    <TargetZone>LocalIntranet</TargetZone>
+  </PropertyGroup>
+  <PropertyGroup>
+    <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="CalcBinding, Version=2.5.1.0, Culture=neutral, processorArchitecture=MSIL">
@@ -197,6 +203,8 @@
     <Compile Include="ViewModels\Dashboard\LinkedAccounts.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedGroups.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedStaffMembers.cs" />
+    <Compile Include="ViewModels\Passwords\StaffAccountEditor.cs" />
+    <Compile Include="ViewModels\Passwords\StaffPasswords.cs" />
     <Compile Include="ViewModels\Settings\ADSettings.cs" />
     <Compile Include="ViewModels\Settings\AzureSettings.cs" />
     <Compile Include="ViewModels\Settings\GeneralSettings.cs" />
@@ -317,6 +325,9 @@
     </Compile>
     <Compile Include="Views\Passwords\PasswordPage.xaml.cs">
       <DependentUpon>PasswordPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Passwords\StaffAccountEditor.xaml.cs">
+      <DependentUpon>StaffAccountEditor.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Passwords\StaffPasswords.xaml.cs">
       <DependentUpon>StaffPasswords.xaml</DependentUpon>
@@ -474,6 +485,10 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Views\Passwords\StaffAccountEditor.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Views\Passwords\StaffPasswords.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -534,6 +549,7 @@
     </EmbeddedResource>
     <None Include="AccountManager_TemporaryKey.pfx" />
     <None Include="packages.config" />
+    <None Include="Properties\app.manifest" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>

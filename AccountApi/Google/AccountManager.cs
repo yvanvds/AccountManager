@@ -262,7 +262,7 @@ namespace AccountApi.Google
             return result;
         }
 
-        public static async Task<bool> ChangePassword(IAccount account, string password)
+        public static async Task<bool> ChangePassword(Account account, string password)
         {
             User user = new User
             {

@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.DirectoryServices;
 using System.IO;
 using System.Linq;
@@ -404,7 +405,7 @@ namespace AccountApi.Directory
             return (State & 0x0002) == 0;
         }
 
-        public void Delete()
+        public async Task Delete()
         {
             var entry = GetEntry(uid);
             if(entry != null)
@@ -417,15 +418,24 @@ namespace AccountApi.Directory
                 }
                 if(home != string.Empty)
                 {
-                    try
+                    await Task.Run(() =>
                     {
-                        var dir = new DirectoryInfo(home);
-                        dir.Delete(true);
-                    } catch(Exception e)
-                    {
-                        Connector.Log.AddError(Origin.Directory, e.Message);
-                    }
-                    
+                        try
+                        {
+                            ProcessStartInfo Info = new ProcessStartInfo();
+                            Info.Arguments = "/C rd /s /q \"" + home + "\"";
+                            Info.WindowStyle = ProcessWindowStyle.Hidden;
+                            Info.CreateNoWindow = true;
+                            Info.FileName = "cmd.exe";
+                            Process.Start(Info);
+                            //var dir = new DirectoryInfo(home);
+                            //dir.Delete(true);
+                        }
+                        catch (Exception e)
+                        {
+                            Connector.Log.AddError(Origin.Directory, e.Message);
+                        }
+                    });  
                 }
                 var parent = entry.Parent;
                 if (parent != null)
