@@ -157,6 +157,8 @@
     <Compile Include="State\AD\ADGroups.cs" />
     <Compile Include="State\AD\ADState.cs" />
     <Compile Include="State\ApplicationState.cs" />
+    <Compile Include="State\Azure\AzureAccounts.cs" />
+    <Compile Include="State\Azure\AzureState.cs" />
     <Compile Include="State\Google\GoogleAccounts.cs" />
     <Compile Include="State\Google\GoogleState.cs" />
     <Compile Include="State\IStateObserver.cs" />
@@ -196,6 +198,7 @@
     <Compile Include="ViewModels\Dashboard\LinkedGroups.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedStaffMembers.cs" />
     <Compile Include="ViewModels\Settings\ADSettings.cs" />
+    <Compile Include="ViewModels\Settings\AzureSettings.cs" />
     <Compile Include="ViewModels\Settings\GeneralSettings.cs" />
     <Compile Include="ViewModels\Settings\GoogleSettings.cs" />
     <Compile Include="ViewModels\Settings\SmartschoolSettings.cs" />
@@ -323,6 +326,9 @@
     </Compile>
     <Compile Include="Views\Settings\ADSettings.xaml.cs">
       <DependentUpon>ADSettings.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Settings\AzureSettings.xaml.cs">
+      <DependentUpon>AzureSettings.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Settings\GeneralSettings.xaml.cs">
       <DependentUpon>GeneralSettings.xaml</DependentUpon>
@@ -477,6 +483,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Settings\ADSettings.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Settings\AzureSettings.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

@@ -64,6 +64,7 @@ namespace AccountApi
         Smartschool,
         Directory,
         Google,
+        Azure,
         Other,
     }
 

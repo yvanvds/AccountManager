@@ -27,9 +27,9 @@
             <TabItem Header="AD">
                 <local:ADSettings/>
             </TabItem>
-            <!--<TabItem Header="OpenLdap">
-                <Label Content="OPpenLDA"/>
-            </TabItem>-->
+            <TabItem Header="Azure">
+                <local:AzureSettings/>
+            </TabItem>
             <TabItem Header="Google">
                 <local:GoogleSettings/>
             </TabItem>

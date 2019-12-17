@@ -14,6 +14,7 @@ namespace AccountManager.ViewModels.Dashboard
         State.Google.GoogleState Google;
         State.AD.ADState AD;
         State.Smartschool.SmartschoolState Smartschool;
+        State.Azure.AzureState Azure;
 
         public IAsyncCommand SyncWisaGroupsCommand { get; private set; }
         public IAsyncCommand SyncADGroupsCommand { get; private set; }
@@ -21,7 +22,7 @@ namespace AccountManager.ViewModels.Dashboard
         public IAsyncCommand SyncADAccountsCommand { get; private set; }
         public IAsyncCommand SyncSmartschoolAccountsCommand { get; private set; }
         public IAsyncCommand SyncGoogleAccountsCommand { get; private set; }
-
+        public IAsyncCommand SyncAzureAccountsCommand { get; private set; }
 
         public DashboardPage()
         {
@@ -29,11 +30,13 @@ namespace AccountManager.ViewModels.Dashboard
             Google = State.App.Instance.Google;
             AD = State.App.Instance.AD;
             Smartschool = State.App.Instance.Smartschool;
+            Azure = State.App.Instance.Azure;
 
             Wisa.AddObserver(this);
             Google.AddObserver(this);
             AD.AddObserver(this);
             Smartschool.AddObserver(this);
+            Azure.AddObserver(this);
 
             SyncWisaGroupsCommand = new RelayAsyncCommand(SyncWisaGroups);
             SyncADGroupsCommand = new RelayAsyncCommand(SyncDirectoryGroups);
@@ -41,6 +44,15 @@ namespace AccountManager.ViewModels.Dashboard
             SyncADAccountsCommand = new RelayAsyncCommand(SyncDirectoryAccounts);
             SyncSmartschoolAccountsCommand = new RelayAsyncCommand(SyncSmartschoolAccounts);
             SyncGoogleAccountsCommand = new RelayAsyncCommand(SyncGoogleAccounts);
+            SyncAzureAccountsCommand = new RelayAsyncCommand(SyncAzureAccounts);
+        }
+
+        private async Task SyncAzureAccounts()
+        {
+            IndicatorAzureAccount = true;
+            Azure.Connect();
+            await Azure.Accounts.Load().ConfigureAwait(false);
+            IndicatorAzureAccount = false;
         }
 
         private async Task SyncGoogleAccounts()
@@ -154,6 +166,22 @@ namespace AccountManager.ViewModels.Dashboard
         }
         #endregion
 
+        #region AzureProps
+        public DateTime AzureAccountDate { get => Azure.Accounts.LastSync; }
+        public string AzureAccountColor { get => GetColor(Azure.Accounts.LastSync); }
+
+        bool indicatorAzureAccount = false;
+        public bool IndicatorAzureAccount
+        {
+            get => indicatorAzureAccount;
+            set
+            {
+                indicatorAzureAccount = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorAzureAccount)));
+            }
+        }
+        #endregion
+
         #region SmartschoolProps
         public DateTime SmartschoolAccountDate { get => Smartschool.Groups.LastSync; }
         public string SmartschoolAccountColor { get => GetColor(Smartschool.Groups.LastSync); }
@@ -203,6 +231,9 @@ namespace AccountManager.ViewModels.Dashboard
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountDate)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountColor)));
+
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureAccountDate)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureAccountColor)));
         }
 
         private string GetColor(DateTime date)

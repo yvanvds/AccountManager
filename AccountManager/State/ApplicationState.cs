@@ -19,6 +19,9 @@ namespace AccountManager.State
         AD.ADState adState = new State.AD.ADState();
         public AD.ADState AD => adState;
 
+        Azure.AzureState azureState = new State.Azure.AzureState();
+        public Azure.AzureState Azure => azureState;
+
         Google.GoogleState googleState = new State.Google.GoogleState();
         public Google.GoogleState Google => googleState;
 
@@ -60,6 +63,7 @@ namespace AccountManager.State
             if (config.ContainsKey("Google")) Google.LoadConfig(config["Google"] as JObject);
             if (config.ContainsKey("AD")) AD.LoadConfig(config["AD"] as JObject);
             if (config.ContainsKey("global")) Settings.LoadConfig(config["global"] as JObject);
+            if (config.ContainsKey("Azure")) Azure.LoadConfig(config["Azure"] as JObject);
         }
 
         public void LoadConfiguration(string fileName)
@@ -77,6 +81,7 @@ namespace AccountManager.State
             config["Smartschool"] = Smartschool.SaveConfig();
             config["Google"] = Google.SaveConfig();
             config["AD"] = AD.SaveConfig();
+            config["Azure"] = Azure.SaveConfig();
             File.WriteAllText(fileName, config.ToString());
         }
 
@@ -86,6 +91,7 @@ namespace AccountManager.State
             Smartschool.LoadLocalContent();
             Google.LoadLocalContent();
             AD.LoadLocalContent();
+            Azure.LoadLocalContent();
         }
 
         private void saveLocalContent()
@@ -94,6 +100,7 @@ namespace AccountManager.State
             Smartschool.SaveContent();
             Google.SaveContent();
             AD.SaveContent();
+            Azure.SaveContent();
         }
 
         /// <summary>
