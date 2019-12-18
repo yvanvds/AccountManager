@@ -153,44 +153,51 @@ namespace AccountApi.Directory
             }
         }
 
-        public static bool Exists(string username)
+        public static async Task<bool> Exists(string username)
         {
-            DirectorySearcher search = Connector.GetSearcher(Connector.AccountPath);
-            search.Filter = $"(samaccountname={username})";
-            SearchResult result;
-
-            try
+            return await Task<bool>.Run(() =>
             {
-                result = search.FindOne();
+                DirectorySearcher search = Connector.GetSearcher(Connector.AccountPath);
+                search.Filter = $"(samaccountname={username})";
+                SearchResult result;
 
-            }
-            catch (DirectoryServicesCOMException)
-            {
-                return false;
-            }
-            if (result == null) return false;
+                try
+                {
+                    result = search.FindOne();
 
-            return true;
+                }
+                catch (DirectoryServicesCOMException)
+                {
+                    return false;
+                }
+                if (result == null) return false;
+
+                return true;
+            });
+            
         }
 
-        public static bool HasAlias(string alias)
+        public static async Task<bool> HasAlias(string alias)
         {
-            DirectorySearcher search = Connector.GetSearcher(Connector.AccountPath);
-            search.Filter = $"(smamailalias={alias})";
-            SearchResult result;
-
-            try
+            return await Task<bool>.Run(() =>
             {
-                result = search.FindOne();
+                DirectorySearcher search = Connector.GetSearcher(Connector.AccountPath);
+                search.Filter = $"(smamailalias={alias})";
+                SearchResult result;
 
-            }
-            catch (DirectoryServicesCOMException)
-            {
-                return false;
-            }
-            if (result == null) return false;
+                try
+                {
+                    result = search.FindOne();
 
-            return true;
+                }
+                catch (DirectoryServicesCOMException)
+                {
+                    return false;
+                }
+                if (result == null) return false;
+
+                return true;
+            });   
         }
 
         public static bool ContainsStudents(ClassGroup classGroup)
@@ -344,8 +351,8 @@ namespace AccountApi.Directory
         {
             return await Task.Run(async () =>
             {
-                string uid = Connector.CreateNewID(firstname, lastname);
-                string alias = Connector.CreateNewAlias(firstname, lastname);
+                string uid = await Connector.CreateNewID(firstname, lastname);
+                string alias = await Connector.CreateNewAlias(firstname, lastname);
 
                 string path = Connector.GetPath(role, classgroup);
                 if (path == null)

@@ -177,7 +177,7 @@ namespace AccountManager.Exporters.Passwords
             
         }
 
-        public async Task ExportStaffPasswordToPDF(string name, string username, string networkPassword = null, string smartschoolPassword = null)
+        public async Task ExportStaffPasswordToPDF(string name, string username, string copycode, string networkPassword = null, string smartschoolPassword = null)
         {
             await Task.Run(() =>
             {
@@ -188,6 +188,7 @@ namespace AccountManager.Exporters.Passwords
 
                 section.AddParagraph("Login Gegevens", "Heading2");
                 section.AddParagraph("Login     : " + username, "PasswordStyle");
+                section.AddParagraph("Copy Code : " + copycode, "PasswordStyle");
 
                 if (networkPassword != null)
                 {

@@ -88,7 +88,7 @@ namespace AccountApi.Directory
             return new DirectorySearcher(connection);
         }
 
-        public static string CreateNewID(string firstname, string lastname)
+        public static async Task<string> CreateNewID(string firstname, string lastname)
         {
             firstname = firstname.Trim().ToLower();
             lastname = lastname.Trim().ToLower();
@@ -128,7 +128,8 @@ namespace AccountApi.Directory
 
             while (true)
             {
-                if (!AccountManager.Exists(test_id))
+                var exists = await AccountManager.Exists(test_id);
+                if (!exists)
                 {
                     return test_id;
                 }
@@ -140,7 +141,7 @@ namespace AccountApi.Directory
             }
         }
 
-        public static string CreateNewAlias(string firstname, string lastname)
+        public static async Task<string> CreateNewAlias(string firstname, string lastname)
         {
             firstname = firstname.Trim().ToLower();
             lastname = lastname.Trim().ToLower();
@@ -155,7 +156,7 @@ namespace AccountApi.Directory
 
             int counter = 0;
 
-            while (AccountManager.HasAlias(mail))
+            while (await AccountManager.HasAlias(mail))
             {
                 counter++;
                 mail = firstname;

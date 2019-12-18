@@ -28,12 +28,23 @@ namespace AccountManager.Views.Passwords
         {
             InitializeComponent();
             DataContext = new ViewModels.Passwords.StaffPasswords();
+            Creator.Visibility = Visibility.Collapsed;
+            Editor.Visibility = Visibility.Collapsed;
         }
 
         private void DataGrid_SelectedCellsChanged(object sender, SelectedCellsChangedEventArgs e)
         {
             var account = ((sender as DataGrid).SelectedItem as AccountApi.Directory.Account);
+            Editor.Visibility = Visibility.Visible;
+            Creator.Visibility = Visibility.Collapsed;
             Editor.Account = account;
+        }
+
+        private void AddAccountButton_Click(object sender, RoutedEventArgs e)
+        {
+            Editor.Visibility = Visibility.Collapsed;
+            Creator.Visibility = Visibility.Visible;
+            Creator.Model.Clear();
         }
     }
 }

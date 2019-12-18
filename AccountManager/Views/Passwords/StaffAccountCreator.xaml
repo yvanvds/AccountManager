@@ -1,0 +1,143 @@
+﻿<UserControl x:Class="AccountManager.Views.Passwords.StaffAccountCreator"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:local="clr-namespace:AccountManager.Views.Passwords"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+             TextElement.FontWeight="Medium"
+             TextElement.FontSize="14"
+             TextOptions.TextFormattingMode="Ideal"
+             TextOptions.TextRenderingMode="Auto"
+             Background="{DynamicResource MaterialDesignPaper}"
+             FontFamily="{DynamicResource MaterialDesignFont}"
+             mc:Ignorable="d" 
+             d:DesignHeight="650" d:DesignWidth="850">
+    <Grid>
+        <GroupBox Grid.Column="1" Grid.Row="1" Header="Create New Account">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="400"/>
+                <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="200"/>
+                    <RowDefinition Height="230"/>
+                    <RowDefinition Height="100"/>
+                    <RowDefinition/>
+                </Grid.RowDefinitions>
+
+                <materialDesign:Card Grid.Row="0" Grid.Column="0" Margin="16" Height="160">
+                    <StackPanel>
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Naam"/>
+
+                        <TextBox Margin="16 16 16 0" Text="{Binding FirstName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  materialDesign:HintAssist.Hint="Voornaam" 
+                                  Style="{StaticResource MaterialDesignFloatingHintTextBox}"/>
+                        <TextBox Margin="16" Text="{Binding LastName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  materialDesign:HintAssist.Hint="Naam"
+                                  Style="{StaticResource MaterialDesignFloatingHintTextBox}"/>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <materialDesign:Card Grid.Row="0" Grid.Column="1" Margin="16" Height="160">
+                    <StackPanel>
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Identificatie"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Margin="16 16 16 0" Text="Login: " Width="100"/>
+                            <TextBlock Margin="16 16 16 0" Text="{Binding UID}" Width="100"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Margin="16 16 16 0" Text="Copy Code: "/>
+                            <TextBlock Margin="16 16 16 0" Text="{Binding CopyCode}" Width="100"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <materialDesign:Card Grid.Row="1" Margin="16" Height="190">
+                    <StackPanel Orientation="Vertical">
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Groep"/>
+
+                        <ComboBox Margin="16"
+                            SelectedIndex="{Binding RoleIndex, Mode=TwoWay}"
+                            materialDesign:HintAssist.Hint="Groep"
+                            Style="{StaticResource MaterialDesignFloatingHintComboBox}">
+                            <ComboBoxItem>
+                                Leerkrachten
+                            </ComboBoxItem>
+                            <ComboBoxItem>
+                                Secretariaat
+                            </ComboBoxItem>
+                            <ComboBoxItem>
+                                IT - Admin
+                            </ComboBoxItem>
+                            <ComboBoxItem>
+                                Directie
+                            </ComboBoxItem>
+                        </ComboBox>
+
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Gender"/>
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="GenderFemale" HorizontalAlignment="Center" VerticalAlignment="Center" Height="40" Width="40"/>
+                            <Slider Width="240" VerticalAlignment="Bottom" Margin="16" Value="{Binding Gender, Mode=TwoWay}"/>
+                            <materialDesign:PackIcon Kind="GenderMale" HorizontalAlignment="Center" VerticalAlignment="Center"  Height="40" Width="40"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <materialDesign:Card Grid.Row="1" Grid.Column="1" Margin="16" Height="190">
+                    <StackPanel>
+                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Wachtwoorden"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Margin="16 16 16 0" Text="Netwerk: " Width="100"/>
+                            <TextBlock Margin="16 16 16 0" Text="{Binding NetworkPassword}" Width="100"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Margin="16" Text="Smartschool: "/>
+                            <TextBlock Margin="16" Text="{Binding SmartschoolPassword}" Width="100"/>
+                        </StackPanel>
+
+                        <Button VerticalAlignment="Bottom" Margin="16" 
+                                Command="{Binding PrintCommand}"
+                                IsEnabled="{Binding PrintEnabled}"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding PrintPasswordsIndicator}"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="FileDocumentOutline"/>
+                                <TextBlock Margin="8 0 0 0">Print Gegevens</TextBlock>
+                            </StackPanel>
+                        </Button>
+                        
+                    </StackPanel>
+                </materialDesign:Card>
+                
+                <materialDesign:Card Grid.Row="2" Grid.Column="0" Margin="16">
+                    <StackPanel Orientation="Horizontal">
+                        
+                        <Button Style="{StaticResource MaterialDesignRaisedAccentButton}" VerticalAlignment="Bottom" HorizontalAlignment="Left" IsEnabled="{Binding CreateEnabled}" Command="{Binding CreateCommand}" Margin="16 16">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="ContentSave"/>
+                                <TextBlock Margin="8 0 0 0">Maak Account</TextBlock>
+                            </StackPanel>
+                        </Button>
+
+                        <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="16 16" 
+                                Command="{Binding ClearCommand}"
+                                >
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Margin="8 0 0 0">Clear</TextBlock>
+                            </StackPanel>
+                        </Button>
+                        
+                    </StackPanel>
+                </materialDesign:Card>
+            </Grid>
+        </GroupBox> 
+    </Grid>
+</UserControl>

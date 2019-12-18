@@ -203,6 +203,7 @@
     <Compile Include="ViewModels\Dashboard\LinkedAccounts.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedGroups.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedStaffMembers.cs" />
+    <Compile Include="ViewModels\Passwords\StaffAccountCreator.cs" />
     <Compile Include="ViewModels\Passwords\StaffAccountEditor.cs" />
     <Compile Include="ViewModels\Passwords\StaffPasswords.cs" />
     <Compile Include="ViewModels\Settings\ADSettings.cs" />
@@ -325,6 +326,9 @@
     </Compile>
     <Compile Include="Views\Passwords\PasswordPage.xaml.cs">
       <DependentUpon>PasswordPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Passwords\StaffAccountCreator.xaml.cs">
+      <DependentUpon>StaffAccountCreator.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Passwords\StaffAccountEditor.xaml.cs">
       <DependentUpon>StaffAccountEditor.xaml</DependentUpon>
@@ -482,6 +486,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Passwords\PasswordPage.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Passwords\StaffAccountCreator.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

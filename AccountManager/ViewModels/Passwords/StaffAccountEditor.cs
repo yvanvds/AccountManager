@@ -54,7 +54,9 @@ namespace AccountManager.ViewModels.Passwords
                     await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, ssPassword, AccountType.Student).ConfigureAwait(false);
                 }
 
-                await Exporters.PasswordManager.Instance.Accounts.ExportStaffPasswordToPDF(account.FullName, account.UID, password, ssPassword).ConfigureAwait(false);
+                await Exporters.PasswordManager.Instance.Accounts
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.CopyCode.ToString(), password, ssPassword)
+                    .ConfigureAwait(false);
             }).ConfigureAwait(false);
 
             
@@ -72,7 +74,9 @@ namespace AccountManager.ViewModels.Passwords
             {
                 await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, password, AccountType.Student).ConfigureAwait(false);
 
-                await Exporters.PasswordManager.Instance.Accounts.ExportStaffPasswordToPDF(account.FullName, account.UID, null, password).ConfigureAwait(false);
+                await Exporters.PasswordManager.Instance.Accounts
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.CopyCode.ToString(), null, password)
+                    .ConfigureAwait(false);
             }
             SmartschoolPWIndicator = false;
         }
@@ -90,7 +94,9 @@ namespace AccountManager.ViewModels.Passwords
                 await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
             }
 
-            await Exporters.PasswordManager.Instance.Accounts.ExportStaffPasswordToPDF(account.FullName, account.UID, password).ConfigureAwait(false);
+            await Exporters.PasswordManager.Instance.Accounts
+                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.CopyCode.ToString(), password)
+                .ConfigureAwait(false);
             NetworkPWIndicator = false;
         }
 
@@ -133,8 +139,8 @@ namespace AccountManager.ViewModels.Passwords
                 if (account.Role != newRole) account.Role = newRole;
 
                 string newGender = account.Gender;
-                if (Gender > 7) newGender = "male";
-                else if (Gender < 3) newGender = "female";
+                if (Gender > 6) newGender = "male";
+                else if (Gender < 4) newGender = "female";
                 if (account.Gender != newGender) account.Gender = newGender;
                 
                 if (account.FirstName != FirstName) account.FirstName = FirstName;
