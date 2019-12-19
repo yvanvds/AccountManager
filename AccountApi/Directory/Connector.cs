@@ -152,7 +152,7 @@ namespace AccountApi.Directory
 
             string mail = firstname;
             mail += "."; mail += lastname;
-            mail += "@sanctamaria-aarschot.be";
+            mail += "@" + Connector.AzureDomain;
 
             int counter = 0;
 
@@ -161,7 +161,7 @@ namespace AccountApi.Directory
                 counter++;
                 mail = firstname;
                 mail += "."; mail += lastname; mail += counter;
-                mail += "@sanctamaria-aarschot.be";
+                mail += "@" + Connector.AzureDomain;
             }
 
             return mail;

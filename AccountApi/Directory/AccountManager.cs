@@ -352,7 +352,7 @@ namespace AccountApi.Directory
             return await Task.Run(async () =>
             {
                 string uid = await Connector.CreateNewID(firstname, lastname);
-                string alias = await Connector.CreateNewAlias(firstname, lastname);
+                
 
                 string path = Connector.GetPath(role, classgroup);
                 if (path == null)
@@ -387,64 +387,105 @@ namespace AccountApi.Directory
                 {
                     Connector.Log.AddError(Origin.Directory, "unable to add account for " + firstname + " " + lastname + ": " + e.Message);
                     return null;
-                }
-
-                try
-                {
-                    childEntry.Properties["givenName"].Value = firstname;
-                    childEntry.Properties["sn"].Value = lastname;
-                    childEntry.Properties["displayname"].Value = firstname + " " + lastname;
-                    //childEntry.Properties["mail"].Value = uid + "@sanctamaria-aarschot.be";
-                    childEntry.Properties["userprincipalname"].Value = uid + "@" + Connector.AzureDomain;
-
-                    // TODO: move mail alias to another property so we can get rid of the custom objectClass
-                    childEntry.Properties["objectClass"].Add("smaSchoolPerson");
-                    childEntry.Properties["smamailalias"].Value = alias;
-                    childEntry.Properties["smaWisaID"].Value = WisaID;
-                    childEntry.Properties["smawisaname"].Value = WisaID;
-                    childEntry.Properties["smaClass"].Value = classgroup;
-                    childEntry.CommitChanges();
-                    childEntry.RefreshCache();
-                }
-                catch (DirectoryServicesCOMException e)
-                {
-                    Connector.Log.AddError(Origin.Directory, "unable to add account for " + firstname + " " + lastname + ": " + e.Message);
-                    return null;
-                }
+                }             
 
                 if (role == AccountRole.Student)
                 {
-                    var account = new Account(childEntry);
-                    await account.SetHome();
-                    await account.AddToGroup("CN=Students,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
-                    await CreateHomeDir(account);
-                    Students.Add(account);
-                    return account;
+                    await setStudentDetails(childEntry, firstname, lastname, uid, WisaID, classgroup);
+                    return await setStudentGroup(childEntry);
                 }
                 else
                 {
-                    var account = new Account(childEntry);
-                    await account.SetHome();
-
-                    switch(role) {
-                        case AccountRole.Director:
-                            await account.AddToGroup("CN=Directors,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
-                            await account.AddToGroup("CN=Support,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
-                            break;
-                        case AccountRole.Support:
-                            await account.AddToGroup("CN=Support,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
-                            break;
-                        case AccountRole.Teacher:
-                            await account.AddToGroup("CN=Teachers,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
-                            break;
-                    }
-
-                    await CreateHomeDir(account);
-                    Staff.Add(account);
-                    return account;
+                    await setStaffDetails(childEntry, firstname, lastname, uid); 
+                    return await setStaffGroup(childEntry, role);
                 }
             });
 
+        }
+
+        private static async Task setStudentDetails(DirectoryEntry entry, string firstName, string lastName, string uid, string wisaID, string classGroup)
+        {
+            string alias = await Connector.CreateNewAlias(firstName, lastName);
+
+            try
+            {
+                entry.Properties["givenName"].Value = firstName;
+                entry.Properties["sn"].Value = lastName;
+                entry.Properties["displayName"].Value = firstName + " " + lastName;
+                entry.Properties["mail"].Value = alias;
+                entry.Properties["userPrincipalName"].Value = uid + "@" + Connector.AzureDomain;
+
+                // TODO: move mail alias to another property so we can get rid of the custom objectClass
+                entry.Properties["objectClass"].Add("smaSchoolPerson");
+                entry.Properties["smaMailAlias"].Value = alias;
+                entry.Properties["smaWisaID"].Value = wisaID;
+                entry.Properties["smaClass"].Value = classGroup;
+                entry.CommitChanges();
+                entry.RefreshCache();
+            }
+            catch (DirectoryServicesCOMException e)
+            {
+                Connector.Log.AddError(Origin.Directory, "unable to add account for " + firstName + " " + lastName + ": " + e.Message);
+            }
+        }
+
+        private static async Task setStaffDetails(DirectoryEntry entry, string firstName, string lastName, string uid)
+        {
+            string alias = await Connector.CreateNewAlias(firstName, lastName);
+
+            try
+            {
+                entry.Properties["givenName"].Value = firstName;
+                entry.Properties["sn"].Value = lastName;
+                entry.Properties["displayName"].Value = firstName + " " + lastName;
+                entry.Properties["mail"].Value = alias;
+                entry.Properties["userPrincipalName"].Value = uid + "@" + Connector.AzureDomain;
+
+                // TODO: move mail alias to another property so we can get rid of the custom objectClass
+                entry.Properties["objectClass"].Add("smaSchoolPerson");
+                entry.Properties["smaMailAlias"].Value = alias;
+                entry.Properties["smaWisaName"].Value = uid; // wisa name is not known at this point, but we can change it later
+                entry.CommitChanges();
+                entry.RefreshCache();
+            }
+            catch (DirectoryServicesCOMException e)
+            {
+                Connector.Log.AddError(Origin.Directory, "unable to add account details for " + firstName + " " + lastName + ": " + e.Message);
+            }
+        }
+
+        private static async Task<Account> setStudentGroup(DirectoryEntry entry)
+        {
+            var account = new Account(entry);
+            await account.SetHome();
+            await account.AddToGroup("CN=Students,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+            await CreateHomeDir(account);
+            Students.Add(account);
+            return account;
+        }
+
+        private static async Task<Account> setStaffGroup(DirectoryEntry entry, AccountRole role)
+        {
+            var account = new Account(entry);
+            await account.SetHome();
+
+            switch (role)
+            {
+                case AccountRole.Director:
+                    await account.AddToGroup("CN=Directors,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                    await account.AddToGroup("CN=Support,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                    break;
+                case AccountRole.Support:
+                    await account.AddToGroup("CN=Support,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                    break;
+                case AccountRole.Teacher:
+                    await account.AddToGroup("CN=Teachers,OU=Security Groups,DC=sanctamaria-aarschot,DC=be");
+                    break;
+            }
+
+            await CreateHomeDir(account);
+            Staff.Add(account);
+            return account;
         }
 
         public static void ApplyImportRules(List<IRule> rules)

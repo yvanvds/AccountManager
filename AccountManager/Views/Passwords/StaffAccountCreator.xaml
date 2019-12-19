@@ -120,7 +120,14 @@
                 <materialDesign:Card Grid.Row="2" Grid.Column="0" Margin="16">
                     <StackPanel Orientation="Horizontal">
                         
-                        <Button Style="{StaticResource MaterialDesignRaisedAccentButton}" VerticalAlignment="Bottom" HorizontalAlignment="Left" IsEnabled="{Binding CreateEnabled}" Command="{Binding CreateCommand}" Margin="16 16">
+                        <Button Style="{StaticResource MaterialDesignRaisedAccentButton}" 
+                                VerticalAlignment="Bottom" HorizontalAlignment="Left" 
+                                IsEnabled="{Binding CreateEnabled}" 
+                                Command="{Binding CreateCommand}" 
+                                Margin="16 16"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding CreateIndicator}"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="ContentSave"/>
                                 <TextBlock Margin="8 0 0 0">Maak Account</TextBlock>

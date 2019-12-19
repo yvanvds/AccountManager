@@ -20,6 +20,7 @@
         mc:Ignorable="d"
         Title="SMA Account Manager"
                    Loaded="MetroWindow_Loaded"
+                   Icon="accountmanager.ico"
         WindowState="Maximized">
 
 

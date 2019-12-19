@@ -34,13 +34,16 @@ namespace AccountManager.ViewModels.Passwords
 
         private async Task Create()
         {
-            await createLoginName().ConfigureAwait(false);
-
+            CreateIndicator = true;
             account = await AccountApi.Directory.AccountManager.Create(
-                FirstName, LastName, UID, getRole()).ConfigureAwait(false);
+                FirstName, LastName, "", getRole()).ConfigureAwait(false);
 
             if (account != null)
             {
+                UID = account.UID;
+                CopyCode = getCopyCode();
+                account.CopyCode = CopyCode;
+
                 NetworkPassword = Password.Create();
                 account.SetPassword(NetworkPassword);
 
@@ -50,6 +53,8 @@ namespace AccountManager.ViewModels.Passwords
 
                 PrintEnabled = true;
             }
+            CreateIndicator = false;
+            State.App.Instance.AD.UpdateObservers();
         }
 
         public void Clear()
@@ -61,23 +66,12 @@ namespace AccountManager.ViewModels.Passwords
             Gender = 0.5f;
             NetworkPassword = "";
             SmartschoolPassword = "";
+            CopyCode = 0;
             
             PrintEnabled = false;
-
-            setCopyCode();
         }
 
         #region functions
-        private async Task createLoginName()
-        {
-            if (FirstName.Length == 0 || LastName.Length == 0)
-            {
-                UID = "";
-            } else
-            {
-                UID = await AccountApi.Directory.Connector.CreateNewID(FirstName, LastName).ConfigureAwait(false);
-            }
-        }
 
         private AccountRole getRole()
         {
@@ -97,7 +91,7 @@ namespace AccountManager.ViewModels.Passwords
             else return GenderType.Female;
         }
 
-        private void setCopyCode()
+        private int getCopyCode()
         {
             var random = new Random();
             bool valid = false;
@@ -111,8 +105,7 @@ namespace AccountManager.ViewModels.Passwords
                     if (code == account.CopyCode) valid = false;
                 }
             }
-            CopyCode = code;
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(CopyCode)));
+            return code;
         }
 
         private async Task createSmartschoolAccount(AccountApi.Directory.Account account)
@@ -152,7 +145,7 @@ namespace AccountManager.ViewModels.Passwords
             googleAccount.FamilyName = LastName;
             googleAccount.IsStaff = true;
             googleAccount.UID = UID;
-            googleAccount.MailAlias = account.MailAlias;
+            googleAccount.MailAlias = account.MailAlias.Split('@')[0] + "@" + State.App.Instance.Google.AppDomain.Value;
 
             bool result = await AccountApi.Google.AccountManager.Add(googleAccount, NetworkPassword).ConfigureAwait(false);
             if (!result)
