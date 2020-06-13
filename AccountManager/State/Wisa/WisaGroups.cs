@@ -19,20 +19,29 @@ namespace AccountManager.State.Wisa
 
         public async Task Load()
         {
-            // check date
-            DateTime workDate = DateTime.Now;
+            
 
             // reload list of classes
             AccountApi.Wisa.ClassGroupManager.Clear();
             foreach (var school in AccountApi.Wisa.SchoolManager.All)
             {
+                // check date
+                DateTime workDate = DateTime.Now;
+
                 if (school.IsActive)
                 {
-                    foreach (var rule in App.Instance.Wisa.ImportRules)
+                    if (App.Instance.Wisa.IsSchoolVirtual(school))
                     {
-                        if (rule.Rule == Rule.WI_MarkAsVirtual && rule.GetConfig(0) == school.Name)
+                        if (!App.Instance.Wisa.WorkDateIsNow.Value)
                         {
-                            workDate = App.Instance.Wisa.WorkDateIsNow.Value ? DateTime.Now : App.Instance.Wisa.WorkDate.Value;
+                            workDate = App.Instance.Wisa.WorkDate.Value;
+                        }
+                    }
+                    else
+                    {
+                        if (!App.Instance.Wisa.WorkDateIsNow.Value && !App.Instance.Wisa.WorkDateOnlyVirtual.Value)
+                        {
+                            workDate = App.Instance.Wisa.WorkDate.Value;
                         }
                     }
 

@@ -21,6 +21,7 @@ namespace AccountManager.State.Wisa
         public ConfigValue<string> Password;
         public ConfigValue<DateTime> WorkDate;
         public ConfigValue<bool> WorkDateIsNow;
+        public ConfigValue<bool> WorkDateOnlyVirtual;
 
         public ObservableCollection<IRule> ImportRules { get; set; } = new ObservableCollection<IRule>();
 
@@ -39,6 +40,7 @@ namespace AccountManager.State.Wisa
             Connection = new ConfigValue<ConnectionState>("connectionTested", ConnectionState.Unknown, UpdateObservers);
             
             WorkDateIsNow = new ConfigValue<bool>("workDateNow", true, UpdateObservers);
+            WorkDateOnlyVirtual = new ConfigValue<bool>("workDateOnlyForVitualSchools", true, UpdateObservers);
             WorkDate = new ConfigValue<DateTime>("workData", DateTime.Now, UpdateObservers);   
         }
 
@@ -52,6 +54,7 @@ namespace AccountManager.State.Wisa
             Connection.Load(obj);
             WorkDateIsNow.Load(obj);
             WorkDate.Load(obj);
+            WorkDateOnlyVirtual.Load(obj);
             if (WorkDateIsNow.Value)
             {
                 WorkDate.Value = DateTime.Now;
@@ -87,6 +90,7 @@ namespace AccountManager.State.Wisa
             Password.Save(ref result);
             WorkDate.Save(ref result);
             WorkDateIsNow.Save(ref result);
+            WorkDateOnlyVirtual.Save(ref result);
 
             if (ImportRules.Count > 0)
             {
@@ -162,6 +166,18 @@ namespace AccountManager.State.Wisa
                 ImportRules.Add(newRule);
             }
             return newRule;
+        }
+
+        public bool IsSchoolVirtual(AccountApi.Wisa.School school)
+        {
+            foreach(var rule in ImportRules)
+            {
+                if (rule.Rule == Rule.WI_MarkAsVirtual)
+                {
+                    return (rule as AccountApi.Rules.MarkAsVirtual).ShouldApply(school);
+                }
+            }
+            return false;
         }
 
 

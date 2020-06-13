@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -24,7 +25,20 @@ namespace AccountManager.State.Wisa
             {
                 if (school.IsActive)
                 {
-                    var workDate = App.Instance.Wisa.WorkDateIsNow.Value ? DateTime.Now : App.Instance.Wisa.WorkDate.Value;
+                    var workDate = DateTime.Now;
+                    if (App.Instance.Wisa.IsSchoolVirtual(school))
+                    {
+                        if (!App.Instance.Wisa.WorkDateIsNow.Value)
+                        {
+                            workDate = App.Instance.Wisa.WorkDate.Value;
+                        }
+                    } else
+                    {
+                        if (!App.Instance.Wisa.WorkDateIsNow.Value && !App.Instance.Wisa.WorkDateOnlyVirtual.Value)
+                        {
+                            workDate = App.Instance.Wisa.WorkDate.Value;
+                        }
+                    }
 
                     bool success = await AccountApi.Wisa.Students.AddSchool(school, workDate).ConfigureAwait(false);
                     if (!success) return;
@@ -36,7 +50,7 @@ namespace AccountManager.State.Wisa
             {
                 foreach (var rule in App.Instance.Wisa.ImportRules)
                 {
-                    if (rule.Rule == Rule.WI_DontImportClass && rule.GetConfig(0) == AccountApi.Wisa.Students.All[i].ClassGroup)
+                    if (rule.Rule == AccountApi.Rule.WI_DontImportClass && rule.GetConfig(0) == AccountApi.Wisa.Students.All[i].ClassGroup)
                     {
                         AccountApi.Wisa.Students.All.RemoveAt(i);
                         break;

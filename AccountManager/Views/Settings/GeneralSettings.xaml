@@ -66,9 +66,10 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="50"/>
+                        <RowDefinition Height="50"/>
                         <RowDefinition/>
                     </Grid.RowDefinitions>
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
                         <ToggleButton Margin="16 4 16 0"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
                                 ToolTip="MaterialDesignSwitchDarkToggleButton"
                                 IsChecked="{c:Binding !WorkDateIsNow, Mode=TwoWay}"/>
@@ -78,7 +79,13 @@
                         <DatePicker SelectedDate="{Binding WorkDate, Mode=TwoWay}" Margin="0 -12 8 0"
                               materialDesign:HintAssist.Hint="Pick Date"
                               Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
-                              Visibility="{c:Binding WorkDateIsNow, FalseToVisibility=Collapsed}"/>
+                              Visibility="{c:Binding !WorkDateIsNow, FalseToVisibility=Collapsed}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal">
+                        <ToggleButton Margin="16 4 16 0" Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
+                                      ToolTip="Zet aan als je de werkdatum enkel wil toepassen op virtuele scholen"
+                                      IsChecked="{c:Binding WorkDateOnlyForVirtualSchools, Mode=TwoWay}"/>
+                        <Label Margin="0 0 16 0" Content="Enkel Virtuele Scholen"/>
                     </StackPanel>
                 </Grid>
             </GroupBox>

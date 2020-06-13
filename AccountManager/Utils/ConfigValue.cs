@@ -2,6 +2,7 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -44,7 +45,16 @@ namespace AccountManager.Utils
 
         public void Save(ref JObject target)
         {
-            target[key] = value?.ToString();
+            if (value is DateTime)
+            {
+                DateTime? date = value as DateTime?;
+
+                target[key] = date?.ToString("MM/dd/yyyy H:mm:ss");
+            } else
+            {
+                target[key] = value?.ToString();
+            }
+            
         }
     }
 }

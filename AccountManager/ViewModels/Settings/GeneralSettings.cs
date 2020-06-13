@@ -63,6 +63,16 @@ namespace AccountManager.ViewModels.Settings
                 PropertyChanged(this, new PropertyChangedEventArgs(nameof(WorkDateIsNow)));
             } 
         }
+
+        public bool WorkDateOnlyForVirtualSchools
+        {
+            get => State.App.Instance.Wisa.WorkDateOnlyVirtual.Value;
+            set
+            {
+                State.App.Instance.Wisa.WorkDateOnlyVirtual.Value = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(WorkDateOnlyForVirtualSchools)));
+            }
+        }
         public DateTime WorkDate { 
             get => State.App.Instance.Wisa.WorkDate.Value;
             set

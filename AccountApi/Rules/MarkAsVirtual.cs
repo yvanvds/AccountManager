@@ -48,7 +48,12 @@ namespace AccountApi.Rules
 
         public bool ShouldApply(object obj)
         {
-            return true; // not relevant here
+            var school = obj as Wisa.School;
+            if (school != null)
+            {
+                return school.Name.Equals(schoolCode);
+            }
+            return false;
         }
 
         public JObject ToJson()
