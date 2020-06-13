@@ -82,6 +82,7 @@ namespace AccountManager.State.Linked
                 }  
             }
 
+            if (AccountApi.Google.AccountManager.All != null)
             foreach (var account in AccountApi.Google.AccountManager.All.Values)
             {
                 if (account.IsStaff)
@@ -97,7 +98,7 @@ namespace AccountManager.State.Linked
                 }
             }
 
-            var staff = AccountApi.Smartschool.GroupManager.Root.Find("Personeel");
+            var staff = AccountApi.Smartschool.GroupManager.Root == null ? null : AccountApi.Smartschool.GroupManager.Root.Find("Personeel");
             if (staff != null)
             {
                 addSmartschoolAccounts(staff);
