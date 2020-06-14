@@ -52,8 +52,6 @@ namespace AccountManager.Action.StudentAccount
             ssAccount.PostalCode = wisa.PostalCode;
             ssAccount.City = wisa.City;
             ssAccount.Mail = directory.UID + "@" + AccountApi.Directory.Connector.AzureDomain;
-            ssAccount.MailAlias = directory.MailAlias;
-
 
             var result = await AccountApi.Smartschool.AccountManager.Save(ssAccount, "FakeP4ssword").ConfigureAwait(false);
             if (!result)

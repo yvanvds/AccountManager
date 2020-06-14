@@ -7,7 +7,7 @@ namespace AccountManager.Action.Group
     {
         public override Task Apply(State.Linked.LinkedGroup linkedGroup)
         {
-            throw new NotImplementedException();
+            var directory = await AccountApi.Directory.ClassGroupManager.
         }
 
         public AddToDirectory() : base(

@@ -121,7 +121,6 @@ namespace AccountManager.ViewModels.Passwords
             smartschoolAccount.Gender = getGender();
 
             smartschoolAccount.Mail = UID + "@" + AccountApi.Directory.Connector.AzureDomain;
-            smartschoolAccount.MailAlias = account.MailAlias;
 
             var result = await AccountApi.Smartschool.AccountManager
                 .Save(smartschoolAccount, SmartschoolPassword)
@@ -145,7 +144,6 @@ namespace AccountManager.ViewModels.Passwords
             googleAccount.FamilyName = LastName;
             googleAccount.IsStaff = true;
             googleAccount.UID = UID;
-            googleAccount.MailAlias = account.MailAlias.Split('@')[0] + "@" + State.App.Instance.Google.AppDomain.Value;
 
             bool result = await AccountApi.Google.AccountManager.Add(googleAccount, NetworkPassword).ConfigureAwait(false);
             if (!result)

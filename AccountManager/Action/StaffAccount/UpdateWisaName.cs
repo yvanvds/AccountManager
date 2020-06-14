@@ -24,7 +24,7 @@ namespace AccountManager.Action.StaffAccount
             var result = new FlowTableCreator(false);
             result.SetHeaders(new string[] { "Wisa", "Directory", "Smartschool" });
 
-            result.AddRow(new List<string>() { "Wisa ID", account.Wisa.Account.CODE, account.Directory.Account.WisaName, account.Smartschool.Account.AccountID });
+            result.AddRow(new List<string>() { "Wisa ID", account.Wisa.Account.CODE, account.Directory.Account.WisaID, account.Smartschool.Account.AccountID });
 
             FlowDocument document = new FlowDocument();
             document.Blocks.Add(result.Create());
@@ -34,9 +34,9 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(LinkedStaffMember account)
         {
-            if (account.Directory.Account.WisaName != account.Wisa.Account.CODE)
+            if (account.Directory.Account.WisaID != account.Wisa.Account.CODE)
             {
-                await account.Directory.Account.SetWisaName(account.Wisa.Account.CODE).ConfigureAwait(false);
+                await account.Directory.Account.SetWisaID(account.Wisa.Account.CODE).ConfigureAwait(false);
             }
             if (account.Smartschool.Account.AccountID != account.Wisa.Account.CODE)
             {
@@ -47,7 +47,7 @@ namespace AccountManager.Action.StaffAccount
 
         public static void Evaluate(LinkedStaffMember account)
         {
-            if (account.Wisa.Account.CODE != account.Directory.Account.WisaName || account.Wisa.Account.CODE != account.Smartschool.Account.AccountID)
+            if (account.Wisa.Account.CODE != account.Directory.Account.WisaID || account.Wisa.Account.CODE != account.Smartschool.Account.AccountID)
             {
                 account.Actions.Add(new UpdateWisaName());
                 account.Directory.FlagWarning();

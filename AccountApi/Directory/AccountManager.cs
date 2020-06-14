@@ -29,11 +29,9 @@ namespace AccountApi.Directory
                 search.PropertiesToLoad.Add("givenName");
                 search.PropertiesToLoad.Add("sn");
                 search.PropertiesToLoad.Add("displayname");
-                search.PropertiesToLoad.Add("smamailalias");
-                search.PropertiesToLoad.Add("smaWisaID");
-                search.PropertiesToLoad.Add("smawisaname");
-                search.PropertiesToLoad.Add("smaClass");
-                search.PropertiesToLoad.Add("samGender");
+                search.PropertiesToLoad.Add("wisaID");
+                search.PropertiesToLoad.Add("classGroup");
+                search.PropertiesToLoad.Add("gender");
                 search.PropertiesToLoad.Add("userAccountControl");
                 search.PropertiesToLoad.Add("employeeID");
                 search.PropertiesToLoad.Add("memberOf");
@@ -222,7 +220,7 @@ namespace AccountApi.Directory
         {
             foreach (var account in Staff)
             {
-                if (account.WisaName == wisaID) return account;
+                if (account.WisaID == wisaID) return account;
             }
             return null;
         }

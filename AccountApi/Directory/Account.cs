@@ -18,11 +18,9 @@ namespace AccountApi.Directory
             firstName = entry.Properties.Contains("givenName") ? entry.Properties["givenName"].Value.ToString() : "";
             lastName = entry.Properties.Contains("sn") ? entry.Properties["sn"].Value.ToString() : "";
             fullName = entry.Properties.Contains("displayname") ? entry.Properties["displayname"].Value.ToString() : "";
-            mailAlias = entry.Properties.Contains("smamailalias") ? entry.Properties["smamailalias"].Value.ToString() : "";
-            wisaID = entry.Properties.Contains("smaWisaID") ? entry.Properties["smaWisaID"].Value.ToString() : "";
-            wisaName = entry.Properties.Contains("smawisaname") ? entry.Properties["smawisaname"].Value.ToString() : "";
-            classGroup = entry.Properties.Contains("smaClass") ? entry.Properties["smaClass"].Value.ToString() : "";
-            gender = entry.Properties.Contains("smaGender") ? entry.Properties["smaGender"].Value.ToString() : "not set";
+            wisaID = entry.Properties.Contains("wisaID") ? entry.Properties["wisaID"].Value.ToString() : "";
+            classGroup = entry.Properties.Contains("classGroup") ? entry.Properties["classGroup"].Value.ToString() : "";
+            gender = entry.Properties.Contains("gender") ? entry.Properties["gender"].Value.ToString() : "not set";
             copyCode = entry.Properties.Contains("employeeID") ? Convert.ToInt32(entry.Properties["employeeID"].Value) : 0;
             state = entry.Properties.Contains("userAccountControl") ? (int)entry.Properties["userAccountControl"].Value : 0;
             role = Connector.GetRoleFromPath(entry.Path);
@@ -47,9 +45,7 @@ namespace AccountApi.Directory
             firstName = obj.ContainsKey("firstName") ? obj["firstName"].ToString() : "";
             lastName = obj.ContainsKey("lastName") ? obj["lastName"].ToString() : "";
             fullName = obj.ContainsKey("fullName") ? obj["fullName"].ToString() : "";
-            mailAlias = obj.ContainsKey("mailAlias") ? obj["mailAlias"].ToString() : "";
             wisaID = obj.ContainsKey("wisaID") ? obj["wisaID"].ToString() : "";
-            wisaName = obj.ContainsKey("wisaName") ? obj["wisaName"].ToString() : "";
             classGroup = obj.ContainsKey("classGroup") ? obj["classGroup"].ToString() : "";
             gender = obj.ContainsKey("gender") ? obj["gender"].ToString() : "not set";
             state = obj.ContainsKey("state") ? Convert.ToInt32(obj["state"]) : 0;
@@ -96,9 +92,7 @@ namespace AccountApi.Directory
                 ["firstName"] = firstName,
                 ["lastName"] = lastName,
                 ["fullName"] = fullName,
-                ["mailAlias"] = mailAlias,
                 ["wisaID"] = wisaID,
-                ["wisaName"] = wisaName,
                 ["classGroup"] = classGroup,
                 ["state"] = state,
                 ["copyCode"] = copyCode,
@@ -158,7 +152,7 @@ namespace AccountApi.Directory
             {
                 var entry = GetEntry(uid);
                 gender = value;
-                entry.Properties["smaGender"].Value = gender;
+                entry.Properties["gender"].Value = gender;
                 entry.CommitChanges();
                 entry.Close();
             }
@@ -248,15 +242,29 @@ namespace AccountApi.Directory
            
         }
 
-        private string mailAlias;
-        public string MailAlias { get => mailAlias; }
-
         private string wisaID;
         public string WisaID { get => wisaID; }
 
-        private string wisaName;
-        public string WisaName { 
-            get => wisaName; 
+        public async Task SetWisaID(string id)
+
+        {
+
+            await Task.Run(() =>
+
+            {
+
+                var entry = GetEntry(uid);
+
+                wisaID = id;
+
+                entry.Properties["wisaID"].Value = wisaID;
+
+                entry.CommitChanges();
+
+                entry.Close();
+
+            });
+
         }
 
         private string classGroup;
@@ -326,17 +334,6 @@ namespace AccountApi.Directory
             });
         }
 
-        public async Task SetWisaName(string name)
-        {
-            await Task.Run(() =>
-            {
-                var entry = GetEntry(uid);
-                wisaName = name;
-                entry.Properties["smawisaname"].Value = wisaName;
-                entry.CommitChanges();
-                entry.Close();
-            });
-        }
 
         private int copyCode;
         public int CopyCode {
