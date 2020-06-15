@@ -165,6 +165,14 @@ namespace AccountManager.State.AD
             );
         }
 
+        public async Task ReloadGroups()
+        {
+            if (Connect())
+            {
+                await Groups.Load().ConfigureAwait(false);
+            }
+        }
+
         public IRule AddimportRule(Rule rule)
         {
             IRule newRule = null;

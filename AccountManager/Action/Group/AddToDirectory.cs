@@ -1,13 +1,23 @@
-﻿using System;
+﻿using AccountApi.Directory;
+using System;
 using System.Threading.Tasks;
 
 namespace AccountManager.Action.Group
 {
     public class AddToDirectory : GroupAction
     {
-        public override Task Apply(State.Linked.LinkedGroup linkedGroup)
+        public override async Task Apply(State.Linked.LinkedGroup linkedGroup)
         {
-            var directory = await AccountApi.Directory.ClassGroupManager.
+            if (linkedGroup != null)
+            {
+                var wisa = linkedGroup.Wisa.Group;
+                var path = Connector.GetStudentpath(wisa.Name);
+
+                Connector.CreateOUIfneeded(path);
+                await State.App.Instance.AD.ReloadGroups().ConfigureAwait(false);
+            }
+            
+            // return Task.FromResult(0);
         }
 
         public AddToDirectory() : base(

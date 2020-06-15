@@ -25,6 +25,7 @@ namespace AccountManager.Action.StudentAccount
                 UnregisterSmartschool.Evaluate(account);
                 DeleteFromSmartschool.Evaluate(account);
                 AddToDirectoryAndSmartschool.Evaluate(account);
+                AddToDirectory.Evaluate(account);
                 RemoveFromDirectoryAndSmartschool.Evaluate(account);
                 account.OK = false;
             }
@@ -32,10 +33,10 @@ namespace AccountManager.Action.StudentAccount
             {
                 ModifySmartschoolStudentAddress.Evaluate(account);
                 AddToADStudentGroup.Evaluate(account);
-                ModifyStudentHomeDir.Evaluate(account);
+                //ModifyStudentHomeDir.Evaluate(account);
                 ModifyAccountID.Evaluate(account);
                 ModifySmartschoolStemID.Evaluate(account);
-                CreateHomeDir.Evaluate(account);
+                //CreateHomeDir.Evaluate(account);
                 MoveDirectoryClassGroup.Evaluate(account);
                 MoveToSmartschoolClassGroup.Evaluate(account);
                 ModifyDirectoryData.Evaluate(account);

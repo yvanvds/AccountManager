@@ -155,6 +155,8 @@ namespace AccountManager.State.Smartschool
         {
             AccountApi.Smartschool.Connector.StudentPath = StudentGroup.Value;
             AccountApi.Smartschool.Connector.StaffPath = StaffGroup.Value;
+            AccountApi.Smartschool.Connector.StudentYear = years;
+            AccountApi.Smartschool.Connector.StudentGrade = grades;
 
             AccountApi.Smartschool.Connector.Init(
                 Uri.Value, Passphrase.Value, MainWindow.Instance.Log

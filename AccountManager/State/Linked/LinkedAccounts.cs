@@ -94,18 +94,38 @@ namespace AccountManager.State.Linked
 
             foreach(var account in AccountApi.Wisa.Students.All)
             {
-                AccountApi.Directory.Account match = AccountApi.Directory.AccountManager.GetStudentByWisaID(account.WisaID);
-                if(match != null)
+                bool linked = false;
+                AccountApi.Directory.Account directoryMatch = AccountApi.Directory.AccountManager.GetStudentByWisaID(account.WisaID);
+
+                if (directoryMatch != null)
                 {
-                    if (List.ContainsKey(match.UID))
+                    if (List.ContainsKey(directoryMatch.UID))
                     {
-                        List[match.UID].Wisa.Account = account;
+                        List[directoryMatch.UID].Wisa.Account = account;
+                        linked = true;
                     }
                     else
                     {
-                        List.Add(match.UID, new LinkedAccount(account));
+                        List.Add(directoryMatch.UID, new LinkedAccount(account));
+                        linked = true;
                     }
-                } else
+                }
+
+                if (!linked)
+                {
+                    var smartschoolMatch = (lln as AccountApi.Smartschool.Group).FindAccountByWisaID(account.WisaID);
+
+                    if (smartschoolMatch != null)
+                    {
+                        if (List.ContainsKey(smartschoolMatch.UID))
+                        {
+                            List[smartschoolMatch.UID].Wisa.Account = account;
+                            linked = true;
+                        }
+                    }
+                }
+
+                if (!linked)
                 {
                     List.Add(account.WisaID, new LinkedAccount(account));
                 }

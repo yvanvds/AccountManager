@@ -158,6 +158,7 @@
     <Compile Include="Action\StaffAccount\StaffMemberActionParser.cs" />
     <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
+    <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
     <Compile Include="Exporters\Passwords\Manager.cs" />

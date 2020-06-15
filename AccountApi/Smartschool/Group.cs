@@ -129,6 +129,19 @@ namespace AccountApi.Smartschool
             return null;
         }
 
+        public IGroup FindByCode(string groupCode)
+        {
+            if (Code.Equals(groupCode)) return this;
+            if (children == null) return null;
+            
+            foreach(var group in children)
+            {
+                var result = (group as Group).FindByCode(groupCode);
+                if (result != null) return result;
+            }
+            return null;
+        }
+
         public IAccount FindAccount(string uid)
         {
             if(Accounts != null)
@@ -146,6 +159,26 @@ namespace AccountApi.Smartschool
                 }
             }
 
+            return null;
+        }
+
+        public IAccount FindAccountByWisaID(string id)
+        {
+            if (Accounts != null)
+            {
+                foreach(var account in Accounts)
+                {
+                    if (account.AccountID == id) return account;
+                }
+            }
+            if (Children != null)
+            {
+                foreach(var child in Children)
+                {
+                    var result = (child as Group).FindAccountByWisaID(id);
+                    if (result != null) return result;
+                }
+            }
             return null;
         }
 

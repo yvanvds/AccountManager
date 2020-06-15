@@ -35,7 +35,7 @@ namespace AccountManager.Action.StudentAccount
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (account.Wisa.Exists && !account.Directory.Exists && !account.Directory.Exists)
+            if (account.Wisa.Exists && !account.Directory.Exists && !account.Smartschool.Exists)
             {
                 account.Actions.Add(new AddToDirectoryAndSmartschool());
             }

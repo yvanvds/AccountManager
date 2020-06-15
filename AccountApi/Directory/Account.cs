@@ -465,7 +465,7 @@ namespace AccountApi.Directory
         {
             var entry = GetEntry(UID);
             classGroup = ClassGroup;
-            entry.Properties["smaClass"].Value = ClassGroup;
+            entry.Properties["classGroup"].Value = ClassGroup;
             entry.CommitChanges();
             entry.MoveTo(newParent);
             entry.CommitChanges();

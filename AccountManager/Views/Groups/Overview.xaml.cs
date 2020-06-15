@@ -89,9 +89,12 @@ namespace AccountManager.Views.Groups
         {
             GroupAction action = (e.Source as Button).DataContext as GroupAction;
             action.InProgress.Value = true;
-            await action.Apply(SelectedGroup.Value);
-            await State.App.Instance.Linked.Groups.ReLink();
-            CreateCollection();
+            await action.Apply(SelectedGroup.Value).ConfigureAwait(false);
+            
+            await State.App.Instance.Linked.Groups.ReLink().ConfigureAwait(false);
+
+            Application.Current.Dispatcher.Invoke(new System.Action(() => CreateCollection()));
+
             action.InProgress.Value = false;
         }
     }
