@@ -107,21 +107,43 @@ namespace AccountManager.State.Linked
             AccountApi.Wisa.StaffManager.ApplyImportRules(App.Instance.Wisa.ImportRules.ToList());
             foreach (var account in AccountApi.Wisa.StaffManager.All)
             {
-                AccountApi.Directory.Account match = AccountApi.Directory.AccountManager.GetStaffmemberByWisaID(account.CODE);
-                if (match == null) match = AccountApi.Directory.AccountManager.GetStaffmemberByName(account.FirstName, account.LastName);
+                bool linked = false;
+                AccountApi.Directory.Account directoryMatch = AccountApi.Directory.AccountManager.GetStaffmemberByWisaID(account.CODE);
+                
+                if (directoryMatch == null) directoryMatch = AccountApi.Directory.AccountManager.GetStaffmemberByName(account.FirstName, account.LastName);
 
-                if (match != null)
+                if (directoryMatch != null)
                 {
-                    if (List.ContainsKey(match.UID) && !List[match.UID].Wisa.Exists)
+                    if (List.ContainsKey(directoryMatch.UID) && !List[directoryMatch.UID].Wisa.Exists)
                     {
-                        List[match.UID].Wisa.Account = account;
+                        List[directoryMatch.UID].Wisa.Account = account;
+                        linked = true;
                     }
                     else
                     {
                         List.Add("WISA-" + account.CODE, new LinkedStaffMember(account));
+                        linked = true;
                     }
                 }
-                else List.Add("WISA-" + account.CODE, new LinkedStaffMember(account));
+
+                if (!linked)
+                {
+                    var smartschoolMatch = (staff as AccountApi.Smartschool.Group).FindAccountByWisaID(account.CODE);
+
+                    if (smartschoolMatch != null)
+                    {
+                        if (List.ContainsKey(smartschoolMatch.UID))
+                        {
+                            List[smartschoolMatch.UID].Wisa.Account = account;
+                            linked = true;
+                        }
+                    }
+                }
+
+                if (!linked)
+                {
+                    List.Add("WISA-" + account.CODE, new LinkedStaffMember(account));
+                }
             }
 
             countAccounts();

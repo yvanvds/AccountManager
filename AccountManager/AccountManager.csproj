@@ -150,6 +150,7 @@
     </ApplicationDefinition>
     <Compile Include="Action\StaffAccount\AccountAction.cs" />
     <Compile Include="Action\StaffAccount\AddToADStaffGroup.cs" />
+    <Compile Include="Action\StaffAccount\AddToDirectory.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromAD.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromWisa.cs" />
     <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />

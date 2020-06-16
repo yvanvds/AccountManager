@@ -18,14 +18,21 @@ namespace AccountManager.Action.StaffAccount
             account.OK = true;
             account.SetBasicFlags();
 
-            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists || !account.Google.Exists)
+            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists)
             {
-                RemoveFromGoogle.Evaluate(account);
+                
+                AddToDirectory.Evaluate(account);
                 RemoveFromDirectory.Evaluate(account);
                 DontImportFromAD.Evaluate(account);
                 DontImportFromWisa.Evaluate(account);
                 account.OK = false;
-            } else
+            }
+            if (account.Google.Exists)
+            {
+                RemoveFromGoogle.Evaluate(account);
+            } 
+            
+            if (account.OK)
             {
                 UpdateWisaName.Evaluate(account);
                 AddToADStaffGroup.Evaluate(account);
