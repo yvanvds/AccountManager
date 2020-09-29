@@ -82,21 +82,21 @@ namespace AccountManager.State.Linked
                 }  
             }
 
-            if (AccountApi.Google.AccountManager.All != null)
-            foreach (var account in AccountApi.Google.AccountManager.All.Values)
-            {
-                if (account.IsStaff)
-                {
-                    if (List.ContainsKey(account.UID))
-                    {
-                        List[account.UID].Google.Account = account;
-                    }
-                    else
-                    {
-                        List.Add(account.UID, new LinkedStaffMember(account));
-                    }
-                }
-            }
+            //if (AccountApi.Google.AccountManager.All != null)
+            //foreach (var account in AccountApi.Google.AccountManager.All.Values)
+            //{
+            //    if (account.IsStaff)
+            //    {
+            //        if (List.ContainsKey(account.UID))
+            //        {
+            //            List[account.UID].Google.Account = account;
+            //        }
+            //        else
+            //        {
+            //            List.Add(account.UID, new LinkedStaffMember(account));
+            //        }
+            //    }
+            //}
 
             var staff = AccountApi.Smartschool.GroupManager.Root == null ? null : AccountApi.Smartschool.GroupManager.Root.Find("Personeel");
             if (staff != null)
@@ -169,7 +169,7 @@ namespace AccountManager.State.Linked
             foreach (var group in List.Values)
             {
                 if (group == null) continue;
-                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Directory.Exists || !group.Google.Exists);
+                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Directory.Exists);// || !group.Google.Exists);
                 if (group.Wisa.Exists)
                 {
                     totalWisaAccounts++;
@@ -188,12 +188,12 @@ namespace AccountManager.State.Linked
                     if (incomplete) unlinkedDirectoryAccounts++;
                     else linkedDirectoryAccounts++;
                 }
-                if (group.Google.Exists)
-                {
-                    totalGoogleAccounts++;
-                    if (incomplete) unlinkedGoogleAccounts++;
-                    else linkedGoogleAccounts++;
-                }
+                //if (group.Google.Exists)
+                //{
+                //    totalGoogleAccounts++;
+                //    if (incomplete) unlinkedGoogleAccounts++;
+                //    else linkedGoogleAccounts++;
+                //}
             }
         }
 

@@ -23,19 +23,21 @@
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
-    <PublishUrl>\\fssupport\SupportShare\AccountManager 2\</PublishUrl>
+    <PublishUrl>C:\Share\</PublishUrl>
     <Install>true</Install>
     <InstallFrom>Unc</InstallFrom>
-    <UpdateEnabled>false</UpdateEnabled>
+    <UpdateEnabled>true</UpdateEnabled>
     <UpdateMode>Foreground</UpdateMode>
     <UpdateInterval>7</UpdateInterval>
     <UpdateIntervalUnits>Days</UpdateIntervalUnits>
     <UpdatePeriodically>false</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
-    <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
+    <InstallUrl>\\accountmanager\Share\</InstallUrl>
+    <ProductName>AccountManager</ProductName>
+    <PublisherName>Yvan Vander Sanden</PublisherName>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>8</ApplicationRevision>
+    <ApplicationRevision>19</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -154,12 +156,15 @@
     <Compile Include="Action\StaffAccount\DontImportFromAD.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromWisa.cs" />
     <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />
+    <Compile Include="Action\StaffAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromDirectory.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromGoogle.cs" />
+    <Compile Include="Action\StaffAccount\RemoveFromSmartschool.cs" />
     <Compile Include="Action\StaffAccount\StaffMemberActionParser.cs" />
     <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
+    <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
     <Compile Include="Exporters\Passwords\Manager.cs" />

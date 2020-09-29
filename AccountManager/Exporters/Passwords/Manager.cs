@@ -136,7 +136,7 @@ namespace AccountManager.Exporters.Passwords
                         section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
                             "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
                             + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
-                        section.AddParagraph("Login     : " + pw.AccountName + "@smaschool.be", "PasswordStyle");
+                        section.AddParagraph("Login     : " + pw.Mail, "PasswordStyle");
                         section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
                     }
 
@@ -177,7 +177,7 @@ namespace AccountManager.Exporters.Passwords
             
         }
 
-        public async Task ExportStaffPasswordToPDF(string name, string username, string copycode, string networkPassword = null, string smartschoolPassword = null)
+        public async Task ExportStaffPasswordToPDF(string name, string username, string mail, string copycode, string networkPassword = null, string smartschoolPassword = null)
         {
             await Task.Run(() =>
             {
@@ -201,7 +201,7 @@ namespace AccountManager.Exporters.Passwords
                     section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
                         "communicatie met de school en je leerlingen verloopt steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
                         + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
-                    section.AddParagraph("Login     : " + username + "@smaschool.be", "PasswordStyle");
+                    section.AddParagraph("Login     : " + mail, "PasswordStyle");
                     section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
                 }
 
@@ -225,7 +225,7 @@ namespace AccountManager.Exporters.Passwords
                 pdfRenderer.Document = document;
                 pdfRenderer.RenderDocument();
 
-                string fileName = username + ".pdf";
+                string fileName = name + ".pdf";
                 try
                 {
                     pdfRenderer.PdfDocument.Save(fileName);

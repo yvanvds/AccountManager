@@ -1,9 +1,11 @@
-﻿using Newtonsoft.Json.Linq;
+﻿using AccountApi.SS;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -57,7 +59,7 @@ namespace AccountApi.Wisa
             using (StringReader reader = new StringReader(result))
             {
                 string line = reader.ReadLine();
-                if (!line.Equals("KLAS,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER"))
+                if (!line.Equals("KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER"))
                 {
                     Connector.Log?.AddError(Origin.Wisa, "Error while getting Classgroups. Headers do not match.");
                     return false;
@@ -80,9 +82,85 @@ namespace AccountApi.Wisa
                 }
             }
 
+            // remove doubles
+            var doubles = new List<ClassGroup>();
+
+            foreach(var group in all)
+            {
+                if (group.GroupName == "00" && UseSubGroups(group))
+                {
+                    doubles.Add(group);
+                } else if (group.GroupName != "00" && !UseSubGroups(group))
+                {
+                    doubles.Add(group);
+                }
+            }
+
+            foreach(var group in doubles)
+            {
+                all.Remove(group);
+            }
+
             Connector.Log?.AddMessage(Origin.Wisa, "Loading classgroups from " + school.Name + " succeeded.");
             return true;
         }
+
+        static ClassGroup GetFirstClass(ClassGroup original)
+        {
+            foreach(var group in all)
+            {
+                if (group.Name == original.Name && group.GroupName == "00")
+                {
+                    return group;
+                }
+            }
+            return null;
+        } 
+
+        static int CountGroups(string name)
+        {
+            int result = 0;
+            foreach(var group in all)
+            {
+                if (group.Name == name && group.GroupName != "00") result++;
+            }
+            return result;
+        }
+
+        static bool UseSubGroups(ClassGroup group)
+        {
+            List<string> admincodes = new List<string>();
+            foreach(var item in all)
+            {
+                if (item.Name.Equals(group.Name))
+                {
+                    if (!admincodes.Contains(item.AdminCode))
+                    {
+                        admincodes.Add(item.AdminCode);
+                    }
+                }
+            }
+
+            return (admincodes.Count > 1);
+        }
+
+        public static bool UseSubGroups(string className)
+        {
+            List<string> admincodes = new List<string>();
+            foreach (var item in all)
+            {
+                if (item.Name.Equals(className))
+                {
+                    if (!admincodes.Contains(item.AdminCode))
+                    {
+                        admincodes.Add(item.AdminCode);
+                    }
+                }
+            }
+
+            return (admincodes.Count > 1);
+        }
+
 
         public static JObject ToJson()
         {

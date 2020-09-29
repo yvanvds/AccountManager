@@ -9,7 +9,7 @@ namespace AccountManager.Action.StaffAccount
     class AddToADStaffGroup : AccountAction
     {
         public AddToADStaffGroup() : base(
-            "Toevoegen aan groep Teachers",
+            "Toevoegen aan leraren groep",
             "Wanneer dit account geen lid is van deze group, is de toegang van het account beperkt.",
             true, true)
         {
@@ -21,18 +21,18 @@ namespace AccountManager.Action.StaffAccount
             // TODO: should not be bound to school
             if (account.Directory.Account.Role == AccountApi.AccountRole.Teacher)
             {
-                await account.Directory.Account.AddToGroup("CN=TeachersOU=ArcadiaGroups,DC=arcadiascholen,DC=be").ConfigureAwait(false);
+                await account.Directory.Account.AddToGroup("CN=SMA-Leraren,OU=ArcadiaGroups,DC=arcadiascholen,DC=be").ConfigureAwait(false);
             }
             if (account.Directory.Account.Role == AccountApi.AccountRole.Support)
             {
-                await account.Directory.Account.AddToGroup("CN=Support,OU=ArcadiaGroups,DC=arcadiascholen,DC=be").ConfigureAwait(false);
+                await account.Directory.Account.AddToGroup("CN=SMA-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be").ConfigureAwait(false);
             }
         }
 
         public static void Evaluate(State.Linked.LinkedStaffMember account)
         {
             if (account.Directory.Account.Role == AccountApi.AccountRole.Teacher 
-                && !account.Directory.Account.Groups.Contains("CN=Teachers,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
+                && !account.Directory.Account.Groups.Contains("CN=SMA-Leraren,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
             {
                 account.Directory.FlagWarning();
                 account.Actions.Add(new AddToADStaffGroup());
@@ -40,7 +40,7 @@ namespace AccountManager.Action.StaffAccount
             }
 
             if (account.Directory.Account.Role == AccountApi.AccountRole.Support
-                && !account.Directory.Account.Groups.Contains("CN=Support,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
+                && !account.Directory.Account.Groups.Contains("CN=SMA-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
             {
                 account.Directory.FlagWarning();
                 account.Actions.Add(new AddToADStaffGroup());

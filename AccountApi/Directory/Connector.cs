@@ -32,6 +32,7 @@ namespace AccountApi.Directory
         public static string TeacherOU = "Leerkrachten";
         public static string SupportOU = "Secretariaat";
         public static string DirectorOU = "Directie";
+        public static string MaintenanceOU = "Onderhoud";
         public static string AdminOU = "IT";
         public static string OtherOU = "Andere";
 
@@ -146,25 +147,33 @@ namespace AccountApi.Directory
             firstname = firstname.Trim().ToLower();
             lastname = lastname.Trim().ToLower();
 
-            Regex rgx = new Regex("[^a-zA-Z]");
-            firstname = rgx.Replace(firstname, "");
-            lastname = rgx.Replace(lastname, "");
-
             string mail = firstname;
             mail += "."; mail += lastname;
+
+            mail = mail.Replace('à', 'a');
+            mail = mail.Replace('á', 'a');
+            mail = mail.Replace('ä', 'a');
+            mail = mail.Replace('è', 'e');
+            mail = mail.Replace('é', 'e');
+            mail = mail.Replace('ë', 'e');
+            mail = mail.Replace('ï', 'i');
+            mail = mail.Replace('ò', 'o');
+            mail = mail.Replace('ó', 'o');
+            mail = mail.Replace('ö', 'o');
+
+            Regex rgx = new Regex("[^a-zA-Z]");
+            mail = rgx.Replace(mail, "");
+
             mail += "@" + Connector.AzureDomain;
 
             int counter = 0;
 
-            while (await AccountManager.HasAlias(mail))
+            while (await AccountManager.HasAlias(mail + (counter > 0 ? counter.ToString() : "") + "@" + Connector.AzureDomain))
             {
                 counter++;
-                mail = firstname;
-                mail += "."; mail += lastname; mail += counter;
-                mail += "@" + Connector.AzureDomain;
             }
 
-            return mail;
+            return mail + (counter > 0 ? counter.ToString() : "") + "@" + Connector.AzureDomain;
         }
 
         public static void CreateOUIfneeded(string path)
@@ -216,6 +225,8 @@ namespace AccountApi.Directory
                     return "OU=" + SupportOU + "," + StaffPath;
                 case AccountRole.Teacher:
                     return "OU=" + TeacherOU + "," + StaffPath;
+                case AccountRole.Maintenance:
+                    return "OU=" + MaintenanceOU + "," + StaffPath;
                 case AccountRole.Student:
                     return GetStudentpath(classgroup);
                 default:
@@ -230,6 +241,7 @@ namespace AccountApi.Directory
             if (path.ToUpper().Contains("OU=" + SupportOU.ToUpper())) return AccountRole.Support;
             if (path.ToUpper().Contains("OU=" + TeacherOU.ToUpper())) return AccountRole.Teacher;
             if (path.ToUpper().Contains(studentPath.ToUpper())) return AccountRole.Student;
+            if (path.ToUpper().Contains("OU=" + MaintenanceOU.ToUpper())) return AccountRole.Maintenance;
 
             return AccountRole.Other;
         }

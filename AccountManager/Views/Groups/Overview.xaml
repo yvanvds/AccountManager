@@ -90,6 +90,15 @@
                                     <StackPanel Grid.Column="0">
                                         <TextBlock Text="{Binding Header}" FontSize="20" Foreground="Chocolate" Margin="0 0 0 8"/>
                                         <TextBlock Text="{Binding Description}" FontWeight="Light" TextWrapping="Wrap"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <StackPanel Orientation="Horizontal" Visibility="{Binding CanShowDetails, Converter={StaticResource VisibleIfTrueConverter}}">
+                                                <Button Style="{StaticResource MaterialDesignFlatButton}"
+                                                            Click="ShowDetails_Click">
+                                                    DETAILS
+                                                </Button>
+                                            </StackPanel>
+                                            
+                                        </StackPanel>
                                     </StackPanel>
                                     <Button Grid.Column="1"
                                             Click="ActionButton_Click"

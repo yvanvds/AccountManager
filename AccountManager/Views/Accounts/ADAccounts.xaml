@@ -167,13 +167,13 @@
                     <Label Grid.Row="5" Grid.Column="0" Content="Wisa ID" FontWeight="Bold"/>
                     <Label Grid.Row="5" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.WisaID}"/>
 
-                    <Label Grid.Row="6" Grid.Column="0" Content="Wisa Naam" FontWeight="Bold"/>
-                    <Label Grid.Row="6" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.WisaName}"/>
-
-                    <Separator Grid.Row="7" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
+                    <Separator Grid.Row="6" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
+                    
+                    <Label Grid.Row="7" Grid.Column="0" Content="Wisa Naam" FontWeight="Bold"/>
+                    <Label Grid.Row="7" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Mail}"/>
 
                     <Label Grid.Row="8" Grid.Column="0" Content="Mail Alias" FontWeight="Bold"/>
-                    <Label Grid.Row="8" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.MailAlias}"/>
+                    <Label Grid.Row="8" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.PrincipalName}"/>
 
                     <Label Grid.Row="9" Grid.Column="0" Content="Klas" FontWeight="Bold"/>
                     <Label Grid.Row="9" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.ClassGroup}"/>

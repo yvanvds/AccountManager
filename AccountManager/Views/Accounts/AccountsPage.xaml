@@ -31,9 +31,9 @@
             <TabItem x:Name="ADTab" Header="AD">
                 <local:ADAccounts/>
             </TabItem>
-            <TabItem x:Name="GoogleTab" Header="Google">
+            <!--<TabItem x:Name="GoogleTab" Header="Google">
                 <local:GoogleAccounts></local:GoogleAccounts>
-            </TabItem>
+            </TabItem>-->
             <TabItem x:Name="SmartschoolTab" Header="Smartschool">
                 <local:SmartschoolAccounts/>
             </TabItem>

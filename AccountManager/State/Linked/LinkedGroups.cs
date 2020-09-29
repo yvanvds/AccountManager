@@ -54,12 +54,12 @@ namespace AccountManager.State.Linked
             List.Clear();
             foreach(var group in AccountApi.Wisa.ClassGroupManager.All)
             {
-                if(List.ContainsKey(group.Name))
+                if(List.ContainsKey(group.FullName))
                 {
-                    List[group.Name].Wisa.Group = group;
+                    List[group.FullName].Wisa.Group = group;
                 } else
                 {
-                    List.Add(group.Name, new LinkedGroup(group));
+                    List.Add(group.FullName, new LinkedGroup(group));
                 }  
             }
 

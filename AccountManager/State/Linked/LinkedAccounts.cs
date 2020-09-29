@@ -72,19 +72,19 @@ namespace AccountManager.State.Linked
                 }
             }
 
-            foreach(var account in AccountApi.Google.AccountManager.All.Values)
-            {
-                if(!account.IsStaff)
-                {
-                    if(List.ContainsKey(account.UID))
-                    {
-                        List[account.UID].Google.Account = account;
-                    } else
-                    {
-                        List.Add(account.UID, new LinkedAccount(account));
-                    }
-                }
-            }
+            //foreach(var account in AccountApi.Google.AccountManager.All.Values)
+            //{
+            //    if(!account.IsStaff)
+            //    {
+            //        if(List.ContainsKey(account.UID))
+            //        {
+            //            List[account.UID].Google.Account = account;
+            //        } else
+            //        {
+            //            List.Add(account.UID, new LinkedAccount(account));
+            //        }
+            //    }
+            //}
 
             var lln = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
             if(lln != null)
@@ -158,12 +158,12 @@ namespace AccountManager.State.Linked
                     if (incomplete) unlinkedDirectoryAccounts++;
                     else linkedDirectoryAccounts++;
                 }
-                if (group.Google.Exists)
-                {
-                    totalGoogleAccounts++;
-                    if (incomplete) unlinkedGoogleAccounts++;
-                    else linkedGoogleAccounts++;
-                }
+                //if (group.Google.Exists)
+                //{
+                //    totalGoogleAccounts++;
+                //    if (incomplete) unlinkedGoogleAccounts++;
+                //    else linkedGoogleAccounts++;
+                //}
             }
 
             // add actions

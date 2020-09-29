@@ -18,6 +18,8 @@ namespace AccountApi.Directory
             firstName = entry.Properties.Contains("givenName") ? entry.Properties["givenName"].Value.ToString() : "";
             lastName = entry.Properties.Contains("sn") ? entry.Properties["sn"].Value.ToString() : "";
             fullName = entry.Properties.Contains("displayname") ? entry.Properties["displayname"].Value.ToString() : "";
+            mail = entry.Properties.Contains("mail") ? entry.Properties["mail"].Value.ToString() : "";
+            principalName = entry.Properties.Contains("userPrincipalName") ? entry.Properties["userPrincipalName"].Value.ToString() : "";
             wisaID = entry.Properties.Contains("wisaID") ? entry.Properties["wisaID"].Value.ToString() : "";
             classGroup = entry.Properties.Contains("classGroup") ? entry.Properties["classGroup"].Value.ToString() : "";
             gender = entry.Properties.Contains("gender") ? entry.Properties["gender"].Value.ToString() : "not set";
@@ -45,6 +47,8 @@ namespace AccountApi.Directory
             firstName = obj.ContainsKey("firstName") ? obj["firstName"].ToString() : "";
             lastName = obj.ContainsKey("lastName") ? obj["lastName"].ToString() : "";
             fullName = obj.ContainsKey("fullName") ? obj["fullName"].ToString() : "";
+            mail = obj.ContainsKey("mail") ? obj["mail"].ToString() : "";
+            principalName = obj.ContainsKey("userPrincipalName") ? obj["userPrincipalName"].ToString() : "";
             wisaID = obj.ContainsKey("wisaID") ? obj["wisaID"].ToString() : "";
             classGroup = obj.ContainsKey("classGroup") ? obj["classGroup"].ToString() : "";
             gender = obj.ContainsKey("gender") ? obj["gender"].ToString() : "not set";
@@ -61,6 +65,7 @@ namespace AccountApi.Directory
                 case "Teacher": role = AccountRole.Teacher; break;
                 case "Director": role = AccountRole.Director; break;
                 case "Support": role = AccountRole.Support; break;
+                case "Maintenance": role = AccountRole.Maintenance; break;
                 case "IT": role = AccountRole.IT; break;
                 default: role = AccountRole.Other; break;
             } 
@@ -92,6 +97,8 @@ namespace AccountApi.Directory
                 ["firstName"] = firstName,
                 ["lastName"] = lastName,
                 ["fullName"] = fullName,
+                ["mail"] = mail,
+                ["userPrincipalName"] = principalName,
                 ["wisaID"] = wisaID,
                 ["classGroup"] = classGroup,
                 ["state"] = state,
@@ -173,6 +180,42 @@ namespace AccountApi.Directory
                 }
                 catch (Exception) { }
                 
+            }
+        }
+
+        private string mail;
+        public string Mail
+        {
+            get => mail;
+            set
+            {
+                mail = value;
+                try
+                {
+                    var entry = GetEntry(uid);
+                    entry.Properties["mail"].Value = mail;
+                    entry.CommitChanges();
+                    entry.Close();
+                }
+                catch (Exception) { }
+            }
+        }
+
+        private string principalName;
+        public string PrincipalName
+        {
+            get => principalName;
+            set
+            {
+                principalName = value;
+                try
+                {
+                    var entry = GetEntry(uid);
+                    entry.Properties["userPrincipalName"].Value = principalName;
+                    entry.CommitChanges();
+                    entry.Close();
+                }
+                catch (Exception) { }
             }
         }
 

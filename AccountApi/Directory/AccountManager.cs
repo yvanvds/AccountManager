@@ -415,7 +415,7 @@ namespace AccountApi.Directory
                 entry.Properties["sn"].Value = lastName;
                 entry.Properties["displayName"].Value = firstName + " " + lastName;
                 entry.Properties["mail"].Value = alias;
-                entry.Properties["userPrincipalName"].Value = uid + "@" + Connector.AzureDomain;
+                entry.Properties["userPrincipalName"].Value = alias;
 
                 // TODO: move mail alias to another property so we can get rid of the custom objectClass
                 //entry.Properties["objectClass"].Add("smaSchoolPerson");
@@ -441,7 +441,7 @@ namespace AccountApi.Directory
                 entry.Properties["sn"].Value = lastName;
                 entry.Properties["displayName"].Value = firstName + " " + lastName;
                 entry.Properties["mail"].Value = alias;
-                entry.Properties["userPrincipalName"].Value = uid + "@" + Connector.AzureDomain;
+                entry.Properties["userPrincipalName"].Value = alias;
 
                 // TODO: move mail alias to another property so we can get rid of the custom objectClass
                // entry.Properties["objectClass"].Add("smaSchoolPerson");
@@ -460,7 +460,7 @@ namespace AccountApi.Directory
         {
             var account = new Account(entry);
             //await account.SetHome();
-            await account.AddToGroup("CN=Students,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+            await account.AddToGroup("CN=SMA-Leerlingen,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
             //await CreateHomeDir(account);
             Students.Add(account);
             return account;
@@ -474,14 +474,21 @@ namespace AccountApi.Directory
             switch (role)
             {
                 case AccountRole.Director:
-                    await account.AddToGroup("CN=Directors,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
-                    await account.AddToGroup("CN=Support,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+                    await account.AddToGroup("CN=SMA-Directie,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+                    await account.AddToGroup("CN=SMA-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
                     break;
                 case AccountRole.Support:
-                    await account.AddToGroup("CN=Support,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+                    await account.AddToGroup("CN=SMA-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+                    break;
+                case AccountRole.Maintenance:
+                    await account.AddToGroup("CN=SMA-Onderhoud,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
                     break;
                 case AccountRole.Teacher:
-                    await account.AddToGroup("CN=Teachers,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+                    await account.AddToGroup("CN=SMA-Leraren,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+                    break;
+                case AccountRole.IT:
+                    await account.AddToGroup("CN=SMA-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
+                    await account.AddToGroup("CN=SMA-Leraren,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
                     break;
             }
 

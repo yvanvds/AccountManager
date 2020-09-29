@@ -67,7 +67,7 @@ namespace AccountApi.Wisa
             using (StringReader reader = new StringReader(result))
             {
                 string line = reader.ReadLine();
-                if (!line.Equals("KLAS,NAAM,VOORNAAM,GEBOORTEDATUM,WISAID,STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,NATIONALITEIT,STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,KLASWIJZIGING"))
+                if (!line.Equals("KLAS,KLASGROEP,NAAM,VOORNAAM,GEBOORTEDATUM,WISAID,STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,NATIONALITEIT,STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,KLASWIJZIGING"))
                 {
                     Connector.Log?.AddError(Origin.Wisa, "Error while getting students. Headers do not match.");
                     return false;
@@ -125,6 +125,7 @@ namespace AccountApi.Wisa
  * 
  * SELECT DISTINCT 
 	klas.KL_CODE as KLAS,
+KLASGROEP.KG_CODE AS KLASGROEP,
 	leerling.LL_NAAM as NAAM,
 	leerling.LL_VOORNAAM as VOORNAAM,
 	leerling.LL_GEBOORTEDATUM as GEBOORTEDATUM,

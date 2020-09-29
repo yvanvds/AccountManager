@@ -11,7 +11,7 @@ namespace AccountManager.Action.Group
             if (linkedGroup != null)
             {
                 var wisa = linkedGroup.Wisa.Group;
-                var path = Connector.GetStudentpath(wisa.Name);
+                var path = Connector.GetStudentpath(wisa.FullName);
 
                 Connector.CreateOUIfneeded(path);
                 await State.App.Instance.AD.ReloadGroups().ConfigureAwait(false);

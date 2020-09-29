@@ -58,7 +58,7 @@ namespace AccountManager.ViewModels.Accounts
                     case "None": accounts.Add(account); break;
                     case "Naam": if (account.Name.Contains(FilterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
                     case "Voornaam": if (account.FirstName.Contains(FilterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
-                    case "Klas": if (account.ClassGroup.Contains(FilterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
+                    case "Klas": if (account.ClassName.Contains(FilterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
                 }
             }
 

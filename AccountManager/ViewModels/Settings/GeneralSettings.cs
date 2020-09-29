@@ -56,6 +56,16 @@ namespace AccountManager.ViewModels.Settings
                 PropertyChanged(this, new PropertyChangedEventArgs(nameof(DebugMode)));
             } 
         }
+
+        public bool WorkDateVirtualIsNow
+        {
+            get => State.App.Instance.Wisa.WorkDateVirtualIsNow.Value;
+            set
+            {
+                State.App.Instance.Wisa.WorkDateVirtualIsNow.Value = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(WorkDateVirtualIsNow)));
+            }
+        }
         public bool WorkDateIsNow { 
             get => State.App.Instance.Wisa.WorkDateIsNow.Value;
             set {
@@ -64,13 +74,13 @@ namespace AccountManager.ViewModels.Settings
             } 
         }
 
-        public bool WorkDateOnlyForVirtualSchools
+        public DateTime WorkDateVirtual
         {
-            get => State.App.Instance.Wisa.WorkDateOnlyVirtual.Value;
+            get => State.App.Instance.Wisa.WorkDateVirtual.Value;
             set
             {
-                State.App.Instance.Wisa.WorkDateOnlyVirtual.Value = value;
-                PropertyChanged(this, new PropertyChangedEventArgs(nameof(WorkDateOnlyForVirtualSchools)));
+                State.App.Instance.Wisa.WorkDateVirtual.Value = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(WorkDateVirtual)));
             }
         }
         public DateTime WorkDate { 

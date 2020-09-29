@@ -10,15 +10,17 @@ namespace AccountManager.Exporters.Passwords
     public class AccountPassword : AbstractPassword
     {
         public string AccountName { get; }
+        public string Mail { get; }
         public string Name { get; }
         public string ClassGroup { get; }
         public string ADPassword { get; }
         public string SSPassword { get; }
 
-        public AccountPassword(string AccountName, string Name, string ClassGroup, string ADPassword, string SSPassword)
+        public AccountPassword(string AccountName, string Name, string mail, string ClassGroup, string ADPassword, string SSPassword)
         {
             this.AccountName = AccountName;
             this.Name = Name;
+            this.Mail = mail;
             this.ClassGroup = ClassGroup;
             this.ADPassword = ADPassword;
             this.SSPassword = SSPassword;
@@ -28,6 +30,7 @@ namespace AccountManager.Exporters.Passwords
         {
             AccountName = obj["AccountName"].ToString();
             Name = obj["Name"].ToString();
+            Mail = obj["Mail"].ToString();
             ClassGroup = obj["ClassGroup"].ToString();
             ADPassword = obj["ADPassword"].ToString();
             SSPassword = obj["SSPassword"].ToString();
@@ -39,6 +42,7 @@ namespace AccountManager.Exporters.Passwords
             {
                 ["AccountName"] = AccountName,
                 ["Name"] = Name,
+                ["Mail"] = Mail,
                 ["ClassGroup"] = ClassGroup,
                 ["ADPassword"] = ADPassword,
                 ["SSPassword"] = SSPassword,

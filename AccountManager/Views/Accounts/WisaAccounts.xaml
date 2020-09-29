@@ -117,7 +117,7 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding Name}" Header="Naam" IsReadOnly="True" />
                     <DataGridTextColumn Binding="{Binding FirstName}" Header="Voornaam" IsReadOnly="True"/>
-                    <DataGridTextColumn Binding="{Binding ClassGroup}" Header="Klas" IsReadOnly="True"/>
+                    <DataGridTextColumn Binding="{Binding ClassName}" Header="Klas" IsReadOnly="True"/>
                 </DataGrid.Columns>
             </DataGrid>
 
@@ -158,7 +158,7 @@
                     <Label Grid.Row="1" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.FirstName}"/>
 
                     <Label Grid.Row="2" Grid.Column="0" Content="Klas" FontWeight="Bold"/>
-                    <Label Grid.Row="2" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.ClassGroup}"/>
+                    <Label Grid.Row="2" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.ClassName}"/>
 
                     <Label Grid.Row="3" Grid.Column="0" Content="Gender" FontWeight="Bold"/>
                     <Label Grid.Row="3" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Gender}"/>

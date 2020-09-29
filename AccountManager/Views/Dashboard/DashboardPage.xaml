@@ -120,7 +120,7 @@
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox Grid.Column="3" Header="Google Sync"  Margin="0 0 8 0">
+            <!--<GroupBox Grid.Column="3" Header="Google Sync"  Margin="0 0 8 0">
                 <StackPanel Orientation="Vertical">
 
                     <TextBlock
@@ -139,9 +139,9 @@
                                 Margin="2,0" />
 
                 </StackPanel>
-            </GroupBox>
+            </GroupBox>-->
 
-            <GroupBox Grid.Column="4" Header="AzureSync">
+            <!--<GroupBox Grid.Column="4" Header="AzureSync">
                 <StackPanel Orientation="Vertical">
 
                     <TextBlock
@@ -159,7 +159,7 @@
                                 Margin="2,0" />
 
                 </StackPanel>
-            </GroupBox>
+            </GroupBox>-->
 
         </Grid>
 

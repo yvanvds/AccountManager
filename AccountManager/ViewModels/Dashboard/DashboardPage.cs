@@ -11,7 +11,7 @@ namespace AccountManager.ViewModels.Dashboard
     class DashboardPage : INotifyPropertyChanged, State.IStateObserver
     {
         State.Wisa.WisaState Wisa;
-        State.Google.GoogleState Google;
+        //State.Google.GoogleState Google;
         State.AD.ADState AD;
         State.Smartschool.SmartschoolState Smartschool;
         State.Azure.AzureState Azure;
@@ -21,19 +21,19 @@ namespace AccountManager.ViewModels.Dashboard
         public IAsyncCommand SyncWisaAccountsCommand { get; private set; }
         public IAsyncCommand SyncADAccountsCommand { get; private set; }
         public IAsyncCommand SyncSmartschoolAccountsCommand { get; private set; }
-        public IAsyncCommand SyncGoogleAccountsCommand { get; private set; }
+        //public IAsyncCommand SyncGoogleAccountsCommand { get; private set; }
         public IAsyncCommand SyncAzureAccountsCommand { get; private set; }
 
         public DashboardPage()
         {
             Wisa = State.App.Instance.Wisa;
-            Google = State.App.Instance.Google;
+            //Google = State.App.Instance.Google;
             AD = State.App.Instance.AD;
             Smartschool = State.App.Instance.Smartschool;
             Azure = State.App.Instance.Azure;
 
             Wisa.AddObserver(this);
-            Google.AddObserver(this);
+            //Google.AddObserver(this);
             AD.AddObserver(this);
             Smartschool.AddObserver(this);
             Azure.AddObserver(this);
@@ -43,7 +43,7 @@ namespace AccountManager.ViewModels.Dashboard
             SyncWisaAccountsCommand = new RelayAsyncCommand(SyncWisaAccounts);
             SyncADAccountsCommand = new RelayAsyncCommand(SyncDirectoryAccounts);
             SyncSmartschoolAccountsCommand = new RelayAsyncCommand(SyncSmartschoolAccounts);
-            SyncGoogleAccountsCommand = new RelayAsyncCommand(SyncGoogleAccounts);
+            //SyncGoogleAccountsCommand = new RelayAsyncCommand(SyncGoogleAccounts);
             SyncAzureAccountsCommand = new RelayAsyncCommand(SyncAzureAccounts);
         }
 
@@ -55,13 +55,13 @@ namespace AccountManager.ViewModels.Dashboard
             IndicatorAzureAccount = false;
         }
 
-        private async Task SyncGoogleAccounts()
-        {
-            IndicatorGoogleAccount = true;
-            Google.Connect();
-            await Google.Accounts.Load().ConfigureAwait(false);
-            IndicatorGoogleAccount = false;
-        }
+        //private async Task SyncGoogleAccounts()
+        //{
+        //    IndicatorGoogleAccount = true;
+        //    //Google.Connect();
+        //    //await Google.Accounts.Load().ConfigureAwait(false);
+        //    IndicatorGoogleAccount = false;
+        //}
 
         private async Task SyncSmartschoolAccounts()
         {
@@ -198,21 +198,21 @@ namespace AccountManager.ViewModels.Dashboard
         }
         #endregion
 
-        #region GoogleProps
-        public DateTime GoogleAccountDate { get => Google.Accounts.LastSync; }
-        public string GoogleAccountColor { get => GetColor(Google.Accounts.LastSync); }
+        //#region GoogleProps
+        //public DateTime GoogleAccountDate { get => Google.Accounts.LastSync; }
+        //public string GoogleAccountColor { get => GetColor(Google.Accounts.LastSync); }
 
-        bool indicatorGoogleAccount = false;
-        public bool IndicatorGoogleAccount
-        {
-            get => indicatorGoogleAccount;
-            set
-            {
-                indicatorGoogleAccount = value;
-                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorGoogleAccount)));
-            }
-        }
-        #endregion
+        //bool indicatorGoogleAccount = false;
+        //public bool IndicatorGoogleAccount
+        //{
+        //    get => indicatorGoogleAccount;
+        //    set
+        //    {
+        //        indicatorGoogleAccount = value;
+        //        PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorGoogleAccount)));
+        //    }
+        //}
+        //#endregion
 
         public void OnStateChanges()
         {
@@ -229,8 +229,8 @@ namespace AccountManager.ViewModels.Dashboard
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(SmartschoolAccountDate)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(SmartschoolAccountColor)));
 
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountDate)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountColor)));
+            //PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountDate)));
+            //PropertyChanged(this, new PropertyChangedEventArgs(nameof(GoogleAccountColor)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureAccountDate)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureAccountColor)));

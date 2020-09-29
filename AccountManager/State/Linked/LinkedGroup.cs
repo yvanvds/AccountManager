@@ -34,7 +34,12 @@ namespace AccountManager.State.Linked
         {
             get
             {
-                if (Wisa.Group != null) return Wisa.Group.Name;
+                if (Wisa.Group != null)
+                {
+                    var result = Wisa.Group.Name;
+                    if (Wisa.Group.GroupName != "00") result += " " + Wisa.Group.GroupName;
+                    return result;
+                }
                 if (Directory.Group != null) return Directory.Group.Name;
                 if (Smartschool.Group != null) return Smartschool.Group.Name;
                 return "Group Name Error";

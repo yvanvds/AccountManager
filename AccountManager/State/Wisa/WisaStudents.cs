@@ -28,13 +28,13 @@ namespace AccountManager.State.Wisa
                     var workDate = DateTime.Now;
                     if (App.Instance.Wisa.IsSchoolVirtual(school))
                     {
-                        if (!App.Instance.Wisa.WorkDateIsNow.Value)
+                        if (!App.Instance.Wisa.WorkDateVirtualIsNow.Value)
                         {
-                            workDate = App.Instance.Wisa.WorkDate.Value;
+                            workDate = App.Instance.Wisa.WorkDateVirtual.Value;
                         }
                     } else
                     {
-                        if (!App.Instance.Wisa.WorkDateIsNow.Value && !App.Instance.Wisa.WorkDateOnlyVirtual.Value)
+                        if (!App.Instance.Wisa.WorkDateIsNow.Value)
                         {
                             workDate = App.Instance.Wisa.WorkDate.Value;
                         }

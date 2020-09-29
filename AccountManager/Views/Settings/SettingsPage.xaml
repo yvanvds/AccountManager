@@ -30,9 +30,9 @@
             <TabItem Header="Azure">
                 <local:AzureSettings/>
             </TabItem>
-            <TabItem Header="Google">
+            <!--<TabItem Header="Google">
                 <local:GoogleSettings/>
-            </TabItem>
+            </TabItem>-->
             <TabItem Header="Smartschool">
                 <local:SmartschoolSettings/>
             </TabItem>

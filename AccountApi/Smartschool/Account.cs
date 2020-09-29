@@ -219,6 +219,7 @@ namespace AccountApi.Smartschool
                 case "Student": Role = AccountRole.Student; break;
                 case "Other": Role = AccountRole.Other; break;
                 case "Teacher": Role = AccountRole.Teacher; break;
+                case "Maintenance": Role = AccountRole.Maintenance; break;
                 case "Support": Role = AccountRole.Support; break;
             }
             StemID = Convert.ToInt32(obj["StemID"]);

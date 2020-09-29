@@ -30,6 +30,7 @@ namespace AccountApi.Smartschool
                 case AccountRole.Student: role = "Leerling"; break;
                 case AccountRole.Support:
                 case AccountRole.IT:
+                case AccountRole.Maintenance:
                 case AccountRole.Teacher: role = "Leerkracht"; break;
                 case AccountRole.Director: role = "Directie"; break;
                 default: return false; // other accounts should be no part of smartschool

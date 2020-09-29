@@ -24,7 +24,7 @@ namespace AccountManager.Action.StaffAccount
 
         public static void Evaluate(State.Linked.LinkedStaffMember account)
         {
-            if (account.Wisa.Exists && !account.Smartschool.Exists && !account.Directory.Exists && !account.Google.Exists)
+            if (account.Wisa.Exists && !account.Smartschool.Exists && !account.Directory.Exists)// && !account.Google.Exists)
             {
                 account.Actions.Add(new DontImportFromWisa());
             }

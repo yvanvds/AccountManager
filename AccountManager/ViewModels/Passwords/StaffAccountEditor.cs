@@ -40,11 +40,11 @@ namespace AccountManager.ViewModels.Passwords
                 var password = AccountApi.Password.Create();
                 account.SetPassword(password);
 
-                var google = AccountApi.Google.AccountManager.Find(account.UID);
-                if (google != null)
-                {
-                    await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
-                }
+                //var google = AccountApi.Google.AccountManager.Find(account.UID);
+                //if (google != null)
+                //{
+                //    await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
+                //}
 
                 string ssPassword = null;
                 var smartschool = AccountApi.Smartschool.GroupManager.Root.FindAccount(account.UID);
@@ -55,7 +55,7 @@ namespace AccountManager.ViewModels.Passwords
                 }
 
                 await Exporters.PasswordManager.Instance.Accounts
-                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.CopyCode.ToString(), password, ssPassword)
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password, ssPassword)
                     .ConfigureAwait(false);
             }).ConfigureAwait(false);
 
@@ -75,7 +75,7 @@ namespace AccountManager.ViewModels.Passwords
                 await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, password, AccountType.Student).ConfigureAwait(false);
 
                 await Exporters.PasswordManager.Instance.Accounts
-                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.CopyCode.ToString(), null, password)
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), null, password)
                     .ConfigureAwait(false);
             }
             SmartschoolPWIndicator = false;
@@ -88,14 +88,14 @@ namespace AccountManager.ViewModels.Passwords
             var password = AccountApi.Password.Create();
             account.SetPassword(password);
 
-            var google = AccountApi.Google.AccountManager.Find(account.UID);
-            if (google != null)
-            {
-                await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
-            }
+            //var google = AccountApi.Google.AccountManager.Find(account.UID);
+            //if (google != null)
+            //{
+            //    await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
+            //}
 
             await Exporters.PasswordManager.Instance.Accounts
-                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.CopyCode.ToString(), password)
+                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password)
                 .ConfigureAwait(false);
             NetworkPWIndicator = false;
         }
@@ -162,11 +162,11 @@ namespace AccountManager.ViewModels.Passwords
             {
                 await AccountApi.Smartschool.AccountManager.Delete(smartschool).ConfigureAwait(false);
             }
-            var google = AccountApi.Google.AccountManager.Find(account.UID);
-            if (google != null)
-            {
-                await AccountApi.Google.AccountManager.Delete(google).ConfigureAwait(false);
-            }
+            //var google = AccountApi.Google.AccountManager.Find(account.UID);
+            //if (google != null)
+            //{
+            //    await AccountApi.Google.AccountManager.Delete(google).ConfigureAwait(false);
+            //}
             account = null;
             DeleteEnabled = true;
         }

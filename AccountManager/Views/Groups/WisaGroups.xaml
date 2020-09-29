@@ -108,6 +108,7 @@
               materialDesign:DataGridAssist.ColumnHeaderPadding="8">
             <DataGrid.Columns>
                 <DataGridTextColumn Binding="{Binding Name}" Header="Naam" IsReadOnly="True" />
+                <DataGridTextColumn Binding="{Binding GroupName}" Header="Groep" IsReadOnly="True"/>
                 <DataGridTextColumn Binding="{Binding Description}" Header="Omschrijving" IsReadOnly="True"/>
                 <DataGridTextColumn Binding="{Binding AdminCode}" Header="Administratieve Code" IsReadOnly="True"/>
                 <DataGridTextColumn Binding="{Binding SchoolCode}" Header="Instellingsnummer" IsReadOnly="True"/>

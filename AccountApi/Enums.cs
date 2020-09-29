@@ -20,6 +20,7 @@ namespace AccountApi
         Teacher,
         Support,
         Director,
+        Maintenance,
         IT,
     }
 

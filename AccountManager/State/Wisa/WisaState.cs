@@ -21,7 +21,8 @@ namespace AccountManager.State.Wisa
         public ConfigValue<string> Password;
         public ConfigValue<DateTime> WorkDate;
         public ConfigValue<bool> WorkDateIsNow;
-        public ConfigValue<bool> WorkDateOnlyVirtual;
+        public ConfigValue<DateTime> WorkDateVirtual;
+        public ConfigValue<bool> WorkDateVirtualIsNow;
 
         public ObservableCollection<IRule> ImportRules { get; set; } = new ObservableCollection<IRule>();
 
@@ -40,8 +41,9 @@ namespace AccountManager.State.Wisa
             Connection = new ConfigValue<ConnectionState>("connectionTested", ConnectionState.Unknown, UpdateObservers);
             
             WorkDateIsNow = new ConfigValue<bool>("workDateNow", true, UpdateObservers);
-            WorkDateOnlyVirtual = new ConfigValue<bool>("workDateOnlyForVitualSchools", true, UpdateObservers);
-            WorkDate = new ConfigValue<DateTime>("workData", DateTime.Now, UpdateObservers);   
+            WorkDate = new ConfigValue<DateTime>("workData", DateTime.Now, UpdateObservers);
+            WorkDateVirtualIsNow = new ConfigValue<bool>(" workDateVirtualNow", true, UpdateObservers);
+            WorkDateVirtual = new ConfigValue<DateTime>("workDateVirtual", DateTime.Now, UpdateObservers);
         }
 
         public override void LoadConfig(JObject obj)
@@ -54,10 +56,15 @@ namespace AccountManager.State.Wisa
             Connection.Load(obj);
             WorkDateIsNow.Load(obj);
             WorkDate.Load(obj);
-            WorkDateOnlyVirtual.Load(obj);
             if (WorkDateIsNow.Value)
             {
                 WorkDate.Value = DateTime.Now;
+            }
+            WorkDateVirtualIsNow.Load(obj);
+            WorkDateVirtual.Load(obj);
+            if(WorkDateVirtualIsNow.Value)
+            {
+                WorkDateVirtual.Value = DateTime.Now;
             }
 
             if (obj.ContainsKey("importRules"))
@@ -90,7 +97,8 @@ namespace AccountManager.State.Wisa
             Password.Save(ref result);
             WorkDate.Save(ref result);
             WorkDateIsNow.Save(ref result);
-            WorkDateOnlyVirtual.Save(ref result);
+            WorkDateVirtual.Save(ref result);
+            WorkDateVirtualIsNow.Save(ref result);
 
             if (ImportRules.Count > 0)
             {

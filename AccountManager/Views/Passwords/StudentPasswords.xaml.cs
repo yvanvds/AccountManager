@@ -276,7 +276,7 @@ namespace AccountManager.Views.Passwords
 
                 if(item.DirectoryPassword.Value || item.SmartschoolPassword.Value)
                 {
-                    Exporters.PasswordManager.Instance.Accounts.List.Add(new AccountPassword(item.UserName, item.Name, item.Account.ClassGroup, item.NewDirectoryPassword, item.NewSmartschoolPassword));  
+                    Exporters.PasswordManager.Instance.Accounts.List.Add(new AccountPassword(item.UserName, item.Name, item.Account.PrincipalName, item.Account.ClassGroup, item.NewDirectoryPassword, item.NewSmartschoolPassword));  
                 }
 
                 if(    item.SmartschoolCo1Password.Value || item.SmartschoolCo2Password.Value 

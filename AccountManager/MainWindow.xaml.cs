@@ -29,7 +29,7 @@ namespace AccountManager
             Instance = this;
             State.App.Instance.Initialize();
 
-            State.App.Instance.Google.Connect();
+            //State.App.Instance.Google.Connect();
             State.App.Instance.Wisa.Connect();
             State.App.Instance.Smartschool.Connect();
             State.App.Instance.AD.Connect();

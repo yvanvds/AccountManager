@@ -1,9 +1,12 @@
 ﻿using AbstractAccountApi;
+using AccountManager.State.Linked;
+using AccountManager.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Documents;
 
 namespace AccountManager.Action.Group
 {
@@ -39,7 +42,7 @@ namespace AccountManager.Action.Group
             "...",
             true)
         {
-
+            CanShowDetails = true;
         }
 
         public override async Task Apply(State.Linked.LinkedGroup linkedGroup)
@@ -65,6 +68,21 @@ namespace AccountManager.Action.Group
             }
             await AccountApi.Smartschool.GroupManager.Save(linkedGroup.Smartschool.Group).ConfigureAwait(false);
             InProgress.Value = false;
+        }
+
+        public override FlowDocument GetDetails(LinkedGroup group)
+        {
+            var result = new FlowTableCreator(true);
+            result.SetHeaders(new string[] { "Wisa", "Smartschool" });
+
+            result.AddRow(new List<string>() { "Instituut", group.Wisa.Group.SchoolCode, group.Smartschool.Group.InstituteNumber });
+            result.AddRow(new List<string>() { "Untis Code", group.Smartschool.Group.Name, group.Smartschool.Group.Untis });
+            result.AddRow(new List<string>() { "Beschrijving", group.Wisa.Group.Description, group.Smartschool.Group.Description });
+
+            FlowDocument document = new FlowDocument();
+            document.Blocks.Add(result.Create());
+
+            return document;
         }
 
         public static void Evaluate(State.Linked.LinkedGroup group)

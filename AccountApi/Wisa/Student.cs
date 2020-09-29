@@ -11,6 +11,7 @@ namespace AccountApi.Wisa
     public class Student
     {
         private readonly string classGroup;
+        private readonly string classSubGroup;
         private readonly string name;
         private readonly string firstname;
         private readonly DateTime dateOfBirth;
@@ -31,21 +32,22 @@ namespace AccountApi.Wisa
         {
             string[] values = data.Split(',');
             classGroup = values[0].Trim();
-            name = values[1].Trim();
-            firstname = values[2].Trim();
-            dateOfBirth = DateTime.ParseExact(values[3].Trim(), "d/M/yyyy", CultureInfo.InvariantCulture);
-            wisaID = values[4].Trim();
-            stemID = values[5].Trim();
-            gender = values[6].Trim().Equals("M") ? GenderType.Male : GenderType.Female;
-            stateID = values[7].Trim();
-            placeOfBirth = values[8].Trim();
-            nationality = values[9].Trim();
-            street = values[10].Trim();
-            houseNumber = values[11].Trim();
-            houseNumberAdd = values[12].Trim();
-            postalCode = values[13].Trim();
-            city = values[14].Trim();
-            classChange = DateTime.ParseExact(values[15].Trim(), "d/M/yyyy", CultureInfo.InvariantCulture);
+            classSubGroup = values[1].Trim();
+            name = values[2].Trim();
+            firstname = values[3].Trim();
+            dateOfBirth = DateTime.ParseExact(values[4].Trim(), "d/M/yyyy", CultureInfo.InvariantCulture);
+            wisaID = values[5].Trim();
+            stemID = values[6].Trim();
+            gender = values[7].Trim().Equals("M") ? GenderType.Male : GenderType.Female;
+            stateID = values[8].Trim();
+            placeOfBirth = values[9].Trim();
+            nationality = values[10].Trim();
+            street = values[11].Trim();
+            houseNumber = values[12].Trim();
+            houseNumberAdd = values[13].Trim();
+            postalCode = values[14].Trim();
+            city = values[15].Trim();
+            classChange = DateTime.ParseExact(values[16].Trim(), "d/M/yyyy", CultureInfo.InvariantCulture);
             SchoolID = schoolID;
         }
 
@@ -53,6 +55,20 @@ namespace AccountApi.Wisa
         /// The student's class
         /// </summary>
         public string ClassGroup { get => classGroup; }
+        public string ClassSubGroup { get => classSubGroup; }
+
+        public string ClassName
+        {
+            get
+            {
+                string result = ClassGroup;
+                if (ClassGroupManager.UseSubGroups(ClassGroup))
+                {
+                    result += " " + ClassSubGroup;
+                }
+                return result;
+            }
+        }
 
         /// <summary>
         /// The student's family name
@@ -141,6 +157,7 @@ namespace AccountApi.Wisa
             JObject result = new JObject
             {
                 ["ClassGroup"] = ClassGroup,
+                ["ClassSubGroup"] = ClassSubGroup,
                 ["Name"] = Name,
                 ["FirstName"] = FirstName,
                 ["DateOfBirth"] = Utils.DateToString(DateOfBirth),
@@ -164,6 +181,7 @@ namespace AccountApi.Wisa
         public Student(JObject obj)
         {
             classGroup = obj["ClassGroup"].ToString();
+            classSubGroup = obj["ClassSubGroup"]?.ToString();
             name = obj["Name"].ToString();
             firstname = obj["FirstName"].ToString();
             dateOfBirth = Utils.StringToDate(obj["DateOfBirth"].ToString());

@@ -16,20 +16,20 @@ namespace AccountManager.Action.StudentAccount
 
         public async override Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
         {
-            bool result = await AccountApi.Directory.AccountManager.MoveStudentToClass(linkedAccount.Directory.Account, linkedAccount.Wisa.Account.ClassGroup).ConfigureAwait(false);
+            bool result = await AccountApi.Directory.AccountManager.MoveStudentToClass(linkedAccount.Directory.Account, linkedAccount.Wisa.Account.ClassName).ConfigureAwait(false);
             if (result)
             {
-                MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Directory, linkedAccount.Wisa.Account.FullName + " moved to " + linkedAccount.Wisa.Account.ClassGroup);
+                MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Directory, linkedAccount.Wisa.Account.FullName + " moved to " + linkedAccount.Wisa.Account.ClassName);
             }
             else
             {
-                MainWindow.Instance.Log.AddError(AccountApi.Origin.Directory, "Failed to move " + linkedAccount.Wisa.Account.FullName + " to " + linkedAccount.Wisa.Account.ClassGroup);
+                MainWindow.Instance.Log.AddError(AccountApi.Origin.Directory, "Failed to move " + linkedAccount.Wisa.Account.FullName + " to " + linkedAccount.Wisa.Account.ClassName);
             }
         }
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (account.Wisa.Account.ClassGroup != account.Directory.Account.ClassGroup)
+            if (account.Wisa.Account.ClassName != account.Directory.Account.ClassGroup)
             {
                 account.Actions.Add(new MoveDirectoryClassGroup());
                 account.Directory.FlagWarning();

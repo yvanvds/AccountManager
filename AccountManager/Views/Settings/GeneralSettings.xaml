@@ -25,6 +25,7 @@
                 <ColumnDefinition Width="300"/>
                 <ColumnDefinition Width="300"/>
                 <ColumnDefinition Width="300"/>
+                <ColumnDefinition Width="300"/>
             </Grid.ColumnDefinitions>
             <GroupBox Header="Settings" Margin="16">
                 <StackPanel Orientation="Vertical">
@@ -81,11 +82,28 @@
                               Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
                               Visibility="{c:Binding !WorkDateIsNow, FalseToVisibility=Collapsed}"/>
                     </StackPanel>
-                    <StackPanel Grid.Row="1" Orientation="Horizontal">
-                        <ToggleButton Margin="16 4 16 0" Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
-                                      ToolTip="Zet aan als je de werkdatum enkel wil toepassen op virtuele scholen"
-                                      IsChecked="{c:Binding WorkDateOnlyForVirtualSchools, Mode=TwoWay}"/>
-                        <Label Margin="0 0 16 0" Content="Enkel Virtuele Scholen"/>
+                   
+                </Grid>
+            </GroupBox>
+            <!-- Werkdatum Virtual -->
+            <GroupBox Grid.Column="3" Header="Wisa Werkdatum (Virtueel)" Margin="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="50"/>
+                        <RowDefinition Height="50"/>
+                        <RowDefinition/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <ToggleButton Margin="16 4 16 0"  Style="{StaticResource MaterialDesignSwitchDarkToggleButton}"
+                                ToolTip="MaterialDesignSwitchDarkToggleButton"
+                                IsChecked="{c:Binding !WorkDateVirtualIsNow, Mode=TwoWay}"/>
+                        <Label Margin="0 0 16 0" Content="Vandaag"
+                                   Visibility="{c:Binding WorkDateVirtualIsNow, FalseToVisibility=Collapsed}"/>
+
+                        <DatePicker SelectedDate="{Binding WorkDateVirtual, Mode=TwoWay}" Margin="0 -12 8 0"
+                              materialDesign:HintAssist.Hint="Pick Date"
+                              Style="{StaticResource MaterialDesignFloatingHintDatePicker}" 
+                              Visibility="{c:Binding !WorkDateVirtualIsNow, FalseToVisibility=Collapsed}"/>
                     </StackPanel>
                 </Grid>
             </GroupBox>

@@ -18,15 +18,15 @@ namespace AccountManager.Action.StudentAccount
         public async override Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
         {
 
-            await AccountApi.Google.AccountManager.Delete(linkedAccount?.Google.Account.Mail).ConfigureAwait(false);
+            //await AccountApi.Google.AccountManager.Delete(linkedAccount?.Google.Account.Mail).ConfigureAwait(false);
         }
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (account.Google.Exists)
-            {
-                account.Actions.Add(new RemoveFromGoogle());
-            }
+            //if (account.Google.Exists)
+            //{
+            //    account.Actions.Add(new RemoveFromGoogle());
+            //}
         }
     }
 }

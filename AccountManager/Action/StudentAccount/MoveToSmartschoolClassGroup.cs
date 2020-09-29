@@ -18,7 +18,7 @@ namespace AccountManager.Action.StudentAccount
 
         public async override Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
         {
-            var group = AccountApi.Smartschool.GroupManager.Root.Find(linkedAccount.Wisa.Account.ClassGroup);
+            var group = AccountApi.Smartschool.GroupManager.Root.Find(linkedAccount.Wisa.Account.ClassName);
             await Move(linkedAccount, group).ConfigureAwait(false);
         }
 
@@ -35,22 +35,22 @@ namespace AccountManager.Action.StudentAccount
                 bool result = await AccountApi.Smartschool.GroupManager.MoveUserToClass(linkedAccount.Smartschool.Account, group, linkedAccount.Wisa.Account.ClassChange).ConfigureAwait(false);
                 if (result)
                 {
-                    MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Smartschool, linkedAccount.Wisa.Account.FullName + " moved to " + linkedAccount.Wisa.Account.ClassGroup);
+                    MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Smartschool, linkedAccount.Wisa.Account.FullName + " moved to " + linkedAccount.Wisa.Account.ClassName);
                 }
                 else
                 {
-                    MainWindow.Instance.Log.AddError(AccountApi.Origin.Smartschool, "Failed to move " + linkedAccount.Wisa.Account.FullName + " to " + linkedAccount.Wisa.Account.ClassGroup);
+                    MainWindow.Instance.Log.AddError(AccountApi.Origin.Smartschool, "Failed to move " + linkedAccount.Wisa.Account.FullName + " to " + linkedAccount.Wisa.Account.ClassName);
                 }
             }
             else
             {
-                MainWindow.Instance.Log.AddError(AccountApi.Origin.Smartschool, "Class " + linkedAccount.Wisa.Account.ClassGroup + " does not exist.");
+                MainWindow.Instance.Log.AddError(AccountApi.Origin.Smartschool, "Class " + linkedAccount.Wisa.Account.ClassName + " does not exist.");
             }
         }
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (!account.Wisa.Account.ClassGroup.Contains("ANS") && !account.Wisa.Account.ClassGroup.Contains("BNS") && account.Wisa.Account.ClassGroup != account.Smartschool.Account.Group)
+            if (!account.Wisa.Account.ClassGroup.Contains("ANS") && !account.Wisa.Account.ClassGroup.Contains("BNS") && account.Wisa.Account.ClassName != account.Smartschool.Account.Group)
             {
                 account.Actions.Add(new MoveToSmartschoolClassGroup());
                 account.Smartschool.FlagWarning();

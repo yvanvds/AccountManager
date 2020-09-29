@@ -1,4 +1,6 @@
 ﻿using AccountManager.Action.Group;
+using AccountManager.ViewModels;
+using MaterialDesignThemes.Wpf;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -27,6 +29,7 @@ namespace AccountManager.Views.Groups
         Prop<State.Linked.LinkedGroup> SelectedGroup = new Prop<State.Linked.LinkedGroup>() { Value = null };
         public ObservableCollection<GroupAction> Actions = new ObservableCollection<GroupAction>();
         private bool showGoodGroups = true;
+
 
         public Overview()
         {
@@ -96,6 +99,18 @@ namespace AccountManager.Views.Groups
             Application.Current.Dispatcher.Invoke(new System.Action(() => CreateCollection()));
 
             action.InProgress.Value = false;
+        }
+
+        private async void ShowDetails_Click(object sender, RoutedEventArgs e)
+        {
+            GroupAction action = (e.Source as Button).DataContext as GroupAction;
+
+            if (action.CanShowDetails)
+            {
+                var document = action.GetDetails(SelectedGroup.Value);
+                var dialog = new Views.Dialogs.ShowActionDetails(document);
+                await DialogHost.Show(dialog, "RootDialog").ConfigureAwait(false);
+            }
         }
     }
 }

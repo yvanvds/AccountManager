@@ -10,6 +10,7 @@ namespace AccountApi.Wisa
     public class ClassGroup
     {
         private readonly string name;
+        private readonly string groupName;
         private readonly string description;
         private readonly string adminCode;
         private string schoolCode;
@@ -18,9 +19,10 @@ namespace AccountApi.Wisa
         {
             string[] values = data.Split(',');
             name = values[0];
-            description = values[1];
-            adminCode = values[2];
-            schoolCode = values[3];
+            groupName = values[1];
+            description = values[2];
+            adminCode = values[3];
+            schoolCode = values[4];
             SchoolID = schoolID;
 
             if (Connector.ReplaceInstNumber.ContainsKey(schoolCode))
@@ -30,6 +32,24 @@ namespace AccountApi.Wisa
         }
 
         public string Name { get => name; }
+        public string GroupName { get => groupName; }
+        public string FullName { get
+            {
+                string result = name;
+                if (GroupName != "00")
+                {
+                    result += " " + GroupName;
+                }
+                return result;
+            } 
+        }
+        public int Year
+        {
+            get
+            {
+                return (int)char.GetNumericValue(Name[0]);
+            }
+        }
         public string Description { get => description; }
         public string AdminCode { get => adminCode; }
         public string SchoolCode { get => schoolCode; set => schoolCode = value; }
@@ -47,9 +67,12 @@ namespace AccountApi.Wisa
 
         public JObject ToJson()
         {
+
+
             JObject result = new JObject
             {
                 ["Name"] = Name,
+                ["GroupName"] = GroupName,
                 ["Description"] = Description,
                 ["AdminCode"] = AdminCode,
                 ["SchoolCode"] = SchoolCode,
@@ -61,6 +84,7 @@ namespace AccountApi.Wisa
         public ClassGroup(JObject obj)
         {
             name = obj["Name"].ToString();
+            groupName = obj["GroupName"]?.ToString();
             description = obj["Description"].ToString();
             adminCode = obj["AdminCode"].ToString();
             schoolCode = obj["SchoolCode"].ToString();

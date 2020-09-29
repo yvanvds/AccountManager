@@ -17,18 +17,18 @@ using System.Windows.Navigation;
 using System.Windows.Shapes;
 using static AbstractAccountApi.ObservableProperties;
 
-namespace AccountManager.Views.Settings
-{
-    /// <summary>
-    /// Interaction logic for GoogleSettings.xaml
-    /// </summary>
-    public partial class GoogleSettings : UserControl
-    {
+//namespace AccountManager.Views.Settings
+//{
+//    /// <summary>
+//    /// Interaction logic for GoogleSettings.xaml
+//    /// </summary>
+//    public partial class GoogleSettings : UserControl
+//    {
 
-        public GoogleSettings()
-        {
-            InitializeComponent();
-            DataContext = new ViewModels.Settings.GoogleSettings();
-        }
-    }
-}
+//        public GoogleSettings()
+//        {
+//            InitializeComponent();
+//            DataContext = new ViewModels.Settings.GoogleSettings();
+//        }
+//    }
+//}

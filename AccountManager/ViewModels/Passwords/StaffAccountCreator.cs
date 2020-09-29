@@ -26,7 +26,7 @@ namespace AccountManager.ViewModels.Passwords
         private async Task Print()
         {
             await Exporters.PasswordManager.Instance.Accounts
-                .ExportStaffPasswordToPDF(account.FullName, UID, CopyCode.ToString(), NetworkPassword, SmartschoolPassword)
+                .ExportStaffPasswordToPDF(account.FullName, UID, account.Mail, CopyCode.ToString(), NetworkPassword, SmartschoolPassword)
                 .ConfigureAwait(false);
         }
 
@@ -49,7 +49,7 @@ namespace AccountManager.ViewModels.Passwords
 
                 MainWindow.Instance.Log.AddMessage(Origin.Directory, "Added account for " + account.FullName);
                 await createSmartschoolAccount(account).ConfigureAwait(false);
-                await createGoogleAccount(account).ConfigureAwait(false);
+                //await createGoogleAccount(account).ConfigureAwait(false);
 
                 PrintEnabled = true;
             }
@@ -137,25 +137,25 @@ namespace AccountManager.ViewModels.Passwords
             }
         }
 
-        private async Task createGoogleAccount(AccountApi.Directory.Account account)
-        {
-            var googleAccount = new AccountApi.Google.Account();
-            googleAccount.GivenName = FirstName;
-            googleAccount.FamilyName = LastName;
-            googleAccount.IsStaff = true;
-            googleAccount.UID = UID;
+        //private async Task createGoogleAccount(AccountApi.Directory.Account account)
+        //{
+        //    var googleAccount = new AccountApi.Google.Account();
+        //    googleAccount.GivenName = FirstName;
+        //    googleAccount.FamilyName = LastName;
+        //    googleAccount.IsStaff = true;
+        //    googleAccount.UID = UID;
 
-            bool result = await AccountApi.Google.AccountManager.Add(googleAccount, NetworkPassword).ConfigureAwait(false);
-            if (!result)
-            {
-                MainWindow.Instance.Log.AddError(Origin.Google, "Failed to add " + account.FullName);
-                return;
-            }
-            else
-            {
-                MainWindow.Instance.Log.AddMessage(Origin.Google, "Added account for " + account.FullName);
-            }
-        }
+        //    bool result = await AccountApi.Google.AccountManager.Add(googleAccount, NetworkPassword).ConfigureAwait(false);
+        //    if (!result)
+        //    {
+        //        MainWindow.Instance.Log.AddError(Origin.Google, "Failed to add " + account.FullName);
+        //        return;
+        //    }
+        //    else
+        //    {
+        //        MainWindow.Instance.Log.AddMessage(Origin.Google, "Added account for " + account.FullName);
+        //    }
+        //}
         #endregion
 
         #region Properties

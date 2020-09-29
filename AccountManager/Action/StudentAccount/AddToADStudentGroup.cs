@@ -19,12 +19,12 @@ namespace AccountManager.Action.StudentAccount
         public async override Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
         {
             // TODO: should not be bound to school
-            await linkedAccount.Directory.Account.AddToGroup("CN=Students,OU=ArcadiaGroups,DC=arcadiascholen,DC=be").ConfigureAwait(false);
+            await linkedAccount.Directory.Account.AddToGroup("CN=SMA-Leerlingen,OU=ArcadiaGroups,DC=arcadiascholen,DC=be").ConfigureAwait(false);
         }
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (!account.Directory.Account.Groups.Contains("CN=Students,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
+            if (!account.Directory.Account.Groups.Contains("CN=SMA-Leerlingen,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
             {
                 account.Directory.FlagWarning();
                 account.Actions.Add(new AddToADStudentGroup());

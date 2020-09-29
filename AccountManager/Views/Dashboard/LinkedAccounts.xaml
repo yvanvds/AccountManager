@@ -41,7 +41,7 @@
                 <Label Grid.Column="1" Grid.Row="0" Content="Wisa"/>
                 <Label Grid.Column="2" Grid.Row="0" Content="Directory"/>
                 <Label Grid.Column="3" Grid.Row="0" Content="Smartschool"/>
-                <Label Grid.Column="4" Grid.Row="0" Content="Google"/>
+                <!--<Label Grid.Column="4" Grid.Row="0" Content="Google"/>-->
 
                 <Label Grid.Column="1" Grid.Row="1" Content="{Binding TotalWisaAccounts}"/>
                 <Label Grid.Column="1" Grid.Row="2" Content="{Binding LinkedWisaAccounts}"/>
@@ -55,9 +55,9 @@
                 <Label Grid.Column="3" Grid.Row="2" Content="{Binding LinkedSmartschoolAccounts}"/>
                 <Label Grid.Column="3" Grid.Row="3" Content="{Binding UnlinkedSmartschoolAccounts}" Foreground="{Binding UnlinkedSmartschoolColor}"/>
 
-                <Label Grid.Column="4" Grid.Row="1" Content="{Binding TotalGoogleAccounts}"/>
+                <!--<Label Grid.Column="4" Grid.Row="1" Content="{Binding TotalGoogleAccounts}"/>
                 <Label Grid.Column="4" Grid.Row="2" Content="{Binding LinkedGoogleAccounts}"/>
-                <Label Grid.Column="4" Grid.Row="3" Content="{Binding UnlinkedGoogleAccounts}" Foreground="{Binding UnlinkedGoogleColor}"/>
+                <Label Grid.Column="4" Grid.Row="3" Content="{Binding UnlinkedGoogleAccounts}" Foreground="{Binding UnlinkedGoogleColor}"/>-->
 
                 <Button Style="{StaticResource MaterialDesignRaisedButton}"
                             Grid.Column="0" Grid.Row="4"
