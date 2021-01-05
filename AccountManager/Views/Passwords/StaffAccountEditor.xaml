@@ -112,7 +112,7 @@
                         </Button>
 
                         <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" 
-                                Command="{Binding NewSmartschoolCommand}"
+                                Command="{Binding NewSmartschoolPasswordCommand}"
                                 materialDesign:ButtonProgressAssist.Value="-1"
                                 materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding SmartschoolPWIndicator}"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True">
