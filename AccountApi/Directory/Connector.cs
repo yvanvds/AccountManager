@@ -161,7 +161,7 @@ namespace AccountApi.Directory
             mail = mail.Replace('ó', 'o');
             mail = mail.Replace('ö', 'o');
 
-            Regex rgx = new Regex("[^a-zA-Z]");
+            Regex rgx = new Regex("[^a-zA-Z_.+-]");
             mail = rgx.Replace(mail, "");
 
             //mail += "@" + Connector.AzureDomain;
