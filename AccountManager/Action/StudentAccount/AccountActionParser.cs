@@ -41,6 +41,7 @@ namespace AccountManager.Action.StudentAccount
                 MoveToSmartschoolClassGroup.Evaluate(account);
                 ModifyDirectoryData.Evaluate(account);
                 PrincipalNameMustEqualMail.Evaluate(account);
+                AddToADClassGroup.Evaluate(account);
             }
         }
     }

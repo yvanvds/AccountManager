@@ -91,6 +91,16 @@ namespace AccountManager.ViewModels.Settings
                 PropertyChanged(this, new PropertyChangedEventArgs(nameof(WorkDate)));
             }
         }
+
+        public string SchoolPrefix
+        {
+            get => State.App.Instance.Settings.SchoolPrefix.Value;
+            set
+            {
+                State.App.Instance.Settings.SchoolPrefix.Value = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(SchoolPrefix)));
+            }
+        }
         #endregion
 
     }

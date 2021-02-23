@@ -29,6 +29,9 @@ namespace AccountApi.Directory
         private static string staffPath;
         internal static string StaffPath { get => staffPath; }
 
+        private static string schoolPrefix;
+        internal static string SchoolPrefix { get => schoolPrefix; }
+
         public static string TeacherOU = "Leerkrachten";
         public static string SupportOU = "Secretariaat";
         public static string DirectorOU = "Directie";
@@ -43,7 +46,7 @@ namespace AccountApi.Directory
 
         private static DirectoryEntry connection;
 
-        public static bool Init(string domain, string accounts, string groups, string students, string staff, ILog log = null)
+        public static bool Init(string domain, string accounts, string groups, string students, string staff, string prefix, ILog log = null)
         {
             Log = log;
 
@@ -52,6 +55,7 @@ namespace AccountApi.Directory
             groupPath = groups;
             studentPath = students;
             staffPath = staff;
+            schoolPrefix = prefix;
 
             try
             {

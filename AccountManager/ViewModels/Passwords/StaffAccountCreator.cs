@@ -134,6 +134,23 @@ namespace AccountManager.ViewModels.Passwords
             else
             {
                 MainWindow.Instance.Log.AddMessage(Origin.Smartschool, "Added account for " + account.FullName);
+
+                IGroup group = null;
+                switch(smartschoolAccount.Role)
+                {
+                    case AccountRole.Teacher: group = AccountApi.Smartschool.GroupManager.Root.Find("Leerkrachten"); break;
+                    case AccountRole.Director: group = AccountApi.Smartschool.GroupManager.Root.Find("Directie"); break;
+                    case AccountRole.IT: group = AccountApi.Smartschool.GroupManager.Root.Find("Leerkrachten"); break;
+                    case AccountRole.Maintenance: group = AccountApi.Smartschool.GroupManager.Root.Find("Onderhoudspersoneel"); break;
+                    case AccountRole.Support: group = AccountApi.Smartschool.GroupManager.Root.Find("Secretariaat"); break;
+                    default: group = AccountApi.Smartschool.GroupManager.Root.Find("Personeel"); break;
+                }
+
+                var groupResult = await AccountApi.Smartschool.GroupManager.AddUserToGroup(smartschoolAccount, group).ConfigureAwait(false);
+                if (!groupResult)
+                {
+                    MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to add " + account.FullName + " to group " + group.Name);
+                }
             }
         }
 

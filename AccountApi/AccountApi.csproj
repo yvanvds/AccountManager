@@ -108,6 +108,7 @@
     <Compile Include="Azure\UserManager.cs" />
     <Compile Include="Directory\Account.cs" />
     <Compile Include="Directory\AccountManager.cs" />
+    <Compile Include="Directory\ADGroup.cs" />
     <Compile Include="Directory\ClassGroup.cs" />
     <Compile Include="Directory\ClassGroupManager.cs" />
     <Compile Include="Directory\Connector.cs" />

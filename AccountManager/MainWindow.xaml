@@ -18,7 +18,7 @@
                    GlowBrush="{DynamicResource AccentColorBrush}"
         BorderThickness="1"
         mc:Ignorable="d"
-        Title="SMA Account Manager"
+        Title="Arcadia Account Manager"
                    Loaded="MetroWindow_Loaded"
                    Icon="accountmanager.ico"
         WindowState="Maximized">

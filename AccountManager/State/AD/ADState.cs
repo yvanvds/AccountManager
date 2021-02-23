@@ -161,7 +161,7 @@ namespace AccountManager.State.AD
         {
             AccountApi.Directory.Connector.AzureDomain = AzureDomain.Value;
             return AccountApi.Directory.Connector.Init(
-                Domain.Value, AccountRoot.Value, ClassesRoot.Value, StudentRoot.Value, StaffRoot.Value, MainWindow.Instance.Log
+                Domain.Value, AccountRoot.Value, ClassesRoot.Value, StudentRoot.Value, StaffRoot.Value, State.App.Instance.Settings.SchoolPrefix.Value, MainWindow.Instance.Log
             );
         }
 

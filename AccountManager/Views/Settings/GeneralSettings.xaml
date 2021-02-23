@@ -52,12 +52,15 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="50"/>
+                        <RowDefinition Height="50"/>
                         <RowDefinition/>
                     </Grid.RowDefinitions>
-                    <StackPanel Orientation="Horizontal" Margin="8" VerticalAlignment="Top">
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="8" VerticalAlignment="Top">
                         <ToggleButton IsChecked="{Binding DebugMode, Mode=TwoWay}" Style="{StaticResource MaterialDesignSwitchToggleButton}" ToolTip="Default ToggleButton Style" />
                         <Label Content="Show Advanced Interface"/>
                     </StackPanel>
+                    <TextBox Grid.Row="1" Text="{Binding Path=SchoolPrefix, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="School Prefix" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+
                 </Grid>
                 
             </GroupBox>

@@ -27,6 +27,7 @@ namespace AccountManager.Action.Group
             {
                 // if the account exists everywhere, we try these actions
                 ModifySmartschoolData.Evaluate(group);
+                AddADGroup.Evaluate(group);
 
                 if (group.Actions.Count > 0)
                 {

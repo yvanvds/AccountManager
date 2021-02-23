@@ -37,7 +37,7 @@
     <ProductName>AccountManager</ProductName>
     <PublisherName>Yvan Vander Sanden</PublisherName>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>22</ApplicationRevision>
+    <ApplicationRevision>26</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -150,6 +150,7 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Action\Group\AddADGroup.cs" />
     <Compile Include="Action\StaffAccount\AccountAction.cs" />
     <Compile Include="Action\StaffAccount\AddToADStaffGroup.cs" />
     <Compile Include="Action\StaffAccount\AddToDirectory.cs" />
@@ -163,6 +164,7 @@
     <Compile Include="Action\StaffAccount\StaffMemberActionParser.cs" />
     <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
+    <Compile Include="Action\StudentAccount\AddToADClassGroup.cs" />
     <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
     <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />

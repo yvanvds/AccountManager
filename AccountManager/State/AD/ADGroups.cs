@@ -14,12 +14,13 @@ namespace AccountManager.State.AD
         DateTime lastSync;
         public DateTime LastSync => lastSync;
         public List<AccountApi.Directory.ClassGroup> List => AccountApi.Directory.ClassGroupManager.All;
+        public List<AccountApi.Directory.ADGroup> ADList => AccountApi.Directory.ClassGroupManager.ADGroups;
 
         const string fileName = "directoryGroups.json";
 
         public async Task Load()
         {
-            await AccountApi.Directory.ClassGroupManager.Load();
+            await AccountApi.Directory.ClassGroupManager.Load().ConfigureAwait(false);
             AccountApi.Directory.ClassGroupManager.Sort();
             lastSync = DateTime.Now;
             SaveToJson();

@@ -11,14 +11,17 @@ namespace AccountManager.State.Settings
     public class SettingsState : AbstractState
     {
         public ConfigValue<bool> DebugMode;
+        public ConfigValue<string> SchoolPrefix;
 
         public SettingsState()
         {
             DebugMode = new ConfigValue<bool>("debugmode", false, UpdateObservers);
+            SchoolPrefix = new ConfigValue<string>("schoolprefix", "", UpdateObservers);
         }
         public override void LoadConfig(JObject obj)
         {
             DebugMode.Load(obj);
+            SchoolPrefix.Load(obj);
         }
 
         public override Task LoadContent()
@@ -36,6 +39,7 @@ namespace AccountManager.State.Settings
         {
             JObject result = new JObject();
             DebugMode.Save(ref result);
+            SchoolPrefix.Save(ref result);
             return result;
         }
 
