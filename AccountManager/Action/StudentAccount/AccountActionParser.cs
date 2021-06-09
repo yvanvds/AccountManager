@@ -36,6 +36,7 @@ namespace AccountManager.Action.StudentAccount
                 //ModifyStudentHomeDir.Evaluate(account);
                 ModifyAccountID.Evaluate(account);
                 ModifySmartschoolStemID.Evaluate(account);
+                ModifySmartschoolBirthPlace.Evaluate(account);
                 //CreateHomeDir.Evaluate(account);
                 MoveDirectoryClassGroup.Evaluate(account);
                 MoveToSmartschoolClassGroup.Evaluate(account);

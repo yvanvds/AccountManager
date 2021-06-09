@@ -166,6 +166,7 @@
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Action\StudentAccount\AddToADClassGroup.cs" />
     <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
+    <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
     <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
