@@ -10,12 +10,19 @@ namespace AccountApi.Directory
 {
     static public class Connector
     {
-        private static readonly string root = "LDAP://";
+        private static string root = "LDAP://";
         internal static string Root { get => root; }
 
         private static string domainPath;
 
         public static string AzureDomain;
+
+        private static string accountName;
+        internal static string AccountName { get => accountName; }
+
+        private static string accountPassword;
+        internal static string AccountPassword { get => accountPassword;  }
+
 
         private static string accountPath;
         internal static string AccountPath { get => accountPath; }
@@ -32,6 +39,9 @@ namespace AccountApi.Directory
         private static string schoolPrefix;
         internal static string SchoolPrefix { get => schoolPrefix; }
 
+        private static string ipAddress;
+        internal static string IPAddress { get => ipAddress; }
+
         public static string TeacherOU = "Leerkrachten";
         public static string SupportOU = "Secretariaat";
         public static string DirectorOU = "Directie";
@@ -46,7 +56,7 @@ namespace AccountApi.Directory
 
         private static DirectoryEntry connection;
 
-        public static bool Init(string domain, string accounts, string groups, string students, string staff, string prefix, ILog log = null)
+        public static bool Init(string domain, string ip, string accounts, string groups, string students, string staff, string prefix, ILog log = null)
         {
             Log = log;
 
@@ -56,6 +66,15 @@ namespace AccountApi.Directory
             studentPath = students;
             staffPath = staff;
             schoolPrefix = prefix;
+            ipAddress = ip;
+
+            if (ip.Length > 0)
+            {
+                root = "LDAP://" + ip + "/";
+            } else
+            {
+                root = "LDAP://";
+            }
 
             try
             {
@@ -75,6 +94,39 @@ namespace AccountApi.Directory
                 return false;
             }
 
+            return true;
+        }
+
+        public static bool Login(string name, string password)
+        {
+            try
+            {
+                connection = new DirectoryEntry(Root + domainPath)
+                {
+                    AuthenticationType = AuthenticationTypes.Secure,
+                    
+                    Username = name,
+                    Password = password
+                };
+            }
+            catch (DirectoryServicesCOMException e)
+            {
+                Log.AddError(Origin.Directory, e.Message);
+                accountName = "";
+                accountPassword = "";
+                
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.AddError(Origin.Directory, e.Message);
+                accountName = "";
+                accountPassword = "";
+                return false;
+            }
+
+            accountName = name;
+            accountPassword = password;
             return true;
         }
 

@@ -24,7 +24,7 @@
         <!-- Left Side -->
         <Grid Grid.Column="0">
             <Grid.RowDefinitions>
-                <RowDefinition Height="450"/>
+                <RowDefinition Height="500"/>
                 <RowDefinition/>
             </Grid.RowDefinitions>
             
@@ -63,6 +63,7 @@
                     <TextBox Text="{Binding Path=StudentRoot, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Leerling Accounts" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                     <TextBox Text="{Binding Path=StaffRoot, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Path naar Personeel Accocunts" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                     <TextBox Text="{Binding Path=AzureDomain, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Azure Domain" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Path=IPAddress, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Server IP Address" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                 </StackPanel>
             </GroupBox>
             

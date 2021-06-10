@@ -46,6 +46,11 @@ namespace AccountApi.Directory
                     Connector.Log.AddError(Origin.Directory, e.Message);
                     return false;
                 }
+                catch (System.Runtime.InteropServices.COMException e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                    return false;
+                }
 
                 int count = 0;
                 foreach (SearchResult r in results)
@@ -85,6 +90,11 @@ namespace AccountApi.Directory
                     results = search.FindAll();
                 }
                 catch (DirectoryServicesCOMException e)
+                {
+                    Connector.Log.AddError(Origin.Directory, e.Message);
+                    return false;
+                }
+                catch (System.Runtime.InteropServices.COMException e)
                 {
                     Connector.Log.AddError(Origin.Directory, e.Message);
                     return false;

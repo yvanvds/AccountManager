@@ -78,6 +78,11 @@ namespace AccountApi.Directory
                 Connector.Log.AddError(Origin.Directory, e.Message);
                 return false;
             }
+            catch (System.Runtime.InteropServices.COMException e)
+            {
+                Connector.Log.AddError(Origin.Directory, e.Message);
+                return false;
+            } 
 
             foreach (SearchResult r in results)
             {

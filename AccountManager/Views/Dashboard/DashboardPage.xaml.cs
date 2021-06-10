@@ -27,5 +27,7 @@ namespace AccountManager.Views.Dashboard
             InitializeComponent();
             DataContext = new ViewModels.Dashboard.DashboardPage();
         }
+
+        
     }
 }

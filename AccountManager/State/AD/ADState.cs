@@ -21,6 +21,7 @@ namespace AccountManager.State.AD
         public ConfigValue<string> StaffRoot;
         public ConfigValue<string> AzureDomain;
         public ConfigValue<bool> CheckHomeDirs;
+        public ConfigValue<string> IPAddress;
 
         public ConfigValue<bool> UseGrades;
         public ConfigValue<bool> UseYears;
@@ -54,6 +55,7 @@ namespace AccountManager.State.AD
             AzureDomain = new ConfigValue<string>("azure", "", UpdateObservers);
             Connection = new ConfigValue<ConnectionState>("connectionTested", ConnectionState.Unknown, UpdateObservers);
             CheckHomeDirs = new ConfigValue<bool>("checkHomeDirs", false, UpdateObservers);
+            IPAddress = new ConfigValue<string>("ipAddress", "", UpdateObservers, UpdateConnectionState);
 
             UseGrades = new ConfigValue<bool>("useGrades", false, UpdateObservers);
             UseYears = new ConfigValue<bool>("useYears", false, UpdateObservers);
@@ -70,6 +72,7 @@ namespace AccountManager.State.AD
             Connection.Load(obj);
             UseGrades.Load(obj);
             UseYears.Load(obj);
+            IPAddress.Load(obj);
 
             if (obj.ContainsKey("grades"))
             {
@@ -117,6 +120,7 @@ namespace AccountManager.State.AD
             StudentRoot.Save(ref result);
             StaffRoot.Save(ref result);
             AzureDomain.Save(ref result);
+            IPAddress.Save(ref result);
             Connection.Save(ref result);
             UseGrades.Save(ref result);
             UseYears.Save(ref result);
@@ -161,7 +165,7 @@ namespace AccountManager.State.AD
         {
             AccountApi.Directory.Connector.AzureDomain = AzureDomain.Value;
             return AccountApi.Directory.Connector.Init(
-                Domain.Value, AccountRoot.Value, ClassesRoot.Value, StudentRoot.Value, StaffRoot.Value, State.App.Instance.Settings.SchoolPrefix.Value, MainWindow.Instance.Log
+                Domain.Value, IPAddress.Value, AccountRoot.Value, ClassesRoot.Value, StudentRoot.Value, StaffRoot.Value, State.App.Instance.Settings.SchoolPrefix.Value, MainWindow.Instance.Log
             );
         }
 

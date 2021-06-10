@@ -151,6 +151,16 @@ namespace AccountManager.ViewModels.Settings
             }
         }
 
+        public string IPAddress
+        {
+            get => state.IPAddress.Value;
+            set
+            {
+                state.IPAddress.Value = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IPAddress)));
+            }
+        }
+
         public bool UseGrades
         {
             get => state.UseGrades.Value;
