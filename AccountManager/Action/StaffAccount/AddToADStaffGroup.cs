@@ -46,6 +46,13 @@ namespace AccountManager.Action.StaffAccount
                 account.Actions.Add(new AddToADStaffGroup());
                 account.OK = false;
             }
+
+            if (!account.Directory.Account.Groups.Contains("CN=" + State.App.Instance.Settings.SchoolPrefix.Value + "-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
+            {
+                account.Directory.FlagWarning();
+                account.Actions.Add(new AddToADStaffGroup());
+                account.OK = false;
+            }
         }
     }
 }

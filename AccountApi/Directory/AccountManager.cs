@@ -501,6 +501,7 @@ namespace AccountApi.Directory
                     await account.AddToGroup("CN=" + Connector.SchoolPrefix + "-Leraren,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
                     break;
             }
+            await account.AddToGroup("CN=" + Connector.SchoolPrefix + "-Personnel,OU=ArcadiaGroups,DC=arcadiascholen,DC=be");
 
             //await CreateHomeDir(account);
             Staff.Add(account);
