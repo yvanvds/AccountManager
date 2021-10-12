@@ -292,6 +292,9 @@
     <Compile Include="Views\Dashboard\LinkedStaffMembers.xaml.cs">
       <DependentUpon>LinkedStaffMembers.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Views\Dialogs\AD_AskForPassword.xaml.cs">
+      <DependentUpon>AD_AskForPassword.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\Dialogs\AD_DontImportUser.xaml.cs">
       <DependentUpon>AD_DontImportUser.xaml</DependentUpon>
     </Compile>
@@ -415,6 +418,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Dashboard\LinkedStaffMembers.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Dialogs\AD_AskForPassword.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

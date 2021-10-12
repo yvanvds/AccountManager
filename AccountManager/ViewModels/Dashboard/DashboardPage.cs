@@ -74,8 +74,8 @@ namespace AccountManager.ViewModels.Dashboard
         private async Task SyncDirectoryAccounts()
         {
             IndicatorADAccount = true;
-            AD.Connect();
-            await AD.Accounts.Load().ConfigureAwait(false);
+            bool result = await AD.Connect().ConfigureAwait(false);
+            if (result) await AD.Accounts.Load().ConfigureAwait(false);
             IndicatorADAccount = false;
         }
 
@@ -91,8 +91,8 @@ namespace AccountManager.ViewModels.Dashboard
         private async Task SyncDirectoryGroups()
         {
             IndicatorADGroup = true;
-            AD.Connect();
-            await AD.Groups.Load().ConfigureAwait(false);
+            bool result = await AD.Connect().ConfigureAwait(false);
+            if (result) await AD.Groups.Load().ConfigureAwait(false);
             IndicatorADGroup = false;
         }
 

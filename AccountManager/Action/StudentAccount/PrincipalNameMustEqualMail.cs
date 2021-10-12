@@ -34,6 +34,9 @@ namespace AccountManager.Action.StudentAccount
 
         public async override Task Apply(LinkedAccount account, DateTime deletionDate)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             account.Directory.Account.PrincipalName = account.Directory.Account.Mail;
         }
 

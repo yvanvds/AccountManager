@@ -36,9 +36,9 @@ namespace AccountManager.ViewModels.Settings
         {
             ShowConnectIndicator = true;
 
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
-                bool result = state.Connect();
+                bool result = await state.Connect().ConfigureAwait(false);
                 if (!result) ConnectIcon = PackIconKind.CloudOffOutline;
                 else ConnectIcon = PackIconKind.CloudTick;
             }).ConfigureAwait(false);

@@ -40,6 +40,9 @@ namespace AccountManager.Action.StudentAccount
 
         public override async Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             Indicator = true;
 
             await Task.Run(() =>

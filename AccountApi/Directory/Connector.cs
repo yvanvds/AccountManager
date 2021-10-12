@@ -56,7 +56,7 @@ namespace AccountApi.Directory
 
         private static DirectoryEntry connection;
 
-        public static bool Init(string domain, string ip, string accounts, string groups, string students, string staff, string prefix, ILog log = null)
+        public static bool Init(string domain, string ip, string accounts, string groups, string students, string staff, string prefix, string username, string password, ILog log = null)
         {
             Log = log;
 
@@ -68,7 +68,10 @@ namespace AccountApi.Directory
             schoolPrefix = prefix;
             ipAddress = ip;
 
-            if (ip.Length > 0)
+            accountName = username;
+            accountPassword = password;
+
+            if (ip != null && ip.Length > 0)
             {
                 root = "LDAP://" + ip + "/";
             } else
@@ -80,41 +83,19 @@ namespace AccountApi.Directory
             {
                 connection = new DirectoryEntry(Root + domainPath)
                 {
-                    AuthenticationType = AuthenticationTypes.Secure
-                };
-            }
-            catch (DirectoryServicesCOMException e)
-            {
-                Log.AddError(Origin.Directory, e.Message);
-                return false;
-            }
-            catch (Exception e)
-            {
-                Log.AddError(Origin.Directory, e.Message);
-                return false;
-            }
-
-            return true;
-        }
-
-        public static bool Login(string name, string password)
-        {
-            try
-            {
-                connection = new DirectoryEntry(Root + domainPath)
-                {
                     AuthenticationType = AuthenticationTypes.Secure,
-                    
-                    Username = name,
-                    Password = password
+                    Username = accountName,
+                    Password = accountPassword,
                 };
+                Log.AddMessage(Origin.Directory, "Verifying Connection...");
+                string name = connection.Name;
+                Log.AddMessage(Origin.Directory, "Connected to " + name);
             }
             catch (DirectoryServicesCOMException e)
             {
                 Log.AddError(Origin.Directory, e.Message);
                 accountName = "";
                 accountPassword = "";
-                
                 return false;
             }
             catch (Exception e)
@@ -125,10 +106,41 @@ namespace AccountApi.Directory
                 return false;
             }
 
-            accountName = name;
-            accountPassword = password;
             return true;
         }
+
+        //public static bool Login(string name, string password)
+        //{
+        //    try
+        //    {
+        //        connection = new DirectoryEntry(Root + domainPath)
+        //        {
+        //            AuthenticationType = AuthenticationTypes.Secure,
+
+        //            Username = name,
+        //            Password = password
+        //        };
+        //    }
+        //    catch (DirectoryServicesCOMException e)
+        //    {
+        //        Log.AddError(Origin.Directory, e.Message);
+        //        accountName = "";
+        //        accountPassword = "";
+                
+        //        return false;
+        //    }
+        //    catch (Exception e)
+        //    {
+        //        Log.AddError(Origin.Directory, e.Message);
+        //        accountName = "";
+        //        accountPassword = "";
+        //        return false;
+        //    }
+
+        //    accountName = name;
+        //    accountPassword = password;
+        //    return true;
+        //}
 
         public static void Close()
         {

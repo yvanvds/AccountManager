@@ -23,7 +23,10 @@ namespace AccountManager.Action.StudentAccount
             var regex = new Regex("/" + State.App.Instance.Settings.SchoolPrefix.Value + "-+[1-7]");
             List<string> results = linkedAccount.Directory.Account.Groups.Where(f => regex.IsMatch(f)).ToList();
 
-            foreach(var group in results)
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
+            foreach (var group in results)
             {
                 await linkedAccount.Directory.Account.RemoveFromGroup(group).ConfigureAwait(false);
             }

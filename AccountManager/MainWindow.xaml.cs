@@ -32,7 +32,7 @@ namespace AccountManager
             //State.App.Instance.Google.Connect();
             State.App.Instance.Wisa.Connect();
             State.App.Instance.Smartschool.Connect();
-            State.App.Instance.AD.Connect();
+            //State.App.Instance.AD.Connect();
         }
 
         private async Task LoadContent()
