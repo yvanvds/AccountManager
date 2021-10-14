@@ -370,8 +370,12 @@ namespace AccountApi.Directory
         }
 
         public static DirectoryEntry GetEntryByUID(string uid)
-        {
+        {         
+            DirectoryEntry root = GetEntry(accountPath);
+            if (root == null) return null;
+
             DirectorySearcher search = new DirectorySearcher();
+            search.SearchRoot = root;
             search.Filter = String.Format("(SAMAccountName={0})", uid);
             SearchResult result = search.FindOne();
             if (result == null) return null;
