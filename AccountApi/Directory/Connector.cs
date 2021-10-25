@@ -267,10 +267,16 @@ namespace AccountApi.Directory
 
                 if (ou[i].Substring(0, 2).Equals("OU", StringComparison.CurrentCultureIgnoreCase))
                 {
-                    if (!DirectoryEntry.Exists(Root + ou[i] + "," + parent))
+                    if (!EntryExists(Root + ou[i] + "," + parent))
                     {
                         DirectoryEntry ouEntry = new DirectoryEntry(Root + parent);
+                        ouEntry.Username = AccountName;
+                        ouEntry.Password = AccountPassword;
+
                         DirectoryEntry child = ouEntry.Children.Add(ou[i], "OrganizationalUnit");
+                        child.Username = AccountName;
+                        child.Password = AccountPassword;
+
                         child.CommitChanges();
                         ouEntry.CommitChanges();
                         Log.AddMessage(Origin.Directory, "Created Unit: " + ou[i]);
@@ -359,9 +365,9 @@ namespace AccountApi.Directory
                 path = Root + path;
             }
 
-            if (DirectoryEntry.Exists(path))
+            if (EntryExists(path))
             {
-                return new DirectoryEntry(path);
+                return new DirectoryEntry(path, AccountName, AccountPassword);
             }
             else
             {
@@ -374,12 +380,32 @@ namespace AccountApi.Directory
             DirectoryEntry root = GetEntry(accountPath);
             if (root == null) return null;
 
-            DirectorySearcher search = new DirectorySearcher();
+            DirectorySearcher search = new DirectorySearcher(connection);
             search.SearchRoot = root;
             search.Filter = String.Format("(SAMAccountName={0})", uid);
             SearchResult result = search.FindOne();
             if (result == null) return null;
             return result.GetDirectoryEntry();
+        }
+
+        public static bool EntryExists(string path)
+        {
+            DirectoryEntry entry = new DirectoryEntry(path);
+            entry.Username = AccountName;
+            entry.Password = AccountPassword;
+
+            bool exists = false;
+
+            try
+            {
+                var tmp = entry.Guid;
+                exists = true;
+            } catch (DirectoryServicesCOMException)
+            {
+                exists = false;
+            }
+
+            return exists;
         }
     }
 }
