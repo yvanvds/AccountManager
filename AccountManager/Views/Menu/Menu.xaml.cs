@@ -46,6 +46,11 @@ namespace AccountManager.Views.Menu
             MainWindow.Instance.Navigate(new Views.Passwords.PasswordPage());
         }
 
+        private void ActionsButton_Click(object sender, RoutedEventArgs e)
+        {
+            MainWindow.Instance.Navigate(new Views.Actions.ActionsPage());
+        }
+
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
         {
             MainWindow.Instance.Navigate(new Views.Settings.SettingsPage());

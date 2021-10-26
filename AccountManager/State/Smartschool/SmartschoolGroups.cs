@@ -54,6 +54,8 @@ namespace AccountManager.State.Smartschool
             App.Instance.Smartschool.UpdateObservers();
         }
 
+        public IGroup Root { get => AccountApi.Smartschool.GroupManager.Root; }
+
         public void LoadFromJson()
         {
             var location = Path.Combine(App.GetAppFolder(), fileName);

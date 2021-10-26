@@ -38,6 +38,7 @@ namespace AccountManager.Action.StaffAccount
                 UpdateWisaName.Evaluate(account);
                 AddToADStaffGroup.Evaluate(account);
                 PrincipalNameMustEqualMail.Evaluate(account);
+                ModifySmartschoolStaffEmail.Evaluate(account);
             }
         }
     }

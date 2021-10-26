@@ -37,7 +37,7 @@
     <ProductName>AccountManager</ProductName>
     <PublisherName>Yvan Vander Sanden</PublisherName>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>34</ApplicationRevision>
+    <ApplicationRevision>36</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -156,6 +156,7 @@
     <Compile Include="Action\StaffAccount\AddToDirectory.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromAD.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromWisa.cs" />
+    <Compile Include="Action\StaffAccount\ModifySmartschoolStaffEmail.cs" />
     <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />
     <Compile Include="Action\StaffAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromDirectory.cs" />
@@ -167,6 +168,7 @@
     <Compile Include="Action\StudentAccount\AddToADClassGroup.cs" />
     <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
+    <Compile Include="Action\StudentAccount\ModifySmartschoolStudentEmail.cs" />
     <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
@@ -208,6 +210,7 @@
     <Compile Include="ViewModels\Accounts\StudentOverview.cs" />
     <Compile Include="ViewModels\Accounts\SmartschoolAccounts.cs" />
     <Compile Include="ViewModels\Accounts\WisaAccounts.cs" />
+    <Compile Include="ViewModels\Actions\QRCodeAction.cs" />
     <Compile Include="ViewModels\Base\BaseViewModel.cs" />
     <Compile Include="Utils\IErrorHandler.cs" />
     <Compile Include="ViewModels\Base\RelayAsyncCommand.cs" />
@@ -274,6 +277,12 @@
     <Compile Include="Action\Group\RemoveEmptyFromDirectory.cs" />
     <Compile Include="Action\Group\GroupAction.cs" />
     <Compile Include="Action\StudentAccount\UnregisterSmartschool.cs" />
+    <Compile Include="Views\Actions\ActionsPage.xaml.cs">
+      <DependentUpon>ActionsPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Actions\QRCodeAction.xaml.cs">
+      <DependentUpon>QRCodeAction.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
@@ -402,6 +411,14 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Accounts\WisaAccounts.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Actions\ActionsPage.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Actions\QRCodeAction.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -621,6 +638,7 @@
   <ItemGroup>
     <Resource Include="accountmanager.ico" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
