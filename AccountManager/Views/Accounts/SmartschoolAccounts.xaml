@@ -6,6 +6,7 @@
              xmlns:local="clr-namespace:AccountManager.Views.Accounts"
              xmlns:model="clr-namespace:AccountManager.ViewModels.Accounts"
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:utils="clr-namespace:AccountManager.Utils"
              TextElement.Foreground="{DynamicResource MaterialDesignBody}"
              TextElement.FontWeight="Medium"
              TextElement.FontSize="14"

@@ -109,21 +109,26 @@
             </Grid.ColumnDefinitions>
 
             <!-- List of Accounts -->
-            <DataGrid Grid.Column="0" Margin="0 8 0 0" ItemsSource="{Binding Accounts}"
+            <utils:SortKeepingDataGrid Grid.Column="0" Margin="0 8 0 0" ItemsSource="{Binding Accounts}"
               CanUserSortColumns="True"
               CanUserAddRows="False"
               AutoGenerateColumns="False"
               SelectionMode="Single"
+              Background="White" 
+              Foreground="Black" 
+              GridLinesVisibility="Horizontal" 
+              HorizontalGridLinesBrush="LightGray"
+              FontSize="12"
               materialDesign:DataGridAssist.CellPadding="13 8 8 8"
               materialDesign:DataGridAssist.ColumnHeaderPadding="8"
-                      
+              xmlns:utils="clr-namespace:AccountManager.Utils"        
               SelectedItem="{Binding SelectedAccount, Mode=OneWayToSource}">
                 <DataGrid.Columns>
                     <DataGridTextColumn Binding="{Binding LastName}" Header="Naam" IsReadOnly="True" />
                     <DataGridTextColumn Binding="{Binding FirstName}" Header="Voornaam" IsReadOnly="True"/>
                     <DataGridTextColumn Binding="{Binding UID}" Header="Gebruikersnaam" IsReadOnly="True"/>
                 </DataGrid.Columns>
-            </DataGrid>
+            </utils:SortKeepingDataGrid>
 
             <!-- Account Detail -->
             <GroupBox Grid.Column="1" Header="{Binding SelectedAccountTitle }">

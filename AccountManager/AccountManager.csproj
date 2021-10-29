@@ -37,7 +37,7 @@
     <ProductName>AccountManager</ProductName>
     <PublisherName>Yvan Vander Sanden</PublisherName>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>36</ApplicationRevision>
+    <ApplicationRevision>37</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -202,6 +202,7 @@
     <Compile Include="Utils\FlowTableCreator.cs" />
     <Compile Include="Utils\JsonConverter.cs" />
     <Compile Include="Utils\Set.cs" />
+    <Compile Include="Utils\SortKeepingDataGrid.cs" />
     <Compile Include="Utils\TaskUtils.cs" />
     <Compile Include="ViewModels\Accounts\AccountsPage.cs" />
     <Compile Include="ViewModels\Accounts\ADAccounts.cs" />

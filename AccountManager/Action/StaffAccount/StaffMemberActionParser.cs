@@ -28,10 +28,6 @@ namespace AccountManager.Action.StaffAccount
                 DontImportFromWisa.Evaluate(account);
                 account.OK = false;
             }
-            //if (account.Google.Exists)
-            //{
-            //    RemoveFromGoogle.Evaluate(account);
-            //} 
             
             if (account.OK)
             {
