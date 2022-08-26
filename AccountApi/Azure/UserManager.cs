@@ -18,14 +18,14 @@ namespace AccountApi.Azure
         IList<Microsoft.Graph.User> users = new List<Microsoft.Graph.User>();
         public IList<Microsoft.Graph.User> Users => users;
 
-        public async Task LoadFromAzure()
+        public async Task<bool> LoadFromAzure()
         {
             try
             {
                 users = new List<Microsoft.Graph.User>();
                 var options = new List<Option>
                 {
-                    new QueryOption("$select", "id, givenName, surName, displayName, mail, userPrincipalName, accountEnabled")
+                    new QueryOption("$select", "id, givenName, surName, displayName, mail, userPrincipalName, accountEnabled, employeeId, department, jobTitle")
                 };
                 var results = await Connector.Instance.Directory.Users.Request(options)
                     .GetAsync();
@@ -34,6 +34,7 @@ namespace AccountApi.Azure
                 while (results != null)
                 {
                     users = users.Concat(results.CurrentPage).ToList();
+                    Connector.Instance.RegisterMessage("" + users.Count + " gebruikers gevonden.");
                     if (results.NextPageRequest != null)
                     {
                         results = await results.NextPageRequest.GetAsync();
@@ -41,12 +42,14 @@ namespace AccountApi.Azure
                     else results = null;
                     
                 }
-                
+               
             }
             catch(ServiceException ex)
             {
                 Connector.Instance.RegisterError(ex.Message);
+                return false;
             }
+            return true;
         }
 
         public JObject ToJson()

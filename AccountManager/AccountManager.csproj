@@ -37,7 +37,7 @@
     <ProductName>AccountManager</ProductName>
     <PublisherName>Yvan Vander Sanden</PublisherName>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>31</ApplicationRevision>
+    <ApplicationRevision>41</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -166,6 +166,7 @@
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Action\StudentAccount\AddToADClassGroup.cs" />
     <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
+    <Compile Include="Action\StudentAccount\ChangeEmail.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
     <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
@@ -230,6 +231,9 @@
     </Compile>
     <Compile Include="Views\Accounts\ADAccounts.xaml.cs">
       <DependentUpon>ADAccounts.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Accounts\AzureAccounts.xaml.cs">
+      <DependentUpon>AzureAccounts.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Accounts\GoogleAccounts.xaml.cs">
       <DependentUpon>GoogleAccounts.xaml</DependentUpon>
@@ -379,6 +383,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Accounts\ADAccounts.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Accounts\AzureAccounts.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

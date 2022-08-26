@@ -51,7 +51,7 @@ namespace AccountManager.ViewModels.Dashboard
         {
             IndicatorAzureAccount = true;
             Azure.Connect();
-            await Azure.Accounts.Load().ConfigureAwait(false);
+            await Azure.LoadContent().ConfigureAwait(false);
             IndicatorAzureAccount = false;
         }
 

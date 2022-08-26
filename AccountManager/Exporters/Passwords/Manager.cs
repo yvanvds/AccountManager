@@ -129,15 +129,14 @@ namespace AccountManager.Exporters.Passwords
                     {
                         section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
 
-                        section.AddParagraph("Met deze gegevens kan je inloggen op de pc's op school. Je kan er ook mee " +
-                            "inloggen op het Smifi-L wifi netwerk.", "Normal");
+                        section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-L wifi netwerk.", "Normal");
 
-                        section.AddParagraph("Office365", "Heading2");
-                        section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
-                            "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
-                            + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
-                        section.AddParagraph("Login     : " + pw.Mail, "PasswordStyle");
-                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
+                        //section.AddParagraph("Office365", "Heading2");
+                        //section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
+                        //    "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
+                        //    + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
+                        //section.AddParagraph("Login     : " + pw.Mail, "PasswordStyle");
+                        //section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
                     }
 
                     if (pw.SSPassword.Length > 0)
@@ -145,8 +144,7 @@ namespace AccountManager.Exporters.Passwords
                         section.AddParagraph("Smartschool", "Heading2");
                         section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
                         section.AddParagraph(pw.SSPassword, "PasswordStyle");
-                        section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen. Je kan dan"
-                            + " het wachtwoord bovenaan ingegeven, zodat je overal hetzelfde wachtwoord kan gebruiken.", "Normal");
+                        section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen.", "Normal");
 
                     }
 
@@ -194,15 +192,14 @@ namespace AccountManager.Exporters.Passwords
                 {
                     section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
 
-                    section.AddParagraph("Met deze gegevens kan je inloggen op de pc's op school. Je kan er ook mee " +
-                        "inloggen op het Smifi-P wifi netwerk.", "Normal");
+                    section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-P wifi netwerk.", "Normal");
 
-                    section.AddParagraph("Office365", "Heading2");
-                    section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
-                        "communicatie met de school en je leerlingen verloopt steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
-                        + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
-                    section.AddParagraph("Login     : " + mail, "PasswordStyle");
-                    section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
+                    //section.AddParagraph("Office365", "Heading2");
+                    //section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
+                    //    "communicatie met de school en je leerlingen verloopt steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
+                    //    + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
+                    //section.AddParagraph("Login     : " + mail, "PasswordStyle");
+                    //section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
                 }
 
                 if (smartschoolPassword != null)

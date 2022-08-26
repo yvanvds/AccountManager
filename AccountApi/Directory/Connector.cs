@@ -198,7 +198,7 @@ namespace AccountApi.Directory
             }
         }
 
-        public static async Task<string> CreateNewAlias(string firstname, string lastname)
+        public static async Task<string> CreateNewAlias(string firstname, string lastname, bool isStudent = false)
         {
             firstname = firstname.Trim().ToLower();
             lastname = lastname.Trim().ToLower();
@@ -224,7 +224,7 @@ namespace AccountApi.Directory
 
             int counter = 0;
 
-            while (await AccountManager.HasAlias(mail + (counter > 0 ? counter.ToString() : "") + "@" + Connector.AzureDomain))
+            while (await AccountManager.HasAlias(mail + (counter > 0 ? counter.ToString() : "") + "@" + (isStudent ? "student." : "") +  Connector.AzureDomain))
             {
                 counter++;
             }

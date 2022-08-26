@@ -417,7 +417,7 @@ namespace AccountApi.Directory
 
         private static async Task setStudentDetails(DirectoryEntry entry, string firstName, string lastName, string uid, string wisaID, string classGroup)
         {
-            string alias = await Connector.CreateNewAlias(firstName, lastName);
+            string alias = await Connector.CreateNewAlias(firstName, lastName, true);
 
             try
             {

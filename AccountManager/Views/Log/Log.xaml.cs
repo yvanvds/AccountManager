@@ -132,6 +132,7 @@ namespace AccountManager.Views.Log
                 case "Wisa": Filter = Origin.Wisa; break;
                 case "SmartSchool": Filter = Origin.Smartschool; break;
                 case "Active Directory": Filter = Origin.Directory; break;
+                case "Office365": Filter = Origin.Azure; break;
                 case "Other": Filter = Origin.Other; break;
             }
 
