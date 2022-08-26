@@ -23,7 +23,7 @@
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
-    <PublishUrl>\\accountmanager\Share\</PublishUrl>
+    <PublishUrl>\\192.168.0.60\Share\</PublishUrl>
     <Install>true</Install>
     <InstallFrom>Unc</InstallFrom>
     <UpdateEnabled>true</UpdateEnabled>
@@ -33,11 +33,11 @@
     <UpdatePeriodically>false</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
-    <InstallUrl>\\accountmanager\Share\</InstallUrl>
+    <InstallUrl>\\192.168.0.60\Share\</InstallUrl>
     <ProductName>AccountManager</ProductName>
     <PublisherName>Yvan Vander Sanden</PublisherName>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>41</ApplicationRevision>
+    <ApplicationRevision>37</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -156,6 +156,7 @@
     <Compile Include="Action\StaffAccount\AddToDirectory.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromAD.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromWisa.cs" />
+    <Compile Include="Action\StaffAccount\ModifySmartschoolStaffEmail.cs" />
     <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />
     <Compile Include="Action\StaffAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromDirectory.cs" />
@@ -166,8 +167,8 @@
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Action\StudentAccount\AddToADClassGroup.cs" />
     <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
-    <Compile Include="Action\StudentAccount\ChangeEmail.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
+    <Compile Include="Action\StudentAccount\ModifySmartschoolStudentEmail.cs" />
     <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
@@ -201,6 +202,7 @@
     <Compile Include="Utils\FlowTableCreator.cs" />
     <Compile Include="Utils\JsonConverter.cs" />
     <Compile Include="Utils\Set.cs" />
+    <Compile Include="Utils\SortKeepingDataGrid.cs" />
     <Compile Include="Utils\TaskUtils.cs" />
     <Compile Include="ViewModels\Accounts\AccountsPage.cs" />
     <Compile Include="ViewModels\Accounts\ADAccounts.cs" />
@@ -209,6 +211,7 @@
     <Compile Include="ViewModels\Accounts\StudentOverview.cs" />
     <Compile Include="ViewModels\Accounts\SmartschoolAccounts.cs" />
     <Compile Include="ViewModels\Accounts\WisaAccounts.cs" />
+    <Compile Include="ViewModels\Actions\QRCodeAction.cs" />
     <Compile Include="ViewModels\Base\BaseViewModel.cs" />
     <Compile Include="Utils\IErrorHandler.cs" />
     <Compile Include="ViewModels\Base\RelayAsyncCommand.cs" />
@@ -231,9 +234,6 @@
     </Compile>
     <Compile Include="Views\Accounts\ADAccounts.xaml.cs">
       <DependentUpon>ADAccounts.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Views\Accounts\AzureAccounts.xaml.cs">
-      <DependentUpon>AzureAccounts.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Accounts\GoogleAccounts.xaml.cs">
       <DependentUpon>GoogleAccounts.xaml</DependentUpon>
@@ -278,6 +278,12 @@
     <Compile Include="Action\Group\RemoveEmptyFromDirectory.cs" />
     <Compile Include="Action\Group\GroupAction.cs" />
     <Compile Include="Action\StudentAccount\UnregisterSmartschool.cs" />
+    <Compile Include="Views\Actions\ActionsPage.xaml.cs">
+      <DependentUpon>ActionsPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Actions\QRCodeAction.xaml.cs">
+      <DependentUpon>QRCodeAction.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
     </Compile>
@@ -295,6 +301,9 @@
     </Compile>
     <Compile Include="Views\Dashboard\LinkedStaffMembers.xaml.cs">
       <DependentUpon>LinkedStaffMembers.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Dialogs\AD_AskForPassword.xaml.cs">
+      <DependentUpon>AD_AskForPassword.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Dialogs\AD_DontImportUser.xaml.cs">
       <DependentUpon>AD_DontImportUser.xaml</DependentUpon>
@@ -386,10 +395,6 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Views\Accounts\AzureAccounts.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
     <Page Include="Views\Accounts\GoogleAccounts.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -410,6 +415,14 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="Views\Actions\ActionsPage.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Actions\QRCodeAction.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Views\Dashboard\DashboardPage.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -423,6 +436,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Dashboard\LinkedStaffMembers.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Dialogs\AD_AskForPassword.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -622,6 +639,7 @@
   <ItemGroup>
     <Resource Include="accountmanager.ico" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>

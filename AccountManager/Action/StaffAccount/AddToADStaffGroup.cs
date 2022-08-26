@@ -18,6 +18,9 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(State.Linked.LinkedStaffMember account)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             // TODO: should not be bound to school
             if (account.Directory.Account.Role == AccountApi.AccountRole.Teacher)
             {
@@ -47,12 +50,12 @@ namespace AccountManager.Action.StaffAccount
                 account.OK = false;
             }
 
-            if (!account.Directory.Account.Groups.Contains("CN=" + State.App.Instance.Settings.SchoolPrefix.Value + "-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
-            {
-                account.Directory.FlagWarning();
-                account.Actions.Add(new AddToADStaffGroup());
-                account.OK = false;
-            }
+            //if (!account.Directory.Account.Groups.Contains("CN=" + State.App.Instance.Settings.SchoolPrefix.Value + "-Secretariaat,OU=ArcadiaGroups,DC=arcadiascholen,DC=be"))
+            //{
+            //    account.Directory.FlagWarning();
+            //    account.Actions.Add(new AddToADStaffGroup());
+            //    account.OK = false;
+            //}
         }
     }
 }

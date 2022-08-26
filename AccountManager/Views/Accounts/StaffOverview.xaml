@@ -6,6 +6,7 @@
              xmlns:local="clr-namespace:AccountManager.Views.Accounts"
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:c="clr-namespace:CalcBinding;assembly=CalcBinding"
+             xmlns:utils="clr-namespace:AccountManager.Utils"
              TextElement.Foreground="{DynamicResource MaterialDesignBody}"
              TextElement.FontWeight="Medium"
              TextElement.FontSize="14"
@@ -79,11 +80,16 @@
                 <ColumnDefinition/>
             </Grid.ColumnDefinitions>
 
-            <DataGrid Grid.Row="1" Margin="16 0 16 16" ItemsSource="{Binding Accounts}"
+            <utils:SortKeepingDataGrid Grid.Row="1" Margin="16 0 16 16" ItemsSource="{Binding Accounts}"
                   CanUserSortColumns="True"
                   CanUserAddRows="False"
                   AutoGenerateColumns="False"
                   SelectionMode="Single"
+                  Background="White" 
+                  Foreground="Black" 
+                  GridLinesVisibility="Horizontal" 
+                  HorizontalGridLinesBrush="LightGray"
+                  FontSize="12"
                   materialDesign:DataGridAssist.CellPadding="13 8 8 8"
                   materialDesign:DataGridAssist.ColumnHeaderPadding="8"
                   CurrentItem="{Binding SelectedAccount, Mode=TwoWay}">
@@ -123,7 +129,7 @@
                     </DataGridTemplateColumn>-->
 
                 </DataGrid.Columns>
-            </DataGrid>
+            </utils:SortKeepingDataGrid>
 
             <GroupBox Grid.Column="1" Header="{Binding SelectedAccountHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">

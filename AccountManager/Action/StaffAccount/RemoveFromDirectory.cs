@@ -18,6 +18,9 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(State.Linked.LinkedStaffMember account)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             await AccountApi.Directory.AccountManager.DeleteStaff(account.Directory.Account).ConfigureAwait(false);
         }
 

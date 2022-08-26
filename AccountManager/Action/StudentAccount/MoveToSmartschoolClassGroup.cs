@@ -8,9 +8,9 @@ namespace AccountManager.Action.StudentAccount
 {
     class MoveToSmartschoolClassGroup : AccountAction
     {
-        public MoveToSmartschoolClassGroup() : base(
+        public MoveToSmartschoolClassGroup(string smartschoolClass, string wisaClass) : base(
             "Wijzig Klas in Smartschool",
-            "De klas van dit account komt niet overeen met de klas in Wisa",
+            "De klas van dit account(" + smartschoolClass + ") komt niet overeen met de klas in Wisa(" + wisaClass + ")",
             true, true)
         {
 
@@ -52,7 +52,7 @@ namespace AccountManager.Action.StudentAccount
         {
             if (!account.Wisa.Account.ClassGroup.Contains("ANS") && !account.Wisa.Account.ClassGroup.Contains("BNS") && account.Wisa.Account.ClassName != account.Smartschool.Account.Group)
             {
-                account.Actions.Add(new MoveToSmartschoolClassGroup());
+                account.Actions.Add(new MoveToSmartschoolClassGroup(account.Smartschool.Account.Group, account.Wisa.Account.ClassName));
                 account.Smartschool.FlagWarning();
                 account.OK = false;
             }

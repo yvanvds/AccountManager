@@ -24,6 +24,8 @@
             <RowDefinition Height="50"/>
             <RowDefinition Height="50"/>
             <RowDefinition Height="50"/>
+            <RowDefinition Height="50"/>
+            <RowDefinition Height="50"/>
         </Grid.RowDefinitions>
         
         <Button Grid.Row="0" Height="50" Margin="0" Style="{StaticResource MaterialDesignFlatButton}" HorizontalContentAlignment="Left" x:Name="DashboardButton" Click="DashboardButton_Click">
@@ -54,7 +56,14 @@
             </StackPanel>
         </Button>
 
-        <Button Grid.Row="4" Height="50" Margin="0" Style="{StaticResource MaterialDesignFlatButton}" HorizontalContentAlignment="Left" x:Name="SettingsButton" Click="SettingsButton_Click">
+        <Button Grid.Row="4" Height="50" Margin="0" Style="{StaticResource MaterialDesignFlatButton}" HorizontalContentAlignment="Left" x:Name="ActionsButton" Click="ActionsButton_Click">
+            <StackPanel Orientation="Horizontal">
+                <materialDesign:PackIcon Grid.Column="0" Kind="ArrowDecisionAuto" Height="25" Width="50"/>
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="15">Acties</TextBlock>
+            </StackPanel>
+        </Button>
+        
+        <Button Grid.Row="6" Height="50" Margin="0" Style="{StaticResource MaterialDesignFlatButton}" HorizontalContentAlignment="Left" x:Name="SettingsButton" Click="SettingsButton_Click">
             <StackPanel Orientation="Horizontal">
                 <materialDesign:PackIcon Grid.Column="0" Kind="Settings" Height="25" Width="50"/>
                 <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="15">Settings</TextBlock>

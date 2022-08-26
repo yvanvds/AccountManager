@@ -19,6 +19,9 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(State.Linked.LinkedStaffMember linkedAccount)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             var wisa = linkedAccount.Wisa.Account;
             var smartschool = linkedAccount.Smartschool.Account;
 

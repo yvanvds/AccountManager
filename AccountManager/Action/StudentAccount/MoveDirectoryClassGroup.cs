@@ -16,6 +16,9 @@ namespace AccountManager.Action.StudentAccount
 
         public async override Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             bool result = await AccountApi.Directory.AccountManager.MoveStudentToClass(linkedAccount.Directory.Account, linkedAccount.Wisa.Account.ClassName).ConfigureAwait(false);
             if (result)
             {

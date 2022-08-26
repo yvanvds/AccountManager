@@ -34,6 +34,9 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(LinkedStaffMember account)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             if (account.Directory.Account.WisaID != account.Wisa.Account.CODE)
             {
                 await account.Directory.Account.SetWisaID(account.Wisa.Account.CODE).ConfigureAwait(false);

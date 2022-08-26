@@ -128,16 +128,25 @@ namespace AccountApi.Directory
                 return false;
             }
 
+            int count = 0;
             foreach (SearchResult r in results)
             {
                 DirectoryEntry entry = r.GetDirectoryEntry();
                 if (entry.Name.StartsWith("OU")) continue;
 
                 list.Add(new ADGroup(entry));
+                count++;
+
+                if (count % 10 == 0)
+                {
+                    Connector.Log.AddMessage(Origin.Directory, "Added " + count.ToString() + " Classes");
+                }
+
                 entry.Close();
             }
 
             results.Dispose();
+            Connector.Log.AddMessage(Origin.Directory, "Added " + count.ToString() + " Classes");
             return true;
         }
 

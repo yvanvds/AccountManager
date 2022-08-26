@@ -142,6 +142,7 @@ namespace AccountManager.Exporters.Passwords
                     if (pw.SSPassword.Length > 0)
                     {
                         section.AddParagraph("Smartschool", "Heading2");
+                        section.AddParagraph("Je gebruikt de website https://sanctamaria-aarschot.smartschool.be", "Normal");
                         section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
                         section.AddParagraph(pw.SSPassword, "PasswordStyle");
                         section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen.", "Normal");
@@ -205,6 +206,7 @@ namespace AccountManager.Exporters.Passwords
                 if (smartschoolPassword != null)
                 {
                     section.AddParagraph("Smartschool", "Heading2");
+                    section.AddParagraph("Je gebruikt de website https://sanctamaria-aarschot.smartschool.be", "Normal");
                     section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
                     section.AddParagraph(smartschoolPassword, "PasswordStyle");
                     section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen.", "Normal");

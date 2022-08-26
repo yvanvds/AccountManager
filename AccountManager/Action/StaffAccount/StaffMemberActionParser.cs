@@ -28,16 +28,13 @@ namespace AccountManager.Action.StaffAccount
                 DontImportFromWisa.Evaluate(account);
                 account.OK = false;
             }
-            //if (account.Google.Exists)
-            //{
-            //    RemoveFromGoogle.Evaluate(account);
-            //} 
             
             if (account.OK)
             {
                 UpdateWisaName.Evaluate(account);
                 AddToADStaffGroup.Evaluate(account);
                 PrincipalNameMustEqualMail.Evaluate(account);
+                ModifySmartschoolStaffEmail.Evaluate(account);
             }
         }
     }

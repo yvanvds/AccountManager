@@ -182,6 +182,26 @@ namespace AccountApi.Smartschool
             return null;
         }
 
+        public async Task UpdateQRCodes()
+        {
+            if (Accounts != null)
+            {
+                foreach(var account in Accounts)
+                {
+                    Connector.Log.AddMessage(Origin.Smartschool, "updating QR: " + account.AccountID + " for "+ account.GivenName + " " + account.SurName + " (" + Name + ")");
+                    await AccountManager.UpdateQRCode(account);
+                }
+            }
+
+            if (Children != null)
+            {
+                foreach(var child in Children)
+                {
+                    await (child as Group).UpdateQRCodes();
+                }
+            }
+        }
+
         public bool HasParent(string name)
         {
             if (Parent == null) return false;

@@ -34,6 +34,9 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(LinkedStaffMember account)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             account.Directory.Account.PrincipalName = account.Directory.Account.Mail;
         }
 

@@ -43,7 +43,7 @@ namespace AccountManager.Action.StudentAccount
                 ModifyDirectoryData.Evaluate(account);
                 PrincipalNameMustEqualMail.Evaluate(account);
                 AddToADClassGroup.Evaluate(account);
-                ChangeEmail.Evaluate(account);
+                ModifySmartschoolStudentEmail.Evaluate(account);
             }
         }
     }

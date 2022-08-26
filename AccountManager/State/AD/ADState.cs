@@ -1,5 +1,7 @@
 ﻿using AccountApi;
 using AccountManager.Utils;
+using AccountManager.Views.Dialogs;
+using MaterialDesignThemes.Wpf;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -25,6 +27,12 @@ namespace AccountManager.State.AD
 
         public ConfigValue<bool> UseGrades;
         public ConfigValue<bool> UseYears;
+
+        public ConfigValue<string> Username;
+
+        private string password = "";
+        private bool passwordOK = false;
+        private bool connected = false;
 
         public ObservableCollection<IRule> ImportRules { get; set; } = new ObservableCollection<IRule>();
 
@@ -59,6 +67,8 @@ namespace AccountManager.State.AD
 
             UseGrades = new ConfigValue<bool>("useGrades", false, UpdateObservers);
             UseYears = new ConfigValue<bool>("useYears", false, UpdateObservers);
+
+            Username = new ConfigValue<string>("username", "", UpdateObservers, UpdateConnectionState);
         }
 
         public override void LoadConfig(JObject obj)
@@ -73,6 +83,7 @@ namespace AccountManager.State.AD
             UseGrades.Load(obj);
             UseYears.Load(obj);
             IPAddress.Load(obj);
+            Username.Load(obj);
 
             if (obj.ContainsKey("grades"))
             {
@@ -124,6 +135,7 @@ namespace AccountManager.State.AD
             Connection.Save(ref result);
             UseGrades.Save(ref result);
             UseYears.Save(ref result);
+            Username.Save(ref result);
             result["grades"] = new JArray(grades);
             result["years"] = new JArray(years);
 
@@ -142,7 +154,7 @@ namespace AccountManager.State.AD
 
         public override async Task LoadContent()
         {
-            if(Connect())
+            if(await Connect().ConfigureAwait(false))
             {
                 await Groups.Load().ConfigureAwait(false);
                 await Accounts.Load().ConfigureAwait(false);
@@ -161,17 +173,53 @@ namespace AccountManager.State.AD
             Accounts.SaveToJson();
         }
 
-        public bool Connect()
+        public async Task<bool> Connect()
         {
+            if (connected) return true;
+
+            if(!passwordOK)
+            {
+                AD_AskForPassword dialog = new AD_AskForPassword(Username.Value);
+                string dialogResult = (string) await  DialogHost.Show(dialog, "RootDialog").ConfigureAwait(false);
+
+                if (dialogResult.Equals("true", StringComparison.CurrentCultureIgnoreCase))
+                {
+                    if (dialog.Username != Username.Value)
+                    {
+                        Username.Value = dialog.Username;
+                        SaveConfig();
+                    }
+                    
+                    password = dialog.Password;
+                } else
+                {
+                    MainWindow.Instance.Log.AddError(Origin.Directory, "Not Connected");
+                    return false;
+                }
+            }
+
             AccountApi.Directory.Connector.AzureDomain = AzureDomain.Value;
-            return AccountApi.Directory.Connector.Init(
-                Domain.Value, IPAddress.Value, AccountRoot.Value, ClassesRoot.Value, StudentRoot.Value, StaffRoot.Value, State.App.Instance.Settings.SchoolPrefix.Value, MainWindow.Instance.Log
+            bool result =  AccountApi.Directory.Connector.Init(
+                Domain.Value, IPAddress.Value, AccountRoot.Value, ClassesRoot.Value, StudentRoot.Value, StaffRoot.Value, State.App.Instance.Settings.SchoolPrefix.Value, Username.Value, password, MainWindow.Instance.Log
             );
+
+            if (result)
+            {
+                passwordOK = true;
+                connected = true;
+
+            } else
+            {
+                MainWindow.Instance.Log.AddError(Origin.Directory, "Not Connected");
+            }
+
+            return result;
         }
 
         public async Task ReloadGroups()
         {
-            if (Connect())
+            bool connected = await Connect().ConfigureAwait(false);
+            if (connected)
             {
                 await Groups.Load().ConfigureAwait(false);
             }

@@ -93,7 +93,14 @@ namespace AccountApi.Smartschool
                 return false;
             }
 
-            return true;
+            bool QRResult = await UpdateQRCode(account).ConfigureAwait(false);
+
+            if (!QRResult)
+            {
+                Connector.Log.AddError(Origin.Smartschool, "Failed to update QR Code");
+            }
+
+            return QRResult;
         }
 
         /// <summary>
@@ -343,6 +350,21 @@ namespace AccountApi.Smartschool
                 }
                 return AccountState.Invalid;
             }
+        }
+
+        public static async Task<bool> UpdateQRCode(IAccount account)
+        {
+            var result = await Task.Run(
+              () => Connector.service.saveUserParameter(Connector.password, account.UID, "Interne nummer QR-code", account.AccountID)
+            );
+
+            int iResult = Convert.ToInt32(result);
+            if (iResult != 0)
+            {
+                Error.AddError(iResult);
+                return false;
+            }
+            return true;
         }
 
         /// <summary>

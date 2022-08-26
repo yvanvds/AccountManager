@@ -56,7 +56,7 @@ namespace AccountApi.Directory
 
         private static DirectoryEntry connection;
 
-        public static bool Init(string domain, string ip, string accounts, string groups, string students, string staff, string prefix, ILog log = null)
+        public static bool Init(string domain, string ip, string accounts, string groups, string students, string staff, string prefix, string username, string password, ILog log = null)
         {
             Log = log;
 
@@ -68,7 +68,10 @@ namespace AccountApi.Directory
             schoolPrefix = prefix;
             ipAddress = ip;
 
-            if (ip.Length > 0)
+            accountName = username;
+            accountPassword = password;
+
+            if (ip != null && ip.Length > 0)
             {
                 root = "LDAP://" + ip + "/";
             } else
@@ -80,41 +83,19 @@ namespace AccountApi.Directory
             {
                 connection = new DirectoryEntry(Root + domainPath)
                 {
-                    AuthenticationType = AuthenticationTypes.Secure
-                };
-            }
-            catch (DirectoryServicesCOMException e)
-            {
-                Log.AddError(Origin.Directory, e.Message);
-                return false;
-            }
-            catch (Exception e)
-            {
-                Log.AddError(Origin.Directory, e.Message);
-                return false;
-            }
-
-            return true;
-        }
-
-        public static bool Login(string name, string password)
-        {
-            try
-            {
-                connection = new DirectoryEntry(Root + domainPath)
-                {
                     AuthenticationType = AuthenticationTypes.Secure,
-                    
-                    Username = name,
-                    Password = password
+                    Username = accountName,
+                    Password = accountPassword,
                 };
+                Log.AddMessage(Origin.Directory, "Verifying Connection...");
+                string name = connection.Name;
+                Log.AddMessage(Origin.Directory, "Connected to " + name);
             }
             catch (DirectoryServicesCOMException e)
             {
                 Log.AddError(Origin.Directory, e.Message);
                 accountName = "";
                 accountPassword = "";
-                
                 return false;
             }
             catch (Exception e)
@@ -125,10 +106,41 @@ namespace AccountApi.Directory
                 return false;
             }
 
-            accountName = name;
-            accountPassword = password;
             return true;
         }
+
+        //public static bool Login(string name, string password)
+        //{
+        //    try
+        //    {
+        //        connection = new DirectoryEntry(Root + domainPath)
+        //        {
+        //            AuthenticationType = AuthenticationTypes.Secure,
+
+        //            Username = name,
+        //            Password = password
+        //        };
+        //    }
+        //    catch (DirectoryServicesCOMException e)
+        //    {
+        //        Log.AddError(Origin.Directory, e.Message);
+        //        accountName = "";
+        //        accountPassword = "";
+                
+        //        return false;
+        //    }
+        //    catch (Exception e)
+        //    {
+        //        Log.AddError(Origin.Directory, e.Message);
+        //        accountName = "";
+        //        accountPassword = "";
+        //        return false;
+        //    }
+
+        //    accountName = name;
+        //    accountPassword = password;
+        //    return true;
+        //}
 
         public static void Close()
         {
@@ -255,10 +267,16 @@ namespace AccountApi.Directory
 
                 if (ou[i].Substring(0, 2).Equals("OU", StringComparison.CurrentCultureIgnoreCase))
                 {
-                    if (!DirectoryEntry.Exists(Root + ou[i] + "," + parent))
+                    if (!EntryExists(Root + ou[i] + "," + parent))
                     {
                         DirectoryEntry ouEntry = new DirectoryEntry(Root + parent);
+                        ouEntry.Username = AccountName;
+                        ouEntry.Password = AccountPassword;
+
                         DirectoryEntry child = ouEntry.Children.Add(ou[i], "OrganizationalUnit");
+                        child.Username = AccountName;
+                        child.Password = AccountPassword;
+
                         child.CommitChanges();
                         ouEntry.CommitChanges();
                         Log.AddMessage(Origin.Directory, "Created Unit: " + ou[i]);
@@ -347,9 +365,9 @@ namespace AccountApi.Directory
                 path = Root + path;
             }
 
-            if (DirectoryEntry.Exists(path))
+            if (EntryExists(path))
             {
-                return new DirectoryEntry(path);
+                return new DirectoryEntry(path, AccountName, AccountPassword);
             }
             else
             {
@@ -358,12 +376,36 @@ namespace AccountApi.Directory
         }
 
         public static DirectoryEntry GetEntryByUID(string uid)
-        {
-            DirectorySearcher search = new DirectorySearcher();
+        {         
+            DirectoryEntry root = GetEntry(accountPath);
+            if (root == null) return null;
+
+            DirectorySearcher search = new DirectorySearcher(connection);
+            search.SearchRoot = root;
             search.Filter = String.Format("(SAMAccountName={0})", uid);
             SearchResult result = search.FindOne();
             if (result == null) return null;
             return result.GetDirectoryEntry();
+        }
+
+        public static bool EntryExists(string path)
+        {
+            DirectoryEntry entry = new DirectoryEntry(path);
+            entry.Username = AccountName;
+            entry.Password = AccountPassword;
+
+            bool exists = false;
+
+            try
+            {
+                var tmp = entry.Guid;
+                exists = true;
+            } catch (DirectoryServicesCOMException)
+            {
+                exists = false;
+            }
+
+            return exists;
         }
     }
 }
