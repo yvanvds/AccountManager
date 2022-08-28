@@ -50,7 +50,6 @@ namespace AccountManager.ViewModels.Dashboard
         private async Task SyncAzureAccounts()
         {
             IndicatorAzureAccount = true;
-            Azure.Connect();
             await Azure.LoadContent().ConfigureAwait(false);
             IndicatorAzureAccount = false;
         }

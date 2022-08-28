@@ -25,13 +25,13 @@ namespace AccountManager.Views.Accounts
                 Tabs.Items.Remove(WisaTab);
                 Tabs.Items.Remove(ADTab);
                 Tabs.Items.Remove(SmartschoolTab);
-                //Tabs.Items.Remove(GoogleTab);
+                Tabs.Items.Remove(AzureTab);
             } else if (viewModel.DebugMode && !debugTabsAreShown)
             {
                 Tabs.Items.Add(WisaTab);
                 Tabs.Items.Add(ADTab);
                 Tabs.Items.Add(SmartschoolTab);
-                //Tabs.Items.Add(GoogleTab);
+                Tabs.Items.Add(AzureTab);
             }
         }
     }

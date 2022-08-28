@@ -48,7 +48,7 @@ namespace AccountManager.Action.StaffAccount
 
         public static void Evaluate(State.Linked.LinkedStaffMember account)
         {
-            if (account.Wisa.Exists && !account.Directory.Exists && account.Smartschool.Exists)
+            if (account.Wisa.Exists && account.Smartschool.Exists && account.Azure.Exists && !account.Directory.Exists)
             {
                 account.Actions.Add(new AddToDirectory());
             }

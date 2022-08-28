@@ -4,6 +4,7 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -40,14 +41,19 @@ namespace AccountManager.State.Azure
             return result;
         }
 
-        public void Connect()
+        public async Task Connect()
         {
-            AccountApi.Azure.Connector.Instance.Create(ClientID.Value, TenantID.Value, MainWindow.Instance, MainWindow.Instance.Log);
+            
+            AccountApi.Azure.Connector.Instance.Create(ClientID.Value, TenantID.Value, MainWindow.Instance, App.Instance.AD.AzureDomain.Value, App.Instance.Settings.SchoolPrefix.Value, MainWindow.Instance.Log);
+            //HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, "");
+            //await AccountApi.Azure.Connector.Instance.AuthenticateRequestAsync(request).ConfigureAwait(false);
+            //request.Dispose();
         }
 
         public override async Task LoadContent()
         {
-            Connect();
+            await Connect().ConfigureAwait(false);
+            
             await Accounts.Load().ConfigureAwait(false);
         }
 

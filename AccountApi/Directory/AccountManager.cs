@@ -226,7 +226,7 @@ namespace AccountApi.Directory
             return null;
         }
 
-        public static Account GetStaffmemberByWisaID(string wisaID)
+        public static Account GetStaffmemberByWisaName(string wisaID)
         {
             foreach (var account in Staff)
             {

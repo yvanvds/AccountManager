@@ -18,15 +18,17 @@ namespace AccountManager.Action.StudentAccount
             account.OK = true;
             account.SetBasicFlags();
 
-            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists)
+            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists || !account.Azure.Exists)
             {
+                AddToAzure.Evaluate(account);
+                AddToDirectoryAndSmartschool.Evaluate(account);
+                AddToDirectory.Evaluate(account);
                 RemoveFromGoogle.Evaluate(account);
                 RemoveFromDirectory.Evaluate(account);
                 UnregisterSmartschool.Evaluate(account);
                 DeleteFromSmartschool.Evaluate(account);
-                AddToDirectoryAndSmartschool.Evaluate(account);
-                AddToDirectory.Evaluate(account);
                 RemoveFromDirectoryAndSmartschool.Evaluate(account);
+                
                 account.OK = false;
             }
             else

@@ -21,8 +21,8 @@ namespace AccountManager.State.Linked
         int totalSmartschoolAccounts = 0;
         public int TotalSmartschoolAccounts => totalSmartschoolAccounts;
 
-        int totalGoogleAccounts = 0;
-        public int TotalGoogleAccounts => totalGoogleAccounts;
+        int totalAzureAccounts = 0;
+        public int TotalAzureAccounts => totalAzureAccounts;
 
         int unlinkedWisaAccounts = 0;
         public int UnlinkedWisaAccounts => unlinkedWisaAccounts;
@@ -33,8 +33,8 @@ namespace AccountManager.State.Linked
         int unlinkedSmartschoolAccounts = 0;
         public int UnlinkedSmartschoolAccounts => unlinkedSmartschoolAccounts;
 
-        int unlinkedGoogleAccounts = 0;
-        public int UnlinkedGoogleAccounts => unlinkedGoogleAccounts;
+        int unlinkedAzureAccounts = 0;
+        public int UnlinkedAzureAccounts => unlinkedAzureAccounts;
 
         int linkedWisaAccounts = 0;
         public int LinkedWisaAccounts => linkedWisaAccounts;
@@ -45,8 +45,8 @@ namespace AccountManager.State.Linked
         int linkedSmartschoolAccounts = 0;
         public int LinkedSmartschoolAccounts => linkedSmartschoolAccounts;
 
-        int linkedGoogleAccounts = 0;
-        public int LinkedGoogleAccounts => linkedGoogleAccounts;
+        int linkedAzureAccounts = 0;
+        public int LinkedAzureAccounts => linkedAzureAccounts;
 
         public async Task ReLink()
         {
@@ -56,59 +56,49 @@ namespace AccountManager.State.Linked
 
         private void DoRelink()
         {
-            //if (!Data.Instance.ConfigReady) return;
             if (AccountApi.Smartschool.GroupManager.Root == null) return;
 
             List.Clear();
             foreach(var account in AccountApi.Directory.AccountManager.Students)
             {
+                if(account.PrincipalName.Length == 0) continue;
 
-                if(List.ContainsKey(account.UID))
+                if(List.ContainsKey(account.PrincipalName))
                 {
-                    List[account.UID].Directory.Account = account;
+                    List[account.PrincipalName].Directory.Account = account;
                 } else
                 {
-                    List.Add(account.UID, new LinkedAccount(account));
+                    List.Add(account.PrincipalName, new LinkedAccount(account));
                 }
             }
 
-            //foreach(var account in AccountApi.Google.AccountManager.All.Values)
-            //{
-            //    if(!account.IsStaff)
-            //    {
-            //        if(List.ContainsKey(account.UID))
-            //        {
-            //            List[account.UID].Google.Account = account;
-            //        } else
-            //        {
-            //            List.Add(account.UID, new LinkedAccount(account));
-            //        }
-            //    }
-            //}
-
             var lln = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
-            if(lln != null)
+            if (lln != null)
             {
                 AddSmartschoolAccounts(lln);
             }
+
+            
+
+            
 
             foreach(var account in AccountApi.Wisa.Students.All)
             {
                 bool linked = false;
                 AccountApi.Directory.Account directoryMatch = AccountApi.Directory.AccountManager.GetStudentByWisaID(account.WisaID);
 
-                if (directoryMatch != null)
+                if (directoryMatch != null && directoryMatch.PrincipalName.Length > 0)
                 {
-                    if (List.ContainsKey(directoryMatch.UID))
+                    if (List.ContainsKey(directoryMatch.PrincipalName))
                     {
-                        List[directoryMatch.UID].Wisa.Account = account;
+                        List[directoryMatch.Mail].Wisa.Account = account;
                         linked = true;
                     }
-                    else
-                    {
-                        List.Add(directoryMatch.UID, new LinkedAccount(account));
-                        linked = true;
-                    }
+                    //else
+                    //{
+                    //    List.Add(directoryMatch.Mail, new LinkedAccount(account));
+                    //    linked = true;
+                    //}
                 }
 
                 if (!linked)
@@ -125,21 +115,64 @@ namespace AccountManager.State.Linked
                     }
                 }
 
+                //if (!linked)
+                //{
+                //    var azureMatch = AccountApi.Azure.UserManager.Instance.FindAccountByWisaID(account.WisaID);
+                //    if (azureMatch != null)
+                //    {
+                //        if (List.ContainsKey(azureMatch.UserPrincipalName))
+                //        {
+                //            List[azureMatch.UserPrincipalName].Wisa.Account = account;
+                //            linked = true;
+                //        }
+                //    }
+                //}
+
                 if (!linked)
                 {
                     List.Add(account.WisaID, new LinkedAccount(account));
                 }
             }
 
+            foreach (var account in AccountApi.Azure.UserManager.Instance.Users)
+            {
+                bool found = false;
+                if (account.UserPrincipalName != null)
+                {
+                    if (List.ContainsKey(account.UserPrincipalName))
+                    {
+                        List[account.UserPrincipalName].Azure.Account = account;
+                        found = true;
+                    } else
+                    {
+                        
+                        foreach (var linkedAccount in List)
+                        {
+                            if (linkedAccount.Value.Wisa.Account != null && linkedAccount.Value.Wisa.Account.WisaID.Equals(account.EmployeeId)) {
+                                linkedAccount.Value.Azure.Account = account;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    //if (!found)
+                    //{
+                    //    List.Add(account.Id, new LinkedAccount(account));
+                    //}
+                }
+                
+            }
+
             // count 
-            totalWisaAccounts = totalDirectoryAccounts = totalSmartschoolAccounts = totalGoogleAccounts = 0;
-            unlinkedWisaAccounts = unlinkedDirectoryAccounts = unlinkedSmartschoolAccounts = unlinkedGoogleAccounts = 0;
-            linkedWisaAccounts = linkedDirectoryAccounts = linkedSmartschoolAccounts = linkedGoogleAccounts = 0;
+            totalWisaAccounts = totalDirectoryAccounts = totalSmartschoolAccounts = totalAzureAccounts = 0;
+            unlinkedWisaAccounts = unlinkedDirectoryAccounts = unlinkedSmartschoolAccounts = unlinkedAzureAccounts = 0;
+            linkedWisaAccounts = linkedDirectoryAccounts = linkedSmartschoolAccounts = linkedAzureAccounts = 0;
 
             foreach (var group in List.Values)
             {
                 if (group == null) continue;
-                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Directory.Exists);
+                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Directory.Exists || !group.Azure.Exists);
                 if (group.Wisa.Exists)
                 {
                     totalWisaAccounts++;
@@ -158,12 +191,12 @@ namespace AccountManager.State.Linked
                     if (incomplete) unlinkedDirectoryAccounts++;
                     else linkedDirectoryAccounts++;
                 }
-                //if (group.Google.Exists)
-                //{
-                //    totalGoogleAccounts++;
-                //    if (incomplete) unlinkedGoogleAccounts++;
-                //    else linkedGoogleAccounts++;
-                //}
+                if (group.Azure.Exists)
+                {
+                    totalAzureAccounts++;
+                    if (incomplete) unlinkedAzureAccounts++;
+                    else linkedAzureAccounts++;
+                }
             }
 
             // add actions
@@ -177,12 +210,12 @@ namespace AccountManager.State.Linked
         {
             foreach(var account in group.Accounts)
             {
-                if(List.ContainsKey(account.UID))
+                if(List.ContainsKey(account.Mail))
                 {
-                    List[account.UID].Smartschool.Account = account as AccountApi.Smartschool.Account;
+                    List[account.Mail].Smartschool.Account = account as AccountApi.Smartschool.Account;
                 } else
                 {
-                    List.Add(account.UID, new LinkedAccount(account as AccountApi.Smartschool.Account));
+                    List.Add(account.Mail, new LinkedAccount(account as AccountApi.Smartschool.Account));
                 }
             }
 

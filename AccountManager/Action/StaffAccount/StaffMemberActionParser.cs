@@ -18,14 +18,16 @@ namespace AccountManager.Action.StaffAccount
             account.OK = true;
             account.SetBasicFlags();
 
-            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists)
+            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists || !account.Azure.Exists)
             {
-                
+                AddToAzure.Evaluate(account);
                 AddToDirectory.Evaluate(account);
                 RemoveFromDirectory.Evaluate(account);
                 RemoveFromSmartschool.Evaluate(account);
                 DontImportFromAD.Evaluate(account);
                 DontImportFromWisa.Evaluate(account);
+                RemoveFromAzure.Evaluate(account);
+                
                 account.OK = false;
             }
             

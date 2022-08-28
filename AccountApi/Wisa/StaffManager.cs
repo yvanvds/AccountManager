@@ -52,7 +52,7 @@ namespace AccountApi.Wisa
             using (StringReader reader = new StringReader(result))
             {
                 string line = reader.ReadLine();
-                if (!line.Equals("CODE,FAMILIENAAM,VOORNAAM"))
+                if (!line.Equals("CODE,WISAID,FAMILIENAAM,VOORNAAM"))
                 {
                     Connector.Log?.AddError(Origin.Wisa, "Error while getting staff. Headers do not match.");
                     return false;

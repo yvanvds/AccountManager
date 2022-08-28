@@ -16,18 +16,33 @@ namespace AccountApi.Azure
         private Connector() { }
         public static Connector Instance { get { return instance; } }
 
-        public void Create(string clientID, string tenantID, System.Windows.Window parentWindow, ILog log = null)
-        {
-            this.log = log;
-            this.parentWindow = parentWindow;
+        private string azureDomain;
+        public string AzureDomain { get => azureDomain; }
+        private string prefix;
+        public string Prefix { get => prefix; }
 
-            clientApp = PublicClientApplicationBuilder.Create(clientID)
-                .WithAuthority(AzureCloudInstance.AzurePublic, tenantID)
-                .WithDefaultRedirectUri()
-                .Build();
-            TokenCacheHelper.EnableSerialization(clientApp.UserTokenCache);
+        public void Create(string clientID, string tenantID, System.Windows.Window parentWindow, string azureDomain, string schoolPrefix, ILog log = null)
+        {
+            this.azureDomain = azureDomain;
+            this.prefix = schoolPrefix;
+
+            try
+            {
+                this.log = log;
+                this.parentWindow = parentWindow;
+
+                clientApp = PublicClientApplicationBuilder.Create(clientID)
+                    .WithAuthority(AzureCloudInstance.AzurePublic, tenantID)
+                    .WithDefaultRedirectUri()
+                    .Build();
+                TokenCacheHelper.EnableSerialization(clientApp.UserTokenCache);
+
+                directory = new GraphServiceClient(this);
+            } catch(Exception ex)
+            {
+                RegisterError($"Error Creating Azure App: {ex.Message}");
+            }
             
-            directory = new GraphServiceClient(this);
         }
 
         private async Task<string> getAccessToken()

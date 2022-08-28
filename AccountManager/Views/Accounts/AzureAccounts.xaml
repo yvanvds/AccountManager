@@ -68,6 +68,91 @@
                 <ColumnDefinition Width="300"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
+
+            <!-- List of Accounts -->
+            <utils:SortKeepingDataGrid Grid.Column="0" Margin="0 8 0 0" ItemsSource="{Binding Accounts}"
+              CanUserSortColumns="True"
+              CanUserAddRows="False"
+              AutoGenerateColumns="False"
+              SelectionMode="Single"
+              Background="White" 
+              Foreground="Black" 
+              GridLinesVisibility="Horizontal" 
+              HorizontalGridLinesBrush="LightGray"
+              FontSize="12"
+              materialDesign:DataGridAssist.CellPadding="13 8 8 8"
+              materialDesign:DataGridAssist.ColumnHeaderPadding="8"
+              xmlns:utils="clr-namespace:AccountManager.Utils"        
+              SelectedItem="{Binding SelectedAccount, Mode=OneWayToSource}">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Binding="{Binding Surname}" Header="Naam" IsReadOnly="True" />
+                    <DataGridTextColumn Binding="{Binding GivenName}" Header="Voornaam" IsReadOnly="True"/>
+                    <DataGridTextColumn Binding="{Binding Department}" Header="Klas" IsReadOnly="True"/>
+                </DataGrid.Columns>
+            </utils:SortKeepingDataGrid>
+
+            <!-- Account Detail -->
+            <GroupBox Grid.Column="1" Header="{Binding SelectedAccountTitle }">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="160"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="30"/>
+
+                    </Grid.RowDefinitions>
+                    <Label Grid.Row="0" Grid.Column="0" Content="ID" FontWeight="Bold"/>
+                    <Label Grid.Row="0" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Id}"/>
+
+                    <Label Grid.Row="1" Grid.Column="0" Content="Voornaam" FontWeight="Bold"/>
+                    <Label Grid.Row="1" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.GivenName}"/>
+
+                    <Label Grid.Row="2" Grid.Column="0" Content="Familienaam" FontWeight="Bold"/>
+                    <Label Grid.Row="2" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Surname}"/>
+
+                    <Label Grid.Row="3" Grid.Column="0" Content="Volledige Naam" FontWeight="Bold"/>
+                    <Label Grid.Row="3" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.DisplayName}"/>
+
+                    <Separator Grid.Row="4" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
+
+                    <Label Grid.Row="5" Grid.Column="0" Content="Mail" FontWeight="Bold"/>
+                    <Label Grid.Row="5" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Mail}"/>
+
+                    <Label Grid.Row="6" Grid.Column="0" Content="Login" FontWeight="Bold"/>
+                    <Label Grid.Row="6" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.UserPrincipalName}"/>
+
+                    <Separator Grid.Row="7" Grid.ColumnSpan="2" Style="{StaticResource MaterialDesignDarkSeparator}" Margin="8 0 8 0" />
+
+                    <Label Grid.Row="8" Grid.Column="0" Content="Actief" FontWeight="Bold"/>
+                    <CheckBox Grid.Row="8" Grid.Column="1" FontWeight="Light" IsChecked="{Binding SelectedAccount.AccountEnabled}"/>
+
+                    <Label Grid.Row="9" Grid.Column="0" Content="Wisa ID" FontWeight="Bold"/>
+                    <Label Grid.Row="9" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.EmployeeId}"/>
+
+                    <Label Grid.Row="10" Grid.Column="0" Content="Klas" FontWeight="Bold"/>
+                    <Label Grid.Row="10" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.Department}"/>
+
+                    <Label Grid.Row="11" Grid.Column="0" Content="Type" FontWeight="Bold"/>
+                    <Label Grid.Row="11" Grid.Column="1" FontWeight="Light" Content="{Binding SelectedAccount.JobTitle}"/>
+
+                </Grid>
+            </GroupBox>
         </Grid>
     </Grid>
 </UserControl>

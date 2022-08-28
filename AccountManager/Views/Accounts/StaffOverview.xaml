@@ -120,13 +120,13 @@
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
 
-                    <!--<DataGridTemplateColumn Header="Google" IsReadOnly="True">
+                    <DataGridTemplateColumn Header="Office365" IsReadOnly="True">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
-                                <materialDesign:PackIcon Kind="{Binding Google.Icon}" Foreground="{Binding Google.Color}"/>
+                                <materialDesign:PackIcon Kind="{Binding Azure.Icon}" Foreground="{Binding Azure.Color}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
-                    </DataGridTemplateColumn>-->
+                    </DataGridTemplateColumn>
 
                 </DataGrid.Columns>
             </utils:SortKeepingDataGrid>

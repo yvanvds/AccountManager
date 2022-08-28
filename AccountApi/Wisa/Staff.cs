@@ -12,15 +12,18 @@ namespace AccountApi.Wisa
         private readonly string code;
         private readonly string firstName;
         private readonly string lastName;
+        private readonly string wisaID;
 
         public Staff(string data)
         {
             string[] values = data.Split(',');
             code = values[0].Trim();
-            lastName = values[1].Trim();
-            firstName = values[2].Trim();
+            wisaID = values[1].Trim();
+            lastName = values[2].Trim();
+            firstName = values[3].Trim();
         }
 
+        public string WisaID { get => wisaID;}
         public string CODE { get => code; }
         public string FirstName { get => firstName; }
         public string LastName { get => lastName; }
@@ -30,6 +33,7 @@ namespace AccountApi.Wisa
             JObject result = new JObject
             {
                 ["Code"] = CODE,
+                ["WisaID"] = WisaID,
                 ["FirstName"] = FirstName,
                 ["LastName"] = LastName,
             };
@@ -39,6 +43,7 @@ namespace AccountApi.Wisa
         public Staff(JObject obj)
         {
             code = obj["Code"].ToString();
+            wisaID = obj.ContainsKey("WisaID") ? obj["WisaID"].ToString() : "";
             firstName = obj["FirstName"].ToString();
             lastName = obj["LastName"].ToString();
         }

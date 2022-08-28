@@ -12,7 +12,7 @@ namespace AccountManager.State.Linked
         public AccountStatus<AccountApi.Wisa.Student> Wisa { get; } = new AccountStatus<AccountApi.Wisa.Student>();
         public AccountStatus<AccountApi.Directory.Account> Directory { get; } = new AccountStatus<AccountApi.Directory.Account>();
         public AccountStatus<AccountApi.Smartschool.Account> Smartschool { get; } = new AccountStatus<AccountApi.Smartschool.Account>();
-        // public AccountStatus<AccountApi.Google.Account> Google { get; } = new AccountStatus<AccountApi.Google.Account>();
+        public AccountStatus<Microsoft.Graph.User> Azure { get; } = new AccountStatus<Microsoft.Graph.User>();
 
         public List<AccountAction> Actions = new List<AccountAction>();
 
@@ -31,10 +31,10 @@ namespace AccountManager.State.Linked
             Smartschool.Account = account;
         }
 
-        //public LinkedAccount(AccountApi.Google.Account account)
-        //{
-        //    Google.Account = account;
-        //}
+        public LinkedAccount(Microsoft.Graph.User account)
+        {
+            Azure.Account = account;
+        }
 
         public string UID
         {
@@ -42,7 +42,7 @@ namespace AccountManager.State.Linked
             {
                 if (Directory.Account != null) return Directory.Account.UID;
                 if (Smartschool.Account != null) return Smartschool.Account.UID;
-                //if (Google.Account != null) return Google.Account.UID;
+                if (Azure.Account != null) return Azure.Account.Id;
                 if (Wisa.Account != null) return Wisa.Account.WisaID;
                 return "No User ID";
             }
@@ -55,7 +55,7 @@ namespace AccountManager.State.Linked
                 if (Wisa.Account != null) return Wisa.Account.Name + " " + Wisa.Account.FirstName;
                 if (Smartschool.Account != null) return Smartschool.Account.SurName + " " + Smartschool.Account.GivenName;
                 if (Directory.Account != null) return Directory.Account.FullName;
-                //if (Google.Account != null) return Google.Account.FullName;
+                if (Azure.Account != null) return Azure.Account.DisplayName;
                 return "No User Name";
             }
         }
@@ -67,7 +67,19 @@ namespace AccountManager.State.Linked
                 if (Wisa.Account != null) return Wisa.Account.ClassName;
                 if (Directory.Account != null) return Directory.Account.ClassGroup;
                 if (Smartschool.Account != null) return Smartschool.Account.Group;
-                return "Google";
+                if (Azure.Account != null) return Azure.Account.Department;
+                return "No ClassGroup";
+            }
+        }
+
+        public string Mail
+        {
+            get
+            {
+                if (Directory.Account != null) return Directory.Account.Mail;
+                if (Smartschool.Account != null) return Smartschool.Account.Mail;
+                if (Azure.Account != null) return Azure.Account.UserPrincipalName;
+                return "No Mail";
             }
         }
 
@@ -78,7 +90,7 @@ namespace AccountManager.State.Linked
             Wisa.SetFlag();
             Smartschool.SetFlag();
             Directory.SetFlag();
-            //Google.SetFlag();
+            Azure.SetFlag();
         }
 
         public AccountAction GetSameAction(AccountAction action)

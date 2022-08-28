@@ -17,9 +17,13 @@ namespace AccountManager.State.Azure
 
         public async Task Load()
         {
-            await AccountApi.Azure.UserManager.Instance.LoadFromAzure().ConfigureAwait(false);
-            lastSync = DateTime.Now;
-            SaveToJson();
+            bool success = await AccountApi.Azure.UserManager.Instance.LoadFromAzure().ConfigureAwait(false);
+            if (success)
+            {
+                lastSync = DateTime.Now;
+                SaveToJson();
+            }
+            
 
             App.Instance.Azure.UpdateObservers();
         }

@@ -160,7 +160,7 @@ namespace AccountApi.Directory
         {
             return await Task.Run(() =>
             {
-                ADGroup adGroup = ADGroups.Find((a) => a.CN.Equals(group.Name));
+                ADGroup adGroup = ADGroups.Find((a) => a.CN.Equals(Connector.SchoolPrefix + "-" + group.Name));
 
                 ClassGroup parent = GetParent(group);
                 bool result = parent.DeleteChild(group);

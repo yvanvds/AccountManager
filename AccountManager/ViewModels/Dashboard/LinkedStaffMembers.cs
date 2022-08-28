@@ -48,41 +48,41 @@ namespace AccountManager.ViewModels.Dashboard
         public int TotalWisaAccounts => state.Staff.TotalWisaAccounts;
         public int TotalDirectoryAccounts => state.Staff.TotalDirectoryAccounts;
         public int TotalSmartschoolAccounts => state.Staff.TotalSmartschoolAccounts;
-        //public int TotalGoogleAccounts => state.Staff.TotalGoogleAccounts;
+        public int TotalAzureAccounts => state.Staff.TotalAzureAccounts;
         public int UnlinkedWisaAccounts => state.Staff.UnlinkedWisaAccounts;
         public int UnlinkedDirectoryAccounts => state.Staff.UnlinkedDirectoryAccounts;
         public int UnlinkedSmartschoolAccounts => state.Staff.UnlinkedSmartschoolAccounts;
-        //public int UnlinkedGoogleAccounts => state.Staff.UnlinkedGoogleAccounts;
+        public int UnlinkedAzureAccounts => state.Staff.UnlinkedAzureAccounts;
         public int LinkedWisaAccounts => state.Staff.LinkedWisaAccounts;
         public int LinkedDirectoryAccounts => state.Staff.LinkedDirectoryAccounts;
         public int LinkedSmartschoolAccounts => state.Staff.LinkedSmartschoolAccounts;
-        //public int LinkedGoogleAccounts => state.Staff.LinkedGoogleAccounts;
+        public int LinkedAzureAccounts => state.Staff.LinkedAzureAccounts;
         public string UnlinkedDirectoryColor => state.Staff.UnlinkedDirectoryAccounts == 0 ? "DarkGreen" : "DarkRed";
         public string UnlinkedSmartschoolColor => state.Staff.UnlinkedSmartschoolAccounts == 0 ? "DarkGreen" : "DarkRed";
         public string UnlinkedWisaColor => state.Staff.UnlinkedWisaAccounts == 0 ? "DarkGreen" : "DarkRed";
-        //public string UnlinkedGoogleColor => state.Staff.UnlinkedGoogleAccounts == 0 ? "DarkGreen" : "DarkRed";
+        public string UnlinkedAzureColor => state.Staff.UnlinkedAzureAccounts == 0 ? "DarkGreen" : "DarkRed";
 
         public void OnStateChanges()
         {
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalWisaAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalDirectoryAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalSmartschoolAccounts)));
-            //PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalGoogleAccounts)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalAzureAccounts)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedWisaAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedDirectoryAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedSmartschoolAccounts)));
-            //PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedGoogleAccounts)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedAzureAccounts)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedWisaAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedDirectoryAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedSmartschoolAccounts)));
-            //PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedGoogleAccounts)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedAzureAccounts)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedWisaColor)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedDirectoryColor)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedSmartschoolColor)));
-            //PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedGoogleColor)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedAzureColor)));
         }
     }
 }
