@@ -24,7 +24,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="200"/>
                     <RowDefinition Height="150"/>
-                    <RowDefinition Height="300"/>
+                    <RowDefinition Height="320"/>
                 </Grid.RowDefinitions>
 
                 <materialDesign:Card Grid.Row="0" Grid.Column="0" Margin="16" Height="160">
@@ -95,7 +95,7 @@
                         </StackPanel>
                     </StackPanel>
                 </materialDesign:Card>
-                <materialDesign:Card Grid.Row="2" Grid.Column="0" Margin="16">
+                <materialDesign:Card Grid.Row="2" Grid.Column="0" Margin="16" Height="250">
                     <StackPanel Orientation="Vertical">
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Wachtwoorden"/>
 
@@ -107,11 +107,23 @@
                             materialDesign:ButtonProgressAssist.IsIndeterminate="True">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="PasswordReset"/>
-                                <TextBlock Margin="8 0 0 0">Nieuw Netwerk Wachtwoord</TextBlock>
+                                <TextBlock Margin="8 0 0 0">Nieuw Wifi Wachtwoord</TextBlock>
                             </StackPanel>
                         </Button>
 
-                        <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" 
+                        <Button  
+                            VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" 
+                            Command="{Binding NewOffice365PasswordCommand}"
+                            materialDesign:ButtonProgressAssist.Value="-1"
+                            materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding Office365PWIndicator}"
+                            materialDesign:ButtonProgressAssist.IsIndeterminate="True">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="PasswordReset"/>
+                                <TextBlock Margin="8 0 0 0">Nieuw Office365 Wachtwoord</TextBlock>
+                            </StackPanel>
+                        </Button>
+
+                        <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" 
                                 Command="{Binding NewSmartschoolPasswordCommand}"
                                 materialDesign:ButtonProgressAssist.Value="-1"
                                 materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding SmartschoolPWIndicator}"
@@ -122,7 +134,7 @@
                             </StackPanel>
                         </Button>
 
-                        <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" 
+                        <Button VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" 
                                 Command="{Binding NewPasswordsCommand}"
                                 materialDesign:ButtonProgressAssist.Value="-1"
                                 materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding AllPWIndicator}"

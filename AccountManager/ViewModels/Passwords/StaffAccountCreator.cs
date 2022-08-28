@@ -36,7 +36,7 @@ namespace AccountManager.ViewModels.Passwords
         {
             CreateIndicator = true;
             account = await AccountApi.Directory.AccountManager.Create(
-                FirstName, LastName, "", getRole()).ConfigureAwait(false);
+                FirstName, LastName, "", "", getRole()).ConfigureAwait(false);
 
             if (account != null)
             {

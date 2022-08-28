@@ -21,7 +21,7 @@ namespace AccountManager.ViewModels.Dashboard
         public IAsyncCommand SyncWisaAccountsCommand { get; private set; }
         public IAsyncCommand SyncADAccountsCommand { get; private set; }
         public IAsyncCommand SyncSmartschoolAccountsCommand { get; private set; }
-        //public IAsyncCommand SyncGoogleAccountsCommand { get; private set; }
+        public IAsyncCommand SyncAzureGroupsCommand { get; private set; }
         public IAsyncCommand SyncAzureAccountsCommand { get; private set; }
 
         public DashboardPage()
@@ -43,15 +43,22 @@ namespace AccountManager.ViewModels.Dashboard
             SyncWisaAccountsCommand = new RelayAsyncCommand(SyncWisaAccounts);
             SyncADAccountsCommand = new RelayAsyncCommand(SyncDirectoryAccounts);
             SyncSmartschoolAccountsCommand = new RelayAsyncCommand(SyncSmartschoolAccounts);
-            //SyncGoogleAccountsCommand = new RelayAsyncCommand(SyncGoogleAccounts);
+            SyncAzureGroupsCommand = new RelayAsyncCommand(SyncAzureGroups);
             SyncAzureAccountsCommand = new RelayAsyncCommand(SyncAzureAccounts);
         }
 
         private async Task SyncAzureAccounts()
         {
             IndicatorAzureAccount = true;
-            await Azure.LoadContent().ConfigureAwait(false);
+            await Azure.Accounts.Load().ConfigureAwait(false);
             IndicatorAzureAccount = false;
+        }
+
+        private async Task SyncAzureGroups()
+        {
+            IndicatorAzureGroups = true;
+            await Azure.Groups.Load().ConfigureAwait(false);
+            IndicatorAzureGroups = false;
         }
 
         //private async Task SyncGoogleAccounts()
@@ -169,6 +176,9 @@ namespace AccountManager.ViewModels.Dashboard
         public DateTime AzureAccountDate { get => Azure.Accounts.LastSync; }
         public string AzureAccountColor { get => GetColor(Azure.Accounts.LastSync); }
 
+        public DateTime AzureGroupDate { get => Azure.Groups.LastSync; }
+        public string AzureGroupColor { get => GetColor(Azure.Groups.LastSync); }
+
         bool indicatorAzureAccount = false;
         public bool IndicatorAzureAccount
         {
@@ -177,6 +187,17 @@ namespace AccountManager.ViewModels.Dashboard
             {
                 indicatorAzureAccount = value;
                 PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorAzureAccount)));
+            }
+        }
+
+        bool indicatorAzureGroups = false;
+        public bool IndicatorAzureGroups
+        {
+            get => indicatorAzureGroups;
+            set
+            {
+                indicatorAzureGroups = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(IndicatorAzureGroups)));
             }
         }
         #endregion
@@ -233,6 +254,9 @@ namespace AccountManager.ViewModels.Dashboard
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureAccountDate)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureAccountColor)));
+
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureGroupDate)));
+            PropertyChanged(this, new PropertyChangedEventArgs(nameof(AzureGroupColor)));
         }
 
         private string GetColor(DateTime date)

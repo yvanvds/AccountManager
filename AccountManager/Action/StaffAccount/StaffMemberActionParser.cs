@@ -22,6 +22,8 @@ namespace AccountManager.Action.StaffAccount
             {
                 AddToAzure.Evaluate(account);
                 AddToDirectory.Evaluate(account);
+                AddToDirectoryAndSmartschool.Evaluate(account);
+                AddToSmartschool.Evaluate(account);
                 RemoveFromDirectory.Evaluate(account);
                 RemoveFromSmartschool.Evaluate(account);
                 DontImportFromAD.Evaluate(account);
@@ -37,6 +39,7 @@ namespace AccountManager.Action.StaffAccount
                 AddToADStaffGroup.Evaluate(account);
                 PrincipalNameMustEqualMail.Evaluate(account);
                 ModifySmartschoolStaffEmail.Evaluate(account);
+                AddToAzureStaffGroup.Evaluate(account);
             }
         }
     }

@@ -12,7 +12,7 @@ namespace AccountManager.State.Linked
         public AccountStatus<AccountApi.Wisa.Student> Wisa { get; } = new AccountStatus<AccountApi.Wisa.Student>();
         public AccountStatus<AccountApi.Directory.Account> Directory { get; } = new AccountStatus<AccountApi.Directory.Account>();
         public AccountStatus<AccountApi.Smartschool.Account> Smartschool { get; } = new AccountStatus<AccountApi.Smartschool.Account>();
-        public AccountStatus<Microsoft.Graph.User> Azure { get; } = new AccountStatus<Microsoft.Graph.User>();
+        public AccountStatus<AccountApi.Azure.User> Azure { get; } = new AccountStatus<AccountApi.Azure.User>();
 
         public List<AccountAction> Actions = new List<AccountAction>();
 
@@ -31,7 +31,7 @@ namespace AccountManager.State.Linked
             Smartschool.Account = account;
         }
 
-        public LinkedAccount(Microsoft.Graph.User account)
+        public LinkedAccount(AccountApi.Azure.User account)
         {
             Azure.Account = account;
         }

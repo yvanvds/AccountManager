@@ -15,6 +15,7 @@ namespace AccountManager.ViewModels.Passwords
         public IAsyncCommand CopyCodeCommand { get; private set; }
 
         public IAsyncCommand NewNetworkPasswordCommand { get; private set; }
+        public IAsyncCommand NewOffice365PasswordCommand { get; private set; }
         public IAsyncCommand NewSmartschoolPasswordCommand { get; private set; }
         public IAsyncCommand NewPasswordsCommand { get; private set; }
 
@@ -26,6 +27,7 @@ namespace AccountManager.ViewModels.Passwords
             CopyCodeCommand = new RelayAsyncCommand(CreateCopyCode);
             NewNetworkPasswordCommand = new RelayAsyncCommand(NewNetworkPassword);
             NewSmartschoolPasswordCommand = new RelayAsyncCommand(NewSmartschoolPassword);
+            NewOffice365PasswordCommand = new RelayAsyncCommand(NewOffice365Password);
             NewPasswordsCommand = new RelayAsyncCommand(NewPasswords);
             DeleteEnabled = account != null;
         }
@@ -37,25 +39,36 @@ namespace AccountManager.ViewModels.Passwords
             AllPWIndicator = true;
             await Task.Run(async () =>
             {
+                // Active Directory
                 var password = AccountApi.Password.Create();
                 account.SetPassword(password);
 
-                //var google = AccountApi.Google.AccountManager.Find(account.UID);
-                //if (google != null)
-                //{
-                //    await AccountApi.Google.AccountManager.ChangePassword(google, password).ConfigureAwait(false);
-                //}
-
-                string ssPassword = null;
+                // Smartschool
                 var smartschool = AccountApi.Smartschool.GroupManager.Root.FindAccount(account.UID);
                 if (smartschool != null)
                 {
-                    ssPassword = Password.Create();
-                    await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, ssPassword, AccountType.Student).ConfigureAwait(false);
+                    // we use accounttype student although this is staff, it is used to indicate its not about a co-account
+                    bool result = await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, password, AccountType.Student).ConfigureAwait(false);
+                    if (!result)
+                    {
+                        return;
+                    }
+                }
+
+                // Office365
+                var office365 = AccountApi.Azure.UserManager.Instance.FindAccountByPrincipalName(account.PrincipalName);
+
+                if (office365 != null)
+                {
+                    bool result = await AccountApi.Azure.UserManager.Instance.SetPassword(office365, password).ConfigureAwait(false);
+                    if (!result)
+                    {
+                        return;
+                    }
                 }
 
                 await Exporters.PasswordManager.Instance.Accounts
-                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password, ssPassword)
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password, password, password)
                     .ConfigureAwait(false);
             }).ConfigureAwait(false);
 
@@ -75,7 +88,7 @@ namespace AccountManager.ViewModels.Passwords
                 await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, password, AccountType.Student).ConfigureAwait(false);
 
                 await Exporters.PasswordManager.Instance.Accounts
-                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), null, password)
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), null, password, null)
                     .ConfigureAwait(false);
             }
             SmartschoolPWIndicator = false;
@@ -95,8 +108,31 @@ namespace AccountManager.ViewModels.Passwords
             //}
 
             await Exporters.PasswordManager.Instance.Accounts
-                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password)
+                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password, null, null)
                 .ConfigureAwait(false);
+            NetworkPWIndicator = false;
+        }
+
+        private async Task NewOffice365Password()
+        {
+            if (account == null) return;
+            NetworkPWIndicator = true;
+            var password = AccountApi.Password.Create();
+
+            var office365 = AccountApi.Azure.UserManager.Instance.FindAccountByPrincipalName(account.PrincipalName);
+
+            if (office365 != null)
+            {
+                bool result = await AccountApi.Azure.UserManager.Instance.SetPassword(office365, password).ConfigureAwait(false);
+                if (!result)
+                {
+                    return;
+                }
+            }
+            await Exporters.PasswordManager.Instance.Accounts
+                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), null, null, password)
+                .ConfigureAwait(false);
+
             NetworkPWIndicator = false;
         }
 
@@ -310,6 +346,17 @@ namespace AccountManager.ViewModels.Passwords
             {
                 networkPWIndicator = value;
                 PropertyChanged(this, new PropertyChangedEventArgs(nameof(NetworkPWIndicator)));
+            }
+        }
+
+        private bool office365PWIndicator = false;
+        public bool Office365PWIndicator
+        {
+            get => office365PWIndicator;
+            set
+            {
+                office365PWIndicator = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(Office365PWIndicator)));
             }
         }
 

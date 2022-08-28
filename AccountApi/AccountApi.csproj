@@ -186,7 +186,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Azure\Connector.cs" />
+    <Compile Include="Azure\Group.cs" />
+    <Compile Include="Azure\GroupManager.cs" />
     <Compile Include="Azure\TokenCacheHelper.cs" />
+    <Compile Include="Azure\User.cs" />
     <Compile Include="Azure\UserManager.cs" />
     <Compile Include="Directory\Account.cs" />
     <Compile Include="Directory\AccountManager.cs" />

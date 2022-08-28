@@ -122,21 +122,26 @@ namespace AccountManager.Exporters.Passwords
                     var section = document.AddSection();
                     section.AddParagraph("Account voor " + pw.Name + " - " + pw.ClassGroup, "Heading1");
 
-                    section.AddParagraph("Login Gegevens", "Heading2");
+                    
                     section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
 
-                    if (pw.ADPassword.Length > 0)
+                    if (pw.AzurePassword.Length > 0)
                     {
-                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
+                        section.AddParagraph("Office365", "Heading2");
+                        section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/ en je laptop, indien aangekocht via de school. Je kan dit e-mail adres gebruiken, maar de " +
+                            "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
+                            + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
+                        section.AddParagraph("Login     : " + pw.Mail, "PasswordStyle");
+                        section.AddParagraph("Wachtwoord: " + pw.AzurePassword, "PasswordStyle");
 
+                    }
+
+                    if (pw.ADPassword.Length > 0) {
+                        section.AddParagraph("WiFi", "Heading2");
                         section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-L wifi netwerk.", "Normal");
-
-                        //section.AddParagraph("Office365", "Heading2");
-                        //section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
-                        //    "communicatie met de school en je leerkrachten verloopts steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
-                        //    + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
-                        //section.AddParagraph("Login     : " + pw.Mail, "PasswordStyle");
-                        //section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
+                        section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
+                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
+                        section.AddParagraph("Dit wachtwoord is eenmalig. Wanneer je inlogt, zal je een nieuw wachtwoord moeten te kiezen.", "Normal");
                     }
 
                     if (pw.SSPassword.Length > 0)
@@ -144,8 +149,9 @@ namespace AccountManager.Exporters.Passwords
                         section.AddParagraph("Smartschool", "Heading2");
                         section.AddParagraph("Je gebruikt de website https://sanctamaria-aarschot.smartschool.be", "Normal");
                         section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
+                        section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
                         section.AddParagraph(pw.SSPassword, "PasswordStyle");
-                        section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen.", "Normal");
+                        section.AddParagraph("Dit wachtwoord is eenmalig. Wanneer je inlogt, zal je een nieuw wachtwoord moeten te kiezen.", "Normal");
 
                     }
 
@@ -176,7 +182,7 @@ namespace AccountManager.Exporters.Passwords
             
         }
 
-        public async Task ExportStaffPasswordToPDF(string name, string username, string mail, string copycode, string networkPassword = null, string smartschoolPassword = null)
+        public async Task ExportStaffPasswordToPDF(string name, string username, string mail, string copycode, string networkPassword = null, string smartschoolPassword = null, string office365Password = null)
         {
             await Task.Run(() =>
             {
@@ -185,31 +191,33 @@ namespace AccountManager.Exporters.Passwords
                 var section = document.AddSection();
                 section.AddParagraph("Account voor " + name, "Heading1");
 
-                section.AddParagraph("Login Gegevens", "Heading2");
-                section.AddParagraph("Login     : " + username, "PasswordStyle");
+                section.AddParagraph("Copies", "Heading2");
                 section.AddParagraph("Copy Code : " + copycode, "PasswordStyle");
+
+                if (office365Password != null)
+                {
+                    section.AddParagraph("Office365", "Heading2");
+                    section.AddParagraph("Login     : " + username, "PasswordStyle");
+                    section.AddParagraph("Wachtwoord: " + mail, "PasswordStyle");
+                    section.AddParagraph("Wanneer je inlogt, kan je een nieuw wachtwoord kiezen.", "Normal");
+                }
 
                 if (networkPassword != null)
                 {
+                    section.AddParagraph("Wifi", "Heading2");
+                    section.AddParagraph("Login     : " + username, "PasswordStyle");
                     section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
 
                     section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-P wifi netwerk.", "Normal");
-
-                    //section.AddParagraph("Office365", "Heading2");
-                    //section.AddParagraph("Je beschikt ook over een Office365 account waarmee je kan inloggen op https://www.office.com/. Je kan dit e-mail adres gebruiken, maar de " +
-                    //    "communicatie met de school en je leerlingen verloopt steeds via smartschool. Je kan wel alle Office365 programma's zoals Word en "
-                    //    + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
-                    //section.AddParagraph("Login     : " + mail, "PasswordStyle");
-                    //section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
                 }
 
                 if (smartschoolPassword != null)
                 {
                     section.AddParagraph("Smartschool", "Heading2");
                     section.AddParagraph("Je gebruikt de website https://sanctamaria-aarschot.smartschool.be", "Normal");
-                    section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
-                    section.AddParagraph(smartschoolPassword, "PasswordStyle");
-                    section.AddParagraph("Wanneer je inlogt, zal smartschool je verplichten om een nieuw wachtwoord te kiezen.", "Normal");
+                    section.AddParagraph("Login     : " + username, "PasswordStyle");
+                    section.AddParagraph("Wachtwoord: " + smartschoolPassword, "PasswordStyle");
+                    section.AddParagraph("Wanneer je inlogt, kan je een nieuw wachtwoord kiezen.", "Normal");
 
                 }
 

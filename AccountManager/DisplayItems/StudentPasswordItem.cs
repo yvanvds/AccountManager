@@ -21,6 +21,7 @@ namespace AccountManager.DisplayItems
 
         public Prop<bool> DirectoryPassword { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolPassword { get; set; } = new Prop<bool>() { Value = false };
+        public Prop<bool> AzurePassword { get; set;} = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolCo1Password { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolCo2Password { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolCo3Password { get; set; } = new Prop<bool>() { Value = false };
@@ -30,6 +31,7 @@ namespace AccountManager.DisplayItems
 
         public string NewDirectoryPassword = string.Empty;
         public string NewSmartschoolPassword = string.Empty;
+        public string NewAzurePassword = string.Empty;
         public string NewSmartschoolCo1Password = string.Empty;
         public string NewSmartschoolCo2Password = string.Empty;
         public string NewSmartschoolCo3Password = string.Empty;

@@ -14,7 +14,7 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace>AccountManager</RootNamespace>
     <AssemblyName>AccountManager</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkVersion>4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <ProjectTypeGuids>{60dc8134-eba5-43b8-bcc9-bb4bc16c2548};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
     <WarningLevel>4</WarningLevel>
@@ -269,6 +269,9 @@
     <Compile Include="Action\StaffAccount\AddToADStaffGroup.cs" />
     <Compile Include="Action\StaffAccount\AddToAzure.cs" />
     <Compile Include="Action\StaffAccount\AddToDirectory.cs" />
+    <Compile Include="Action\StaffAccount\AddToDirectoryAndSmartschool.cs" />
+    <Compile Include="Action\StaffAccount\AddToSmartschool.cs" />
+    <Compile Include="Action\StaffAccount\AddToAzureStaffGroup.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromAD.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromWisa.cs" />
     <Compile Include="Action\StaffAccount\ModifySmartschoolStaffEmail.cs" />
@@ -287,6 +290,7 @@
     <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolStudentEmail.cs" />
     <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
+    <Compile Include="Action\StudentAccount\RemoveFromAzure.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
     <Compile Include="Exporters\Passwords\Manager.cs" />
@@ -296,6 +300,7 @@
     <Compile Include="State\AD\ADState.cs" />
     <Compile Include="State\ApplicationState.cs" />
     <Compile Include="State\Azure\AzureAccounts.cs" />
+    <Compile Include="State\Azure\AzureGroups.cs" />
     <Compile Include="State\Azure\AzureState.cs" />
     <Compile Include="State\Google\GoogleAccounts.cs" />
     <Compile Include="State\Google\GoogleState.cs" />
@@ -330,6 +335,7 @@
     <Compile Include="ViewModels\Accounts\SmartschoolAccounts.cs" />
     <Compile Include="ViewModels\Accounts\WisaAccounts.cs" />
     <Compile Include="ViewModels\Actions\QRCodeAction.cs" />
+    <Compile Include="ViewModels\Actions\TestButtonAction.cs" />
     <Compile Include="ViewModels\Base\BaseViewModel.cs" />
     <Compile Include="Utils\IErrorHandler.cs" />
     <Compile Include="ViewModels\Base\RelayAsyncCommand.cs" />
@@ -404,6 +410,9 @@
     </Compile>
     <Compile Include="Views\Actions\QRCodeAction.xaml.cs">
       <DependentUpon>QRCodeAction.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Views\Actions\TestButtonAction.xaml.cs">
+      <DependentUpon>TestButtonAction.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Dashboard\DashboardPage.xaml.cs">
       <DependentUpon>DashboardPage.xaml</DependentUpon>
@@ -545,6 +554,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Actions\QRCodeAction.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="Views\Actions\TestButtonAction.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

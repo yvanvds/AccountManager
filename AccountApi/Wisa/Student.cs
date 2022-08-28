@@ -10,23 +10,24 @@ namespace AccountApi.Wisa
 {
     public class Student
     {
-        private readonly string classGroup;
-        private readonly string classSubGroup;
-        private readonly string name;
-        private readonly string firstname;
-        private readonly DateTime dateOfBirth;
-        private readonly string wisaID;
-        private readonly string stemID;
-        private readonly GenderType gender;
-        private readonly string stateID;
-        private readonly string placeOfBirth;
-        private readonly string nationality;
-        private readonly string street;
-        private readonly string houseNumber;
-        private readonly string houseNumberAdd;
-        private readonly string postalCode;
-        private readonly string city;
-        private readonly DateTime classChange;
+        private string classGroup;
+        private string classSubGroup;
+        private string name;
+        private string firstname;
+        private DateTime dateOfBirth;
+        private string wisaID;
+        private string stemID;
+        private GenderType gender;
+        private string stateID;
+        private string placeOfBirth;
+        private string nationality;
+        private string street;
+        private string houseNumber;
+        private string houseNumberAdd;
+        private string postalCode;
+        private string city;
+        private int schoolID;
+        private DateTime classChange;
 
         public Student(string data, int schoolID)
         {
@@ -48,7 +49,7 @@ namespace AccountApi.Wisa
             postalCode = values[14].Trim();
             city = values[15].Trim();
             classChange = DateTime.ParseExact(values[16].Trim(), "d/M/yyyy", CultureInfo.InvariantCulture);
-            SchoolID = schoolID;
+            this.schoolID = schoolID;
         }
 
         /// <summary>
@@ -150,7 +151,7 @@ namespace AccountApi.Wisa
         /// <summary>
         /// The ID of the school this student belongs to
         /// </summary>
-        public int SchoolID { get; }
+        public int SchoolID { get => schoolID; }
 
         public JObject ToJson()
         {
@@ -203,7 +204,35 @@ namespace AccountApi.Wisa
             postalCode = obj["PostalCode"].ToString();
             city = obj["City"].ToString();
             classChange = Utils.StringToDate(obj["ClassChange"].ToString());
-            SchoolID = Convert.ToInt32(obj["SchoolID"]);
+            schoolID = Convert.ToInt32(obj["SchoolID"]);
+        }
+
+        private Student() {
+        }
+
+        public static Student CreateTestStudent()
+        {
+            Student student = new Student();
+            student.classGroup = "1A";
+            student.classSubGroup = "00";
+            student.name = "StudentSMA";
+            student.firstname = "Test";
+            student.dateOfBirth = Utils.StringToDate("2000-12-31");
+            student.wisaID = "150000";
+            student.stemID = "20000000";
+            student.gender = GenderType.Male;
+            student.stateID = "04213128584";
+            student.placeOfBirth = "Genk";
+            student.nationality = "Belgisch";
+            student.street = "Kleine Zapstraat";
+            student.houseNumber = "1";
+            student.houseNumberAdd = "a";
+            student.postalCode = "3200";
+            student.city = "AARSCHOT";
+            student.classChange = Utils.StringToDate("2022-9-1");
+            student.schoolID = 25;
+
+            return student;
         }
     }
 }

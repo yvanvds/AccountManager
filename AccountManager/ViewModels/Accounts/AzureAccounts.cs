@@ -59,8 +59,8 @@ namespace AccountManager.ViewModels.Accounts
         public event PropertyChangedEventHandler PropertyChanged = (sender, e) => { };
 
         #region Accounts
-        private ObservableCollection<Microsoft.Graph.User> accounts = new ObservableCollection<Microsoft.Graph.User>();
-        public ObservableCollection<Microsoft.Graph.User> Accounts => accounts;
+        private ObservableCollection<AccountApi.Azure.User> accounts = new ObservableCollection<AccountApi.Azure.User>();
+        public ObservableCollection<AccountApi.Azure.User> Accounts => accounts;
 
         public string SelectedAccountTitle => selectedAccount == null ? "Geen Actieve Selectie" : selectedAccount.DisplayName;
 

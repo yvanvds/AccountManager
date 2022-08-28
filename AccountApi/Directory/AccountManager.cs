@@ -356,7 +356,7 @@ namespace AccountApi.Directory
         }
 
 
-        public static async Task<Account> Create(string firstname, string lastname, string WisaID, AccountRole role, string classgroup = "", string uid = "")
+        public static async Task<Account> Create(string firstname, string lastname, string mail, string WisaID, AccountRole role, string classgroup = "", string uid = "")
         {
             return await Task.Run(async () =>
             {
@@ -403,29 +403,27 @@ namespace AccountApi.Directory
 
                 if (role == AccountRole.Student)
                 {
-                    await setStudentDetails(childEntry, firstname, lastname, uid, WisaID, classgroup);
+                    await setStudentDetails(childEntry, firstname, lastname, mail, uid, WisaID, classgroup);
                     return await setStudentGroup(childEntry);
                 }
                 else
                 {
-                    await setStaffDetails(childEntry, firstname, lastname, uid); 
+                    await setStaffDetails(childEntry, firstname, lastname, mail, uid); 
                     return await setStaffGroup(childEntry, role);
                 }
             });
 
         }
 
-        private static async Task setStudentDetails(DirectoryEntry entry, string firstName, string lastName, string uid, string wisaID, string classGroup)
+        private static async Task setStudentDetails(DirectoryEntry entry, string firstName, string lastName, string mail, string uid, string wisaID, string classGroup)
         {
-            string alias = await Connector.CreateNewAlias(firstName, lastName, true);
-
             try
             {
                 entry.Properties["givenName"].Value = firstName;
                 entry.Properties["sn"].Value = lastName;
                 entry.Properties["displayName"].Value = firstName + " " + lastName;
-                entry.Properties["mail"].Value = alias;
-                entry.Properties["userPrincipalName"].Value = alias;
+                entry.Properties["mail"].Value = mail;
+                entry.Properties["userPrincipalName"].Value = mail;
 
                 // TODO: move mail alias to another property so we can get rid of the custom objectClass
                 //entry.Properties["objectClass"].Add("smaSchoolPerson");
@@ -441,17 +439,15 @@ namespace AccountApi.Directory
             }
         }
 
-        private static async Task setStaffDetails(DirectoryEntry entry, string firstName, string lastName, string uid)
+        private static async Task setStaffDetails(DirectoryEntry entry, string firstName, string lastName, string mail, string uid)
         {
-            string alias = await Connector.CreateNewAlias(firstName, lastName);
-
             try
             {
                 entry.Properties["givenName"].Value = firstName;
                 entry.Properties["sn"].Value = lastName;
                 entry.Properties["displayName"].Value = firstName + " " + lastName;
-                entry.Properties["mail"].Value = alias;
-                entry.Properties["userPrincipalName"].Value = alias;
+                entry.Properties["mail"].Value = mail;
+                entry.Properties["userPrincipalName"].Value = mail;
 
                 // TODO: move mail alias to another property so we can get rid of the custom objectClass
                // entry.Properties["objectClass"].Add("smaSchoolPerson");

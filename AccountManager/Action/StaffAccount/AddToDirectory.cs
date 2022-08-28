@@ -31,6 +31,7 @@ namespace AccountManager.Action.StaffAccount
                 wisa.FirstName,
                 wisa.LastName,
                 wisa.CODE,
+                linkedAccount.Azure.Account.UserPrincipalName,
                 AccountRole.Teacher,
                 "",
                 usernameExists ? "" : smartschool.UID

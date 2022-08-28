@@ -29,8 +29,10 @@ namespace AccountManager.Action.StudentAccount
 
             var directory = await AccountApi.Directory.AccountManager.Create(
                 wisa.FirstName, 
-                wisa.Name, 
-                wisa.WisaID, 
+                wisa.Name,
+                linkedAccount.Azure.Account.UserPrincipalName,
+                wisa.WisaID,
+                
                 AccountRole.Student,
                 wisa.ClassGroup,
                 usernameExists ? "": smartschool.UID

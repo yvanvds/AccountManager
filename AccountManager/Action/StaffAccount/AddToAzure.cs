@@ -20,11 +20,37 @@ namespace AccountManager.Action.StaffAccount
             var user = await AccountApi.Azure.UserManager.Instance.CreateStaffMember(linkedAccount.Wisa.Account).ConfigureAwait(false);
             if (user != null)
             {
+                linkedAccount.Azure.Account = new AccountApi.Azure.User(user);
                 MainWindow.Instance.Log.AddMessage(Origin.Azure, "Added account for " + user.DisplayName);
             }
             else
             {
                 MainWindow.Instance.Log.AddError(Origin.Azure, "Failed to add " + linkedAccount.Wisa.Account.FirstName + " " + linkedAccount.Wisa.Account.LastName);
+            }
+
+            var group = AccountApi.Azure.GroupManager.Instance.FindGroupByName(State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren", false);
+            if (group != null)
+            {
+                if (!group.HasMember(linkedAccount.Azure.Account))
+                {
+                    await group.AddMember(linkedAccount.Azure.Account).ConfigureAwait(false);
+                }
+            } else
+            {
+                MainWindow.Instance.Log.AddError(Origin.Azure, "Group " + State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren not found");
+            }
+
+            var secgroup = AccountApi.Azure.GroupManager.Instance.FindGroupByName(State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren", true);
+            if (secgroup != null)
+            {
+                if (!secgroup.HasMember(linkedAccount.Azure.Account))
+                {
+                    await secgroup.AddMember(linkedAccount.Azure.Account).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                MainWindow.Instance.Log.AddError(Origin.Azure, "SecGroup " + State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren not found");
             }
         }
 

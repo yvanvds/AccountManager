@@ -118,6 +118,20 @@
 
             <GroupBox Grid.Column="3" Header="Office365 Sync"  Margin="0 0 8 0">
                 <StackPanel Orientation="Vertical">
+                    <TextBlock
+                        Text="{Binding AzureGroupDate, StringFormat='{}{0:dd MMM yy - HH:mm}'}"
+                        Foreground="{Binding AzureGroupColor}"
+                        Margin="4"/>
+
+                    <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                                Grid.Column="0" Grid.Row="4"
+                                materialDesign:ButtonProgressAssist.Value="-1"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorAzureAccount}"
+                                materialDesign:ButtonProgressAssist.IsIndeterminate="True"
+                                Content="Sync Groups"
+                                Command="{Binding SyncAzureGroupsCommand}"
+                            
+                                Margin="2,0" />
 
                     <TextBlock
                         Text="{Binding AzureAccountDate, StringFormat='{}{0:dd MMM yy - HH:mm}'}"
@@ -133,6 +147,8 @@
                                 Command="{Binding SyncAzureAccountsCommand}"
                             
                                 Margin="2,0" />
+
+                    
 
                 </StackPanel>
             </GroupBox>

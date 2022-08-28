@@ -16,8 +16,8 @@ namespace AccountApi.Azure
         private UserManager() { }
         public static UserManager Instance { get { return instance; } }
 
-        IList<Microsoft.Graph.User> users = new List<Microsoft.Graph.User>();
-        public IList<Microsoft.Graph.User> Users => users;
+        IList<User> users = new List<User>();
+        public IList<User> Users => users;
 
         
 
@@ -25,7 +25,7 @@ namespace AccountApi.Azure
         {
             try
             {
-                users = new List<Microsoft.Graph.User>();
+                users = new List<User>();
                 
                 var options = new List<Option>
                 {
@@ -37,7 +37,11 @@ namespace AccountApi.Azure
                 
                 while (results != null)
                 {
-                    users = users.Concat(results.CurrentPage).ToList();
+                    foreach(var user in results.CurrentPage)
+                    {
+                        users.Add(new User(user));
+                    }
+
                     Connector.Instance.RegisterMessage("" + users.Count + " gebruikers gevonden.");
                     if (results.NextPageRequest != null)
                     {
@@ -48,7 +52,7 @@ namespace AccountApi.Azure
                 }
                
             }
-            catch(ServiceException ex)
+            catch(Exception ex)
             {
                 Connector.Instance.RegisterError(ex.Message);
                 return false;
@@ -59,20 +63,26 @@ namespace AccountApi.Azure
         public JObject ToJson()
         {
             var result = new JObject();
-            result["Users"] = JArray.FromObject(users);
+            var json = new JArray();
+            foreach (var user in users)
+            {
+                json.Add(user.ToJson());
+            }
+            result["Users"] = json;
             return result;
         }
 
         public void FromJson(JObject obj)
         {
             users.Clear();
-            if (obj["Users"] is JArray)
+            var json = obj["Users"]?.ToArray();
+            if (json != null) foreach(var item in json)
             {
-                users = (obj["Users"] as JArray).ToObject<List<Microsoft.Graph.User>>();
+                users.Add(new User(item as JObject));
             }
         }
 
-        public Microsoft.Graph.User FindAccountByWisaID(String ID)
+        public User FindAccountByWisaID(String ID)
         {
             for(int i = 0; i < users.Count; i++)
             {
@@ -84,59 +94,89 @@ namespace AccountApi.Azure
             return null;
         }
 
+        public User FindAccountByPrincipalName(String name)
+        {
+            for (int i = 0; i < users.Count; i++)
+            {
+                if (users[i].UserPrincipalName == name)
+                {
+                    return users[i];
+                }
+            }
+            return null;
+        }
+
         public async Task<Microsoft.Graph.User> CreateStudent(Wisa.Student student)
         {
-            var principalName = await CreatePrincipalName(student.FirstName, student.Name, true);
-            var mailNickName = principalName.Split('@')[0];
-            
-            var user = new Microsoft.Graph.User
+            try
             {
-                AccountEnabled = true,
-                GivenName = student.FirstName,
-                Surname = student.Name,
-                DisplayName = student.FullName,
-                UserPrincipalName = principalName,
-                EmployeeId = student.WisaID,
-                Department = student.ClassGroup,
-                JobTitle = "LeerlingSec",
-                Mail = principalName,
-                MailNickname = mailNickName,
-                UserType = "Member",
-                PasswordProfile = new PasswordProfile
-                {
-                    ForceChangePasswordNextSignIn = false,
-                    Password = Password.Create(), // Password does not matter, we create a new one when handing out accounts
-                }
-            };
+                var principalName = await CreatePrincipalName(student.FirstName, student.Name, true);
+                var mailNickName = principalName.Split('@')[0];
 
-            return await CreateUser(user);
+                var user = new Microsoft.Graph.User
+                {
+                    AccountEnabled = true,
+                    GivenName = student.FirstName,
+                    Surname = student.Name,
+                    DisplayName = student.FullName,
+                    UserPrincipalName = principalName,
+                    EmployeeId = student.WisaID,
+                    Department = student.ClassGroup,
+                    JobTitle = "LeerlingSec",
+                    Mail = principalName,
+                    MailNickname = mailNickName,
+                    UserType = "Member",
+                    PasswordProfile = new PasswordProfile
+                    {
+                        ForceChangePasswordNextSignIn = false,
+                        Password = Password.Create(), // Password does not matter, we create a new one when handing out accounts
+                    }
+                };
+
+                return await CreateUser(user);
+            }
+            catch (Exception ex)
+            {
+                Connector.Instance.RegisterError(ex.Message);
+                return null;
+            }
+
         }
 
         public async Task<Microsoft.Graph.User> CreateStaffMember(Wisa.Staff member)
         {
-            var principalName = await CreatePrincipalName(member.FirstName, member.LastName, false);
-            var mailNickName = principalName.Split('@')[0];
-
-            var user = new Microsoft.Graph.User
+            try
             {
-                AccountEnabled = true,
-                GivenName = member.FirstName,
-                Surname = member.LastName,
-                DisplayName = member.FirstName + " " + member.LastName,
-                UserPrincipalName = principalName,
-                EmployeeId = member.WisaID,
-                Department = Connector.Instance.Prefix,
-                Mail = principalName,
-                MailNickname = mailNickName,
-                UserType = "Member",
-                PasswordProfile = new PasswordProfile
-                {
-                    ForceChangePasswordNextSignIn = false,
-                    Password = Password.Create(), // Password does not matter, we create a new one when handing out accounts
-                }
-            };
+                var principalName = await CreatePrincipalName(member.FirstName, member.LastName, false);
+                var mailNickName = principalName.Split('@')[0];
 
-            return await CreateUser(user);
+                var user = new Microsoft.Graph.User
+                {
+                    AccountEnabled = true,
+                    GivenName = member.FirstName,
+                    Surname = member.LastName,
+                    DisplayName = member.FirstName + " " + member.LastName,
+                    UserPrincipalName = principalName,
+                    EmployeeId = member.WisaID,
+                    Department = Connector.Instance.Prefix,
+                    Mail = principalName,
+                    MailNickname = mailNickName,
+                    UserType = "Member",
+                    PasswordProfile = new PasswordProfile
+                    {
+                        ForceChangePasswordNextSignIn = false,
+                        Password = Password.Create(), // Password does not matter, we create a new one when handing out accounts
+                    }
+                };
+
+                return await CreateUser(user);
+            }
+            catch (Exception ex)
+            {
+                Connector.Instance.RegisterError(ex.Message);
+                return null;
+            }
+
         }
 
         private async Task<Microsoft.Graph.User> CreateUser(Microsoft.Graph.User user)
@@ -147,7 +187,7 @@ namespace AccountApi.Azure
                 var newUser = await Connector.Instance.Directory.Users.Request().AddAsync(user);
                 if (newUser != null)
                 {
-                    users.Add(newUser);
+                    users.Add(new User(newUser));
                     return newUser;
                 } else
                 {
@@ -208,8 +248,53 @@ namespace AccountApi.Azure
 
         private async Task<bool> DoesUserExist(String ID)
         {
-            var user = await Connector.Instance.Directory.Users[ID].Request().GetAsync();
-            return user != null;    
+            try
+            {
+                var user = await Connector.Instance.Directory.Users[ID].Request().GetAsync();
+                return user != null;
+            }
+            catch (Exception ex)
+            {
+                //Connector.Instance.RegisterError(ex.Message);
+                return false;
+            }
+
         }
+
+        public async Task<bool> SetPassword(User user, string newPassword)
+        {
+            try
+            {
+                await Connector.Instance.Directory.Users[user.UserPrincipalName].Authentication
+                    .PasswordMethods["28c10230-6103-485e-b985-444c60001490"]
+                    .ResetPassword(newPassword, true)
+                    .Request()
+                    .PostAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Connector.Instance.RegisterError(ex.Message);
+                return false;
+            }
+        } 
+
+        public async Task GetPasswordMethodId(string id)
+        {
+            try
+            {
+                var result = await Connector.Instance.Directory.Users[id].Authentication.PasswordMethods.Request().GetAsync();
+                foreach(var user in result)
+                {
+                    Connector.Instance.RegisterMessage(user.Id);
+                }
+                
+            }
+            catch (Exception ex)
+            {
+                Connector.Instance.RegisterError(ex.Message);
+                return ;
+            }
+        } 
     }
 }

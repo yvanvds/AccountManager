@@ -23,7 +23,7 @@ namespace AccountManager.Action.StudentAccount
             if (!connected) return;
 
             var wisa = linkedAccount.Wisa.Account;
-            var directory = await AccountApi.Directory.AccountManager.Create(wisa.FirstName, wisa.Name, wisa.WisaID, AccountRole.Student, wisa.ClassGroup).ConfigureAwait(false);
+            var directory = await AccountApi.Directory.AccountManager.Create(wisa.FirstName, wisa.Name, linkedAccount.Azure.Account.UserPrincipalName, wisa.WisaID, AccountRole.Student, wisa.ClassGroup).ConfigureAwait(false);
 
             if (directory != null)
             {

@@ -29,5 +29,6 @@
             </Style>
         </ListView.ItemContainerStyle>
         <local:QRCodeAction Margin="8 16 0 0"/>
+        <local:TestButtonAction Margin="8 16 0 0"/>
     </ListView>
 </UserControl>

@@ -16,7 +16,9 @@ namespace AccountManager.Exporters.Passwords
         public string ADPassword { get; }
         public string SSPassword { get; }
 
-        public AccountPassword(string AccountName, string Name, string mail, string ClassGroup, string ADPassword, string SSPassword)
+        public string AzurePassword { get; }
+
+        public AccountPassword(string AccountName, string Name, string mail, string ClassGroup, string ADPassword, string SSPassword, string azurePassword)
         {
             this.AccountName = AccountName;
             this.Name = Name;
@@ -24,6 +26,7 @@ namespace AccountManager.Exporters.Passwords
             this.ClassGroup = ClassGroup;
             this.ADPassword = ADPassword;
             this.SSPassword = SSPassword;
+            AzurePassword = azurePassword;
         }
 
         public AccountPassword(JObject obj)
@@ -34,6 +37,7 @@ namespace AccountManager.Exporters.Passwords
             ClassGroup = obj["ClassGroup"].ToString();
             ADPassword = obj["ADPassword"].ToString();
             SSPassword = obj["SSPassword"].ToString();
+            AzurePassword = obj["AzurePassword"].ToString();
         }
 
         public override JObject ToJson()
@@ -46,6 +50,7 @@ namespace AccountManager.Exporters.Passwords
                 ["ClassGroup"] = ClassGroup,
                 ["ADPassword"] = ADPassword,
                 ["SSPassword"] = SSPassword,
+                ["AzurePassword"] = AzurePassword,
             };
         }
     }

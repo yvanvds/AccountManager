@@ -17,6 +17,7 @@ namespace AccountManager.State.Azure
         public ConfigValue<string> TenantID { get; set; }
 
         public AzureAccounts Accounts { get; private set; } = new AzureAccounts();
+        public AzureGroups Groups { get; private set; } = new AzureGroups();
 
         public AzureState()
         {
@@ -41,30 +42,35 @@ namespace AccountManager.State.Azure
             return result;
         }
 
-        public async Task Connect()
+        public void Connect()
         {
+            AccountApi.Azure.Connector.Init(
+                ClientID.Value,
+                TenantID.Value,
+                MainWindow.Instance,
+                App.Instance.AD.AzureDomain.Value,
+                App.Instance.Settings.SchoolPrefix.Value,
+                MainWindow.Instance.Log
+            );
             
-            AccountApi.Azure.Connector.Instance.Create(ClientID.Value, TenantID.Value, MainWindow.Instance, App.Instance.AD.AzureDomain.Value, App.Instance.Settings.SchoolPrefix.Value, MainWindow.Instance.Log);
-            //HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, "");
-            //await AccountApi.Azure.Connector.Instance.AuthenticateRequestAsync(request).ConfigureAwait(false);
-            //request.Dispose();
         }
 
         public override async Task LoadContent()
         {
-            await Connect().ConfigureAwait(false);
-            
             await Accounts.Load().ConfigureAwait(false);
+            await Groups.Load().ConfigureAwait(false);
         }
 
         public override void LoadLocalContent()
         {
             Accounts.LoadFromJson();
+            Groups.LoadFromJson();
         }
 
         public override void SaveContent()
         {
             Accounts.SaveToJson();
+            Groups.SaveToJson();
         }
 
         public void UpdateConnectionState(ConnectionState state)

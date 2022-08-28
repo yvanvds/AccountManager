@@ -20,6 +20,7 @@ namespace AccountManager.Action.StudentAccount
             var user = await AccountApi.Azure.UserManager.Instance.CreateStudent(linkedAccount.Wisa.Account).ConfigureAwait(false);
             if (user != null)
             {
+                linkedAccount.Azure.Account = new AccountApi.Azure.User(user);
                 MainWindow.Instance.Log.AddMessage(Origin.Azure, "Added account for " + user.DisplayName);
             }
             else

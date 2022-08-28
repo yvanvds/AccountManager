@@ -1,13 +1,11 @@
 ﻿using AccountApi;
-using AccountManager.State.Linked;
-using Microsoft.Graph;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace AccountManager.Action.StaffAccount
+namespace AccountManager.Action.StudentAccount
 {
     internal class RemoveFromAzure : AccountAction
     {
@@ -19,7 +17,7 @@ namespace AccountManager.Action.StaffAccount
 
         }
 
-        public async override Task Apply(State.Linked.LinkedStaffMember account)
+        public async override Task Apply(State.Linked.LinkedAccount account, DateTime deletionDate)
         {
             var name = account.Azure.Account.DisplayName;
             bool result = await AccountApi.Azure.UserManager.Instance.DeleteUser(account.Azure.Account).ConfigureAwait(false);
@@ -34,7 +32,7 @@ namespace AccountManager.Action.StaffAccount
             }
         }
 
-        public static void Evaluate(State.Linked.LinkedStaffMember account)
+        public static void Evaluate(State.Linked.LinkedAccount account)
         {
             if (!account.Directory.Exists && !account.Smartschool.Exists && account.Azure.Exists)
             {
