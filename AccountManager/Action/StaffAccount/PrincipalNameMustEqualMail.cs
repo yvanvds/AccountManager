@@ -13,7 +13,7 @@ namespace AccountManager.Action.StaffAccount
     {
         public PrincipalNameMustEqualMail() : base(
             "Update PrincipalName",
-            "De velden UserPrincipalName en Mail moeten gelijk zijn in AD",
+            "De velden UserPrincipalName en Mail in AD moeten gelijk zijn aan het Office365 account",
             true, true)
         {
             CanShowDetails = true;
@@ -23,8 +23,9 @@ namespace AccountManager.Action.StaffAccount
         {
             var result = new FlowTableCreator(false);
             result.SetHeaders(new string[] { "Veld", "Waarde" });
-            result.AddRow(new List<string>() { "Mail", account.Directory.Account.Mail });
-            result.AddRow(new List<string>() { "UserPrincipalName", account.Directory.Account.PrincipalName });
+            result.AddRow(new List<string>() {"", "Office365", account.Azure.Account.UserPrincipalName });
+            result.AddRow(new List<string>() {"", "AD Mail", account.Directory.Account.Mail });
+            result.AddRow(new List<string>() {"", "AD PrincipalName", account.Directory.Account.PrincipalName });
 
             FlowDocument document = new FlowDocument();
             document.Blocks.Add(result.Create());
@@ -37,12 +38,14 @@ namespace AccountManager.Action.StaffAccount
             bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
             if (!connected) return;
 
-            account.Directory.Account.PrincipalName = account.Directory.Account.Mail;
+            account.Directory.Account.PrincipalName = account.Azure.Account.UserPrincipalName;
+            account.Directory.Account.Mail = account.Azure.Account.UserPrincipalName;
         }
 
         public static void Evaluate(LinkedStaffMember account)
         {
-            if (account.Directory.Account.Mail != account.Directory.Account.PrincipalName)
+            if (account.Directory.Account.Mail != account.Azure.Account.UserPrincipalName
+                || account.Directory.Account.PrincipalName != account.Azure.Account.UserPrincipalName)
             {
                 account.Actions.Add(new PrincipalNameMustEqualMail());
                 account.Directory.FlagWarning();

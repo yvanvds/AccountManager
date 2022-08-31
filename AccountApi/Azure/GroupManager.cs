@@ -63,8 +63,9 @@ namespace AccountApi.Azure
                     {
                         Connector.Instance.RegisterMessage("Leden gevonden voor " + i + " groepen.");
                     }
-                    Connector.Instance.RegisterMessage("Leden gevonden voor " + groups.Count + " groepen.");
+                    
                 }
+                Connector.Instance.RegisterMessage("Leden gevonden voor " + groups.Count + " groepen.");
             }
             catch (ServiceException ex)
             {

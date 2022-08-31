@@ -233,6 +233,9 @@ namespace AccountManager.Views.Passwords
 
         private async void GenerateButton_Click(object sender, RoutedEventArgs e)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             foreach (var item in currentGroup)
             {
                 var password = AccountApi.Password.Create();

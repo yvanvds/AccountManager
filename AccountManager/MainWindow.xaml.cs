@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
@@ -45,7 +46,7 @@ namespace AccountManager
             {
                 Navigate(new Views.Dashboard.DashboardPage());
             });
-            
+            Log.AddMessage(AccountApi.Origin.Other, "Build: 1.0.0.41");
         }
 
         public void Navigate(UserControl page)

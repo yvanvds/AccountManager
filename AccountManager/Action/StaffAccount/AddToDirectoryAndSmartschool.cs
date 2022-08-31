@@ -20,6 +20,8 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(State.Linked.LinkedStaffMember linkedAccount)
         {
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
             var wisa = linkedAccount.Wisa.Account;
             var azure = linkedAccount.Azure.Account;
             var uid = await AccountApi.Directory.Connector.CreateNewID(azure.GivenName, azure.Surname).ConfigureAwait(false);
@@ -27,8 +29,8 @@ namespace AccountManager.Action.StaffAccount
             var directory = await AccountApi.Directory.AccountManager.Create(
                 azure.GivenName,
                 azure.Surname,
-                wisa.CODE,
                 azure.UserPrincipalName,
+                wisa.CODE,
                 AccountApi.AccountRole.Teacher,
                 "",
                 uid

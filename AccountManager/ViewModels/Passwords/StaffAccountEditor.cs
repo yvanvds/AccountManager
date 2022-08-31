@@ -34,8 +34,11 @@ namespace AccountManager.ViewModels.Passwords
 
         private async Task NewPasswords()
         {
+
             if (account == null) return;
-      
+            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
+            if (!connected) return;
+
             AllPWIndicator = true;
             await Task.Run(async () =>
             {
@@ -68,7 +71,7 @@ namespace AccountManager.ViewModels.Passwords
                 }
 
                 await Exporters.PasswordManager.Instance.Accounts
-                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password, password, password)
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.PrincipalName, account.CopyCode.ToString(), password, password, password)
                     .ConfigureAwait(false);
             }).ConfigureAwait(false);
 
@@ -88,7 +91,7 @@ namespace AccountManager.ViewModels.Passwords
                 await AccountApi.Smartschool.AccountManager.SetPassword(smartschool, password, AccountType.Student).ConfigureAwait(false);
 
                 await Exporters.PasswordManager.Instance.Accounts
-                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), null, password, null)
+                    .ExportStaffPasswordToPDF(account.FullName, account.UID, account.PrincipalName, account.CopyCode.ToString(), null, password, null)
                     .ConfigureAwait(false);
             }
             SmartschoolPWIndicator = false;
@@ -108,7 +111,7 @@ namespace AccountManager.ViewModels.Passwords
             //}
 
             await Exporters.PasswordManager.Instance.Accounts
-                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), password, null, null)
+                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.PrincipalName, account.CopyCode.ToString(), password, null, null)
                 .ConfigureAwait(false);
             NetworkPWIndicator = false;
         }
@@ -130,7 +133,7 @@ namespace AccountManager.ViewModels.Passwords
                 }
             }
             await Exporters.PasswordManager.Instance.Accounts
-                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.Mail, account.CopyCode.ToString(), null, null, password)
+                .ExportStaffPasswordToPDF(account.FullName, account.UID, account.PrincipalName, account.CopyCode.ToString(), null, null, password)
                 .ConfigureAwait(false);
 
             NetworkPWIndicator = false;

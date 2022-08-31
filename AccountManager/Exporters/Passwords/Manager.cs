@@ -133,14 +133,6 @@ namespace AccountManager.Exporters.Passwords
                             + "Powerpoint online gebruiken of installeren op een computer naar keuze.", "Normal");
                         section.AddParagraph("Login     : " + pw.Mail, "PasswordStyle");
                         section.AddParagraph("Wachtwoord: " + pw.AzurePassword, "PasswordStyle");
-
-                    }
-
-                    if (pw.ADPassword.Length > 0) {
-                        section.AddParagraph("WiFi", "Heading2");
-                        section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-L wifi netwerk.", "Normal");
-                        section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
-                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
                         section.AddParagraph("Dit wachtwoord is eenmalig. Wanneer je inlogt, zal je een nieuw wachtwoord moeten te kiezen.", "Normal");
                     }
 
@@ -154,6 +146,16 @@ namespace AccountManager.Exporters.Passwords
                         section.AddParagraph("Dit wachtwoord is eenmalig. Wanneer je inlogt, zal je een nieuw wachtwoord moeten te kiezen.", "Normal");
 
                     }
+
+                    if (pw.ADPassword.Length > 0) {
+                        section.AddParagraph("WiFi", "Heading2");
+                        section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-L wifi netwerk.", "Normal");
+                        section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
+                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
+                        section.AddParagraph("Dit wachtwoord kan je niet aanpassen. Je moet het wel maar één keer ingeven, tenzij je je toestel reset.", "Normal");
+                    }
+
+                    
 
                     section.AddParagraph("Privacy", "Heading2");
                     section.AddParagraph("Je account is strikt persoonlijk. Indien je je account doorgeeft aan anderen, dan ben jij " +
@@ -197,8 +199,8 @@ namespace AccountManager.Exporters.Passwords
                 if (office365Password != null)
                 {
                     section.AddParagraph("Office365", "Heading2");
-                    section.AddParagraph("Login     : " + username, "PasswordStyle");
-                    section.AddParagraph("Wachtwoord: " + mail, "PasswordStyle");
+                    section.AddParagraph("Login     : " + mail, "PasswordStyle");
+                    section.AddParagraph("Wachtwoord: " + office365Password, "PasswordStyle");
                     section.AddParagraph("Wanneer je inlogt, kan je een nieuw wachtwoord kiezen.", "Normal");
                 }
 
