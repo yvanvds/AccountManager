@@ -36,5 +36,10 @@ namespace AccountApi.Azure
         public string Department => Account.Department;
         public string GivenName => Account.GivenName;
         public string Surname => Account.Surname;
+
+        public void ChangePrincipalName(string newValue)
+        {
+            Account.UserPrincipalName = newValue;
+        }
     }
 }

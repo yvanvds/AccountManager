@@ -27,18 +27,18 @@
     <PublishUrl>\\192.168.0.60\Share\</PublishUrl>
     <Install>true</Install>
     <InstallFrom>Unc</InstallFrom>
-    <UpdateEnabled>true</UpdateEnabled>
+    <UpdateEnabled>false</UpdateEnabled>
     <UpdateMode>Foreground</UpdateMode>
     <UpdateInterval>7</UpdateInterval>
     <UpdateIntervalUnits>Days</UpdateIntervalUnits>
     <UpdatePeriodically>false</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
-    <InstallUrl>\\192.168.0.60\Share\</InstallUrl>
     <ProductName>AccountManager</ProductName>
     <PublisherName>Yvan Vander Sanden</PublisherName>
+    <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>39</ApplicationRevision>
+    <ApplicationRevision>46</ApplicationRevision>
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -264,32 +264,22 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
-    <Compile Include="Action\Group\AddADGroup.cs" />
     <Compile Include="Action\StaffAccount\AccountAction.cs" />
-    <Compile Include="Action\StaffAccount\AddToADStaffGroup.cs" />
     <Compile Include="Action\StaffAccount\AddToAzure.cs" />
-    <Compile Include="Action\StaffAccount\AddToDirectory.cs" />
-    <Compile Include="Action\StaffAccount\AddToDirectoryAndSmartschool.cs" />
     <Compile Include="Action\StaffAccount\AddToSmartschool.cs" />
     <Compile Include="Action\StaffAccount\AddToAzureStaffGroup.cs" />
-    <Compile Include="Action\StaffAccount\DontImportFromAD.cs" />
     <Compile Include="Action\StaffAccount\DontImportFromWisa.cs" />
     <Compile Include="Action\StaffAccount\ModifySmartschoolStaffEmail.cs" />
     <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />
-    <Compile Include="Action\StaffAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromAzure.cs" />
-    <Compile Include="Action\StaffAccount\RemoveFromDirectory.cs" />
-    <Compile Include="Action\StaffAccount\RemoveFromGoogle.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromSmartschool.cs" />
     <Compile Include="Action\StaffAccount\StaffMemberActionParser.cs" />
     <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
-    <Compile Include="Action\StudentAccount\AddToADClassGroup.cs" />
     <Compile Include="Action\StudentAccount\AddToAzure.cs" />
-    <Compile Include="Action\StudentAccount\AddToDirectory.cs" />
+    <Compile Include="Action\StudentAccount\modifyAzureStudentEmail.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolStudentEmail.cs" />
-    <Compile Include="Action\StudentAccount\PrincipalNameMustEqualMail.cs" />
     <Compile Include="Action\StudentAccount\RemoveFromAzure.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
@@ -380,29 +370,18 @@
     <Compile Include="Action\StudentAccount\AccountAction.cs" />
     <Compile Include="Action\StudentAccount\AddToDirectoryAndSmartschool.cs" />
     <Compile Include="Action\StudentAccount\AddToSmartschool.cs" />
-    <Compile Include="Action\Group\AddToDirectory.cs" />
     <Compile Include="Action\Group\AddToSmartschool.cs" />
-    <Compile Include="Action\StudentAccount\AddToADStudentGroup.cs" />
-    <Compile Include="Action\StudentAccount\CreateHomeDir.cs" />
     <Compile Include="Action\StudentAccount\DeleteFromSmartschool.cs" />
     <Compile Include="Action\Group\DoNotImportFromSmartschool.cs" />
     <Compile Include="Action\Group\DoNotImportFromWisa.cs" />
     <Compile Include="Action\Group\CreateInSmartschool.cs" />
     <Compile Include="Action\StudentAccount\ModifyAccountID.cs" />
-    <Compile Include="Action\StudentAccount\ModifyDirectoryData.cs" />
     <Compile Include="Action\Group\ModifySmartschoolData.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolStemID.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolStudentAddress.cs" />
-    <Compile Include="Action\StudentAccount\ModifyStudentHomeDir.cs" />
-    <Compile Include="Action\StudentAccount\MoveDirectoryClassGroup.cs" />
     <Compile Include="Action\StudentAccount\MoveToSmartschoolClassGroup.cs" />
     <Compile Include="Action\StudentAccount\NoActionNeeded.cs" />
     <Compile Include="Action\Group\NoActionNeeded.cs" />
-    <Compile Include="Action\StudentAccount\RemoveFromDirectory.cs" />
-    <Compile Include="Action\StudentAccount\RemoveFromDirectoryAndSmartschool.cs" />
-    <Compile Include="Action\StudentAccount\RemoveFromGoogle.cs" />
-    <Compile Include="Action\Group\RemoveFromDirectory.cs" />
-    <Compile Include="Action\Group\RemoveEmptyFromDirectory.cs" />
     <Compile Include="Action\Group\GroupAction.cs" />
     <Compile Include="Action\StudentAccount\UnregisterSmartschool.cs" />
     <Compile Include="Views\Actions\ActionsPage.xaml.cs">

@@ -113,7 +113,7 @@ namespace AccountManager.State.Wisa
             return result;
         }
 
-        public override async Task LoadContent()
+        public override async Task LoadContent( )
         {
             Connect();
             await Schools.Load().ConfigureAwait(false);

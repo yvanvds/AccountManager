@@ -243,7 +243,7 @@ namespace AccountApi.Azure
                 counter++;
             }
 
-            return mail + (counter > 0 ? counter.ToString() : "") + "@" + Connector.Instance.AzureDomain;
+            return mail + (counter > 0 ? counter.ToString() : "") + "@" + (isStudent ? "student." : "") + Connector.Instance.AzureDomain;
         }
 
         private async Task<bool> DoesUserExist(String ID)
@@ -296,5 +296,18 @@ namespace AccountApi.Azure
                 return ;
             }
         } 
+
+        public async Task UpdatePrincipalName(string oldPrincipalName, User newValues)
+        {
+            try
+            {
+                var result = await Connector.Instance.Directory.Users[oldPrincipalName].Request().UpdateAsync(newValues.Account).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Connector.Instance.RegisterError(ex.Message);
+                return;
+            }
+        }
     }
 }

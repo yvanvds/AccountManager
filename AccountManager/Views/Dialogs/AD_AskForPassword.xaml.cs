@@ -35,6 +35,16 @@ namespace AccountManager.Views.Dialogs
             Username = nameBox.Text.Trim();
             Password = passwordBox.Password.Trim();
         }
+
+        private void OnKeyDownHandler(object sender, KeyEventArgs e)
+        {
+            //if (e.Key == Key.Return)
+            //{
+            //    Username = nameBox.Text.Trim();
+            //    Password = passwordBox.Password.Trim();
+            //    Visibility = Visibility.Collapsed;
+            //}
+        }
     }
 }
 

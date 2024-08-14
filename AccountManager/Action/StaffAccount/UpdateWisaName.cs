@@ -13,7 +13,7 @@ namespace AccountManager.Action.StaffAccount
     {
         public UpdateWisaName() : base(
             "Update Wisa ID",
-            "Het wisa ID in Active Directory of Smartschool is niet gelijk aan dat in WISA.",
+            "Het wisa ID in Smartschool is niet gelijk aan dat in WISA.",
             true)
         {
             CanShowDetails = true;
@@ -22,9 +22,9 @@ namespace AccountManager.Action.StaffAccount
         public override FlowDocument GetDetails(LinkedStaffMember account)
         {
             var result = new FlowTableCreator(false);
-            result.SetHeaders(new string[] { "Wisa", "Directory", "Smartschool" });
+            result.SetHeaders(new string[] { "Wisa", "Smartschool" });
 
-            result.AddRow(new List<string>() { "Wisa ID", account.Wisa.Account.CODE, account.Directory.Account.WisaID, account.Smartschool.Account.AccountID });
+            result.AddRow(new List<string>() { "Wisa ID", account.Wisa.Account.CODE, account.Smartschool.Account.AccountID });
 
             FlowDocument document = new FlowDocument();
             document.Blocks.Add(result.Create());
@@ -37,10 +37,6 @@ namespace AccountManager.Action.StaffAccount
             bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
             if (!connected) return;
 
-            if (account.Directory.Account.WisaID != account.Wisa.Account.CODE)
-            {
-                await account.Directory.Account.SetWisaID(account.Wisa.Account.CODE).ConfigureAwait(false);
-            }
             if (account.Smartschool.Account.AccountID != account.Wisa.Account.CODE)
             {
                 account.Smartschool.Account.AccountID = account.Wisa.Account.CODE;
@@ -50,7 +46,7 @@ namespace AccountManager.Action.StaffAccount
 
         public static void Evaluate(LinkedStaffMember account)
         {
-            if (account.Wisa.Account.CODE != account.Directory.Account.WisaID || account.Wisa.Account.CODE != account.Smartschool.Account.AccountID)
+            if (account.Wisa.Account.CODE != account.Smartschool.Account.AccountID)
             {
                 account.Actions.Add(new UpdateWisaName());
                 account.Directory.FlagWarning();

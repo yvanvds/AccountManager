@@ -78,10 +78,6 @@ namespace AccountManager.State.Linked
                 AddSmartschoolAccounts(lln);
             }
 
-            
-
-            
-
             foreach(var account in AccountApi.Wisa.Students.All)
             {
                 bool linked = false;
@@ -210,9 +206,10 @@ namespace AccountManager.State.Linked
         {
             foreach(var account in group.Accounts)
             {
-                if(List.ContainsKey(account.Mail))
+                string key = FindKey(account);
+                if(key != null)
                 {
-                    List[account.Mail].Smartschool.Account = account as AccountApi.Smartschool.Account;
+                    List[key].Smartschool.Account = account as AccountApi.Smartschool.Account;
                 } else
                 {
                     List.Add(account.Mail, new LinkedAccount(account as AccountApi.Smartschool.Account));
@@ -224,6 +221,24 @@ namespace AccountManager.State.Linked
             {
                 AddSmartschoolAccounts(child);
             }
+        }
+
+        private string FindKey(AccountApi.IAccount account)
+        {
+            if (List.ContainsKey(account.Mail)) return account.Mail;
+            foreach(var entry in List)
+            {
+                if (entry.Value.Wisa.Account != null && entry.Value.Wisa.Account.WisaID == account.AccountID)
+                {
+                    return entry.Key;
+                }
+
+                if (entry.Value.Directory.Account != null && entry.Value.Directory.Account.WisaID == account.AccountID)
+                {
+                    return entry.Key;
+                }
+            }
+            return null;
         }
     }
 }

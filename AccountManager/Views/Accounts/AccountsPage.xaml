@@ -28,9 +28,6 @@
             <TabItem x:Name="WisaTab" Header="Wisa">
                 <local:WisaAccounts/>
             </TabItem>
-            <TabItem x:Name="ADTab" Header="AD">
-                <local:ADAccounts/>
-            </TabItem>
             <TabItem x:Name="AzureTab" Header="Office365">
                 <local:AzureAccounts></local:AzureAccounts>
             </TabItem>

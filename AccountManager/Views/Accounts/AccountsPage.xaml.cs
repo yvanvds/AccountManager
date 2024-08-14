@@ -23,13 +23,11 @@ namespace AccountManager.Views.Accounts
             if (!viewModel.DebugMode && debugTabsAreShown)
             {
                 Tabs.Items.Remove(WisaTab);
-                Tabs.Items.Remove(ADTab);
                 Tabs.Items.Remove(SmartschoolTab);
                 Tabs.Items.Remove(AzureTab);
             } else if (viewModel.DebugMode && !debugTabsAreShown)
             {
                 Tabs.Items.Add(WisaTab);
-                Tabs.Items.Add(ADTab);
                 Tabs.Items.Add(SmartschoolTab);
                 Tabs.Items.Add(AzureTab);
             }

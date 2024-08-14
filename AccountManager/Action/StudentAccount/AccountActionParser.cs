@@ -33,6 +33,7 @@ namespace AccountManager.Action.StudentAccount
             }
             else
             {
+                ModifyAzureStudentEmail.Evaluate(account);
                 ModifySmartschoolStudentAddress.Evaluate(account);
                 AddToADStudentGroup.Evaluate(account);
                 //ModifyStudentHomeDir.Evaluate(account);

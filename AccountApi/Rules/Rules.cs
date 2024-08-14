@@ -21,10 +21,5 @@ namespace AccountApi.Rules
             { Rule.SS_DiscardGroup, "Negeer Groep" },
             { Rule.SS_NoSubGroups, "Negeer SubGroepen" },
         };
-
-        public static Dictionary<Rule, string> DirectoryRules = new Dictionary<Rule, string>()
-        {
-            { Rule.AD_DontImportUser, "Negeer Account" },
-        };
     }
 }

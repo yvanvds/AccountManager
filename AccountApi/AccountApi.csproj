@@ -37,24 +37,6 @@
     <Reference Include="Azure.Core, Version=1.25.0.0, Culture=neutral, PublicKeyToken=92742159e12e44c8, processorArchitecture=MSIL">
       <HintPath>..\packages\Azure.Core.1.25.0\lib\net461\Azure.Core.dll</HintPath>
     </Reference>
-    <Reference Include="Google.Apis, Version=1.40.1.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
-      <HintPath>..\packages\Google.Apis.1.40.1\lib\net45\Google.Apis.dll</HintPath>
-    </Reference>
-    <Reference Include="Google.Apis.Admin.Directory.directory_v1, Version=1.40.1.1505, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
-      <HintPath>..\packages\Google.Apis.Admin.Directory.directory_v1.1.40.1.1505\lib\net45\Google.Apis.Admin.Directory.directory_v1.dll</HintPath>
-    </Reference>
-    <Reference Include="Google.Apis.Auth, Version=1.40.1.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
-      <HintPath>..\packages\Google.Apis.Auth.1.40.1\lib\net45\Google.Apis.Auth.dll</HintPath>
-    </Reference>
-    <Reference Include="Google.Apis.Auth.PlatformServices, Version=1.40.1.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
-      <HintPath>..\packages\Google.Apis.Auth.1.40.1\lib\net45\Google.Apis.Auth.PlatformServices.dll</HintPath>
-    </Reference>
-    <Reference Include="Google.Apis.Core, Version=1.40.1.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
-      <HintPath>..\packages\Google.Apis.Core.1.40.1\lib\net45\Google.Apis.Core.dll</HintPath>
-    </Reference>
-    <Reference Include="Google.Apis.PlatformServices, Version=1.40.1.0, Culture=neutral, PublicKeyToken=4b01fa6e34db77ab, processorArchitecture=MSIL">
-      <HintPath>..\packages\Google.Apis.1.40.1\lib\net45\Google.Apis.PlatformServices.dll</HintPath>
-    </Reference>
     <Reference Include="Microsoft.Bcl.AsyncInterfaces, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.Bcl.AsyncInterfaces.6.0.0\lib\net461\Microsoft.Bcl.AsyncInterfaces.dll</HintPath>
     </Reference>
@@ -98,7 +80,6 @@
     <Reference Include="System.Diagnostics.DiagnosticSource, Version=4.0.5.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Diagnostics.DiagnosticSource.4.7.1\lib\net46\System.Diagnostics.DiagnosticSource.dll</HintPath>
     </Reference>
-    <Reference Include="System.DirectoryServices" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.EnterpriseServices" />
     <Reference Include="System.IdentityModel" />
@@ -191,16 +172,7 @@
     <Compile Include="Azure\TokenCacheHelper.cs" />
     <Compile Include="Azure\User.cs" />
     <Compile Include="Azure\UserManager.cs" />
-    <Compile Include="Directory\Account.cs" />
-    <Compile Include="Directory\AccountManager.cs" />
-    <Compile Include="Directory\ADGroup.cs" />
-    <Compile Include="Directory\ClassGroup.cs" />
-    <Compile Include="Directory\ClassGroupManager.cs" />
-    <Compile Include="Directory\Connector.cs" />
     <Compile Include="Enums.cs" />
-    <Compile Include="Google\Account.cs" />
-    <Compile Include="Google\AccountManager.cs" />
-    <Compile Include="Google\Connector.cs" />
     <Compile Include="IAccount.cs" />
     <Compile Include="IGroup.cs" />
     <Compile Include="ILog.cs" />
@@ -215,7 +187,6 @@
     </Compile>
     <Compile Include="Rules\DiscardSmartschoolGroup.cs" />
     <Compile Include="Rules\DontImportClass.cs" />
-    <Compile Include="Rules\DontImportUserFromAD.cs" />
     <Compile Include="Rules\DontImportUserFromWisa.cs" />
     <Compile Include="Rules\MarkAsVirtual.cs" />
     <Compile Include="Rules\NoSmartschoolSubgroups.cs" />

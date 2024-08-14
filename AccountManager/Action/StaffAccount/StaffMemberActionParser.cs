@@ -21,12 +21,8 @@ namespace AccountManager.Action.StaffAccount
             if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists || !account.Azure.Exists)
             {
                 AddToAzure.Evaluate(account);
-                AddToDirectory.Evaluate(account);
-                AddToDirectoryAndSmartschool.Evaluate(account);
                 AddToSmartschool.Evaluate(account);
-                RemoveFromDirectory.Evaluate(account);
                 RemoveFromSmartschool.Evaluate(account);
-                DontImportFromAD.Evaluate(account);
                 DontImportFromWisa.Evaluate(account);
                 RemoveFromAzure.Evaluate(account);
                 
@@ -36,8 +32,6 @@ namespace AccountManager.Action.StaffAccount
             if (account.OK)
             {
                 UpdateWisaName.Evaluate(account);
-                AddToADStaffGroup.Evaluate(account);
-                PrincipalNameMustEqualMail.Evaluate(account);
                 ModifySmartschoolStaffEmail.Evaluate(account);
                 AddToAzureStaffGroup.Evaluate(account);
             }

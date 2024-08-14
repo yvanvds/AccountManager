@@ -33,10 +33,17 @@ namespace AccountManager.State.Azure
             var location = Path.Combine(App.GetAppFolder(), fileName);
             if (File.Exists(location))
             {
-                string content = File.ReadAllText(location);
-                var newObj = JObject.Parse(content);
-                AccountApi.Azure.UserManager.Instance.FromJson(newObj);
-                lastSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
+                try
+                {
+                    string content = File.ReadAllText(location);
+                    var newObj = JObject.Parse(content);
+                    AccountApi.Azure.UserManager.Instance.FromJson(newObj);
+                    lastSync = newObj.ContainsKey("lastSync") ? Convert.ToDateTime(newObj["lastSync"]) : DateTime.MinValue;
+                }catch (Exception ex)
+                {
+                    MainWindow.Instance.Log.AddError(AccountApi.Origin.Other, ex.Message);
+                }
+                
             }
             App.Instance.Azure.UpdateObservers();
         }

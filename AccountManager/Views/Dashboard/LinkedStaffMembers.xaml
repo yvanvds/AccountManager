@@ -23,7 +23,6 @@
                     <ColumnDefinition Width="150"/>
                     <ColumnDefinition Width="150"/>
                     <ColumnDefinition Width="150"/>
-                    <ColumnDefinition Width="150"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="30"/>
@@ -39,25 +38,20 @@
                 <Label Grid.Column="0" Grid.Row="3" Content="Unlinked"/>
 
                 <Label Grid.Column="1" Grid.Row="0" Content="Wisa"/>
-                <Label Grid.Column="2" Grid.Row="0" Content="Directory"/>
-                <Label Grid.Column="3" Grid.Row="0" Content="Smartschool"/>
-                <Label Grid.Column="4" Grid.Row="0" Content="Office365"/>
+                <Label Grid.Column="2" Grid.Row="0" Content="Smartschool"/>
+                <Label Grid.Column="3" Grid.Row="0" Content="Office365"/>
 
                 <Label Grid.Column="1" Grid.Row="1" Content="{Binding TotalWisaAccounts}"/>
                 <Label Grid.Column="1" Grid.Row="2" Content="{Binding LinkedWisaAccounts}"/>
                 <Label Grid.Column="1" Grid.Row="3" Content="{Binding UnlinkedWisaAccounts}" Foreground="{Binding UnlinkedWisaColor}"/>
 
-                <Label Grid.Column="2" Grid.Row="1" Content="{Binding TotalDirectoryAccounts}"/>
-                <Label Grid.Column="2" Grid.Row="2" Content="{Binding LinkedDirectoryAccounts}"/>
-                <Label Grid.Column="2" Grid.Row="3" Content="{Binding UnlinkedDirectoryAccounts}" Foreground="{Binding UnlinkedDirectoryColor}"/>
+                <Label Grid.Column="2" Grid.Row="1" Content="{Binding TotalSmartschoolAccounts}"/>
+                <Label Grid.Column="2" Grid.Row="2" Content="{Binding LinkedSmartschoolAccounts}"/>
+                <Label Grid.Column="2" Grid.Row="3" Content="{Binding UnlinkedSmartschoolAccounts}" Foreground="{Binding UnlinkedSmartschoolColor}"/>
 
-                <Label Grid.Column="3" Grid.Row="1" Content="{Binding TotalSmartschoolAccounts}"/>
-                <Label Grid.Column="3" Grid.Row="2" Content="{Binding LinkedSmartschoolAccounts}"/>
-                <Label Grid.Column="3" Grid.Row="3" Content="{Binding UnlinkedSmartschoolAccounts}" Foreground="{Binding UnlinkedSmartschoolColor}"/>
-
-                <Label Grid.Column="4" Grid.Row="1" Content="{Binding TotalAzureAccounts}"/>
-                <Label Grid.Column="4" Grid.Row="2" Content="{Binding LinkedAzureAccounts}"/>
-                <Label Grid.Column="4" Grid.Row="3" Content="{Binding UnlinkedAzureAccounts}" Foreground="{Binding UnlinkedAzureColor}"/>
+                <Label Grid.Column="3" Grid.Row="1" Content="{Binding TotalAzureAccounts}"/>
+                <Label Grid.Column="3" Grid.Row="2" Content="{Binding LinkedAzureAccounts}"/>
+                <Label Grid.Column="3" Grid.Row="3" Content="{Binding UnlinkedAzureAccounts}" Foreground="{Binding UnlinkedAzureColor}"/>
 
                 <Button Style="{StaticResource MaterialDesignRaisedButton}"
                             Grid.Column="0" Grid.Row="4"
