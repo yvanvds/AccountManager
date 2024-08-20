@@ -23,7 +23,7 @@ namespace AccountManager.Action.Group
         public DoNotImportFromWisa() : base(
             "Klas Negeren",
             "Een Wisa importregel toevoegen om deze groep te negeren. Doe dit als het nodig is dat de groep bestaat in WISA, " +
-            "maar niet nodig is in Active Directory en Smartschool.",
+            "maar niet nodig is in Smartschool.",
             true
             )
         {
@@ -33,7 +33,7 @@ namespace AccountManager.Action.Group
 
         public static bool Evaluate(State.Linked.LinkedGroup group)
         {
-            if (group.Wisa.Linked && !group.Directory.Linked && !group.Smartschool.Linked)
+            if (group.Wisa.Linked && !group.Smartschool.Linked)
             {
                 group.Actions.Add(new DoNotImportFromWisa());
                 return true;

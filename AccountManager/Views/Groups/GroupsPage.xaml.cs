@@ -25,7 +25,6 @@ namespace AccountManager.Views.Groups
             Overview,
             Wisa,
             Smartschool,
-            Directory,
         }
 
         public GroupsPage(Tab activeTab = Tab.Overview)
@@ -35,35 +34,15 @@ namespace AccountManager.Views.Groups
             {
                 case Tab.Overview: TabControl.SelectedIndex = 0; break;
                 case Tab.Wisa: TabControl.SelectedIndex = 1; break;
-                case Tab.Directory: TabControl.SelectedIndex = 2; break;
-                case Tab.Smartschool: TabControl.SelectedIndex = 3; break;
+                case Tab.Smartschool: TabControl.SelectedIndex = 2; break;
             }
 
             if(!State.App.Instance.Settings.DebugMode.Value)
             {
                 TabControl.SelectedIndex = 0;
                 TabControl.Items.Remove(WisaTab);
-                TabControl.Items.Remove(ADTab);
                 TabControl.Items.Remove(SmartschoolTab);
             }
-        }
-
-        public void CalendarDialogOpenedEventHandler(object sender, DialogOpenedEventArgs eventArgs)
-        {
-            //Calendar.SelectedDate = ((PickersViewModel)DataContext).Date;
-        }
-
-        public void CalendarDialogClosingEventHandler(object sender, DialogClosingEventArgs eventArgs)
-        {
-            //if (!Equals(eventArgs.Parameter, "1")) return;
-
-            //if (!Calendar.SelectedDate.HasValue)
-            //{
-            //    eventArgs.Cancel();
-            //    return;
-            //}
-
-            //((PickersViewModel)DataContext).Date = Calendar.SelectedDate.Value;
         }
     }
 }

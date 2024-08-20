@@ -40,7 +40,7 @@
                     </StackPanel>
                 </materialDesign:Card>
 
-                <materialDesign:Card Grid.Row="0" Grid.Column="1" Margin="16" Height="160">
+                <!--<materialDesign:Card Grid.Row="0" Grid.Column="1" Margin="16" Height="160">
                     <StackPanel>
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Identificatie"/>
                         <StackPanel Orientation="Horizontal">
@@ -62,9 +62,9 @@
                         </StackPanel>
 
                     </StackPanel>
-                </materialDesign:Card>
+                </materialDesign:Card>-->
 
-                <materialDesign:Card Grid.Row="1" Grid.ColumnSpan="2" Margin="16">
+                <!--<materialDesign:Card Grid.Row="1" Grid.ColumnSpan="2" Margin="16">
 
                     <StackPanel Orientation="Vertical">
                         <TextBlock Margin="16 16 12 0" FontSize="16" Text="Extra Gegevens"/>
@@ -94,12 +94,12 @@
 
                         </StackPanel>
                     </StackPanel>
-                </materialDesign:Card>
+                </materialDesign:Card>-->
                 <materialDesign:Card Grid.Row="2" Grid.Column="0" Margin="16" Height="250">
                     <StackPanel Orientation="Vertical">
-                        <TextBlock Margin="16 16 12 0" FontSize="16" Text="Wachtwoorden"/>
+                        <TextBlock Margin="16 16 12 16" FontSize="16" Text="Wachtwoorden"/>
 
-                        <Button  
+                        <!--<Button  
                             VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 16" 
                             Command="{Binding NewNetworkPasswordCommand}"
                             materialDesign:ButtonProgressAssist.Value="-1"
@@ -109,7 +109,7 @@
                                 <materialDesign:PackIcon Kind="PasswordReset"/>
                                 <TextBlock Margin="8 0 0 0">Nieuw Wifi Wachtwoord</TextBlock>
                             </StackPanel>
-                        </Button>
+                        </Button>-->
 
                         <Button  
                             VerticalAlignment="Bottom" HorizontalAlignment="Left" Width="260"  Margin="16 0" 
@@ -149,12 +149,12 @@
                 </materialDesign:Card>
                 <materialDesign:Card Grid.Row="2" Grid.Column="1" Margin="16">
                     <StackPanel Orientation="Vertical">
-                        <Button Style="{StaticResource MaterialDesignRaisedAccentButton}" x:Name="SaveButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" IsEnabled="{Binding SaveEnabled}" Command="{Binding SaveCommand}" Margin="16 16">
+                        <!--<Button Style="{StaticResource MaterialDesignRaisedAccentButton}" x:Name="SaveButton" VerticalAlignment="Bottom" HorizontalAlignment="Left" IsEnabled="{Binding SaveEnabled}" Command="{Binding SaveCommand}" Margin="16 16">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="ContentSave"/>
                                 <TextBlock Margin="8 0 0 0">Wijzigingen Opslaan</TextBlock>
                             </StackPanel>
-                        </Button>
+                        </Button>-->
                         <Button Background="Red" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="16 16" IsEnabled="{Binding DeleteEnabled}" Command="{Binding DeleteCommand}">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="DeleteForever"/>

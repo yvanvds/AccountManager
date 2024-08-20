@@ -14,7 +14,7 @@ namespace AccountManager.Action.Group
         public DoNotImportFromSmartschool() : base(
             "Klas Negeren",
             "Importeer deze klas niet uit Smartschool. Doe dit wanneer de klas moet bestaan in smartschool maar " +
-            "niet gelinkt is aan een klas in Wisa en Active Directory.",
+            "niet gelinkt is aan een klas in Wisa.",
             true
             )
         {
@@ -22,7 +22,7 @@ namespace AccountManager.Action.Group
 
         public static bool Evaluate(State.Linked.LinkedGroup group)
         {
-            if (!group.Directory.Linked && !group.Wisa.Linked && group.Smartschool.Linked)
+            if (!group.Wisa.Linked && group.Smartschool.Linked)
             {
                 group.Actions.Add(new DoNotImportFromSmartschool());
                 return true;

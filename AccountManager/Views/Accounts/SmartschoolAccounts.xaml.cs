@@ -1,4 +1,5 @@
 ﻿using AccountApi;
+using AccountManager.Utils;
 using AccountManager.ViewModels.Accounts;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -21,9 +22,7 @@ namespace AccountManager.Views.Accounts
             model = new ViewModels.Accounts.SmartschoolAccounts();
             DataContext = model;
         }
-
-
-
+ 
         private void SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
             model.SelectedAccount = e.NewValue is TreeAccount ? (e.NewValue as TreeAccount) : null;

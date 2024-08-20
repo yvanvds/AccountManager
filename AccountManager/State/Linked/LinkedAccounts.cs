@@ -15,9 +15,6 @@ namespace AccountManager.State.Linked
         int totalWisaAccounts = 0;
         public int TotalWisaAccounts => totalWisaAccounts;
 
-        int totalDirectoryAccounts = 0;
-        public int TotalDirectoryAccounts => totalDirectoryAccounts;
-
         int totalSmartschoolAccounts = 0;
         public int TotalSmartschoolAccounts => totalSmartschoolAccounts;
 
@@ -27,9 +24,6 @@ namespace AccountManager.State.Linked
         int unlinkedWisaAccounts = 0;
         public int UnlinkedWisaAccounts => unlinkedWisaAccounts;
 
-        int unlinkedDirectoryAccounts = 0;
-        public int UnlinkedDirectoryAccounts => unlinkedDirectoryAccounts;
-
         int unlinkedSmartschoolAccounts = 0;
         public int UnlinkedSmartschoolAccounts => unlinkedSmartschoolAccounts;
 
@@ -38,9 +32,6 @@ namespace AccountManager.State.Linked
 
         int linkedWisaAccounts = 0;
         public int LinkedWisaAccounts => linkedWisaAccounts;
-
-        int linkedDirectoryAccounts = 0;
-        public int LinkedDirectoryAccounts => linkedDirectoryAccounts;
 
         int linkedSmartschoolAccounts = 0;
         public int LinkedSmartschoolAccounts => linkedSmartschoolAccounts;
@@ -59,18 +50,6 @@ namespace AccountManager.State.Linked
             if (AccountApi.Smartschool.GroupManager.Root == null) return;
 
             List.Clear();
-            foreach(var account in AccountApi.Directory.AccountManager.Students)
-            {
-                if(account.PrincipalName.Length == 0) continue;
-
-                if(List.ContainsKey(account.PrincipalName))
-                {
-                    List[account.PrincipalName].Directory.Account = account;
-                } else
-                {
-                    List.Add(account.PrincipalName, new LinkedAccount(account));
-                }
-            }
 
             var lln = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
             if (lln != null)
@@ -81,48 +60,17 @@ namespace AccountManager.State.Linked
             foreach(var account in AccountApi.Wisa.Students.All)
             {
                 bool linked = false;
-                AccountApi.Directory.Account directoryMatch = AccountApi.Directory.AccountManager.GetStudentByWisaID(account.WisaID);
 
-                if (directoryMatch != null && directoryMatch.PrincipalName.Length > 0)
+                var smartschoolMatch = (lln as AccountApi.Smartschool.Group).FindAccountByWisaID(account.WisaID);
+
+                if (smartschoolMatch != null)
                 {
-                    if (List.ContainsKey(directoryMatch.PrincipalName))
+                    if (List.ContainsKey(smartschoolMatch.Mail))
                     {
-                        List[directoryMatch.Mail].Wisa.Account = account;
+                        List[smartschoolMatch.Mail].Wisa.Account = account;
                         linked = true;
                     }
-                    //else
-                    //{
-                    //    List.Add(directoryMatch.Mail, new LinkedAccount(account));
-                    //    linked = true;
-                    //}
                 }
-
-                if (!linked)
-                {
-                    var smartschoolMatch = (lln as AccountApi.Smartschool.Group).FindAccountByWisaID(account.WisaID);
-
-                    if (smartschoolMatch != null)
-                    {
-                        if (List.ContainsKey(smartschoolMatch.UID))
-                        {
-                            List[smartschoolMatch.UID].Wisa.Account = account;
-                            linked = true;
-                        }
-                    }
-                }
-
-                //if (!linked)
-                //{
-                //    var azureMatch = AccountApi.Azure.UserManager.Instance.FindAccountByWisaID(account.WisaID);
-                //    if (azureMatch != null)
-                //    {
-                //        if (List.ContainsKey(azureMatch.UserPrincipalName))
-                //        {
-                //            List[azureMatch.UserPrincipalName].Wisa.Account = account;
-                //            linked = true;
-                //        }
-                //    }
-                //}
 
                 if (!linked)
                 {
@@ -152,23 +100,19 @@ namespace AccountManager.State.Linked
                         }
                     }
 
-                    //if (!found)
-                    //{
-                    //    List.Add(account.Id, new LinkedAccount(account));
-                    //}
                 }
                 
             }
 
             // count 
-            totalWisaAccounts = totalDirectoryAccounts = totalSmartschoolAccounts = totalAzureAccounts = 0;
-            unlinkedWisaAccounts = unlinkedDirectoryAccounts = unlinkedSmartschoolAccounts = unlinkedAzureAccounts = 0;
-            linkedWisaAccounts = linkedDirectoryAccounts = linkedSmartschoolAccounts = linkedAzureAccounts = 0;
+            totalWisaAccounts = totalSmartschoolAccounts = totalAzureAccounts = 0;
+            unlinkedWisaAccounts = unlinkedSmartschoolAccounts = unlinkedAzureAccounts = 0;
+            linkedWisaAccounts = linkedSmartschoolAccounts = linkedAzureAccounts = 0;
 
             foreach (var group in List.Values)
             {
                 if (group == null) continue;
-                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Directory.Exists || !group.Azure.Exists);
+                bool incomplete = (!group.Wisa.Exists || !group.Smartschool.Exists || !group.Azure.Exists);
                 if (group.Wisa.Exists)
                 {
                     totalWisaAccounts++;
@@ -180,12 +124,6 @@ namespace AccountManager.State.Linked
                     totalSmartschoolAccounts++;
                     if (incomplete) unlinkedSmartschoolAccounts++;
                     else linkedSmartschoolAccounts++;
-                }
-                if (group.Directory.Exists)
-                {
-                    totalDirectoryAccounts++;
-                    if (incomplete) unlinkedDirectoryAccounts++;
-                    else linkedDirectoryAccounts++;
                 }
                 if (group.Azure.Exists)
                 {
@@ -226,17 +164,12 @@ namespace AccountManager.State.Linked
         private string FindKey(AccountApi.IAccount account)
         {
             if (List.ContainsKey(account.Mail)) return account.Mail;
-            foreach(var entry in List)
+            foreach (var entry in List)
             {
                 if (entry.Value.Wisa.Account != null && entry.Value.Wisa.Account.WisaID == account.AccountID)
                 {
                     return entry.Key;
-                }
-
-                if (entry.Value.Directory.Account != null && entry.Value.Directory.Account.WisaID == account.AccountID)
-                {
-                    return entry.Key;
-                }
+                } 
             }
             return null;
         }

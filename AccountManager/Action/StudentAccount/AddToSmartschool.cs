@@ -20,16 +20,15 @@ namespace AccountManager.Action.StudentAccount
         public async override Task Apply(State.Linked.LinkedAccount linkedAccount, DateTime deletionDate)
         {
             var wisa = linkedAccount.Wisa.Account;
-            var directory = linkedAccount.Directory.Account;
 
-            await Add(linkedAccount, wisa, directory).ConfigureAwait(false);
+            await Add(linkedAccount, wisa).ConfigureAwait(false);
         }
 
-        public static async Task Add(State.Linked.LinkedAccount linkedAccount, AccountApi.Wisa.Student wisa, AccountApi.Directory.Account directory)
+        public static async Task Add(State.Linked.LinkedAccount linkedAccount, AccountApi.Wisa.Student wisa)
         {
             var ssAccount = new AccountApi.Smartschool.Account();
 
-            ssAccount.UID = directory.UID;
+            ssAccount.UID = AccountApi.Smartschool.AccountManager.CreateUID(wisa.FirstName, wisa.Name);
             ssAccount.RegisterID = wisa.StateID;
             try
             {
@@ -51,7 +50,7 @@ namespace AccountManager.Action.StudentAccount
             ssAccount.HouseNumberAdd = wisa.HouseNumberAdd;
             ssAccount.PostalCode = wisa.PostalCode;
             ssAccount.City = wisa.City;
-            ssAccount.Mail = directory.Mail;
+            ssAccount.Mail = linkedAccount.Azure.Account.UserPrincipalName;
 
             var result = await AccountApi.Smartschool.AccountManager.Save(ssAccount, "FakeP4ssword").ConfigureAwait(false);
             if (!result)
@@ -64,6 +63,7 @@ namespace AccountManager.Action.StudentAccount
 
                 linkedAccount.Smartschool.Account = ssAccount;
                 MainWindow.Instance.Log.AddMessage(Origin.Smartschool, "Added account for " + wisa.FullName);
+                AccountApi.Smartschool.GroupManager.UIDs.Add(ssAccount.UID);
             }
 
 

@@ -16,6 +16,8 @@ namespace AccountManager.State.Azure
         public ConfigValue<string> ClientID { get; set; }
         public ConfigValue<string> TenantID { get; set; }
 
+        public ConfigValue<string> Domain {  get; set; }
+
         public AzureAccounts Accounts { get; private set; } = new AzureAccounts();
         public AzureGroups Groups { get; private set; } = new AzureGroups();
 
@@ -23,6 +25,7 @@ namespace AccountManager.State.Azure
         {
             ClientID = new ConfigValue<string>("clientID", "", UpdateObservers, UpdateConnectionState);
             TenantID = new ConfigValue<string>("tenantID", "", UpdateObservers, UpdateConnectionState);
+            Domain = new ConfigValue<string>("domain", "", UpdateObservers, UpdateConnectionState);
             Connection = new ConfigValue<ConnectionState>("connectionTested", ConnectionState.Unknown, UpdateObservers);
         }
 
@@ -30,6 +33,7 @@ namespace AccountManager.State.Azure
         {
             ClientID.Load(obj);
             TenantID.Load(obj);
+            Domain.Load(obj);
             Connection.Load(obj);
         }
 
@@ -38,6 +42,7 @@ namespace AccountManager.State.Azure
             JObject result = new JObject();
             ClientID.Save(ref result);
             TenantID.Save(ref result);
+            Domain.Save(ref result);
             Connection.Save(ref result);
             return result;
         }
@@ -48,7 +53,7 @@ namespace AccountManager.State.Azure
                 ClientID.Value,
                 TenantID.Value,
                 MainWindow.Instance,
-                App.Instance.AD.AzureDomain.Value,
+                App.Instance.Azure.Domain.Value,
                 App.Instance.Settings.SchoolPrefix.Value,
                 MainWindow.Instance.Log
             );

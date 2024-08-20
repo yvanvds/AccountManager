@@ -1,21 +1,11 @@
 using AccountApi;
-using AccountManager.Views.Log;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+
 
 namespace AccountManager.Views.Log
 {
@@ -131,7 +121,6 @@ namespace AccountManager.Views.Log
                 case "All": Filter = Origin.All; break;
                 case "Wisa": Filter = Origin.Wisa; break;
                 case "SmartSchool": Filter = Origin.Smartschool; break;
-                case "Active Directory": Filter = Origin.Directory; break;
                 case "Office365": Filter = Origin.Azure; break;
                 case "Other": Filter = Origin.Other; break;
             }

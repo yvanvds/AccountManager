@@ -22,6 +22,8 @@ namespace AccountApi.Smartschool
         /// </summary>
         public static IGroup Root { get => root.Children?[0]; }
 
+        public static List<string> UIDs { get; set; } = new List<string>();
+
         /// <summary>
         /// Load all Groups from smartschool. This method will not reload if groups are already present. If a reload is 
         /// needed, use the reload method.

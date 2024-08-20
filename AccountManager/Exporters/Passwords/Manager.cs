@@ -147,16 +147,11 @@ namespace AccountManager.Exporters.Passwords
 
                     }
 
-                    if (pw.ADPassword.Length > 0) {
-                        section.AddParagraph("WiFi", "Heading2");
-                        section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-L wifi netwerk.", "Normal");
-                        section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
-                        section.AddParagraph("Wachtwoord: " + pw.ADPassword, "PasswordStyle");
-                        section.AddParagraph("Dit wachtwoord kan je niet aanpassen. Je moet het wel maar één keer ingeven, tenzij je je toestel reset.", "Normal");
-                    }
+                    section.AddParagraph("WiFi", "Heading2");
+                    section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-L wifi netwerk.", "Normal");
+                    section.AddParagraph("Wachtwoord: SmifiDeWifi", "PasswordStyle");
 
                     
-
                     section.AddParagraph("Privacy", "Heading2");
                     section.AddParagraph("Je account is strikt persoonlijk. Indien je je account doorgeeft aan anderen, dan ben jij " +
                         "verantwoordelijk voor hun acties op het netwerk. Laat dit blad dus niet rondslingeren maar leer je login " +
@@ -184,7 +179,7 @@ namespace AccountManager.Exporters.Passwords
             
         }
 
-        public async Task ExportStaffPasswordToPDF(string name, string username, string mail, string copycode, string networkPassword = null, string smartschoolPassword = null, string office365Password = null)
+        public async Task ExportStaffPasswordToPDF(string name, string username, string mail, string smartschoolPassword = null, string office365Password = null)
         {
             await Task.Run(() =>
             {
@@ -192,9 +187,6 @@ namespace AccountManager.Exporters.Passwords
 
                 var section = document.AddSection();
                 section.AddParagraph("Account voor " + name, "Heading1");
-
-                section.AddParagraph("Copies", "Heading2");
-                section.AddParagraph("Copy Code : " + copycode, "PasswordStyle");
 
                 if (office365Password != null)
                 {
@@ -204,14 +196,12 @@ namespace AccountManager.Exporters.Passwords
                     section.AddParagraph("Wanneer je inlogt, kan je een nieuw wachtwoord kiezen.", "Normal");
                 }
 
-                if (networkPassword != null)
-                {
+
                     section.AddParagraph("Wifi", "Heading2");
-                    section.AddParagraph("Login     : " + username, "PasswordStyle");
-                    section.AddParagraph("Wachtwoord: " + networkPassword, "PasswordStyle");
+                    section.AddParagraph("Code: !TEAM!SMA!", "PasswordStyle");
 
                     section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-P wifi netwerk.", "Normal");
-                }
+
 
                 if (smartschoolPassword != null)
                 {

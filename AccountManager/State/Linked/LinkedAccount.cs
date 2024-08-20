@@ -10,7 +10,6 @@ namespace AccountManager.State.Linked
     public class LinkedAccount
     {
         public AccountStatus<AccountApi.Wisa.Student> Wisa { get; } = new AccountStatus<AccountApi.Wisa.Student>();
-        public AccountStatus<AccountApi.Directory.Account> Directory { get; } = new AccountStatus<AccountApi.Directory.Account>();
         public AccountStatus<AccountApi.Smartschool.Account> Smartschool { get; } = new AccountStatus<AccountApi.Smartschool.Account>();
         public AccountStatus<AccountApi.Azure.User> Azure { get; } = new AccountStatus<AccountApi.Azure.User>();
 
@@ -19,11 +18,6 @@ namespace AccountManager.State.Linked
         public LinkedAccount(AccountApi.Wisa.Student account)
         {
             Wisa.Account = account;
-        }
-
-        public LinkedAccount(AccountApi.Directory.Account account)
-        {
-            Directory.Account = account;
         }
 
         public LinkedAccount(AccountApi.Smartschool.Account account)
@@ -40,7 +34,6 @@ namespace AccountManager.State.Linked
         {
             get
             {
-                if (Directory.Account != null) return Directory.Account.UID;
                 if (Smartschool.Account != null) return Smartschool.Account.UID;
                 if (Azure.Account != null) return Azure.Account.Id;
                 if (Wisa.Account != null) return Wisa.Account.WisaID;
@@ -54,7 +47,6 @@ namespace AccountManager.State.Linked
             {
                 if (Wisa.Account != null) return Wisa.Account.Name + " " + Wisa.Account.FirstName;
                 if (Smartschool.Account != null) return Smartschool.Account.SurName + " " + Smartschool.Account.GivenName;
-                if (Directory.Account != null) return Directory.Account.FullName;
                 if (Azure.Account != null) return Azure.Account.DisplayName;
                 return "No User Name";
             }
@@ -65,7 +57,6 @@ namespace AccountManager.State.Linked
             get
             {
                 if (Wisa.Account != null) return Wisa.Account.ClassName;
-                if (Directory.Account != null) return Directory.Account.ClassGroup;
                 if (Smartschool.Account != null) return Smartschool.Account.Group;
                 if (Azure.Account != null) return Azure.Account.Department;
                 return "No ClassGroup";
@@ -76,7 +67,6 @@ namespace AccountManager.State.Linked
         {
             get
             {
-                if (Directory.Account != null) return Directory.Account.Mail;
                 if (Smartschool.Account != null) return Smartschool.Account.Mail;
                 if (Azure.Account != null) return Azure.Account.UserPrincipalName;
                 return "No Mail";
@@ -89,7 +79,6 @@ namespace AccountManager.State.Linked
         {
             Wisa.SetFlag();
             Smartschool.SetFlag();
-            Directory.SetFlag();
             Azure.SetFlag();
         }
 

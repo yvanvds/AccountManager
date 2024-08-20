@@ -1,9 +1,11 @@
 ﻿using AbstractAccountApi;
 using AccountApi;
 using AccountManager.Exporters.Passwords;
+using AccountManager.Utils;
 using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -50,57 +52,38 @@ namespace AccountManager.Views.Passwords
         private void BuildGroupTree()
         {
             GroupTree.Items.Clear();
-            foreach (var group in State.App.Instance.AD.Groups.List)
+            IGroup leerlingen = State.App.Instance.Smartschool.Groups.Root.Find("Leerlingen");
+            foreach (var group in leerlingen.Children)
             {
-                GroupTree.Items.Add(new DisplayItems.ADGroup(group));
+                GroupTree.Items.Add(new DisplayItems.SSGroup(group));
             }
         }
 
         private void GroupTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
-            var group = ((sender as TreeView).SelectedItem as DisplayItems.ADGroup).Base;
+            var group = ((sender as TreeView).SelectedItem as DisplayItems.SSGroup).Base;
 
             currentGroup = new List<DisplayItems.StudentPasswordItem>();
 
-            foreach(var account in AccountApi.Directory.AccountManager.Students)
+            foreach(var account in group.Accounts)
             {
-                if(account.ClassGroup == group.Name)
-                {
-                    var item = new DisplayItems.StudentPasswordItem(account);
+                var item = new DisplayItems.StudentPasswordItem(account);
 
-                    item.DirectoryPassword.Value = CheckDirectory.IsChecked ?? false;
-                    item.SmartschoolPassword.Value = CheckSmartschool.IsChecked ?? false;
-                    item.AzurePassword.Value = CheckAzure.IsChecked ?? false;
+                item.SmartschoolPassword.Value = CheckSmartschool.IsChecked ?? false;
+                item.AzurePassword.Value = CheckAzure.IsChecked ?? false;
 
-                    item.SmartschoolCo1Password.Value = CheckCo1.IsChecked ?? false;
-                    item.SmartschoolCo2Password.Value = CheckCo2.IsChecked ?? false;
-                    item.SmartschoolCo3Password.Value = CheckCo3.IsChecked ?? false;
-                    item.SmartschoolCo4Password.Value = CheckCo4.IsChecked ?? false;
-                    item.SmartschoolCo5Password.Value = CheckCo5.IsChecked ?? false;
-                    item.SmartschoolCo6Password.Value = CheckCo6.IsChecked ?? false;
+                item.SmartschoolCo1Password.Value = CheckCo1.IsChecked ?? false;
+                item.SmartschoolCo2Password.Value = CheckCo2.IsChecked ?? false;
+                item.SmartschoolCo3Password.Value = CheckCo3.IsChecked ?? false;
+                item.SmartschoolCo4Password.Value = CheckCo4.IsChecked ?? false;
+                item.SmartschoolCo5Password.Value = CheckCo5.IsChecked ?? false;
+                item.SmartschoolCo6Password.Value = CheckCo6.IsChecked ?? false;
 
-                    currentGroup.Add(item);
-                }
+                currentGroup.Add(item);
             }
-            currentGroup.Sort((a, b) => a.Account.LastName.CompareTo(b.Account.LastName));
+            currentGroup.Sort((a, b) => a.Account.SurName.CompareTo(b.Account.SurName));
 
             AccountList.ItemsSource = currentGroup;
-        }
-
-        private void CheckDirectory_Checked(object sender, RoutedEventArgs e)
-        {
-            foreach(var item in currentGroup)
-            {
-                item.DirectoryPassword.Value = true;
-            }
-        }
-
-        private void CheckDirectory_Unchecked(object sender, RoutedEventArgs e)
-        {
-            foreach (var item in currentGroup)
-            {
-                item.DirectoryPassword.Value = false;
-            }
         }
 
         private void CheckAzure_Checked(object sender, RoutedEventArgs e)
@@ -233,29 +216,21 @@ namespace AccountManager.Views.Passwords
 
         private async void GenerateButton_Click(object sender, RoutedEventArgs e)
         {
-            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
-            if (!connected) return;
-
             foreach (var item in currentGroup)
             {
-                var password = AccountApi.Password.Create();
+                var password = Password.Create();
 
-                if (item.DirectoryPassword.Value == true)
-                {
-                    item.NewDirectoryPassword = password;
-                    item.Account.SetPassword(item.NewDirectoryPassword);
-                }
 
                 if (item.AzurePassword.Value == true)
                 {
                     item.NewAzurePassword = password;
-                    var user = AccountApi.Azure.UserManager.Instance.FindAccountByPrincipalName(item.Account.PrincipalName);
+                    var user = AccountApi.Azure.UserManager.Instance.FindAccountByPrincipalName(item.Account.Mail);
                     if (user != null)
                     {
                         await AccountApi.Azure.UserManager.Instance.SetPassword(user, password).ConfigureAwait(false);
                     } else
                     {
-                        MainWindow.Instance.Log.AddMessage(Origin.Azure, "No account for " + item.Account.FullName);
+                        MainWindow.Instance.Log.AddMessage(Origin.Azure, "No account for " + item.Account.GivenName + " " + item.Account.SurName);
                     }
                 }
 
@@ -310,16 +285,16 @@ namespace AccountManager.Views.Passwords
                 }
 
 
-                if(item.DirectoryPassword.Value || item.SmartschoolPassword.Value || item.AzurePassword.Value)
+                if(item.SmartschoolPassword.Value || item.AzurePassword.Value)
                 {
-                    Exporters.PasswordManager.Instance.Accounts.List.Add(new AccountPassword(item.UserName, item.Name, item.Account.PrincipalName, item.Account.ClassGroup, item.NewDirectoryPassword, item.NewSmartschoolPassword, item.NewAzurePassword));  
+                    Exporters.PasswordManager.Instance.Accounts.List.Add(new AccountPassword(item.UserName, item.Name, item.Account.Mail, item.Account.Group, item.NewSmartschoolPassword, item.NewAzurePassword));  
                 }
 
                 if(    item.SmartschoolCo1Password.Value || item.SmartschoolCo2Password.Value 
                     || item.SmartschoolCo3Password.Value || item.SmartschoolCo4Password.Value 
                     || item.SmartschoolCo5Password.Value || item.SmartschoolCo6Password.Value)
                 {
-                    var pw = new CoAccountPassword(item.UserName, item.Name, item.Account.ClassGroup);
+                    var pw = new CoAccountPassword(item.UserName, item.Name, item.Account.Group);
                     pw.Co1 = item.NewSmartschoolCo1Password;
                     pw.Co2 = item.NewSmartschoolCo2Password;
                     pw.Co3 = item.NewSmartschoolCo3Password;
@@ -329,7 +304,6 @@ namespace AccountManager.Views.Passwords
                     Exporters.PasswordManager.Instance.CoAccounts.List.Add(pw);
                 }
 
-                item.DirectoryPassword.Value = false;
                 item.SmartschoolPassword.Value = false;
                 item.AzurePassword.Value = false;
 
@@ -341,13 +315,6 @@ namespace AccountManager.Views.Passwords
                 item.SmartschoolCo6Password.Value = false;
             }
             UpdateButtons();
-        }
-
-        private void SingleDirectoryCheck_Checked(object sender, RoutedEventArgs e)
-        {
-            var checkbox = sender as CheckBox;
-            var item = checkbox.DataContext as DisplayItems.StudentPasswordItem;
-            item.DirectoryPassword.Value = checkbox.IsChecked ?? false;
         }
 
         private void SingleSmartschoolCheck_Checked(object sender, RoutedEventArgs e)
@@ -430,4 +397,6 @@ namespace AccountManager.Views.Passwords
             UpdateButtons();
         }
     }
+
+    
 }

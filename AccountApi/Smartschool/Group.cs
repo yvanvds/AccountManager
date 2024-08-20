@@ -287,6 +287,19 @@ namespace AccountApi.Smartschool
             return count;
         }
 
+        public void GetAllAccounts(List<IAccount> result)
+        {
+            if (children != null && !Connector.DiscardSubgroups.Contains(Name))
+            {
+                foreach (var child in children)
+                {
+                    (child as Group).GetAllAccounts(result);
+                }
+            }
+
+            result.AddRange(Accounts);
+        }
+
         /// <summary>
         /// Sort all child groups by name. This is a recursive method.
         /// </summary>
@@ -317,6 +330,21 @@ namespace AccountApi.Smartschool
             }
 
             list.Add(this);
+        }
+
+        public void GetAllUserNames(List<string> output)
+        {
+            if (children != null && !Connector.DiscardSubgroups.Contains(Name)){
+                foreach (var child in children)
+                {
+                    child.GetAllUserNames(output);
+                }
+            }
+
+            foreach(var account in accounts)
+            {
+                output.Add(account.UID);
+            }
         }
 
         /// <summary>

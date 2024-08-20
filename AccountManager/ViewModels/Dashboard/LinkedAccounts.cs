@@ -46,18 +46,14 @@ namespace AccountManager.ViewModels.Dashboard
         }
 
         public int TotalWisaAccounts => state.Accounts.TotalWisaAccounts;
-        public int TotalDirectoryAccounts => state.Accounts.TotalDirectoryAccounts;
         public int TotalSmartschoolAccounts => state.Accounts.TotalSmartschoolAccounts;
         public int TotalAzureAccounts => state.Accounts.TotalAzureAccounts;
         public int UnlinkedWisaAccounts => state.Accounts.UnlinkedWisaAccounts;
-        public int UnlinkedDirectoryAccounts => state.Accounts.UnlinkedDirectoryAccounts;
         public int UnlinkedSmartschoolAccounts => state.Accounts.UnlinkedSmartschoolAccounts;
         public int UnlinkedAzureAccounts => state.Accounts.UnlinkedAzureAccounts;
         public int LinkedWisaAccounts => state.Accounts.LinkedWisaAccounts;
-        public int LinkedDirectoryAccounts => state.Accounts.LinkedDirectoryAccounts;
         public int LinkedSmartschoolAccounts => state.Accounts.LinkedSmartschoolAccounts;
         public int LinkedAzureAccounts => state.Accounts.LinkedAzureAccounts;
-        public string UnlinkedDirectoryColor => state.Accounts.UnlinkedDirectoryAccounts == 0 ? "DarkGreen" : "DarkRed";
         public string UnlinkedSmartschoolColor => state.Accounts.UnlinkedSmartschoolAccounts == 0 ? "DarkGreen" : "DarkRed";
         public string UnlinkedWisaColor => state.Accounts.UnlinkedWisaAccounts == 0 ? "DarkGreen" : "DarkRed";
         public string UnlinkedAzureColor => state.Accounts.UnlinkedAzureAccounts == 0 ? "DarkGreen" : "DarkRed";
@@ -65,22 +61,18 @@ namespace AccountManager.ViewModels.Dashboard
         public void OnStateChanges()
         {
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalWisaAccounts)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalDirectoryAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalSmartschoolAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalAzureAccounts)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedWisaAccounts)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedDirectoryAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedSmartschoolAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedAzureAccounts)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedWisaAccounts)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedDirectoryAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedSmartschoolAccounts)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedAzureAccounts)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedWisaColor)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedDirectoryColor)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedSmartschoolColor)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedAzureColor)));
         }

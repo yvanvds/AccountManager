@@ -18,16 +18,12 @@ namespace AccountManager.Action.StudentAccount
             account.OK = true;
             account.SetBasicFlags();
 
-            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists || !account.Azure.Exists)
+            if (!account.Wisa.Exists || !account.Smartschool.Exists || !account.Azure.Exists)
             {
                 AddToAzure.Evaluate(account);
-                AddToDirectoryAndSmartschool.Evaluate(account);
-                AddToDirectory.Evaluate(account);
-                RemoveFromGoogle.Evaluate(account);
-                RemoveFromDirectory.Evaluate(account);
+                AddToSmartschool.Evaluate(account);
                 UnregisterSmartschool.Evaluate(account);
                 DeleteFromSmartschool.Evaluate(account);
-                RemoveFromDirectoryAndSmartschool.Evaluate(account);
                 
                 account.OK = false;
             }
@@ -35,17 +31,10 @@ namespace AccountManager.Action.StudentAccount
             {
                 ModifyAzureStudentEmail.Evaluate(account);
                 ModifySmartschoolStudentAddress.Evaluate(account);
-                AddToADStudentGroup.Evaluate(account);
-                //ModifyStudentHomeDir.Evaluate(account);
                 ModifyAccountID.Evaluate(account);
                 ModifySmartschoolStemID.Evaluate(account);
                 ModifySmartschoolBirthPlace.Evaluate(account);
-                //CreateHomeDir.Evaluate(account);
-                MoveDirectoryClassGroup.Evaluate(account);
                 MoveToSmartschoolClassGroup.Evaluate(account);
-                ModifyDirectoryData.Evaluate(account);
-                PrincipalNameMustEqualMail.Evaluate(account);
-                AddToADClassGroup.Evaluate(account);
                 ModifySmartschoolStudentEmail.Evaluate(account);
             }
         }

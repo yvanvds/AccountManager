@@ -21,10 +21,10 @@ namespace AccountManager.Views.Passwords
     public partial class StaffAccountEditor : UserControl
     {
         public static readonly DependencyProperty AccountProperty =
-            DependencyProperty.Register("Account", typeof(AccountApi.Directory.Account), typeof(StaffAccountEditor));
-        public AccountApi.Directory.Account Account
+            DependencyProperty.Register("Account", typeof(AccountApi.Smartschool.Account), typeof(StaffAccountEditor));
+        public AccountApi.Smartschool.Account Account
         {
-            get { return (AccountApi.Directory.Account)this.GetValue(AccountProperty); }
+            get { return (AccountApi.Smartschool.Account)this.GetValue(AccountProperty); }
             set { 
                 this.SetValue(AccountProperty, value); 
                 if (model != null)

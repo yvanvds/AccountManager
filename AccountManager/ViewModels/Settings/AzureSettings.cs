@@ -47,6 +47,16 @@ namespace AccountManager.ViewModels.Settings
             }
         }
 
+        public string Domain
+        {
+            get => State.App.Instance.Azure.Domain.Value;
+            set
+            {
+                State.App.Instance.Azure.Domain.Value = value;
+                PropertyChanged(this, new PropertyChangedEventArgs(nameof(Domain)));
+            }
+        }
+
         bool indicator = false;
         public bool Indicator
         {

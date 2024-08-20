@@ -26,7 +26,7 @@ namespace AccountManager.Views.Accounts
         public State.App State { get => AccountManager.State.App.Instance; }
 
         public ObservableCollection<Microsoft.Graph.User> accounts = new ObservableCollection<Microsoft.Graph.User>();
-        public Prop<AccountApi.Directory.Account> SelectedAccount { get; set; } = new Prop<AccountApi.Directory.Account> { Value = null };
+        public Prop<AccountApi.Smartschool.Account> SelectedAccount { get; set; } = new Prop<AccountApi.Smartschool.Account> { Value = null };
         public Prop<string> SelectedTitle { get; set; } = new Prop<string> { Value = "Geen actieve selectie" };
 
         public AzureAccounts()

@@ -285,15 +285,10 @@
     <Compile Include="Exporters\Passwords\AbstractPassword.cs" />
     <Compile Include="Exporters\Passwords\Manager.cs" />
     <Compile Include="State\AbstractState.cs" />
-    <Compile Include="State\AD\ADAccounts.cs" />
-    <Compile Include="State\AD\ADGroups.cs" />
-    <Compile Include="State\AD\ADState.cs" />
     <Compile Include="State\ApplicationState.cs" />
     <Compile Include="State\Azure\AzureAccounts.cs" />
     <Compile Include="State\Azure\AzureGroups.cs" />
     <Compile Include="State\Azure\AzureState.cs" />
-    <Compile Include="State\Google\GoogleAccounts.cs" />
-    <Compile Include="State\Google\GoogleState.cs" />
     <Compile Include="State\IStateObserver.cs" />
     <Compile Include="State\IStateSubject.cs" />
     <Compile Include="Action\Group\GroupActionParser.cs" />
@@ -316,10 +311,10 @@
     <Compile Include="Utils\Set.cs" />
     <Compile Include="Utils\SortKeepingDataGrid.cs" />
     <Compile Include="Utils\TaskUtils.cs" />
+    <Compile Include="Utils\TreeAccount.cs" />
+    <Compile Include="Utils\TreeGroup.cs" />
     <Compile Include="ViewModels\Accounts\AccountsPage.cs" />
-    <Compile Include="ViewModels\Accounts\ADAccounts.cs" />
     <Compile Include="ViewModels\Accounts\AzureAccounts.cs" />
-    <Compile Include="ViewModels\Accounts\GoogleAccounts.cs" />
     <Compile Include="ViewModels\Accounts\StaffOverview.cs" />
     <Compile Include="ViewModels\Accounts\StudentOverview.cs" />
     <Compile Include="ViewModels\Accounts\SmartschoolAccounts.cs" />
@@ -334,10 +329,8 @@
     <Compile Include="ViewModels\Dashboard\LinkedAccounts.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedGroups.cs" />
     <Compile Include="ViewModels\Dashboard\LinkedStaffMembers.cs" />
-    <Compile Include="ViewModels\Passwords\StaffAccountCreator.cs" />
     <Compile Include="ViewModels\Passwords\StaffAccountEditor.cs" />
     <Compile Include="ViewModels\Passwords\StaffPasswords.cs" />
-    <Compile Include="ViewModels\Settings\ADSettings.cs" />
     <Compile Include="ViewModels\Settings\AzureSettings.cs" />
     <Compile Include="ViewModels\Settings\GeneralSettings.cs" />
     <Compile Include="ViewModels\Settings\GoogleSettings.cs" />
@@ -346,14 +339,8 @@
     <Compile Include="Views\Accounts\AccountsPage.xaml.cs">
       <DependentUpon>AccountsPage.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Views\Accounts\ADAccounts.xaml.cs">
-      <DependentUpon>ADAccounts.xaml</DependentUpon>
-    </Compile>
     <Compile Include="Views\Accounts\AzureAccounts.xaml.cs">
       <DependentUpon>AzureAccounts.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Views\Accounts\GoogleAccounts.xaml.cs">
-      <DependentUpon>GoogleAccounts.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Accounts\StaffOverview.xaml.cs">
       <DependentUpon>StaffOverview.xaml</DependentUpon>
@@ -368,7 +355,6 @@
       <DependentUpon>WisaAccounts.xaml</DependentUpon>
     </Compile>
     <Compile Include="Action\StudentAccount\AccountAction.cs" />
-    <Compile Include="Action\StudentAccount\AddToDirectoryAndSmartschool.cs" />
     <Compile Include="Action\StudentAccount\AddToSmartschool.cs" />
     <Compile Include="Action\Group\AddToSmartschool.cs" />
     <Compile Include="Action\StudentAccount\DeleteFromSmartschool.cs" />
@@ -411,12 +397,6 @@
     <Compile Include="Views\Dashboard\LinkedStaffMembers.xaml.cs">
       <DependentUpon>LinkedStaffMembers.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Views\Dialogs\AD_AskForPassword.xaml.cs">
-      <DependentUpon>AD_AskForPassword.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Views\Dialogs\AD_DontImportUser.xaml.cs">
-      <DependentUpon>AD_DontImportUser.xaml</DependentUpon>
-    </Compile>
     <Compile Include="Views\Dialogs\ImportRuleSelectDialog.xaml.cs">
       <DependentUpon>ImportRuleSelectDialog.xaml</DependentUpon>
     </Compile>
@@ -442,11 +422,8 @@
     <Compile Include="Views\Dialogs\WI_ReplaceInstitute.xaml.cs">
       <DependentUpon>WI_ReplaceInstitute.xaml</DependentUpon>
     </Compile>
-    <Compile Include="DisplayItems\ADGroup.cs" />
+    <Compile Include="DisplayItems\SSGroup.cs" />
     <Compile Include="DisplayItems\StudentPasswordItem.cs" />
-    <Compile Include="Views\Groups\ADGroups.xaml.cs">
-      <DependentUpon>ADGroups.xaml</DependentUpon>
-    </Compile>
     <Compile Include="Views\Groups\GroupsPage.xaml.cs">
       <DependentUpon>GroupsPage.xaml</DependentUpon>
     </Compile>
@@ -462,9 +439,6 @@
     <Compile Include="Views\Passwords\PasswordPage.xaml.cs">
       <DependentUpon>PasswordPage.xaml</DependentUpon>
     </Compile>
-    <Compile Include="Views\Passwords\StaffAccountCreator.xaml.cs">
-      <DependentUpon>StaffAccountCreator.xaml</DependentUpon>
-    </Compile>
     <Compile Include="Views\Passwords\StaffAccountEditor.xaml.cs">
       <DependentUpon>StaffAccountEditor.xaml</DependentUpon>
     </Compile>
@@ -473,9 +447,6 @@
     </Compile>
     <Compile Include="Views\Passwords\StudentPasswords.xaml.cs">
       <DependentUpon>StudentPasswords.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Views\Settings\ADSettings.xaml.cs">
-      <DependentUpon>ADSettings.xaml</DependentUpon>
     </Compile>
     <Compile Include="Views\Settings\AzureSettings.xaml.cs">
       <DependentUpon>AzureSettings.xaml</DependentUpon>
@@ -500,17 +471,9 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Views\Accounts\ADAccounts.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
     <Page Include="Views\Accounts\AzureAccounts.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
-    </Page>
-    <Page Include="Views\Accounts\GoogleAccounts.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Accounts\StaffOverview.xaml">
       <SubType>Designer</SubType>
@@ -556,14 +519,6 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Views\Dialogs\AD_AskForPassword.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Views\Dialogs\AD_DontImportUser.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
     <Page Include="Views\Dialogs\ImportRuleSelectDialog.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -593,10 +548,6 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Dialogs\WI_ReplaceInstitute.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Views\Groups\ADGroups.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
@@ -644,10 +595,6 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
-    <Page Include="Views\Passwords\StaffAccountCreator.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
     <Page Include="Views\Passwords\StaffAccountEditor.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -657,10 +604,6 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="Views\Passwords\StudentPasswords.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="Views\Settings\ADSettings.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

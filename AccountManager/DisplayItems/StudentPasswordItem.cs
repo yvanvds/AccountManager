@@ -9,17 +9,16 @@ namespace AccountManager.DisplayItems
 {
     public class StudentPasswordItem
     {
-        public AccountApi.Directory.Account Account { get; }
+        public AccountApi.IAccount Account { get; }
 
-        public StudentPasswordItem(AccountApi.Directory.Account account)
+        public StudentPasswordItem(AccountApi.IAccount account)
         {
             Account = account;
         }
 
-        public string Name { get => Account.FullName; }
+        public string Name { get => Account.GivenName + " " + Account.SurName; }
         public string UserName { get => Account.UID; }
 
-        public Prop<bool> DirectoryPassword { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolPassword { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> AzurePassword { get; set;} = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolCo1Password { get; set; } = new Prop<bool>() { Value = false };
@@ -29,7 +28,6 @@ namespace AccountManager.DisplayItems
         public Prop<bool> SmartschoolCo5Password { get; set; } = new Prop<bool>() { Value = false };
         public Prop<bool> SmartschoolCo6Password { get; set; } = new Prop<bool>() { Value = false };
 
-        public string NewDirectoryPassword = string.Empty;
         public string NewSmartschoolPassword = string.Empty;
         public string NewAzurePassword = string.Empty;
         public string NewSmartschoolCo1Password = string.Empty;

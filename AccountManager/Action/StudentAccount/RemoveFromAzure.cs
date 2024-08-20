@@ -11,7 +11,7 @@ namespace AccountManager.Action.StudentAccount
     {
         public RemoveFromAzure() : base(
             "Verwijder Azure Account",
-            "Dit account bestaat niet in Smartschool of AD. Mogelijk mag dit verwijderd worden.",
+            "Dit account bestaat niet in Smartschool en Wisa. Mogelijk mag dit verwijderd worden.",
             true)
         {
 
@@ -34,7 +34,7 @@ namespace AccountManager.Action.StudentAccount
 
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (!account.Directory.Exists && !account.Smartschool.Exists && account.Azure.Exists)
+            if (!account.Wisa.Exists && !account.Smartschool.Exists && account.Azure.Exists)
             {
                 account.Actions.Add(new RemoveFromAzure());
             }

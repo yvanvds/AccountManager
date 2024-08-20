@@ -1,4 +1,5 @@
-﻿using System;
+﻿using AccountApi;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -10,16 +11,20 @@ namespace AccountManager.ViewModels.Passwords
 {
     class StaffPasswords : INotifyPropertyChanged, State.IStateObserver
     {
-        State.AD.ADState state;
+        State.Smartschool.SmartschoolState state;
         public ICommand ClearFilterCommand { get; private set; }
         public ICommand NewAccountCommand { get; private set; }
 
+        List<IAccount> allAccounts = new List<IAccount>();
+
         public StaffPasswords()
         {
-            state = State.App.Instance.AD;
+            state = State.App.Instance.Smartschool;
             state.AddObserver(this);
             ClearFilterCommand = new RelayCommand(ClearFilter);
             NewAccountCommand = new RelayCommand(NewAccount);
+
+            (state.Groups.Root.Find("Personeel") as AccountApi.Smartschool.Group).GetAllAccounts(allAccounts);
 
             updateSelection();
         }
@@ -42,17 +47,17 @@ namespace AccountManager.ViewModels.Passwords
 
         private void updateSelection()
         {
-            var accounts = new List<AccountApi.Directory.Account>();
+            var accounts = new List<IAccount>();
 
             var selectedFilter = filterText.Length == 0 ? "None" : SelectedFilter;
 
-            foreach (var account in AccountApi.Directory.AccountManager.Staff)
+            foreach (var account in allAccounts)
             {
                 switch(selectedFilter)
                 {
                     case "None": accounts.Add(account); break;
-                    case "Voornaam": if (account.FirstName.Contains(filterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
-                    case "Naam": if (account.LastName.Contains(filterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
+                    case "Voornaam": if (account.GivenName.Contains(filterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
+                    case "Naam": if (account.SurName.Contains(filterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
                     case "Gebruikersnaam": if (account.UID.Contains(filterText, StringComparison.CurrentCultureIgnoreCase)) accounts.Add(account); break;
                 }
             }
@@ -63,8 +68,8 @@ namespace AccountManager.ViewModels.Passwords
         public event PropertyChangedEventHandler PropertyChanged = (sender, e) => { };
 
         #region Accounts
-        private List<AccountApi.Directory.Account> accounts = new List<AccountApi.Directory.Account>();
-        public List<AccountApi.Directory.Account> Accounts
+        private List<IAccount> accounts = new List<IAccount>();
+        public List<IAccount> Accounts
         {
             get => accounts;
             set
@@ -74,10 +79,10 @@ namespace AccountManager.ViewModels.Passwords
             }
         }
 
-        public string SelectedAccountTitle => selectedAccount == null ? "Geen Actieve Selectie" : selectedAccount.FullName;
+        public string SelectedAccountTitle => selectedAccount == null ? "Geen Actieve Selectie" : selectedAccount.GivenName + " " + selectedAccount.SurName;
 
-        AccountApi.Directory.Account selectedAccount = null;
-        public AccountApi.Directory.Account SelectedAccount
+        AccountApi.Smartschool.Account selectedAccount = null;
+        public AccountApi.Smartschool.Account SelectedAccount
         {
             get => selectedAccount;
             set

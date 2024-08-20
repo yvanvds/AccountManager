@@ -34,9 +34,6 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(LinkedStaffMember account)
         {
-            bool connected = await State.App.Instance.AD.Connect().ConfigureAwait(false);
-            if (!connected) return;
-
             if (account.Smartschool.Account.AccountID != account.Wisa.Account.CODE)
             {
                 account.Smartschool.Account.AccountID = account.Wisa.Account.CODE;
@@ -49,7 +46,7 @@ namespace AccountManager.Action.StaffAccount
             if (account.Wisa.Account.CODE != account.Smartschool.Account.AccountID)
             {
                 account.Actions.Add(new UpdateWisaName());
-                account.Directory.FlagWarning();
+                account.Smartschool.FlagWarning();
                 account.OK = false;
             }
         }

@@ -54,9 +54,6 @@
                     Wisa
                 </ComboBoxItem>
                 <ComboBoxItem>
-                    Active Directory
-                </ComboBoxItem>
-                <ComboBoxItem>
                     SmartSchool
                 </ComboBoxItem>
             </ComboBox>

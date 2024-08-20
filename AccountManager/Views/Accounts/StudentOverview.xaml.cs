@@ -26,34 +26,5 @@ namespace AccountManager.Views.Accounts
             
             DataContext = new ViewModels.Accounts.StudentOverview();
         }
-
-        //private async void ActionButton_Click(object sender, RoutedEventArgs e)
-        //{
-        //    ButtonProgressAssist.SetIsIndicatorVisible((e.Source as DependencyObject), true);
-        //    AccountAction action = (e.Source as Button).DataContext as AccountAction;
-        //    if(action.CanBeAppliedToAll && action.ApplyToAll.Value)
-        //    {
-        //        var items = AccountList.ItemsSource;
-        //        foreach(var item in items)
-        //        {
-        //            var account = item as State.Linked.Account;
-        //            var sameAction = account.GetSameAction(action);
-        //            if(sameAction != null)
-        //            {
-        //                await sameAction.Apply(account, StudentDeleteDate);
-                        
-        //            }
-                    
-        //        }
-        //        MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Other, "Alle Acties werden uitgevoerd.");
-        //    } else
-        //    {
-        //        await action.Apply(SelectedAccount.Value, StudentDeleteDate);
-        //    }
-                        
-        //    await State.App.Instance.Linked.Accounts.ReLink();
-        //    await CreateCollection();
-        //    ButtonProgressAssist.SetIsIndicatorVisible((e.Source as DependencyObject), true);
-        //}
     }
 }

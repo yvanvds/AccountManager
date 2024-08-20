@@ -3,10 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
-             xmlns:local="clr-namespace:AccountManager.Views.Accounts"
-             xmlns:model="clr-namespace:AccountManager.ViewModels.Accounts"
-             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:utils="clr-namespace:AccountManager.Utils"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              TextElement.Foreground="{DynamicResource MaterialDesignBody}"
              TextElement.FontWeight="Medium"
              TextElement.FontSize="14"
@@ -87,7 +85,7 @@
 
             <TreeView Grid.Column="0" x:Name="AccountTree" ItemsSource="{Binding Tree}" SelectedItemChanged="SelectedItemChanged">
                 <TreeView.Resources>
-                    <HierarchicalDataTemplate DataType="{x:Type model:TreeGroup}" ItemsSource="{Binding Children}">
+                    <HierarchicalDataTemplate DataType="{x:Type utils:TreeGroup}" ItemsSource="{Binding Children}">
                         <materialDesign:Badged Margin="0 8 0 0" Padding="0 -8 32 0" Badge="{Binding CountAccount}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -99,7 +97,7 @@
                             </Grid>
                         </materialDesign:Badged>
                     </HierarchicalDataTemplate>
-                    <DataTemplate DataType="{x:Type model:TreeAccount}">
+                    <DataTemplate DataType="{x:Type utils:TreeAccount}">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="{Binding Icon}"/>
                             <TextBlock Text="{Binding Header}" Margin="3 2"/>

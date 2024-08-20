@@ -1,10 +1,6 @@
 ﻿using Newtonsoft.Json.Linq;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace AccountManager.State
 {
@@ -16,14 +12,8 @@ namespace AccountManager.State
         Wisa.WisaState wisaState = new State.Wisa.WisaState();
         public Wisa.WisaState Wisa => wisaState;
 
-        AD.ADState adState = new State.AD.ADState();
-        public AD.ADState AD => adState;
-
         Azure.AzureState azureState = new State.Azure.AzureState();
         public Azure.AzureState Azure => azureState;
-
-        //Google.GoogleState googleState = new State.Google.GoogleState();
-        //public Google.GoogleState Google => googleState;
 
         Smartschool.SmartschoolState smartschoolState = new Smartschool.SmartschoolState();
         public Smartschool.SmartschoolState Smartschool => smartschoolState;
@@ -60,8 +50,6 @@ namespace AccountManager.State
         {
             if (config.ContainsKey("Wisa")) Wisa.LoadConfig(config["Wisa"] as JObject);
             if (config.ContainsKey("Smartschool")) Smartschool.LoadConfig(config["Smartschool"] as JObject);
-            //if (config.ContainsKey("Google")) Google.LoadConfig(config["Google"] as JObject);
-            if (config.ContainsKey("AD")) AD.LoadConfig(config["AD"] as JObject);
             if (config.ContainsKey("global")) Settings.LoadConfig(config["global"] as JObject);
             if (config.ContainsKey("Azure")) Azure.LoadConfig(config["Azure"] as JObject);
         }
@@ -79,8 +67,6 @@ namespace AccountManager.State
             config["global"] = Settings.SaveConfig();
             config["Wisa"] = Wisa.SaveConfig();
             config["Smartschool"] = Smartschool.SaveConfig();
-            //config["Google"] = Google.SaveConfig();
-            config["AD"] = AD.SaveConfig();
             config["Azure"] = Azure.SaveConfig();
             File.WriteAllText(fileName, config.ToString());
         }
@@ -89,8 +75,6 @@ namespace AccountManager.State
         {
             Wisa.LoadLocalContent();
             Smartschool.LoadLocalContent();
-            //Google.LoadLocalContent();
-            AD.LoadLocalContent();
             Azure.LoadLocalContent();
         }
 
@@ -98,8 +82,6 @@ namespace AccountManager.State
         {
             Wisa.SaveContent();
             Smartschool.SaveContent();
-            //Google.SaveContent();
-            AD.SaveContent();
             Azure.SaveContent();
         }
 

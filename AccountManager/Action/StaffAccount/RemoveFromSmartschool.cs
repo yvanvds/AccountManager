@@ -10,7 +10,7 @@ namespace AccountManager.Action.StaffAccount
     {
         public RemoveFromSmartschool() : base(
             "Verwijder Smartschool Account",
-            "Dit account bestaat niet in Active Directory en niet in Wisa. Waarschijnlijk mag het verwijderd worden.",
+            "Dit account bestaat niet in Azure en niet in Wisa. Waarschijnlijk mag het verwijderd worden.",
             true
         )
         { }
@@ -23,7 +23,7 @@ namespace AccountManager.Action.StaffAccount
 
         public static void Evaluate(State.Linked.LinkedStaffMember account)
         {
-            if (!account.Wisa.Exists && !account.Directory.Exists && account.Smartschool.Exists)
+            if (!account.Wisa.Exists && !account.Azure.Exists && account.Smartschool.Exists)
             {
                 account.Actions.Add(new RemoveFromSmartschool());
             }

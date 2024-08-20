@@ -35,9 +35,6 @@ namespace AccountManager.Views.Dialogs
                 case AccountApi.RuleType.WISA_Import:
                     Rules = AccountApi.Rules.ImportRules.WisaRules;
                     break;
-                case AccountApi.RuleType.AD_Import:
-                    Rules = AccountApi.Rules.ImportRules.DirectoryRules;
-                    break;
             }
             SelectedRule = Rules.First().Key;
             DataContext = this;

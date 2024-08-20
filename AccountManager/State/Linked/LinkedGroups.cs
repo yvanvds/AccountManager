@@ -16,26 +16,17 @@ namespace AccountManager.State.Linked
         int totalWisaGroups = 0;
         public int TotalWisaGroups => totalWisaGroups;
 
-        int totalDirectoryGroups = 0;
-        public int TotalDirectoryGroups => totalDirectoryGroups;
-
         int totalSmartschoolGroups = 0;
         public int TotalSmartschoolGroups => totalSmartschoolGroups;
 
         int unlinkedWisaGroups = 0;
         public int UnlinkedWisaGroups => unlinkedWisaGroups;
 
-        int unlinkedDirectoryGroups = 0;
-        public int UnlinkedDirectoryGroups => unlinkedDirectoryGroups;
-
         int unlinkedSmartschoolGroups = 0;
         public int UnlinkedSmartschoolGroups => unlinkedSmartschoolGroups;
 
         int linkedWisaGroups = 0;
         public int LinkedWisaGroups => linkedWisaGroups;
-
-        int linkedDirectoryGroups = 0;
-        public int LinkedDirectoryGroups => linkedDirectoryGroups;
 
         int linkedSmartschoolGroups = 0;
         public int LinkedSmartschoolGroups => linkedSmartschoolGroups;
@@ -63,11 +54,6 @@ namespace AccountManager.State.Linked
                 }  
             }
 
-            foreach(var group in AccountApi.Directory.ClassGroupManager.All)
-            {
-
-                AddDirectoryChildGroups(group);
-            }
 
             // only compare class groups
             AccountApi.Smartschool.Group students = (AccountApi.Smartschool.Group)AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
@@ -78,12 +64,12 @@ namespace AccountManager.State.Linked
             
 
             // count
-            totalWisaGroups = totalDirectoryGroups = totalSmartschoolGroups = 0;
-            unlinkedWisaGroups = unlinkedDirectoryGroups = unlinkedSmartschoolGroups = 0;
-            linkedWisaGroups = linkedDirectoryGroups = linkedSmartschoolGroups = 0;
+            totalWisaGroups = totalSmartschoolGroups = 0;
+            unlinkedWisaGroups = unlinkedSmartschoolGroups = 0;
+            linkedWisaGroups = linkedSmartschoolGroups = 0;
             foreach(var group in List.Values)
             {
-                bool incomplete = (group.Wisa.Group == null || group.Smartschool.Group == null || group.Directory.Group == null);
+                bool incomplete = (group.Wisa.Group == null || group.Smartschool.Group == null);
                 if(group.Wisa.Group != null)
                 {
                     totalWisaGroups++;
@@ -95,12 +81,6 @@ namespace AccountManager.State.Linked
                     totalSmartschoolGroups++;
                     if (incomplete) unlinkedSmartschoolGroups++;
                     else linkedSmartschoolGroups++;
-                }
-                if(group.Directory.Group != null)
-                {
-                    totalDirectoryGroups++;
-                    if (incomplete) unlinkedDirectoryGroups++;
-                    else linkedDirectoryGroups++;
                 }
             }
 
@@ -133,23 +113,5 @@ namespace AccountManager.State.Linked
             }
         }
 
-        private void AddDirectoryChildGroups(AccountApi.Directory.ClassGroup group)
-        {
-            if(!group.IsContainer)
-            {
-                if (List.ContainsKey(group.Name))
-                {
-                    List[group.Name].Directory.Group = group;
-                }
-                else
-                {
-                    List.Add(group.Name, new LinkedGroup(group));
-                }
-            }
-            foreach(var child in group.Children)
-            {
-                AddDirectoryChildGroups(child);
-            }
-        }
     }
 }

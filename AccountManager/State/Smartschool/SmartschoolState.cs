@@ -24,18 +24,18 @@ namespace AccountManager.State.Smartschool
         public ObservableCollection<IRule> ImportRules { get; set; } = new ObservableCollection<IRule>();
 
         private string[] grades = new string[3];
-        public string Grade1 { get => grades[0]; set { grades[0] = value.Trim(); updateGrades(); } }
-        public string Grade2 { get => grades[1]; set { grades[1] = value.Trim(); updateGrades(); } }
-        public string Grade3 { get => grades[2]; set { grades[2] = value.Trim(); updateGrades(); } }
+        public string Grade1 { get => grades[0]; set { grades[0] = value.Trim(); } }
+        public string Grade2 { get => grades[1]; set { grades[1] = value.Trim(); } }
+        public string Grade3 { get => grades[2]; set { grades[2] = value.Trim(); } }
 
         private string[] years = new string[7];
-        public string Year1 { get => years[0]; set { years[0] = value.Trim(); updateYears(); } }
-        public string Year2 { get => years[1]; set { years[1] = value.Trim(); updateYears(); } }
-        public string Year3 { get => years[2]; set { years[2] = value.Trim(); updateYears(); } }
-        public string Year4 { get => years[3]; set { years[3] = value.Trim(); updateYears(); } }
-        public string Year5 { get => years[4]; set { years[4] = value.Trim(); updateYears(); } }
-        public string Year6 { get => years[5]; set { years[5] = value.Trim(); updateYears(); } }
-        public string Year7 { get => years[6]; set { years[6] = value.Trim(); updateYears(); } }
+        public string Year1 { get => years[0]; set { years[0] = value.Trim();  } }
+        public string Year2 { get => years[1]; set { years[1] = value.Trim(); } }
+        public string Year3 { get => years[2]; set { years[2] = value.Trim(); } }
+        public string Year4 { get => years[3]; set { years[3] = value.Trim(); } }
+        public string Year5 { get => years[4]; set { years[4] = value.Trim(); } }
+        public string Year6 { get => years[5]; set { years[5] = value.Trim(); } }
+        public string Year7 { get => years[6]; set { years[6] = value.Trim(); } }
 
         public SmartschoolGroups Groups = new SmartschoolGroups();
 
@@ -94,9 +94,6 @@ namespace AccountManager.State.Smartschool
                     }
                 }
             }
-
-            updateGrades();
-            updateYears();
         }
 
         public override JObject SaveConfig()
@@ -178,34 +175,6 @@ namespace AccountManager.State.Smartschool
                 ImportRules.Add(newRule);
             }
             return newRule;
-        }
-
-        void updateGrades()
-        {
-            if (UseGrades.Value)
-            {
-                AccountApi.Directory.Connector.StudentGrade = grades;
-            }
-            else
-            {
-                AccountApi.Directory.Connector.StudentGrade = new string[0];
-            }
-
-            UpdateObservers();
-        }
-
-        void updateYears()
-        {
-            if (UseYears.Value)
-            {
-                AccountApi.Directory.Connector.StudentYear = years;
-            }
-            else
-            {
-                AccountApi.Directory.Connector.StudentYear = new string[0];
-            }
-
-            UpdateObservers();
         }
     }
 }

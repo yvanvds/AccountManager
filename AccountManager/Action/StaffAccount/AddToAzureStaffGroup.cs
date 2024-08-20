@@ -20,7 +20,7 @@ namespace AccountManager.Action.StaffAccount
         public async override Task Apply(State.Linked.LinkedStaffMember account)
         {
             var user = account.Azure.Account;
-            if (account.Directory.Account.Role == AccountRole.Director)
+            if (account.Smartschool.Account.Role == AccountRole.Director)
             {
                 await Add(directorGroup, user).ConfigureAwait(false);
                 await Add(directorGroupSec, user).ConfigureAwait(false);
@@ -30,7 +30,7 @@ namespace AccountManager.Action.StaffAccount
                 await Remove(teacherGroupSec, user).ConfigureAwait(false);
             }
 
-            if (account.Directory.Account.Role == AccountRole.Support || account.Directory.Account.Role == AccountRole.IT)
+            if (account.Smartschool.Account.Role == AccountRole.Support || account.Smartschool.Account.Role == AccountRole.IT)
             {
                 await Remove(directorGroup, user).ConfigureAwait(false);
                 await Remove(directorGroupSec, user).ConfigureAwait(false);
@@ -40,7 +40,7 @@ namespace AccountManager.Action.StaffAccount
                 await Remove(teacherGroupSec, user).ConfigureAwait(false);
             }
 
-            if (account.Directory.Account.Role == AccountRole.Teacher)
+            if (account.Smartschool.Account.Role == AccountRole.Teacher)
             {
                 await Remove(directorGroup, user).ConfigureAwait(false);
                 await Remove(directorGroupSec, user).ConfigureAwait(false);
@@ -61,7 +61,7 @@ namespace AccountManager.Action.StaffAccount
             }
             if (!groupsLoaded) return;
 
-            if (account.Directory.Account.Role == AccountRole.Director)
+            if (account.Smartschool.Account.Role == AccountRole.Director)
             {
                 if (!directorGroup.HasMember(user) || !directorGroupSec.HasMember(user) || supportGroup.HasMember(user) || supportGroupSec.HasMember(user) || teacherGroup.HasMember(user) || teacherGroupSec.HasMember(user)) {
                     account.Azure.FlagWarning();
@@ -70,7 +70,7 @@ namespace AccountManager.Action.StaffAccount
                 }
             }
 
-            if (account.Directory.Account.Role == AccountRole.Support)
+            if (account.Smartschool.Account.Role == AccountRole.Support)
             {
                 if (directorGroup.HasMember(user) || directorGroupSec.HasMember(user) || !supportGroup.HasMember(user) || !supportGroupSec.HasMember(user) || teacherGroup.HasMember(user) || teacherGroupSec.HasMember(user)) {
                     account.Azure.FlagWarning();
@@ -79,7 +79,7 @@ namespace AccountManager.Action.StaffAccount
                 }
             }
 
-            if (account.Directory.Account.Role == AccountRole.IT)
+            if (account.Smartschool.Account.Role == AccountRole.IT)
             {
                 if (directorGroup.HasMember(user) || directorGroupSec.HasMember(user) || !supportGroup.HasMember(user) || !supportGroupSec.HasMember(user) || teacherGroup.HasMember(user) || teacherGroupSec.HasMember(user)) {
                     account.Azure.FlagWarning();
@@ -88,7 +88,7 @@ namespace AccountManager.Action.StaffAccount
                 }
             }
 
-            if (account.Directory.Account.Role == AccountRole.Teacher)
+            if (account.Smartschool.Account.Role == AccountRole.Teacher)
             {
                 if (directorGroup.HasMember(user) || directorGroupSec.HasMember(user) || supportGroup.HasMember(user) || supportGroupSec.HasMember(user) || !teacherGroup.HasMember(user) || !teacherGroupSec.HasMember(user)) {
                     account.Azure.FlagWarning();
@@ -98,7 +98,7 @@ namespace AccountManager.Action.StaffAccount
             }
         }
 
-        private static bool groupsLoaded = false;
+        private static bool groupsLoaded;
         private static AccountApi.Azure.Group teacherGroupSec;
         private static AccountApi.Azure.Group supportGroupSec;
         private static AccountApi.Azure.Group directorGroupSec;

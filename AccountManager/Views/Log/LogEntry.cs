@@ -21,10 +21,8 @@ namespace AccountManager.Views.Log
             {
                 switch (Origin)
                 {
-                    case Origin.Directory: return "AD";
                     case Origin.Wisa: return "WI";
                     case Origin.Smartschool: return "SS";
-                    case Origin.Google: return "GO";
                     case Origin.Azure: return "365";
                     default: return "-";
                 }

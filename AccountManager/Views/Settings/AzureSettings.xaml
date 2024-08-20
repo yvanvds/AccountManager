@@ -52,6 +52,7 @@
                 <StackPanel Orientation="Vertical">
                     <TextBox Text="{Binding ClientID, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Azure Client ID" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                     <TextBox Text="{Binding TenantID, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Azure Tenant ID" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
+                    <TextBox Text="{Binding Domain, Mode=TwoWay}" Margin="8 8 8 8" materialDesign:HintAssist.Hint="Domain" Style="{StaticResource MaterialDesignFloatingHintTextBox}" />
                     
                 </StackPanel>
             </GroupBox>

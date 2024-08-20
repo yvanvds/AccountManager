@@ -19,9 +19,9 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(State.Linked.LinkedStaffMember linkedAccount)
         {
-            linkedAccount.Smartschool.Account.Mail = linkedAccount.Directory.Account.PrincipalName;
+            linkedAccount.Smartschool.Account.Mail = linkedAccount.Azure.Account.UserPrincipalName;
             await AccountApi.Smartschool.AccountManager.Save(linkedAccount.Smartschool.Account, "").ConfigureAwait(false);
-            MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Smartschool, "Email aangepast voor " + linkedAccount.Directory.Account.FullName);
+            MainWindow.Instance.Log.AddMessage(AccountApi.Origin.Smartschool, "Email aangepast voor " + linkedAccount.Azure.Account.UserPrincipalName);
         }
 
         public override FlowDocument GetDetails(State.Linked.LinkedStaffMember account)
@@ -29,7 +29,7 @@ namespace AccountManager.Action.StaffAccount
             var result = new FlowTableCreator(true);
             result.SetHeaders(new string[] { "Active Directory", "Smartschool" });
 
-            result.AddRow(new List<string>() { "Email", account.Directory.Account.PrincipalName, account.Smartschool.Account.Mail });
+            result.AddRow(new List<string>() { "Email", account.Azure.Account.UserPrincipalName, account.Smartschool.Account.Mail });
 
             FlowDocument document = new FlowDocument();
             document.Blocks.Add(result.Create());
@@ -46,7 +46,7 @@ namespace AccountManager.Action.StaffAccount
                 if (!domain.Equals("arcadiascholen.be", StringComparison.CurrentCulture)) return;
             }
 
-            if (!account.Directory.Account.PrincipalName.Equals(account.Smartschool.Account.Mail, StringComparison.CurrentCulture))
+            if (!account.Azure.Account.UserPrincipalName.Equals(account.Smartschool.Account.Mail, StringComparison.CurrentCulture))
             {
                 account.Smartschool.FlagWarning();
                 account.Actions.Add(new ModifySmartschoolStaffEmail());

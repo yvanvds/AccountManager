@@ -24,9 +24,6 @@
             <TabItem Header="Wisa">
                 <local:WisaSettings/>
             </TabItem>
-            <TabItem Header="AD">
-                <local:ADSettings/>
-            </TabItem>
             <TabItem Header="Azure">
                 <local:AzureSettings/>
             </TabItem>

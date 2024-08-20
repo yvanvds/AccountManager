@@ -7,21 +7,22 @@ using System.Threading.Tasks;
 
 namespace AccountManager.DisplayItems
 {
-    public class ADGroup
+    public class SSGroup
     {
-        public ObservableCollection<ADGroup> Children { get; set; }
-        public AccountApi.Directory.ClassGroup Base;
+        public ObservableCollection<SSGroup> Children { get; set; }
+        public AccountApi.IGroup Base;
         public string Header { get; set; } = "No Groups Found";
         public string Icon { get; set; } = "QuestionMarkBox";
 
-        public ADGroup(AccountApi.Directory.ClassGroup Base)
+        public SSGroup(AccountApi.IGroup Base)
         {
             this.Base = Base;
-            Children = new ObservableCollection<ADGroup>();
+            Children = new ObservableCollection<SSGroup>();
 
             Header = Base.Name;
 
             if (Base == null) return;
+            if (Base.Children == null) return;
             if (Base.Children.Count == 0)
             {
                 Icon = "Class";
@@ -31,7 +32,7 @@ namespace AccountManager.DisplayItems
                 Icon = "UserGroup";
                 foreach (var group in Base.Children)
                 {
-                    Children.Add(new ADGroup(group));
+                    Children.Add(new SSGroup(group));
                 }
             }
         }

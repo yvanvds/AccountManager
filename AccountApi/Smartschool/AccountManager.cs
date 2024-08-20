@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace AccountApi.Smartschool
@@ -411,6 +412,64 @@ namespace AccountApi.Smartschool
                 return false;
             }
             return true;
+        }
+
+        public static string CreateUID(string firstname, string lastname)
+        {
+            if (GroupManager.UIDs.Count == 0)
+            {
+                GroupManager.Root.GetAllUserNames(GroupManager.UIDs);
+            }
+
+            firstname = firstname.Trim().ToLower();
+            lastname = lastname.Trim().ToLower();
+            lastname = Regex.Replace(lastname, @"\s+", "");
+
+            Regex rgx = new Regex("[^a-zA-Z]");
+            firstname = rgx.Replace(firstname, "");
+            lastname = rgx.Replace(lastname, "");
+
+            int pos = 0;
+            if (lastname.StartsWith("de")) pos = 2;
+            if (lastname.StartsWith("ver")) pos = 3;
+            if (lastname.StartsWith("van")) pos = 3;
+            if (lastname.StartsWith("vande")) pos = 5;
+            if (lastname.StartsWith("vander")) pos = 6;
+
+            int length = lastname.Length - pos;
+            if (length > 5) length = 5;
+
+            string id = lastname.Substring(pos, length);
+            id += firstname[0];
+
+            id = id.Replace('à', 'a');
+            id = id.Replace('á', 'a');
+            id = id.Replace('ä', 'a');
+            id = id.Replace('è', 'e');
+            id = id.Replace('é', 'e');
+            id = id.Replace('ë', 'e');
+            id = id.Replace('ï', 'i');
+            id = id.Replace('ò', 'o');
+            id = id.Replace('ó', 'o');
+            id = id.Replace('ö', 'o');
+
+            int counter = 0;
+
+            string test_id = id;
+
+            while (true)
+            {
+                var exists = GroupManager.UIDs.Contains(test_id);
+                if (!exists)
+                {
+                    return test_id;
+                }
+                else
+                {
+                    counter++;
+                    test_id = id + counter;
+                }
+            }
         }
 
         /// <summary>

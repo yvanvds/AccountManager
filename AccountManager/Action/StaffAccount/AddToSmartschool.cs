@@ -19,18 +19,16 @@ namespace AccountManager.Action.StaffAccount
 
         public async override Task Apply(State.Linked.LinkedStaffMember linkedAccount)
         {
-            var wisa = linkedAccount.Wisa.Account;
             var azure = linkedAccount.Azure.Account;
-            var directory = linkedAccount.Directory.Account;
 
             var smartschool = new AccountApi.Smartschool.Account();
-            var password = AccountApi.Password.Create();
+            var password = Password.Create();
 
-            smartschool.UID = directory.UID;
+            smartschool.UID = AccountApi.Smartschool.AccountManager.CreateUID(azure.GivenName, azure.Surname);
             smartschool.Role = AccountRole.Teacher;
             smartschool.GivenName = azure.GivenName;
             smartschool.SurName = azure.Surname;
-            smartschool.AccountID = directory.UID;
+            smartschool.AccountID = smartschool.UID;
             smartschool.Gender = GenderType.Male;
 
             smartschool.Mail = azure.UserPrincipalName;
@@ -41,26 +39,26 @@ namespace AccountManager.Action.StaffAccount
 
             if (!result)
             {
-                MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to add " + directory.FullName);
+                MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to add " + azure.DisplayName);
                 return;
             }
             else
             {
-                MainWindow.Instance.Log.AddMessage(Origin.Smartschool, "Added account for " + directory.FullName);
+                MainWindow.Instance.Log.AddMessage(Origin.Smartschool, "Added account for " + azure.DisplayName);
 
                 var groupResult = await AccountApi.Smartschool.GroupManager.AddUserToGroup(smartschool, AccountApi.Smartschool.GroupManager.Root.Find("Leerkrachten")).ConfigureAwait(false);
                 if (!groupResult)
                 {
-                    MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to add " + directory.FullName + " to group " + "Leerkrachten");
+                    MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to add " + azure.DisplayName + " to group " + "Leerkrachten");
                 }
             }
         }
 
         public static void Evaluate(State.Linked.LinkedStaffMember account)
         {
-            if (account.Wisa.Exists && !account.Smartschool.Exists && account.Azure.Exists && account.Directory.Exists)
+            if (account.Wisa.Exists && !account.Smartschool.Exists && account.Azure.Exists)
             {
-                account.Actions.Add(new AddToDirectoryAndSmartschool());
+                account.Actions.Add(new AddToSmartschool());
             }
 
         }

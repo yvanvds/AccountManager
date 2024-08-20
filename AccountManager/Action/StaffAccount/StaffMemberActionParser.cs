@@ -18,7 +18,7 @@ namespace AccountManager.Action.StaffAccount
             account.OK = true;
             account.SetBasicFlags();
 
-            if (!account.Wisa.Exists || !account.Directory.Exists || !account.Smartschool.Exists || !account.Azure.Exists)
+            if (!account.Wisa.Exists || !account.Smartschool.Exists || !account.Azure.Exists)
             {
                 AddToAzure.Evaluate(account);
                 AddToSmartschool.Evaluate(account);

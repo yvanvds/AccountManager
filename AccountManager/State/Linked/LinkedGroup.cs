@@ -10,7 +10,6 @@ namespace AccountManager.State.Linked
     public class LinkedGroup
     {
         public GroupStatus<AccountApi.Wisa.ClassGroup> Wisa { get; } = new GroupStatus<AccountApi.Wisa.ClassGroup>();
-        public GroupStatus<AccountApi.Directory.ClassGroup> Directory { get; } = new GroupStatus<AccountApi.Directory.ClassGroup>();
         public GroupStatus<AccountApi.Smartschool.Group> Smartschool { get; } = new GroupStatus<AccountApi.Smartschool.Group>();
 
         public List<GroupAction> Actions { get; } = new List<GroupAction>();
@@ -18,11 +17,6 @@ namespace AccountManager.State.Linked
         public LinkedGroup(AccountApi.Wisa.ClassGroup group)
         {
             Wisa.Group = group;
-        }
-
-        public LinkedGroup(AccountApi.Directory.ClassGroup group)
-        {
-            Directory.Group = group;
         }
 
         public LinkedGroup(AccountApi.Smartschool.Group group)
@@ -40,7 +34,6 @@ namespace AccountManager.State.Linked
                     if (Wisa.Group.GroupName != "00") result += " " + Wisa.Group.GroupName;
                     return result;
                 }
-                if (Directory.Group != null) return Directory.Group.Name;
                 if (Smartschool.Group != null) return Smartschool.Group.Name;
                 return "Group Name Error";
             }
@@ -52,7 +45,6 @@ namespace AccountManager.State.Linked
         {
             Wisa.SetFlag();
             Smartschool.SetFlag();
-            Directory.SetFlag();
         }
     }
 }

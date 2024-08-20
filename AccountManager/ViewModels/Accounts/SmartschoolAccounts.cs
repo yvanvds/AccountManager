@@ -1,4 +1,5 @@
 ﻿using AccountApi;
+using AccountManager.Utils;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -119,76 +120,5 @@ namespace AccountManager.ViewModels.Accounts
         }
     }
 
-    public class TreeGroup
-    {
-        public ObservableCollection<object> Children { get; private set; }
-        public IGroup Base;
-        public string Header { get; set; } = "No Groups Found";
-        public string Icon { get; set; } = "QuestionMarkBox";
-        public int CountAccount { get; set; } = 0;
-
-        public TreeGroup(IGroup Base)
-        {
-            this.Base = Base;
-            Children = new ObservableCollection<object>();
-
-            if (Base == null) return;
-
-            Header = Base.Name;
-            if (Base.Official)
-            {
-                Icon = "Class";
-            }
-            else
-            {
-                Icon = "UserGroup";
-            }
-
-            if (Base.Children != null)
-            {
-                foreach (var group in Base.Children)
-                {
-                    Children.Add(new TreeGroup(group));
-                    CountAccount += (Children.Last() as TreeGroup).CountAccount;
-                }
-
-            }
-
-            if (Base.Accounts != null)
-            {
-                foreach (var account in Base.Accounts)
-                {
-                    Children.Add(new TreeAccount(account));
-                }
-                CountAccount += Base.Accounts.Count;
-            }
-        }
-    }
-
-    public class TreeAccount
-    {
-        public IAccount Base { get; private set; }
-        public string Header { get; set; } = "Invalid Account";
-        public string Icon { get; set; } = "GenderTransgender";
-
-        public TreeAccount(IAccount Base)
-        {
-            this.Base = Base;
-            if (Base == null) return;
-
-            Header = Base.SurName + " " + Base.GivenName;
-            if (Base.Gender == GenderType.Female)
-            {
-                Icon = "GenderFemale";
-            }
-            else if (Base.Gender == GenderType.Male)
-            {
-                Icon = "GenderMale";
-            }
-            else
-            {
-                Icon = "GenderTransgender";
-            }
-        }
-    }
+    
 }

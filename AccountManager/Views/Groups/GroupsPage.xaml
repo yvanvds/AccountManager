@@ -24,9 +24,6 @@
             <TabItem Header="Wisa" x:Name="WisaTab">
                 <local:WisaGroups/>
             </TabItem>
-            <TabItem Header="AD" x:Name="ADTab">
-                <local:ADGroups/>
-            </TabItem>
             <TabItem Header="Smartschool" x:Name="SmartschoolTab">
                 <local:SmartschoolGroups/>
             </TabItem>

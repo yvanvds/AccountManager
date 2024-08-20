@@ -34,6 +34,8 @@ namespace AccountApi
         void Sort();
         void GetTreeAsList(List<IGroup> list);
 
+        void GetAllUserNames(List<string> output);
+
         Task LoadAccounts();
         void ApplyImportRules(List<IRule> rules);
 

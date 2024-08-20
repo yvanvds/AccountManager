@@ -1,5 +1,4 @@
-﻿using Google.Apis.Admin.Directory.directory_v1.Data;
-using Microsoft.Graph;
+﻿using Microsoft.Graph;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;

@@ -46,15 +46,11 @@ namespace AccountManager.ViewModels.Dashboard
         }
 
         public int TotalWisaGroups => state.Groups.TotalWisaGroups;
-        public int TotalDirectoryGroups => state.Groups.TotalDirectoryGroups;
         public int TotalSmartschoolGroups => state.Groups.TotalSmartschoolGroups;
         public int UnlinkedWisaGroups => state.Groups.UnlinkedWisaGroups;
-        public int UnlinkedDirectoryGroups => state.Groups.UnlinkedDirectoryGroups;
         public int UnlinkedSmartschoolGroups => state.Groups.UnlinkedSmartschoolGroups;
         public int LinkedWisaGroups => state.Groups.LinkedWisaGroups;
-        public int LinkedDirectoryGroups => state.Groups.LinkedDirectoryGroups;
         public int LinkedSmartschoolGroups => state.Groups.LinkedSmartschoolGroups;
-        public string UnlinkedDirectoryColor => state.Groups.UnlinkedDirectoryGroups == 0 ? "DarkGreen" : "DarkRed";
         public string UnlinkedSmartschoolColor => state.Groups.UnlinkedSmartschoolGroups == 0 ? "DarkGreen" : "DarkRed";
         public string UnlinkedWisaColor => state.Groups.UnlinkedWisaGroups == 0 ? "DarkGreen" : "DarkRed";
 
@@ -62,19 +58,15 @@ namespace AccountManager.ViewModels.Dashboard
         public void OnStateChanges()
         {
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalWisaGroups)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalDirectoryGroups)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(TotalSmartschoolGroups)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedWisaGroups)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedDirectoryGroups)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedSmartschoolGroups)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedWisaGroups)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedDirectoryGroups)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(LinkedSmartschoolGroups)));
 
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedWisaColor)));
-            PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedDirectoryColor)));
             PropertyChanged(this, new PropertyChangedEventArgs(nameof(UnlinkedSmartschoolColor)));
         }
     }
