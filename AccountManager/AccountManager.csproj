@@ -273,6 +273,7 @@
     <Compile Include="Action\StaffAccount\NoActionNeeded.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromAzure.cs" />
     <Compile Include="Action\StaffAccount\RemoveFromSmartschool.cs" />
+    <Compile Include="Action\StaffAccount\SetCopyCode.cs" />
     <Compile Include="Action\StaffAccount\StaffMemberActionParser.cs" />
     <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />

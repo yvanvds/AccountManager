@@ -51,6 +51,7 @@ namespace AccountManager.Action.StudentAccount
             ssAccount.PostalCode = wisa.PostalCode;
             ssAccount.City = wisa.City;
             ssAccount.Mail = linkedAccount.Azure.Account.UserPrincipalName;
+            ssAccount.AccountID = wisa.WisaID;
 
             var result = await AccountApi.Smartschool.AccountManager.Save(ssAccount, "FakeP4ssword").ConfigureAwait(false);
             if (!result)
@@ -60,7 +61,7 @@ namespace AccountManager.Action.StudentAccount
             }
             else
             {
-
+                AccountApi.Smartschool.GroupManager.UIDs.Add(ssAccount.UID);
                 linkedAccount.Smartschool.Account = ssAccount;
                 MainWindow.Instance.Log.AddMessage(Origin.Smartschool, "Added account for " + wisa.FullName);
                 AccountApi.Smartschool.GroupManager.UIDs.Add(ssAccount.UID);

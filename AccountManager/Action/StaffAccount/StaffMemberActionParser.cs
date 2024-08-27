@@ -34,6 +34,7 @@ namespace AccountManager.Action.StaffAccount
                 UpdateWisaName.Evaluate(account);
                 ModifySmartschoolStaffEmail.Evaluate(account);
                 AddToAzureStaffGroup.Evaluate(account);
+                SetCopyCode.Evaluate(account);
             }
         }
     }

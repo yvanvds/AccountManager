@@ -68,6 +68,8 @@ namespace AccountManager.State
             config["Wisa"] = Wisa.SaveConfig();
             config["Smartschool"] = Smartschool.SaveConfig();
             config["Azure"] = Azure.SaveConfig();
+            var content = config.ToString();
+            Console.WriteLine(content);
             File.WriteAllText(fileName, config.ToString());
         }
 

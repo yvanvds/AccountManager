@@ -309,6 +309,24 @@ namespace AccountApi.Smartschool
             return true;
         }
 
+        public static async Task<bool> SaveUserParameter(IAccount account, string paramName, string paramValue)
+        {
+            
+
+            var result = await Task.Run(
+              () => Connector.service.saveUserParameter(Connector.password, account.UID, paramName, paramValue)
+            );
+
+            int iResult = Convert.ToInt32(result);
+            if (iResult != 0)
+            {
+                Error.AddError(iResult);
+                return false;
+            }
+
+            return true;
+        }
+
         /// <summary>
         /// Get the current account state of the account.
         /// </summary>
@@ -489,19 +507,22 @@ namespace AccountApi.Smartschool
             {
                 // ignore this Connector.Log.AddError(Origin.Smartschool, "Ongeldig stamboeknummer bij account " + json.Gebruikersnaam);
             }
-            
+
 
             if (json.Basisrol == "1")
             {
                 account.Role = AccountRole.Student;
             }
-            else if (json.Basisrol == "2")
+            else if (json.Basisrol == "0" || json.Basisrol == "13")
             {
                 account.Role = AccountRole.Teacher;
             }
-            else if (json.Basisrol == "3")
+            else if (json.Basisrol == "30")
             {
                 account.Role = AccountRole.Director;
+            } else
+            {
+                Connector.Log.AddError(Origin.Smartschool, $"Invalid role for {json.Emailadres}: {json.Basisrol}");
             }
 
             account.GivenName = json.Voornaam;

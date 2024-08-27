@@ -28,8 +28,9 @@ namespace AccountManager.Action.StaffAccount
             smartschool.Role = AccountRole.Teacher;
             smartschool.GivenName = azure.GivenName;
             smartschool.SurName = azure.Surname;
-            smartschool.AccountID = smartschool.UID;
-            smartschool.Gender = GenderType.Male;
+            smartschool.AccountID = linkedAccount.Wisa.Account.CODE;
+            smartschool.Gender = GenderType.Female;
+            smartschool.Fax = linkedAccount.Wisa.Account.WisaID;
 
             smartschool.Mail = azure.UserPrincipalName;
 
@@ -44,6 +45,8 @@ namespace AccountManager.Action.StaffAccount
             }
             else
             {
+                AccountApi.Smartschool.GroupManager.UIDs.Add(smartschool.UID);
+
                 MainWindow.Instance.Log.AddMessage(Origin.Smartschool, "Added account for " + azure.DisplayName);
 
                 var groupResult = await AccountApi.Smartschool.GroupManager.AddUserToGroup(smartschool, AccountApi.Smartschool.GroupManager.Root.Find("Leerkrachten")).ConfigureAwait(false);
