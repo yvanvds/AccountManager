@@ -85,10 +85,13 @@ namespace AccountManager.State.Linked
                 {
                     if (List.ContainsKey(account.UserPrincipalName))
                     {
-                        List[account.UserPrincipalName].Azure.Account = account;
-                        found = true;
-                    } else
-                    {
+                        if (List[account.UserPrincipalName].Wisa.Account != null && List[account.UserPrincipalName].Wisa.Account.WisaID == account.EmployeeId)
+                        {
+                            List[account.UserPrincipalName].Azure.Account = account;
+                            found = true;
+                        }
+                    }
+                    if (!found) {
                         
                         foreach (var linkedAccount in List)
                         {

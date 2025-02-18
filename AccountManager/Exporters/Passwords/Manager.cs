@@ -149,7 +149,7 @@ namespace AccountManager.Exporters.Passwords
 
                     section.AddParagraph("WiFi", "Heading2");
                     section.AddParagraph("Met deze gegevens kan je inloggen op het Smifi-L wifi netwerk.", "Normal");
-                    section.AddParagraph("Wachtwoord: SmifiDeWifi", "PasswordStyle");
+                    section.AddParagraph("Wachtwoord: SmifiDeWifi:)", "PasswordStyle");
 
                     
                     section.AddParagraph("Privacy", "Heading2");
