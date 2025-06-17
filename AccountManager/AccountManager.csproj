@@ -279,6 +279,7 @@
     <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Action\StudentAccount\AddToAzure.cs" />
+    <Compile Include="Action\StudentAccount\ModifyAzureSchool.cs" />
     <Compile Include="Action\StudentAccount\modifyAzureStudentEmail.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolStudentEmail.cs" />

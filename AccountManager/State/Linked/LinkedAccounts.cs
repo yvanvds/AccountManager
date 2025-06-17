@@ -51,33 +51,57 @@ namespace AccountManager.State.Linked
 
             List.Clear();
 
+            // first add all smartschool accounts to List. These will have the mail address as the key in List.
             var lln = AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen");
             if (lln != null)
             {
                 AddSmartschoolAccounts(lln);
             }
 
+            /**
+             * Wisa does not have the mail addresses, but smartschool has the wisa ID. We try to find the smartschool
+             * account with the correct wisa ID. Then we will use the smartschool account to get the mail address,
+             * which will be the key of the dictionary (List).
+             * **/
+            
+
+            // iterate over all wisa accounts
             foreach(var account in AccountApi.Wisa.Students.All)
             {
-                bool linked = false;
+                bool linked = false;                
 
+                // search for match by wisa ID
                 var smartschoolMatch = (lln as AccountApi.Smartschool.Group).FindAccountByWisaID(account.WisaID);
 
+                // most of there time there is a smartschool match and it will have the user's mail.
                 if (smartschoolMatch != null)
                 {
+                    // if the list contains the mail address as key
                     if (List.ContainsKey(smartschoolMatch.Mail))
                     {
+                        // add the wisa account to this entry
                         List[smartschoolMatch.Mail].Wisa.Account = account;
                         linked = true;
                     }
                 }
 
+                /** 
+                 * If the account is not linked at this point, the account does not exist in smartschool, but only in Wisa.
+                 * For now it will be added with the WisaID as a key. This means a new key must probably be generated later.
+                 * **/
                 if (!linked)
                 {
                     List.Add(account.WisaID, new LinkedAccount(account));
                 }
             }
 
+            /**
+             * Now link azure accounts. These have a mail address and a wisa ID.
+             * If the dict contains the key (mail) we do check for the wisa ID. It must be identical, in wich case the account is linked.
+             * If not, this is a student with the same name as an existing student.
+             * In this case we check if the list contains the Wisa ID. This will be true if the user exists in Wisa, But not in smartschool.
+             * If the account does only exist in Azure, this is someone from another school. So this account can be discarded.
+             * **/
             foreach (var account in AccountApi.Azure.UserManager.Instance.Users)
             {
                 bool found = false;
@@ -91,8 +115,19 @@ namespace AccountManager.State.Linked
                             found = true;
                         }
                     }
-                    if (!found) {
-                        
+                    if (!found && account.EmployeeId != null)
+                    {
+                        if (List.ContainsKey(account.EmployeeId))
+                        {
+                            List[account.EmployeeId].Azure.Account = account;
+                            List.Add(account.UserPrincipalName, List[account.EmployeeId]);
+                            List.Remove(account.EmployeeId);
+                            found = true;
+                        }
+                    }
+                     
+                    if (!found) 
+                    { 
                         foreach (var linkedAccount in List)
                         {
                             if (linkedAccount.Value.Wisa.Account != null && linkedAccount.Value.Wisa.Account.WisaID.Equals(account.EmployeeId)) {

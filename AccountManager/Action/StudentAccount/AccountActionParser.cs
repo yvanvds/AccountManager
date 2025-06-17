@@ -30,6 +30,7 @@ namespace AccountManager.Action.StudentAccount
             else
             {
                 ModifyAzureStudentEmail.Evaluate(account);
+                ModifyAzureSchool.Evaluate(account);
                 ModifySmartschoolStudentAddress.Evaluate(account);
                 ModifyAccountID.Evaluate(account);
                 ModifySmartschoolStemID.Evaluate(account);

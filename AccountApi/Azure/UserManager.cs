@@ -29,7 +29,7 @@ namespace AccountApi.Azure
                 
                 var options = new List<Option>
                 {
-                    new QueryOption("$select", "id, givenName, surname, displayName, mail, userPrincipalName, accountEnabled, employeeId, department, jobTitle")
+                    new QueryOption("$select", "id, givenName, surname, displayName, mail, userPrincipalName, accountEnabled, employeeId, department, jobTitle, companyName")
                 };
                 var results = await Connector.Instance.Directory.Users.Request(options)
                     .GetAsync();
@@ -304,6 +304,18 @@ namespace AccountApi.Azure
                 var result = await Connector.Instance.Directory.Users[oldPrincipalName].Request().UpdateAsync(newValues.Account).ConfigureAwait(false);
             }
             catch (Exception ex)
+            {
+                Connector.Instance.RegisterError(ex.Message);
+                return;
+            }
+        }
+
+        public async Task UpdateSchool( User user)
+        {
+            try
+            {
+                var result = await Connector.Instance.Directory.Users[user.UserPrincipalName].Request().UpdateAsync(user.Account).ConfigureAwait(false);
+            } catch (Exception ex)
             {
                 Connector.Instance.RegisterError(ex.Message);
                 return;

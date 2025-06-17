@@ -34,12 +34,18 @@ namespace AccountApi.Azure
         public string Id => Account.Id;
         public string DisplayName => Account.DisplayName;
         public string Department => Account.Department;
+        public string CompanyName => Account.CompanyName;
         public string GivenName => Account.GivenName;
         public string Surname => Account.Surname;
 
         public void ChangePrincipalName(string newValue)
         {
             Account.UserPrincipalName = newValue;
+        }
+
+        public void ChangeCompanyName(string newValue)
+        {
+            Account.CompanyName = newValue;
         }
     }
 }

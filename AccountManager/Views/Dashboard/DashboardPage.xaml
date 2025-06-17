@@ -93,7 +93,7 @@
                     <Button Style="{StaticResource MaterialDesignRaisedButton}"
                                 Grid.Column="0" Grid.Row="4"
                                 materialDesign:ButtonProgressAssist.Value="-1"
-                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorAzureAccount}"
+                                materialDesign:ButtonProgressAssist.IsIndicatorVisible="{Binding IndicatorAzureGroups}"
                                 materialDesign:ButtonProgressAssist.IsIndeterminate="True"
                                 Content="Sync Groups"
                                 Command="{Binding SyncAzureGroupsCommand}"
