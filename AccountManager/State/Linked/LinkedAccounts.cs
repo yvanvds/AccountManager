@@ -134,7 +134,16 @@ namespace AccountManager.State.Linked
                                 linkedAccount.Value.Azure.Account = account;
                                 found = true;
                                 break;
-                            }
+                            } 
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        // This is a old account, no longer linked to Wisa or Smartschool. 
+                        if (account.CompanyName != null && account.CompanyName.Equals(App.Instance.Settings.SchoolPrefix.Value))
+                        {
+                            List.Add(account.UserPrincipalName, new LinkedAccount(account));
                         }
                     }
 

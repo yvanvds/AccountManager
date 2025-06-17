@@ -82,10 +82,6 @@ namespace AccountApi.Wisa
                     try
                     {
                         all.Add(new Student(line, school.ID));
-                        if (all.Last().WisaID.Equals("13455"))
-                        {
-                            Connector.Log?.AddError(Origin.Wisa, "found");
-                        }
                         count++;
                     }
                     catch (Exception e)

@@ -24,7 +24,8 @@ namespace AccountManager.Action.StudentAccount
                 AddToSmartschool.Evaluate(account);
                 UnregisterSmartschool.Evaluate(account);
                 DeleteFromSmartschool.Evaluate(account);
-                
+                RemoveFromAzure.Evaluate(account);
+
                 account.OK = false;
             }
             else

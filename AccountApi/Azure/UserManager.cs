@@ -206,7 +206,9 @@ namespace AccountApi.Azure
             try
             {
                 await Connector.Instance.Directory.Users[user.UserPrincipalName].Request().DeleteAsync();
+                Users.Remove(user);
                 return true;
+            
             } catch (Exception ex)
             {
                 Connector.Instance.RegisterError(ex.Message);

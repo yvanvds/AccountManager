@@ -23,7 +23,6 @@ namespace AccountManager.Action.StudentAccount
             bool result = await AccountApi.Azure.UserManager.Instance.DeleteUser(account.Azure.Account).ConfigureAwait(false);
             if (result)
             {
-                account.Azure.Account = null;
                 MainWindow.Instance.Log.AddMessage(Origin.Azure, "Removed account for " + name);
             }
             else
@@ -36,7 +35,12 @@ namespace AccountManager.Action.StudentAccount
         {
             if (!account.Wisa.Exists && !account.Smartschool.Exists && account.Azure.Exists)
             {
-                account.Actions.Add(new RemoveFromAzure());
+                if (account.Azure.Account.CompanyName.Equals(State.App.Instance.Settings.SchoolPrefix.Value))
+                {
+                    // This is a old account, no longer linked to Wisa or Smartschool.
+                    // It can be removed from Azure.
+                    account.Actions.Add(new RemoveFromAzure());
+                }
             }
         }
     }
