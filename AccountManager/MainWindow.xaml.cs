@@ -46,7 +46,7 @@ namespace AccountManager
             {
                 Navigate(new Views.Dashboard.DashboardPage());
             });
-            Log.AddMessage(AccountApi.Origin.Other, "Build: 1.1.2.62");
+            Log.AddMessage(AccountApi.Origin.Other, "Build: 1.1.3.72");
         }
 
         public void Navigate(UserControl page)

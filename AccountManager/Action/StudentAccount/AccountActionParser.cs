@@ -31,6 +31,7 @@ namespace AccountManager.Action.StudentAccount
             else
             {
                 ModifyAzureStudentEmail.Evaluate(account);
+                ModifyAzureName.Evaluate(account);
                 ModifyAzureSchool.Evaluate(account);
                 ModifySmartschoolStudentAddress.Evaluate(account);
                 ModifyAccountID.Evaluate(account);
@@ -38,6 +39,7 @@ namespace AccountManager.Action.StudentAccount
                 ModifySmartschoolBirthPlace.Evaluate(account);
                 MoveToSmartschoolClassGroup.Evaluate(account);
                 ModifySmartschoolStudentEmail.Evaluate(account);
+                ModifySmartschoolName.Evaluate(account);
             }
         }
     }

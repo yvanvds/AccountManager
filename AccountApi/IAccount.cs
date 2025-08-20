@@ -18,6 +18,7 @@ namespace AccountApi
 
         string GivenName { set; get; } // voornaam
         string SurName { set; get; } // naam
+        string PreferedName { set; get; } // roepnaam
         string ExtraNames { set; get; } // extra voornamen
         string Initials { set; get; } // initialen
         GenderType Gender { set; get; } // geslacht

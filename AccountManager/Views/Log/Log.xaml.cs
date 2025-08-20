@@ -108,6 +108,7 @@ namespace AccountManager.Views.Log
                 Content = message,
                 Error = true,
             });
+            Console.WriteLine("Error: " + message);
             Application.Current.Dispatcher.Invoke(new System.Action(() => Rebuild()));
         }
 

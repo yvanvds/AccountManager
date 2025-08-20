@@ -142,6 +142,7 @@ namespace AccountApi.Smartschool
         public string Group { get; set; } = String.Empty;
 
         public string Status { get; set; } = string.Empty;
+        public string PreferedName { get; set; } = String.Empty;
 
         /// <summary>
         /// Create a JSON JObject containing the data in this account.
@@ -160,7 +161,7 @@ namespace AccountApi.Smartschool
                 ["ExtraNames"] = ExtraNames,
                 ["Fax"] = Fax,
                 ["Gender"] = Gender.ToString(),
-                ["GivenName"] = GivenName,
+                ["GivenName"] = GivenName, 
                 ["Group"] = Group,
                 ["HomePhone"] = HomePhone,
                 ["HouseNumber"] = HouseNumber,
@@ -170,6 +171,7 @@ namespace AccountApi.Smartschool
                 ["MailAlias"] = MailAlias,
                 ["MobilePhone"] = MobilePhone,
                 ["PostalCode"] = PostalCode,
+                ["PreferedName"] = PreferedName,
                 ["RegisterID"] = RegisterID,
                 ["Role"] = Role.ToString(),
                 ["StemID"] = StemID,
@@ -211,6 +213,7 @@ namespace AccountApi.Smartschool
             MailAlias = obj["MailAlias"].ToString();
             MobilePhone = obj["MobilePhone"].ToString();
             PostalCode = obj["PostalCode"].ToString();
+            PreferedName = obj.ContainsKey("PreferedName") ? obj["PreferedName"].ToString() : string.Empty;
             RegisterID = obj["RegisterID"].ToString();
             switch (obj["Role"].ToString())
             {
@@ -291,6 +294,7 @@ namespace AccountApi.Smartschool
                 Error.AddMessage("Account " + UID + " GivenName: " + GivenName + " is not equal to other: " + other.GivenName);
                 return false;
             }
+
 
             if (!Group.Equals(other.Group))
             {
@@ -385,6 +389,12 @@ namespace AccountApi.Smartschool
             if (!UntisID.Equals(other.UntisID))
             {
                 Error.AddMessage("Account " + UID + " UntisID: " + UntisID + " is not equal to other: " + other.UntisID);
+                return false;
+            }
+
+            if (!PreferedName.Equals(other.PreferedName))
+            {
+                Error.AddMessage("Account " + UID + " PreferedName: " + PreferedName + " is not equal to other: " + other.PreferedName);
                 return false;
             }
 

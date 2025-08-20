@@ -143,7 +143,17 @@ namespace AccountManager.State.Linked
                         // This is a old account, no longer linked to Wisa or Smartschool. 
                         if (account.CompanyName != null && account.CompanyName.Equals(App.Instance.Settings.SchoolPrefix.Value))
                         {
-                            List.Add(account.UserPrincipalName, new LinkedAccount(account));
+                            if (List.ContainsKey(account.UserPrincipalName))
+                            {
+                                // This is a new account, but the mail address already exists in the list.
+                                List[account.UserPrincipalName].Azure.Account = account;
+                            }
+                            else
+                            {
+                                // This is a new account, not linked to Wisa or Smartschool.
+                                // We add it with the mail address as key.
+                                List.Add(account.UserPrincipalName, new LinkedAccount(account));
+                            }
                         }
                     }
 

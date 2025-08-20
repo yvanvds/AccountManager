@@ -8,9 +8,9 @@ namespace AccountManager.Action.StudentAccount
     {
         public ModifyAzureSchool() : base(
             "Wijzig de school in Azure",
-            "De leerling zit niet in school " + State.App.Instance.Settings.SchoolPrefix,
+            "De leerling zit niet in school " + State.App.Instance.Settings.SchoolPrefix.Value,
             true,
-            false
+            true
         )
         {
             CanShowDetails = false;
@@ -20,7 +20,7 @@ namespace AccountManager.Action.StudentAccount
         {
             linkedAccount.Azure.Account.ChangeCompanyName(State.App.Instance.Settings.SchoolPrefix.Value);
 
-            await UserManager.Instance.UpdateSchool(linkedAccount.Azure.Account).ConfigureAwait(false);
+            await UserManager.Instance.Update(linkedAccount.Azure.Account).ConfigureAwait(false);
         }
 
         public static void Evaluate(State.Linked.LinkedAccount account)

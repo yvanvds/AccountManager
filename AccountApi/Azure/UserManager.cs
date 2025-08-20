@@ -110,13 +110,14 @@ namespace AccountApi.Azure
         {
             try
             {
-                var principalName = await CreatePrincipalName(student.FirstName, student.Name, true);
+                var firstname = student.PreferedName.Length > 0 ? student.PreferedName : student.FirstName;
+                var principalName = await CreatePrincipalName(firstname, student.Name, true);
                 var mailNickName = principalName.Split('@')[0];
 
                 var user = new Microsoft.Graph.User
                 {
                     AccountEnabled = true,
-                    GivenName = student.FirstName,
+                    GivenName =  firstname,
                     Surname = student.Name,
                     DisplayName = student.FullName,
                     UserPrincipalName = principalName,
@@ -312,7 +313,7 @@ namespace AccountApi.Azure
             }
         }
 
-        public async Task UpdateSchool( User user)
+        public async Task Update( User user)
         {
             try
             {

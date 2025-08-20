@@ -224,7 +224,11 @@ namespace AccountManager.Exporters.Passwords
                 pdfRenderer.Document = document;
                 pdfRenderer.RenderDocument();
 
+
+
+
                 string fileName = name + ".pdf";
+                fileName = Path.GetTempPath() + fileName;
                 try
                 {
                     pdfRenderer.PdfDocument.Save(fileName);

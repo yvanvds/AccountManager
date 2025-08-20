@@ -12,7 +12,7 @@ namespace AccountManager.Action.StudentAccount
         public AddToSmartschool() : base(
             "Maak een Nieuw Smartschool Account",
             "Voeg een account toe aan Smartschool",
-            true)
+            true, true)
         {
 
         }
@@ -28,7 +28,7 @@ namespace AccountManager.Action.StudentAccount
         {
             var ssAccount = new AccountApi.Smartschool.Account();
 
-            ssAccount.UID = AccountApi.Smartschool.AccountManager.CreateUID(wisa.FirstName, wisa.Name);
+            ssAccount.UID = AccountApi.Smartschool.AccountManager.CreateUID(wisa.PreferedName.Length > 0 ? wisa.PreferedName : wisa.FirstName, wisa.Name);
             ssAccount.RegisterID = wisa.StateID;
             try
             {
@@ -42,6 +42,7 @@ namespace AccountManager.Action.StudentAccount
             ssAccount.Role = AccountRole.Student;
             ssAccount.GivenName = wisa.FirstName;
             ssAccount.SurName = wisa.Name;
+            ssAccount.PreferedName = wisa.PreferedName;
             ssAccount.Gender = wisa.Gender;
             ssAccount.Birthday = wisa.DateOfBirth;
             ssAccount.BirthPlace = wisa.PlaceOfBirth;

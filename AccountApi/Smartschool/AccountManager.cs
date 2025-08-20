@@ -101,6 +101,15 @@ namespace AccountApi.Smartschool
                 Connector.Log.AddError(Origin.Smartschool, "Failed to update QR Code");
             }
 
+            if (account.PreferedName.Length > 0)
+            {
+                // update the prefered name
+                var paramresult = await SaveUserParameter(account, "Roepnaam", account.PreferedName).ConfigureAwait(false);
+                if (!paramresult)
+                {
+                    Connector.Log.AddError(Origin.Smartschool, "Failed to update prefered name");
+                }
+            }
             return QRResult;
         }
 
@@ -527,6 +536,10 @@ namespace AccountApi.Smartschool
 
             account.GivenName = json.Voornaam;
             account.SurName = json.Naam;
+            if (json.Roepnaam.Length > 0)
+            {
+                account.PreferedName = json.Roepnaam;
+            }
             account.ExtraNames = json.Extravoornamen;
             account.Initials = json.Initialen;
 

@@ -19,14 +19,14 @@
     <ProjectTypeGuids>{60dc8134-eba5-43b8-bcc9-bb4bc16c2548};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
     <WarningLevel>4</WarningLevel>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
-    <Deterministic>true</Deterministic>
-    <IsWebBootstrapper>false</IsWebBootstrapper>
+    <Deterministic>false</Deterministic>
+    <IsWebBootstrapper>true</IsWebBootstrapper>
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
     <TargetFrameworkProfile />
-    <PublishUrl>\\192.168.0.60\Share\</PublishUrl>
+    <PublishUrl>C:\Users\yvan\VZW Arcadia\SSM-WG-DigitaleSchool - Accountmanager\</PublishUrl>
     <Install>true</Install>
-    <InstallFrom>Unc</InstallFrom>
+    <InstallFrom>Web</InstallFrom>
     <UpdateEnabled>true</UpdateEnabled>
     <UpdateMode>Foreground</UpdateMode>
     <UpdateInterval>7</UpdateInterval>
@@ -34,11 +34,12 @@
     <UpdatePeriodically>false</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
+    <InstallUrl>https://arcadiascholen.sharepoint.com/:f:/r/sites/SSM-WG-DigitaleSchool/Gedeelde%2520documenten/General/Bestanden/Accountmanager%3fcsf=1&amp;web=1&amp;e=o4a4i4/</InstallUrl>
     <ProductName>AccountManager</ProductName>
     <PublisherName>Yvan Vander Sanden</PublisherName>
     <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
     <WebPage>publish.htm</WebPage>
-    <ApplicationRevision>55</ApplicationRevision>
+    <ApplicationRevision>60</ApplicationRevision>
     <ApplicationVersion>1.1.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -279,9 +280,11 @@
     <Compile Include="Action\StaffAccount\UpdateWisaName.cs" />
     <Compile Include="Action\StudentAccount\AccountActionParser.cs" />
     <Compile Include="Action\StudentAccount\AddToAzure.cs" />
+    <Compile Include="Action\StudentAccount\ModifyAzureName.cs" />
     <Compile Include="Action\StudentAccount\ModifyAzureSchool.cs" />
     <Compile Include="Action\StudentAccount\modifyAzureStudentEmail.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolBirthPlace.cs" />
+    <Compile Include="Action\StudentAccount\ModifySmartschoolName.cs" />
     <Compile Include="Action\StudentAccount\ModifySmartschoolStudentEmail.cs" />
     <Compile Include="Action\StudentAccount\RemoveFromAzure.cs" />
     <Compile Include="Exporters\PasswordManager.cs" />

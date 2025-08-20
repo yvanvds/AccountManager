@@ -47,5 +47,14 @@ namespace AccountApi.Azure
         {
             Account.CompanyName = newValue;
         }
+
+        public void ChangeGivenName(string newValue)
+        {
+            Account.GivenName = newValue;
+        }
+        public void ChangeDisplayName(string newValue)
+        {
+            Account.DisplayName = newValue;
+        }
     }
 }
