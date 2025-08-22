@@ -352,7 +352,7 @@ namespace AccountApi.Smartschool
             var result = await Task.Run(() => Connector.service.saveUserToClassesAndGroups(
               Connector.password,
               account.UID,
-              group.Name,
+              group.Code,
               1
             ));
 

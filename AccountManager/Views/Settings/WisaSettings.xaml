@@ -82,7 +82,7 @@
                     </DataTemplate>
                 </GroupBox.HeaderTemplate>
 
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ScrollViewer VerticalScrollBarVisibility="Visible">
                     <ItemsControl ItemsSource="{Binding ImportRules}" Grid.IsSharedSizeScope="True" Margin="12 0 12 0">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>

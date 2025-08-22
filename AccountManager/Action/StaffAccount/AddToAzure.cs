@@ -28,19 +28,20 @@ namespace AccountManager.Action.StaffAccount
                 MainWindow.Instance.Log.AddError(Origin.Azure, "Failed to add " + linkedAccount.Wisa.Account.FirstName + " " + linkedAccount.Wisa.Account.LastName);
             }
 
-            //var group = AccountApi.Azure.GroupManager.Instance.FindGroupByName(State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren", false);
-            //if (group != null)
-            //{
-            //    if (!group.HasMember(linkedAccount.Azure.Account))
-            //    {
-            //        await group.AddMember(linkedAccount.Azure.Account).ConfigureAwait(false);
-            //    }
-            //} else
-            //{
-            //    MainWindow.Instance.Log.AddError(Origin.Azure, "Group " + State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren not found");
-            //}
+            var group = AccountApi.Azure.GroupManager.Instance.FindGroupByName(State.App.Instance.Settings.SchoolPrefix.Value + "-Personeel", false);
+            if (group != null)
+            {
+                if (!group.HasMember(linkedAccount.Azure.Account))
+                {
+                    await group.AddMember(linkedAccount.Azure.Account).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                MainWindow.Instance.Log.AddError(Origin.Azure, "Group " + State.App.Instance.Settings.SchoolPrefix.Value + "-Personeel not found");
+            }
 
-            var secgroup = AccountApi.Azure.GroupManager.Instance.FindGroupByName(State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren", true);
+            var secgroup = AccountApi.Azure.GroupManager.Instance.FindGroupByName(State.App.Instance.Settings.SchoolPrefix.Value + "-Personeel", true);
             if (secgroup != null)
             {
                 if (!secgroup.HasMember(linkedAccount.Azure.Account))
@@ -50,7 +51,7 @@ namespace AccountManager.Action.StaffAccount
             }
             else
             {
-                MainWindow.Instance.Log.AddError(Origin.Azure, "SecGroup " + State.App.Instance.Settings.SchoolPrefix.Value + "-Leraren not found");
+                MainWindow.Instance.Log.AddError(Origin.Azure, "Security Group " + State.App.Instance.Settings.SchoolPrefix.Value + "-Personeel not found");
             }
         }
 

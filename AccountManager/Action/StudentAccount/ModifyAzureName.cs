@@ -42,7 +42,7 @@ namespace AccountManager.Action.StudentAccount
         }
         public static void Evaluate(State.Linked.LinkedAccount account)
         {
-            if (!account.Wisa.Account.FullName.Equals(account.Azure.Account.DisplayName, StringComparison.InvariantCulture))
+            if (!Utils.CompareStrings.NamesEqual(account.Wisa.Account.FullName, account.Azure.Account.DisplayName))
             {
                 account.Actions.Add(new ModifyAzureName());
                 account.Azure.FlagWarning();

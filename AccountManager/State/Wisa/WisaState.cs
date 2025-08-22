@@ -79,6 +79,7 @@ namespace AccountManager.State.Wisa
                         case Rule.WI_ReplaceInstitution: ImportRules.Add(new AccountApi.Rules.ReplaceInstitute(data)); break;
                         case Rule.WI_DontImportClass: ImportRules.Add(new AccountApi.Rules.DontImportClass(data)); break;
                         case Rule.WI_MarkAsVirtual: ImportRules.Add(new AccountApi.Rules.MarkAsVirtual(data)); break;
+                        case Rule.WI_DontImportUser: ImportRules.Add(new AccountApi.Rules.DontImportUserFromWisa(data)); break;
                     }
                 }
             }
@@ -173,6 +174,8 @@ namespace AccountManager.State.Wisa
             {
                 ImportRules.Add(newRule);
             }
+            SaveConfig();
+
             return newRule;
         }
 

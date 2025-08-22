@@ -18,6 +18,8 @@ namespace AccountManager.ViewModels.Dashboard
         public IAsyncCommand SyncAzureGroupsCommand { get; private set; }
         public IAsyncCommand SyncAzureAccountsCommand { get; private set; }
 
+        private bool _wisaIsSyncing;
+
         public DashboardPage()
         {
             Wisa = State.App.Instance.Wisa;
@@ -59,11 +61,26 @@ namespace AccountManager.ViewModels.Dashboard
 
         private async Task SyncWisaAccounts()
         {
+            if (_wisaIsSyncing) return;
+            _wisaIsSyncing = true;
+
             IndicatorWisaAccount = true;
-            Wisa.Connect();
-            await Wisa.Students.Load().ConfigureAwait(false);
-            await Wisa.Staff.Load().ConfigureAwait(false);
-            IndicatorWisaAccount = false;
+
+            try
+            {
+                Wisa.Connect();
+                await Wisa.Students.Load();
+                await Wisa.Staff.Load();
+            } catch (Exception ex)
+            {
+                // Handle exceptions, e.g., log them
+                Console.WriteLine($"Error syncing Wisa accounts: {ex.Message}");
+            } finally
+            {
+                _wisaIsSyncing = false;
+                IndicatorWisaAccount = false;
+            }
+            
         }
 
         private async Task SyncWisaGroups()

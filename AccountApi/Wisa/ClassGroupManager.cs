@@ -190,7 +190,7 @@ namespace AccountApi.Wisa
             {
                 for (int i = 0; i < rules.Count; i++)
                 {
-                    if (rules[i].ShouldApply(all[group]))
+                    if (rules[i].Rule != Rule.WI_DontImportUser && rules[i].ShouldApply(all[group]))
                     {
                         if (rules[i].RuleAction == RuleAction.Modify) rules[i].Modify(all[group]);
                         else if (rules[i].RuleAction == RuleAction.Discard)

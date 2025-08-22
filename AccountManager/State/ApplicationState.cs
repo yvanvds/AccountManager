@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json.Linq;
+﻿using AccountApi;
+using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
 
@@ -75,9 +76,29 @@ namespace AccountManager.State
 
         private void loadLocalContent()
         {
-            Wisa.LoadLocalContent();
-            Smartschool.LoadLocalContent();
-            Azure.LoadLocalContent();
+            try
+            {
+                Wisa.LoadLocalContent();
+            } catch (Exception ex)
+            {
+                MainWindow.Instance.Log?.AddError(Origin.Wisa, "Error loading local WISA content: " + ex.Message);
+            }
+
+            try {                 
+                Smartschool.LoadLocalContent();
+            } 
+            catch (Exception ex)
+            {
+                MainWindow.Instance.Log?.AddError(Origin.Smartschool, "Error loading local Smartschool content: " + ex.Message);
+            }
+            
+            try { 
+                Azure.LoadLocalContent(); 
+            } 
+            catch (Exception ex)
+            {
+                MainWindow.Instance.Log?.AddError(Origin.Azure, "Error loading local Azure content: " + ex.Message);
+            }
         }
 
         private void saveLocalContent()

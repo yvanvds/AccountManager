@@ -42,14 +42,36 @@ namespace AccountApi.Azure
             members.Clear();
             try
             {
-                var result = await Connector.Instance.Directory.Groups[GraphGroup.Id]
-                .Members.Request()
-                .GetAsync();
+                IGroupMembersCollectionWithReferencesPage page = null;
 
-                foreach (var member in result)
+                while(true)
                 {
-                    members.Add(member);
+                    if (page == null)
+                    {
+                        page = await Connector.Instance.Directory.Groups[GraphGroup.Id]
+                            .Members
+                            .Request()
+                            .GetAsync();
+                    }
+                    else if (page.NextPageRequest != null)
+                    {
+                        page = await page.NextPageRequest.GetAsync();
+                    }
+                    else break;
+                    foreach (var member in page)
+                    {
+                        members.Add(member);
+                    }
                 }
+
+                //var result = await Connector.Instance.Directory.Groups[GraphGroup.Id]
+                //.Members.Request()
+                //.GetAsync();
+
+                //foreach (var member in result)
+                //{
+                //    members.Add(member);
+                //}
             }
             catch (Exception ex)
             {

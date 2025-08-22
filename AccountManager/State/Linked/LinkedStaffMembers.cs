@@ -87,13 +87,23 @@ namespace AccountManager.State.Linked
                     }
                     else
                     {
+                        bool found = false;
                         foreach (var linkedAccount in List)
                         {
                             if (linkedAccount.Value.Wisa.Account != null && linkedAccount.Value.Wisa.Account.WisaID.Equals(account.EmployeeId))
                             {
                                 linkedAccount.Value.Azure.Account = account;
+                                found = true;
                                 break;
                             }
+                        }
+                        if (!found)
+                        {
+                            if (account.Department != null && account.Department.Contains(App.Instance.Settings.SchoolPrefix.Value))
+                            {
+                                List.Add(account.UserPrincipalName, new LinkedStaffMember(account));
+                            }
+                            
                         }
                     }
                 }

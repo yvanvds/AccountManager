@@ -1,11 +1,13 @@
 ﻿using AccountApi;
 using AccountManager.State.Linked;
+using AccountManager.Utils;
 using Microsoft.Graph;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Documents;
 
 namespace AccountManager.Action.StaffAccount
 {
@@ -16,7 +18,19 @@ namespace AccountManager.Action.StaffAccount
             "Dit account bestaat niet in Smartschool of Wisa. Mogelijk mag dit verwijderd worden.",
             true)
         {
+            CanShowDetails = true;
+        }
 
+        public override FlowDocument GetDetails(LinkedStaffMember account)
+        {
+            var result = new FlowTableCreator(false);
+            result.SetHeaders(new string[] { "Active Schools" });
+            result.AddRow(new List<string>() { account.Azure.Account.Department });
+
+            FlowDocument document = new FlowDocument();
+            document.Blocks.Add(result.Create());
+
+            return document;
         }
 
         public async override Task Apply(State.Linked.LinkedStaffMember account)

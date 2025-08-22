@@ -311,6 +311,7 @@
     <Compile Include="State\Wisa\WisaStaff.cs" />
     <Compile Include="State\Wisa\WisaState.cs" />
     <Compile Include="State\Wisa\WisaStudents.cs" />
+    <Compile Include="Utils\CompareStrings.cs" />
     <Compile Include="Utils\ConfigValue.cs" />
     <Compile Include="Utils\FlowTableCreator.cs" />
     <Compile Include="Utils\JsonConverter.cs" />

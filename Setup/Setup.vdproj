@@ -4315,7 +4315,7 @@
             {
             "AssemblyRegister" = "3:1"
             "AssemblyIsInGAC" = "11:FALSE"
-            "AssemblyAsmDisplayName" = "8:AccountApi, Version=1.13.0.22510, Culture=neutral, processorArchitecture=MSIL"
+            "AssemblyAsmDisplayName" = "8:AccountApi, Version=1.13.0.23452, Culture=neutral, processorArchitecture=MSIL"
                 "ScatterAssemblies"
                 {
                     "_7C2B81ADD49D2E24DA81C0AC5017B34A"
@@ -7095,15 +7095,15 @@
         {
         "Name" = "8:Microsoft Visual Studio"
         "ProductName" = "8:AccountManager"
-        "ProductCode" = "8:{F4F232D5-0B7C-46FC-B57B-D2329DCA6261}"
-        "PackageCode" = "8:{B08814E1-475A-4CDF-BED7-DA7DB3F82A94}"
+        "ProductCode" = "8:{4AB693CB-26DD-447C-BB6E-F9BAA8DBC60E}"
+        "PackageCode" = "8:{E9417C1E-0D69-474D-933E-DE556107EE21}"
         "UpgradeCode" = "8:{3019CA5B-E156-4FD0-B211-C79A16F7CBA7}"
         "AspNetVersion" = "8:2.0.50727.0"
         "RestartWWWService" = "11:FALSE"
         "RemovePreviousVersions" = "11:TRUE"
         "DetectNewerInstalledVersion" = "11:TRUE"
         "InstallAllUsers" = "11:TRUE"
-        "ProductVersion" = "8:1.1.15"
+        "ProductVersion" = "8:1.2.5"
         "Manufacturer" = "8:yvan vander sanden"
         "ARPHELPTELEPHONE" = "8:"
         "ARPHELPLINK" = "8:"
@@ -7645,7 +7645,7 @@
         {
             "{5259A561-127C-4D43-A0A1-72F10C7B3BF8}:_7D48BDB7290F486DBD40650C789E73B0"
             {
-            "SourcePath" = "8:..\\AccountManager\\obj\\Release\\AccountManager.exe"
+            "SourcePath" = "8:..\\AccountManager\\obj\\Debug\\AccountManager.exe"
             "TargetName" = "8:"
             "Tag" = "8:"
             "Folder" = "8:_46529C1F85F34FCB8F9551F4770C95AD"

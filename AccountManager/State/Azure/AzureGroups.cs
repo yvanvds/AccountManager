@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json.Linq;
+﻿using AccountManager.Action.StaffAccount;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -24,6 +25,8 @@ namespace AccountManager.State.Azure
                 SaveToJson();
             }
 
+            // not ideal to put this here, but it will do for now
+            AddToAzureStaffGroup.loadGroups();
             App.Instance.Azure.UpdateObservers();
         }
 
