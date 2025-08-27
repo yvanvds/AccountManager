@@ -140,6 +140,7 @@ namespace AccountManager.Exporters.Passwords
                     {
                         section.AddParagraph("Smartschool", "Heading2");
                         section.AddParagraph("Je gebruikt de website https://sanctamaria-aarschot.smartschool.be", "Normal");
+                        section.AddParagraph("Als je de smartphone app gebruikt, zorg er dan voor dat je de juiste school kiest (sanctamaria-aarschot)!", "Normal");
                         section.AddParagraph("Je kan inloggen bij smartschool met deze login, en het volgende wachtwoord:", "Normal");
                         section.AddParagraph("Login     : " + pw.AccountName, "PasswordStyle");
                         section.AddParagraph(pw.SSPassword, "PasswordStyle");

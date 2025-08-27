@@ -54,6 +54,12 @@ namespace AccountManager.Action.StaffAccount
                 {
                     MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to add " + azure.DisplayName + " to group " + "Leerkrachten");
                 }
+
+                groupResult = await AccountApi.Smartschool.GroupManager.RemoveUserFromGroup(smartschool, AccountApi.Smartschool.GroupManager.Root.Find("Leerlingen")).ConfigureAwait(false);
+                if (!groupResult)
+                {
+                    MainWindow.Instance.Log.AddError(Origin.Smartschool, "Failed to remove " + azure.DisplayName + " from group " + "Leerlingen");
+                }
             }
         }
 

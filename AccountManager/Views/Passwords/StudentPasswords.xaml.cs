@@ -53,10 +53,11 @@ namespace AccountManager.Views.Passwords
         {
             GroupTree.Items.Clear();
             IGroup leerlingen = State.App.Instance.Smartschool.Groups.Root.Find("Leerlingen");
-            foreach (var group in leerlingen.Children)
-            {
-                GroupTree.Items.Add(new DisplayItems.SSGroup(group));
-            }
+            GroupTree.Items.Add(new DisplayItems.SSGroup(leerlingen));
+            //foreach (var group in leerlingen.Children)
+            //{
+            //    GroupTree.Items.Add(new DisplayItems.SSGroup(group));
+            //}
         }
 
         private void GroupTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
