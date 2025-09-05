@@ -43,7 +43,7 @@ namespace AccountManager.Action.StaffAccount
 
         public static void Evaluate(LinkedStaffMember account)
         {
-            if (account.Wisa.Account.CODE != account.Smartschool.Account.AccountID)
+            if (account.Wisa.Account.CODE.ToLower() != account.Smartschool.Account.AccountID.ToLower())
             {
                 account.Actions.Add(new UpdateWisaName());
                 account.Smartschool.FlagWarning();

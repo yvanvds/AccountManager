@@ -168,7 +168,7 @@ namespace AccountApi.Smartschool
             {
                 foreach(var account in Accounts)
                 {
-                    if (account.AccountID == id) return account;
+                    if (account.AccountID.ToLower() == id.ToLower()) return account;
                 }
             }
             if (Children != null)
