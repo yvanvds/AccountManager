@@ -1,5 +1,104 @@
 KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER
-1A,00,Eerste jaar A,ASO,111111
-2B,00,Tweede jaar B,ASO,111111
-3C,00,Derde jaar C ASO,ASO,111111
-3C,Alpha,Derde jaar C TSO,TSO,111111
+1A,00,1ste leerjaar A,006246,125252
+1B1,00,1ste leerjaar B,006247,125252
+1B2,00,1ste leerjaar B,006247,125252
+1B3,00,1ste leerjaar B,006247,125252
+1C,00,1ste leerjaar A,006246,125252
+1D,00,1ste leerjaar A,006246,125252
+1E,00,1e leerjaar A,006246,125261
+1F,00,1e leerjaar A,006246,125261
+1G,00,1e leerjaar A,006246,125261
+2A,MAW,2e lj A,040094,125252
+2A,MOW,2e lj A,040095,125252
+2A,STEMW,2e lj A,040099,125252
+2A,ECO,2e lj A,040091,125252
+2B1,00,2e lj B Economie en organisatie met Maatschappij en welzijn,040109,125252
+2B2,00,2e lj B Economie en organisatie met Maatschappij en welzijn,040109,125252
+2B3,00,2e lj B Economie en organisatie met Maatschappij en welzijn,040109,125252
+2C,ECO,2e lj A,040091,125252
+2C,STEMW,2e lj A,040099,125252
+2C,MAW,2e lj A,040094,125252
+2C,MOW,2e lj A,040095,125252
+2D,ECO,2e lj A,040091,125252
+2D,MAW,2e lj A,040094,125252
+2D,MOW,2e lj A,040095,125252
+2D,STEMW,2e lj A,040099,125252
+2E,ECO,2e lj A,040091,125261
+2E,MAW,2e lj A,040094,125261
+2E,MOW,2e lj A,040095,125261
+2E,STEMW,2e lj A,040099,125261
+2F,ECO,2e lj A,040091,125261
+2F,MAW,2e lj A,040094,125261
+2F,MOW,2e lj A,040095,125261
+2F,STEMW,2e lj A,040099,125261
+2G,00,2e lj A Klassieke talen,040092,125261
+3BO1,00,3 Bedrijf en organisatie 1,041306,125252
+3BO2,00,3 Bedrijf en organisatie 2,041306,125252
+3BW,00,3 Bedrijfswetenschappen,041307,125252
+3EW,00,3 Economische wetenschappen,041323,125261
+3LAT,00,3 Latijn,041337,125261
+3MT,00,3 Moderealisatie en textielverzorging,041344,125252
+3MW1,00,3 Maatschappij en welzijn 1,041338,125252
+3MW2,00,3 Maatschappij en welzijn 2,041338,125252
+3MWW,00,3 Maatschappij- en welzijnswetenschappen,041339,125252
+3NW,00,3 Natuurwetenschappen,041347,125261
+3OL,00,3 Organisatie en logistiek,041349,125252
+3ZW1,00,3 Zorg en welzijn 1,041378,125252
+3ZW2,00,3 Zorg en welzijn 2,041378,125252
+4BO1,00,4 Bedrijf en organisatie 1,041974,125252
+4BO2,00,4 Bedrijf en organisatie 2,041974,125252
+4BO3,00,4 Bedrijf en organisatie 3,041974,125252
+4BW1,00,4 Bedrijfswetenschappen 1,041975,125252
+4BW2,00,4 Bedrijfswetenschappen 2,041975,125252
+4EW,00,4 Economische wetenschappen,041991,125261
+4LAT,00,4 Latijn,042005,125261
+4MT,00,4 Moderealisatie en textielverzorging,042012,125252
+4MW1,00,4 Maatschappij en welzijn 1,042006,125252
+4MW2,00,4 Maatschappij en welzijn 2,042006,125252
+4MW3,00,4 Maatschappij en welzijn 3,042006,125252
+4MWW1,00,4 Maatschappij- en welzijnswetenschappen 1,042007,125252
+4MWW2,00,4 Maatschappij- en welzijnswetenschappen 2,042007,125252
+4NW1,00,4 Natuurwetenschappen 1,042015,125261
+4NW2,00,4 Natuurwetenschappen 2,042015,125261
+4OL,00,4 Organisatie en logistiek,042017,125252
+4ZW,00,4 Zorg en welzijn,042046,125252
+5ADB,00,5 Applicatie- en databeheer,043246,125252
+5BO1,00,5 Bedrijfsorganisatie 1,043062,125252
+5BO2,00,5 Bedrijfsorganisatie 2,043062,125252
+5BW,00,5 Bedrijfswetenschappen,043020,125252
+5BZO,00,5 Basiszorg en ondersteuning,043061,125252
+5EMT,00,5 Economie-moderne talen,043082,125261
+5EWI,00,5 Economie-wiskunde,043083,125261
+5GZ,00,5 Gezondheidszorg,043087,125252
+5LOG,00,5 Logistiek,043106,125252
+5LWE,00,5 Latijn-wetenschappen,043104,125261
+5M,00,5 Moderealisatie,043112,125252
+5MTWE,00,5 Moderne talen-wetenschappen,043113,125261
+5OOS,00,5 Onthaal, organisatie en sales,043117
+5OPB,00,5 Opvoeding en begeleiding,043119,125252
+5TO,00,5 Toerisme,043147,125252
+5WEWI1,00,5 Wetenschappen-wiskunde 1,043142,125261
+5WEWI2,00,5 Wetenschappen-wiskunde 2,043142,125261
+5WW,00,5 Welzijnswetenschappen,043141,125252
+6ADB,00,6 Applicatie- en databeheer,043582,125252
+6BO1,00,6 Bedrijfsorganisatie 1,043480,125252
+6BO2,00,6 Bedrijfsorganisatie 2,043480,125252
+6BW1,00,6 Bedrijfswetenschappen 1,043438,125252
+6BW2,00,6 Bedrijfswetenschappen 2,043438,125252
+6BZO,00,6 Basiszorg en ondersteuning,043479,125252
+6EMT,00,6 Economie-moderne talen,043510,125261
+6EWI,00,6 Economie-wiskunde,043511,125261
+6GZ,00,6 Gezondheidszorg,043515,125252
+6LMT,00,6 Latijn-moderne talen,043531,125261
+6LOG,00,6 Logistiek,043534,125252
+6LWE,00,6 Latijn-wetenschappen,043532,125261
+6M,00,6 Moderealisatie,043540,125252
+6MTWE,00,6 Moderne talen-wetenschappen,043541,125261
+6OOS,00,6 Onthaal, organisatie en sales,043545
+6OPB,00,6 Opvoeding en begeleiding,043547,125252
+6TO,00,6 Toerisme,043575,125252
+6WEWI1,00,6 Wetenschappen-wiskunde 1,043570,125261
+6WEWI2,00,6 Wetenschappen-wiskunde 2,043570,125261
+6WW1,00,6 Welzijnswetenschappen 1,043569,125252
+6WW2,00,6 Welzijnswetenschappen 2,043569,125252
+7KB,00,7 Kinderbegeleider,043797,125252

@@ -277,3 +277,8 @@ build/
 # Library packages don't commit pubspec.lock (the app at account_manager/ may
 # later opt back in if it wants pinned versions).
 packages/*/pubspec.lock
+
+# Legacy-app cached state used as local-only input to the wisa_api fixture
+# redaction script. Contains real PII (names, national IDs, addresses);
+# never commit raw. See packages/wisa_api/tool/redact_fixtures.dart.
+artifacts/

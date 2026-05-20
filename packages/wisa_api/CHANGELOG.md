@@ -16,3 +16,7 @@ Initial WISA SOAP connector for the Arcadia Account Manager port (issue #20).
 - Dual workdate support (real + virtual) for schools marked virtual.
 - CSV parser with Belgian date format support and quoted-field handling.
 - Pluggable SOAP transport for headless record-and-replay tests.
+- Record-and-replay fixtures derived from real production data via the
+  redaction script at `tool/redact_fixtures.dart`. Input
+  (`artifacts/`) is gitignored; only the redacted CSV output is
+  committed.

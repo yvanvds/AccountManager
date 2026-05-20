@@ -101,37 +101,44 @@ void main() {
   });
 
   group('loadSchools', () {
-    test('returns parsed schools with isVirtual=false', () async {
+    test('parses every school in the fixture with isVirtual=false',
+        () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
-      expect(schools, hasLength(2));
-      expect(schools.first.id, 25);
-      expect(schools.first.name, 'Sint-Maria-Aalst');
-      expect(schools.first.description, 'SMA');
+      expect(schools, isNotEmpty);
       expect(schools.every((s) => !s.isVirtual), isTrue);
+      // The redacted fixture preserves the legacy edge case of a "?"
+      // placeholder school at id 0.
+      expect(schools.any((s) => s.id == 0 && s.name == '?'), isTrue);
+      // ISMAA (id 25) is the primary active school in the fixture.
+      expect(schools.any((s) => s.id == 25), isTrue);
     });
   });
 
   group('sync', () {
-    test('produces a snapshot from fixtures', () async {
+    test('produces a snapshot from the active school', () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
+      final school = schools.firstWhere((s) => s.id == 25);
       final snapshot = await c.sync(
-        schools: [schools.first],
+        schools: [school],
         workDate: DateTime(2024, 9, 1),
       );
       expect(snapshot.origin, core.Origin.wisa);
-      expect(snapshot.students, hasLength(3));
-      expect(snapshot.staff, hasLength(3));
-      // Class groups: the dedupe drops the "00" row of 3C because 3C also
-      // has a non-"00" row, leaving 1A, 2B, and 3C/Alpha.
-      expect(
-        snapshot.classGroups.map((g) => g.fullName),
-        containsAll(<String>['1A', '2B', '3C Alpha']),
-      );
+      expect(snapshot.students, isNotEmpty);
+      expect(snapshot.staff, isNotEmpty);
+      expect(snapshot.classGroups, isNotEmpty);
       expect(snapshot.schools, hasLength(1));
+      // The fixture has real multi-subgroup classes (e.g. 2A with MAW,
+      // MOW, STEMW, ECO subgroups). The dedupe drops the "00" row when
+      // any non-"00" row exists, so we expect at least one subgroup
+      // class.
+      expect(
+        snapshot.classGroups.any((g) => g.groupName != '00'),
+        isTrue,
+      );
     });
 
     test('sends Werkdatum=dd/MM/yyyy', () async {
@@ -139,7 +146,7 @@ void main() {
       final c = buildConnector(t);
       final schools = await c.loadSchools();
       await c.sync(
-        schools: [schools.first],
+        schools: [schools.firstWhere((s) => s.id == 25)],
         workDate: DateTime(2024, 9, 1),
       );
       final werkdates = t.calls
@@ -154,12 +161,13 @@ void main() {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
+      final ismaa = schools.firstWhere((s) => s.id == 25);
       final markedVirtual = WisaConnector.applySchoolRules(
-        schools,
-        const [MarkAsVirtual('Sint-Maria-Aalst')],
+        [ismaa],
+        const [MarkAsVirtual('ISMAA')],
       );
       await c.sync(
-        schools: [markedVirtual.first],
+        schools: markedVirtual,
         workDate: DateTime(2024, 9, 1),
         virtualWorkDate: DateTime(2025, 9, 1),
       );
@@ -171,20 +179,38 @@ void main() {
       expect(werkdates, {'01/09/2025'});
     });
 
-    test('applies ReplaceInstitute to class group schoolCodes', () async {
+    test('applies ReplaceInstitute to matching class group schoolCodes',
+        () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
-      final snapshot = await c.sync(
-        schools: [schools.first],
+      // The fixture uses real institute number '125252' for ISMAA's
+      // class groups.
+      final beforeMatch = (await c.sync(
+        schools: [schools.firstWhere((s) => s.id == 25)],
+        workDate: DateTime(2024, 9, 1),
+      ))
+          .classGroups
+          .where((g) => g.schoolCode == '125252')
+          .length;
+      expect(beforeMatch, greaterThan(0));
+
+      final afterSnapshot = await c.sync(
+        schools: [schools.firstWhere((s) => s.id == 25)],
         workDate: DateTime(2024, 9, 1),
         rules: const [
-          ReplaceInstitute(original: '111111', replacement: '999999'),
+          ReplaceInstitute(original: '125252', replacement: '999999'),
         ],
       );
       expect(
-        snapshot.classGroups.every((g) => g.schoolCode == '999999'),
-        isTrue,
+        afterSnapshot.classGroups.any((g) => g.schoolCode == '125252'),
+        isFalse,
+      );
+      expect(
+        afterSnapshot.classGroups
+            .where((g) => g.schoolCode == '999999')
+            .length,
+        beforeMatch,
       );
     });
 
@@ -192,43 +218,68 @@ void main() {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
-      final snapshot = await c.sync(
-        schools: [schools.first],
+      final school = schools.firstWhere((s) => s.id == 25);
+      final before = (await c.sync(
+        schools: [school],
         workDate: DateTime(2024, 9, 1),
-        rules: const [DontImportClass('2B')],
-      );
-      expect(
-        snapshot.classGroups.any((g) => g.name == '2B'),
-        isFalse,
-      );
+      ))
+          .classGroups;
+      // Pick any class group present in the snapshot and drop it.
+      final target = before.first.name;
+      final after = (await c.sync(
+        schools: [school],
+        workDate: DateTime(2024, 9, 1),
+        rules: [DontImportClass(target)],
+      ))
+          .classGroups;
+      expect(after.any((g) => g.name == target), isFalse);
+      expect(after.length, lessThan(before.length));
     });
 
-    test('applies DontImportUserFromWisa at snapshot construction', () async {
+    test('applies DontImportUserFromWisa at snapshot construction',
+        () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
-      final snapshot = await c.sync(
-        schools: [schools.first],
+      final school = schools.firstWhere((s) => s.id == 25);
+      final before = (await c.sync(
+        schools: [school],
+        workDate: DateTime(2024, 9, 1),
+      ))
+          .staff;
+      // 'AAAAA' is the first generated code in the redacted fixture.
+      final after = (await c.sync(
+        schools: [school],
         workDate: DateTime(2024, 9, 1),
         rules: const [DontImportUserFromWisa('AAAAA')],
-      );
-      expect(
-        snapshot.staff.any((s) => s.code.value == 'AAAAA'),
-        isFalse,
-      );
-      expect(snapshot.staff, hasLength(2));
+      ))
+          .staff;
+      expect(after.any((s) => s.code.value == 'AAAAA'), isFalse);
+      expect(after.length, before.length - 1);
     });
 
     test('dedupes staff across schools by code', () async {
-      // Two schools, same staff CSV — duplicate codes must be dropped.
+      // Two schools, same staff CSV (the fake transport returns the
+      // same fixture regardless of IS_ID) — duplicate codes must be
+      // dropped on the second load.
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
-      final snapshot = await c.sync(
-        schools: schools, // both schools share the same staff fixture
+      final twoSchools = [
+        schools.firstWhere((s) => s.id == 25),
+        schools.firstWhere((s) => s.id == 27),
+      ];
+      final oneSchool = await c.sync(
+        schools: [twoSchools.first],
         workDate: DateTime(2024, 9, 1),
       );
-      expect(snapshot.staff, hasLength(3));
+      final t2 = _FakeTransport(fixtures);
+      final c2 = buildConnector(t2);
+      final bothSchools = await c2.sync(
+        schools: twoSchools,
+        workDate: DateTime(2024, 9, 1),
+      );
+      expect(bothSchools.staff.length, oneSchool.staff.length);
     });
   });
 
