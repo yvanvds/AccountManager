@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(gh label *)",
-      "PowerShell(\\(Get-Command gh -ErrorAction SilentlyContinue\\).Source; gh --version 2>&1 | Select-Object -First 2)"
-    ]
-  }
-}
