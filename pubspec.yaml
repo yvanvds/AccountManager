@@ -1,0 +1,13 @@
+name: arcadia_account_manager_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.6.0
+
+workspace:
+  - packages/account_core
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0
+  coverage: ^1.9.0
