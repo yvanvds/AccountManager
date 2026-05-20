@@ -1,0 +1,116 @@
+# Continuous integration for the Flutter/Dart port.
+#
+# Scope: ONLY the new Dart packages under `packages/`. The legacy WPF/C#
+# code under `legacy-wpf/` is reference material and is explicitly excluded
+# from analysis (see sonar-project.properties).
+#
+# ----------------------------------------------------------------------------
+# Operator setup (one-time, after this workflow lands):
+#   1. Create a SonarCloud (aka SonarQube Cloud) project for
+#      github.com/yvanvds/AccountManager. Use the default project key
+#      `yvanvds_AccountManager` and organization `yvanvds`. Adjust
+#      sonar-project.properties if SonarCloud assigns different values.
+#   2. Generate a SonarCloud token and add it as a repository secret named
+#      `SONAR_TOKEN`.
+#   3. Add a repository variable `SONARCLOUD_ENABLED=true` to turn on the
+#      SonarCloud job. Until this is set, the sonar job is skipped and the
+#      workflow still passes — so this file can land before the operator
+#      finishes the SonarCloud setup.
+# ----------------------------------------------------------------------------
+#
+# Until issue #19 (account_core) lands a root `pubspec.yaml`, the Dart steps
+# are no-ops and the workflow reports green based on the workspace-detection
+# notice alone. That is intentional: we want CI scaffolding committed early.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dart:
+    name: Dart analyze + test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # SonarCloud needs full history for blame-based new-code detection.
+          fetch-depth: 0
+
+      - name: Detect Dart workspace
+        id: workspace
+        run: |
+          if [ -f pubspec.yaml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=No Dart workspace yet::Skipping Dart steps. CI will become meaningful once issue #19 (account_core) lands a root pubspec.yaml."
+          fi
+
+      - name: Set up Dart
+        if: steps.workspace.outputs.exists == 'true'
+        uses: dart-lang/setup-dart@v1
+
+      - name: dart pub get
+        if: steps.workspace.outputs.exists == 'true'
+        run: dart pub get
+
+      - name: dart analyze
+        if: steps.workspace.outputs.exists == 'true'
+        run: dart analyze --fatal-infos --fatal-warnings
+
+      - name: dart test (with coverage)
+        if: steps.workspace.outputs.exists == 'true'
+        run: |
+          dart test --coverage=coverage
+          dart pub global activate coverage
+          dart pub global run coverage:format_coverage \
+            --lcov \
+            --in=coverage \
+            --out=coverage/lcov.info \
+            --report-on=packages \
+            --packages=.dart_tool/package_config.json
+
+      - name: Upload coverage artifact
+        if: steps.workspace.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 7
+
+  sonar:
+    name: SonarQube Cloud scan
+    needs: dart
+    runs-on: ubuntu-latest
+    # Skipped until the operator sets repo variable SONARCLOUD_ENABLED=true.
+    # See the header comment for setup steps.
+    if: ${{ vars.SONARCLOUD_ENABLED == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage
+        # Coverage may not exist yet (no Dart workspace).
+        continue-on-error: true
+
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
