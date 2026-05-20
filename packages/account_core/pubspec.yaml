@@ -1,0 +1,19 @@
+name: account_core
+description: >-
+  Canonical domain model for the Arcadia Account Manager port: entities,
+  identity types, enums, password generator, and log sink. Pure Dart; no
+  Flutter, no I/O, no connector dependencies.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+# License: GPL-3.0-or-later. See LICENSE.
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0
