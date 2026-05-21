@@ -160,7 +160,11 @@ String decodeGetCsvDataResponse(String responseXml) {
   if (results.isEmpty) {
     throw WisaSoapResponseException('No <Result> element in response');
   }
-  final encoded = results.first.innerText.trim();
+  // WISA emits the base64 payload wrapped across lines (~76-char chunks
+  // separated by CRLF). Dart's `base64.decode` is strict and rejects any
+  // inline whitespace, unlike .NET's `Convert.FromBase64String`, which
+  // is why the legacy app never hit this. Strip all whitespace first.
+  final encoded = results.first.innerText.replaceAll(RegExp(r'\s+'), '');
   if (encoded.isEmpty) return '';
   try {
     final bytes = base64.decode(encoded);

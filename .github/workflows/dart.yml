@@ -1,0 +1,80 @@
+# Dart CI for the wisa_api package (and any future workspace package).
+#
+# Two jobs:
+#   - test       : offline `dart analyze` + `dart test`. Always runs.
+#   - live-test  : opt-in WISA integration test (`test/integration/`).
+#                  Gated to this repository so fork PRs cannot trigger
+#                  secret access — fork pull_request runs do not expose
+#                  secrets anyway, the gate is belt-and-suspenders.
+#
+# Operator setup for live-test (one-time):
+#   Add the following six repository secrets:
+#     WISA_SERVER, WISA_PORT, WISA_DATABASE,
+#     WISA_USERNAME, WISA_PASSWORD, WISA_SCHOOL_ID
+#   See packages/wisa_api/README.md and .wisa.env.example for the names.
+#
+# Overlap note: an older workflow (`ci.yml`) also runs `dart analyze` +
+# `dart test` on pull_request, plus coverage / SonarCloud. The two
+# workflows are kept side-by-side for now; consolidation is a follow-up.
+
+name: Dart
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Analyze + test (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: dart pub get
+        run: dart pub get
+
+      - name: dart analyze
+        run: dart analyze --fatal-infos --fatal-warnings
+
+      - name: dart test
+        # No WISA_USERNAME in this job — the integration test self-skips,
+        # see test/integration/wisa_live_test.dart.
+        run: dart test
+
+  live-test:
+    name: WISA live integration
+    needs: test
+    runs-on: ubuntu-latest
+    # Only run on the canonical repo. Fork PRs do not get secrets even
+    # without this gate, but skipping the job outright keeps the build
+    # matrix tidy.
+    if: github.repository == 'yvanvds/AccountManager'
+    env:
+      WISA_SERVER: ${{ secrets.WISA_SERVER }}
+      WISA_PORT: ${{ secrets.WISA_PORT }}
+      WISA_DATABASE: ${{ secrets.WISA_DATABASE }}
+      WISA_USERNAME: ${{ secrets.WISA_USERNAME }}
+      WISA_PASSWORD: ${{ secrets.WISA_PASSWORD }}
+      WISA_SCHOOL_ID: ${{ secrets.WISA_SCHOOL_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: dart pub get
+        run: dart pub get
+
+      - name: Run live integration test
+        # If WISA_USERNAME is unset (secrets not configured yet) the test
+        # self-skips and this still passes — by design, so the workflow
+        # can land before secrets are provisioned.
+        run: dart test packages/wisa_api/test/integration/

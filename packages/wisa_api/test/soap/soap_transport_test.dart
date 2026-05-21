@@ -51,5 +51,37 @@ void main() {
       );
       transport.close();
     });
+
+    test('WisaSoapHttpException.toString redacts echoed credentials',
+        () async {
+      const echoed =
+          '<Envelope><Username>alice</Username><Password>hunter2</Password></Envelope>';
+      final ex = WisaSoapHttpException(500, echoed);
+      final s = ex.toString();
+      expect(s, isNot(contains('hunter2')));
+      expect(s, isNot(contains('alice')));
+      expect(s, contains('[REDACTED]'));
+    });
+  });
+
+  group('redactCredentials', () {
+    test('replaces Username and Password element contents', () {
+      const input =
+          '<x><Username>u</Username><Password>p</Password></x>';
+      expect(
+        redactCredentials(input),
+        '<x><Username>[REDACTED]</Username><Password>[REDACTED]</Password></x>',
+      );
+    });
+
+    test('handles attributes on the element tag', () {
+      const input = '<Password xsi:type="xsd:string">secret</Password>';
+      expect(redactCredentials(input), contains('[REDACTED]'));
+      expect(redactCredentials(input), isNot(contains('secret')));
+    });
+
+    test('is a no-op when neither element is present', () {
+      expect(redactCredentials('<x>plain</x>'), '<x>plain</x>');
+    });
   });
 }

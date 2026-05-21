@@ -14,12 +14,33 @@ abstract interface class WisaSoapTransport {
 }
 
 /// Thrown when the HTTP transport receives a non-2xx response.
+///
+/// Some WISA error responses echo back the original request envelope,
+/// which contains the password in plaintext. [toString] redacts those
+/// credential fields so the exception is safe to log.
 class WisaSoapHttpException implements Exception {
   final int statusCode;
   final String body;
   WisaSoapHttpException(this.statusCode, this.body);
   @override
-  String toString() => 'WisaSoapHttpException($statusCode): $body';
+  String toString() =>
+      'WisaSoapHttpException($statusCode): ${redactCredentials(body)}';
+}
+
+/// Replaces the contents of `<Username>…</Username>` and
+/// `<Password>…</Password>` elements with `[REDACTED]`. Used by
+/// transport exceptions and by the capture script. Conservative — runs
+/// on plain strings, never throws.
+String redactCredentials(String input) {
+  return input
+      .replaceAllMapped(
+        RegExp(r'(<Username[^>]*>).*?(</Username>)', dotAll: true),
+        (m) => '${m.group(1)}[REDACTED]${m.group(2)}',
+      )
+      .replaceAllMapped(
+        RegExp(r'(<Password[^>]*>).*?(</Password>)', dotAll: true),
+        (m) => '${m.group(1)}[REDACTED]${m.group(2)}',
+      );
 }
 
 /// Default transport backed by `package:http`. Sends a SOAP 1.1 POST with
