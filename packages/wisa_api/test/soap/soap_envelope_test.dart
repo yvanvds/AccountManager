@@ -91,6 +91,25 @@ void main() {
       expect(decodeGetCsvDataResponse(makeResponse('')), '');
     });
 
+    test('tolerates whitespace inside the base64 payload', () {
+      // WISA wraps the base64 across ~76-char lines separated by CRLF.
+      // Dart's base64.decode is strict; the decoder must strip whitespace.
+      const csv = 'ID,NAME\n1,Alpha\n2,Beta\n';
+      final encoded = base64.encode(utf8.encode(csv));
+      final wrapped =
+          '${encoded.substring(0, 8)}\r\n${encoded.substring(8, 16)}\n  '
+          '${encoded.substring(16)}';
+      final xml = '''<?xml version="1.0" encoding="utf-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
+  <SOAP-ENV:Body>
+    <NS1:GetCSVDataResponse xmlns:NS1="urn:WisaAPIService-WisaAPIService">
+      <Result xsi:type="xsd:base64Binary" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">$wrapped</Result>
+    </NS1:GetCSVDataResponse>
+  </SOAP-ENV:Body>
+</SOAP-ENV:Envelope>''';
+      expect(decodeGetCsvDataResponse(xml), csv);
+    });
+
     test('throws WisaSoapResponseException when Result is missing', () {
       const xml = '''<?xml version="1.0"?>
 <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">

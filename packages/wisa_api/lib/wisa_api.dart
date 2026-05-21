@@ -9,6 +9,7 @@
 /// (read-only): `legacy-wpf/AccountApi/Wisa/`.
 library;
 
+export 'src/config/live_config.dart' show WisaLiveConfig;
 export 'src/connector.dart' show WisaConnector, WisaQuery;
 export 'src/csv/csv_parser.dart' show CsvHeaderMismatch, CsvRowParseException;
 export 'src/models/wisa_class_group.dart';
@@ -19,6 +20,13 @@ export 'src/rules/import_rules.dart';
 export 'src/snapshot.dart';
 export 'src/soap/credentials.dart';
 export 'src/soap/soap_envelope.dart'
-    show WisaSoapFault, WisaSoapResponseException;
+    show
+        WisaSoapFault,
+        WisaSoapResponseException,
+        decodeGetCsvDataResponse;
 export 'src/soap/soap_transport.dart'
-    show HttpWisaSoapTransport, WisaSoapHttpException, WisaSoapTransport;
+    show
+        HttpWisaSoapTransport,
+        WisaSoapHttpException,
+        WisaSoapTransport,
+        redactCredentials;

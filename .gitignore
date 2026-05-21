@@ -282,3 +282,10 @@ packages/*/pubspec.lock
 # redaction script. Contains real PII (names, national IDs, addresses);
 # never commit raw. See packages/wisa_api/tool/redact_fixtures.dart.
 artifacts/
+
+# Raw SOAP + CSV dumps from packages/wisa_api/tool/capture_responses.dart.
+# Local-only diagnostic output; contains real PII straight from WISA.
+packages/wisa_api/captures/
+
+# Populated .wisa.env (real credentials). Only .wisa.env.example is committed.
+.wisa.env
