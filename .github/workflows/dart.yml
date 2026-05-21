@@ -44,9 +44,12 @@ jobs:
         run: dart analyze --fatal-infos --fatal-warnings
 
       - name: dart test
+        # Dart workspaces don't auto-discover tests from the root; pass
+        # each workspace package's test/ directory explicitly. Update
+        # this list whenever a new package is added to pubspec.yaml.
         # No WISA_USERNAME in this job — the integration test self-skips,
         # see test/integration/wisa_live_test.dart.
-        run: dart test
+        run: dart test packages/account_core/test packages/wisa_api/test
 
   live-test:
     name: WISA live integration
