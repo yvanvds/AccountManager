@@ -1,0 +1,24 @@
+name: wisa_api
+description: >-
+  WISA SOAP connector for the Arcadia Account Manager port. Pulls students,
+  staff, class groups, and schools from a school's WISA instance and
+  produces immutable WisaSnapshots. Pure Dart, headless-testable.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+# License: GPL-3.0-or-later. See LICENSE.
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  account_core:
+  http: ^1.2.0
+  xml: ^6.5.0
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0
