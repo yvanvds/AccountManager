@@ -78,6 +78,16 @@ When `SMARTSCHOOL_ACCESSCODE` is empty the integration test self-skips, so
 `dart test` stays offline by default. The live test is **read-only** (sync
 only) per the project's live-testing policy.
 
+> **Credential caveat.** Smartschool does **not** offer a read-only API
+> tier: the single `SMARTSCHOOL_ACCESSCODE` passphrase is the same
+> credential used for writes (create user, set password, …). So unlike the
+> Azure connector — whose CI credential is read-only at the directory level —
+> the read-only stance here is enforced **client-side** (the test calls only
+> `sync()`), which is weaker than a credential-level guarantee. This is the
+> deliberate, accepted trade-off the live-testing policy flags; it matches how
+> the equally-capable `WISA_*` credential is used in CI. Write coverage stays
+> in offline unit tests against recorded fixtures, never live.
+
 ### Capture script
 
 Run from anywhere inside the repo, after exporting the env vars:
