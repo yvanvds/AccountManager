@@ -1,0 +1,16 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users",
+  "value": [
+    {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "userPrincipalName": "carla.maes@school.example",
+      "employeeId": "S2001",
+      "displayName": "Carla Maes",
+      "givenName": "Carla",
+      "surname": "Maes",
+      "companyName": null,
+      "department": "GBS",
+      "accountEnabled": true
+    }
+  ]
+}

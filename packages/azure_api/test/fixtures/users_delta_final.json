@@ -1,0 +1,34 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users",
+  "@odata.deltaLink": "https://graph.microsoft.com/v1.0/users/delta?$deltatoken=NEWDELTA456",
+  "value": [
+    {
+      "id": "00000000-0000-0000-0000-000000000009",
+      "userPrincipalName": "dirk.nieuw@student.school.example",
+      "employeeId": "W1009",
+      "displayName": "Dirk Nieuw",
+      "givenName": "Dirk",
+      "surname": "Nieuw",
+      "companyName": "GBS",
+      "department": "1A",
+      "accountEnabled": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000050",
+      "userPrincipalName": "evy.extern@other.example",
+      "employeeId": "X9999",
+      "displayName": "Evy Extern",
+      "givenName": "Evy",
+      "surname": "Extern",
+      "companyName": "OTHER",
+      "department": "ZZ",
+      "accountEnabled": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "@removed": {
+        "reason": "deleted"
+      }
+    }
+  ]
+}

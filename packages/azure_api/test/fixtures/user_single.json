@@ -1,0 +1,12 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users/$entity",
+  "id": "00000000-0000-0000-0000-000000000001",
+  "userPrincipalName": "ann.peeters@student.school.example",
+  "employeeId": "W1001",
+  "displayName": "Ann Peeters",
+  "givenName": "Ann",
+  "surname": "Peeters",
+  "companyName": "GBS",
+  "department": "3A",
+  "accountEnabled": true
+}

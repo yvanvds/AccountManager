@@ -1,0 +1,25 @@
+name: azure_api
+description: >-
+  Microsoft Graph connector for the Arcadia Account Manager port. Reads Azure
+  AD / Office 365 users and groups into an immutable AzureSnapshot using Graph
+  $filter, $select and /users/delta, and performs the user and group-membership
+  writes the action set depends on. Pure Dart, headless-testable.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+# License: GPL-3.0-or-later. See LICENSE.
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  account_core:
+  http: ^1.2.0
+  oauth2: ^2.0.0
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0

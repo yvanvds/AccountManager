@@ -1,0 +1,162 @@
+import 'dart:convert';
+
+import 'package:azure_api/azure_api.dart';
+import 'package:test/test.dart';
+
+import 'support/fake_graph_transport.dart';
+
+void main() {
+  GraphClient clientWith(FakeGraphTransport transport) => GraphClient(
+        transport: transport,
+        auth: const StaticAuthProvider('T'),
+      );
+
+  group('listGroups', () {
+    late FakeGraphTransport transport;
+    late GroupManager groups;
+
+    setUp(() {
+      transport = FakeGraphTransport((req) {
+        if (req.url.path.contains('/members')) {
+          return jsonOk(readFixture('group_members_3a.json'));
+        }
+        return jsonOk(readFixture('groups.json'));
+      });
+      groups = GroupManager(clientWith(transport));
+    });
+
+    test('filters by startswith(displayName, prefix) with \$select', () async {
+      await groups.listGroups('GBS');
+      final groupCall = transport.requests.first;
+      expect(
+        groupCall.url.queryParameters[r'$filter'],
+        "startswith(displayName,'GBS')",
+      );
+      expect(
+        groupCall.url.queryParameters[r'$select'],
+        'id,displayName,securityEnabled',
+      );
+      expect(groupCall.headers['ConsistencyLevel'], 'eventual');
+    });
+
+    test('loads member ids for each group', () async {
+      final result = await groups.listGroups('GBS');
+      expect(result, hasLength(2));
+      expect(result.first.displayName, 'GBS-3A');
+      expect(result.first.memberIds, [
+        '00000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000002',
+      ]);
+    });
+  });
+
+  group('membership writes', () {
+    test('addMember POSTs an @odata.id directoryObjects ref', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final groups = GroupManager(clientWith(transport));
+      await groups.addMember('g1', 'u1');
+      expect(transport.last.method, 'POST');
+      expect(transport.last.url.path, endsWith(r'/members/$ref'));
+      final body = jsonDecode(transport.last.body!) as Map<String, dynamic>;
+      expect(
+        body['@odata.id'],
+        'https://graph.microsoft.com/v1.0/directoryObjects/u1',
+      );
+    });
+
+    test('removeMember DELETEs the member ref', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final groups = GroupManager(clientWith(transport));
+      await groups.removeMember('g1', 'u1');
+      expect(transport.last.method, 'DELETE');
+      expect(transport.last.url.path, endsWith(r'/members/u1/$ref'));
+    });
+  });
+
+  group('\$batch', () {
+    test('coalesces many adds into one \$batch POST with relative urls',
+        () async {
+      final transport = FakeGraphTransport((req) {
+        final body = jsonDecode(req.body!) as Map<String, dynamic>;
+        final requests = body['requests'] as List<dynamic>;
+        return jsonOk({
+          'responses': [
+            for (final r in requests.cast<Map<String, dynamic>>())
+              {'id': r['id'], 'status': 204},
+          ],
+        });
+      });
+      final groups = GroupManager(clientWith(transport));
+
+      final results = await groups.addMembers('g1', ['u1', 'u2', 'u3']);
+
+      expect(transport.requests, hasLength(1));
+      expect(transport.last.url.path, endsWith(r'/$batch'));
+      final body = jsonDecode(transport.last.body!) as Map<String, dynamic>;
+      final reqs = (body['requests'] as List).cast<Map<String, dynamic>>();
+      expect(reqs, hasLength(3));
+      expect(reqs.first['method'], 'POST');
+      expect(reqs.first['url'], r'/groups/g1/members/$ref');
+      expect(results.every((r) => r.isSuccess), isTrue);
+    });
+
+    test('chunks batches larger than 20 sub-requests', () async {
+      var batches = 0;
+      final transport = FakeGraphTransport((req) {
+        batches++;
+        final body = jsonDecode(req.body!) as Map<String, dynamic>;
+        final requests = body['requests'] as List<dynamic>;
+        return jsonOk({
+          'responses': [
+            for (final r in requests.cast<Map<String, dynamic>>())
+              {'id': r['id'], 'status': 204},
+          ],
+        });
+      });
+      final groups = GroupManager(clientWith(transport));
+
+      final userIds = List.generate(45, (i) => 'u$i');
+      final results = await groups.addMembers('g1', userIds);
+
+      expect(batches, 3); // 20 + 20 + 5
+      expect(results, hasLength(45));
+    });
+
+    test('empty member list short-circuits without a call', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final groups = GroupManager(clientWith(transport));
+      expect(await groups.addMembers('g1', const []), isEmpty);
+      expect(transport.requests, isEmpty);
+    });
+
+    test('removeMembers batches DELETE \$ref sub-requests', () async {
+      final transport = FakeGraphTransport((req) {
+        final body = jsonDecode(req.body!) as Map<String, dynamic>;
+        final requests =
+            (body['requests'] as List).cast<Map<String, dynamic>>();
+        return jsonOk({
+          'responses': [
+            for (final r in requests) {'id': r['id'], 'status': 204},
+          ],
+        });
+      });
+      final groups = GroupManager(clientWith(transport));
+
+      final results = await groups.removeMembers('g1', ['u1', 'u2']);
+
+      final reqs = (jsonDecode(transport.last.body!)
+          as Map<String, dynamic>)['requests'] as List;
+      expect(reqs, hasLength(2));
+      expect((reqs.first as Map)['method'], 'DELETE');
+      expect((reqs.first as Map)['url'], r'/groups/g1/members/u1/$ref');
+      expect(results.every((r) => r.isSuccess), isTrue);
+    });
+
+    test('removeMembers short-circuits on an empty list', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final groups = GroupManager(clientWith(transport));
+      expect(await groups.removeMembers('g1', const []), isEmpty);
+      expect(transport.requests, isEmpty);
+    });
+  });
+}

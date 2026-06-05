@@ -1,0 +1,16 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#groups",
+  "@odata.count": 2,
+  "value": [
+    {
+      "id": "g0000000-0000-0000-0000-0000000000a1",
+      "displayName": "GBS-3A",
+      "securityEnabled": true
+    },
+    {
+      "id": "g0000000-0000-0000-0000-0000000000a2",
+      "displayName": "GBS-Staff",
+      "securityEnabled": false
+    }
+  ]
+}

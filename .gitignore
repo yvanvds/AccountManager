@@ -293,8 +293,15 @@ packages/wisa_api/captures/
 # Local-only diagnostic output; contains real PII straight from Smartschool.
 packages/smartschool_api/captures/
 
+# Raw Graph JSON dumps from packages/azure_api/tool/capture_responses.dart.
+# Local-only diagnostic output; contains real PII straight from Azure AD.
+packages/azure_api/captures/
+
 # Populated .wisa.env (real credentials). Only .wisa.env.example is committed.
 .wisa.env
 
 # Populated .smartschool.env (real accesscode). Only the .example is committed.
 .smartschool.env
+
+# Populated .azure.env (real token/ids). Only .azure.env.example is committed.
+.azure.env
