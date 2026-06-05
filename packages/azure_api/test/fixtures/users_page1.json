@@ -1,0 +1,29 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users",
+  "@odata.count": 3,
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/users?$skiptoken=PAGE2",
+  "value": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "userPrincipalName": "ann.peeters@student.school.example",
+      "employeeId": "W1001",
+      "displayName": "Ann Peeters",
+      "givenName": "Ann",
+      "surname": "Peeters",
+      "companyName": "GBS",
+      "department": "3A",
+      "accountEnabled": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "userPrincipalName": "bram.janssens@student.school.example",
+      "employeeId": "W1002",
+      "displayName": "Bram Janssens",
+      "givenName": "Bram",
+      "surname": "Janssens",
+      "companyName": "GBS",
+      "department": "3A",
+      "accountEnabled": true
+    }
+  ]
+}

@@ -1,0 +1,175 @@
+import 'package:account_core/account_core.dart' as core;
+
+/// An Azure AD / Office 365 user, as read from Microsoft Graph.
+///
+/// Implements [core.AzureUser] so the linker can refer to it by its linking
+/// keys (`id`, `upn`, `employeeId`) without depending on this package
+/// (`docs/domain-model.md` §3.6, §4). The remaining fields are the ones the
+/// connector reads and writes via Graph `$select`; nothing Graph emits that
+/// the port does not use is carried.
+///
+/// Immutable. Legacy reference (read-only):
+/// `legacy-wpf/AccountApi/Azure/User.cs`.
+class AzureUser implements core.AzureUser {
+  /// Azure object id (GUID). Stable across UPN changes.
+  @override
+  final String id;
+
+  /// `userPrincipalName`. The primary linking key; compared
+  /// case-insensitively and trimmed (INV-12).
+  @override
+  final String upn;
+
+  /// Equals `WisaStudent.wisaId` / `WisaStaff.wisaId` when set — the
+  /// cross-system bridge to WISA. `null`/empty for accounts not provisioned
+  /// from WISA.
+  @override
+  final String? employeeId;
+
+  final String displayName;
+  final String givenName;
+  final String surname;
+
+  /// School prefix; the legacy connector uses it to identify alumni.
+  final String? companyName;
+
+  /// Holds the school prefix for staff; the student class group for students.
+  final String? department;
+
+  /// Whether the account is enabled for sign-in.
+  final bool accountEnabled;
+
+  const AzureUser({
+    required this.id,
+    required this.upn,
+    this.employeeId,
+    this.displayName = '',
+    this.givenName = '',
+    this.surname = '',
+    this.companyName,
+    this.department,
+    this.accountEnabled = true,
+  });
+
+  /// Fields the connector requests from Graph (`$select`). Kept minimal so the
+  /// initial bulk read never pulls more than the port uses (PAIN-2).
+  static const List<String> graphSelectFields = [
+    'id',
+    'userPrincipalName',
+    'employeeId',
+    'displayName',
+    'givenName',
+    'surname',
+    'companyName',
+    'department',
+    'accountEnabled',
+  ];
+
+  /// Parses a single Graph `user` resource (a JSON object as returned by
+  /// `/users`, `/users/{id}` or `/users/delta`). Missing optional fields
+  /// become `null`; missing strings become empty.
+  factory AzureUser.fromGraphJson(Map<String, dynamic> json) {
+    String str(String key) => (json[key] as String?) ?? '';
+    String? nullable(String key) {
+      final v = json[key] as String?;
+      return (v == null || v.isEmpty) ? null : v;
+    }
+
+    return AzureUser(
+      id: str('id'),
+      upn: str('userPrincipalName'),
+      employeeId: nullable('employeeId'),
+      displayName: str('displayName'),
+      givenName: str('givenName'),
+      surname: str('surname'),
+      companyName: nullable('companyName'),
+      department: nullable('department'),
+      accountEnabled: (json['accountEnabled'] as bool?) ?? true,
+    );
+  }
+
+  /// Whether this delta entry marks the user as removed. Graph signals a
+  /// deleted user with an `@removed` annotation on the resource.
+  static bool isRemoved(Map<String, dynamic> json) =>
+      json.containsKey('@removed');
+
+  /// Serializes to the connector's own cache shape (not Graph's). Round-trips
+  /// with [AzureUser.fromJson] for the on-disk "last known good" snapshot.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'upn': upn,
+        if (employeeId != null) 'employeeId': employeeId,
+        'displayName': displayName,
+        'givenName': givenName,
+        'surname': surname,
+        if (companyName != null) 'companyName': companyName,
+        if (department != null) 'department': department,
+        'accountEnabled': accountEnabled,
+      };
+
+  factory AzureUser.fromJson(Map<String, dynamic> json) => AzureUser(
+        id: json['id'] as String,
+        upn: json['upn'] as String,
+        employeeId: json['employeeId'] as String?,
+        displayName: (json['displayName'] as String?) ?? '',
+        givenName: (json['givenName'] as String?) ?? '',
+        surname: (json['surname'] as String?) ?? '',
+        companyName: json['companyName'] as String?,
+        department: json['department'] as String?,
+        accountEnabled: (json['accountEnabled'] as bool?) ?? true,
+      );
+
+  /// Returns a copy with the given fields replaced. Used to apply writes
+  /// locally after a successful Graph PATCH.
+  AzureUser copyWith({
+    String? id,
+    String? upn,
+    String? employeeId,
+    String? displayName,
+    String? givenName,
+    String? surname,
+    String? companyName,
+    String? department,
+    bool? accountEnabled,
+  }) =>
+      AzureUser(
+        id: id ?? this.id,
+        upn: upn ?? this.upn,
+        employeeId: employeeId ?? this.employeeId,
+        displayName: displayName ?? this.displayName,
+        givenName: givenName ?? this.givenName,
+        surname: surname ?? this.surname,
+        companyName: companyName ?? this.companyName,
+        department: department ?? this.department,
+        accountEnabled: accountEnabled ?? this.accountEnabled,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is AzureUser &&
+      other.id == id &&
+      other.upn == upn &&
+      other.employeeId == employeeId &&
+      other.displayName == displayName &&
+      other.givenName == givenName &&
+      other.surname == surname &&
+      other.companyName == companyName &&
+      other.department == department &&
+      other.accountEnabled == accountEnabled;
+
+  @override
+  int get hashCode => Object.hash(
+        id,
+        upn,
+        employeeId,
+        displayName,
+        givenName,
+        surname,
+        companyName,
+        department,
+        accountEnabled,
+      );
+
+  @override
+  String toString() => 'AzureUser($upn, id: $id, employeeId: $employeeId)';
+}

@@ -8,6 +8,7 @@ workspace:
   - packages/account_core
   - packages/wisa_api
   - packages/smartschool_api
+  - packages/azure_api
 
 dev_dependencies:
   lints: ^5.1.0

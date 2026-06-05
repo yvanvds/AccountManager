@@ -77,7 +77,9 @@ jobs:
         run: |
           dart test --coverage=coverage \
             packages/account_core/test \
-            packages/wisa_api/test
+            packages/wisa_api/test \
+            packages/smartschool_api/test \
+            packages/azure_api/test
           dart pub global activate coverage
           dart pub global run coverage:format_coverage \
             --lcov \

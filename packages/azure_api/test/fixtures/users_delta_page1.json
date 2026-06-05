@@ -1,0 +1,17 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/delta?$skiptoken=DELTA2",
+  "value": [
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "userPrincipalName": "bram.janssens@student.school.example",
+      "employeeId": "W1002",
+      "displayName": "Bram Janssens",
+      "givenName": "Bram",
+      "surname": "Janssens",
+      "companyName": "GBS",
+      "department": "4A",
+      "accountEnabled": true
+    }
+  ]
+}
