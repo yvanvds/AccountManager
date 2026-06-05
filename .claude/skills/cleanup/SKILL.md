@@ -66,11 +66,13 @@ gh issue view <num> --json number,state,title
 
 Classify the result:
 
-- **State `OPEN`** → eligible to close after we delete the branch.
-- **State `CLOSED`** → nothing to do (typically the PR closed it via `Closes #N`).
+- **State `OPEN`** → eligible to close after we delete the branch. This is the **normal** case: PRs in this repo merge into `dev`, which is **not** the GitHub default branch (`master`), so a `Closes #N` line does **not** auto-close the issue on merge. A branch that is merged into `dev` therefore almost always still has an `OPEN` issue, and closing it is this skill's job.
+- **State `CLOSED`** → nothing to do (already closed manually, or the change reached `master` and GitHub auto-closed it).
 - **No matching issue / `gh` errors** → skip the issue side, but still process the branch.
 
 Branches that don't match `issue-<num>-*` (ad-hoc/experiment branches) are processed for deletion only; there's no issue to close.
+
+**Rule of thumb:** if a branch is merged into `dev` (Step 3 category (a)) and tracks an `OPEN` issue, the plan is always to **delete the branch and close the issue**.
 
 ### Step 5 — Confirm with the user
 
@@ -107,7 +109,7 @@ If `git branch -d` refuses (branch is not fully merged), do **not** retry with `
 For each branch that was actually deleted in Step 6 AND has a linked issue still in state `OPEN`:
 
 ```
-gh issue close <num> --comment "Branch <branch> deleted via /cleanup after merge."
+gh issue close <num> --comment "Branch <branch> deleted via /cleanup after PR merged to dev."
 ```
 
 If `gh issue close` fails (network, auth, permission), report the failure and leave the issue alone — the branch deletion still stands.
