@@ -174,6 +174,27 @@ void _writeStaff(Directory inDir, Directory outDir) {
       .writeAsStringSync(buf.toString(), flush: true);
 }
 
+/// Class groups whose `OMSCHRIJVING` contains a literal comma. WISA emits
+/// these *unquoted*, so the legacy WPF parser mis-split them before caching
+/// to `wisaClasses.json` — shifting `AdminCode` and dropping the institute
+/// number (issue #29). The cache is therefore an unreliable source for
+/// these rows, so we restore WISA's real wire values (captured live against
+/// school 25 / ISMAA) keyed by class name. Keep this map in sync with any
+/// new comma-bearing descriptions a fresh capture turns up.
+const Map<String, ({String description, String adminCode, String schoolCode})>
+    _commaDescriptionRepairs = {
+  '5OOS': (
+    description: '5 Onthaal, organisatie en sales',
+    adminCode: '043117',
+    schoolCode: '125252',
+  ),
+  '6OOS': (
+    description: '6 Onthaal, organisatie en sales',
+    adminCode: '043545',
+    schoolCode: '125252',
+  ),
+};
+
 void _writeClassGroups(Directory inDir, Directory outDir) {
   final json = jsonDecode(
     File('${inDir.path}/wisaClasses.json').readAsStringSync(),
@@ -185,15 +206,20 @@ void _writeClassGroups(Directory inDir, Directory outDir) {
   );
   for (final g in groups) {
     // Class group fields are not PII — class names (`1A`), descriptions
-    // (`1ste leerjaar A`), admin/school codes are institutional. Some
-    // descriptions contain commas (`"Onthaal, organisatie en sales"`),
-    // so each field is CSV-escaped.
-    final name = _csvField(_toAscii(g['Name'] as String? ?? ''));
-    final groupName = _csvField(_toAscii(g['GroupName'] as String? ?? ''));
+    // (`1ste leerjaar A`), admin/school codes are institutional. WISA emits
+    // every field unquoted, including descriptions that contain a literal
+    // comma (`5 Onthaal, organisatie en sales`), so we mirror that exactly
+    // — no CSV quoting — which keeps the fixture exercising the parser's
+    // comma-rejoin path (issue #29).
+    final name = _toAscii(g['Name'] as String? ?? '');
+    final repair = _commaDescriptionRepairs[name];
+    final groupName = _toAscii(g['GroupName'] as String? ?? '');
     final description =
-        _csvField(_toAscii(g['Description'] as String? ?? ''));
-    final adminCode = _csvField(_toAscii(g['AdminCode'] as String? ?? ''));
-    final schoolCode = _csvField(_toAscii(g['SchoolCode'] as String? ?? ''));
+        repair?.description ?? _toAscii(g['Description'] as String? ?? '');
+    final adminCode =
+        repair?.adminCode ?? _toAscii(g['AdminCode'] as String? ?? '');
+    final schoolCode =
+        repair?.schoolCode ?? _toAscii(g['SchoolCode'] as String? ?? '');
     buf.writeln('$name,$groupName,$description,$adminCode,$schoolCode');
   }
   File('${outDir.path}/sync_klas.csv')
