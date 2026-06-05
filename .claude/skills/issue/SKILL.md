@@ -78,7 +78,9 @@ Use when the user says something like "start working on issue #42", "let's tackl
 
 Use when the user says the work is ready, or asks to open a PR.
 
-1. Confirm the working tree is clean: `git status`. If there are uncommitted changes, ask whether to commit them first — do not proceed with a dirty tree.
+1. Inspect the working tree: `git status --porcelain`.
+   - **Modified/staged files** — ask whether to commit them first. Do not push a partial state.
+   - **Untracked files** — `gh pr create` will warn "N uncommitted change(s)" even though they're untracked. Decide explicitly per file: stage and commit it, add to `.gitignore`, or surface the warning to the user and proceed knowingly. Don't silently ship the warning.
 2. Push the branch if not already pushed: `git push -u origin <branch>`.
 3. Open the PR **against `dev`** (never against `master`). Use a HEREDOC so the body formats correctly:
    ```
@@ -95,6 +97,15 @@ Use when the user says the work is ready, or asks to open a PR.
    )"
    ```
 4. Report the PR URL.
+5. **Verify CI passes** before declaring the work done. Open PRs almost always trigger checks — wait for them:
+   ```
+   gh pr checks <num> --watch
+   ```
+   `--watch` blocks until all checks finish and exits non-zero if any failed. On failure, diagnose with:
+   ```
+   gh run view <runId> --log-failed
+   ```
+   Fix the root cause, push a follow-up commit, and re-watch. Only report the PR as "done" once checks are green (or the user explicitly accepts a known-failing check, e.g. a Sonar gate that's expected to be skipped).
 
 ## Hard rules
 
