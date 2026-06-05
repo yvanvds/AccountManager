@@ -1,7 +1,16 @@
+@Timeout(Duration(minutes: 3))
+library;
+
 import 'package:azure_api/azure_api.dart';
 import 'package:test/test.dart';
 
 /// Opt-in, **read-only** live test against a real Azure AD tenant.
+///
+/// `sync()` fans out a per-group member fetch against the live tenant, so a
+/// full read takes ~30s+ locally — well over the 30s default test timeout.
+/// The generous [Timeout] keeps the live job from failing on duration alone;
+/// a true hang still trips the limit. (The N+1 member pull is the connector's
+/// "Azure bulk pull" concern, tracked separately — not a test bug.)
 ///
 /// Honours the repo live-testing policy: CI live tests never write. The
 /// interactive sign-in is skipped — a pre-acquired bearer token is supplied
