@@ -1,0 +1,2376 @@
+<!DOCTYPE html>
+<!-- saved from url=(0141)https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&file=manual&layout=2&id=handleiding:algemene_configuratie:smartschool-api -->
+<html lang="nl" class="chrome chrome-148 desktop cookies flexbox flexwrap js-focus-visible" data-js-focus-visible=""><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><style data-merge-styles="true"></style>
+                    <title>Instituut Sancta Maria Aarschot - Smartschool</title>
+            
+            <meta http-equiv="x-ua-compatible" content="ie=edge">
+                            <link rel="icon" href="https://static4.smart-school.net/smsc/svg/favicon/favicon.svg">
+                <link rel="mask-icon" href="https://static6.smart-school.net/smsc/svg/favicon/mask-icon.svg" color="#ff520e">
+                <link rel="apple-touch-icon" href="https://static6.smart-school.net/smsc/img/favicon/apple-touch-icon.png">
+                <link rel="manifest" href="https://sanctamaria-aarschot.smartschool.be/manifest.json">
+                                                                    <link rel="stylesheet" type="text/css" media="print" href="./webservices-doc_files/print-built.css">
+                
+        <!-- jQuery & jQueryUI -->
+                    <script type="text/javascript" src="./webservices-doc_files/jquery.min.rev-b09ae91461.js.downloaden"></script>
+    
+                    <script type="text/javascript" src="./webservices-doc_files/jquery-ui.min.rev-4acaa79af9.js.downloaden"></script>
+    
+                    <link href="./webservices-doc_files/jquery-ui.min.rev-1c4b0b0b8d.css" rel="stylesheet">
+    
+
+                                                <link href="./webservices-doc_files/main.rev-013b98528e.css" rel="stylesheet">
+    
+                    
+                            <link href="./webservices-doc_files/main-built.rev-2f7ee8211a.css" rel="stylesheet">
+    
+            
+                        <!-- TinyMCE HEAD -->
+                                    <!-- javascriptContent HEAD -->
+            <script type="text/javascript">
+        if(!window.SMSC) window.SMSC = {};
+        if(!window.SMSC.languagehash) window.SMSC.languageHash = {};
+
+                    window.SMSC.languageHash['general_legacy'] = {
+                'nl': { 
+                    'version': 'eba695a73d'
+                },
+                'fr': { 
+                    'version': '5019d33fa2' 
+                },
+            };
+                    window.SMSC.languageHash['general_buttons'] = {
+                'nl': { 
+                    'version': 'bc76bcabf0'
+                },
+                'fr': { 
+                    'version': '27995d7564' 
+                },
+            };
+                    window.SMSC.languageHash['component_period'] = {
+                'nl': { 
+                    'version': '345a3ee02d'
+                },
+                'fr': { 
+                    'version': '111101c946' 
+                },
+            };
+                    window.SMSC.languageHash['component_dialog'] = {
+                'nl': { 
+                    'version': '485b17e2e7'
+                },
+                'fr': { 
+                    'version': 'b30632da91' 
+                },
+            };
+                    window.SMSC.languageHash['component_router'] = {
+                'nl': { 
+                    'version': 'b0e3832f11'
+                },
+                'fr': { 
+                    'version': '971d18e394' 
+                },
+            };
+                    window.SMSC.languageHash['component_sidebar'] = {
+                'nl': { 
+                    'version': 'd362090bf4'
+                },
+                'fr': { 
+                    'version': '8a928ca20f' 
+                },
+            };
+            </script>
+
+        <!-- javascriptURL HEAD -->
+                        
+                <!-- javascriptContent HEAD -->
+                        
+                    <style>.smsc-svg--pushpin_blue--24{
+background-image:url('https://static2.smart-school.net/smsc/svg/pushpin_blue/pushpin_blue_24x24.svg');
+}
+.smsc-svg--house_blue--24{
+background-image:url('https://static2.smart-school.net/smsc/svg/house_blue/house_blue_24x24.svg');
+}
+.smsc-svg--house_blue--32{
+background-image:url('https://static2.smart-school.net/smsc/svg/house_blue/house_blue_16x16.svg');
+}
+.smsc-svg--users4--24{
+background-image:url('https://static2.smart-school.net/smsc/svg/users4/users4_24x24.svg');
+}
+.smsc-svg--users4--32{
+background-image:url('https://static2.smart-school.net/smsc/svg/users4/users4_16x16.svg');
+}
+.smsc-svg--mail_green-500--24{
+background-image:url('https://static2.smart-school.net/smsc/svg/mail_green-500/mail_green-500_24x24.svg');
+}
+.smsc-svg--mail_green-500--32{
+background-image:url('https://static2.smart-school.net/smsc/svg/mail_green-500/mail_green-500_16x16.svg');
+}
+</style><style type="text/css">/* TREE LAYOUT */ .tree ul { margin:0 0 0 5px; padding:0 0 0 0; list-style-type:none; } .tree li { display:block; min-height:18px; line-height:18px; padding:0 0 0 15px; margin:0 0 0 0; /* Background fix */ clear:both; } .tree li ul { display:none; } .tree li a, .tree li span { display:inline-block;line-height:16px;height:16px;color:black;white-space:nowrap;text-decoration:none;padding:1px 4px 1px 4px;margin:0; } .tree li a:focus { outline: none; } .tree li a input, .tree li span input { margin:0;padding:0 0;display:inline-block;height:12px !important;border:1px solid white;background:white;font-size:10px;font-family:Verdana; } .tree li a input:not([class="xxx"]), .tree li span input:not([class="xxx"]) { padding:1px 0; } /* FOR DOTS */ .tree .ltr li.last { float:left; } .tree > ul li.last { overflow:visible; } /* OPEN OR CLOSE */ .tree li.open ul { display:block; } .tree li.closed ul { display:none !important; } /* FOR DRAGGING */ #jstree-dragged { position:absolute; top:-10px; left:-10px; margin:0; padding:0; } #jstree-dragged ul ul ul { display:none; } #jstree-marker { padding:0; margin:0; line-height:5px; font-size:1px; overflow:hidden; height:5px; position:absolute; left:-45px; top:-30px; z-index:1000; background-color:transparent; background-repeat:no-repeat; display:none; } #jstree-marker.marker { width:45px; background-position:-32px top; } #jstree-marker.marker_plus { width:5px; background-position:right top; } /* BACKGROUND DOTS */ .tree li li { overflow:hidden; } .tree > .ltr > li { /*display:table;*/ } /* ICONS */ .tree ul ins { display:inline-block; text-decoration:none; width:16px; height:16px; } .tree .ltr ins { margin:0 4px 0 0px; } </style></head>
+    <body class="modern-ui modern-ui--larger-font">
+                                    <a href="javascript://" class="skip-link js-skip-link">Spring naar hoofdcontent</a>
+<div id="topnavMenuOverlay" class="topnav-menu-overlay" hidden=""></div>
+<header id="smscTopContainer" class="smsc-topnav">
+  <nav class="topnav">
+    <div data-profile="" class="topnav__btn-wrapper">
+        <button class="js-btn-profile topnav__btn topnav__btn--profile" aria-haspopup="true" aria-expanded="false">
+            <img src="./webservices-doc_files/48" alt="Profiel afbeelding">
+            <div class="hlp-vert-box">
+                <span>Yvan Admin</span>
+                <span class="topnav__btn__light"></span>
+            </div>
+            <div class="topnav__menu-arrow" aria-hidden="true"></div>
+        </button>
+        <div id="profileMenu" class="topnav__menu-wrapper" tabindex="-1" hidden="" role="menu">
+            <div class="topnav__menu">
+                <a href="https://sanctamaria-aarschot.smartschool.be/?module=Profile" class="topnav__menuitem topnav__menuitem--img" role="menuitem">
+                    <img src="./webservices-doc_files/48" alt="Profiel afbeelding">
+                    <span>Profiel</span>
+                </a>
+                <a href="https://sanctamaria-aarschot.smartschool.be/Profile/Notify" class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--notifs" role="menuitem">Instellingen berichtgeving</a>
+                <a href="https://www.smartschool.be/privacy/" target="_blank" class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--privacy" role="menuitem">Privacy</a>
+                <ul class="profile-blocks js-profile-blocks"></ul>
+            </div>
+        </div>
+    </div>
+
+    
+        <hr class="topnav__divider js-divider-platformcheck">
+    <div data-platformerrors="" class="topnav__btn-wrapper">
+        <button class="js-btn-platformerrors topnav__btn topnav__btn--platformerrors" aria-haspopup="true" aria-expanded="false">
+            <span class="consistency-checks--hidden">Platformcontrole</span>
+            <span class="topnav__badge js-badge-platformerrors" role="status" aria-label="" aria-live="polite" aria-relevant="additions">7</span>
+            <div class="topnav__menu-arrow" aria-hidden="true"></div>
+        </button>
+        <div id="platformerrorsMenu" class="topnav__menu-wrapper modern-ui" tabindex="-1" hidden="" role="dialog">
+            <div class="topnav__menu topnav__menu--platformerrors js-platformerrors-list ">
+                <h2 class="errors__title--1">Controle van uw Smartschoolplatform</h2>
+                <div class="errors__pending">De controle wordt momenteel uitgevoerd. Indien er fouten worden gevonden verschijnt deze lijst automatisch. Afhankelijk van de grootte van je platform kan dit even duren. Je kan intussen verder werken.</div>
+                <div class="js-error-wrapper errors__cat-wrapper">
+                    <div class="errors__category">
+    <h2 class="errors__title--2">Kritiek - Los deze problemen onmiddellijk op voor een correcte werking van Smartschool</h2>
+        <a class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--error" role="menuitem" href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=-33">2 leerlingen met verschillen tussen Smartschool en Discimus</a>
+        <a class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--error" role="menuitem" href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=-14" target="_blank">2 leerlingen zonder correct stamnummer</a>
+        <a class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--error" role="menuitem" href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=-36">1 persoon met beheerrechten gebruikt geen methode voor 'aanmelden in twee stappen'</a>
+    </div>
+<div class="errors__category">
+    <h2 class="errors__title--2">Belangrijk - Los deze problemen zo snel mogelijk op</h2>
+        <a class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--warning" role="menuitem" href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=-12">2 leerlingen zonder geboortedatum</a>
+    </div>
+<div class="errors__category">
+    <h2 class="errors__title--2">Informatieve meldingen</h2>
+        <a class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--info" role="menuitem" href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=-2">1 nieuwe leerling</a>
+        <a class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--info" role="menuitem" href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=-3">7 schoolverlaters</a>
+        <a class="topnav__menuitem topnav__menuitem--icon topnav__menuitem--icon--info" role="menuitem" href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=0">4 personen zonder groep</a>
+    </div>
+
+                </div>   
+                <hr class="errors__seperator">
+                <div class="errors__bottom">
+                    <a href="https://sanctamaria-aarschot.smartschool.be/?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:platformcontroles" class="errors__information errors__icon errors__icon--information">Lees meer informatie over de platformcontroles in de handleiding</a>
+                    <button id="startConsistencyCheck" class="smscButton blue">Opnieuw controleren</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    
+    <div class="topnav__spacer"></div>
+
+    <a href="https://sanctamaria-aarschot.smartschool.be/" class="js-btn-home topnav__btn">Start</a>
+
+    <div data-shortcuts="" class="topnav__btn-wrapper">
+        <button class="js-btn-shortcuts topnav__btn" aria-haspopup="true" aria-expanded="false">
+          Ga naar
+          <div class="topnav__menu-arrow" aria-hidden="true"></div>
+        </button>
+        <div id="shortcutsMenu" class="topnav__menu-wrapper" tabindex="-1" hidden="" role="menu">
+            <div class="topnav__menu">
+              <div class="topnav__menu--shortcuts js-shortcuts-container js-autosize">
+                      
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/printing-center" class="shortcut topnav__menuitem topnav__menuitem--icon module-printingcenter--24" role="menuitem" title="Afdrukcentrum" data-id="printingcenter">
+            <span>Afdrukcentrum</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/Presence" class="shortcut topnav__menuitem topnav__menuitem--icon module-presence--24" role="menuitem" title="Afwezigheden" data-id="presence">
+            <span>Afwezigheden</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/analytics" class="shortcut topnav__menuitem topnav__menuitem--icon module-analytics--24" role="menuitem" title="Analytics" data-id="analytics">
+            <span>Analytics</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;file=index&amp;function=main" class="shortcut topnav__menuitem topnav__menuitem--icon module-messages--24" role="menuitem" title="Berichten" data-id="messages">
+            <span>Berichten</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/contact-moments" class="shortcut topnav__menuitem topnav__menuitem--icon module-contactmoments--24" role="menuitem" title="Contactmomenten" data-id="contact_moments">
+            <span>Contactmomenten</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/deliberation" class="shortcut topnav__menuitem topnav__menuitem--icon module-deliberation--24" role="menuitem" title="Deliberatie" data-id="deliberation">
+            <span>Deliberatie</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/forms/selfscan" class="shortcut topnav__menuitem topnav__menuitem--icon module-selfscan--24" role="menuitem" title="Educheck" data-id="selfscan">
+            <span>Educheck</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/forms" class="shortcut topnav__menuitem topnav__menuitem--icon module-forms--24" role="menuitem" title="Formulieren" data-id="forms">
+            <span>Formulieren</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Forum&amp;file=index&amp;function=main" class="shortcut topnav__menuitem topnav__menuitem--icon module-forum--24" role="menuitem" title="Forum" data-id="forum">
+            <span>Forum</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/photos" class="shortcut topnav__menuitem topnav__menuitem--icon module-photos--24" role="menuitem" title="Foto&#39;s" data-id="photos">
+            <span>Foto's</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/helpdesk" class="shortcut topnav__menuitem topnav__menuitem--icon module-ticket--24" role="menuitem" title="Helpdesk" data-id="helpdesk">
+            <span>Helpdesk</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/intradesk" class="shortcut topnav__menuitem topnav__menuitem--icon module-intradesk--24" role="menuitem" title="Intradesk" data-id="intradesk">
+            <span>Intradesk</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Yearplan" class="shortcut topnav__menuitem topnav__menuitem--icon module-yearplan--24" role="menuitem" title="Jaarplannen" data-id="yearplan">
+            <span>Jaarplannen</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=LVS&amp;file=index&amp;function=main" class="shortcut topnav__menuitem topnav__menuitem--icon module-lvs--24" role="menuitem" title="Leerlingvolgsysteem" data-id="lvs">
+            <span>Leerlingvolgsysteem</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/lesson-content" class="shortcut topnav__menuitem topnav__menuitem--icon module-lesson-content--24" role="menuitem" title="Lesfiches" data-id="lesson_content">
+            <span>Lesfiches</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/timetable" class="shortcut topnav__menuitem topnav__menuitem--icon module-timetable--24" role="menuitem" title="Lesrooster" data-id="timetable">
+            <span>Lesrooster</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/mydoc" class="shortcut topnav__menuitem topnav__menuitem--icon module-mydoc--24" role="menuitem" title="Mijn documenten" data-id="mydoc">
+            <span>Mijn documenten</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=News&amp;file=index" class="shortcut topnav__menuitem topnav__menuitem--icon module-news--24" role="menuitem" title="Nieuwsberichten" data-id="news">
+            <span>Nieuwsberichten</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/online-session" class="shortcut topnav__menuitem topnav__menuitem--icon module-onlinesession--24" role="menuitem" title="Online sessies" data-id="live">
+            <span>Online sessies</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/planner" class="shortcut topnav__menuitem topnav__menuitem--icon module-planner--24" role="menuitem" title="Planner" data-id="planner">
+            <span>Planner</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Portfolio&amp;file=index&amp;function=main" class="shortcut topnav__menuitem topnav__menuitem--icon module-portfolio--24" role="menuitem" title="Portfolio" data-id="portfolio">
+            <span>Portfolio</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Reservation" class="shortcut topnav__menuitem topnav__menuitem--icon module-reservation--24" role="menuitem" title="Reserveringen" data-id="reservations">
+            <span>Reserveringen</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/results" class="shortcut topnav__menuitem topnav__menuitem--icon module-results--24" role="menuitem" title="Resultaten" data-id="results">
+            <span>Resultaten</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Agenda" class="shortcut topnav__menuitem topnav__menuitem--icon module-agenda--24" role="menuitem" title="Schoolagenda" data-id="agenda_so">
+            <span>Schoolagenda</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/SkoreGradebook" class="shortcut topnav__menuitem topnav__menuitem--icon module-skore--24" role="menuitem" title="Skore puntenboek" data-id="gradebook_teachers">
+            <span>Skore puntenboek</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Wiki" class="shortcut topnav__menuitem topnav__menuitem--icon module-wiki--24" role="menuitem" title="Wiki" data-id="wiki">
+            <span>Wiki</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                                <hr class="menu-divider">
+            
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Manual&amp;file=manual&amp;function=main" class="shortcut topnav__menuitem topnav__menuitem--icon module-manual--24" role="menuitem" title="Handleiding" data-id="manual">
+            <span>Handleiding</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                                <hr class="menu-divider">
+            
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/two-factor/management" class="shortcut topnav__menuitem topnav__menuitem--icon module-two-factor--24" role="menuitem" title="Aanmelden in twee stappen" data-id="admin_two_factor_management">
+            <span>Aanmelden in twee stappen</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Globalmanagement" class="shortcut topnav__menuitem topnav__menuitem--icon module-globalmanagement--24" role="menuitem" title="Algemene configuratie" data-id="admin_globalmanagement">
+            <span>Algemene configuratie</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Usermanagement&amp;mode=0&amp;gID=2" class="shortcut topnav__menuitem topnav__menuitem--icon module-usermanagement--24" role="menuitem" title="Gebruikersbeheer" data-id="admin_usermanagement">
+            <span>Gebruikersbeheer</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/labels" class="shortcut topnav__menuitem topnav__menuitem--icon module-labels--24" role="menuitem" title="Labelbeheer" data-id="admin_labelmanagement">
+            <span>Labelbeheer</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/MiniDB2" class="shortcut topnav__menuitem topnav__menuitem--icon module-minidb--24" role="menuitem" title="Minidatabanken" data-id="admin_minidb2">
+            <span>Minidatabanken</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/modules/Skore/skore.php" class="shortcut topnav__menuitem topnav__menuitem--icon module-skore--24" role="menuitem" target="_blank" title="Skorebeheer" data-id="admin_skoremanagement">
+            <span>Skorebeheer</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Statistics" class="shortcut topnav__menuitem topnav__menuitem--icon module-statistics--24" role="menuitem" title="Statistieken" data-id="admin_statistics">
+            <span>Statistieken</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+                        
+    <div class="shortcut-wrapper">
+      <a href="https://sanctamaria-aarschot.smartschool.be/course/course-management" class="shortcut topnav__menuitem topnav__menuitem--icon module-coursemanagement--24" role="menuitem" title="Vakkenbeheer" data-id="admin_coursemanagement">
+            <span>Vakkenbeheer</span>
+      </a>
+      <button class="pin-button js-pin-button smsc-svg--16"></button>
+    </div>
+
+    
+
+              </div>
+                                <div class="topnav__menu--pin-shortcuts">
+                      <div class="smsc-svg--24 smsc-svg--pushpin_blue--24"></div>
+                      <div><b>Nieuw:</b> Maak tot <b>drie favoriete modules</b> vast in de menubalk.</div>
+                  </div>
+                        </div>
+        </div>
+    </div>
+
+    <div data-courses="" class="topnav__btn-wrapper">
+        <button class="js-btn-courses topnav__btn" aria-haspopup="true" aria-expanded="false">
+            Vakken
+        <div class="topnav__menu-arrow" aria-hidden="true"></div></button>
+    
+    <div id="coursesMenu" class="topnav__menu-wrapper" tabindex="-1" role="dialog" hidden="">
+      <div class="topnav__menu topnav__menu--courses">
+        <div class="topnav__menu__hdr">
+          <div class="hlp-horiz-box">
+            <h2 class="topnav__menu__title" id="topnavCoursesTitle">Vakken</h2>
+            <div class="js-course-filters course-btnbar" aria-busy="true"></div>
+          </div>
+          <input id="courseSearch" type="search" class="input-search" placeholder="Zoek naar een vak">
+        </div>
+        <ul class="course-list js-courses-list" aria-relevant="additions" aria-busy="true" aria-labelled-by="topnavCoursesTitle"></ul>
+        <div class="course-management-link--container js-course-management-link-container"></div>
+      </div>
+    </div>
+  </div>
+
+    <div data-links="" class="topnav__btn-wrapper">
+        <button class="js-btn-links topnav__btn" aria-haspopup="true" aria-expanded="false">
+            Links
+        <div class="topnav__menu-arrow" aria-hidden="true"></div></button>
+    
+    <div id="linksMenu" class="topnav__menu-wrapper" tabindex="-1" role="dialog" hidden="">
+      <div id="menuContainer" class="topnav__menu topnav__menu__container js-autosize">
+        <div class="topnav__menu--links js-links-container" aria-busy="true">
+        </div>
+      </div>
+    </div>
+  </div>
+
+    
+      <div class="favourites-container js-favourites-container">
+                  <hr class="topnav__divider">
+                                      <a class="topnav__btn" href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;file=index&amp;function=main" title="Berichten" data-id="messages">
+                Berichten
+                                  <span class="js-badge-msg topnav__badge" role="status" aria-label="1243 Ongelezen meldingen" aria-live="polite" aria-relevant="additions" data-value="1243">1243</span>
+                              </a>
+                      <hr class="topnav__divider">
+              </div>
+
+    <div data-notifs="" class="topnav__btn-wrapper">
+        <button class="js-btn-notifs topnav__btn topnav__btn--icon topnav__btn--icon--notifications" title="Meldingen" aria-haspopup="true" aria-expanded="false">
+            <span class="js-badge-notifs topnav__badge" role="status" aria-label="11 Ongelezen meldingen" aria-live="polite" aria-relevant="additions" data-value="11">11</span>
+        <div class="topnav__menu-arrow" aria-hidden="true"></div></button>
+    
+    <div id="notifsMenu" class="topnav__menu-wrapper js-focus-trap-allow-outside-click" tabindex="-1" role="dialog" hidden="">
+      <div class="topnav__menu topnav__menu--notifs modern-ui">
+        <div class="notifs__hdr">
+          <button class="js-notifs-toggle" role="switch" aria-checked="true" aria-labelledby="notifsToggleLabel">
+            <div class="switch-values">
+              <span>Aan</span>
+              <span>Uit</span>
+            </div>
+          </button>
+          <span id="notifsToggleLabel" class="js-notifs-toggle-lbl">Nieuwe meldingen tonen als pop-up</span> 
+          <a class="js-notifs-settingsbtn smscButton smscButton--fit-text" href="https://sanctamaria-aarschot.smartschool.be/Profile/Notify">Instellingen</a>
+          <button class="js-notifs-clearbtn smscButton smscButton--fit-text">Alles wissen</button>
+        </div>
+        <div class="notifs__content">
+          <ul class="js-notifs-list notifs__list" data-placeholder="Er zijn geen meldingen. Je bent volledig up-to-date!" aria-relevant="additions"><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6296085" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool Team</span>
+        <span class="notification__info">★ Update Contactmomenten &amp; Formulieren ★</span>
+        <span class="notification__info">2026-06-03 13:55</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6292870" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Account uitgeschakeld</span>
+        <span class="notification__info">2026-06-02 17:49</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6292864" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Account uitgeschakeld</span>
+        <span class="notification__info">2026-06-02 17:42</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6291354" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Leerpunt</span>
+        <span class="notification__info">Hoe halen al jouw leerlingen de gestelde doelen?</span>
+        <span class="notification__info">2026-06-02 13:21</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6289096" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Afwezigheden - Discimus foutenrapport  1 juni 2026 23:52</span>
+        <span class="notification__info">2026-06-01 23:52</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6281098" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Afwezigheden - Discimus foutenrapport 29 mei 2026 23:52</span>
+        <span class="notification__info">2026-05-29 23:52</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6273234" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Account uitgeschakeld</span>
+        <span class="notification__info">2026-05-28 01:05</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6270696" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Bevestiging schooljaarback-up</span>
+        <span class="notification__info">2026-05-27 10:01</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6270694" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Bevestiging schooljaarback-up</span>
+        <span class="notification__info">2026-05-27 10:01</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6270692" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool</span>
+        <span class="notification__info">Bevestiging schooljaarback-up</span>
+        <span class="notification__info">2026-05-27 10:01</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li><li class="notification">
+      <a href="https://sanctamaria-aarschot.smartschool.be/?module=Messages&amp;msgID=6270685" class="js-notif-btn notification__btn notification__btn--unread"><div class="notification__image smsc-svg--24 module-messages--24"></div>
+      <div class="notification__content hlp-vert-box">
+        <span class="notification__title">Smartschool Team</span>
+        <span class="notification__info">★ Belangrijk • Smartschool Management Tool ★</span>
+        <span class="notification__info">2026-05-27 09:58</span>
+      </div></a>
+      <button class="js-notif-close notification__close">
+        undefined
+        <svg viewBox="0 0 24 24" class="close-icon">
+          <path d="M7.5 7.5 L17.5 17.5" fill="none"></path>
+          <path d="M7.5 17.5 L17.5 7.5" fill="none"></path>
+        </svg>
+      </button>
+    </li></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+      
+    <div data-search="" class="topnav__btn-wrapper">
+        <button class="js-btn-search topnav__btn topnav__btn--icon topnav__btn--icon--search" newintradeskenabled="" title="Zoeken" aria-haspopup="true" aria-expanded="false"><div class="topnav__menu-arrow" aria-hidden="true"></div></button>
+    
+    <div id="searchMenu" class="topnav__menu-wrapper" tabindex="-1" role="dialog" hidden="">
+      <form class="topnav__menu topnav__menu--search js-form-search js-autosize-">
+        <div class="form-search__head">  
+          <input type="search" class="input-search js-input-search" placeholder="Geef een zoekterm in en druk op enter om te zoeken." minlength="2" required="">
+          <div class="smscCheckbox extra-option__checkbox">
+            <input id="cb_ownPlatform" type="checkbox" checked="true" on:change="searchNodes()" on:blur="inputBlurred()">
+            <label for="cb_ownPlatform">Enkel in eigen platform zoeken</label>
+          </div>
+        </div>
+        <div class="form-search__body">
+          <div class="form-search__filter js-search-filter">
+            <!-- filter.js -->
+          </div>
+          <div class="form-search__results">
+            <div class="form-search__placeholder js-form-placeholder">Waar ben je naar op zoek?</div>
+            <ul class="form-search__list js-form-results" aria-relevant="additions" hidden=""></ul>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+    <a href="https://sanctamaria-aarschot.smartschool.be/?module=Manual&amp;file=manual&amp;function=main" class="js-btn-manual topnav__btn topnav__btn--icon topnav__btn--icon--manual" title="Handleiding"></a>
+        <a href="https://sanctamaria-aarschot.smartschool.be/logout" class="js-btn-logout topnav__btn topnav__btn--icon topnav__btn--icon--exit" title="Afmelden"></a>
+  
+  </nav>
+    </header>
+
+                    		<div id="smscMain" class="smscMain " tabindex="-1"><div data-collapsed="false" class="sidebar"><div class="sidebar__items-wrapper"><div data-selected="true" data-collapsed="false" aria-label="Start" class="sidebar-btn"><button aria-label="Start" class="sidebar-btn__button"><div class="sidebar-btn__small-icon smsc-svg--house_blue--24 smsc-svg--24"></div><div class="sidebar-btn__large-icon smsc-svg--house_blue--32 smsc-svg--32"></div><div class="sidebar-btn__label">Start</div></button></div><div data-selected="false" data-collapsed="false" aria-label="Opleidingen" class="sidebar-btn"><button aria-label="Opleidingen" class="sidebar-btn__button"><div class="sidebar-btn__small-icon smsc-svg--users4--24 smsc-svg--24"></div><div class="sidebar-btn__large-icon smsc-svg--users4--32 smsc-svg--32"></div><div class="sidebar-btn__label">Opleidingen</div></button></div><div data-selected="false" data-collapsed="false" aria-label="Contact-formulier" class="sidebar-btn"><button aria-label="Contact-formulier" class="sidebar-btn__button"><div class="sidebar-btn__small-icon smsc-svg--mail_green-500--24 smsc-svg--24"></div><div class="sidebar-btn__large-icon smsc-svg--mail_green-500--32 smsc-svg--32"></div><div class="sidebar-btn__label">Contact-formulier</div></button></div></div></div>
+			    <div class="manualmain__wrapper modern-ui modern-ui--larger-font">
+  <div class="manualmain2col manualmain">
+    <!-- BEGIN toppart -->
+    <div class="manualtop search-inside"><div class="manual_widget manual_widget_top" id="manual_widget_23">
+	
+	<div class="manual_widgetcontent manual_widgetcontent_topborder manual_widget_class_searchtop_T " id="manual_widgetcontent_23"><div class="legacy-manual-search-input__wrapper">
+  <input type="search" placeholder="Heb je een vraag? Vul hier de zoekterm in." value="" class="js-legacy-manual-search-input legacy-manual-search-input input bootstrap__input search-input js-search-input" id="manual_searchbox" autofocus="" onchange="doManualSearch();">
+</div></div>
+</div></div>
+    <!-- END toppart -->
+    
+    
+    <!-- BEGIN middlepart -->
+    <div class="manualmiddle"><div class="manualmiddlecontent" style="width: 100%;"><div class="manual_widget" id="manual_widget_3" style="width: 100%;">
+	
+	<div class="manual_widgetcontent manual_widgetcontent_topborder manual_widget_class_kenniscentrum_M middlewidget" id="manual_widgetcontent_3" style="width: 100%;"><div class="breadcrumb"><a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie" class="wikilink1" title="handleiding:algemene_configuratie" data-wiki-id="handleiding:algemene_configuratie">Algemene configuratie</a> » <bdi><a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api" class="wikilink1" title="handleiding:algemene_configuratie:smartschool-api" data-wiki-id="handleiding:algemene_configuratie:smartschool-api">Webservices</a></bdi></div></div><div class="kenniscontent" id="kenniscontent" style="width: 100%;"><!-- wikipage start -->
+                    
+
+<h1 class="sectionedit1" id="webservices">Webservices</h1>
+<div class="level1">
+<ul>
+<li class="level1"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#richtlijnen_webservices" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Richtlijnen webservices</a></div>
+</li>
+<li class="level1 node"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#instellingen_webservices" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Instellingen webservices</a></div>
+<ul>
+<li class="level2"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#globaal_wachtwoord" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Globaal wachtwoord</a></div>
+</li>
+<li class="level2"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#profielen_met_beperkte_toegang" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Profielen met beperkte toegang</a></div>
+</li>
+</ul>
+</li>
+<li class="level1 node"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#webservices_v3_soap" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Webservices V3 (SOAP)</a></div>
+<ul>
+<li class="level2"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#url_s" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">URL's</a></div>
+</li>
+<li class="level2"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#voorbeelden_van_toepassingen_in_php_en_c" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Voorbeelden van toepassingen in PHP en C#</a></div>
+</li>
+<li class="level2"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#overzicht_van_de_methoden" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Overzicht van de methoden</a></div>
+</li>
+<li class="level2"><div class="li"> <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#detail_van_de_methoden" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">Detail van de methoden</a></div>
+</li>
+</ul>
+</li>
+</ul>
+
+</div>
+
+<h2 class="sectionedit2" id="richtlijnen_webservices">Richtlijnen webservices</h2>
+<div class="level2">
+<div class="plugin_note noteimportant">Lees eerst onderstaande richtlijnen alvorens te starten met het gebruik van de webservices.
+</div>
+</div>
+
+<h3 class="sectionedit3" id="privacybewustzijn_en_regelgeving">Privacybewustzijn en regelgeving</h3>
+<div class="level3">
+<ul>
+<li class="level1"><div class="li"> Wanneer je gegevens exporteert via onze <abbr title="Application Programming Interface">API</abbr> of webservices dien je rekening te houden met de bescherming van persoonsgegevens.</div>
+</li>
+<li class="level1"><div class="li"> Persoonsgegevens, zoals namen, adressen, e-mailadressen en IP-adressen, zijn gevoelige informatie. Je dient ervoor te zorgen dat deze gegevens veilig worden behandeld en voldoen aan de relevante privacywetgeving (AVG).</div>
+</li>
+<li class="level1"><div class="li"> Je dient de gegevens op een legitieme en veilige manier te verwerken.</div>
+</li>
+<li class="level1"><div class="li"> De toepassing die je ontwikkelt en aanbiedt is conform de Algemene Voorwaarden van Smartschool.</div>
+</li>
+</ul>
+
+</div>
+
+<h3 class="sectionedit4" id="documentatie_en_hulpmiddelen">Documentatie en hulpmiddelen</h3>
+<div class="level3">
+<ul>
+<li class="level1"><div class="li"> Raadpleeg steeds vooraf onze documentatie voor gedetailleerde informatie over de beschikbare eindpunten, parameters en authenticatiemethoden.</div>
+</li>
+</ul>
+
+</div>
+
+<h3 class="sectionedit5" id="ondersteuning">Ondersteuning</h3>
+<div class="level3">
+<ul>
+<li class="level1"><div class="li"> Onze <abbr title="Application Programming Interface">API</abbr> en webservices bieden krachtige mogelijkheden om gegevens op te vragen en te wijzigen. We bieden geen support op de programmacode die je zelf ontwikkelt en zijn niet verantwoordelijk voor de kwaliteit en gevolgen van het gebruik ervan.</div>
+</li>
+<li class="level1"><div class="li"> We verwachten dat je alle nodige technische kennis hebt alvorens te starten met de <abbr title="Application Programming Interface">API</abbr> of webservices. Indien dit niet het geval is, raden we je af om hiervan gebruik te maken.</div>
+</li>
+<li class="level1 node"><div class="li"> Via onderstaande kanalen kan je in contact komen met andere scholen om zo kennis te delen over de werking van de <abbr title="Application Programming Interface">API</abbr> of webservices.</div>
+<ul>
+<li class="level2"><div class="li"> Smartschool Forum: <a href="https://www.smartschool.be/bb" class="urlextern" target="_blank" title="https://www.smartschool.be/bb" rel="ugc nofollow noopener">www.smartschool.be/bb</a></div>
+</li>
+<li class="level2"><div class="li"> Faceboekgroep ICT-coördinatoren of andere zelfhulpgroepen</div>
+</li>
+</ul>
+</li>
+<li class="level1"><div class="li"> We bieden geen bijkomend platform aan om je programmacode te testen. Je dient de ontwikkeling te doen door te gebruik te maken van je actueel Smartschool-platform.</div>
+</li>
+</ul>
+
+</div>
+
+<h2 class="sectionedit6" id="instellingen_webservices">Instellingen webservices</h2>
+<div class="level2">
+
+<p>
+In dit dialoogvenster (Algemene configuratie &gt; Webservices) kan je volgende opties instellen:
+</p>
+<ul>
+<li class="level1"><div class="li"> <strong>Wachtwoord</strong>: Dit is het globaal wachtwoord dat toegang geeft tot alle methodes (string $accesscode). Je kan het wachtwoord tijdelijk zichtbaar maken door op het oogje naast het wachtwoord te klikken. Via het kopieer-icoon kan je het wachtwoord naar je klembord kopiëren.</div>
+</li>
+<li class="level1"><div class="li"> <strong>Doelgroep</strong>: De groep waarin de nieuw aangemaakte gebruikers terechtkomen.</div>
+</li>
+<li class="level1"><div class="li"> <strong>Uniek veld</strong>: Kies gebruikersnaam of intern nummer. Afhankelijk van deze keuze zal Smartschool inkomende requests behandelen (string $userIdentifier).</div>
+</li>
+</ul>
+
+<p>
+Het <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#globaal_wachtwoord" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">globaal wachtwoord</a> verleent aan een externe toepassing automatisch toegang tot alle methodes. Dat is zeker niet altijd gewenst! Maak bij voorkeur <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:smartschool-api#profielen_met_beperkte_toegang" title="handleiding:algemene_configuratie:smartschool-api ↵" class="wikilink1">een profiel aan met een apart wachtwoord voor beperkte toegang</a> tot methodes.
+</p>
+
+<p>
+<img src="./webservices-doc_files/webservices-globaal.png" class="media" alt="">
+</p>
+
+</div>
+
+<h3 class="sectionedit7" id="globaal_wachtwoord">Globaal wachtwoord</h3>
+<div class="level3">
+<ol>
+<li class="level1"><div class="li"> Kies in 'Algemene configuratie' voor 'Webservices'.</div>
+</li>
+<li class="level1"><div class="li"> Bekijk of wijzig het globaal wachtwoord bij 'wachtwoord' en klik eventueel op Opslaan.</div>
+</li>
+</ol>
+
+</div>
+
+<h3 class="sectionedit8" id="profielen_met_beperkte_toegang">Profielen met beperkte toegang</h3>
+<div class="level3">
+<ol>
+<li class="level1"><div class="li"> Kies in 'Algemene configuratie' voor 'Webservices'.</div>
+</li>
+<li class="level1"><div class="li"> Klik op 'Profiel toevoegen' om een nieuw profiel aan te maken.</div>
+</li>
+<li class="level1"><div class="li"> Vul de naam van het profiel in en duidt aan tot welke methoden dit profiel toegang heeft.</div>
+</li>
+<li class="level1"><div class="li"> Klik op Opslaan.</div>
+</li>
+</ol>
+
+<p>
+Bezorg het wachtwoord van dit profiel aan de persoon die de externe toepassing beheert. Met dit wachtwoord heeft deze toepassing enkel toegang tot de door jou gekozen methodes.
+</p>
+
+<p>
+<img src="./webservices-doc_files/webservices-profiel01.png" class="media" alt="">
+</p>
+
+</div>
+
+<h2 class="sectionedit9" id="webservices_v3_soap">Webservices V3 (SOAP)</h2>
+<div class="level2">
+
+<p>
+<br>
+Hieronder vind je alle informatie van de verschillende methoden terug waarmee je via de webservices aan de slag kan.
+</p>
+<div class="plugin_note noteimportant">Enkel requesten die TLS 1.2 of hoger gebruiken worden ondersteund.
+</div>
+</div>
+
+<h3 class="sectionedit10" id="url_s">URL's</h3>
+<div class="level3">
+<ul>
+<li class="level1"><div class="li"> <a href="https://school.smartschool.be/Webservices/V3" class="urlextern" target="_blank" title="https://school.smartschool.be/Webservices/V3" rel="ugc nofollow noopener">https://school.smartschool.be/Webservices/V3</a></div>
+</li>
+<li class="level1"><div class="li"> <a href="https://school.smartschool.be/Webservices/V3?wsdl" class="urlextern" target="_blank" title="https://school.smartschool.be/Webservices/V3?wsdl" rel="ugc nofollow noopener">https://school.smartschool.be/Webservices/V3?wsdl</a></div>
+</li>
+</ul>
+
+</div>
+
+<h3 class="sectionedit11" id="voorbeelden_van_toepassingen_in_php_en_c">Voorbeelden van toepassingen in PHP en C#</h3>
+<div class="level3">
+
+<p>
+We bieden enkele concrete voorbeelden aan van programmacode in C# en PHP waarbij de webservices en OAuth gebruikt worden:
+</p>
+<ul>
+<li class="level1"><div class="li"> C#-toepassing om het wachtwoord en de status van een gebruiker te wijzigen.</div>
+</li>
+<li class="level1"><div class="li"> PHP-toepassing om het wachtwoord van een gebruiker te wijzigen.</div>
+</li>
+<li class="level1"><div class="li"> PHP-toepassing voor het bestellen van broodjes, authenticatie met behulp van OAuth.</div>
+</li>
+</ul>
+
+<p>
+De broncode van alle toepassingen kan je <a href="https://www.smartschool.be/pdf/Smartschool-API-voorbeelden.zip" class="urlextern" target="_blank" title="https://www.smartschool.be/pdf/Smartschool-API-voorbeelden.zip" rel="ugc nofollow noopener">downloaden</a> ter inspiratie. Het is niet de bedoeling dat je deze toepassingen effectief gebruikt. Ze zijn bedoeld als aanzet en voorbeeld.
+</p>
+
+</div>
+
+<h3 class="sectionedit12" id="overzicht_van_de_methoden">Overzicht van de methoden</h3>
+<div class="level3">
+<ul>
+<li class="level1"><div class="li"> string <strong>addCourse</strong> (string $accesscode, string $coursename, string $coursedesc, int $visibility)<br>
+<em>int $visibilityis is optioneel</em></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>addCourseStudents</strong> (string $accesscode, string $coursename, string $coursedesc, string $groupIds)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>addCourseTeacher</strong> (string $accesscode, string $coursename, string $coursedesc, string $internnummer, string $userlist)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>addHelpdeskTicket</strong> (string $accescode, string $title, string $description, integer $priority, string $miniDbItem, string $userIdentifier)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>changeGroupOwners</strong> (string $accesscode, $code, $userlist)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>changeInternNumber</strong> (string $accesscode, $username, $newInternNumber)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>changePasswordAtNextLogin</strong> (string $accesscode, string $userIdentifier, integer $accountType)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>changeUsername</strong> (string $accesscode, $internNumber, $newUsername)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>checkStatus</strong> (string $accesscode, string $serviceId)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>clearGroup</strong> (string $accesscode, string $group, string $officialDate)<br>
+<em>string $officialDate is optioneel</em></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>delClass</strong> (string $accesscode, string $code)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>delUser</strong> (string $accesscode, string $userIdentifier, string $officialDate)<br>
+<em>string $officialDate is optioneel</em></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>forcePasswordReset</strong> (string $accesscode, string $userIdentifier, integer $accountType)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAbsents</strong> (string $accesscode, string $userIdentifier, string $schoolYear)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAbsentsWithAlias</strong> (string $accesscode, string $userIdentifier, string $schoolYear)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAbsentsByDate</strong> (string $accesscode, string $date)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAbsentsWithAliasByDate</strong> (string $accesscode, string $date)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAbsentsWithInternalNumberByDate</strong> ($accesscode, string $date)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAbsentsWithUsernameByDate</strong> ($accesscode, string $date)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAbsentsByDateAndGroup</strong> ($accesscode, string $date, string $code)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAccountPhoto</strong> (string $accesscode, string $userIdentifier)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAllAccounts</strong> (string $accesscode, string $code, string $recursive)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAllAccountsExtended</strong> (string $accesscode, string $code, string $recursive)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getAllGroupsAndClasses</strong> (string $accesscode)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>getClassList</strong> (string $accesscode)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>getClassListJson</strong> (string $accesscode)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getClassTeachers</strong> (string $accesscode, boolean $getAllOwners)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>getCourses</strong> (string $accesscode)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getHelpdeskMiniDbItems</strong> (string $accescode)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>getReferenceField</strong> (string $accesscode)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getSchoolyearDataOfClass</strong> (string $accesscode, string $classCode)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getSkoreClassTeacherCourseRelation</strong> (string $accesscode)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>getStudentCareer</strong> (string $accesscode, string $userIdentifier)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getUserDetails</strong> (string $accesscode, string $userIdentifier)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getUserDetailsByNumber</strong> (string $accesscode, string $number)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getUserDetailsByScannableCode</strong> (string $accesscode, string $scannableCode)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getUserDetailsByUsername</strong> (string $accesscode, string $username)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>getUserOfficialClass</strong> (string $accesscode, string $userIdentifier, string $date)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>removeCoAccount</strong> (string $accesscode, string $userIdentifier, integer $accountType)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>removeUserFromGroup</strong> (string $accesscode, string $userIdentifier, string $class, string $officialDate)<br>
+<em>string $officialDate is optioneel</em></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>replaceInum</strong> (string $accesscode, string $oldInum, string $newInum)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>returnCsvErrorCodes</strong> </div>
+</li>
+<li class="level1"><div class="li"> string <strong>returnJsonErrorCodes</strong></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveClass</strong> (string $accesscode, string $name, string $desc, string $code, string $parent, string $untis, string $instituteNumber, string $adminNumber, string $schoolYearDate)<br>
+<em>string $instituteNumber, string $adminNumber en string $schoolYearDate zijn optioneel</em></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveClassList</strong> (string $accesscode, string $serializedList)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveClassListJson</strong> (string $accesscode, string $jsonList)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveGroup</strong> (string $accesscode, string $name, string $desc, string $code, string $parent, string $untis)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>savePassword</strong> (string $accesscode, string $userIdentifier, string $password, integer $accountType, integer $changePasswordAtNextLogin)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveSchoolyearDataOfClass</strong> (string $accesscode, string $classCode, string $date, string $instituteNumber, string $administrativeGroupNumber, string $residence, string $domain, string $principal)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveSignature</strong> (string $accesscode, string $userIdentifier, integer $accountType, string $signature)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveUser</strong> (string $accesscode, string $internnumber, string $username, string $passwd1, string $passwd2, string $passwd3, string $name, string $surname, string $extranames, string $initials, string $sex, string $birthday, string $birthplace, string $birthcountry, string $address, string $postalCode, string $location, string $country, string $email, string $mobilephone, string $homephone, string $fax, string $prn, string $stamboeknummer, string $basisrol, string $untis)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveUserParameter</strong> (string $accesscode, string $userIdentifier, string $paramName, string $paramValue)<br>
+string $paramName werd uitgebreid met mogelijkheden voor co-accounts</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveUserToClass</strong> (string $accesscode, string $userIdentifier, string $class, string $officialDate)<br>
+<em>string $officialDate is optioneel</em></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveUserToClasses</strong> (string $accesscode, string $userIdentifier, string $csvList)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>saveUserToClassesAndGroups</strong> (string $accesscode, string $userIdentifier, string $csvList, integer $keepOld)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>sendMsg</strong> (string $accesscode, string $userIdentifier, string $title, string $body, string $senderIdentifier, mixed $attachments, integer $coaccount, boolean $copyToLVS = false)<br>
+<em>array $attachments, integer $coaccount, boolean $copyToLVS = false zijn optioneel</em></div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>setAccountPhoto</strong> (string $accesscode, string $userIdentifier, string $photo)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>setAccountStatus</strong> (string $accesscode, string $userIdentifier, mixed $accountStatus)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>startSkoreSync</strong> (string $accesscode)</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>unregisterStudent</strong> (string $accesscode, string $userIdentifier, string $officialDate)<br>
+<em>string $officialDate is optioneel</em></div>
+</li>
+</ul>
+
+</div>
+
+<h3 class="sectionedit13" id="detail_van_de_methoden">Detail van de methoden</h3>
+<div class="level3">
+
+</div>
+
+<h4 id="addcourse">addCourse</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk om vakken aan te maken in Smartschool. Het XML-bestand heeft 3 parameters aan boord:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$coursename</strong>: Vaknaam</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$coursedesc</strong>: Vakomschrijving</div>
+</li>
+<li class="level1"><div class="li"> int <strong>$visibility</strong>: Zichtbaarheid (optioneel: '1' = zichtbaar (default) of '0' = niet zichtbaar)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="addcoursestudents">addCourseStudents</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk om bepaalde klassen toe te voegen aan een bepaald vak. Het XML-bestand heeft 4 parameters aan boord:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$coursename</strong>: Vaknaam</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$coursedesc</strong>: Vakomschrijving </div>
+</li>
+<li class="level1"><div class="li"> string <strong>$groupIds</strong>: CSV-lijst met unieke klas- of groepscode(s)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="addcourseteacher">addCourseTeacher</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk om een vakleerkracht toe te voegen aan een bepaald vak. Het XML-bestand heeft 5 parameters aan boord:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$coursename</strong>: Vaknaam</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$coursedesc</strong>: Vakomschrijving </div>
+</li>
+<li class="level1"><div class="li"> string <strong>$internnummer</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userlist</strong>: CSV-lijst met uniek veld gebruiker</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="addhelpdeskticket">addHelpdeskTicket</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk om een ticket aan te maken in de module Helpdesk. Gebruik de methode 'getHelpdeskMiniDbItems' om alle minidatabankitems op te halen die gebruikt kunnen worden in de module Helpdesk.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accescode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$title</strong>: titel van het helpdeskticket</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$description</strong>: omschrijving van het helpdeskticket</div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$priority</strong>: prioriteit van het ticket. Waarde tussen 1 en 5 (standaardwaarde is 3).</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$miniDbItem</strong>: item uit de minidatabank</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: uniek veld gebruiker</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="changegroupowners">changeGroupOwners</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk om de klastitularissen van een klas te wijzigen.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$code</strong>: Unieke klas- of groepscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userlist</strong>: CSV-lijst met uniek veld gebruiker</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="changeinternnumber">changeInternNumber</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk om het intern nummer van een gebruiker te wijzigen waarbij de gebruikersnaam als sleutelveld fungeert.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$username</strong>: Gebruikersnaam</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$newInternNumber</strong>: Nieuw intern nummer</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="changepasswordatnextlogin">changePasswordAtNextLogin</h4>
+<div class="level4">
+
+<p>
+Met deze methode verplicht je een bepaalde hoofd- of co-account om een nieuw wachtwoord in te stellen bij de volgende aanmelding.
+</p>
+<ul>
+<li class="level1"><div class="li"> string $accescode: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string $userIdentifier: uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> integer $accountType: type account ('0' = hoofdaccount, '1' = co-account 1, '2' = co-account 2…)</div>
+</li>
+</ul>
+<div class="plugin_note noteclassic">Bij de eerste aanmelding dient het wachtwoord altijd gewijzigd te worden door de Smartschoolgebruiker. Sommige scholen gaan er vanuit dat dat via changePasswordAtNextLogin vermeden kan worden zodat het wachtwoord dat ingesteld werd door de beheerder behouden blijft. Dit is op geen enkele manier mogelijk.
+</div>
+</div>
+
+<h4 id="changeusername">changeUsername</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk om de gebruikersnaam van een gebruiker te wijzigen waarbij het intern nummer als sleutelveld fungeert.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$internNumber</strong>: Intern nummer</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$newUsername</strong>: Nieuwe gebruikersnaam</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="checkstatus">checkStatus</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan de status van de synchronisatieopdracht van de methode startSkoreSync opgevraagd worden.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$serviceId</strong>: De unieke code van de synchronisatieopdracht van de methode startSkoreSync</div>
+</li>
+</ul>
+
+<p>
+Deze methode geeft de status van de synchronisatieopdracht terug:
+</p>
+<ul>
+<li class="level1"><div class="li"> no_status: er is voor de opgegeven serviceId geen opdracht gevonden</div>
+</li>
+<li class="level1"><div class="li"> busy: de opdracht is bezig</div>
+</li>
+<li class="level1"><div class="li"> done: de opdracht is voltooid</div>
+</li>
+<li class="level1"><div class="li"> error: de opdracht is niet voltooid door een fout tijdens de opdracht</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="cleargroup">clearGroup</h4>
+<div class="level4">
+
+<p>
+Deze methode verwijdert alle gebruikers uit een groep.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$group</strong>: Uniek klas- of groepscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$officialDate</strong>: Officiële datum (optioneel: zonder officiële datum dient de eventuele klasbeweging in Smartschool te worden bevestigd; formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="delclass">delClass</h4>
+<div class="level4">
+
+<p>
+Met deze methode kunnen groepen, klassen en officiële klassen uit Smartschool worden verwijderd. Deze methode kan aangeroepen worden met 1 extra parameter: $code. Dit volstaat om de groep te identificeren. De leden in deze groep worden niet uit Smartschool verwijderd.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$code</strong>: Unieke klas- of groepscode</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="deluser">delUser</h4>
+<div class="level4">
+
+<p>
+Deze methode verwijdert de opgegeven gebruiker uit Smartschool. Volgende gegevens zijn vereist:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$officialDate</strong>: Officiële datum (optioneel: zonder officiële datum dient de klasbeweging in Smartschool te worden bevestigd; formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="forcepasswordreset">forcePasswordReset</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je voor een bepaalde gebruiker aangeven dat het wachtwoord verplicht gewijzigd dient te worden bij de eerstvolgende aanmelding.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$accountType</strong>: Type account ('0' = hoofdaccount, '1' = co-account 1 of '2' = co-account 2 …)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getabsents">getAbsents</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de officiële afwezigheden (voor- en namiddag) van een leerling van een bepaald schooljaar ophalen. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$schoolYear</strong>: Het startjaar van het schooljaar (bv. '2013' voor het schooljaar 2013-2014)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getabsentswithalias">getAbsentsWithAlias</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de officiële afwezigheden (voor- en namiddag) inclusief de aliassen van een leerling van een bepaald schooljaar ophalen. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string $accesscode: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string $userIdentifier: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string $schoolYear: Het startjaar van het schooljaar (bv. ‘2013’ voor het schooljaar 2013-2014)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getabsentsbydate">getAbsentsByDate</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de officiële afwezigheden (voor- en namiddag) van alle leerlingen van een bepaalde dag ophalen. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$date</strong>: Datum (formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getabsentswithaliasbydate">getAbsentsWithAliasByDate</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de officiële afwezigheden (voor- en namiddag) inclusief de aliassen van alle leerlingen van een bepaalde dag ophalen. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$date</strong>: Datum (formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getabsentswithinternalnumberbydate">getAbsentsWithInternalNumberByDate</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de officiële afwezigheden (voor- en namiddag) van alle leerlingen van een bepaalde dag ophalen. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$date</strong>: Datum (formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getabsentswithusernamebydate">getAbsentsWithUsernameByDate</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de officiële afwezigheden (voor- en namiddag) van alle leerlingen van een bepaalde dag ophalen. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$date</strong>: Datum (formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getabsentsbydateandgroup">getAbsentsByDateAndGroup</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de officiële afwezigheden (voor- en namiddag) van alle leerlingen van een bepaalde klas en dag ophalen. Deze methode levert een JSON-object. 
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$date</strong>: Datum (formaat: YYYY-MM-DD)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$code</strong>: Unieke klas- of groepscode van de op te halen groep</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getaccountphoto">getAccountPhoto</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je de foto van de leerling ophalen. Deze methode levert een base64 encoded string.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getallaccounts">getAllAccounts</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je voornaam, naam, gebruikersnaam, intern nummer en het klasnummer van de officiële klas ophalen van gebruikers in een bepaalde groep. Deze methode levert een in base64 geëncodeerde XML.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$code</strong>: Unieke klas- of groepscode van de op te halen groep</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$recursive</strong>: Subgroepen ook ophalen ('0' indien niet vereist of '1' indien wel vereist)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getallaccountsextended">getAllAccountsExtended</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je alle profielvelden (behalve wachtwoorden en profielfoto), het klasnummer van de officiële klas, de groepslidmaatschappen en de laatste aanmeldingen ophalen van gebruikers (hoofd- en co-accounts) in een bepaalde groep. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$code</strong>: Unieke klas- of groepscode van de op te halen groep</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$recursive</strong>: Subgroepen ook ophalen ('0' indien niet vereist of '1' indien wel vereist)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getallgroupsandclasses">getAllGroupsAndClasses</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt alle groepen en klassen van het Smartschoolplatform op. Deze methode levert een in base64 geëncodeerde XML met de klas- of groepsnaam, de omschrijving, de unieke klas- of groepscode en het type.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getclasslist">getClassList</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt een lijst met alle klassen op. Deze methode levert een geserialiseerde array met de klasnaam, de omschrijving, de zichtbaarheid en de unieke klascode. Er wordt ook aangegeven indien het al dan niet een officiële klas is.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getclasslistjson">getClassListJson</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt een lijst met alle klassen op. Deze methode levert een JSON-array met de klasnaam, de omschrijving, de zichtbaarheid en de unieke klascode. Er wordt ook aangegeven indien het al dan niet een officiële klas is.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getclassteachers">getClassTeachers</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt een lijst van de klastitularissen op. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> boolean <strong>$getAllOwners</strong>: Hiermee is het mogelijk om alle klastitularissen op te vragen (if true) en niet enkel de eerste (default false).</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getcourses">getCourses</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt alle vakken van het Smartschoolplatform op. Deze methode levert een in base64 geëncodeerde XML.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="gethelpdeskminidbitems">getHelpdeskMiniDbItems</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt alle items in minidatabanken op die gebruikt mogen worden in de module Helpdesk.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getreferencefield">getReferenceField</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt het unieke veld op dat binnen het platform is ingesteld ('number' of ‘username’).
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getschoolyeardataofclass">getSchoolyearDataOfClass</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt alle schooljaargegevens op van de opgegeven klas. 
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$classCode</strong>: Unieke klas- of groepscode</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getskoreclassteachercourserelation">getSkoreClassTeacherCourseRelation</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt een lijst met de koppeling tussen klassen, leerkrachten, vakken en leerlinginformatie (naam, voornaam, gebruikersnaam, intern nummer, stamnummer …) uit Skore weer (koppeling van de puntenboeken). Deze methode levert een XML-bestand.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getstudentcareer">getStudentCareer</h4>
+<div class="level4">
+
+<p>
+Deze methode vraagt de volledige <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:algemene_configuratie:schoolloopbaan" class="wikilink1" title="handleiding:algemene_configuratie:schoolloopbaan" data-wiki-id="handleiding:algemene_configuratie:schoolloopbaan">schoolloopbaan</a> van de leerling op. Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getuserdetails">getUserDetails</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je alle profielvelden (behalve wachtwoorden en profielfoto) en de groepslidmaatschappen ophalen van een specifieke gebruiker (hoofd- en co-accounts). Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getuserdetailsbynumber">getUserDetailsByNumber</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je alle profielvelden (behalve wachtwoorden en profielfoto) en de groepslidmaatschappen ophalen van een specifieke gebruiker (hoofd- en co-accounts). Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$number</strong>: Intern nummer</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getuserdetailsbyscannablecode">getUserDetailsByScannableCode</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je een leerling (laten) herkennen a.d.h.v. de <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:gebruikersbeheer:gebruikers:profiel#scanbare_waarde_om_leerling_te_identificeren" class="wikilink1" title="handleiding:gebruikersbeheer:gebruikers:profiel" data-wiki-id="handleiding:gebruikersbeheer:gebruikers:profiel">scanbare waarde van Smartschool</a> of een <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:gebruikersbeheer:profielvelden#leerlingenkaart" class="wikilink1" title="handleiding:gebruikersbeheer:profielvelden" data-wiki-id="handleiding:gebruikersbeheer:profielvelden">eigen scanbare waarde</a>.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$scannableCode</strong>: Scanbare code</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getuserdetailsbyusername">getUserDetailsByUsername</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je alle profielvelden (behalve wachtwoorden en profielfoto) en de groepslidmaatschappen ophalen van een specifieke gebruiker (hoofd- en co-accounts). Deze methode levert een JSON-object.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$username</strong>: Gebruikersnaam</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="getuserofficialclass">getUserOfficialClass</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan je controleren in welke officiële klas een bepaalde leerling zit op een bepaalde dag.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$date</strong>: Datum (optioneel: zonder datum wordt de huidige dag opgevraagd; formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="removecoaccount">removeCoAccount</h4>
+<div class="level4">
+
+<p>
+Via deze methode is het mogelijk om een bepaalde co-account van een gebruiker te verwijderen.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$accountType</strong>: Type account ('1' = co-account 1 of '2' = co-account 2 …)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="removeuserfromgroup">removeUserFromGroup</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het mogelijk een gebruiker uit een specifieke groep te verwijderen.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Webservices toegangscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$class</strong>: Unieke klas- of groepscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$officialDate</strong>: Officiële datum klasbeweging (optioneel)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="replaceinum">replaceInum</h4>
+<div class="level4">
+
+<p>
+Via deze methode kan je het internnummer van een bepaalde gebruiker vervangen.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$oldInum</strong>: Oud intern nummer</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$newInum</strong>: Nieuw intern nummer</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="returncsverrorcodes">returnCsvErrorCodes</h4>
+<div class="level4">
+
+<p>
+Deze methode haalt alle errorcodes in een CSV-bestand op.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>returnCsvErrorCodes ()</strong></div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="returnjsonerrorcodes">returnJsonErrorCodes</h4>
+<div class="level4">
+
+<p>
+Deze methode haalt alle errorcodes in een JSON-object op.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>returnJsonErrorCodes ()</strong></div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveclass">saveClass</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het enerzijds mogelijk om klassen en officiële klassen aan te maken of te wijzigen in Smartschool. Het is evenwel niet mogelijk om de klasnaam van bestaande klassen en officiële klassen te wijzigen of om bestaande (officiële) klassen onder een andere bovenliggende groep of klas te plaatsen. Het xml-bestand heeft 6 parameters en 3 optionele parameters aan boord.
+</p>
+
+<p>
+Indien er nog geen (officiële) klas voorkomt met de aangeleverde identificatie string ($name) zal Smartschool een nieuwe (officiële) klas aanmaken. Bestaat er echter wel reeds een (officiële) klas met de identificatie string dan zullen de bestaande parameters in Smartschool worden aangepast.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$name</strong>: Klas- of groepsnaam</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$desc</strong>: Omschrijving</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$code</strong>: Unieke klas- of groepscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$parent</strong>: Unieke klas-of groepscode van parent groep (leeg of '0' voor behouden huidige parent) <br>
+<em>(Het is niet mogelijk om een bestaande (officiële) klas te verplaatsen via de <abbr title="Application Programming Interface">API</abbr>.</em></div>
+</li>
+<li class="level1"><div class="li"> string <strong>$untis</strong>: Roostercode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$instituteNumber</strong>: Instellingsnummer (optioneel: enkel voor het aanmaken van een officiële klas)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$adminNumber</strong>: Nummer van de administratieve groep (optioneel: enkel voor het aanmaken van een officiële klas)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$schoolYearDate</strong>: Dit past het instellingsnummer en nummer van de administratieve groep aan voor het doorgegeven schooljaar (indien niet meegegeven wordt dit aangepast voor het huidige schooljaar)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveclasslist">saveClassList</h4>
+<div class="level4">
+
+<p>
+Via deze methode update je een lijst van klassen.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$serializedList</strong>: Een geserialiseerde array met alle klassen</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveclasslistjson">saveClassListJson</h4>
+<div class="level4">
+
+<p>
+Via deze methode update je een lijst van klassen.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$jsonList</strong>: Een JSON-array met alle klassen</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="savegroup">saveGroup</h4>
+<div class="level4">
+
+<p>
+Met deze methode is het enerzijds mogelijk om groepen aan te maken of te wijzigen in Smartschool. Het is evenwel niet mogelijk om de groepsnaam van bestaande groepen te wijzigen of om een bestaande groep te verplaatsen naar een andere bovenliggende groep. Het xml-bestand heeft 6 parameters aan boord.
+</p>
+
+<p>
+Indien er nog geen groep voorkomt met de aangeleverde identificatie string ($code) zal Smartschool een nieuwe groep aanmaken. Bestaat er echter wel reeds een groep met de identificatie string dan zullen de bestaande parameters in Smartschool worden aangepast.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$name</strong>: Klas- of groepsnaam</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$desc</strong>: Omschrijving</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$code</strong>: Unieke klas- of groepscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$parent</strong>: Unieke klas-of groepscode van parent groep (leeg of '0' voor behouden huidige parent) <br>
+<em>(Het is niet mogelijk om een bestaande groep te verplaatsen via de <abbr title="Application Programming Interface">API</abbr>.</em></div>
+</li>
+<li class="level1"><div class="li"> string <strong>$untis</strong>: Roostercode</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="savepassword">savePassword</h4>
+<div class="level4">
+
+<p>
+Met deze methode stel je het wachtwoord voor een bepaalde hoofd- of co-account in.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$password</strong>: Wachtwoord of wachtzin<br>
+<a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:profiel:gebuikersnaam-wachtwoord#wachtwoord_vs_wachtzin" class="wikilink1" title="handleiding:profiel:gebuikersnaam-wachtwoord" data-wiki-id="handleiding:profiel:gebuikersnaam-wachtwoord">Lees hier alle informatie over de voorwaarden van een wachtwoord of wachtzin.</a></div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$accountType</strong>: Type account ('0' = hoofdaccount, '1' = co-account 1 of '2' = co-account 2 …)</div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$changePasswordAtNextLogin</strong>: Afdwingen of het wachtwoord gewijzigd moet worden of niet, optionele waarde (0 = niet wijzigen, 1 = wijzigen, standaardwaarde is 1)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveschoolyeardataofclass">saveSchoolyearDataOfClass</h4>
+<div class="level4">
+
+<p>
+Met deze methode wijzig je de schooljaargegevens van de opgegeven klas. 
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$classCode</strong>: Unieke klas- of groepscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$date</strong>: Datum (formaat: YYYY-MM-DD)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$instituteNumber</strong>: Instellingsnummer</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$administrativeGroupNumber</strong>:  Nummer administratieve groep</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$residence</strong>: Vestigingsplaats</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$domain</strong>: Studiedomein</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$principal</strong>: naam voornaam of voornaam naam van het directielid</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="savesignature">saveSignature</h4>
+<div class="level4">
+
+<p>
+Met deze methode stel je de handtekening (Berichten) voor een bepaalde hoofd- of co-account in.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$accountType</strong>: Type account ('0' = hoofdaccount, '1' = co-account 1 of '2' = co-account 2 …)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$signature</strong>: Handtekening</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveuser">saveUser</h4>
+<div class="level4">
+
+<p>
+Voegt een gebruiker toe of wijzigt een bestaande gebruiker.
+</p>
+
+<p>
+Als de saveUser methode wordt aangeroepen dan wordt het ingesteld uniek veld (userIdentifier) gecontroleerd. Indien er nog geen account bestaat met het ingesteld uniek veld dan zal er een nieuwe account worden toegevoegd. Bestaat er echter wel reeds een account met het ingesteld uniek veld dan worden de gegevens van deze account geüpdatet met de meegeleverde gegevens.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$internnumber</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$username</strong>: Gebruikersnaam (minstens 2 karakters)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$passwd1</strong>: Wachtwoord hoofdaccount<br>
+Voor nieuwe gebruikers is het verplicht om dit wachtwoord op te geven. Bij bestaande gebruikers is het mogelijk om deze string leeg te laten, zo zal het wachtwoord van deze gebruiker niet gewijzigd worden. <br>
+<a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:profiel:gebuikersnaam-wachtwoord#wachtwoord_vs_wachtzin" class="wikilink1" title="handleiding:profiel:gebuikersnaam-wachtwoord" data-wiki-id="handleiding:profiel:gebuikersnaam-wachtwoord">Lees hier alle informatie over de voorwaarden van een wachtwoord of wachtzin.</a></div>
+</li>
+<li class="level1"><div class="li"> string <strong>$passwd2</strong>: Wachtwoord co-account (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$passwd3</strong>: Wachtwoord tweede co-account (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$name</strong>: Voornaam (minstens 1 karakter)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$surname</strong>: Achternaam (minstens 1 karakter)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$extranames</strong>: Extra voornamen (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$initials</strong>: Initialen (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$sex</strong>: Geslacht: 'm' of 'v' (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$birthday</strong>: Geboortedatum (optioneel; formaat YYYY-MM-DD of DD-MM-YYYY)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$birthplace</strong>: Geboorteplaats (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$birthcountry</strong>: Geboorteland (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$address</strong>: Adres (optioneel) <br>
+Het huisnummer en busnummer kunnen meegeleverd worden in de '$address' parameter. Wanneer het adres in de vorm &lt;straatnaam&gt; spatie &lt;huisnummer&gt; spatie 'bus' spatie &lt;busnummer&gt; wordt aangeboden zal de saveUser service dit herkennen de gegevens in de juiste databankvelden invoeren. Bv.: Kerkstraat 22 of Kerkstraat 22 bus 1. Naast het woord 'bus' wordt ook een schuine streep gebruikt om huisnummer van busnummer te scheiden. Kerkstraat 22/1 wordt dus Kerkstraat 22 bus 1.</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$postalcode</strong>: Postcode (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$location</strong>: Stad/Gemeente (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$country</strong>: Land (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$email</strong>: E-mailadres (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$mobilephone</strong>: Mobiel nummer (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$homephone</strong>: Telefoonnummer (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$fax</strong>: Fax (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$prn</strong>: Rijksregisternummer (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$stamboeknummer</strong>: Stamnummer (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$basisrol</strong>: Basisrol: 'leerling', 'leerkracht', 'directie' of 'andere' (verplicht)</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$untis</strong>: Roostercode (optioneel)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveuserparameter">saveUserParameter</h4>
+<div class="level4">
+
+<p>
+Met deze methode kunnen de onderstaande velden uit het profiel worden ingevuld:
+</p>
+<ul>
+<li class="level1"><div class="li"> eigen profielvelden</div>
+</li>
+<li class="level1"><div class="li"> name, surname, extranames, initials, sex, status, role, stamboeknummer, number, sort, birthday, birthplace, birthcountry, prn, street, streetnr, busnr, postalCode, location, country, email, website, untis, mobilePhone, homePhone, fax, im, website, type_coaccount1, type_coaccount2, naam_coaccount1, naam_coaccount2, voornaam_coaccount1, voornaam_coaccount2, status_coaccount1, status_coaccount2, email_coaccount1, email_coaccount2, telefoonnummer_coaccount1, telefoonnummer_coaccount2, mobielnummer_coaccount1, mobielnummer_coaccount2 (incl. Informatvelden, gorollen)<br>
+<em>Voor de co-accounts loopt de nummering verder (vb. naam_coaccount3, naam_coaacount4, naam_coaccount5 en naam_coaccount6). Zo kan je co-accounts 1 t.e.m. 6 via deze functie beheren.<br>
+De parameter 'gorollen' is enkel bruikbaar voor scholen van het GO!. De mogelijke waarden komen overeen met de taal die in het Gebruikersbeheer wordt gebruikt. De 'gorollen' moeten als json-encoded array doorgegeven worden, bv. $smartwebservice.saveUserParameter($accesscode,$internnr,'gorollen','[“Leerkracht”]')</em></div>
+</li>
+<li class="level1 node"><div class="li"> eigen profielvelden</div>
+<ul>
+<li class="level2"><div class="li"> paramName: naam profielveld</div>
+</li>
+<li class="level2"><div class="li"> paramValue: waarde</div>
+</li>
+</ul>
+</li>
+<li class="level1 node"><div class="li"> status co-account</div>
+<ul>
+<li class="level2"><div class="li"> paramName: status_coaccount1..6</div>
+</li>
+<li class="level2"><div class="li"> paramValue: 'actief' of 'niet actief' of 'actief tot en met yyyy/mm/dd'</div>
+</li>
+</ul>
+</li>
+<li class="level1 node"><div class="li"> godsdienstkeuze</div>
+<ul>
+<li class="level2"><div class="li"> paramName: 'Godsdienstkeuze'</div>
+</li>
+<li class="level2"><div class="li"> paramValue: 'MOR' (niet-confessionele zedenleer), 'CAT' (katholieke godsdienst), 'PRO' (protestantse godsdienst), 'ISR' (israëlitische godsdienst), 'ISL' (islamitische godsdienst), 'ORT' (orthodoxe godsdienst), 'ANG' (anglicaanse godsdienst), 'DIS' (vrijgesteld of niet van toepassing), 'CUL' (cultuurbeschouwing), 'PER' (eigen cultuur en religie)</div>
+</li>
+</ul>
+</li>
+<li class="level1 node"><div class="li"> soort leerling</div>
+<ul>
+<li class="level2"><div class="li"> paramName: 'Soort leerling'</div>
+</li>
+<li class="level2 node"><div class="li"> paramValue:</div>
+<ul>
+<li class="level3"><div class="li">  secundair onderwijs: '01' of 'V' (vrije leerling), '02' of 'R' (regelmatig financierbaar), '03' (regelmatig niet financierbaar), '99' (onder voorbehoud aanvaarde leerling)</div>
+</li>
+<li class="level3"><div class="li">  basisonderwijs: '01' (coefficient 1), '02' (coefficient 1,5), '99' (niet financieerbaar)</div>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="level1 node"><div class="li"> nationaliteit</div>
+<ul>
+<li class="level2"><div class="li"> paramName: 'Nationaliteit'</div>
+</li>
+<li class="level2"><div class="li"> paramValue: zie lijst met nationaliteiten binnen het Gebruikersbeheer (binnen het profiel van een willekeurige gebruiker). </div>
+</li>
+</ul>
+</li>
+</ul>
+
+<p>
+De functie verwacht 4 parameters:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$paramName</strong>: Naam parameter</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$paramValue</strong>: Waarde parameter (bij aanvinkvakjes dien je meerdere keuzes te scheiden met een puntkomma)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveusertoclass">saveUserToClass</h4>
+<div class="level4">
+
+<p>
+Met deze methode verplaats je de gebruiker naar de (nieuwe) officiële klas. Een leerling kan maar aan één officiële klas gekoppeld worden. De officiele datum kan optioneel worden meegeleverd.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$class</strong>: Unieke klas- of groepscode</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$officialDate</strong>: Officiële datum (optioneel: zonder officiële datum dient de klasbeweging in Smartschool te worden bevestigd; formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveusertoclasses">saveUserToClasses</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan een gebruiker aan meerdere klassen/groepen gekoppeld worden. De nieuwe klassen en groepen worden aan de bestaande klassen en groepen toegevoegd. In geval van een officiële klas: de leerling zal verwijderd worden uit zijn huidige officiële klas en opnieuw gekoppeld worden aan de officiële klas die wordt meegegeven. De methode vereist 3 parameters:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$csvList</strong>: CSV-lijst met unieke klas- of groepscode(s)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="saveusertoclassesandgroups">saveUserToClassesAndGroups</h4>
+<div class="level4">
+
+<p>
+Via deze methode is het mogelijk om de lidmaatschappen van de officiële klas, klassen en groepen van een bepaalde gebruiker te bepalen. Het is mogelijk om de nieuwe lidmaatschappen toe te voegen aan de bestaande of om de bestaande lidmaatschappen eerst te verwijderen. Indien er fouten zijn bij de verwerking dan wordt een CSV-bestand met de foutcodes teruggegeven.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord Webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$csvList</strong>: CSV-lijst met unieke klas- of groepscode(s)</div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$keepOld</strong>: ('1' = behoud bestaande lidmaatschappen en voeg nieuwe lidmaatschappen toe, '0' = verwijder oude lidmaatschappen en maak enkel de nieuwe lidmaatschappen)</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="sendmsg">sendMsg</h4>
+<div class="level4">
+
+<p>
+Via deze methode kan je een bericht naar de hoofdaccount of een co-account van een bepaalde gebruiker sturen. Het opgeven van de bijlage is optioneel.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker van de ontvanger</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$title</strong>: Titel van het bericht</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$body</strong>: Tekst van het bericht</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$senderIdentifier</strong>: Uniek veld gebruiker van de verzender. Geef 'Null' mee om geen verzender in te stellen.</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>$attachments</strong>: Bijlagen (1 of meer) in base64 encoding (optioneel)</div>
+</li>
+<li class="level1"><div class="li"> integer <strong>$coaccount</strong>: Type account ('0' = hoofdaccount, '1' = co-account 1 of '2' = co-account 2 …)<br>
+$coaccount is optioneel: indien dit niet wordt opgegeven dan wordt het bericht naar de hoofdaccount gestuurd.</div>
+</li>
+<li class="level1"><div class="li"> boolean <strong>$copyToLVS</strong>: Waarde 'true' voegt het <a href="https://sanctamaria-aarschot.smartschool.be/index.php?module=Manual&amp;file=manual&amp;layout=2&amp;id=handleiding:lvs:gebruik:berichten" class="wikilink1" title="handleiding:lvs:gebruik:berichten" data-wiki-id="handleiding:lvs:gebruik:berichten">bericht toe aan het LVS</a> (optioneel en standaardwaarde is 'false')</div>
+</li>
+</ul>
+
+<p>
+De array van de bijlagen ziet er in pseudo code als volgt uit:
+</p>
+
+<p>
+[
+['filename' ⇒ 'test1.docx', 'filedata' ⇒ 'base64encoded string']
+['filename' ⇒ 'test2.docx', 'filedata' ⇒ 'base64encoded string']
+]
+</p>
+
+<p>
+Of je kan een JSON-string meegeven met de volgende structuur:
+</p>
+
+<p>
+[<br>
+
+{ “filename”: “test1.docx”, “filedata”: “base64encoded string” },<br>
+
+{ “filename”: “test2.docx”, “filedata”: “base64encoded string” }<br>
+
+]<br>
+
+</p>
+
+</div>
+
+<h4 id="setaccountphoto">setAccountPhoto</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan de foto van de leerling ingevuld worden. Door een 'lege' foto door te sturen kan de foto ook gewist worden. De functie accepteert 3 parameters:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$photo</strong>: base64encoded photo</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="setaccountstatus">setAccountStatus</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan de status van een leerling gewijzigd worden. De methode vereist 3 parameters:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> mixed <strong>$accountStatus</strong>: Status account</div>
+</li>
+</ul>
+
+<p>
+Deze laatste parameter kan volgende waarden hebben:
+</p>
+<ul>
+<li class="level1"><div class="li"> 'actief', 'active' of 'enabled' om de account op actief te zetten</div>
+</li>
+<li class="level1"><div class="li"> 'inactief', 'inactive' of 'disabled' om de account uit te schakelen</div>
+</li>
+<li class="level1"><div class="li"> 'administrative' of 'administratief' om van de account een administratieve account te maken.</div>
+</li>
+</ul>
+
+</div>
+
+<h4 id="startskoresync">startSkoreSync</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan de synchronisatie van klassen en leerlingen van Smartschool naar Skore gestart worden. Deze methode levert een JSON-object met daarin de UUID van de synchronisatieopdracht.
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+</ul>
+
+<p>
+Deze opdracht kan slechts één keer per 15 minuten gestart worden.
+</p>
+
+</div>
+
+<h4 id="unregisterstudent">unregisterStudent</h4>
+<div class="level4">
+
+<p>
+Met deze methode kan de leerling worden uitgeschreven. De officiele datum kan optioneel worden meegeleverd. De methode vereist 3 parameters:
+</p>
+<ul>
+<li class="level1"><div class="li"> string <strong>$accesscode</strong>: Wachtwoord webservices</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$userIdentifier</strong>: Uniek veld gebruiker</div>
+</li>
+<li class="level1"><div class="li"> string <strong>$officialDate</strong>: Officiële datum (optioneel: zonder officiële datum dient de klasbeweging in Smartschool te worden bevestigd; formaat: YYYY-MM-DD)</div>
+</li>
+</ul>
+
+</div>
+                    <!-- wikipage stop --></div></div>
+</div></div></div>
+    <!-- END middlepart -->
+    
+  </div>
+</div>
+		
+                
+        <!-- javascript variables -->
+        <script type="text/javascript">var SMSC = SMSC || {};</script>
+                                        <script type="text/javascript">$.extend(true, SMSC, JSON.parse('\u007B\u0022vars\u0022\u003A\u007B\u0022showNotifyAlerts\u0022\u003Atrue,\u0022isMP\u0022\u003Afalse,\u0022tracklogging\u0022\u003Atrue,\u0022storageToken\u0022\u003A\u00222b4f5db39262dd00ea60d178e9be0903\u0022,\u0022socketUrl\u0022\u003A\u0022https\u003A\\\/\\\/nodejs\u002Dgs.smartschool.be\u0022,\u0022socketPort\u0022\u003A\u0022443\u0022,\u0022queueUuid\u0022\u003A\u002297be6437\u002D75f0\u002D4529\u002Dac92\u002D96b45a537223\u0022,\u0022userID\u0022\u003A7236,\u0022lng_rpc_error_title\u0022\u003A\u0022Melding\u0022,\u0022lng_rpc_error_unknown_msg\u0022\u003A\u0022Er\u0020is\u0020een\u0020onbekende\u0020fout\u0020opgetreden.\u0022,\u0022lng_rpc_error_not_found\u0022\u003A\u0022Het\u0020onderdeel\u0020dat\u0020je\u0020zoekt\u0020is\u0020niet\u0020gevonden.\u0020Mogelijk\u0020is\u0020het\u0020verwijderd\u0020of\u0020onzichtbaar\u0020gemaakt.\u0022,\u0022lng_rpc_error_close\u0022\u003A\u0022Sluiten\u0022,\u0022lng_rpc_error_ok\u0022\u003A\u0022OK\u0022,\u0022lng_rpc_following_errors_appeared\u0022\u003A\u0022Volgende\u0020fouten\u0020zijn\u0020opgetreden\u0022,\u0022campaigns\u0022\u003A\u005B\u005D\u007D\u007D'));</script>
+
+                                        <script type="text/javascript">$.extend(true, SMSC, JSON.parse('\u007B\u0022quickSearch\u0022\u003A\u007B\u0022quicksearch.search_placeholder\u0022\u003A\u0022Zoeken...\u0022,\u0022quicksearch.search_option_own\u002Dplatform\u002Donly\u0022\u003A\u0022Enkel\u0020in\u0020eigen\u0020platform\u0020zoeken\u0022,\u0022quicksearch.search_option_include\u002Ddeleted\u0022\u003A\u0022Ook\u0020\u003Cspan\u0020style\u003D\\\u0022color\u003A\u0023E30000\u003B\u0020font\u002Dweight\u003A\u0020bold\u003B\\\u0022\u003Everwijderde\u003C\\\/span\u003E\u0020gebruikers\u0020tonen\u0022,\u0022quicksearch.default_deleted_string\u0022\u003A\u0022verwijderd\u0022,\u0022quicksearch.search_not_found\u0022\u003A\u0022We\u0020hebben\u0020__SEARCHSTRING__\u0020niet\u0020gevonden.\u0020Probeer\u0020een\u0020andere\u0020zoekterm.\u0022,\u0022quicksearch.search_subtitle_suggestions\u0022\u003A\u0022Suggesties\u0022,\u0022quicksearch.currentUser\u0022\u003A\u0022Aangemelde\u0020gebruiker\u0022,\u0022quicksearch.me\u0022\u003A\u0022Mezelf\u0022,\u0022quicksearch.all_students\u0022\u003A\u0022Alle\u0020leerlingen\u0022,\u0022planner.user_role.1\u0022\u003A\u0022Alle\u0020leerlingen\u0022,\u0022quicksearch.unassigned\u0022\u003A\u0022Niemand\u0022,\u0022quicksearch.search_subtitle_favourites\u0022\u003A\u0022Favorieten\u0022,\u0022quicksearch.mark_as_favourite\u0022\u003A\u0022Toevoegen\u0020aan\u0020favorieten\u0022,\u0022quicksearch.discard_as_favourite\u0022\u003A\u0022Verwijderen\u0020uit\u0020favorieten\u0022,\u0022quicksearch.co_account_type_\u002D1\u0022\u003A\u0022hoofdaccounts\u0022,\u0022quicksearch.co_account_type_\u002D2\u0022\u003A\u0022alle\u0020co\u002Daccounts\u0022,\u0022property.co\u002Daccount\u002Dtype.main\u0022\u003A\u0022Hoofdaccounts\u0022,\u0022bubble_coaccountfilter_title\u0022\u003A\u0022Specifieke\u0020accounttypes\u0020voor\u0020deze\u0020groep\\\/klas\u0020selecteren\u0022,\u0022bubble_coaccountfilter_tokeninput_emptystate\u0022\u003A\u0022Zoek\u0020naar\u0020accounttypes\u0022,\u0022bubble_coaccountfilter_quickfilter_title\u0022\u003A\u0022Snelle\u0020filters\u0022,\u0022quicksearch_clear_selection\u0022\u003A\u0022Selectie\u0020verwijderen\u0022,\u0022\u0025quick\u002Dsearch.co\u002Daccount\u002Dfilter.main\u002Daccounts\u0025\u0022\u003A\u0022Hoofdaccounts\u0022,\u0022\u0025quick\u002Dsearch.co\u002Daccount\u002Dfilter.all\u002Dco\u002Daccounts\u0025\u0022\u003A\u0022alle\u0020Co\u002Daccounts\u0022,\u0022\u0025quick\u002Dsearch.co\u002Daccount\u002Dfilter.non\u002Dprofessional\u002Dco\u002Daccounts\u0025\u0022\u003A\u0022Familie\u0022\u007D,\u0022vars\u0022\u003A\u007B\u0022userPictureDomain\u0022\u003A\u0022https\u003A\\\/\\\/userpicture20.smartschool.be\u0022,\u0022currentUser\u0022\u003A\u007B\u0022userIdentifier\u0022\u003A\u00224069_7236_0\u0022,\u0022userPictureHash\u0022\u003A\u0022initials_YA\u0022,\u0022userPictureUrl\u0022\u003A\u0022https\u003A\\\/\\\/userpicture20.smartschool.be\\\/User\\\/Userimage\\\/hashimage\\\/hash\\\/initials_YA\\\/plain\\\/1\\\/res\\\/128\u0022,\u0022name\u0022\u003A\u0022Yvan\u0020Admin\u0022,\u0022nameReverse\u0022\u003A\u0022Admin\u0020Yvan\u0022,\u0022description\u0022\u003A\u0022\u0022,\u0022descriptionReverse\u0022\u003A\u0022\u0022\u007D,\u0022authenticatedUser\u0022\u003A\u007B\u0022id\u0022\u003A\u00224069_7236_0\u0022,\u0022pictureHash\u0022\u003A\u0022initials_YA\u0022,\u0022pictureUrl\u0022\u003A\u0022https\u003A\\\/\\\/userpicture20.smartschool.be\\\/User\\\/Userimage\\\/hashimage\\\/hash\\\/initials_YA\\\/plain\\\/1\\\/res\\\/128\u0022,\u0022description\u0022\u003A\u007B\u0022startingWithFirstName\u0022\u003A\u0022\u0022,\u0022startingWithLastName\u0022\u003A\u0022\u0022\u007D,\u0022name\u0022\u003A\u007B\u0022startingWithFirstName\u0022\u003A\u0022Yvan\u0020Admin\u0022,\u0022startingWithLastName\u0022\u003A\u0022Admin\u0020Yvan\u0022\u007D,\u0022sort\u0022\u003A\u0022admin\u002Dyvan\u0022,\u0022deleted\u0022\u003Afalse\u007D,\u0022currentUserRole\u0022\u003A0,\u0022locale\u0022\u003A\u0022nl\u0022,\u0022tinyMCEVersion\u0022\u003A\u00226.8.5\u0022,\u0022ssID\u0022\u003A4069\u007D\u007D'));</script>
+
+            <script type="text/javascript">$.extend(true, SMSC, JSON.parse('\u007B\u0022wopiConfig\u0022\u003A\u007B\u0022wopiActions\u0022\u003A\u007B\u0022pdf\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Pdf\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/mime_pdf\\\/mime_pdf_16x16.png\u0022\u007D\u007D,\u0022csv\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D,\u0022convert\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022ods\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022xls\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D,\u0022convert\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022xlsb\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022xlsm\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022xlsx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Excel\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Excel\u002Dcolor\\\/Excel\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022odp\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022pot\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022potm\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022potx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022pps\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D,\u0022convert\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022ppsm\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022ppsx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022ppt\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D,\u0022convert\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022pptm\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022pptx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022PowerPoint\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/PowerPoint\u002Dcolor\\\/PowerPoint\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022vdw\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Visio\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Visio\u002Dcolor\\\/Visio\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022vsd\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Visio\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Visio\u002Dcolor\\\/Visio\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022vsdm\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Visio\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Visio\u002Dcolor\\\/Visio\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022vsdx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Visio\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Visio\u002Dcolor\\\/Visio\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Visio\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Visio\u002Dcolor\\\/Visio\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022wopitest\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WopiTest\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WopiTest\u002Dcolor\\\/WopiTest\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WopiTest\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WopiTest\u002Dcolor\\\/WopiTest\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022wopitestx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WopiTest\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WopiTest\u002Dcolor\\\/WopiTest\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WopiTest\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WopiTest\u002Dcolor\\\/WopiTest\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022doc\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D,\u0022convert\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022docm\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022docx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022dot\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022dotm\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022dotx\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022odt\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D,\u0022edit\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022rtf\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022Word\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/Word\u002Dcolor\\\/Word\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022b\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WordPrague\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WordPrague\u002Dcolor\\\/WordPrague\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022fluid\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WordPrague\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WordPrague\u002Dcolor\\\/WordPrague\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022note\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WordPrague\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WordPrague\u002Dcolor\\\/WordPrague\u002Dcolor_16x16.png\u0022\u007D\u007D,\u0022whiteboard\u0022\u003A\u007B\u0022view\u0022\u003A\u007B\u0022applicationName\u0022\u003A\u0022WordPrague\u0022,\u0022applicationIcon\u0022\u003A\u0022\\\/smsc\\\/img\\\/WordPrague\u002Dcolor\\\/WordPrague\u002Dcolor_16x16.png\u0022\u007D\u007D\u007D,\u0022allowCreate\u0022\u003Atrue\u007D\u007D'));</script>
+
+
+          
+        <!-- javascriptContent Body  -->
+                                        <script type="text/javascript">$(document).ready(function(){
+								json_select = eval({"option":[{"value":"0","title":"Maak uw keuze","selected":true},{"value":"511","title":"Aanmelden in twee stappen","selected":false},{"value":"325","title":"Afwezigheden","selected":false},{"value":"23","title":"Algemene configuratie","selected":false},{"value":"457","title":"Analytics","selected":false},{"value":"481","title":"Basisopties en pakketten","selected":false},{"value":"72","title":"Berichten","selected":false},{"value":"334","title":"Beveiliging in Smartschool","selected":false},{"value":"120","title":"Community","selected":false},{"value":"577","title":"Contactmomenten","selected":false},{"value":"519","title":"Deliberatie","selected":false},{"value":"406","title":"Discimus","selected":false},{"value":"452","title":"Doorlichting","selected":false},{"value":"567","title":"Educheck","selected":false},{"value":"328","title":"Enqu\u00eate","selected":false},{"value":"559","title":"Formulieren","selected":false},{"value":"290","title":"Forum","selected":false},{"value":"557","title":"Foto&#039;s","selected":false},{"value":"49","title":"Gebruikersbeheer","selected":false},{"value":"455","title":"GO! Navigator","selected":false},{"value":"575","title":"HBO5 verpleegkunde","selected":false},{"value":"78","title":"Helpdesk","selected":false},{"value":"446","title":"Icoon kiezen","selected":false},{"value":"350","title":"Informat","selected":false},{"value":"579","title":"Interactieve Handleiding","selected":false},{"value":"459","title":"Interimarissen","selected":false},{"value":"79","title":"Intradesk","selected":false},{"value":"95","title":"Kalender","selected":false},{"value":"384","title":"Klastitularis","selected":false},{"value":"473","title":"Labelbeheer","selected":false},{"value":"515","title":"Lesfiches","selected":false},{"value":"81","title":"Lesrooster","selected":false},{"value":"561","title":"Links","selected":false},{"value":"465","title":"Live","selected":false},{"value":"525","title":"Locatie","selected":false},{"value":"370","title":"Logo en huisstijl","selected":false},{"value":"84","title":"LVS","selected":false},{"value":"362","title":"Microsoft Office Online","selected":false},{"value":"438","title":"Mijn documenten","selected":false},{"value":"329","title":"Mijn kinderen - Mijn leerlingfiche","selected":false},{"value":"98","title":"Minidatabanken","selected":false},{"value":"323","title":"Minimumvereisten","selected":false},{"value":"90","title":"Nieuwsberichten","selected":false},{"value":"573","title":"Ondersteuning helpdesk","selected":false},{"value":"551","title":"Online sessies","selected":false},{"value":"523","title":"Opdrachten","selected":false},{"value":"463","title":"Opleidingen","selected":false},{"value":"450","title":"Opsplitsen van platformen","selected":false},{"value":"330","title":"Opstart nieuw schooljaar","selected":false},{"value":"152","title":"Overzicht updates","selected":false},{"value":"443","title":"Overzichten","selected":false},{"value":"408","title":"Planner","selected":false},{"value":"405","title":"Platform van webadres (URL) wijzigen","selected":false},{"value":"424","title":"Platformcontroles","selected":false},{"value":"91","title":"Portfolio","selected":false},{"value":"469","title":"Preteaching","selected":false},{"value":"92","title":"Profiel","selected":false},{"value":"471","title":"Promoties","selected":false},{"value":"215","title":"Reserveringen","selected":false},{"value":"539","title":"Resultaten","selected":false},{"value":"527","title":"Safe Exam Browser","selected":false},{"value":"404","title":"Samenvoegen meerdere platformen","selected":false},{"value":"420","title":"Samenwerking met partners","selected":false},{"value":"448","title":"Selecteren van groepen, klassen en personen","selected":false},{"value":"96","title":"Skore","selected":false},{"value":"282","title":"Smartschool App","selected":false},{"value":"64","title":"Smartschool Management Tool (SMT)","selected":false},{"value":"545","title":"Starten met Planner","selected":false},{"value":"101","title":"Statistieken","selected":false},{"value":"179","title":"Technische informatie voor netwerkbeheerders","selected":false},{"value":"181","title":"Teksteditor van Smartschool","selected":false},{"value":"475","title":"Thema&#039;s en routines","selected":false},{"value":"412","title":"Tips","selected":false},{"value":"430","title":"Uploaden van bestanden","selected":false},{"value":"104","title":"Vak - Forum","selected":false},{"value":"313","title":"Vak - Importeren uit eloV","selected":false},{"value":"116","title":"Vak - Kalender","selected":false},{"value":"105","title":"Vak - Leerpaden","selected":false},{"value":"118","title":"Vak - Live","selected":false},{"value":"106","title":"Vak - Oefeningen","selected":false},{"value":"107","title":"Vak - Rapport","selected":false},{"value":"108","title":"Vak - Samenwerken","selected":false},{"value":"117","title":"Vak - Studiegenoten","selected":false},{"value":"109","title":"Vak - Taken","selected":false},{"value":"110","title":"Vak - Toetsen","selected":false},{"value":"111","title":"Vak - Uploadzone","selected":false},{"value":"112","title":"Vak - Vaknieuws","selected":false},{"value":"113","title":"Vak - Vakopties","selected":false},{"value":"114","title":"Vak - Weblinks","selected":false},{"value":"115","title":"Vak - Wiki","selected":false},{"value":"382","title":"Vakken","selected":false},{"value":"63","title":"Vakkenbeheer","selected":false},{"value":"513","title":"Vakkenlijst","selected":false},{"value":"581","title":"Vernieuwingen - vervolg digitale transformatie","selected":false},{"value":"374","title":"Wachtwoord vergeten","selected":false},{"value":"336","title":"Wat te doen bij hacking of gelekte wachtwoorden?","selected":false},{"value":"410","title":"Webinars en screencasts","selected":false},{"value":"180","title":"Wiki","selected":false},{"value":"294","title":"Zoekfunctie","selected":false}]});
+								$('#renderselect').smscselect({
+									json 			: json_select,
+									onchange		: 'selectBoxHyperlink();'
+								});
+							});</script>
+            <script type="text/javascript">$(document).ready(function(){
+			$('#titlespan').parents('table').addClass('istable');
+		});
+		</script>
+            <script type="text/javascript">var _LNG_ERROR_TITLE= 'Melding';var _LNG_ERROR_MSG= 'Er is een onbekende fout opgetreden waardoor de gevraagde actie niet kon worden uitgevoerd. Vernieuw de pagina (F5) of meld u opnieuw aan indien uw sessie verlopen is.';var _LNG_PHOTOSTRIPNAVLEFT = 'Navigeer links';var _LNG_PHOTOSTRIPNAVRIGHT = 'Navigeer rechts';var _LNG_PHOTOSTRIPGOTOALBUM = 'Ga naar album';var _LNG_PHOTOSTRIPCLICKTOCLOSE = 'Klik om te sluiten';var _LNG_PHOTOSTRIPCLICKTOENLARGE = 'Klik om te vergroten';var _LNG_FOLDERFILESTRIPCLICKFOLDER = 'Klik om deze map binnen te gaan';var _LNG_FOLDERFILESTRIPCLICKFILE = 'Klik om dit bestand te downloaden';var _LNG_FOLDERFILESTRIPCLICKGOUP = 'Klik om een niveau naar boven te gaan';var _LNG_FOLDERFILESTRIPCLICKGOUP_TEXT = 'Terug naar bovenliggende map';var _LNG_FOLDERFILESTRIPCLICKFILE_OPEN = 'Klik om dit bestand te openen';var _LNG_FOLDERFILESTRIPNOCONTENT = 'Deze map is leeg';var _LNG_LIGHTBOX_IMAGE= 'Afbeelding';var _LNG_LIGHTBOX_OF= 'van';</script>
+            <script type="text/javascript">$.extend(true, SMSC, { vars : {"_CURRENTLAYOUT":"2","_LAYOUT":"2","config":{"capabilities":{"canViewLessons":true,"canViewContactForm":true}},"sidebar":{"sidebar_label_start":"Start","sidebar_label_lesson":"Opleidingen","sidebar_label_contact":"Contact-formulier"}}});</script>
+    
+                                <script type="text/javascript">$.extend(true, SMSC, JSON.parse('\u007B\u0022topnav\u0022\u003A\u007B\u0022lang\u0022\u003A\u007B\u0022badge\u0022\u003A\u007B\u0022badge_unread_notifs\u0022\u003A\u0022Ongelezen\u0020meldingen\u0022\u007D,\u0022courses\u0022\u003A\u007B\u0022courses_menu_title\u0022\u003A\u0022Vakken\u0022,\u0022courses_menu_search_placeholder\u0022\u003A\u0022Zoek\u0020naar\u0020een\u0020vak\u0022,\u0022courses_menu_no_courses\u0022\u003A\u0022Geen\u0020vakken\u0020gevonden\u0022,\u0022add_to_favourites\u0022\u003A\u0022Aan\u0020favorieten\u0020toevoegen\u0022,\u0022remove_from_favourites\u0022\u003A\u0022Uit\u0020favorieten\u0020verwijderen\u0022\u007D,\u0022shortcuts\u0022\u003A\u007B\u0022pin_shortcut\u0022\u003A\u0022Aan\u0020menu\u0020vastmaken\u0022,\u0022unpin_shortcut\u0022\u003A\u0022Van\u0020menu\u0020losmaken\u0022,\u0022dialog_pin_limit_reached_title\u0022\u003A\u0022Je\u0020zit\u0020zonder\u0020pins\u0021\u0022,\u0022dialog_pin_limit_reached_content\u0022\u003A\u0022Je\u0020kan\u0020maximaal\u0020drie\u0020modules\u0020vastmaken.\u0020Maak\u0020eerst\u0020een\u0020andere\u0020los\u0020om\u0020er\u0020eentje\u0020bij\u0020te\u0020zetten.\u0022,\u0022dialog_pin_limit_reached_ok\u0022\u003A\u0022OK\u0022\u007D,\u0022filter\u0022\u003A\u007B\u0022filter_sections_communication\u0022\u003A\u0022Communicatie\u0022,\u0022filter_sections_files\u0022\u003A\u0022Bestanden\u0022,\u0022filter_sections_mycourses\u0022\u003A\u0022Vakken\u0022,\u0022filter_sections_others\u0022\u003A\u0022Anderen\u0022,\u0022filter_options_sort_filter\u0022\u003A\u0022Sorteren\u0020en\u0020filteren\u0022,\u0022filter_filter_sort\u0022\u003A\u0022Sortering\u0022,\u0022filter_filter_bydate\u0022\u003A\u0022Filter\u0020op\u0020periode\u0022\u007D,\u0022go\u0022\u003A\u007B\u0022link.go.name\u0022\u003A\u0022GO\u0021\u0022,\u0022link.go_pro.name\u0022\u003A\u0022GO\u0021\u0020pro\u0022,\u0022link.go_training.name\u0022\u003A\u0022GO\u0021\u0020ondersteuningsaanbod\u0022,\u0022link.go_parents.name\u0022\u003A\u0022GO\u0021\u0020ouders\u0022,\u0022link.go_clb.name\u0022\u003A\u0022GO\u0021\u0020CLB\u0022,\u0022link.go_pro_curricula.name\u0022\u003A\u0022GO\u0021\u0020pro\u0020leerplannen\u0022,\u0022courses_menu_title\u0022\u003A\u0022Mijn\u0020virtuele\u0020ruimtes\u0022,\u0022link_menu_title\u0022\u003A\u0022Snel\u0020naar\u0022,\u0022curriculum_menu_title\u0022\u003A\u0022GO\u0021\u0020leerplannen\u0022,\u0022link_virtualSpace\u0022\u003A\u0022Op\u0020virtuele\u0020ruimtes\u0020van\u0020het\u0020GO\u0021\u0020abonneren\u0022\u007D,\u0022links\u0022\u003A\u007B\u0022go_to_management\u0022\u003A\u0022Links\u0020beheren\u0022,\u0022no_links_management\u0022\u003A\u0022Geen\u0020links\u0020voor\u0020jou\u0020beschikbaar\u0022,\u0022no_links\u0022\u003A\u0022Geen\u0020links\u0020voor\u0020jou\u0020beschikbaar\u0022\u007D,\u0022notifications\u0022\u003A\u007B\u0022notifs_placeholder\u0022\u003A\u0022Er\u0020zijn\u0020geen\u0020meldingen.\u0020Je\u0020bent\u0020volledig\u0020up\u002Dto\u002Ddate\u0021\u0022,\u0022notifs_toggle\u0022\u003A\u0022Nieuwe\u0020meldingen\u0020tonen\u0020als\u0020pop\u002Dup\u0022,\u0022notifs_toggle_on\u0022\u003A\u0022Aan\u0022,\u0022notifs_toggle_off\u0022\u003A\u0022Uit\u0022,\u0022notifs_settings\u0022\u003A\u0022Instellingen\u0022,\u0022notifs_clear\u0022\u003A\u0022Alles\u0020wissen\u0022,\u0022notifs_error\u0022\u003A\u0022Het\u0020ophalen\u0020van\u0020de\u0020meldingen\u0020is\u0020mislukt.\u0020Vernieuw\u0020de\u0020pagina\u0020en\u0020probeer\u0020opnieuw.\u0022\u007D,\u0022notification\u0022\u003A\u007B\u0022notif_mark_as_read\u0022\u003A\u0022Uit\u0020de\u0020lijst\u0020verwijderen\u0022\u007D,\u0022profile\u0022\u003A\u007B\u0022profile_img_alt\u0022\u003A\u0022Profiel\u0020afbeelding\u0022\u007D,\u0022search\u0022\u003A\u007B\u0022search_input_placeholder\u0022\u003A\u0022Zoeken\u0022,\u0022search_results_placeholder\u0022\u003A\u0022Waar\u0020ben\u0020je\u0020naar\u0020op\u0020zoek\u003F\u0022,\u0022search_more_results\u0022\u003A\u0022Toon\u0020meer\u0020resultaten\u0022,\u0022search_no_results\u0022\u003A\u0022Er\u0020werden\u0020geen\u0020resultaten\u0020gevonden.\u0022,\u0022search_searching\u0022\u003A\u0022Bezig\u0020met\u0020zoeken\u0020...\u0022,\u0022search_info\u0022\u003A\u0022Geef\u0020een\u0020zoekterm\u0020in\u0020en\u0020druk\u0020op\u0020enter\u0020om\u0020te\u0020zoeken.\u0022,\u0022search_from\u0022\u003A\u0022van\u0022,\u0022search_to\u0022\u003A\u0022naar\u0022,\u0022search_module_persons\u0022\u003A\u0022Personen\u0022,\u0022search_time_all\u0022\u003A\u0022Toon\u0020alles\u0022,\u0022search_time_today\u0022\u003A\u0022Vandaag\u0022,\u0022search_time_last_7_days\u0022\u003A\u0022Deze\u0020week\u0022,\u0022search_time_last_30_days\u0022\u003A\u0022Deze\u0020maand\u0022,\u0022search_time_current_schoolyear\u0022\u003A\u0022Dit\u0020schooljaar\u0022,\u0022search_checkbox_own_platform\u0022\u003A\u0022Enkel\u0020in\u0020eigen\u0020platform\u0020zoeken\u0022\u007D,\u0022toast\u0022\u003A\u007B\u0022toast_close\u0022\u003A\u0022Sluiten\u0022\u007D,\u0022toaster\u0022\u003A\u007B\u0022toaster_sessionextender_title\u0022\u003A\u0022Wilt\u0020u\u0020aangemeld\u0020blijven\u003F\u0022,\u0022toaster_sessionextender_description\u0022\u003A\u0022U\u0020wordt\u0020automatisch\u0020afgemeld\u0020binnen\u0020___id___\u0020seconden.\u0022,\u0022toaster_sessionextender_button\u0022\u003A\u0022OK\u0022\u007D\u007D\u007D\u007D'));</script>
+
+            <!-- Javascript_Topnav -->
+                                        <script type="text/javascript" src="./webservices-doc_files/main.rev-8eac06e23a.js.downloaden"></script><ul id="notificationToaster" class="notifs-toaster js-focus-trap-allow-outside-click" style="top: 48px;"></ul>
+    
+                            <!-- Javascript_Body_Urls -->
+                                <script type="text/javascript" src="./webservices-doc_files/main-built.rev-44fc3ff4f5.js.downloaden"></script>
+    
+                <!-- Javascript_requirejs_Urls -->
+                        
+        		<!-- Javascript_legacy_stealjs_Urls -->
+                        
+                
+        <!-- Javascript_symfony -->
+                                
+        <!-- Sentry -->
+        
+<script>
+    window.sentryOnLoad = function() {
+        Sentry.init({"sampleRate":0.1,"tracesSampleRate":0.005,"replaysSessionSampleRate":0.001,"replaysOnErrorSampleRate":0.05,"enableLogs":true,"initialScope":{"user":{"id":"4069_7236_0","role":"0"}},"environment":"production",
+            dsn: "https://9ad77b6a87396b7f63935c755ea1d6b9@sentry.smartbit.be/4",
+            integrations: [
+                Sentry.browserTracingIntegration(),
+                Sentry.replayIntegration({
+                    workerUrl: "https://static2.smart-school.net/smsc/resources/sentry/worker.min.rev-8c6c854d24.js",
+                    block: ["[style*=userpicture]"]
+                })
+            ]
+        }
+        );
+
+        Sentry.setContext("device", {
+            screen_width_pixels: window.screen.width,
+            screen_height_pixels: window.screen.height
+        });
+    };
+</script>
+ <script src="./webservices-doc_files/bundle.tracing.replay.logs.metrics.min.js.downloaden" onload="window.sentryOnLoad()"></script>
+    
+
+<div id="EdpuzzleScreenRecorderForegroundApp"></div></body></html>
