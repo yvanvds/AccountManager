@@ -2,16 +2,32 @@
 #
 # Two jobs:
 #   - test       : offline `dart analyze` + `dart test`. Always runs.
-#   - live-test  : opt-in WISA integration test (`test/integration/`).
+#   - live-test  : opt-in WISA + Smartschool + Azure integration tests
+#                  (each package's `test/integration/`, all read-only).
 #                  Gated to this repository so fork PRs cannot trigger
 #                  secret access — fork pull_request runs do not expose
 #                  secrets anyway, the gate is belt-and-suspenders.
 #
 # Operator setup for live-test (one-time):
-#   Add the following six repository secrets:
-#     WISA_SERVER, WISA_PORT, WISA_DATABASE,
-#     WISA_USERNAME, WISA_PASSWORD, WISA_SCHOOL_ID
-#   See packages/wisa_api/README.md and .wisa.env.example for the names.
+#   WISA + Smartschool authenticate with stored read-only credentials, kept
+#   as repository secrets:
+#     WISA:        WISA_SERVER, WISA_PORT, WISA_DATABASE,
+#                  WISA_USERNAME, WISA_PASSWORD, WISA_SCHOOL_ID
+#     Smartschool: SMARTSCHOOL_SITE, SMARTSCHOOL_ACCESSCODE
+#   Azure uses OIDC workload-identity federation — NO token or secret is
+#   stored. A short-lived bearer token expires in ~1h, so storing one is
+#   pointless; instead a fresh read-only Graph token is minted per run via
+#   `azure/login` + `az account get-access-token`. Provide:
+#     AZURE_CLIENT_ID, AZURE_TENANT_ID  — the federated read-only app (these
+#                                         are identifiers, not secrets)
+#     AZURE_DOMAIN, AZURE_SCHOOL_PREFIX — tenant config for the read filter
+#   One-time Azure setup — an app registration with User.Read.All +
+#   Group.Read.All *application* permissions (admin-consented) and a
+#   federated credential trusting this repo — is documented in
+#   packages/azure_api/README.md.
+#   See each package's README.md and the matching .<name>.env.example at the
+#   repo root for the variable meanings. Per the live-testing policy, every
+#   credential is read-only — CI live tests never write.
 #
 # Overlap note: an older workflow (`ci.yml`) also runs `dart analyze` +
 # `dart test` on pull_request, plus coverage / SonarCloud. The two
@@ -47,19 +63,24 @@ jobs:
         # Dart workspaces don't auto-discover tests from the root; pass
         # each workspace package's test/ directory explicitly. Update
         # this list whenever a new package is added to pubspec.yaml.
-        # No WISA_USERNAME / SMARTSCHOOL_ACCESSCODE in this job — the
-        # integration tests self-skip, see each package's
+        # No WISA_USERNAME / SMARTSCHOOL_ACCESSCODE / AZURE_ACCESS_TOKEN in
+        # this job — the integration tests self-skip, see each package's
         # test/integration/.
-        run: dart test packages/account_core/test packages/wisa_api/test packages/smartschool_api/test
+        run: dart test packages/account_core/test packages/wisa_api/test packages/smartschool_api/test packages/azure_api/test
 
   live-test:
-    name: WISA + Smartschool live integration
+    name: WISA + Smartschool + Azure live integration
     needs: test
     runs-on: ubuntu-latest
     # Only run on the canonical repo. Fork PRs do not get secrets even
     # without this gate, but skipping the job outright keeps the build
     # matrix tidy.
     if: github.repository == 'yvanvds/AccountManager'
+    permissions:
+      # OIDC: let the runner request a federated identity token so
+      # azure/login can mint a read-only Graph token — nothing is stored.
+      id-token: write
+      contents: read
     env:
       WISA_SERVER: ${{ secrets.WISA_SERVER }}
       WISA_PORT: ${{ secrets.WISA_PORT }}
@@ -69,6 +90,12 @@ jobs:
       WISA_SCHOOL_ID: ${{ secrets.WISA_SCHOOL_ID }}
       SMARTSCHOOL_SITE: ${{ secrets.SMARTSCHOOL_SITE }}
       SMARTSCHOOL_ACCESSCODE: ${{ secrets.SMARTSCHOOL_ACCESSCODE }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_DOMAIN: ${{ secrets.AZURE_DOMAIN }}
+      AZURE_SCHOOL_PREFIX: ${{ secrets.AZURE_SCHOOL_PREFIX }}
+      # AZURE_ACCESS_TOKEN is intentionally absent: it is minted at runtime
+      # by the steps below (OIDC), never stored as a secret.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -79,9 +106,36 @@ jobs:
       - name: dart pub get
         run: dart pub get
 
+      # --- Azure: mint a fresh read-only Graph token via OIDC ---
+      # Gated on AZURE_CLIENT_ID so the job still runs (and the Azure test
+      # self-skips) if the Azure secrets are ever cleared. Also gated to the
+      # refs we created federated credentials for — pull requests and the
+      # `dev` branch; on any other ref these steps skip and the Azure test
+      # self-skips on the empty token. The federated app (AccountManager-CI-
+      # ReadOnly) holds only User.Read.All + Group.Read.All, so the minted
+      # token cannot write — the read-only guarantee is at the credential
+      # layer, per the live-testing policy.
+      - name: Azure login (OIDC — no stored secret)
+        if: env.AZURE_CLIENT_ID != '' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev')
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Mint read-only Graph token
+        if: env.AZURE_CLIENT_ID != '' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev')
+        run: |
+          token=$(az account get-access-token \
+            --resource https://graph.microsoft.com \
+            --query accessToken -o tsv)
+          echo "::add-mask::$token"
+          echo "AZURE_ACCESS_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Run live integration tests
         # If the credentials are unset (secrets not configured yet) the
         # tests self-skip and this still passes — by design, so the
         # workflow can land before secrets are provisioned. The Smartschool
-        # live test is read-only (sync only); see the live-testing policy.
-        run: dart test packages/wisa_api/test/integration/ packages/smartschool_api/test/integration/
+        # and Azure live tests are read-only (sync only); see the
+        # live-testing policy.
+        run: dart test packages/wisa_api/test/integration/ packages/smartschool_api/test/integration/ packages/azure_api/test/integration/
