@@ -96,6 +96,17 @@ WisaStaff parseStaffRow(String line) {
 }
 
 /// Parses a `SyncKlas` row into a [WisaClassGroup].
+///
+/// WISA emits `OMSCHRIJVING` (the description) unquoted even when it
+/// contains a literal comma — e.g. `5 Onthaal, organisatie en sales` —
+/// which splits the row into more than the five header columns and, in the
+/// naive parser, shifts `ADMINGROEP` and `INSTELLINGSNUMMER` (issue #29).
+/// `OMSCHRIJVING` is the only free-text column; `KLAS`, `KLASGROEP`,
+/// `ADMINGROEP`, and `INSTELLINGSNUMMER` are codes that never contain a
+/// comma. So we anchor on the first two and last two columns and rejoin
+/// everything in between as the description. A properly quoted description
+/// (should WISA ever quote it) yields exactly five fields and parses
+/// identically.
 WisaClassGroup parseClassGroupRow(String line, {required int schoolId}) {
   try {
     final f = splitCsvLine(line);
@@ -108,9 +119,9 @@ WisaClassGroup parseClassGroupRow(String line, {required int schoolId}) {
     return WisaClassGroup(
       name: f[0].trim(),
       groupName: f[1].trim(),
-      description: f[2].trim(),
-      adminCode: f[3].trim(),
-      schoolCode: f[4].trim(),
+      description: f.sublist(2, f.length - 2).join(',').trim(),
+      adminCode: f[f.length - 2].trim(),
+      schoolCode: f[f.length - 1].trim(),
       schoolId: schoolId,
     );
   } on CsvRowParseException {

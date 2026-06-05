@@ -134,6 +134,41 @@ void main() {
       final g = parseClassGroupRow('Foo,00,,ASO,123456', schoolId: 25);
       expect(g.year, -1);
     });
+
+    test('rejoins an unquoted comma-bearing description (issue #29)', () {
+      // WISA does not quote OMSCHRIJVING, so the embedded comma splits the
+      // row into six fields. The parser must rejoin the description and
+      // keep adminCode/schoolCode anchored to the trailing columns —
+      // otherwise the institute number is silently dropped.
+      final g = parseClassGroupRow(
+        '5OOS,00,5 Onthaal, organisatie en sales,043117,125252',
+        schoolId: 25,
+      );
+      expect(g.name, '5OOS');
+      expect(g.groupName, '00');
+      expect(g.description, '5 Onthaal, organisatie en sales');
+      expect(g.adminCode, '043117');
+      expect(g.schoolCode, '125252');
+    });
+
+    test('rejoins a description containing multiple commas', () {
+      final g = parseClassGroupRow('7X,00,a, b, c,111,222', schoolId: 25);
+      expect(g.description, 'a, b, c');
+      expect(g.adminCode, '111');
+      expect(g.schoolCode, '222');
+    });
+
+    test('still parses a quoted comma-bearing description', () {
+      // If WISA ever quotes the field, the splitter yields five fields and
+      // the result must be identical to the unquoted path.
+      final g = parseClassGroupRow(
+        '5OOS,00,"5 Onthaal, organisatie en sales",043117,125252',
+        schoolId: 25,
+      );
+      expect(g.description, '5 Onthaal, organisatie en sales');
+      expect(g.adminCode, '043117');
+      expect(g.schoolCode, '125252');
+    });
   });
 
   group('parseSchoolRow', () {

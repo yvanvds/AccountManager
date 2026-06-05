@@ -74,7 +74,7 @@ KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER
 5LWE,00,5 Latijn-wetenschappen,043104,125261
 5M,00,5 Moderealisatie,043112,125252
 5MTWE,00,5 Moderne talen-wetenschappen,043113,125261
-5OOS,00,5 Onthaal, organisatie en sales,043117
+5OOS,00,5 Onthaal, organisatie en sales,043117,125252
 5OPB,00,5 Opvoeding en begeleiding,043119,125252
 5TO,00,5 Toerisme,043147,125252
 5WEWI1,00,5 Wetenschappen-wiskunde 1,043142,125261
@@ -94,7 +94,7 @@ KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER
 6LWE,00,6 Latijn-wetenschappen,043532,125261
 6M,00,6 Moderealisatie,043540,125252
 6MTWE,00,6 Moderne talen-wetenschappen,043541,125261
-6OOS,00,6 Onthaal, organisatie en sales,043545
+6OOS,00,6 Onthaal, organisatie en sales,043545,125252
 6OPB,00,6 Opvoeding en begeleiding,043547,125252
 6TO,00,6 Toerisme,043575,125252
 6WEWI1,00,6 Wetenschappen-wiskunde 1,043570,125261
