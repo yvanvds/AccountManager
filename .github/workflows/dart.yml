@@ -9,15 +9,25 @@
 #                  secrets anyway, the gate is belt-and-suspenders.
 #
 # Operator setup for live-test (one-time):
-#   Add the following repository secrets, all read-only credentials:
+#   WISA + Smartschool authenticate with stored read-only credentials, kept
+#   as repository secrets:
 #     WISA:        WISA_SERVER, WISA_PORT, WISA_DATABASE,
 #                  WISA_USERNAME, WISA_PASSWORD, WISA_SCHOOL_ID
 #     Smartschool: SMARTSCHOOL_SITE, SMARTSCHOOL_ACCESSCODE
-#     Azure:       AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_DOMAIN,
-#                  AZURE_SCHOOL_PREFIX, AZURE_ACCESS_TOKEN
+#   Azure uses OIDC workload-identity federation — NO token or secret is
+#   stored. A short-lived bearer token expires in ~1h, so storing one is
+#   pointless; instead a fresh read-only Graph token is minted per run via
+#   `azure/login` + `az account get-access-token`. Provide:
+#     AZURE_CLIENT_ID, AZURE_TENANT_ID  — the federated read-only app (these
+#                                         are identifiers, not secrets)
+#     AZURE_DOMAIN, AZURE_SCHOOL_PREFIX — tenant config for the read filter
+#   One-time Azure setup — an app registration with User.Read.All +
+#   Group.Read.All *application* permissions (admin-consented) and a
+#   federated credential trusting this repo — is documented in
+#   packages/azure_api/README.md.
 #   See each package's README.md and the matching .<name>.env.example at the
 #   repo root for the variable meanings. Per the live-testing policy, every
-#   one of these is a read-only credential — CI live tests never write.
+#   credential is read-only — CI live tests never write.
 #
 # Overlap note: an older workflow (`ci.yml`) also runs `dart analyze` +
 # `dart test` on pull_request, plus coverage / SonarCloud. The two
@@ -66,6 +76,11 @@ jobs:
     # without this gate, but skipping the job outright keeps the build
     # matrix tidy.
     if: github.repository == 'yvanvds/AccountManager'
+    permissions:
+      # OIDC: let the runner request a federated identity token so
+      # azure/login can mint a read-only Graph token — nothing is stored.
+      id-token: write
+      contents: read
     env:
       WISA_SERVER: ${{ secrets.WISA_SERVER }}
       WISA_PORT: ${{ secrets.WISA_PORT }}
@@ -79,7 +94,8 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_DOMAIN: ${{ secrets.AZURE_DOMAIN }}
       AZURE_SCHOOL_PREFIX: ${{ secrets.AZURE_SCHOOL_PREFIX }}
-      AZURE_ACCESS_TOKEN: ${{ secrets.AZURE_ACCESS_TOKEN }}
+      # AZURE_ACCESS_TOKEN is intentionally absent: it is minted at runtime
+      # by the steps below (OIDC), never stored as a secret.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,6 +105,29 @@ jobs:
 
       - name: dart pub get
         run: dart pub get
+
+      # --- Azure: mint a fresh read-only Graph token via OIDC ---
+      # Gated on AZURE_CLIENT_ID so the job still runs (and the Azure test
+      # self-skips) before the Azure app/federation is provisioned. The
+      # federated app holds only User.Read.All + Group.Read.All, so the
+      # minted token cannot write — the read-only guarantee is at the
+      # credential layer, per the live-testing policy.
+      - name: Azure login (OIDC — no stored secret)
+        if: env.AZURE_CLIENT_ID != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Mint read-only Graph token
+        if: env.AZURE_CLIENT_ID != ''
+        run: |
+          token=$(az account get-access-token \
+            --resource https://graph.microsoft.com \
+            --query accessToken -o tsv)
+          echo "::add-mask::$token"
+          echo "AZURE_ACCESS_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Run live integration tests
         # If the credentials are unset (secrets not configured yet) the

@@ -127,8 +127,46 @@ The opt-in [`test/integration/azure_live_test.dart`](test/integration/azure_live
 runs **read-only** against a real tenant (per the project's live-testing
 policy — CI live tests never write). It skips unless the `AZURE_*` env vars are
 present, so `dart test` stays offline by default. See
-[`.azure.env.example`](../../.azure.env.example) for the variables; supply a
-pre-acquired bearer token via `AZURE_ACCESS_TOKEN` to skip interactive
-sign-in. Refresh fixtures with
+[`.azure.env.example`](../../.azure.env.example) for the variables.
+
+A Graph bearer token expires in ~1 hour, so the token is **never stored** —
+it is minted fresh each run. Both contexts use the same dedicated read-only
+app registration; only the way they authenticate to it differs.
+
+**Locally** — run the helper, which loads `.azure.env` and mints a fresh
+token via the Azure CLI before invoking the test:
+
+```
+./tool/live-tests.ps1 -Only azure   # or omit -Only to run all three connectors
+```
+
+It calls `az account get-access-token` under the hood, so `az login` must
+have been run with an account that can read the directory. The full sync
+fans out a per-group member fetch and takes ~30s; the test carries a 3-minute
+`@Timeout` to suit.
+
+**In CI** — the `live-test` job uses **OIDC workload-identity federation**
+(`azure/login@v2`): GitHub issues a short-lived identity token, Azure trusts
+this repo via a federated credential and mints a Graph token in-job. Nothing
+is stored as a secret. Only `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_DOMAIN`, `AZURE_SCHOOL_PREFIX` are configured (identifiers + config,
+not credentials).
+
+#### One-time Azure setup (operator)
+
+1. Register an app (or reuse one) and grant it the **application** Graph
+   permissions `User.Read.All` and `Group.Read.All` — **no write scopes** —
+   then grant admin consent. This makes the credential read-only at the
+   directory level, which is the hard guarantee the live-testing policy
+   requires.
+2. Add a **federated credential** on that app for GitHub Actions: issuer
+   `https://token.actions.githubusercontent.com`, subject matching this repo
+   (e.g. `repo:yvanvds/AccountManager:ref:refs/heads/dev`), audience
+   `api://AzureADTokenExchange`.
+3. In the repo, set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_DOMAIN`,
+   `AZURE_SCHOOL_PREFIX` (Settings → Secrets and variables → Actions). No
+   token or client secret is ever added.
+
+Refresh record-and-replay fixtures with
 [`tool/capture_responses.dart`](tool/capture_responses.dart) (redacts tokens;
 **scrub PII** before committing).
