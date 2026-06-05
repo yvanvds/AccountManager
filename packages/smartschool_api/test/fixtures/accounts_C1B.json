@@ -1,0 +1,20 @@
+[
+  {
+    "Voornaam": "Mieke",
+    "Naam": "Janssens",
+    "Gebruikersnaam": "miek",
+    "Internnummer": "W002",
+    "Status": "actief",
+    "Basisrol": "1",
+    "Geslacht": "f",
+    "Geboortedatum": "2011-12-1",
+    "Straat": "Dorpsplein",
+    "Huisnummer": "4",
+    "Busnummer": "B",
+    "Postcode": "3000",
+    "Woonplaats": "Leuven",
+    "Land": "België",
+    "Emailadres": "shared@school.be",
+    "Stamboeknummer": "0"
+  }
+]

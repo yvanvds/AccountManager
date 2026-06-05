@@ -1,0 +1,41 @@
+<groups>
+  <group>
+    <name>School</name>
+    <desc>Hoofdgroep</desc>
+    <type>G</type>
+    <code>SCH</code>
+    <untis></untis>
+    <visible>1</visible>
+    <isOfficial>0</isOfficial>
+    <coAccountLabel>Ouders</coAccountLabel>
+    <group>
+      <name>1A</name>
+      <desc>Klas 1A</desc>
+      <type>K</type>
+      <code>C1A</code>
+      <untis>1A</untis>
+      <visible>1</visible>
+      <isOfficial>1</isOfficial>
+      <adminNumber>12345</adminNumber>
+      <instituteNumber>30024</instituteNumber>
+      <username>titularis1</username>
+      <username>titularis2</username>
+    </group>
+    <group>
+      <name>1B</name>
+      <desc>Klas 1B</desc>
+      <type>K</type>
+      <code>C1B</code>
+      <visible>1</visible>
+      <isOfficial>1</isOfficial>
+    </group>
+    <group>
+      <name>Sport</name>
+      <desc>Sportgroep</desc>
+      <type>G</type>
+      <code>GSPORT</code>
+      <visible>0</visible>
+      <isOfficial>0</isOfficial>
+    </group>
+  </group>
+</groups>

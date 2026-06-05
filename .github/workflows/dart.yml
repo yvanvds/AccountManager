@@ -47,12 +47,13 @@ jobs:
         # Dart workspaces don't auto-discover tests from the root; pass
         # each workspace package's test/ directory explicitly. Update
         # this list whenever a new package is added to pubspec.yaml.
-        # No WISA_USERNAME in this job — the integration test self-skips,
-        # see test/integration/wisa_live_test.dart.
-        run: dart test packages/account_core/test packages/wisa_api/test
+        # No WISA_USERNAME / SMARTSCHOOL_ACCESSCODE in this job — the
+        # integration tests self-skip, see each package's
+        # test/integration/.
+        run: dart test packages/account_core/test packages/wisa_api/test packages/smartschool_api/test
 
   live-test:
-    name: WISA live integration
+    name: WISA + Smartschool live integration
     needs: test
     runs-on: ubuntu-latest
     # Only run on the canonical repo. Fork PRs do not get secrets even
@@ -66,6 +67,8 @@ jobs:
       WISA_USERNAME: ${{ secrets.WISA_USERNAME }}
       WISA_PASSWORD: ${{ secrets.WISA_PASSWORD }}
       WISA_SCHOOL_ID: ${{ secrets.WISA_SCHOOL_ID }}
+      SMARTSCHOOL_SITE: ${{ secrets.SMARTSCHOOL_SITE }}
+      SMARTSCHOOL_ACCESSCODE: ${{ secrets.SMARTSCHOOL_ACCESSCODE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,8 +79,9 @@ jobs:
       - name: dart pub get
         run: dart pub get
 
-      - name: Run live integration test
-        # If WISA_USERNAME is unset (secrets not configured yet) the test
-        # self-skips and this still passes — by design, so the workflow
-        # can land before secrets are provisioned.
-        run: dart test packages/wisa_api/test/integration/
+      - name: Run live integration tests
+        # If the credentials are unset (secrets not configured yet) the
+        # tests self-skip and this still passes — by design, so the
+        # workflow can land before secrets are provisioned. The Smartschool
+        # live test is read-only (sync only); see the live-testing policy.
+        run: dart test packages/wisa_api/test/integration/ packages/smartschool_api/test/integration/
