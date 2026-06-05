@@ -1,0 +1,39 @@
+[
+  {
+    "Voornaam": "Jan",
+    "Naam": "Desmet",
+    "Gebruikersnaam": "jand",
+    "Internnummer": "W001",
+    "Status": "actief",
+    "Basisrol": "1",
+    "Geslacht": "m",
+    "Roepnaam": "",
+    "Extravoornamen": "Jan Baptist",
+    "Initialen": "J.B.",
+    "Geboortedatum": "2010-3-5",
+    "Geboorteplaats": "Leuven",
+    "Geboorteland": "België",
+    "Rijksregisternummer": "10030512345",
+    "Straat": "Kerkstraat",
+    "Huisnummer": "12",
+    "Busnummer": "",
+    "Postcode": "3000",
+    "Woonplaats": "Leuven",
+    "Land": "België",
+    "Emailadres": "jan.desmet@school.be",
+    "Mobielnummer": "0470111222",
+    "Telefoonnummer": "016111222",
+    "Fax": "",
+    "Stamboeknummer": "123456"
+  },
+  {
+    "Voornaam": "Old",
+    "Naam": "Gebruiker",
+    "Gebruikersnaam": "olduser",
+    "Internnummer": "W099",
+    "Status": "uitgeschakeld",
+    "Basisrol": "1",
+    "Geslacht": "f",
+    "Emailadres": "old@school.be"
+  }
+]
