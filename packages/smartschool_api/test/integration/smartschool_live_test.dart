@@ -42,7 +42,22 @@ void main() {
         'memberships=${snapshot.memberships.length}',
       );
 
-      expect(snapshot.groups, isNotEmpty, reason: 'sync returned no groups');
+      // A real tenant has many groups nested under the root, a populated
+      // account set, and memberships linking the two. Asserting only
+      // "groups is non-empty" let #37 hide — the group-tree walk stopped at
+      // the root (groups=1) and the empty account/membership sets passed the
+      // vacuous consistency check below. Assert all three are populated.
+      expect(
+        snapshot.groups.length,
+        greaterThan(1),
+        reason: 'expected the group tree to descend past the root (see #37)',
+      );
+      expect(snapshot.accounts, isNotEmpty, reason: 'sync returned no accounts');
+      expect(
+        snapshot.memberships,
+        isNotEmpty,
+        reason: 'sync returned no memberships',
+      );
 
       // Every membership references a known group and a known account.
       final groupIds = snapshot.groups.map((g) => g.id.value).toSet();

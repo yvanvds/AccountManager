@@ -11,7 +11,10 @@ these into SOAP responses:
 
 - `group_tree.xml` — the decoded `getAllGroupsAndClasses` payload. The fake
   transport base64-encodes it into the `<return>` element, the way the live
-  service delivers it.
+  service delivers it. Mirrors the live shape: field values are `<![CDATA[…]]>`,
+  subgroups are nested inside a `<children>` wrapper, and titulars are
+  `<titu><user><username>…` (see #37 — a flat fixture hid the missing
+  `<children>` descent).
 - `accounts_<CODE>.json` — the `getAllAccountsExtended` JSON for the group
   with that code. `SCH` has no fixture: the fake returns the int code `19`
   ("no direct accounts").

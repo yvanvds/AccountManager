@@ -1,41 +1,45 @@
 <groups>
   <group>
-    <name>School</name>
-    <desc>Hoofdgroep</desc>
-    <type>G</type>
-    <code>SCH</code>
-    <untis></untis>
-    <visible>1</visible>
-    <isOfficial>0</isOfficial>
-    <coAccountLabel>Ouders</coAccountLabel>
-    <group>
-      <name>1A</name>
-      <desc>Klas 1A</desc>
-      <type>K</type>
-      <code>C1A</code>
-      <untis>1A</untis>
-      <visible>1</visible>
-      <isOfficial>1</isOfficial>
-      <adminNumber>12345</adminNumber>
-      <instituteNumber>30024</instituteNumber>
-      <username>titularis1</username>
-      <username>titularis2</username>
-    </group>
-    <group>
-      <name>1B</name>
-      <desc>Klas 1B</desc>
-      <type>K</type>
-      <code>C1B</code>
-      <visible>1</visible>
-      <isOfficial>1</isOfficial>
-    </group>
-    <group>
-      <name>Sport</name>
-      <desc>Sportgroep</desc>
-      <type>G</type>
-      <code>GSPORT</code>
-      <visible>0</visible>
-      <isOfficial>0</isOfficial>
-    </group>
+    <name><![CDATA[School]]></name>
+    <desc><![CDATA[Hoofdgroep]]></desc>
+    <type><![CDATA[G]]></type>
+    <code><![CDATA[SCH]]></code>
+    <untis><![CDATA[]]></untis>
+    <visible><![CDATA[1]]></visible>
+    <isOfficial><![CDATA[0]]></isOfficial>
+    <coAccountLabel><![CDATA[Ouders]]></coAccountLabel>
+    <children>
+      <group>
+        <name><![CDATA[1A]]></name>
+        <desc><![CDATA[Klas 1A]]></desc>
+        <type><![CDATA[K]]></type>
+        <code><![CDATA[C1A]]></code>
+        <untis><![CDATA[1A]]></untis>
+        <visible><![CDATA[1]]></visible>
+        <isOfficial><![CDATA[1]]></isOfficial>
+        <adminNumber><![CDATA[12345]]></adminNumber>
+        <instituteNumber><![CDATA[30024]]></instituteNumber>
+        <titu>
+          <user><username><![CDATA[titularis1]]></username><number><![CDATA[n1]]></number></user>
+          <user><username><![CDATA[titularis2]]></username><number><![CDATA[n2]]></number></user>
+        </titu>
+      </group>
+      <group>
+        <name><![CDATA[1B]]></name>
+        <desc><![CDATA[Klas 1B]]></desc>
+        <type><![CDATA[K]]></type>
+        <code><![CDATA[C1B]]></code>
+        <visible><![CDATA[1]]></visible>
+        <isOfficial><![CDATA[1]]></isOfficial>
+      </group>
+      <group>
+        <name><![CDATA[Sport]]></name>
+        <desc><![CDATA[Sportgroep]]></desc>
+        <type><![CDATA[G]]></type>
+        <code><![CDATA[GSPORT]]></code>
+        <visible><![CDATA[0]]></visible>
+        <isOfficial><![CDATA[0]]></isOfficial>
+      </group>
+    </children>
   </group>
 </groups>
