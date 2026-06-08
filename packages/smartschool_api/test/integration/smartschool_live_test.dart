@@ -27,7 +27,11 @@ void main() {
       connector = config!.connector();
     });
 
-    test('sync returns a non-empty, consistent snapshot', () async {
+    // A full live sync walks every group with a sequential
+    // getAllAccountsExtended call (hundreds against a real tenant), so it
+    // runs well past the test package's 30s default. Give it room.
+    test('sync returns a non-empty, consistent snapshot',
+        timeout: const Timeout(Duration(minutes: 5)), () async {
       SmartschoolSnapshot snapshot;
       try {
         snapshot = await connector.sync();
