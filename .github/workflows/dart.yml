@@ -36,8 +36,20 @@
 name: Dart
 
 on:
+  # Run on PRs (feature branches) and on direct pushes to the mainline
+  # branches only. Without the branch filter, a feature branch with an open
+  # PR runs every job twice — once for its `push` event and once for the
+  # `pull_request` event. Pre-merge quality gates run on the PR; the
+  # mainline `push` runs act as post-merge canaries.
   push:
+    branches: [dev, master]
   pull_request:
+
+# A newer commit on the same ref cancels an in-progress run, so a quick
+# follow-up push doesn't pile up redundant live-integration runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
