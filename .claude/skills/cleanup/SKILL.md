@@ -10,7 +10,7 @@ Use this after a successful PR merge to keep the local working copy aligned with
 ## When to use
 
 - The user invokes `/cleanup`.
-- A PR was just merged and the user confirms it's safe to tidy up.
+- A PR was just merged and it's safe to tidy up.
 
 Do **not** run this proactively during other work. It's a deliberate end-of-iteration step.
 
@@ -19,8 +19,8 @@ Do **not** run this proactively during other work. It's a deliberate end-of-iter
 - **Never** delete `dev` or `master` — neither the local branch nor the remote branch. Even if `git branch --merged` lists them, skip.
 - **Never** use `git branch -D` (force-delete). Only `git branch -d` (safe — refuses if a branch isn't fully merged).
 - **Delete the remote branch only after its local copy was safely deleted.** Remote deletion (`git push origin --delete <branch>`) applies solely to approved candidate branches whose local `git branch -d` succeeded. If the local delete was refused, leave the remote alone.
-- **Never** run on a dirty working tree without explicit user consent — uncommitted work could be lost.
-- **Confirm before deleting or closing.** Print the planned actions (branch deletes + issue closes) in one list and wait for the user's "yes" (or list of exceptions) before anything runs.
+- **Never** run on a dirty working tree without explicit user consent — uncommitted work could be lost. This is the **only** stop that requires asking the user; it's a data-loss guard, not a cleanup confirmation.
+- **Don't ask whether to clean up.** Invoking `/cleanup` *is* the go-ahead. Print the planned actions (branch deletes + issue closes) for transparency, then execute them immediately — no "yes/no" prompt.
 - **Only close issues whose branch you successfully delete.** If `git branch -d` refused (unmerged work), leave the issue open — the user may still be working on it.
 
 ## Flow
@@ -74,9 +74,9 @@ Branches that don't match `issue-<num>-*` (ad-hoc/experiment branches) are proce
 
 **Rule of thumb:** if a branch is merged into `dev` (Step 3 category (a)) and tracks an `OPEN` issue, the plan is always to **delete the branch (local + remote) and close the issue**.
 
-### Step 5 — Confirm with the user
+### Step 5 — Print the plan, then proceed
 
-Print one combined plan as a numbered review. For each branch show why it qualifies and what will happen to the linked issue:
+Print one combined plan as a numbered list, for transparency. For each branch show why it qualifies and what will happen to the linked issue:
 
 ```
 1. issue-23-set-up-ci-with-sonarcloud  (merged into dev) — delete local + remote, close issue #23 "Set up CI with SonarCloud"
@@ -84,17 +84,11 @@ Print one combined plan as a numbered review. For each branch show why it qualif
 3. experiment-azure-delta-spike        (merged into dev) — delete local + remote, no linked issue
 ```
 
-Branch deletion covers **both** the local branch and its `origin` counterpart. Then ask:
-
-> "Delete these N branches (local + remote) and close the listed open issues? (yes / no / skip `<numbers>`)"
-
-- "no" → stop, report nothing deleted/closed.
-- skip `<numbers>` → drop those entries, continue with the rest.
-- "yes" / confirm → proceed.
+Branch deletion covers **both** the local branch and its `origin` counterpart. **Do not ask for confirmation** — print the plan and immediately continue to Step 6. (If there are zero candidate branches, say so and stop.)
 
 ### Step 6 — Delete branches (local, then remote)
 
-For each approved branch, delete the local copy first:
+For each candidate branch, delete the local copy first:
 
 ```
 git branch -d <branch>
@@ -161,14 +155,10 @@ Claude: Working tree clean. Switching to dev and pulling...
           2. issue-19-build-account-core         (upstream gone)   — delete local (remote already gone), issue #19 already CLOSED
           3. experiment-azure-delta-spike        (merged into dev) — delete local + remote, no linked issue
 
-        Delete all 3 branches (local + remote) and close the listed open issues? (yes / no / skip <numbers>)
-
-User: skip 3
-
-Claude: Deleted issue-23-set-up-ci-with-sonarcloud (local + origin).
+        Deleted issue-23-set-up-ci-with-sonarcloud (local + origin).
         Closed issue #23.
         Deleted issue-19-build-account-core locally (origin was already gone; issue #19 was already closed).
-        Kept experiment-azure-delta-spike (per your request).
+        Deleted experiment-azure-delta-spike (local + origin; no linked issue).
 
         Done. On dev, up to date with origin/dev.
 ```
