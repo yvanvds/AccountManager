@@ -1,0 +1,26 @@
+name: account_linker
+description: >-
+  Cross-system linker for the Arcadia Account Manager port. Implements the
+  pure `link(wisa, smartschool, azure, PersonIdResolver) -> LinkedSnapshot`
+  function that reconciles the three connector snapshots into one record per
+  person. Pure Dart; no Flutter, no I/O — identity minting is delegated to an
+  injected PersonIdResolver.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  account_core:
+  wisa_api:
+  smartschool_api:
+  azure_api:
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0
+  glados: ^1.1.7
