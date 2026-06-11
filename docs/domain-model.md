@@ -119,7 +119,7 @@ The flat shape mirrors Smartschool's SOAP contract. It must **not** leak past th
 | `displayName` | `String` | |
 | `givenName` | `String` | |
 | `surname` | `String` | |
-| `companyName` | `String?` | School prefix; used to identify alumni |
+| `companyName` | `String?` | School prefix; used to identify former members to remove |
 | `department` | `String?` | Holds school prefix for staff |
 
 ### 3.7 `Group` and `Membership` — major redesign
@@ -185,13 +185,27 @@ class LinkedAccount {
   final WisaStudent? wisa;
   final SmartschoolAccount? smartschool;
   final AzureUser? azure;
-  final LinkConfidence confidence;   // High | Medium (alumni / WISA-only placeholder)
+  final LinkConfidence confidence;   // High | Medium (former-member / WISA-only placeholder)
 }
 class LinkedGroup { ... }
 class LinkedStaff  { ... }
 ```
 
-See INV-5, INV-6. The `confidence` field replaces the implicit "alumni" and "placeholder" states that today are encoded in which fields are null.
+See INV-5, INV-6. The `confidence` field replaces the implicit "alumni" and "placeholder" states that today are encoded in which fields are null. A former member surfaces as an Azure-only record (confidence `Medium`) so the action engine can raise a remove action for it (§7).
+
+The linker bundles its output into a `LinkedSnapshot`:
+
+```dart
+class LinkedSnapshot {
+  final List<LinkedAccount> accounts;
+  final List<LinkedStaff>   staff;
+  final List<LinkedGroup>   groups;
+  final LinkCounts wisa, smartschool, azure;   // total/linked/unlinked per system
+  final List<LinkWarning> warnings;            // e.g. ResolveDuplicateMail (INV-23)
+}
+```
+
+`LinkCounts` mirrors the legacy `LinkedAccounts` counters: a person counts toward a system's `linked` only when present in all three systems, otherwise `unlinked`. `LinkWarning` is a sealed type; its `ResolveDuplicateMail` variant carries the shared `mail` and every colliding Smartschool account (INV-23, PAIN-7).
 
 ### 3.10 `Action`
 
@@ -263,7 +277,7 @@ Rules are applied **at snapshot construction time** (inside the connector or jus
 
 - **INV-20 [D]:** `link` is a **pure function**: `(WisaSnapshot, SmartschoolSnapshot, AzureSnapshot) → LinkedSnapshot`. Same input ⇒ same output.
 - **INV-21 [D]:** Every WISA student appears in **exactly one** `LinkedAccount`.
-- **INV-22 [D]:** Every Azure user with `companyName == schoolPrefix` (students) or `department contains schoolPrefix` (staff) appears in **exactly one** `LinkedAccount`, even when alumni.
+- **INV-22 [D]:** Every Azure user with `companyName == schoolPrefix` (students) or `department contains schoolPrefix` (staff) appears in **exactly one** `LinkedAccount`, even after the person has left the school (so the engine can raise a remove action).
 - **INV-23 [D]:** When two Smartschool accounts collide on `mail`, **both** end up in some `LinkedAccount`, never silently dropped. A `ResolveDuplicateMail` warning action is raised.
 
 ### Membership
@@ -312,7 +326,7 @@ Rules are applied **at snapshot construction time** (inside the connector or jus
 
 | Case | Legacy behaviour | New behaviour | Rationale |
 |---|---|---|---|
-| Alumni (Azure-only w/ school prefix) | Preserved as Azure-only `LinkedAccount` | **Keep**, mark `confidence: Medium` + `alumni: true` | Operator needs visibility |
+| Former member (Azure-only w/ school prefix) | Preserved as Azure-only `LinkedAccount` | **Fix**: surface as Azure-only `LinkedAccount` (`confidence: Medium`); the action engine raises a remove action — we don't keep alumni | Students who leave are deleted, not retained |
 | WISA-only student (no SS, no Azure) | Placeholder keyed by `WisaID` | **Keep**; surfaces "add" actions naturally | Drives onboarding |
 | Two Smartschool accounts share `mail` | First wins, second lost silently | **Fix**: both retained, raise `ResolveDuplicateMail` warning | INV-23 |
 | Case-sensitive mail/UPN comparison | `.Equals()` | **Fix**: case-insensitive + trim | INV-12 — latent bug |

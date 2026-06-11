@@ -119,4 +119,124 @@ void main() {
     expect(lg.azure?.displayName, equals('5A'));
     expect(lg.smartschool, isNull);
   });
+
+  test('ResolveDuplicateMail is a LinkWarning carrying the colliding accounts '
+      '(INV-23)', () {
+    const a = _FakeSmartschoolAccount(
+      uid: 'janssens.anna',
+      mail: 'anna@school.be',
+      accountId: 'w-1',
+      accountType: AccountType.student,
+    );
+    const b = _FakeSmartschoolAccount(
+      uid: 'janssens.anna2',
+      mail: 'anna@school.be',
+      accountId: 'w-2',
+      accountType: AccountType.coAccount1,
+    );
+    const warning =
+        ResolveDuplicateMail(mail: 'anna@school.be', accounts: [a, b]);
+    expect(warning, isA<LinkWarning>());
+    expect(warning.mail, equals('anna@school.be'));
+    expect(warning.accounts, hasLength(2));
+    expect(
+      warning.accounts.map((s) => s.uid),
+      containsAll(<String>['janssens.anna', 'janssens.anna2']),
+    );
+  });
+
+  test('LinkedSnapshot stores records, counts, and warnings (spec §6.2)', () {
+    const snapshot = LinkedSnapshot(
+      accounts: [],
+      staff: [],
+      groups: [],
+      wisa: LinkCounts.empty,
+      smartschool: LinkCounts.empty,
+      azure: LinkCounts.empty,
+    );
+    expect(snapshot.accounts, isEmpty);
+    expect(snapshot.warnings, isEmpty);
+    expect(snapshot.wisa, equals(LinkCounts.empty));
+  });
+
+  test('LinkedSnapshot.fromRecords derives per-system counts like legacy', () {
+    // Fully linked student: present in all three systems.
+    const full = LinkedAccount(
+      id: LinkedAccountId('la-full'),
+      role: PersonRole.student,
+      wisa: _FakeWisaStudent(WisaId('w-1')),
+      smartschool: _FakeSmartschoolAccount(
+        uid: 'a',
+        mail: 'a@school.be',
+        accountId: 'w-1',
+        accountType: AccountType.student,
+      ),
+      azure: _FakeAzureUser(id: 'az-1', upn: 'a@school.be', employeeId: 'w-1'),
+      confidence: LinkConfidence.high,
+    );
+    // WISA-only placeholder.
+    const wisaOnly = LinkedAccount(
+      id: LinkedAccountId('la-wisa'),
+      role: PersonRole.student,
+      wisa: _FakeWisaStudent(WisaId('w-2')),
+      confidence: LinkConfidence.medium,
+    );
+    // Azure-only record for someone who has left (the engine will remove it).
+    const azureOnly = LinkedAccount(
+      id: LinkedAccountId('la-az'),
+      role: PersonRole.student,
+      azure: _FakeAzureUser(id: 'az-2', upn: 'old@school.be'),
+      confidence: LinkConfidence.medium,
+    );
+    // Fully linked staff member contributes to every system total too.
+    const staff = LinkedStaff(
+      id: LinkedAccountId('ls-1'),
+      role: PersonRole.teacher,
+      wisa: _FakeWisaStaff(WisaStaffCode('s-1'), WisaId('w-100')),
+      smartschool: _FakeSmartschoolAccount(
+        uid: 'staff',
+        mail: 'staff@school.be',
+        accountId: 'w-100',
+        accountType: AccountType.student,
+      ),
+      azure: _FakeAzureUser(
+        id: 'az-100',
+        upn: 'staff@school.be',
+        employeeId: 'w-100',
+      ),
+      confidence: LinkConfidence.high,
+    );
+
+    final snapshot = LinkedSnapshot.fromRecords(
+      accounts: const [full, wisaOnly, azureOnly],
+      staff: const [staff],
+      groups: const [],
+      warnings: const [
+        ResolveDuplicateMail(mail: 'dup@school.be', accounts: []),
+      ],
+    );
+
+    // WISA: full, wisaOnly, staff present (3); only full + staff complete (2).
+    expect(snapshot.wisa.total, equals(3));
+    expect(snapshot.wisa.linked, equals(2));
+    expect(snapshot.wisa.unlinked, equals(1));
+
+    // Smartschool: full + staff present (2), both complete.
+    expect(snapshot.smartschool.total, equals(2));
+    expect(snapshot.smartschool.linked, equals(2));
+    expect(snapshot.smartschool.unlinked, equals(0));
+
+    // Azure: full, azureOnly, staff present (3); full + staff complete (2).
+    expect(snapshot.azure.total, equals(3));
+    expect(snapshot.azure.linked, equals(2));
+    expect(snapshot.azure.unlinked, equals(1));
+
+    // total always equals linked + unlinked.
+    for (final c in [snapshot.wisa, snapshot.smartschool, snapshot.azure]) {
+      expect(c.total, equals(c.linked + c.unlinked));
+    }
+
+    expect(snapshot.warnings, hasLength(1));
+    expect(snapshot.warnings.single, isA<ResolveDuplicateMail>());
+  });
 }
