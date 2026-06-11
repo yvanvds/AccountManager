@@ -16,5 +16,9 @@ Manager port (issue #19).
   `AzureUser`, `AzureGroup` — to be implemented by connector packages.
 - `LinkedAccount`, `LinkedStaff`, `LinkedGroup` shapes for the linker
   (Phase 2).
+- `PersonIdResolver` interface (issue #42): maps a natural key to a stable
+  `PersonId`. The linker depends on this interface only; the file-backed
+  implementation lives in `account_store` (keeps `link()` pure — OQ-3,
+  INV-20).
 - `Password` generator ported faithfully from `legacy-wpf/AccountApi/Password.cs`.
 - `ILog` sink interface.

@@ -1,0 +1,23 @@
+name: account_store
+description: >-
+  Persistence layer for the Arcadia Account Manager port. Provides a
+  file-backed PersonIdResolver that maps natural keys to stable PersonId
+  UUIDs, quarantining UUID minting and disk I/O so the linker stays pure.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+# License: GPL-3.0-or-later. See LICENSE.
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  account_core:
+  uuid: ^4.5.0
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0
