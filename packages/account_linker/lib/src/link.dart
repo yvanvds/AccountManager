@@ -12,8 +12,8 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// minting and persisting the stable [PersonId] — is delegated to [resolver],
 /// so `link` itself does no I/O.
 ///
-/// This function links **students** (#43) and **staff** (#44);
-/// [LinkedSnapshot.groups] is still returned empty (groups #45).
+/// This function links **students** (#43), **staff** (#44), and **groups**
+/// (#45).
 ///
 /// The **student** bridges (spec `docs/domain-model.md` §4, §6.2):
 /// - `AzureUser.upn` ≡ `SmartschoolAccount.mail` (case-insensitive, trimmed)
@@ -158,10 +158,12 @@ LinkedSnapshot link(
     warnings: warnings,
   );
 
+  final groups = _linkGroups(wisaSnapshot, smartschoolSnapshot, azureSnapshot);
+
   return LinkedSnapshot.fromRecords(
     accounts: accounts,
     staff: staff,
-    groups: const [],
+    groups: groups,
     warnings: warnings,
   );
 }
@@ -278,6 +280,98 @@ List<LinkedStaff> _linkStaff(
   ];
 }
 
+/// Links the class-group population, ported from legacy
+/// `LinkedGroups.DoRelink`. Groups are matched purely **by name**: a WISA class
+/// group's `fullName` against a Smartschool official class's `name` and an
+/// Azure group's `displayName`. There is no stable cross-system id for a group,
+/// so the name *is* the bridge.
+///
+/// Anchored on WISA: every [LinkedGroup] carries a WISA [Group] ([LinkedGroup]
+/// requires it), so only WISA class groups seed records. A Smartschool or Azure
+/// group that matches no WISA class has no anchor and is dropped — unlike a
+/// person, a group cannot be represented Smartschool-only or Azure-only
+/// (issue #45, "WISA required"). Cleanup of such orphan groups is left to the
+/// action engine, which would need a nullable-WISA record type.
+///
+/// Only `official` Smartschool groups are considered (legacy
+/// `AddSmartschoolChildGroups` walked the "Leerlingen" subtree and linked only
+/// official classes); organisational sub-groups never match.
+///
+/// Confidence mirrors accounts/staff: `high` only when all three systems carry
+/// the group — and because the match key *is* the (normalized) name, presence
+/// in all three implies the keys agree — otherwise `medium`. All comparisons
+/// are trimmed + case-insensitive (INV-12).
+List<LinkedGroup> _linkGroups(
+  wapi.WisaSnapshot wisaSnapshot,
+  ss.SmartschoolSnapshot smartschoolSnapshot,
+  az.AzureSnapshot azureSnapshot,
+) {
+  final records = <_GroupRecord>[];
+  // Normalized fullName -> the record anchored on that WISA class group.
+  final byName = <String, _GroupRecord>{};
+
+  // 1. Seed one record per distinct WISA class group, in snapshot order, keyed
+  //    by its `fullName`. Duplicate fullNames collapse to the first record so
+  //    the output is a deterministic function of the input order (INV-20).
+  for (final group in wisaSnapshot.classGroups) {
+    final key = _norm(group.fullName);
+    if (key == null || byName.containsKey(key)) continue;
+    final rec = _GroupRecord(wisa: group);
+    records.add(rec);
+    byName[key] = rec;
+  }
+
+  // 2. Attach official Smartschool class groups by name. Non-official
+  //    organisational groups never link; an official group matching no WISA
+  //    class is dropped (no WISA anchor).
+  for (final group in smartschoolSnapshot.groups) {
+    if (!group.official) continue;
+    final key = _norm(group.name);
+    if (key == null) continue;
+    final rec = byName[key];
+    if (rec != null && rec.smartschool == null) rec.smartschool = group;
+  }
+
+  // 3. Attach Azure groups by displayName. An Azure group matching no WISA
+  //    class is likewise dropped.
+  for (final group in azureSnapshot.groups) {
+    final key = _norm(group.displayName);
+    if (key == null) continue;
+    final rec = byName[key];
+    if (rec != null && rec.azure == null) rec.azure = group;
+  }
+
+  // 4. Freeze each record into an immutable [LinkedGroup].
+  return <LinkedGroup>[
+    for (final rec in records)
+      LinkedGroup(
+        wisa: _wisaToCoreGroup(rec.wisa),
+        smartschool: rec.smartschool,
+        azure: rec.azure,
+        confidence: rec.smartschool != null && rec.azure != null
+            ? LinkConfidence.high
+            : LinkConfidence.medium,
+      ),
+  ];
+}
+
+/// Projects a [wapi.WisaClassGroup] to the canonical [Group] that
+/// [LinkedGroup.wisa] expects. The group is identified and named by its
+/// `fullName` (the cross-system match key); WISA class groups are always real
+/// classes, hence `official: true` and [GroupType.classGroup]. `schoolCode`
+/// becomes the institute number; WISA exposes no tree edge or numeric admin
+/// number for a class group, so [Group.parentId] and [Group.adminNumber] stay
+/// null.
+Group _wisaToCoreGroup(wapi.WisaClassGroup g) => Group(
+      id: GroupId(g.fullName),
+      name: g.fullName,
+      description: g.description,
+      type: GroupType.classGroup,
+      official: true,
+      instituteNumber: g.schoolCode.isEmpty ? null : g.schoolCode,
+      origin: Origin.wisa,
+    );
+
 /// Mutable accumulator for one linked person while the passes run; frozen into
 /// an immutable [LinkedAccount] at the end.
 class _Record {
@@ -297,6 +391,18 @@ class _StaffRecord {
   az.AzureUser? azure;
 
   _StaffRecord({this.smartschool, this.wisa, this.azure});
+}
+
+/// Mutable accumulator for one linked class group; the group analogue of
+/// [_Record]. Anchored on a required [wapi.WisaClassGroup] (groups seed only
+/// from WISA), gathering the matching Smartschool [Group] and [az.AzureGroup]
+/// as the passes run. Frozen into an immutable [LinkedGroup] at the end.
+class _GroupRecord {
+  final wapi.WisaClassGroup wisa;
+  Group? smartschool;
+  az.AzureGroup? azure;
+
+  _GroupRecord({required this.wisa});
 }
 
 /// Whether a Smartschool [role] marks the account as staff (teacher or

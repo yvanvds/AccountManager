@@ -130,30 +130,80 @@ az.AzureUser azureUser({
       department: department,
     );
 
+/// A WISA class group. [name] + [groupName] form the `fullName` the linker
+/// matches on; `groupName == '00'` (the default) means "no subgroup", so
+/// `fullName == name`. [schoolCode] becomes the linked group's institute
+/// number.
+wapi.WisaClassGroup wisaClassGroup(
+  String name, {
+  String groupName = '00',
+  String schoolCode = '123',
+}) =>
+    wapi.WisaClassGroup(
+      name: name,
+      groupName: groupName,
+      description: '',
+      adminCode: '',
+      schoolCode: schoolCode,
+      schoolId: 1,
+    );
+
+/// A Smartschool class group as a [core.Group]. Matched to WISA by [name];
+/// [official] must be `true` for the linker to consider it (non-official
+/// organisational groups never link). [code] defaults to [name].
+Group ssGroup(
+  String name, {
+  String? code,
+  bool official = true,
+}) =>
+    Group(
+      id: GroupId(code ?? name),
+      name: name,
+      description: '',
+      type: GroupType.classGroup,
+      official: official,
+      origin: Origin.smartschool,
+    );
+
+/// An Azure group, matched to WISA by [displayName]. [id] defaults to
+/// [displayName].
+az.AzureGroup azureGroup(String displayName, {String? id}) => az.AzureGroup(
+      id: id ?? displayName,
+      displayName: displayName,
+    );
+
 wapi.WisaSnapshot wisaSnap(
   List<wapi.WisaStudent> students, {
   List<wapi.WisaStaff> staff = const [],
+  List<wapi.WisaClassGroup> classGroups = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: _fixedDate,
       students: students,
       staff: staff,
-      classGroups: const [],
+      classGroups: classGroups,
       schools: const [],
     );
 
-ss.SmartschoolSnapshot ssSnap(List<ss.SmartschoolAccount> accounts) =>
+ss.SmartschoolSnapshot ssSnap(
+  List<ss.SmartschoolAccount> accounts, {
+  List<Group> groups = const [],
+}) =>
     ss.SmartschoolSnapshot(
       fetchedAt: _fixedDate,
-      groups: const [],
+      groups: groups,
       accounts: accounts,
       memberships: const [],
     );
 
-az.AzureSnapshot azSnap(List<az.AzureUser> users) => az.AzureSnapshot(
+az.AzureSnapshot azSnap(
+  List<az.AzureUser> users, {
+  List<az.AzureGroup> groups = const [],
+}) =>
+    az.AzureSnapshot(
       fetchedAt: _fixedDate,
       users: users,
-      groups: const [],
+      groups: groups,
     );
 
 /// Deterministic [PersonIdResolver]: mints `p0`, `p1`, … in first-seen order
@@ -193,6 +243,14 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
         'a:${s.azure?.id ?? '-'}',
       ].join('|');
 
+  // Groups have no linker-minted id; the WISA name anchors the record.
+  String grp(LinkedGroup g) => [
+        g.confidence.name,
+        'w:${g.wisa.name}',
+        's:${g.smartschool?.id.value ?? '-'}',
+        'a:${g.azure?.id ?? '-'}',
+      ].join('|');
+
   String warning(LinkWarning w) => switch (w) {
         ResolveDuplicateMail(:final mail, :final accounts) =>
           'dupmail:$mail:${(accounts.map((x) => x.uid).toList()..sort()).join(',')}',
@@ -201,6 +259,7 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
   return [
     for (final a in snapshot.accounts) 'acc:${acc(a)}',
     for (final s in snapshot.staff) 'stf:${stf(s)}',
+    for (final g in snapshot.groups) 'grp:${grp(g)}',
     for (final w in snapshot.warnings) warning(w),
     'wisa:${snapshot.wisa.total}/${snapshot.wisa.linked}/${snapshot.wisa.unlinked}',
     'ss:${snapshot.smartschool.total}/${snapshot.smartschool.linked}/${snapshot.smartschool.unlinked}',
