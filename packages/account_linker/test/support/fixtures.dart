@@ -69,26 +69,75 @@ ss.SmartschoolAccount ssAccount({
       status: 'actief',
     );
 
+/// A WISA staff member. [code] is the alphabetic surname-mnemonic that bridges
+/// to Smartschool (`accountId`); [wisaId] is the distinct numeric id that
+/// bridges to Azure (`employeeId`) and may be null (OQ-1).
+wapi.WisaStaff wisaStaff(String code, {String? wisaId}) => wapi.WisaStaff(
+      code: WisaStaffCode(code),
+      wisaId: wisaId == null ? null : WisaId(wisaId),
+      firstName: 'Jane',
+      lastName: 'Doe',
+    );
+
+/// A Smartschool **staff** account. Unlike [ssAccount], [accountId] holds the
+/// WISA staff `code` (not the wisaId) and [role] is a staff role so the linker
+/// routes it to the staff population.
+ss.SmartschoolAccount ssStaffAccount({
+  required String uid,
+  required String accountId,
+  required String mail,
+  PersonRole role = PersonRole.teacher,
+}) =>
+    ss.SmartschoolAccount(
+      uid: uid,
+      accountId: accountId,
+      mail: mail,
+      registerId: '',
+      stemId: 0,
+      role: role,
+      givenName: 'Jane',
+      surname: 'Doe',
+      extraNames: '',
+      initials: '',
+      preferredName: '',
+      gender: Gender.female,
+      birthDate: null,
+      birthPlace: '',
+      birthCountry: '',
+      address: _blankAddress,
+      mobilePhone: '',
+      homePhone: '',
+      fax: '',
+      untisId: '',
+      status: 'actief',
+    );
+
 /// An Azure user. [companyName] equal to the school prefix marks one of the
-/// school's own users (INV-22).
+/// school's own *students*; a [department] containing the prefix marks a
+/// *staff* member (INV-22).
 az.AzureUser azureUser({
   required String id,
   required String upn,
   String? employeeId,
   String? companyName,
+  String? department,
 }) =>
     az.AzureUser(
       id: id,
       upn: upn,
       employeeId: employeeId,
       companyName: companyName,
+      department: department,
     );
 
-wapi.WisaSnapshot wisaSnap(List<wapi.WisaStudent> students) =>
+wapi.WisaSnapshot wisaSnap(
+  List<wapi.WisaStudent> students, {
+  List<wapi.WisaStaff> staff = const [],
+}) =>
     wapi.WisaSnapshot(
       fetchedAt: _fixedDate,
       students: students,
-      staff: const [],
+      staff: staff,
       classGroups: const [],
       schools: const [],
     );
@@ -135,6 +184,15 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
         'a:${a.azure?.id ?? '-'}',
       ].join('|');
 
+  String stf(LinkedStaff s) => [
+        s.id.value,
+        s.role.name,
+        s.confidence.name,
+        'w:${s.wisa?.code.value ?? '-'}',
+        's:${s.smartschool?.uid ?? '-'}',
+        'a:${s.azure?.id ?? '-'}',
+      ].join('|');
+
   String warning(LinkWarning w) => switch (w) {
         ResolveDuplicateMail(:final mail, :final accounts) =>
           'dupmail:$mail:${(accounts.map((x) => x.uid).toList()..sort()).join(',')}',
@@ -142,6 +200,7 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
 
   return [
     for (final a in snapshot.accounts) 'acc:${acc(a)}',
+    for (final s in snapshot.staff) 'stf:${stf(s)}',
     for (final w in snapshot.warnings) warning(w),
     'wisa:${snapshot.wisa.total}/${snapshot.wisa.linked}/${snapshot.wisa.unlinked}',
     'ss:${snapshot.smartschool.total}/${snapshot.smartschool.linked}/${snapshot.smartschool.unlinked}',

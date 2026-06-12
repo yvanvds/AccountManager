@@ -12,13 +12,30 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// minting and persisting the stable [PersonId] — is delegated to [resolver],
 /// so `link` itself does no I/O.
 ///
-/// This issue (#43) links **students** only; [LinkedSnapshot.staff] and
-/// [LinkedSnapshot.groups] are returned empty (staff #44, groups #45).
+/// This function links **students** (#43) and **staff** (#44);
+/// [LinkedSnapshot.groups] is still returned empty (groups #45).
 ///
-/// The bridges used (spec `docs/domain-model.md` §4, §6.2):
+/// The **student** bridges (spec `docs/domain-model.md` §4, §6.2):
 /// - `AzureUser.upn` ≡ `SmartschoolAccount.mail` (case-insensitive, trimmed)
 /// - `SmartschoolAccount.accountId` ≡ `WisaStudent.wisaId` ≡
 ///   `AzureUser.employeeId`
+///
+/// The **staff** bridges differ on the Smartschool side. Staff carry two WISA
+/// identifiers — `WisaStaff.code` (an alphabetic surname-mnemonic) and
+/// `WisaStaff.wisaId` (a numeric id) — that are *genuinely distinct* (OQ-1,
+/// resolved from real data; see the package README). Each bridges a different
+/// system:
+/// - `AzureUser.upn` ≡ `SmartschoolAccount.mail` (as for students)
+/// - `SmartschoolAccount.accountId` ≡ `WisaStaff.code` — the staff
+///   "AddToSmartschool" action stores the *code*, not the wisaId, as the
+///   Smartschool internal number (legacy `FindAccountByWisaID(account.CODE)`).
+/// - `AzureUser.employeeId` ≡ `WisaStaff.wisaId`
+///
+/// Students and staff are partitioned out of the single flat Smartschool
+/// account list by [SmartschoolAccount] `role`: teacher/director ⇒ staff,
+/// everything else ⇒ student. Azure orphans split per INV-22:
+/// `companyName == schoolPrefix` keeps a former *student*, `department`
+/// containing the prefix keeps a former *staff* member.
 ///
 /// Fixes carried over from the legacy linker:
 /// - **INV-12:** every `mail`/`upn`/id comparison is trimmed and
@@ -46,8 +63,11 @@ LinkedSnapshot link(
   final warnings = <LinkWarning>[];
 
   // 1. Seed one record per Smartschool student account, in snapshot order.
+  //    Staff (teacher/director role) are linked separately below, so they are
+  //    skipped here — otherwise a staff account would be linked twice.
   for (final account in smartschoolSnapshot.accounts) {
     if (account.accountType != AccountType.student) continue;
+    if (_isStaffRole(account.role)) continue;
     final rec = _Record(smartschool: account);
     records.add(rec);
 
@@ -129,12 +149,133 @@ LinkedSnapshot link(
       ),
   ];
 
+  final staff = _linkStaff(
+    wisaSnapshot,
+    smartschoolSnapshot,
+    azureSnapshot,
+    resolver,
+    schoolPrefix: schoolPrefix,
+    warnings: warnings,
+  );
+
   return LinkedSnapshot.fromRecords(
     accounts: accounts,
-    staff: const [],
+    staff: staff,
     groups: const [],
     warnings: warnings,
   );
+}
+
+/// Links the staff population, mirroring the student passes above but using
+/// the staff-specific bridges (see the `link` doc-comment): WISA staff match
+/// Smartschool by `code` (≡ `accountId`) and Azure by `wisaId` (≡
+/// `employeeId`). Appends any duplicate-mail warnings to [warnings].
+List<LinkedStaff> _linkStaff(
+  wapi.WisaSnapshot wisaSnapshot,
+  ss.SmartschoolSnapshot smartschoolSnapshot,
+  az.AzureSnapshot azureSnapshot,
+  PersonIdResolver resolver, {
+  required String schoolPrefix,
+  required List<LinkWarning> warnings,
+}) {
+  final records = <_StaffRecord>[];
+  // Normalized mail -> the staff records that claim it (>1 ⇒ INV-23).
+  final byMail = <String, List<_StaffRecord>>{};
+  // Normalized Smartschool accountId (≡ WISA staff `code`) -> first record.
+  final byCode = <String, _StaffRecord>{};
+  // Normalized WISA staff `wisaId` -> the record holding that staff member,
+  // for the Azure `employeeId` bridge.
+  final byWisaId = <String, _StaffRecord>{};
+
+  // 1. Seed one record per Smartschool staff account, in snapshot order.
+  for (final account in smartschoolSnapshot.accounts) {
+    if (!_isStaffRole(account.role)) continue;
+    final rec = _StaffRecord(smartschool: account);
+    records.add(rec);
+
+    final mail = _norm(account.mail);
+    if (mail != null) byMail.putIfAbsent(mail, () => []).add(rec);
+
+    final code = _norm(account.accountId);
+    if (code != null) byCode.putIfAbsent(code, () => rec);
+  }
+
+  // INV-23: surface every mail shared by two or more staff accounts.
+  for (final entry in byMail.entries) {
+    if (entry.value.length < 2) continue;
+    warnings.add(
+      ResolveDuplicateMail(
+        mail: entry.key,
+        accounts: <SmartschoolAccount>[
+          for (final rec in entry.value) rec.smartschool!,
+        ],
+      ),
+    );
+  }
+
+  // 2. Attach WISA staff by `code`; unmatched ones become WISA-only
+  //    placeholders. Every WISA staff member lands in exactly one record, and
+  //    that record is indexed by `wisaId` for the Azure bridge in pass 3.
+  for (final member in wisaSnapshot.staff) {
+    final codeKey = _norm(member.code.value);
+    final match = codeKey == null ? null : byCode[codeKey];
+    final _StaffRecord target;
+    if (match != null && match.wisa == null) {
+      match.wisa = member;
+      target = match;
+    } else {
+      target = _StaffRecord(wisa: member);
+      records.add(target);
+      if (codeKey != null) byCode.putIfAbsent(codeKey, () => target);
+    }
+    final wisaIdKey = _norm(member.wisaId?.value);
+    if (wisaIdKey != null) byWisaId.putIfAbsent(wisaIdKey, () => target);
+  }
+
+  // 3. Attach Azure users: by upn → mail, else by employeeId → wisaId, else
+  //    keep school-prefix orphans (INV-22 staff variant: `department` contains
+  //    the prefix), else discard (belongs to another school / population).
+  for (final user in azureSnapshot.users) {
+    final upn = _norm(user.upn);
+    final employeeId = _norm(user.employeeId);
+
+    _StaffRecord? target;
+    if (upn != null) {
+      final candidates = byMail[upn];
+      if (candidates != null) {
+        for (final rec in candidates) {
+          if (rec.azure == null) {
+            target = rec;
+            break;
+          }
+        }
+      }
+    }
+    if (target == null && employeeId != null) {
+      final rec = byWisaId[employeeId];
+      if (rec != null && rec.azure == null) target = rec;
+    }
+
+    if (target != null) {
+      target.azure = user;
+    } else if (_departmentMatchesPrefix(user.department, schoolPrefix)) {
+      records.add(_StaffRecord(azure: user));
+    }
+    // else: a user belonging to another school/population — dropped.
+  }
+
+  // 4. Resolve a stable identity, role, and confidence for each record.
+  return <LinkedStaff>[
+    for (final rec in records)
+      LinkedStaff(
+        id: LinkedAccountId(resolver.resolve(_naturalStaffKey(rec)).value),
+        role: rec.smartschool?.role ?? PersonRole.teacher,
+        wisa: rec.wisa,
+        smartschool: rec.smartschool,
+        azure: rec.azure,
+        confidence: _staffConfidence(rec),
+      ),
+  ];
 }
 
 /// Mutable accumulator for one linked person while the passes run; frozen into
@@ -146,6 +287,25 @@ class _Record {
 
   _Record({this.smartschool, this.wisa, this.azure});
 }
+
+/// Mutable accumulator for one linked staff member; the staff analogue of
+/// [_Record], carrying [wapi.WisaStaff] (with its `code`) instead of a
+/// [wapi.WisaStudent]. Frozen into an immutable [LinkedStaff] at the end.
+class _StaffRecord {
+  ss.SmartschoolAccount? smartschool;
+  wapi.WisaStaff? wisa;
+  az.AzureUser? azure;
+
+  _StaffRecord({this.smartschool, this.wisa, this.azure});
+}
+
+/// Whether a Smartschool [role] marks the account as staff (teacher or
+/// director) rather than a student. A `null` role (unrecognised Basisrol) is
+/// treated as non-staff so it stays in the student population, matching the
+/// pre-staff behaviour. The staff/student split derives from `role` because
+/// [SmartschoolAccount.accountType] is always `student` for a primary record.
+bool _isStaffRole(PersonRole? role) =>
+    role == PersonRole.teacher || role == PersonRole.director;
 
 /// Trims and lowercases [value] for case-insensitive, whitespace-tolerant
 /// comparison (INV-12). Returns `null` when [value] is null or blank so empty
@@ -162,6 +322,16 @@ bool _matchesPrefix(String? companyName, String schoolPrefix) {
   final company = _norm(companyName);
   final prefix = _norm(schoolPrefix);
   return company != null && prefix != null && company == prefix;
+}
+
+/// Whether an Azure user's [department] marks it as one of the school's own
+/// staff (a current or former staff member). Per INV-22 the staff signal is a
+/// *substring* match (`department` contains the prefix), unlike the student
+/// signal which is an exact `companyName` equality. Trimmed + case-insensitive.
+bool _departmentMatchesPrefix(String? department, String schoolPrefix) {
+  final dept = _norm(department);
+  final prefix = _norm(schoolPrefix);
+  return dept != null && prefix != null && dept.contains(prefix);
 }
 
 /// The natural key handed to the [PersonIdResolver]: `wisaId → mail → upn →
@@ -210,4 +380,56 @@ LinkConfidence _confidence(_Record rec) {
       wisaId != null && wisaId == accountId && wisaId == employeeId;
 
   return mailAgrees && idAgrees ? LinkConfidence.high : LinkConfidence.medium;
+}
+
+/// The natural key for a staff member: `wisaId → code → mail → upn → azureId`,
+/// normalized and namespaced under `staff:` so a staff member never collides
+/// with a student who happens to share a numeric id. `wisaId` (the Azure
+/// bridge) is preferred, then the Smartschool-side `code`.
+String _naturalStaffKey(_StaffRecord rec) {
+  final wisaId = _norm(rec.wisa?.wisaId?.value ?? rec.azure?.employeeId);
+  if (wisaId != null) return 'staff:wisa:$wisaId';
+
+  final code = _norm(rec.wisa?.code.value ?? rec.smartschool?.accountId);
+  if (code != null) return 'staff:code:$code';
+
+  final mail = _norm(rec.smartschool?.mail);
+  if (mail != null) return 'staff:mail:$mail';
+
+  final upn = _norm(rec.azure?.upn);
+  if (upn != null) return 'staff:upn:$upn';
+
+  final azureId = _norm(rec.azure?.id);
+  if (azureId != null) return 'staff:azure:$azureId';
+
+  // Unreachable: every record carries at least one identifying field.
+  throw StateError('LinkedStaff record has no identifying key: $rec');
+}
+
+/// `high` only when all three systems are present *and* both staff bridges
+/// agree: `upn == mail`, `accountId == code` (Smartschool ↔ WISA), and
+/// `employeeId == wisaId` (Azure ↔ WISA). Anything weaker is `medium`.
+LinkConfidence _staffConfidence(_StaffRecord rec) {
+  final member = rec.wisa;
+  final account = rec.smartschool;
+  final user = rec.azure;
+  if (member == null || account == null || user == null) {
+    return LinkConfidence.medium;
+  }
+
+  final upn = _norm(user.upn);
+  final mail = _norm(account.mail);
+  final mailAgrees = upn != null && upn == mail;
+
+  final code = _norm(member.code.value);
+  final accountId = _norm(account.accountId);
+  final codeAgrees = code != null && code == accountId;
+
+  final wisaId = _norm(member.wisaId?.value);
+  final employeeId = _norm(user.employeeId);
+  final idAgrees = wisaId != null && wisaId == employeeId;
+
+  return mailAgrees && codeAgrees && idAgrees
+      ? LinkConfidence.high
+      : LinkConfidence.medium;
 }

@@ -92,7 +92,14 @@ Immutable. Much smaller than `WisaStudent` ([legacy-wpf/AccountApi/Wisa/Staff.cs
 | `firstName` | `String` | |
 | `lastName` | `String` | |
 
-> **OQ-1:** Are `code` and `wisaId` ever genuinely different identifiers, or always the same value? The linker uses `wisaId` to match Azure (`EmployeeId`), but the "AddToSmartschool" staff action uses `code` as Smartschool `AccountID`. If they're always equal in real data, we collapse to one field.
+> **OQ-1 (RESOLVED — keep both fields):** `code` and `wisaId` are genuinely
+> different identifiers. Verified against a real 194-row WISA staff export: they
+> differ in 194/194 records (`wisaId` numeric, `code` an alphabetic
+> surname-mnemonic; `wisaId` may also be empty while `code` never is). Each
+> bridges a different system — the "AddToSmartschool" staff action writes `code`
+> as the Smartschool `AccountID`, while `wisaId` equals Azure's `EmployeeId`.
+> The linker matches staff to Smartschool on `code` and to Azure on `wisaId`.
+> See `packages/account_linker/README.md` for the data and method.
 
 ### 3.5 `SmartschoolAccount` (source record)
 
@@ -251,7 +258,7 @@ Rules are applied **at snapshot construction time** (inside the connector or jus
 |---|---|---|---|
 | `PersonId` | `Person` | Opaque local UUID | Internal stable key. See OQ-3. |
 | `WisaId` | WisaStudent, WisaStaff, AzureUser.employeeId | String | WISA primary; cross-system bridge to Azure |
-| `WisaStaffCode` | WisaStaff | String | Staff-scope key; possibly equal to `WisaId` (OQ-1) |
+| `WisaStaffCode` | WisaStaff | String | Staff-scope key; **distinct** from `WisaId` (OQ-1 resolved). Bridges staff to Smartschool (`accountId`) |
 | `nationalId` | Person, WisaStudent | String (rijksregisternr) | Identity attribute; **not** used for linking |
 | `stemId` | Person/Wisa/Smartschool | String/int | Attribute; not a primary key |
 | `upn` | AzureUser | Email-format | Azure primary; also the legacy linker key |
@@ -262,7 +269,8 @@ Rules are applied **at snapshot construction time** (inside the connector or jus
 
 - `AzureUser.upn` ≡ `SmartschoolAccount.mail` (when both exist) — **case-insensitive, trimmed** (INV-12)
 - `AzureUser.employeeId` ≡ `WisaStudent.wisaId` (or `WisaStaff.wisaId`)
-- `SmartschoolAccount.accountId` ≡ `WisaStudent.wisaId` (a `ModifyAccountID` action enforces this)
+- `SmartschoolAccount.accountId` ≡ `WisaStudent.wisaId` for **students** (a `ModifyAccountID` action enforces this)
+- `SmartschoolAccount.accountId` ≡ `WisaStaff.code` for **staff** (the "AddToSmartschool" staff action writes the code, not the wisaId — OQ-1)
 
 ## 5. Invariants
 
@@ -348,7 +356,7 @@ Rules are applied **at snapshot construction time** (inside the connector or jus
 
 ## 9. Open questions (decide before coding)
 
-- **OQ-1:** `WisaStaff.code` vs `WisaStaff.wisaId` — same identifier in different costume, or genuinely two IDs? Inspect real data to decide.
+- **OQ-1 (RESOLVED):** `WisaStaff.code` vs `WisaStaff.wisaId` — **genuinely two IDs.** Real data (194/194 staff differ) shows `code` is an alphabetic surname-mnemonic bridging Smartschool and `wisaId` is the numeric WISA key bridging Azure. Both fields are kept. See §3.4 and `packages/account_linker/README.md`.
 - **OQ-2:** `Address` — strictly Belgian-format or free-form per country? Legacy assumes Belgian (street/house/box).
 - **OQ-3:** `PersonId` lifecycle — derived (e.g. `wisaId` if present, `upn` otherwise) or freshly minted on first observation and stored in a local persistence layer? Affects the upgrade story when an alumni's only ID changes.
 - **OQ-4:** Co-accounts (parents) — first-class `Person` linked via a `ParentOf` relation, or attribute-only as in legacy? Affects the Passwords feature.
