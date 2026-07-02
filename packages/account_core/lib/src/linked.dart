@@ -69,14 +69,21 @@ class LinkedStaff {
 }
 
 /// Output of the linker: one record per identified group.
+///
+/// [wisa] is nullable (#52): a group that vanished from WISA but still exists
+/// in Smartschool and/or Azure is kept as an orphan record — symmetric with
+/// how an Azure-only [LinkedAccount] is kept for a former student — so the
+/// action engine can raise a delete action for it instead of it silently
+/// disappearing. At least one of [wisa], [smartschool], [azure] is always
+/// present.
 class LinkedGroup {
-  final Group wisa;
+  final Group? wisa;
   final Group? smartschool;
   final AzureGroup? azure;
   final LinkConfidence confidence;
 
   const LinkedGroup({
-    required this.wisa,
+    this.wisa,
     this.smartschool,
     this.azure,
     required this.confidence,
