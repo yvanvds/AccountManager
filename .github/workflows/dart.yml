@@ -70,13 +70,15 @@ jobs:
       - name: Set up Dart
         uses: dart-lang/setup-dart@v1
 
-      - name: dart format (check only)
-        # Runs before pub get — formatting needs no dependencies, so drift
-        # fails the job as early and cheaply as possible (#58).
-        run: dart format --output=none --set-exit-if-changed .
-
       - name: dart pub get
         run: dart pub get
+
+      - name: dart format (check only)
+        # Must run AFTER pub get: since Dart 3.7 the formatter styles each
+        # file by its package's language version, resolved via
+        # package_config.json. Without it the formatter falls back to the
+        # SDK-default style and flags spurious diffs (#58).
+        run: dart format --output=none --set-exit-if-changed .
 
       - name: dart analyze
         run: dart analyze --fatal-infos --fatal-warnings
