@@ -99,6 +99,58 @@ class SmartschoolAccount implements core.SmartschoolAccount {
     this.coAccounts = const [],
   });
 
+  /// Returns a copy with the given fields replaced. Used by the action engine
+  /// to project the mutated source record after a successful write, so the
+  /// State layer can patch its snapshot without a re-sync (`account_actions`).
+  SmartschoolAccount copyWith({
+    String? uid,
+    String? accountId,
+    String? mail,
+    String? registerId,
+    int? stemId,
+    core.PersonRole? role,
+    String? givenName,
+    String? surname,
+    String? extraNames,
+    String? initials,
+    String? preferredName,
+    core.Gender? gender,
+    DateTime? birthDate,
+    String? birthPlace,
+    String? birthCountry,
+    core.Address? address,
+    String? mobilePhone,
+    String? homePhone,
+    String? fax,
+    String? untisId,
+    String? status,
+    List<CoAccountSlot>? coAccounts,
+  }) =>
+      SmartschoolAccount(
+        uid: uid ?? this.uid,
+        accountId: accountId ?? this.accountId,
+        mail: mail ?? this.mail,
+        registerId: registerId ?? this.registerId,
+        stemId: stemId ?? this.stemId,
+        role: role ?? this.role,
+        givenName: givenName ?? this.givenName,
+        surname: surname ?? this.surname,
+        extraNames: extraNames ?? this.extraNames,
+        initials: initials ?? this.initials,
+        preferredName: preferredName ?? this.preferredName,
+        gender: gender ?? this.gender,
+        birthDate: birthDate ?? this.birthDate,
+        birthPlace: birthPlace ?? this.birthPlace,
+        birthCountry: birthCountry ?? this.birthCountry,
+        address: address ?? this.address,
+        mobilePhone: mobilePhone ?? this.mobilePhone,
+        homePhone: homePhone ?? this.homePhone,
+        fax: fax ?? this.fax,
+        untisId: untisId ?? this.untisId,
+        status: status ?? this.status,
+        coAccounts: coAccounts ?? this.coAccounts,
+      );
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
