@@ -13,6 +13,10 @@
 #   as repository secrets:
 #     WISA:        WISA_SERVER, WISA_PORT, WISA_DATABASE,
 #                  WISA_USERNAME, WISA_PASSWORD, WISA_SCHOOL_ID
+#                  Optional repository *variable* WISA_WERKDATUM (ISO date,
+#                  not a secret) pins the export Werkdatum; when unset the
+#                  live test defaults to 30 June of the current year so the
+#                  export is non-empty in summer too (#57).
 #     Smartschool: SMARTSCHOOL_SITE, SMARTSCHOOL_ACCESSCODE
 #   Azure uses OIDC workload-identity federation — NO token or secret is
 #   stored. A short-lived bearer token expires in ~1h, so storing one is
@@ -100,6 +104,10 @@ jobs:
       WISA_USERNAME: ${{ secrets.WISA_USERNAME }}
       WISA_PASSWORD: ${{ secrets.WISA_PASSWORD }}
       WISA_SCHOOL_ID: ${{ secrets.WISA_SCHOOL_ID }}
+      # Optional; a plain date, so a repository variable rather than a
+      # secret. Empty when unconfigured — the live test then defaults to
+      # 30 June of the current year.
+      WISA_WERKDATUM: ${{ vars.WISA_WERKDATUM }}
       SMARTSCHOOL_SITE: ${{ secrets.SMARTSCHOOL_SITE }}
       SMARTSCHOOL_ACCESSCODE: ${{ secrets.SMARTSCHOOL_ACCESSCODE }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}

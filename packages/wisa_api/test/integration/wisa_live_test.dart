@@ -60,8 +60,7 @@ void main() {
       expect(
         ids,
         contains(config!.schoolId),
-        reason:
-            'WISA_SCHOOL_ID=${config.schoolId} not present in schools '
+        reason: 'WISA_SCHOOL_ID=${config.schoolId} not present in schools '
             '(${schools.length} returned)',
       );
     });
@@ -82,11 +81,18 @@ void main() {
         reason: 'WISA_SCHOOL_ID not in schools list',
       );
 
+      // Not DateTime.now(): with a summer Werkdatum the export is
+      // legitimately empty and the test false-fails all holiday (#57).
+      final workDate = config!.resolveWorkDate(DateTime.now());
+      stdout.writeln(
+        '  workDate=${workDate.toIso8601String().split('T').first}',
+      );
+
       WisaSnapshot snapshot;
       try {
         snapshot = await connector.sync(
           schools: target,
-          workDate: DateTime.now(),
+          workDate: workDate,
         );
       } on Exception catch (e) {
         throw Exception(
