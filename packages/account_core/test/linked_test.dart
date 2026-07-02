@@ -120,7 +120,8 @@ void main() {
     expect(lg.smartschool, isNull);
   });
 
-  test('ResolveDuplicateMail is a LinkWarning carrying the colliding accounts '
+  test(
+      'ResolveDuplicateMail is a LinkWarning carrying the colliding accounts '
       '(INV-23)', () {
     const a = _FakeSmartschoolAccount(
       uid: 'janssens.anna',

@@ -30,8 +30,7 @@ const int _staffLimit = 100;
 void main() {
   final repoRoot = _findRepoRoot();
   final artifactsDir = Directory('${repoRoot.path}/artifacts');
-  final outDir =
-      Directory('${repoRoot.path}/packages/wisa_api/test/fixtures');
+  final outDir = Directory('${repoRoot.path}/packages/wisa_api/test/fixtures');
 
   if (!artifactsDir.existsSync()) {
     stderr.writeln(
@@ -59,7 +58,8 @@ Directory _findRepoRoot() {
     }
     final parent = d.parent;
     if (parent.path == d.path) {
-      throw StateError('Could not find repo root from ${Directory.current.path}');
+      throw StateError(
+          'Could not find repo root from ${Directory.current.path}');
     }
     d = parent;
   }
@@ -90,8 +90,7 @@ void _writeStudents(Directory inDir, Directory outDir) {
   final json = jsonDecode(
     File('${inDir.path}/wisaStudents.json').readAsStringSync(),
   ) as Map<String, dynamic>;
-  final accounts =
-      (json['Accounts'] as List).cast<Map<String, dynamic>>();
+  final accounts = (json['Accounts'] as List).cast<Map<String, dynamic>>();
 
   final buf = StringBuffer(
     'KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,STAMBOEKNUMMER,'
@@ -99,7 +98,8 @@ void _writeStudents(Directory inDir, Directory outDir) {
     'BUSNR,POSTCODE,WOONPLAATS,KLASWIJZIGING\n',
   );
 
-  final take = accounts.length < _studentLimit ? accounts.length : _studentLimit;
+  final take =
+      accounts.length < _studentLimit ? accounts.length : _studentLimit;
   for (var i = 0; i < take; i++) {
     final s = accounts[i];
 
@@ -111,43 +111,43 @@ void _writeStudents(Directory inDir, Directory outDir) {
     final geboorteDatum = _isoToBelgianDate(s['DateOfBirth'] as String? ?? '');
     final geslacht = (s['Gender'] as String?) == 'Male' ? 'M' : 'V';
     final nationaliteit = _toAscii(s['Nationality'] as String? ?? '');
-    final klaswijziging =
-        _isoToBelgianDate(s['ClassChange'] as String? ?? '');
+    final klaswijziging = _isoToBelgianDate(s['ClassChange'] as String? ?? '');
     final straatNr = _csvSafe(s['HouseNumber'] as String? ?? '');
     final busNr = _csvSafe(s['HouseNumberAdd'] as String? ?? '');
 
     // Redacted: name, place of birth, address text, national ID.
     final naam = _redactSurname(i, s['Name'] as String? ?? '');
     final voornaam = _redactFirstName(i);
-    final roepnaam = (s['PreferedName'] as String?) == ''
-        ? ''
-        : _redactPreferredName(i);
+    final roepnaam =
+        (s['PreferedName'] as String?) == '' ? '' : _redactPreferredName(i);
     const rrn = '00000000000';
     final geboorteplaats = _redactPlace(i, s['PlaceOfBirth'] as String? ?? '');
     final straat = _redactStreet(i);
     const postcode = '0000';
     const woonplaats = 'ANON_CITY';
 
-    buf.writeln([
-      klas,
-      klasgroep,
-      naam,
-      voornaam,
-      roepnaam,
-      geboorteDatum,
-      wisaId,
-      stemId,
-      geslacht,
-      rrn,
-      geboorteplaats,
-      nationaliteit,
-      straat,
-      straatNr,
-      busNr,
-      postcode,
-      woonplaats,
-      klaswijziging,
-    ].join(','),);
+    buf.writeln(
+      [
+        klas,
+        klasgroep,
+        naam,
+        voornaam,
+        roepnaam,
+        geboorteDatum,
+        wisaId,
+        stemId,
+        geslacht,
+        rrn,
+        geboorteplaats,
+        nationaliteit,
+        straat,
+        straatNr,
+        busNr,
+        postcode,
+        woonplaats,
+        klaswijziging,
+      ].join(','),
+    );
   }
   File('${outDir.path}/sma_sync_lln.csv')
       .writeAsStringSync(buf.toString(), flush: true);
@@ -157,8 +157,7 @@ void _writeStaff(Directory inDir, Directory outDir) {
   final json = jsonDecode(
     File('${inDir.path}/wisaStaff.json').readAsStringSync(),
   ) as Map<String, dynamic>;
-  final accounts =
-      (json['Accounts'] as List).cast<Map<String, dynamic>>();
+  final accounts = (json['Accounts'] as List).cast<Map<String, dynamic>>();
 
   final buf = StringBuffer('CODE,WISAID,FAMILIENAAM,VOORNAAM\n');
   final take = accounts.length < _staffLimit ? accounts.length : _staffLimit;
@@ -248,11 +247,9 @@ String _redactSurname(int i, String original) {
   return base;
 }
 
-String _redactFirstName(int i) =>
-    'First${i.toString().padLeft(4, '0')}';
+String _redactFirstName(int i) => 'First${i.toString().padLeft(4, '0')}';
 
-String _redactPreferredName(int i) =>
-    'Pref${i.toString().padLeft(4, '0')}';
+String _redactPreferredName(int i) => 'Pref${i.toString().padLeft(4, '0')}';
 
 /// Synthetic place name; every 7th retains a parenthesised country
 /// fragment to keep that legacy edge case (`"Dac (Somalie)"` shape)
@@ -263,8 +260,7 @@ String _redactPlace(int i, String original) {
   return base;
 }
 
-String _redactStreet(int i) =>
-    'Anon Street ${i.toString().padLeft(4, '0')}';
+String _redactStreet(int i) => 'Anon Street ${i.toString().padLeft(4, '0')}';
 
 /// Synthetic 5-letter staff code. `[A-Z]` only — preserves WISA's
 /// observed shape.

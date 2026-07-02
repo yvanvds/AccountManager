@@ -15,24 +15,45 @@ void main() {
       // Capital + vowel + consonant + vowel + consonant + vowel + digit + symbol
       for (var i = 0; i < 100; i++) {
         final p = Password.create();
-        expect(Password.capitals.contains(p[0]), isTrue,
-            reason: 'p[0]=${p[0]} not in capitals',);
-        expect(Password.vowels.contains(p[1]), isTrue,
-            reason: 'p[1]=${p[1]} not in vowels',);
-        expect(Password.consonants.contains(p[2]), isTrue,
-            reason: 'p[2]=${p[2]} not in consonants',);
-        expect(Password.vowels.contains(p[3]), isTrue,
-            reason: 'p[3]=${p[3]} not in vowels',);
-        expect(Password.consonants.contains(p[4]), isTrue,
-            reason: 'p[4]=${p[4]} not in consonants',);
-        expect(Password.vowels.contains(p[5]), isTrue,
-            reason: 'p[5]=${p[5]} not in vowels',);
+        expect(
+          Password.capitals.contains(p[0]),
+          isTrue,
+          reason: 'p[0]=${p[0]} not in capitals',
+        );
+        expect(
+          Password.vowels.contains(p[1]),
+          isTrue,
+          reason: 'p[1]=${p[1]} not in vowels',
+        );
+        expect(
+          Password.consonants.contains(p[2]),
+          isTrue,
+          reason: 'p[2]=${p[2]} not in consonants',
+        );
+        expect(
+          Password.vowels.contains(p[3]),
+          isTrue,
+          reason: 'p[3]=${p[3]} not in vowels',
+        );
+        expect(
+          Password.consonants.contains(p[4]),
+          isTrue,
+          reason: 'p[4]=${p[4]} not in consonants',
+        );
+        expect(
+          Password.vowels.contains(p[5]),
+          isTrue,
+          reason: 'p[5]=${p[5]} not in vowels',
+        );
         // Digit in [2, 9].
         final d = int.parse(p[6]);
         expect(d, greaterThanOrEqualTo(2));
         expect(d, lessThanOrEqualTo(9));
-        expect(Password.symbols.contains(p[7]), isTrue,
-            reason: 'p[7]=${p[7]} not in symbols',);
+        expect(
+          Password.symbols.contains(p[7]),
+          isTrue,
+          reason: 'p[7]=${p[7]} not in symbols',
+        );
       }
     });
 

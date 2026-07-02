@@ -23,8 +23,7 @@ class _FakeTransport implements WisaSoapTransport {
     required String envelope,
   }) async {
     final doc = XmlDocument.parse(envelope);
-    final queryCode =
-        doc.findAllElements('QueryCode').first.innerText.trim();
+    final queryCode = doc.findAllElements('QueryCode').first.innerText.trim();
     final params = <({String name, String value})>[];
     for (final item in doc.findAllElements('item')) {
       final name = item.findElements('Name').firstOrNull?.innerText ?? '';
@@ -101,8 +100,7 @@ void main() {
   });
 
   group('loadSchools', () {
-    test('parses every school in the fixture with isVirtual=false',
-        () async {
+    test('parses every school in the fixture with isVirtual=false', () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();
@@ -207,9 +205,7 @@ void main() {
         isFalse,
       );
       expect(
-        afterSnapshot.classGroups
-            .where((g) => g.schoolCode == '999999')
-            .length,
+        afterSnapshot.classGroups.where((g) => g.schoolCode == '999999').length,
         beforeMatch,
       );
     });
@@ -236,8 +232,7 @@ void main() {
       expect(after.length, lessThan(before.length));
     });
 
-    test('applies DontImportUserFromWisa at snapshot construction',
-        () async {
+    test('applies DontImportUserFromWisa at snapshot construction', () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);
       final schools = await c.loadSchools();

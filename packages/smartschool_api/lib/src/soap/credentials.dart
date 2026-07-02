@@ -22,8 +22,7 @@ class SmartschoolCredentials {
   });
 
   /// The SOAP endpoint URL: `https://<site>.smartschool.be/Webservices/V3`.
-  Uri get endpoint =>
-      Uri.parse('https://$site.smartschool.be/Webservices/V3');
+  Uri get endpoint => Uri.parse('https://$site.smartschool.be/Webservices/V3');
 
   /// The RPC namespace used by every operation in the V3 WSDL. Smartschool
   /// bakes the tenant URL into the namespace (the generated .NET stub uses

@@ -26,7 +26,8 @@ void main() {
 
     test('returns the same id for the same key within a run', () async {
       final resolver = await FilePersonIdResolver.load(path);
-      expect(resolver.resolve('wisa:123'), equals(resolver.resolve('wisa:123')));
+      expect(
+          resolver.resolve('wisa:123'), equals(resolver.resolve('wisa:123')));
     });
 
     test('returns different ids for different keys', () async {

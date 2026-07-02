@@ -87,23 +87,36 @@ class _FakeTransport implements SmartschoolSoapTransport {
   String _wrap(String method, String value, String type) {
     final b = XmlBuilder();
     b.processing('xml', 'version="1.0" encoding="utf-8"');
-    b.element('soap:Envelope', namespaces: {
-      'http://schemas.xmlsoap.org/soap/envelope/': 'soap',
-      'http://www.w3.org/2001/XMLSchema-instance': 'xsi',
-    }, nest: () {
-      b.element('soap:Body', nest: () {
-        b.element('${method}Response', nest: () {
-          b.element('return', nest: () {
-            b.attribute(
-              'type',
-              type,
-              namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+    b.element(
+      'soap:Envelope',
+      namespaces: {
+        'http://schemas.xmlsoap.org/soap/envelope/': 'soap',
+        'http://www.w3.org/2001/XMLSchema-instance': 'xsi',
+      },
+      nest: () {
+        b.element(
+          'soap:Body',
+          nest: () {
+            b.element(
+              '${method}Response',
+              nest: () {
+                b.element(
+                  'return',
+                  nest: () {
+                    b.attribute(
+                      'type',
+                      type,
+                      namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+                    );
+                    b.text(value);
+                  },
+                );
+              },
             );
-            b.text(value);
-          },);
-        },);
-      },);
-    },);
+          },
+        );
+      },
+    );
     return b.buildDocument().toXmlString();
   }
 
@@ -231,7 +244,8 @@ void main() {
         snap.groups.map((g) => g.id.value),
         ['SCH', 'C1A', 'C1B'],
       );
-      expect(snap.accounts.map((a) => a.uid).toList()..sort(), ['jand', 'miek']);
+      expect(
+          snap.accounts.map((a) => a.uid).toList()..sort(), ['jand', 'miek']);
       expect(snap.memberships, hasLength(2));
       expect(t.sentTo(SmartschoolMethod.getAllAccountsExtended), isTrue);
       // GSPORT accounts must never be requested.
@@ -432,7 +446,8 @@ void main() {
 
     test('deleteUser formats an official date when given', () async {
       final t = _FakeTransport();
-      await _connector(t).deleteUser('jand', officialDate: DateTime(2026, 6, 5));
+      await _connector(t)
+          .deleteUser('jand', officialDate: DateTime(2026, 6, 5));
       expect(
         t.callTo(SmartschoolMethod.delUser).args['officialDate'],
         '2026-6-5',
@@ -463,8 +478,7 @@ void main() {
 
     test('setAccountStatus maps the state to a string', () async {
       final t = _FakeTransport();
-      await _connector(t)
-          .setAccountStatus('jand', core.AccountState.inactive);
+      await _connector(t).setAccountStatus('jand', core.AccountState.inactive);
       expect(
         t.callTo(SmartschoolMethod.setAccountStatus).args['accountStatus'],
         'inactive',

@@ -284,7 +284,8 @@ void main() {
 
     test('subgroup fullName (name + groupName) is the match key', () {
       final snapshot = link(
-        wisaSnap(const [], classGroups: [wisaClassGroup('5A', groupName: '01')]),
+        wisaSnap(const [],
+            classGroups: [wisaClassGroup('5A', groupName: '01')]),
         ssSnap(const [], groups: [ssGroup('5A 01')]),
         azSnap(const [], groups: [azureGroup('5A 01')]),
         SeqResolver(),
@@ -340,7 +341,8 @@ void main() {
       // (≡ employeeId): the two WISA identifiers are distinct (OQ-1).
       final snapshot = link(
         wisaSnap(const [], staff: [wisaStaff('DOEJA', wisaId: '493')]),
-        ssSnap([ssStaffAccount(uid: 'jdoe', accountId: 'DOEJA', mail: 'j@s.be')]),
+        ssSnap(
+            [ssStaffAccount(uid: 'jdoe', accountId: 'DOEJA', mail: 'j@s.be')]),
         azSnap([
           azureUser(
             id: 'az-s1',
@@ -454,7 +456,8 @@ void main() {
     test('Azure staff matched by employeeId when UPN differs from mail', () {
       final snapshot = link(
         wisaSnap(const [], staff: [wisaStaff('AMYTE', wisaId: '321')]),
-        ssSnap([ssStaffAccount(uid: 'amy', accountId: 'AMYTE', mail: 'amy@s.be')]),
+        ssSnap(
+            [ssStaffAccount(uid: 'amy', accountId: 'AMYTE', mail: 'amy@s.be')]),
         azSnap([
           azureUser(
             id: 'az-s4',

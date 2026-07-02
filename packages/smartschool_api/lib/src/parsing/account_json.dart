@@ -21,8 +21,7 @@ List<SmartschoolAccount> parseSmartschoolAccounts(String jsonText) {
     );
   }
   return [
-    for (final e in decoded)
-      parseSmartschoolAccount(e as Map<String, dynamic>),
+    for (final e in decoded) parseSmartschoolAccount(e as Map<String, dynamic>),
   ];
 }
 

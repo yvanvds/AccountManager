@@ -82,8 +82,7 @@ void main() {
         WisaSchool(id: 1, name: 'SMA', description: 'Sint Maria'),
         WisaSchool(id: 2, name: 'SDK', description: 'Sint Dimphna'),
       ];
-      final out =
-          applyRulesToSchools(schools, const [MarkAsVirtual('SMA')]);
+      final out = applyRulesToSchools(schools, const [MarkAsVirtual('SMA')]);
       expect(out[0].isVirtual, isTrue);
       expect(out[1].isVirtual, isFalse);
     });

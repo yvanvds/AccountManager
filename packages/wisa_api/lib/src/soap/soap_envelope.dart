@@ -35,81 +35,110 @@ String buildGetCsvDataEnvelope({
         'http://schemas.xmlsoap.org/soap/encoding/',
         namespace: 'http://schemas.xmlsoap.org/soap/envelope/',
       );
-      b.element('soap:Body', nest: () {
-        b.element('tns:GetCSVData', namespaces: {
-          'urn:WisaAPIService-WisaAPIService': 'tns',
-        }, nest: () {
-          // Credentials part.
-          b.element('Credentials', nest: () {
-            b.attribute(
-              'type',
-              'ns0:TWISAAPICredentials',
-              namespace: 'http://www.w3.org/2001/XMLSchema-instance',
-            );
-            b.element('Username', nest: credentials.username);
-            b.element('Password', nest: credentials.password);
-            b.element('Database', nest: credentials.database);
-          },);
-          // QueryCode part.
-          b.element('QueryCode', nest: () {
-            b.attribute(
-              'type',
-              'xsd:string',
-              namespace: 'http://www.w3.org/2001/XMLSchema-instance',
-            );
-            b.text(queryCode);
-          },);
-          // Params: SOAP-encoded array of TWISAAPIParamValue.
-          b.element('Params', nest: () {
-            b.attribute(
-              'arrayType',
-              'ns0:TWISAAPIParamValue[${params.length}]',
-              namespace: 'http://schemas.xmlsoap.org/soap/encoding/',
-            );
-            b.attribute(
-              'type',
-              'soapenc:Array',
-              namespace: 'http://www.w3.org/2001/XMLSchema-instance',
-            );
-            for (final p in params) {
-              b.element('item', nest: () {
-                b.attribute(
-                  'type',
-                  'ns0:TWISAAPIParamValue',
-                  namespace: 'http://www.w3.org/2001/XMLSchema-instance',
-                );
-                b.element('Name', nest: p.name);
-                b.element('Value', nest: p.value);
-              },);
-            }
-          },);
-          // Header part.
-          b.element('Header', nest: () {
-            b.attribute(
-              'type',
-              'xsd:boolean',
-              namespace: 'http://www.w3.org/2001/XMLSchema-instance',
-            );
-            b.text(includeHeader ? 'true' : 'false');
-          },);
-          b.element('Separator', nest: () {
-            b.attribute(
-              'type',
-              'xsd:string',
-              namespace: 'http://www.w3.org/2001/XMLSchema-instance',
-            );
-            b.text(separator);
-          },);
-          b.element('Options', nest: () {
-            b.attribute(
-              'type',
-              'xsd:string',
-              namespace: 'http://www.w3.org/2001/XMLSchema-instance',
-            );
-            b.text(options);
-          },);
-        },);
-      },);
+      b.element(
+        'soap:Body',
+        nest: () {
+          b.element(
+            'tns:GetCSVData',
+            namespaces: {
+              'urn:WisaAPIService-WisaAPIService': 'tns',
+            },
+            nest: () {
+              // Credentials part.
+              b.element(
+                'Credentials',
+                nest: () {
+                  b.attribute(
+                    'type',
+                    'ns0:TWISAAPICredentials',
+                    namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+                  );
+                  b.element('Username', nest: credentials.username);
+                  b.element('Password', nest: credentials.password);
+                  b.element('Database', nest: credentials.database);
+                },
+              );
+              // QueryCode part.
+              b.element(
+                'QueryCode',
+                nest: () {
+                  b.attribute(
+                    'type',
+                    'xsd:string',
+                    namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+                  );
+                  b.text(queryCode);
+                },
+              );
+              // Params: SOAP-encoded array of TWISAAPIParamValue.
+              b.element(
+                'Params',
+                nest: () {
+                  b.attribute(
+                    'arrayType',
+                    'ns0:TWISAAPIParamValue[${params.length}]',
+                    namespace: 'http://schemas.xmlsoap.org/soap/encoding/',
+                  );
+                  b.attribute(
+                    'type',
+                    'soapenc:Array',
+                    namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+                  );
+                  for (final p in params) {
+                    b.element(
+                      'item',
+                      nest: () {
+                        b.attribute(
+                          'type',
+                          'ns0:TWISAAPIParamValue',
+                          namespace:
+                              'http://www.w3.org/2001/XMLSchema-instance',
+                        );
+                        b.element('Name', nest: p.name);
+                        b.element('Value', nest: p.value);
+                      },
+                    );
+                  }
+                },
+              );
+              // Header part.
+              b.element(
+                'Header',
+                nest: () {
+                  b.attribute(
+                    'type',
+                    'xsd:boolean',
+                    namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+                  );
+                  b.text(includeHeader ? 'true' : 'false');
+                },
+              );
+              b.element(
+                'Separator',
+                nest: () {
+                  b.attribute(
+                    'type',
+                    'xsd:string',
+                    namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+                  );
+                  b.text(separator);
+                },
+              );
+              b.element(
+                'Options',
+                nest: () {
+                  b.attribute(
+                    'type',
+                    'xsd:string',
+                    namespace: 'http://www.w3.org/2001/XMLSchema-instance',
+                  );
+                  b.text(options);
+                },
+              );
+            },
+          );
+        },
+      );
     },
   );
   return b.buildDocument().toXmlString();
