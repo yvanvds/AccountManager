@@ -1,7 +1,8 @@
 # Dart CI for the wisa_api package (and any future workspace package).
 #
 # Two jobs:
-#   - test       : offline `dart analyze` + `dart test`. Always runs.
+#   - test       : offline `dart format` check + `dart analyze` + `dart test`.
+#                  Always runs.
 #   - live-test  : opt-in WISA + Smartschool + Azure integration tests
 #                  (each package's `test/integration/`, all read-only).
 #                  Gated to this repository so fork PRs cannot trigger
@@ -68,6 +69,11 @@ jobs:
 
       - name: Set up Dart
         uses: dart-lang/setup-dart@v1
+
+      - name: dart format (check only)
+        # Runs before pub get — formatting needs no dependencies, so drift
+        # fails the job as early and cheaply as possible (#58).
+        run: dart format --output=none --set-exit-if-changed .
 
       - name: dart pub get
         run: dart pub get
