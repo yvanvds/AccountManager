@@ -149,6 +149,43 @@ LinkedAccount fullySynced() => linked(
     );
 
 // ---------------------------------------------------------------------------
+// Class-placement fixtures (#55).
+// ---------------------------------------------------------------------------
+
+/// A non-official Smartschool group node (e.g. the "Leerlingen" student root),
+/// which `saveUserToClass` rejects as a move target.
+Group ssGroupNode({
+  String code = 'leerlingen',
+  String name = 'Leerlingen',
+}) =>
+    Group(
+      id: GroupId(code),
+      name: name,
+      description: '',
+      type: GroupType.group,
+      official: false,
+      origin: Origin.smartschool,
+    );
+
+/// A [ClassPlacement] for a student. [tree] is the set of Smartschool groups
+/// [ClassPlacement.resolveClass] searches by name (default: the official `3A`
+/// class). [currentClass] is the student's current official class — omit for a
+/// student in no class yet (a fresh account).
+ClassPlacement classPlacement({
+  String className = '3A',
+  Group? currentClass,
+  List<Group> tree = const [],
+}) {
+  final resolved = tree.isEmpty ? [ssGroup(code: '3A', name: '3A')] : tree;
+  final byName = {for (final g in resolved) g.name: g};
+  return ClassPlacement(
+    className: className,
+    currentClass: currentClass,
+    resolveClass: (name) => byName[name],
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Staff fixtures.
 // ---------------------------------------------------------------------------
 
@@ -333,10 +370,16 @@ class RecordingSmartschoolTransport implements ss.SmartschoolSoapTransport {
   final List<String> soapActions = [];
 
   /// When set, the integer result to return (non-zero = failure). Applied to
-  /// every write.
+  /// every write for which [resultFor] returns null.
   final int resultCode;
 
-  RecordingSmartschoolTransport({this.resultCode = 0});
+  /// Optional per-call override: given a `SOAPAction` header, returns the
+  /// integer result for that call (non-zero = failure), or null to fall back to
+  /// [resultCode]. Lets a test make one method succeed and another fail (e.g.
+  /// `saveAccount` ok but `saveUserToClass` failing).
+  final int? Function(String soapAction)? resultFor;
+
+  RecordingSmartschoolTransport({this.resultCode = 0, this.resultFor});
 
   bool calledMethod(String method) =>
       soapActions.any((a) => a.contains(method));
@@ -348,10 +391,11 @@ class RecordingSmartschoolTransport implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
+    final code = resultFor?.call(soapAction) ?? resultCode;
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '
         'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
-        '<soap:Body><response><return>$resultCode</return></response>'
+        '<soap:Body><response><return>$code</return></response>'
         '</soap:Body></soap:Envelope>';
   }
 }

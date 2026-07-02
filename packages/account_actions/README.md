@@ -103,12 +103,36 @@ accounts, and a Smartschool `uid` builder. `StaffActionConfig` is the same
 minus `studentDomain` — staff live on the base `azureDomain`. The group family
 needs no config.
 
+## Class placement (#55)
+
+Two student actions are **membership-dependent** — they cannot be expressed as a
+pure function of a `LinkedAccount`, because a `LinkedAccount` carries no
+membership and no group tree (spec §3.7, PAIN-1, INV-31). They take a second
+injectable, `ClassPlacement`, alongside `StudentActionConfig`:
+
+- **`MoveToSmartschoolClassGroup`** (modify branch): fires when the student's
+  target class name differs from their current Smartschool class, and moves them
+  with `saveUserToClass`. The ANS/BNS adult-education classes are excluded here,
+  exactly as legacy `Evaluate` skips them.
+- **The placement step inside `AddStudentToSmartschool`** (lifecycle branch):
+  after creating the account, best-effort-moves it into its class — the WISA
+  `classGroup`, or the "Leerlingen" root for ANS/BNS (legacy `AddToSmartschool`
+  chained `MoveToSmartschoolClassGroup.Move`).
+
+`ClassPlacement` carries the student's `currentClass`, their target `className`
+(the caller computes the sub-group suffix, `Student.ClassName`), and a
+`resolveClass(name)` tree lookup. It is **opt-in**: `studentActions` /
+`studentActionsFor` take a `placementFor` callback; without it the dispatch is
+exactly as it shipped in #46 (account created but not placed, no class move).
+The future State layer builds a `ClassPlacement` per student from the Smartschool
+snapshot's memberships and group tree. Both the standalone move and the create
+placement guard the target the way legacy `MoveUserToClass` does — only an
+**official** class node is a valid destination (the ported `moveUserToClass`
+connector leaves that guard to the caller), so an ANS/BNS student whose
+"Leerlingen" target is non-official is correctly not moved.
+
 ## Deferred (documented divergences)
 
-- **`MoveToSmartschoolClassGroup`** and the class-group placement inside
-  `AddStudentToSmartschool` are **not** ported here: they need the Smartschool
-  group tree / a student's current class membership, which the `LinkedAccount`
-  record does not carry. They belong with a `Membership`-aware input (follow-up).
 - **`AddToAzureStaffGroup`** / **`AddToStaffGroup`** and the `-Personeel` /
   `Leerkrachten` group placements inside `AddStaffToAzure` /
   `AddStaffToSmartschool` are **not** ported: they evaluate against Office 365 /
