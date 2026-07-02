@@ -1,4 +1,5 @@
 import 'package:account_core/account_core.dart';
+import 'package:wisa_api/wisa_api.dart' show WisaImportRule;
 
 import 'change_set.dart';
 
@@ -27,6 +28,11 @@ enum ActionOutcome {
 ///
 /// The record fields are typed against the `account_core` interfaces; the
 /// concrete connector records ([smartschool_api] / [azure_api]) implement them.
+///
+/// A WISA-targeted action ([wisaRule], e.g. the staff `DontImportFromWisa`)
+/// carries no connector record: WISA is read-only, so the action produces an
+/// import rule for the State layer to add to its rule set and re-sync, rather
+/// than writing anything itself.
 class ActionResult {
   final ActionOutcome outcome;
 
@@ -48,6 +54,13 @@ class ActionResult {
   /// should drop it from the snapshot rather than patch it).
   final bool removed;
 
+  /// The WISA import rule the action produced, when [system] is
+  /// [Origin.wisa]. WISA is read-only, so the action performs no write itself;
+  /// the State layer adds this rule to its import-rule set and re-syncs (which
+  /// drops the ignored staff record from the next snapshot). Null for every
+  /// non-WISA action.
+  final WisaImportRule? wisaRule;
+
   /// The failure cause; non-null only when [outcome] is [ActionOutcome.failed].
   final Object? error;
 
@@ -58,6 +71,7 @@ class ActionResult {
     this.smartschool,
     this.azure,
     this.removed = false,
+    this.wisaRule,
     this.error,
   });
 
