@@ -255,6 +255,73 @@ LinkedStaff fullySyncedStaff() => linkedStaff(
     );
 
 // ---------------------------------------------------------------------------
+// Group fixtures.
+// ---------------------------------------------------------------------------
+
+/// A WISA-side canonical [Group], as the linker's `_wisaToCoreGroup` projects a
+/// class group: named by its `fullName`, always an official class, `schoolCode`
+/// as the institute number, and no tree edge or admin number.
+Group wisaGroup({
+  String name = '3A',
+  String description = 'Klas 3A',
+  String? instituteNumber = '123456',
+}) =>
+    Group(
+      id: GroupId(name),
+      name: name,
+      description: description,
+      type: GroupType.classGroup,
+      official: true,
+      instituteNumber: instituteNumber,
+      origin: Origin.wisa,
+    );
+
+/// A Smartschool-side canonical [Group] (an official class), with a tree parent
+/// and admin number the WISA side lacks. Defaults line up with [wisaGroup] so a
+/// [fullySyncedGroup] triggers no action.
+Group ssGroup({
+  String code = '3A',
+  String name = '3A',
+  String description = 'Klas 3A',
+  String? instituteNumber = '123456',
+  int? adminNumber = 7,
+  String? parentId = 'jaar-3',
+}) =>
+    Group(
+      id: GroupId(code),
+      name: name,
+      description: description,
+      type: GroupType.classGroup,
+      official: true,
+      parentId: parentId == null ? null : GroupId(parentId),
+      instituteNumber: instituteNumber,
+      adminNumber: adminNumber,
+      origin: Origin.smartschool,
+    );
+
+/// Builds a [LinkedGroup] from optional per-system records. Omit a system to
+/// simulate the class missing there.
+LinkedGroup linkedGroup({
+  Group? wisa,
+  Group? smartschool,
+  az.AzureGroup? azure,
+  LinkConfidence confidence = LinkConfidence.high,
+}) =>
+    LinkedGroup(
+      wisa: wisa,
+      smartschool: smartschool,
+      azure: azure,
+      confidence: confidence,
+    );
+
+/// A class present and in sync in both WISA and Smartschool — no group action
+/// should apply to it.
+LinkedGroup fullySyncedGroup() => linkedGroup(
+      wisa: wisaGroup(),
+      smartschool: ssGroup(),
+    );
+
+// ---------------------------------------------------------------------------
 // Recording fake transports.
 // ---------------------------------------------------------------------------
 

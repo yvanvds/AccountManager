@@ -50,6 +50,13 @@ class ActionResult {
   /// still exists. Null for a delete or a Smartschool-targeted action.
   final AzureUser? azure;
 
+  /// The created/updated Smartschool **group** record, when the action targets
+  /// a class group (the [GroupAction] family) rather than an account. Carried
+  /// separately from [smartschool] because a group is a [Group], not a
+  /// [SmartschoolAccount]. Null for every account-targeted action and for a
+  /// group delete (which sets [removed] instead).
+  final Group? group;
+
   /// True when the action deleted the record from [system] (so the State layer
   /// should drop it from the snapshot rather than patch it).
   final bool removed;
@@ -70,6 +77,7 @@ class ActionResult {
     required this.system,
     this.smartschool,
     this.azure,
+    this.group,
     this.removed = false,
     this.wisaRule,
     this.error,
