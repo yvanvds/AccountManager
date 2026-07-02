@@ -8,16 +8,17 @@ write APIs.
 
 ## What ships here
 
-This package currently implements the **student** family and its dispatcher.
-Staff and group families are tracked as follow-ups to #46, mirroring how the
-linker shipped student/staff/group as separate slices (#43/#44/#45).
+This package implements the **student** and **staff** families and their
+dispatchers. The group family is tracked as a follow-up to #46, mirroring how
+the linker shipped student/staff/group as separate slices (#43/#44/#45).
 
 ## The shape of an action
 
-`StudentAction` is a `sealed` base with one subclass per legacy
-`Action\StudentAccount\*` class. Each action is **bound to its target**
-`LinkedAccount` at construction (per §6.4's `apply(action, connectors,
-options)`), and exposes three operations with a hard purity boundary:
+`StudentAction` (and its sibling `StaffAction`) is a `sealed` base with one
+subclass per legacy `Action\StudentAccount\*` / `Action\StaffAccount\*` class.
+Each action is **bound to its target** (`LinkedAccount` / `LinkedStaff`) at
+construction (per §6.4's `apply(action, connectors, options)`), and exposes
+three operations with a hard purity boundary:
 
 | Operation | Purity | Purpose |
 |---|---|---|
@@ -35,6 +36,12 @@ record or its snapshot (INV-42: every changed record is a fresh copy).
 or `azure`), or `removed: true` for a delete. This lets the future State layer
 patch its in-memory snapshot and re-run `link()` **without a network re-sync**
 (the incremental-refresh constraint from #40).
+
+The staff `DontImportFromWisa` action is the one exception: WISA is read-only,
+so it performs no write. Instead it returns a `WisaImportRule` via
+`ActionResult.wisaRule` (with `system: Origin.wisa`); the State layer adds the
+rule to its import-rule set and re-syncs, which drops the ignored staff record
+from the next snapshot.
 
 ### Dry run (PAIN-3)
 
@@ -55,11 +62,24 @@ per record, applies the legacy `AccountActionParser` rule:
 
 The two sets never coexist for one record, exactly as in legacy.
 
+`staffActions(snapshot, config)` does the same over the snapshot's staff
+records. The legacy staff parser writes the modify branch as `if (OK)` rather
+than `else`, but sets `OK = false` inside the missing branch, so the two
+branches are mutually exclusive just like the student parser. The staff
+lifecycle set is `AddStaffToAzure`, `AddStaffToSmartschool`,
+`RemoveStaffFromSmartschool`, `DontImportStaffFromWisa`, `RemoveStaffFromAzure`;
+the modify set is `UpdateStaffWisaName`, `ModifySmartschoolStaffEmail`,
+`SetStaffCopyCode`. Staff bridge to Smartschool by `WisaStaff.code` (not
+`wisaId`) — `AddStaffToSmartschool` and `UpdateStaffWisaName` write the code
+into `accountId` (spec §4, OQ-1), while the numeric `wisaId` becomes the
+copy-code.
+
 ## Configuration
 
 `StudentActionConfig` injects the values legacy hard-coded: `schoolPrefix`, the
 base `azureDomain` and derived `studentDomain`, a password provider for created
-accounts, and a Smartschool `uid` builder.
+accounts, and a Smartschool `uid` builder. `StaffActionConfig` is the same
+minus `studentDomain` — staff live on the base `azureDomain`.
 
 ## Deferred (documented divergences)
 
@@ -67,8 +87,20 @@ accounts, and a Smartschool `uid` builder.
   `AddStudentToSmartschool` are **not** ported here: they need the Smartschool
   group tree / a student's current class membership, which the `LinkedAccount`
   record does not carry. They belong with a `Membership`-aware input (follow-up).
+- **`AddToAzureStaffGroup`** / **`AddToStaffGroup`** and the `-Personeel` /
+  `Leerkrachten` group placements inside `AddStaffToAzure` /
+  `AddStaffToSmartschool` are **not** ported: they evaluate against Office 365 /
+  Smartschool group membership, which `LinkedStaff` does not carry. Same
+  membership-aware follow-up.
 - **`ChangeEmail`** (legacy) is dead code — not wired into the parser — and is
   intentionally omitted.
+- **`SetStaffCopyCode` idempotency fix.** Legacy `SetCopyCode` compares the
+  *zero-padded* copy-code against Smartschool's `fax`, but writes back the
+  *unpadded* `wisaId` — so a sub-4-digit id makes the action re-trigger forever.
+  We write the padded code to both `fax` and the `PINCODE CANON` parameter, so
+  the action converges after one apply.
+- **Staff gender on create.** Legacy `AddToSmartschool` hard-codes `Female` for
+  new staff (WISA staff rows carry no gender); preserved verbatim.
 - Smartschool `uid` uniqueness for new accounts is the caller's concern (the
   State layer holds the account set); the default builder is deliberately
   simple.

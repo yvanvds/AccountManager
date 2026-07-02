@@ -149,6 +149,112 @@ LinkedAccount fullySynced() => linked(
     );
 
 // ---------------------------------------------------------------------------
+// Staff fixtures.
+// ---------------------------------------------------------------------------
+
+/// The default staff config: prefix `SSM`, base domain `school.example` (staff
+/// live on the base domain, unlike students), a fixed password, default uid
+/// builder.
+StaffActionConfig staffConfig({
+  String schoolPrefix = 'SSM',
+  String azureDomain = 'school.example',
+}) =>
+    StaffActionConfig(
+      schoolPrefix: schoolPrefix,
+      azureDomain: azureDomain,
+      newAccountPassword: () => 'FakeP4ss!',
+    );
+
+wapi.WisaStaff wisaStaff({
+  String code = 'SMIT',
+  String? wisaId = '42',
+  String firstName = 'Anna',
+  String lastName = 'Smit',
+}) =>
+    wapi.WisaStaff(
+      code: WisaStaffCode(code),
+      wisaId: wisaId == null ? null : WisaId(wisaId),
+      firstName: firstName,
+      lastName: lastName,
+    );
+
+/// A Smartschool staff account (role `teacher`). Defaults line up with
+/// [wisaStaff] / [azureStaff] so a [fullySyncedStaff] triggers no action:
+/// `accountId` == staff code, `fax` == the zero-padded `wisaId`, `mail` == UPN.
+ss.SmartschoolAccount ssStaff({
+  String uid = 'anna.smit',
+  String accountId = 'SMIT',
+  String mail = 'anna.smit@school.example',
+  String fax = '0042',
+  String status = 'actief',
+}) =>
+    ss.SmartschoolAccount(
+      uid: uid,
+      accountId: accountId,
+      mail: mail,
+      registerId: '',
+      stemId: 0,
+      role: PersonRole.teacher,
+      givenName: 'Anna',
+      surname: 'Smit',
+      extraNames: '',
+      initials: '',
+      preferredName: '',
+      gender: Gender.female,
+      birthDate: null,
+      birthPlace: '',
+      birthCountry: '',
+      address: blankAddress,
+      mobilePhone: '',
+      homePhone: '',
+      fax: fax,
+      untisId: '',
+      status: status,
+    );
+
+az.AzureUser azureStaff({
+  String id = 'az-s1',
+  String upn = 'anna.smit@school.example',
+  String? employeeId = '42',
+  String displayName = 'Anna Smit',
+  String? department = 'SSM',
+}) =>
+    az.AzureUser(
+      id: id,
+      upn: upn,
+      employeeId: employeeId,
+      displayName: displayName,
+      givenName: 'Anna',
+      surname: 'Smit',
+      department: department,
+    );
+
+/// Builds a [LinkedStaff] from optional per-system records. Omit a system to
+/// simulate it missing (drives the lifecycle-action branch).
+LinkedStaff linkedStaff({
+  wapi.WisaStaff? wisa,
+  ss.SmartschoolAccount? smartschool,
+  az.AzureUser? azure,
+  String id = 's0',
+}) =>
+    LinkedStaff(
+      id: LinkedAccountId(id),
+      role: PersonRole.teacher,
+      wisa: wisa,
+      smartschool: smartschool,
+      azure: azure,
+      confidence: LinkConfidence.high,
+    );
+
+/// A fully-synced staff member present in all three systems with matching
+/// fields — no staff action should apply to it.
+LinkedStaff fullySyncedStaff() => linkedStaff(
+      wisa: wisaStaff(),
+      smartschool: ssStaff(),
+      azure: azureStaff(),
+    );
+
+// ---------------------------------------------------------------------------
 // Recording fake transports.
 // ---------------------------------------------------------------------------
 
