@@ -8,9 +8,11 @@ write APIs.
 
 ## What ships here
 
-This package implements the **student** and **staff** families and their
-dispatchers. The group family is tracked as a follow-up to #46, mirroring how
-the linker shipped student/staff/group as separate slices (#43/#44/#45).
+This package implements the **student**, **staff**, and **group** families and
+their dispatchers, mirroring how the linker shipped student/staff/group as
+separate slices (#43/#44/#45). The group family (#54) ships the subset the
+`LinkedGroup` model can express; the membership/tree-dependent group actions are
+deferred (see **Deferred** below).
 
 ## The shape of an action
 
@@ -74,12 +76,32 @@ the modify set is `UpdateStaffWisaName`, `ModifySmartschoolStaffEmail`,
 into `accountId` (spec §4, OQ-1), while the numeric `wisaId` becomes the
 copy-code.
 
+`groupActions(snapshot)` walks the snapshot's class groups, ported from the
+legacy `GroupActionParser`. The split is on the WISA/Smartschool **pair** rather
+than all three systems (there is no Azure group action):
+
+- **Missing from WISA or Smartschool** → the lifecycle-style actions:
+  `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass` rule) and
+  `DoNotImportFromSmartschool` (orphan Smartschool class; informational).
+- **Present in both** → only `ModifySmartschoolData` (sync institute number and
+  description down from WISA).
+
+A group action returns its mutated record through `ActionResult.group` (a
+`Group`), not `ActionResult.smartschool` (a `SmartschoolAccount`). It takes no
+config — the shippable group actions derive everything from the WISA/Smartschool
+pair. `DoNotImportFromWisa`, like the staff `DontImportFromWisa`, writes nothing
+and returns a `WisaImportRule` via `ActionResult.wisaRule`.
+`DoNotImportFromSmartschool` is **informational** (`canApply == false`, legacy
+`CanBeApplied == false`): it surfaces a diagnosis and its `apply` throws
+`UnsupportedError`.
+
 ## Configuration
 
 `StudentActionConfig` injects the values legacy hard-coded: `schoolPrefix`, the
 base `azureDomain` and derived `studentDomain`, a password provider for created
 accounts, and a Smartschool `uid` builder. `StaffActionConfig` is the same
-minus `studentDomain` — staff live on the base `azureDomain`.
+minus `studentDomain` — staff live on the base `azureDomain`. The group family
+needs no config.
 
 ## Deferred (documented divergences)
 
@@ -92,6 +114,18 @@ minus `studentDomain` — staff live on the base `azureDomain`.
   `AddStaffToSmartschool` are **not** ported: they evaluate against Office 365 /
   Smartschool group membership, which `LinkedStaff` does not carry. Same
   membership-aware follow-up.
+- **Group `AddToSmartschool`** / **`CreateInSmartschool`** are **not** ported:
+  both branch on the WISA class's `ContainsStudents()`, and `AddToSmartschool`
+  additionally needs the Smartschool group tree to resolve a parent
+  (`GetLogicalParent`) — neither is carried by the canonical `LinkedGroup`
+  (`Group`), the same membership/tree gap as the student/staff placements above.
+  Tracked in the group follow-up.
+- **Group Untis-drift detection.** Legacy `ModifySmartschoolData` also syncs the
+  Untis id, but the canonical `Group` drops `untis`, so drift on *Untis alone*
+  can't trigger the action. When it *does* fire (institute number / description
+  drift), the `saveClass` write still sets `untis = name` — legacy's own
+  remediation target — so Untis converges. Full detection waits on a `Group.untis`
+  field (group follow-up).
 - **`ChangeEmail`** (legacy) is dead code — not wired into the parser — and is
   intentionally omitted.
 - **`SetStaffCopyCode` idempotency fix.** Legacy `SetCopyCode` compares the
