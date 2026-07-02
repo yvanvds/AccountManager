@@ -71,17 +71,12 @@ jobs:
 
       - name: dart test (with coverage)
         if: steps.workspace.outputs.exists == 'true'
-        # Dart workspaces don't auto-discover tests from the root; pass
-        # each workspace package's test/ directory explicitly. Update
-        # this list whenever a new package is added to pubspec.yaml.
+        # Dart workspaces don't auto-discover tests from the root; the shell
+        # glob expands to every workspace package's test/ directory, so new
+        # packages are picked up automatically (#60 — a hand-maintained list
+        # silently skipped account_store).
         run: |
-          dart test --coverage=coverage \
-            packages/account_core/test \
-            packages/wisa_api/test \
-            packages/smartschool_api/test \
-            packages/azure_api/test \
-            packages/account_linker/test \
-            packages/account_actions/test
+          dart test --coverage=coverage packages/*/test
           dart pub global activate coverage
           dart pub global run coverage:format_coverage \
             --lcov \
