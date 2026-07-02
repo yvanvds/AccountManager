@@ -32,16 +32,14 @@ void main() {
     });
 
     test('gender defaults to female for any value other than M', () {
-      const row =
-          '1A,00,Doe,Anna,,1/9/2008,150002,20000002,V,,Genk,Belgisch,'
+      const row = '1A,00,Doe,Anna,,1/9/2008,150002,20000002,V,,Genk,Belgisch,'
           'Kerkstraat,5,,3000,Leuven,1/9/2024';
       final s = parseStudentRow(row, schoolId: 25);
       expect(s.gender, core.Gender.female);
     });
 
     test('empty houseNumberAdd becomes null', () {
-      const row =
-          '1A,00,Doe,Jan,,1/9/2008,150001,20000001,M,,Genk,Belgisch,'
+      const row = '1A,00,Doe,Jan,,1/9/2008,150001,20000001,M,,Genk,Belgisch,'
           'Kerkstraat,5,,3000,Leuven,1/9/2024';
       final s = parseStudentRow(row, schoolId: 25);
       expect(s.address.houseNumberAdd, isNull);
@@ -56,8 +54,7 @@ void main() {
     });
 
     test('fullName falls back to firstName when preferredName empty', () {
-      const row =
-          '1A,00,Doe,Jan,,1/9/2008,150001,20000001,M,,Genk,Belgisch,'
+      const row = '1A,00,Doe,Jan,,1/9/2008,150001,20000001,M,,Genk,Belgisch,'
           'Kerkstraat,5,,3000,Leuven,1/9/2024';
       final s = parseStudentRow(row, schoolId: 25);
       expect(s.fullName, 'Jan Doe');
@@ -71,8 +68,7 @@ void main() {
     });
 
     test('throws CsvRowParseException on malformed date', () {
-      const row =
-          '1A,00,Doe,Jan,,not-a-date,150001,20000001,M,,Genk,Belgisch,'
+      const row = '1A,00,Doe,Jan,,not-a-date,150001,20000001,M,,Genk,Belgisch,'
           'Kerkstraat,5,,3000,Leuven,1/9/2024';
       expect(
         () => parseStudentRow(row, schoolId: 1),

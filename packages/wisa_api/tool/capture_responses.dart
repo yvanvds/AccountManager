@@ -35,11 +35,8 @@ Future<int> main(List<String> args) async {
   }
 
   final repoRoot = _findRepoRoot();
-  final stamp = DateTime.now()
-      .toIso8601String()
-      .replaceAll(':', '-')
-      .split('.')
-      .first;
+  final stamp =
+      DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
   final outDir = Directory(
     '${repoRoot.path}/packages/wisa_api/captures/$stamp',
   )..createSync(recursive: true);
@@ -176,8 +173,8 @@ class _RecordingTransport implements WisaSoapTransport {
   }
 
   String _peekQueryCode(String envelope) {
-    final m = RegExp(r'<QueryCode[^>]*>([^<]+)</QueryCode>')
-        .firstMatch(envelope);
+    final m =
+        RegExp(r'<QueryCode[^>]*>([^<]+)</QueryCode>').firstMatch(envelope);
     return m?.group(1)?.trim() ?? 'unknown';
   }
 
@@ -224,10 +221,10 @@ Directory _findRepoRoot() {
     }
     final parent = d.parent;
     if (parent.path == d.path) {
-      stderr.writeln('Could not locate repo root from ${Directory.current.path}');
+      stderr
+          .writeln('Could not locate repo root from ${Directory.current.path}');
       exit(2);
     }
     d = parent;
   }
 }
-

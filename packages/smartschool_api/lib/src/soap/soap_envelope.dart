@@ -34,17 +34,26 @@ String buildRpcEnvelope({
       namespace: 'ns1',
     },
     nest: () {
-      b.element('soap:Body', nest: () {
-        b.attribute('encodingStyle', soapEnc, namespace: soapEnv);
-        b.element('ns1:$method', nest: () {
-          for (final a in args) {
-            b.element(a.name, nest: () {
-              b.attribute('type', a.xsiType, namespace: xsi);
-              b.text(a.value);
-            },);
-          }
-        },);
-      },);
+      b.element(
+        'soap:Body',
+        nest: () {
+          b.attribute('encodingStyle', soapEnc, namespace: soapEnv);
+          b.element(
+            'ns1:$method',
+            nest: () {
+              for (final a in args) {
+                b.element(
+                  a.name,
+                  nest: () {
+                    b.attribute('type', a.xsiType, namespace: xsi);
+                    b.text(a.value);
+                  },
+                );
+              }
+            },
+          );
+        },
+      );
     },
   );
   return b.buildDocument().toXmlString();

@@ -90,8 +90,7 @@ class SmartschoolConnector {
     );
   }
 
-  SoapArg get _access =>
-      SoapArg.string('accesscode', _credentials.accessCode);
+  SoapArg get _access => SoapArg.string('accesscode', _credentials.accessCode);
 
   // ---------------------------------------------------------------------------
   // Read path

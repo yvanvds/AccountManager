@@ -56,7 +56,8 @@ void main() {
         greaterThan(1),
         reason: 'expected the group tree to descend past the root (see #37)',
       );
-      expect(snapshot.accounts, isNotEmpty, reason: 'sync returned no accounts');
+      expect(snapshot.accounts, isNotEmpty,
+          reason: 'sync returned no accounts');
       expect(
         snapshot.memberships,
         isNotEmpty,

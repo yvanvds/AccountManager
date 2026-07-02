@@ -51,7 +51,8 @@ void main() {
         throwsA(
           isA<SmartschoolSoapHttpException>()
               .having((e) => e.toString(), 'toString', contains('[REDACTED]'))
-              .having((e) => e.toString(), 'toString', isNot(contains('leaked'))),
+              .having(
+                  (e) => e.toString(), 'toString', isNot(contains('leaked'))),
         ),
       );
     });

@@ -49,8 +49,7 @@ void main() {
     });
 
     test('handles 18-column WISA student row', () {
-      const row =
-          '1A,00,Doe,Jan,,1/9/2008,150001,20000001,M,,Genk,Belgisch,'
+      const row = '1A,00,Doe,Jan,,1/9/2008,150001,20000001,M,,Genk,Belgisch,'
           'Kerkstraat,5,,3000,Leuven,1/9/2024';
       final f = splitCsvLine(row);
       expect(f.length, 18);

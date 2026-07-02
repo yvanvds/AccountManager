@@ -52,8 +52,7 @@ void main() {
       transport.close();
     });
 
-    test('WisaSoapHttpException.toString redacts echoed credentials',
-        () async {
+    test('WisaSoapHttpException.toString redacts echoed credentials', () async {
       const echoed =
           '<Envelope><Username>alice</Username><Password>hunter2</Password></Envelope>';
       final ex = WisaSoapHttpException(500, echoed);
@@ -66,8 +65,7 @@ void main() {
 
   group('redactCredentials', () {
     test('replaces Username and Password element contents', () {
-      const input =
-          '<x><Username>u</Username><Password>p</Password></x>';
+      const input = '<x><Username>u</Username><Password>p</Password></x>';
       expect(
         redactCredentials(input),
         '<x><Username>[REDACTED]</Username><Password>[REDACTED]</Password></x>',

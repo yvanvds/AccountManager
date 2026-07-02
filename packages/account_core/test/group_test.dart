@@ -57,8 +57,10 @@ void main() {
       expect(_group(), equals(_group()));
       expect(_group().hashCode, equals(_group().hashCode));
       expect(_group(official: true), isNot(equals(_group(official: false))));
-      expect(_group(type: GroupType.group),
-          isNot(equals(_group(type: GroupType.classGroup))),);
+      expect(
+        _group(type: GroupType.group),
+        isNot(equals(_group(type: GroupType.classGroup))),
+      );
     });
   });
 

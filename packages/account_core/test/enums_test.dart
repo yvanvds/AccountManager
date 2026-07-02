@@ -92,7 +92,9 @@ void main() {
   test('Gender enum drops legacy Transgender in favour of x (spec §3.1)', () {
     // The new domain uses x where legacy Enums.cs uses Transgender; the
     // names are not preserved on purpose.
-    expect(Gender.values.map((g) => g.name),
-        unorderedEquals(<String>['male', 'female', 'x']),);
+    expect(
+      Gender.values.map((g) => g.name),
+      unorderedEquals(<String>['male', 'female', 'x']),
+    );
   });
 }

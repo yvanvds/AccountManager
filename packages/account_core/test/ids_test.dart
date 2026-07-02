@@ -5,8 +5,10 @@ void main() {
   group('StringId equality', () {
     test('same type + same value are equal', () {
       expect(const PersonId('abc'), equals(const PersonId('abc')));
-      expect(const PersonId('abc').hashCode,
-          equals(const PersonId('abc').hashCode),);
+      expect(
+        const PersonId('abc').hashCode,
+        equals(const PersonId('abc').hashCode),
+      );
     });
 
     test('same type + different value are not equal', () {
@@ -28,8 +30,10 @@ void main() {
       // hashCode; unequal objects *may* share it), but our impl folds the
       // runtimeType in so collisions across types are unlikely. This catches
       // accidental regressions where hashCode only looked at value.
-      expect(const PersonId('x').hashCode,
-          isNot(equals(const WisaId('x').hashCode)),);
+      expect(
+        const PersonId('x').hashCode,
+        isNot(equals(const WisaId('x').hashCode)),
+      );
     });
 
     test('toString includes the runtime type', () {

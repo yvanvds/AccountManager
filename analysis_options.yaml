@@ -12,4 +12,6 @@ linter:
     - prefer_const_constructors
     - prefer_const_declarations
     - avoid_print
-    - require_trailing_commas
+    # require_trailing_commas is intentionally absent: since the tall-style
+    # formatter (Dart 3.7+) trailing-comma placement is owned by dart format,
+    # and the lint conflicts with its output (#58).

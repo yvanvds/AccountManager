@@ -110,9 +110,12 @@ void main() {
 
   group('SmartschoolMembership', () {
     test('value equality', () {
-      const a = SmartschoolMembership(uid: 'jand', groupId: core.GroupId('C1A'));
-      const b = SmartschoolMembership(uid: 'jand', groupId: core.GroupId('C1A'));
-      const c = SmartschoolMembership(uid: 'jand', groupId: core.GroupId('C1B'));
+      const a =
+          SmartschoolMembership(uid: 'jand', groupId: core.GroupId('C1A'));
+      const b =
+          SmartschoolMembership(uid: 'jand', groupId: core.GroupId('C1A'));
+      const c =
+          SmartschoolMembership(uid: 'jand', groupId: core.GroupId('C1B'));
       expect(a, b);
       expect(a.hashCode, b.hashCode);
       expect(a == c, isFalse);

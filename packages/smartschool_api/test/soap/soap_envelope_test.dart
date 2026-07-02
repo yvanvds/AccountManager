@@ -26,15 +26,16 @@ void main() {
     test('emits args in order with their part names', () {
       final method = doc.findAllElements('savePassword', namespace: ns).first;
       final names = method.childElements.map((e) => e.name.local).toList();
-      expect(names, ['accesscode', 'userIdentifier', 'password', 'accountType']);
+      expect(
+          names, ['accesscode', 'userIdentifier', 'password', 'accountType']);
     });
 
     test('writes xsi:type per argument (string vs int)', () {
       final method = doc.findAllElements('savePassword', namespace: ns).first;
-      final pw = method.childElements
-          .firstWhere((e) => e.name.local == 'password');
-      final type = method.childElements
-          .firstWhere((e) => e.name.local == 'accountType');
+      final pw =
+          method.childElements.firstWhere((e) => e.name.local == 'password');
+      final type =
+          method.childElements.firstWhere((e) => e.name.local == 'accountType');
       expect(pw.getAttribute('xsi:type'), 'xsd:string');
       expect(pw.innerText, 'Hunter2!');
       expect(type.getAttribute('xsi:type'), 'xsd:int');
