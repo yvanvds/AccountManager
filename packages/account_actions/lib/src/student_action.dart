@@ -6,6 +6,7 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 import 'action_result.dart';
 import 'apply_options.dart';
 import 'change_set.dart';
+import 'class_placement.dart';
 import 'connectors.dart';
 import 'student_action_config.dart';
 
@@ -75,6 +76,12 @@ sealed class StudentAction {
         system: system,
         error: error,
       );
+
+  /// Whether [group] is a valid `saveUserToClass` destination — an *official*
+  /// class node (legacy `MoveUserToClass` guards `Type == Class && Official`;
+  /// the ported `moveUserToClass` connector leaves that guard to the caller).
+  bool _isOfficialClass(Group group) =>
+      group.official && group.type == GroupType.classGroup;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,11 +178,19 @@ class AddStudentToAzure extends StudentAction {
 
 /// Create a Smartschool account for a student present in WISA and Azure but not
 /// Smartschool. Ported from `Action\StudentAccount\AddToSmartschool` — the
-/// account is built from the WISA record with the Azure UPN as its mail; the
-/// class-group placement is a separate action (see the package README's
-/// "deferred" note).
+/// account is built from the WISA record with the Azure UPN as its mail. When a
+/// [ClassPlacement] is wired (#55), a successful create is followed by a
+/// best-effort move into the student's class group; without one the account is
+/// created but not placed (see [_placeNewAccount]).
 class AddStudentToSmartschool extends StudentAction {
-  const AddStudentToSmartschool(super.account, super.config);
+  /// The class-placement context (#55). When non-null, a successful create is
+  /// followed by a best-effort move into the student's class group (legacy
+  /// chained `MoveToSmartschoolClassGroup.Move` after the create). When null —
+  /// the caller wired no membership context — the account is created but not
+  /// placed, exactly as this action shipped in #46.
+  final ClassPlacement? placement;
+
+  const AddStudentToSmartschool(super.account, super.config, {this.placement});
 
   @override
   bool evaluate() =>
@@ -253,6 +268,7 @@ class AddStudentToSmartschool extends StudentAction {
           StateError('Smartschool saveAccount returned failure'),
         );
       }
+      await _placeNewAccount(connectors, built);
       return ActionResult(
         outcome: ActionOutcome.applied,
         changes: changes,
@@ -262,6 +278,37 @@ class AddStudentToSmartschool extends StudentAction {
     } on Object catch (e) {
       return _failed(changes, Origin.smartschool, e);
     }
+  }
+
+  /// Places a freshly created account into its class group (#55), mirroring the
+  /// `MoveToSmartschoolClassGroup.Move` legacy chained after the create. The
+  /// target is the "Leerlingen" root for the ANS/BNS classes and the WISA
+  /// `classGroup` otherwise (legacy `AddToSmartschool.Add`).
+  ///
+  /// **Best-effort, by design.** The create is this action's success criterion;
+  /// a failed placement must not fail (and so retry) the create (INV-41).
+  /// Legacy likewise logs and continues. An unresolved or non-official target,
+  /// or a failed move, is therefore silently tolerated here — a mis-placed
+  /// *non*-ANS/BNS student is re-caught next pass by [MoveToSmartschoolClassGroup]
+  /// once the account is complete, so only the (rare) ANS/BNS → "Leerlingen"
+  /// case has no safety net. There is no log sink on this path.
+  Future<void> _placeNewAccount(
+    Connectors connectors,
+    ss.SmartschoolAccount built,
+  ) async {
+    final placement = this.placement;
+    if (placement == null) return;
+
+    final classGroup = _wisa.classGroup;
+    final targetName =
+        (classGroup.contains('ANS') || classGroup.contains('BNS'))
+            ? 'Leerlingen'
+            : classGroup;
+    final target = placement.resolveClass(targetName);
+    if (target == null || !_isOfficialClass(target)) return;
+
+    await _requireSmartschool(connectors)
+        .moveUserToClass(built.uid, target.id.value, _wisa.classChange);
   }
 }
 
@@ -762,6 +809,113 @@ class ModifySmartschoolName extends StudentAction {
         describeChanges(),
         _ss.copyWith(preferredName: _wisa.preferredName),
       );
+}
+
+/// Move a student into the official Smartschool class named by their WISA
+/// class, when the two disagree (#55). Ported from
+/// `Action\StudentAccount\MoveToSmartschoolClassGroup`.
+///
+/// This is the membership-dependent action #46 deferred: it reads the student's
+/// current class and resolves the target class through the [ClassPlacement]
+/// companion, neither of which a [LinkedAccount] carries. The ANS/BNS classes
+/// are **excluded** here — legacy `Evaluate` skips them, so their placement
+/// happens only at create time (see [AddStudentToSmartschool]).
+class MoveToSmartschoolClassGroup extends StudentAction {
+  /// The membership + group-tree context this action reads (#55).
+  final ClassPlacement placement;
+
+  const MoveToSmartschoolClassGroup(
+    super.account,
+    super.config,
+    this.placement,
+  );
+
+  bool get _isAdultEducation {
+    final classGroup = _wisa.classGroup;
+    return classGroup.contains('ANS') || classGroup.contains('BNS');
+  }
+
+  @override
+  bool evaluate() =>
+      !_isAdultEducation && placement.className != placement.currentClassName;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.smartschool,
+        summary: 'Wijzig de klas in Smartschool',
+        fields: [
+          FieldChange(
+            'class',
+            before: placement.currentClassName,
+            after: placement.className,
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+    final account = _ss;
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.smartschool,
+        smartschool: account,
+      );
+    }
+
+    final target = placement.resolveClass(placement.className);
+    if (target == null) {
+      return _failed(
+        changes,
+        Origin.smartschool,
+        StateError(
+          'Smartschool class "${placement.className}" does not exist',
+        ),
+      );
+    }
+    if (!_isOfficialClass(target)) {
+      return _failed(
+        changes,
+        Origin.smartschool,
+        StateError(
+          'Cannot move ${account.uid} to "${target.name}": '
+          'only official classes accept members',
+        ),
+      );
+    }
+
+    try {
+      final ok = await _requireSmartschool(connectors).moveUserToClass(
+        account.uid,
+        target.id.value,
+        _wisa.classChange,
+      );
+      if (!ok) {
+        return _failed(
+          changes,
+          Origin.smartschool,
+          StateError('Smartschool moveUserToClass returned failure'),
+        );
+      }
+      // A move changes membership, not the account's own fields; the account
+      // still exists, so the State layer keeps its record (and updates its
+      // membership index from the target it built into [placement]).
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.smartschool,
+        smartschool: account,
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.smartschool, e);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

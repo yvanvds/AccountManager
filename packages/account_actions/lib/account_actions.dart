@@ -19,6 +19,7 @@ library;
 export 'src/action_result.dart';
 export 'src/apply_options.dart';
 export 'src/change_set.dart';
+export 'src/class_placement.dart';
 export 'src/connectors.dart';
 export 'src/group_action.dart';
 export 'src/group_dispatch.dart';
