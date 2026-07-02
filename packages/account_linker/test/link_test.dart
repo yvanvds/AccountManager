@@ -208,8 +208,8 @@ void main() {
       expect(snapshot.groups, hasLength(1));
       final g = snapshot.groups.single;
       expect(g.confidence, LinkConfidence.high);
-      expect(g.wisa.name, '5A');
-      expect(g.wisa.origin, Origin.wisa);
+      expect(g.wisa!.name, '5A');
+      expect(g.wisa!.origin, Origin.wisa);
       expect(g.smartschool, isNotNull);
       expect(g.azure, isNotNull);
     });
@@ -224,13 +224,13 @@ void main() {
       );
 
       final g = snapshot.groups.single;
-      expect(g.wisa.name, '3B');
+      expect(g.wisa!.name, '3B');
       expect(g.smartschool, isNull);
       expect(g.azure, isNull);
       expect(g.confidence, LinkConfidence.medium);
     });
 
-    test('Smartschool-only group is dropped (no WISA anchor)', () {
+    test('Smartschool-only orphan group is kept (#52)', () {
       final snapshot = link(
         wisaSnap(const []),
         ssSnap(const [], groups: [ssGroup('6C')]),
@@ -238,10 +238,26 @@ void main() {
         SeqResolver(),
         schoolPrefix: _prefix,
       );
+
+      final g = snapshot.groups.single;
+      expect(g.wisa, isNull);
+      expect(g.smartschool, isNotNull);
+      expect(g.azure, isNull);
+      expect(g.confidence, LinkConfidence.medium);
+    });
+
+    test('non-official Smartschool group does not seed an orphan', () {
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const [], groups: [ssGroup('6C', official: false)]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
       expect(snapshot.groups, isEmpty);
     });
 
-    test('Azure-only group is dropped (no WISA anchor)', () {
+    test('Azure-only orphan group is kept (#52)', () {
       final snapshot = link(
         wisaSnap(const []),
         ssSnap(const []),
@@ -249,8 +265,35 @@ void main() {
         SeqResolver(),
         schoolPrefix: _prefix,
       );
-      expect(snapshot.groups, isEmpty);
+
+      final g = snapshot.groups.single;
+      expect(g.wisa, isNull);
+      expect(g.smartschool, isNull);
+      expect(g.azure, isNotNull);
+      expect(g.confidence, LinkConfidence.medium);
     });
+
+    test(
+      'an Azure staff/administrative group is not kept as a class orphan (#52)',
+      () {
+        final snapshot = link(
+          wisaSnap(const []),
+          ssSnap(const []),
+          azSnap(
+            const [],
+            groups: [
+              azureGroup('$_prefix-Personeel'),
+              azureGroup('$_prefix-Directie'),
+              azureGroup('$_prefix-Secretariaat'),
+              azureGroup('$_prefix-Leraren'),
+            ],
+          ),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+        );
+        expect(snapshot.groups, isEmpty);
+      },
+    );
 
     test('WISA + Smartschool but no Azure → medium', () {
       final snapshot = link(
@@ -293,7 +336,7 @@ void main() {
       );
 
       final g = snapshot.groups.single;
-      expect(g.wisa.name, '5A 01');
+      expect(g.wisa!.name, '5A 01');
       expect(g.smartschool, isNotNull);
       expect(g.azure, isNotNull);
       expect(g.confidence, LinkConfidence.high);
@@ -331,7 +374,7 @@ void main() {
       );
 
       expect(snapshot.groups, hasLength(1));
-      expect(snapshot.groups.single.wisa.instituteNumber, '111');
+      expect(snapshot.groups.single.wisa!.instituteNumber, '111');
     });
   });
 

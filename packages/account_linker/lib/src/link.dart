@@ -286,28 +286,35 @@ List<LinkedStaff> _linkStaff(
 /// Azure group's `displayName`. There is no stable cross-system id for a group,
 /// so the name *is* the bridge.
 ///
-/// Anchored on WISA: every [LinkedGroup] carries a WISA [Group] ([LinkedGroup]
-/// requires it), so only WISA class groups seed records. A Smartschool or Azure
-/// group that matches no WISA class has no anchor and is dropped — unlike a
-/// person, a group cannot be represented Smartschool-only or Azure-only
-/// (issue #45, "WISA required"). Cleanup of such orphan groups is left to the
-/// action engine, which would need a nullable-WISA record type.
+/// WISA class groups seed records first, but a Smartschool or Azure group
+/// matching no WISA class is no longer dropped (#52): it becomes an orphan
+/// [LinkedGroup] with `wisa: null`, mirroring how an Azure-only [LinkedAccount]
+/// is kept for a former student. This lets the action engine raise a delete
+/// action for a class that vanished from WISA but still exists downstream.
 ///
 /// Only `official` Smartschool groups are considered (legacy
 /// `AddSmartschoolChildGroups` walked the "Leerlingen" subtree and linked only
-/// official classes); organisational sub-groups never match.
+/// official classes); organisational sub-groups never match or seed orphans.
+///
+/// Azure carries no `official`-style signal — [az.AzureGroup] is just
+/// `{id, displayName, securityEnabled}` — so an unmatched Azure group is kept
+/// as an orphan *unless* its name looks administrative (see
+/// [_looksLikeClassGroup]); staff/directorate/secretariat groups are excluded
+/// by name rather than included by one, since there is no positive
+/// class-group signal to include by.
 ///
 /// Confidence mirrors accounts/staff: `high` only when all three systems carry
 /// the group — and because the match key *is* the (normalized) name, presence
-/// in all three implies the keys agree — otherwise `medium`. All comparisons
-/// are trimmed + case-insensitive (INV-12).
+/// in all three implies the keys agree — otherwise `medium` (including every
+/// orphan record, per #52). All comparisons are trimmed + case-insensitive
+/// (INV-12).
 List<LinkedGroup> _linkGroups(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
   az.AzureSnapshot azureSnapshot,
 ) {
   final records = <_GroupRecord>[];
-  // Normalized fullName -> the record anchored on that WISA class group.
+  // Normalized fullName/name/displayName -> the record indexed under it.
   final byName = <String, _GroupRecord>{};
 
   // 1. Seed one record per distinct WISA class group, in snapshot order, keyed
@@ -321,38 +328,79 @@ List<LinkedGroup> _linkGroups(
     byName[key] = rec;
   }
 
-  // 2. Attach official Smartschool class groups by name. Non-official
-  //    organisational groups never link; an official group matching no WISA
-  //    class is dropped (no WISA anchor).
+  // 2. Attach official Smartschool class groups by name; non-official
+  //    organisational groups never link or seed orphans. An official group
+  //    matching no WISA class becomes an orphan record (#52) instead of being
+  //    dropped.
   for (final group in smartschoolSnapshot.groups) {
     if (!group.official) continue;
     final key = _norm(group.name);
     if (key == null) continue;
-    final rec = byName[key];
-    if (rec != null && rec.smartschool == null) rec.smartschool = group;
+    final existing = byName[key];
+    if (existing != null) {
+      existing.smartschool ??= group;
+    } else {
+      final rec = _GroupRecord(smartschool: group);
+      records.add(rec);
+      byName[key] = rec;
+    }
   }
 
-  // 3. Attach Azure groups by displayName. An Azure group matching no WISA
-  //    class is likewise dropped.
+  // 3. Attach Azure groups by displayName. An Azure group matching no
+  //    existing record becomes an orphan too (#52), but only when it looks
+  //    like a stale class rather than a staff/administrative group.
   for (final group in azureSnapshot.groups) {
     final key = _norm(group.displayName);
     if (key == null) continue;
-    final rec = byName[key];
-    if (rec != null && rec.azure == null) rec.azure = group;
+    final existing = byName[key];
+    if (existing != null) {
+      existing.azure ??= group;
+    } else if (_looksLikeClassGroup(group.displayName)) {
+      final rec = _GroupRecord(azure: group);
+      records.add(rec);
+      byName[key] = rec;
+    }
   }
 
   // 4. Freeze each record into an immutable [LinkedGroup].
   return <LinkedGroup>[
     for (final rec in records)
       LinkedGroup(
-        wisa: _wisaToCoreGroup(rec.wisa),
+        wisa: rec.wisa == null ? null : _wisaToCoreGroup(rec.wisa!),
         smartschool: rec.smartschool,
         azure: rec.azure,
-        confidence: rec.smartschool != null && rec.azure != null
-            ? LinkConfidence.high
-            : LinkConfidence.medium,
+        confidence:
+            rec.wisa != null && rec.smartschool != null && rec.azure != null
+                ? LinkConfidence.high
+                : LinkConfidence.medium,
       ),
   ];
+}
+
+/// Azure AD group-name suffixes that mark a *staff*/administrative group
+/// rather than a class — ported from the literal names legacy
+/// `AddToAzureStaffGroup`/`AddToStaffGroup` look up via `FindGroupByName`
+/// (`{prefix}-Personeel`, `-Directie`, `-Secretariaat`, `-Leraren`). Checked
+/// as a case-insensitive suffix so it applies regardless of the school's
+/// actual prefix.
+///
+/// This is a denylist, not an allowlist, because [az.AzureGroup] carries no
+/// positive class-group signal: `securityEnabled` doesn't split the
+/// populations either — legacy creates both a security-group and a plain
+/// variant of `{prefix}-Personeel` for the same staff population.
+const List<String> _nonClassGroupSuffixes = [
+  '-personeel',
+  '-directie',
+  '-secretariaat',
+  '-leraren',
+];
+
+/// Whether an unmatched Azure group is plausible as a stale class rather than
+/// a known staff/administrative group. See [_nonClassGroupSuffixes].
+bool _looksLikeClassGroup(String? displayName) {
+  final name = _norm(displayName);
+  if (name == null) return false;
+  return !_nonClassGroupSuffixes.any(name.endsWith);
 }
 
 /// Projects a [wapi.WisaClassGroup] to the canonical [Group] that
@@ -394,15 +442,15 @@ class _StaffRecord {
 }
 
 /// Mutable accumulator for one linked class group; the group analogue of
-/// [_Record]. Anchored on a required [wapi.WisaClassGroup] (groups seed only
-/// from WISA), gathering the matching Smartschool [Group] and [az.AzureGroup]
-/// as the passes run. Frozen into an immutable [LinkedGroup] at the end.
+/// [_Record]. [wisa] is nullable (#52): a record may instead be seeded from an
+/// orphan Smartschool or Azure group with no WISA anchor. Frozen into an
+/// immutable [LinkedGroup] at the end.
 class _GroupRecord {
-  final wapi.WisaClassGroup wisa;
+  wapi.WisaClassGroup? wisa;
   Group? smartschool;
   az.AzureGroup? azure;
 
-  _GroupRecord({required this.wisa});
+  _GroupRecord({this.wisa, this.smartschool, this.azure});
 }
 
 /// Whether a Smartschool [role] marks the account as staff (teacher or

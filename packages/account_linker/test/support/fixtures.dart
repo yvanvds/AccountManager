@@ -243,10 +243,11 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
         'a:${s.azure?.id ?? '-'}',
       ].join('|');
 
-  // Groups have no linker-minted id; the WISA name anchors the record.
+  // Groups have no linker-minted id; the WISA name anchors the record when
+  // present, else the Smartschool/Azure name of the orphan (#52).
   String grp(LinkedGroup g) => [
         g.confidence.name,
-        'w:${g.wisa.name}',
+        'w:${g.wisa?.name ?? '-'}',
         's:${g.smartschool?.id.value ?? '-'}',
         'a:${g.azure?.id ?? '-'}',
       ].join('|');

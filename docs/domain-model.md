@@ -194,11 +194,18 @@ class LinkedAccount {
   final AzureUser? azure;
   final LinkConfidence confidence;   // High | Medium (former-member / WISA-only placeholder)
 }
-class LinkedGroup { ... }
+class LinkedGroup {
+  final Group? wisa;                 // nullable: an orphan may lack a WISA anchor
+  final Group? smartschool;
+  final AzureGroup? azure;
+  final LinkConfidence confidence;
+}
 class LinkedStaff  { ... }
 ```
 
 See INV-5, INV-6. The `confidence` field replaces the implicit "alumni" and "placeholder" states that today are encoded in which fields are null. A former member surfaces as an Azure-only record (confidence `Medium`) so the action engine can raise a remove action for it (§7).
+
+`LinkedGroup` is symmetric (#52): all three systems are optional (at least one is always present). WISA class groups seed records first, but a group that vanished from WISA while still present in Smartschool and/or Azure is kept as an orphan (confidence `Medium`) rather than dropped, so the action engine can raise a delete action for it — the group analogue of the Azure-only former-member record above. Only `official` Smartschool groups seed orphans; on the Azure side — which carries no `official`-style signal — an unmatched group is kept unless its `displayName` ends with a known staff/administrative suffix (`-Personeel`, `-Directie`, `-Secretariaat`, `-Leraren`), a denylist because `securityEnabled` does not separate class groups from staff groups.
 
 The linker bundles its output into a `LinkedSnapshot`:
 
