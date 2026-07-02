@@ -79,7 +79,9 @@ jobs:
             packages/account_core/test \
             packages/wisa_api/test \
             packages/smartschool_api/test \
-            packages/azure_api/test
+            packages/azure_api/test \
+            packages/account_linker/test \
+            packages/account_actions/test
           dart pub global activate coverage
           dart pub global run coverage:format_coverage \
             --lcov \

@@ -1,0 +1,25 @@
+name: account_actions
+description: >-
+  Action engine for the Arcadia Account Manager port. A sealed `Action`
+  hierarchy (student family in this package; staff/group to follow) with pure
+  `evaluate()`/`describeChanges()` and an impure, dry-run-capable `apply()`
+  that returns the mutated source record for incremental snapshot refresh.
+  Pure Dart; no Flutter, no UI coupling.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  account_core:
+  wisa_api:
+  smartschool_api:
+  azure_api:
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0

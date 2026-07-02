@@ -11,6 +11,7 @@ workspace:
   - packages/smartschool_api
   - packages/azure_api
   - packages/account_linker
+  - packages/account_actions
 
 dev_dependencies:
   lints: ^5.1.0
