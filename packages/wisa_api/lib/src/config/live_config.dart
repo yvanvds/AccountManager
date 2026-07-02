@@ -4,7 +4,8 @@ import 'package:account_core/account_core.dart' as core;
 
 import '../connector.dart';
 
-/// Six-variable configuration for talking to a live WISA host.
+/// Six-variable configuration for talking to a live WISA host, plus the
+/// optional `WISA_WERKDATUM` override for the export Werkdatum.
 ///
 /// Used by both the capture script (`tool/capture_responses.dart`) and
 /// the opt-in integration test (`test/integration/wisa_live_test.dart`).
@@ -19,6 +20,11 @@ class WisaLiveConfig {
   final String password;
   final int schoolId;
 
+  /// Explicit Werkdatum for the export, from `WISA_WERKDATUM`. `null`
+  /// when the variable is unset; use [resolveWorkDate] to fall back to
+  /// the end-of-school-year default.
+  final DateTime? workDate;
+
   const WisaLiveConfig({
     required this.server,
     required this.port,
@@ -26,6 +32,7 @@ class WisaLiveConfig {
     required this.username,
     required this.password,
     required this.schoolId,
+    this.workDate,
   });
 
   /// Names of the six environment variables, in canonical order.
@@ -44,8 +51,8 @@ class WisaLiveConfig {
   /// signal, so `dart test` stays offline by default.
   ///
   /// Throws [ArgumentError] when `WISA_USERNAME` is set but one of the
-  /// other five variables is missing/empty or a numeric variable cannot
-  /// be parsed.
+  /// other five variables is missing/empty, a numeric variable cannot
+  /// be parsed, or `WISA_WERKDATUM` is set but not an ISO-8601 date.
   static WisaLiveConfig? fromEnvironment([Map<String, String>? env]) {
     final source = env ?? Platform.environment;
     final username = (source['WISA_USERNAME'] ?? '').trim();
@@ -81,6 +88,17 @@ class WisaLiveConfig {
       );
     }
 
+    DateTime? workDate;
+    final workDateRaw = (source['WISA_WERKDATUM'] ?? '').trim();
+    if (workDateRaw.isNotEmpty) {
+      workDate = DateTime.tryParse(workDateRaw);
+      if (workDate == null) {
+        throw ArgumentError(
+          'WISA_WERKDATUM is not an ISO-8601 date: "$workDateRaw"',
+        );
+      }
+    }
+
     return WisaLiveConfig(
       server: source['WISA_SERVER']!.trim(),
       port: port,
@@ -88,8 +106,17 @@ class WisaLiveConfig {
       username: username,
       password: source['WISA_PASSWORD']!.trim(),
       schoolId: schoolId,
+      workDate: workDate,
     );
   }
+
+  /// The Werkdatum the live test should use: the explicit [workDate]
+  /// when `WISA_WERKDATUM` was set, otherwise 30 June of [now]'s year —
+  /// the end of the Belgian school year, so the export has enrolled
+  /// students regardless of the calendar date (issue #57: `DateTime.now()`
+  /// yields an empty export all summer).
+  DateTime resolveWorkDate(DateTime now) =>
+      workDate ?? DateTime(now.year, 6, 30);
 
   /// Builds a connector from this config. The connector uses the default
   /// HTTP transport unless [log] is provided to capture diagnostics.
