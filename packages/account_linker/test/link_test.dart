@@ -183,7 +183,7 @@ void main() {
       expect(a.confidence, LinkConfidence.medium);
     });
 
-    test('groups stay empty (out of scope for #45)', () {
+    test('a WISA student leaves groups untouched', () {
       final snapshot = link(
         wisaSnap([wisaStudent('W10')]),
         ssSnap(const []),
@@ -192,6 +192,145 @@ void main() {
         schoolPrefix: _prefix,
       );
       expect(snapshot.groups, isEmpty);
+    });
+  });
+
+  group('link — group scenarios', () {
+    test('fully linked across three systems → high confidence', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5A')]),
+        ssSnap(const [], groups: [ssGroup('5A')]),
+        azSnap(const [], groups: [azureGroup('5A')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.groups, hasLength(1));
+      final g = snapshot.groups.single;
+      expect(g.confidence, LinkConfidence.high);
+      expect(g.wisa.name, '5A');
+      expect(g.wisa.origin, Origin.wisa);
+      expect(g.smartschool, isNotNull);
+      expect(g.azure, isNotNull);
+    });
+
+    test('WISA-only group → medium, no Smartschool/Azure', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('3B')]),
+        ssSnap(const []),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.wisa.name, '3B');
+      expect(g.smartschool, isNull);
+      expect(g.azure, isNull);
+      expect(g.confidence, LinkConfidence.medium);
+    });
+
+    test('Smartschool-only group is dropped (no WISA anchor)', () {
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const [], groups: [ssGroup('6C')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      expect(snapshot.groups, isEmpty);
+    });
+
+    test('Azure-only group is dropped (no WISA anchor)', () {
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap(const [], groups: [azureGroup('6C')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      expect(snapshot.groups, isEmpty);
+    });
+
+    test('WISA + Smartschool but no Azure → medium', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5A')]),
+        ssSnap(const [], groups: [ssGroup('5A')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.smartschool, isNotNull);
+      expect(g.azure, isNull);
+      expect(g.confidence, LinkConfidence.medium);
+    });
+
+    test('non-official Smartschool group never links', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5A')]),
+        ssSnap(const [], groups: [ssGroup('5A', official: false)]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      // The organisational group with the same name is ignored.
+      expect(g.smartschool, isNull);
+      expect(g.confidence, LinkConfidence.medium);
+    });
+
+    test('subgroup fullName (name + groupName) is the match key', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5A', groupName: '01')]),
+        ssSnap(const [], groups: [ssGroup('5A 01')]),
+        azSnap(const [], groups: [azureGroup('5A 01')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.wisa.name, '5A 01');
+      expect(g.smartschool, isNotNull);
+      expect(g.azure, isNotNull);
+      expect(g.confidence, LinkConfidence.high);
+    });
+
+    test('INV-12: case/whitespace differences still link → high', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5A')]),
+        ssSnap(const [], groups: [ssGroup('5a')]),
+        azSnap(const [], groups: [azureGroup('  5A  ')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.smartschool, isNotNull);
+      expect(g.azure, isNotNull);
+      expect(g.confidence, LinkConfidence.high);
+    });
+
+    test('duplicate WISA fullName collapses to one record', () {
+      final snapshot = link(
+        wisaSnap(
+          const [],
+          // Same fullName from two schools — one linked group, first wins.
+          classGroups: [
+            wisaClassGroup('5A', schoolCode: '111'),
+            wisaClassGroup('5A', schoolCode: '222'),
+          ],
+        ),
+        ssSnap(const []),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.groups, hasLength(1));
+      expect(snapshot.groups.single.wisa.instituteNumber, '111');
     });
   });
 
