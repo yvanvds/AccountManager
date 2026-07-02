@@ -1,3 +1,7 @@
 {
-  "dotnet.preferCSharpExtension": true
+  "dotnet.preferCSharpExtension": true,
+  "sonarlint.connectedMode.project": {
+    "connectionId": "yvanvds",
+    "projectKey": "yvanvds_AccountManager"
+  }
 }
