@@ -1,14 +1,21 @@
 import 'package:account_manager/src/app.dart';
+import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import 'auth/fake_broker.dart';
+
 void main() {
   testWidgets('app boots into the Plink-themed shell with a Home screen',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const AccountManagerApp());
+    // graph: null → AAD not configured, so the sign-in gate reveals the shell
+    // directly (no acquisition attempted).
+    await tester.pumpWidget(
+      AccountManagerApp(session: SignInSession(FakeBroker()), graph: null),
+    );
     await tester.pumpAndSettle();
 
     // The shell and its single Home destination are present.

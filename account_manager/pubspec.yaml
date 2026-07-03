@@ -17,6 +17,14 @@ dependencies:
   # Bare version: resolved through the root workspace.
   account_state:
 
+  # The Graph connector: needed here for the auth seam types the sign-in layer
+  # implements (AzureAuthProvider, AzureCredentials, TokenCache).
+  azure_api:
+
+  # For the interactive loopback fallback's injectable HTTP client (the token
+  # endpoint), shared with the OAuthAuthProvider reused from azure_api.
+  http: ^1.2.0
+
   # Plink Labs design system — Flutter binding, external to this workspace
   # (not on pub.dev). Consumed as a git dependency so it resolves everywhere
   # (CI + fresh clones), pinned to a commit for reproducibility. To hack on the

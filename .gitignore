@@ -311,3 +311,7 @@ packages/azure_api/captures/
 
 # Populated .keyvault.env (real vault/token). Only .keyvault.env.example is committed.
 .keyvault.env
+# Local Azure AD dart-define config (client/tenant IDs are not secrets, but
+# machine-specific — keep out of the repo).
+aad.local.json
+**/aad.local.json
