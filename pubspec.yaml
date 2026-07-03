@@ -12,6 +12,7 @@ workspace:
   - packages/azure_api
   - packages/account_linker
   - packages/account_actions
+  - packages/account_state
 
 dev_dependencies:
   lints: ^5.1.0

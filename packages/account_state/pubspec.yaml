@@ -1,0 +1,29 @@
+name: account_state
+description: >-
+  Layer-5 orchestration package for the Arcadia Account Manager port. Defines
+  the persistence seams (settings, PersonId resolution, password queue) that
+  the sync/link/apply orchestration plugs into, with in-memory and file-backed
+  defaults so the layer is testable headlessly.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+# License: GPL-3.0-or-later. See LICENSE.
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  account_core:
+  account_store:
+  wisa_api:
+  smartschool_api:
+  azure_api:
+  account_linker:
+  account_actions:
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0
