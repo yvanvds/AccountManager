@@ -82,6 +82,25 @@ void main() {
       );
     });
 
+    test('uid-only records keep the seam contract via the ss: fallback', () {
+      // Intern-style accounts with no accountId and no mail key by uid; the
+      // enumerator must hand the same fallback keys to a DB-backed resolver.
+      final uidOnly = ssSnap([
+        ssAccount(uid: 'stagiair1', accountId: '', mail: ''),
+        ssStaffAccount(uid: 'begeleider', accountId: '', mail: ''),
+      ]);
+      final recorder = _RecordingResolver();
+      link(wisaSnap(const []), uidOnly, azSnap(const []), recorder,
+          schoolPrefix: 'SMA');
+
+      final keys = naturalKeysFor(wisaSnap(const []), uidOnly, azSnap(const []),
+          schoolPrefix: 'SMA');
+
+      expect(keys, equals(recorder.resolved.toSet()));
+      expect(
+          keys, containsAll(<String>['ss:stagiair1', 'staff:ss:begeleider']));
+    });
+
     test('is a pure function of the snapshots — no group keys, stable', () {
       // Groups carry no PersonId; the enumerated set is unchanged whether or not
       // the resolver would be called, and repeated calls agree.

@@ -615,5 +615,25 @@ void main() {
       // No Azure (and no wisaId to bridge it) ⇒ medium.
       expect(s.confidence, LinkConfidence.medium);
     });
+
+    test('a Smartschool-only account with no accountId or mail keys by uid',
+        () {
+      // Real tenant data (found live in #99): intern accounts carry neither
+      // the WISA-id convention nor a mail address, so the uid is their only
+      // identity. This used to hit the "no identifying key" StateError.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap([
+          ssAccount(uid: 'stagiair1', accountId: '', mail: ''),
+          ssStaffAccount(uid: 'begeleider', accountId: '', mail: ''),
+        ]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts.single.smartschool?.uid, 'stagiair1');
+      expect(snapshot.staff.single.smartschool?.uid, 'begeleider');
+    });
   });
 }

@@ -576,6 +576,11 @@ String _naturalKey(_Record rec) {
   final azureId = _norm(rec.azure?.id);
   if (azureId != null) return 'azure:$azureId';
 
+  // A Smartschool-only account may carry neither an accountId nor a mail
+  // (real data: e.g. intern accounts) — its uid is then the only identity.
+  final uid = _norm(rec.smartschool?.uid);
+  if (uid != null) return 'ss:$uid';
+
   // Unreachable: every record carries at least one identifying field.
   throw StateError('LinkedAccount record has no identifying key: $rec');
 }
@@ -623,6 +628,11 @@ String _naturalStaffKey(_StaffRecord rec) {
 
   final azureId = _norm(rec.azure?.id);
   if (azureId != null) return 'staff:azure:$azureId';
+
+  // A Smartschool-only account may carry neither an accountId nor a mail
+  // (real data: e.g. intern accounts) — its uid is then the only identity.
+  final uid = _norm(rec.smartschool?.uid);
+  if (uid != null) return 'staff:ss:$uid';
 
   // Unreachable: every record carries at least one identifying field.
   throw StateError('LinkedStaff record has no identifying key: $rec');
