@@ -47,7 +47,7 @@ on:
   # `pull_request` event. Pre-merge quality gates run on the PR; the
   # mainline `push` runs act as post-merge canaries.
   push:
-    branches: [dev, master]
+    branches: [develop, master]
   pull_request:
 
 # A newer commit on the same ref cancels an in-progress run, so a quick
@@ -160,13 +160,13 @@ jobs:
       # Gated on AZURE_CLIENT_ID so the job still runs (and the Azure test
       # self-skips) if the Azure secrets are ever cleared. Also gated to the
       # refs we created federated credentials for — pull requests and the
-      # `dev` branch; on any other ref these steps skip and the Azure test
+      # `develop` branch; on any other ref these steps skip and the Azure test
       # self-skips on the empty token. The federated app (AccountManager-CI-
       # ReadOnly) holds only User.Read.All + Group.Read.All, so the minted
       # token cannot write — the read-only guarantee is at the credential
       # layer, per the live-testing policy.
       - name: Azure login (OIDC — no stored secret)
-        if: env.AZURE_CLIENT_ID != '' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev')
+        if: env.AZURE_CLIENT_ID != '' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/develop')
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -174,7 +174,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Mint read-only Graph token
-        if: env.AZURE_CLIENT_ID != '' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev')
+        if: env.AZURE_CLIENT_ID != '' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/develop')
         run: |
           token=$(az account get-access-token \
             --resource https://graph.microsoft.com \

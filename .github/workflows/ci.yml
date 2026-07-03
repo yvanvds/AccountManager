@@ -26,10 +26,10 @@ name: CI
 
 on:
   pull_request:
-    branches: [dev]
+    branches: [develop]
   # Manual trigger as an escape hatch (e.g. to refresh the SonarCloud
-  # baseline on `dev` after a merge). Plain pushes to `dev` do NOT run CI
-  # by design — quality gates run pre-merge, on the PR.
+  # baseline on `develop` after a merge). Plain pushes to `develop` do NOT
+  # run CI by design — quality gates run pre-merge, on the PR.
   workflow_dispatch:
 
 permissions:
