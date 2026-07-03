@@ -131,7 +131,11 @@ class _OdbcSqlConnection implements SqlConnection {
     try {
       _prepare(stmt, sql);
       _bindParams(stmt, params, allocations);
-      _check(_b, _b.execute(stmt), 'SQLExecute', sqlHandleStmt, stmt);
+      final ret = _b.execute(stmt);
+      // SQL_NO_DATA is success-with-nothing (a searched UPDATE/DELETE that
+      // matched zero rows), not a failure — there is no result to read.
+      if (ret == sqlNoData) return const [];
+      _check(_b, ret, 'SQLExecute', sqlHandleStmt, stmt);
       return _readRows(stmt);
     } finally {
       for (final p in allocations) {
@@ -149,7 +153,13 @@ class _OdbcSqlConnection implements SqlConnection {
     try {
       _prepare(stmt, sql);
       _bindParams(stmt, params, allocations);
-      _check(_b, _b.execute(stmt), 'SQLExecute', sqlHandleStmt, stmt);
+      final ret = _b.execute(stmt);
+      // SQL_NO_DATA is success-with-nothing (a searched UPDATE/DELETE that
+      // matched zero rows, e.g. clearing an already-empty table), not a
+      // failure. The settings store's whole-config replace and the PersonId
+      // resolver's insert-if-absent both hit this legitimately.
+      if (ret == sqlNoData) return 0;
+      _check(_b, ret, 'SQLExecute', sqlHandleStmt, stmt);
 
       final rowsPtr = malloc<IntPtr>();
       try {
