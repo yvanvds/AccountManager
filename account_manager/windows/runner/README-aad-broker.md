@@ -70,6 +70,34 @@ the manual follow-up the issue's test plan calls out.
    Do **not** block the platform thread waiting for the interactive callback:
    the sign-in UI parents to `parent_window` and blocking deadlocks it.
 
+## Interactive fallback (loopback OAuth) — works today, no SDK
+
+Until the WAM broker above is wired, and on any machine without it (the dev
+laptop), sign-in falls through to the **interactive loopback flow**
+(`lib/src/auth/loopback_aad_broker.dart`, reusing `azure_api`'s
+`OAuthAuthProvider` + `LoopbackAuthorizer`): it opens the system browser,
+captures the redirect on `http://localhost:8765/auth-redirect`, and works with
+no native code. `CompositeBroker` chains the two — native WAM first, loopback
+second.
+
+For it to complete, the Azure **app registration** used for `AAD_CLIENT_ID`
+must be a **public client** with `http://localhost:8765/auth-redirect`
+registered under *Authentication → Mobile and desktop applications*. Run with
+the `--dart-define`s set:
+
+```
+flutter run -d windows \
+  --dart-define=AAD_CLIENT_ID=<client id> \
+  --dart-define=AAD_TENANT_ID=<tenant id> \
+  --dart-define=AAD_DOMAIN=<verified domain> \
+  --dart-define=SCHOOL_PREFIX=<prefix>
+```
+
+Signing in for Graph mints the Graph token; the Azure SQL token
+(`database.windows.net`) is acquired the same way when a SQL connection is first
+opened (a later slice) — that currently triggers a second browser prompt, which
+the WAM broker (single sign-on) removes once wired.
+
 ## Manual verification (school-account machine)
 
 - On a laptop signed in to Windows with the school AAD account: launch with the

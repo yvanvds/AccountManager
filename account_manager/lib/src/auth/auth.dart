@@ -10,6 +10,8 @@ library;
 
 export 'aad_broker.dart' show AadBroker, AadBrokerException, BrokerToken;
 export 'aad_resource.dart' show AadResource;
+export 'composite_broker.dart' show CompositeBroker;
+export 'loopback_aad_broker.dart' show LoopbackAadBroker;
 export 'method_channel_aad_broker.dart' show MethodChannelAadBroker;
 export 'sign_in_session.dart'
     show GraphSessionAuthProvider, SignInSession, SqlSessionTokenProvider;

@@ -142,7 +142,8 @@ class _SigningInPanel extends StatelessWidget {
         Text('Signing in…', style: text.headlineSmall),
         const SizedBox(height: PlinkSpacing.s4),
         Text(
-          'Connecting to Azure AD with your school account.',
+          'Connecting to Azure AD with your school account. A browser window '
+          'may open for sign-in — complete it there and return here.',
           style: text.bodyMedium,
         ),
         const SizedBox(height: PlinkSpacing.s5),

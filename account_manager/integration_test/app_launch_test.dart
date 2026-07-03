@@ -108,6 +108,31 @@ void main() {
     expect(find.byType(AppShell), findsOneWidget);
     expect(attempts, 2);
   });
+
+  testWidgets('an unavailable native broker falls through to interactive',
+      (WidgetTester tester) async {
+    // The real composition on the dev laptop: the native WAM broker reports
+    // `broker_unavailable`, so the chain falls through to the interactive
+    // (loopback) broker, which signs in and reveals the shell.
+    final native = _FakeBroker(
+      silent: (_) => throw const AadBrokerException(
+        'not built',
+        code: 'broker_unavailable',
+      ),
+      interactive: (_) => throw const AadBrokerException(
+        'not built',
+        code: 'broker_unavailable',
+      ),
+    );
+    final loopback = _FakeBroker(interactive: (_) => _token('AT'));
+    final session = SignInSession(CompositeBroker([native, loopback]));
+
+    await tester.pumpWidget(AccountManagerApp(session: session, graph: graph));
+    await tester.pumpAndSettle();
+
+    expect(loopback.interactiveCalls, ['graph']);
+    expect(find.byType(AppShell), findsOneWidget);
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.
