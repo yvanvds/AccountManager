@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:account_manager/src/auth/auth.dart';
 import 'package:azure_api/azure_api.dart'
     show AzureAuthException, AzureAuthProvider, AzureCredentials;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 /// A per-resource auth provider stand-in for [OAuthAuthProvider].
 class _FakeProvider implements AzureAuthProvider {
@@ -26,7 +30,7 @@ void main() {
     schoolPrefix: 'p',
   ));
 
-  test('acquireSilent never prompts — it always returns null', () async {
+  test('acquireSilent without a silent acquirer returns null', () async {
     final broker = LoopbackAadBroker(
       providerFactory: (_) => _FakeProvider('SHOULD-NOT-BE-USED'),
     );
@@ -73,5 +77,103 @@ void main() {
       throwsA(isA<AadBrokerException>()
           .having((e) => e.message, 'message', 'sign-in was denied')),
     );
+  });
+
+  group('oauth factory silent leg', () {
+    // oauth2 requires the token endpoint to declare a JSON content type.
+    http.Response jsonResp(Map<String, Object?> body) => http.Response(
+          jsonEncode(body),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+
+    Map<String, Object?> tokenBody(String accessToken, {String? scope}) => {
+          'token_type': 'Bearer',
+          'access_token': accessToken,
+          'expires_in': 3600,
+          'refresh_token': 'refresh-for-$accessToken',
+          if (scope != null) 'scope': scope,
+        };
+
+    /// The production broker over a scripted token endpoint: interactive
+    /// exchanges an auth code, silent redeems refresh tokens. Records every
+    /// refresh request and each authorizer invocation.
+    (LoopbackAadBroker, List<Map<String, String>>, List<Uri>) build({
+      bool rejectRefresh = false,
+    }) {
+      final refreshRequests = <Map<String, String>>[];
+      final authorizerCalls = <Uri>[];
+      final broker = LoopbackAadBroker.oauth(
+        clientId: 'client-123',
+        tenantId: 'tenant-abc',
+        azureDomain: 'school.example',
+        schoolPrefix: 'GBS',
+        authorizer: (authUrl, redirect) async {
+          authorizerCalls.add(authUrl);
+          return {'code': 'auth-code-xyz'};
+        },
+        httpClient: MockClient((req) async {
+          final fields = req.bodyFields;
+          if (fields['grant_type'] == 'refresh_token') {
+            refreshRequests.add(fields);
+            if (rejectRefresh) {
+              return http.Response(
+                jsonEncode({'error': 'invalid_grant'}),
+                400,
+                headers: {'content-type': 'application/json'},
+              );
+            }
+            return jsonResp(tokenBody('REFRESHED-AT'));
+          }
+          return jsonResp(tokenBody('INTERACTIVE-AT'));
+        }),
+      );
+      return (broker, refreshRequests, authorizerCalls);
+    }
+
+    test('returns null when no resource has signed in yet', () async {
+      final (broker, refreshRequests, authorizerCalls) = build();
+
+      expect(await broker.acquireSilent(AadResource.sql), isNull);
+      expect(refreshRequests, isEmpty);
+      expect(authorizerCalls, isEmpty);
+    });
+
+    test('redeems another resource\'s refresh token — no browser round-trip',
+        () async {
+      final (broker, refreshRequests, authorizerCalls) = build();
+
+      // Graph pays the one interactive prompt…
+      await broker.acquireInteractive(graph);
+      expect(authorizerCalls, hasLength(1));
+
+      // …then SQL is minted silently from Graph's refresh token, with the
+      // SQL scopes requested on the refresh grant.
+      final sql = await broker.acquireSilent(AadResource.sql);
+      expect(sql, isNotNull);
+      expect(sql!.accessToken, 'REFRESHED-AT');
+      expect(authorizerCalls, hasLength(1), reason: 'no second prompt');
+      expect(refreshRequests, hasLength(1));
+      expect(
+        refreshRequests.single['scope'],
+        contains('https://database.windows.net/.default'),
+      );
+
+      // The minted credentials are cached: a repeat silent acquisition needs
+      // neither the authorizer nor the token endpoint.
+      final again = await broker.acquireSilent(AadResource.sql);
+      expect(again!.accessToken, 'REFRESHED-AT');
+      expect(refreshRequests, hasLength(1));
+    });
+
+    test('a rejected refresh token yields null (fall back to interactive)',
+        () async {
+      final (broker, refreshRequests, _) = build(rejectRefresh: true);
+
+      await broker.acquireInteractive(graph);
+
+      expect(await broker.acquireSilent(AadResource.sql), isNull);
+      expect(refreshRequests, isNotEmpty, reason: 'the redeem was attempted');
+    });
   });
 }
