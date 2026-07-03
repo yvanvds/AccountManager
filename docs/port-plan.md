@@ -142,12 +142,16 @@ reintroduces the hosting the epic deliberately avoids. The DB + AAD-only +
 token-auth round-trip was **proven end to end** during the spike (connect →
 create table → insert → read back `roundtrip-ok` → drop, `SUSER_SNAME()` =
 the operator UPN). The `account_state` connection/auth seam (`SqlConnection` /
-`SqlConnectionFactory` / `AadTokenProvider`) is in place now; the concrete
-Dart-side ODBC/FFI factory and its live DB round-trip are **deferred to #89**
-(carved out of #83 because the FFI-over-`msodbcsql18` binding is Windows-only
-and can't be unit-tested headlessly). Adapters are written and fully tested
-against the seam with a scripted fake; their opt-in live round-trip tests stay
-skipped until #89 wires the driver.
+`SqlConnectionFactory` / `AadTokenProvider`) is in place, and **#89 landed the
+concrete `OdbcSqlConnectionFactory`**: `dart:ffi` over `odbc32.dll` →
+`msodbcsql18`, authenticated by packing the AAD token into
+`SQL_COPT_SS_ACCESS_TOKEN`, with `query` / `execute` / `transaction` / `close`
+over the seam. The driver-free decisions (connection string, token packing,
+column-type mapping) are factored out and unit-tested offline; the FFI caller
+itself is Windows-only and can't be unit-tested headlessly, so it is exercised
+by the three adapters' opt-in, write-capable live round-trips (settings,
+PersonId resolver, password queue) — now wired to the real driver and run
+manually per the live-testing policy, skipped by default when no token is set.
 
 **Key Vault secrets (#84).** `KeyVaultSecretProvider` backs the `SecretProvider`
 seam against `accountmanager-kv`, replacing `InMemorySecretProvider` so the WISA

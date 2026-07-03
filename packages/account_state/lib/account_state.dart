@@ -73,6 +73,7 @@ export 'src/sql/azure_sql_live_config.dart';
 export 'src/sql/azure_sql_password_queue_store.dart';
 export 'src/sql/azure_sql_person_id_resolver.dart';
 export 'src/sql/azure_sql_settings_store.dart';
+export 'src/sql/odbc/odbc_sql_connection.dart' show OdbcSqlConnectionFactory;
 export 'src/sql/password_queue_schema.dart';
 export 'src/sql/person_id_schema.dart';
 export 'src/sql/settings_schema.dart';

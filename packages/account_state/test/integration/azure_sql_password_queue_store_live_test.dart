@@ -15,11 +15,11 @@ import 'package:test/test.dart';
 /// — never part of the read-only CI live set — and needs a fresh AAD token (see
 /// `AzureSqlLiveConfig`).
 ///
-/// It cannot run yet: the concrete ODBC/FFI [SqlConnectionFactory] is deferred
-/// to #89 (Windows-only, needs `msodbcsql18` + a live DB, not unit-testable
-/// headlessly). The body below is the ready-made round-trip that slice will
-/// enable by wiring [_liveFactory] to the real driver and dropping the `skip`.
-/// Until then the adapter is fully covered by the seam-fake unit tests in
+/// Enabled by #89, which wired [_liveFactory] to the concrete ODBC/FFI driver.
+/// It is Windows-only (needs `msodbcsql18` + a live AAD-authenticated DB + a
+/// fresh token), so it stays offline-by-default: the group runs only when
+/// `AZURE_SQL_ACCESS_TOKEN` (+ server/database) is set, and is skipped
+/// otherwise. The adapter also stays covered by the seam-fake unit tests in
 /// `test/sql/azure_sql_password_queue_store_test.dart`.
 void main() {
   final config = AzureSqlLiveConfig.fromEnvironment();
@@ -35,9 +35,9 @@ void main() {
         );
         final tokens = StaticAadTokenProvider(config.accessToken);
 
-        // #89 will provision the schema through the factory before this runs;
-        // documented here as the precondition rather than executed blind.
-        //   for (final ddl in passwordQueueSchemaStatements) { ... }
+        // Provision the schema through the real driver before the round-trip;
+        // the DDL is idempotent, so a re-run is a no-op.
+        await _provision(sqlConfig, tokens, passwordQueueSchemaStatements);
 
         final generator = AzureSqlPasswordQueueStore(
           factory: _liveFactory(),
@@ -81,16 +81,30 @@ void main() {
         expect(await printer.load(), isEmpty);
       });
     },
-    // Two gates: offline by default (no token), and blocked on the real driver.
-    skip: 'Requires the concrete ODBC/FFI SqlConnectionFactory (#89); '
-        'the adapter is covered by the seam-fake unit tests. '
-        'Set AZURE_SQL_ACCESS_TOKEN and wire _liveFactory to run.',
+    // Offline by default: skipped unless a live token (+ server/database) is set.
+    skip: config == null
+        ? 'Set AZURE_SQL_ACCESS_TOKEN (+ AZURE_SQL_SERVER/DATABASE) to run.'
+        : false,
   );
 }
 
-/// The production [SqlConnectionFactory] the live round-trip needs. Deferred to
-/// #89 — throws until the real ODBC/FFI driver is wired, which is why the group
-/// above is skipped.
-SqlConnectionFactory _liveFactory() => throw UnimplementedError(
-      'Concrete ODBC/FFI SqlConnectionFactory is deferred to #89.',
-    );
+/// The production [SqlConnectionFactory] the live round-trip runs against: the
+/// concrete ODBC/FFI driver wired in #89.
+SqlConnectionFactory _liveFactory() => OdbcSqlConnectionFactory();
+
+/// Runs the schema [ddl] through the real driver so the round-trip has its
+/// tables. Opens a fresh connection (a new token per open) and closes it.
+Future<void> _provision(
+  AzureSqlConfig config,
+  AadTokenProvider tokens,
+  List<String> ddl,
+) async {
+  final connection = await _liveFactory().open(config, tokens);
+  try {
+    for (final statement in ddl) {
+      await connection.execute(statement);
+    }
+  } finally {
+    await connection.close();
+  }
+}
