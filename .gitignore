@@ -308,3 +308,6 @@ packages/azure_api/captures/
 
 # Populated .azuresql.env (real server/db). Only .azuresql.env.example is committed.
 .azuresql.env
+
+# Populated .keyvault.env (real vault/token). Only .keyvault.env.example is committed.
+.keyvault.env

@@ -62,7 +62,7 @@ zero network and zero infra.
 | Interface | Model | Defaults | Legacy counterpart |
 |---|---|---|---|
 | `SettingsStore` | `AppSettings` (+ import-rule codecs) | `InMemorySettingsStore`, `FileSettingsStore` | `config.json` / `SettingsState` |
-| `SecretProvider` | `SecretRef` → value | `InMemorySecretProvider` | inline secrets in `config.json` |
+| `SecretProvider` | `SecretRef` → value | `InMemorySecretProvider`, `KeyVaultSecretProvider` | inline secrets in `config.json` |
 | `PersonIdResolver` (from `account_core`) | `PersonId` | `FilePersonIdResolver` (from `account_store`) | — |
 | `PasswordQueueStore` | `PasswordEntry` | `InMemoryPasswordQueueStore`, `FilePasswordQueueStore` | `PasswordManager` / `Passwords.json` |
 
@@ -82,8 +82,12 @@ persisted into one immutable value (PROJECT_OVERVIEW §6.2):
 **Secrets never enter the blob.** The WISA password and Smartschool passphrase
 are modeled as a `SecretRef` on their profile and resolved through a
 `SecretProvider`; `toJson` emits only the (non-sensitive) ref name. Phase B
-swaps `InMemorySecretProvider` for a Key-Vault-backed implementation without
-touching anything above the seam. `WorkDateSetting.resolve(now)` keeps the live
+swaps `InMemorySecretProvider` for `KeyVaultSecretProvider` (#84) without
+touching anything above the seam: a `SecretRef.name` maps to a Key Vault secret
+name (escaping the illegal `.` — see `KeyVaultSecretProvider.secretNameFor`), the
+value lives in `accountmanager-kv`, and AAD auth goes through the
+`KeyVaultTokenProvider` seam (operator identity, no stored secret).
+`WorkDateSetting.resolve(now)` keeps the live
 clock out of the model, mirroring `WisaLiveConfig.resolveWorkDate`.
 
 ## Scope notes

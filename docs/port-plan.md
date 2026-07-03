@@ -135,6 +135,22 @@ and can't be unit-tested headlessly). Adapters are written and fully tested
 against the seam with a scripted fake; their opt-in live round-trip tests stay
 skipped until #89 wires the driver.
 
+**Key Vault secrets (#84).** `KeyVaultSecretProvider` backs the `SecretProvider`
+seam against `accountmanager-kv`, replacing `InMemorySecretProvider` so the WISA
+password, Smartschool passphrase, and OAuth/token material leave the settings
+blob for good. Unlike the SQL side there is no native driver: the vault
+data-plane is plain HTTPS, so the adapter uses `package:http` behind a swappable
+`KeyVaultTransport` seam (mirroring `azure_api`'s `GraphTransport`) and AAD auth
+goes through a `KeyVaultTokenProvider` scoped to `https://vault.azure.net/`
+(operator identity, no stored secret). A `SecretRef.name` maps to a vault secret
+name via `KeyVaultSecretProvider.secretNameFor`: vault names allow only
+`[0-9a-zA-Z-]` and are matched case-insensitively, so every character outside
+`[0-9a-z]` (the config refs' `.`, and any uppercase) is escaped as `-` + two
+lowercase hex digits, round-tripping regardless of case folding. The adapter is
+fully covered by fake-transport unit tests, and — because it only reads — its
+opt-in live check (`KeyVaultLiveConfig`) is a genuine read against the vault, not
+a skipped placeholder.
+
 ### Phase C — Flutter Windows desktop app *(not started, epic #75)*
 
 Port the six WPF pages (Dashboard, Klassen, Accounts, Passwords, Acties,
