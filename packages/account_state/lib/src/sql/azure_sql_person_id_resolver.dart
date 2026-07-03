@@ -76,6 +76,10 @@ class AzureSqlPersonIdResolver implements PreparablePersonIdResolver {
   /// is split into this-sized chunks. Kept well under the ceiling for headroom.
   static const int maxKeysPerLookup = 2000;
 
+  /// The maximum rows in one multi-row guarded insert — each row binds two
+  /// parameters (key + id), so this stays under the same statement cap.
+  static const int maxRowsPerInsert = maxKeysPerLookup ~/ 2;
+
   static String _defaultMint() => const Uuid().v4();
 
   @override
@@ -108,18 +112,30 @@ class AzureSqlPersonIdResolver implements PreparablePersonIdResolver {
       ];
       if (missing.isEmpty) return;
 
-      // Mint-or-fetch the genuinely new keys atomically (see the class doc): the
-      // guarded insert plus its read-back is the "converge on one id" step, so
-      // it runs inside a single transaction as the seam intends (#85).
+      // Mint-or-fetch the genuinely new keys atomically (see the class doc):
+      // the guarded insert plus its read-back is the "converge on one id"
+      // step, so it runs inside a single transaction as the seam intends
+      // (#85). Set-based on purpose: one multi-row guarded INSERT plus one
+      // batched read-back per chunk. The original per-key loop cost two
+      // network round-trips per new key, which froze a first run over a real
+      // school (~1500 fresh keys ⇒ ~3000 sequential round-trips, #99).
       await connection.transaction((tx) async {
-        for (final key in missing) {
-          await tx.execute(_insertIfAbsentSql, [key, _mintId(), key]);
-          final winner = await tx.query(_selectOneSql, [key]);
-          if (winner.isEmpty) {
-            // Unreachable: the key either pre-existed or we just inserted it.
-            throw StateError('PersonIdentity row vanished for key: $key');
+        for (var i = 0; i < missing.length; i += maxRowsPerInsert) {
+          final chunk = missing.sublist(
+              i, math.min(i + maxRowsPerInsert, missing.length));
+          await tx.execute(_insertIfAbsentSql(chunk.length), [
+            for (final key in chunk) ...[key, _mintId()],
+          ]);
+          for (final row in await tx.query(_selectInSql(chunk.length), chunk)) {
+            _cache[_string(row['NaturalKey'])] =
+                PersonId(_string(row['PersonId']));
           }
-          _cache[key] = PersonId(_string(winner.first['PersonId']));
+          for (final key in chunk) {
+            if (!_cache.containsKey(key)) {
+              // Unreachable: the key either pre-existed or was just inserted.
+              throw StateError('PersonIdentity row vanished for key: $key');
+            }
+          }
         }
       });
     } finally {
@@ -150,19 +166,21 @@ String _selectInSql(int count) =>
     'SELECT NaturalKey, PersonId FROM $personIdentityTableName '
     'WHERE NaturalKey IN (${List.filled(count, '?').join(', ')})';
 
-/// Reads back the row that owns [NaturalKey] after a guarded insert — either the
-/// id this operator just minted or the one a concurrent operator committed first.
-const String _selectOneSql =
-    'SELECT PersonId FROM $personIdentityTableName WHERE NaturalKey = ?';
-
-/// Inserts a freshly minted id **only if the key is still absent**. The
-/// `UPDLOCK, HOLDLOCK` takes a serializable key-range lock so two operators
-/// minting the same new key are ordered: the loser's `NOT EXISTS` sees the
-/// winner's row and inserts nothing. Params: `[naturalKey, personId, naturalKey]`.
-const String _insertIfAbsentSql = 'INSERT INTO $personIdentityTableName '
-    '(NaturalKey, PersonId) SELECT ?, ? WHERE NOT EXISTS ('
+/// Inserts a batch of freshly minted ids, each row **only if its key is still
+/// absent**. The `UPDLOCK, HOLDLOCK` takes a serializable key-range lock per
+/// key so two operators minting the same new key are ordered: the loser's
+/// `NOT EXISTS` sees the winner's row and inserts nothing for that key. The
+/// read-back (the batched `_selectInSql` over the same chunk) then returns
+/// whichever id won. Params: `[key1, id1, key2, id2, …]` — two per row; the
+/// placeholders are generated, never interpolated data.
+String _insertIfAbsentSql(int rows) => 'INSERT INTO $personIdentityTableName '
+    '(NaturalKey, PersonId) '
+    'SELECT v.NaturalKey, v.PersonId '
+    'FROM (VALUES ${List.filled(rows, '(?, ?)').join(', ')}) '
+    'AS v(NaturalKey, PersonId) '
+    'WHERE NOT EXISTS ('
     'SELECT 1 FROM $personIdentityTableName WITH (UPDLOCK, HOLDLOCK) '
-    'WHERE NaturalKey = ?)';
+    'WHERE NaturalKey = v.NaturalKey)';
 
 /// Reads a driver value as a non-null string. The identity columns are declared
 /// `NOT NULL`, so a null here would be a schema violation; coercing keeps the
