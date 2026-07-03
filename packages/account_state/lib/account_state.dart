@@ -80,3 +80,4 @@ export 'src/sql/settings_schema.dart';
 export 'src/sql/sql_connection.dart';
 export 'src/sync/application_state.dart';
 export 'src/sync/system_state.dart';
+export 'src/sync/wisa_snapshot_diff.dart';

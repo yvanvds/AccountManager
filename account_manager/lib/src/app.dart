@@ -4,6 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 import 'auth/aad_resource.dart';
 import 'auth/sign_in_gate.dart';
 import 'auth/sign_in_session.dart';
+import 'reconcile/reconcile_bootstrap.dart';
 import 'shell/app_shell.dart';
 
 /// This app's per-product accent (Plink DS-5): one colour that is clearly
@@ -22,6 +23,7 @@ class AccountManagerApp extends StatelessWidget {
     super.key,
     required this.session,
     required this.graph,
+    this.reconcileBootstrap,
   });
 
   /// The operator's Azure AD session, used by the sign-in gate and, later, by
@@ -30,6 +32,11 @@ class AccountManagerApp extends StatelessWidget {
 
   /// The Graph resource to sign in for, or `null` when AAD is not configured.
   final AadResource? graph;
+
+  /// Assembles the reconcile stack when its screen is first opened, or `null`
+  /// when AAD is not configured. Injectable so tests can bind the screen to
+  /// fakes; the real closure is built in `main()`.
+  final Future<ReconcileServices> Function()? reconcileBootstrap;
 
   ThemeData _themed(ThemeData base) => base.copyWith(
         extensions: const <ThemeExtension<dynamic>>[
@@ -47,7 +54,7 @@ class AccountManagerApp extends StatelessWidget {
       home: SignInGate(
         session: session,
         graph: graph,
-        child: const AppShell(),
+        child: AppShell(reconcileBootstrap: reconcileBootstrap),
       ),
     );
   }

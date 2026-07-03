@@ -13,13 +13,16 @@ class _FakePersonIdDb implements SqlConnection {
   /// The persisted map — the singular source of truth all connections share.
   final Map<String, String> table = {};
 
-  /// When true, the keyed lookup reports no rows even though [table] may hold
-  /// them: the "stale load" a concurrent minter races against.
+  /// When true, the keyed lookup **outside a transaction** reports no rows even
+  /// though [table] may hold them: the "stale load" a concurrent minter races
+  /// against. The read-back inside the mint transaction always sees committed
+  /// rows — that is exactly the visibility the guarded insert relies on.
   final bool hideOnLoad;
 
-  /// The parameter list of each `WHERE NaturalKey IN (...)` lookup, in order —
-  /// so a test can assert the warm cache only fetches uncached keys and that a
-  /// large key set is chunked under the parameter limit.
+  /// The parameter list of each warm-cache `WHERE NaturalKey IN (...)` lookup
+  /// (outside the mint transaction), in order — so a test can assert the warm
+  /// cache only fetches uncached keys and that a large key set is chunked under
+  /// the parameter limit.
   final List<List<Object?>> lookups = [];
 
   final List<String> statements = [];
@@ -27,6 +30,7 @@ class _FakePersonIdDb implements SqlConnection {
   int opens = 0;
   int closes = 0;
   int transactions = 0;
+  bool _inTransaction = false;
 
   @override
   Future<List<SqlRow>> query(String sql, [List<Object?> p = const []]) async {
@@ -34,24 +38,16 @@ class _FakePersonIdDb implements SqlConnection {
     params.add(p);
     // Keyed lookup: SELECT NaturalKey, PersonId FROM ... WHERE NaturalKey IN (?, ...)
     if (sql.contains('SELECT NaturalKey, PersonId')) {
-      lookups.add(p);
-      if (hideOnLoad) return [];
+      if (!_inTransaction) {
+        lookups.add(p);
+        if (hideOnLoad) return [];
+      }
       final keys = p.cast<String>();
       return [
         for (final key in keys)
           if (table.containsKey(key))
             {'NaturalKey': key, 'PersonId': table[key]!},
       ];
-    }
-    // Read-back of one row: SELECT PersonId FROM ... WHERE NaturalKey = ?
-    if (sql.contains('SELECT PersonId FROM')) {
-      final key = p.single as String;
-      final id = table[key];
-      return id == null
-          ? []
-          : [
-              {'PersonId': id},
-            ];
     }
     throw StateError('unexpected query: $sql');
   }
@@ -60,13 +56,18 @@ class _FakePersonIdDb implements SqlConnection {
   Future<int> execute(String sql, [List<Object?> p = const []]) async {
     statements.add(sql);
     params.add(p);
-    // Guarded insert: params are [naturalKey, personId, naturalKey].
+    // Multi-row guarded insert: params are [key1, id1, key2, id2, …]; a row
+    // is written only when its key is still absent.
     if (sql.contains('INSERT INTO') && sql.contains('WHERE NOT EXISTS')) {
-      final key = p[0] as String;
-      final id = p[1] as String;
-      if (table.containsKey(key)) return 0; // key present ⇒ insert nothing
-      table[key] = id;
-      return 1;
+      var inserted = 0;
+      for (var i = 0; i < p.length; i += 2) {
+        final key = p[i] as String;
+        final id = p[i + 1] as String;
+        if (table.containsKey(key)) continue; // key present ⇒ insert nothing
+        table[key] = id;
+        inserted++;
+      }
+      return inserted;
     }
     throw StateError('unexpected execute: $sql');
   }
@@ -74,6 +75,7 @@ class _FakePersonIdDb implements SqlConnection {
   @override
   Future<T> transaction<T>(Future<T> Function(SqlConnection tx) action) async {
     transactions++;
+    _inTransaction = true;
     final snapshot = Map<String, String>.of(table);
     try {
       return await action(this);
@@ -82,6 +84,8 @@ class _FakePersonIdDb implements SqlConnection {
         ..clear()
         ..addAll(snapshot);
       rethrow;
+    } finally {
+      _inTransaction = false;
     }
   }
 
@@ -283,6 +287,31 @@ void main() {
       final resolver = resolverOver(db);
       await resolver.prepare(['wisa:1', 'wisa:2']);
       expect(db.transactions, 1);
+    });
+
+    test('minting is set-based: a few statements, never two per key (#99)',
+        () async {
+      // A first run over a real school mints ~1500 fresh keys; the per-key
+      // loop cost two network round-trips each and froze the UI. The batch
+      // shape is the fix, so pin it: 2500 fresh keys must produce two
+      // warm-cache lookups (2000-key limit), then per 1000-row insert chunk
+      // one INSERT and one read-back — 8 statements, not 5000.
+      final db = _FakePersonIdDb();
+      final resolver = resolverOver(db);
+      const rows = AzureSqlPersonIdResolver.maxRowsPerInsert;
+      final keys = [for (var i = 0; i < rows * 2 + 500; i++) 'wisa:$i'];
+
+      await resolver.prepare(keys);
+
+      final inserts =
+          db.statements.where((s) => s.contains('INSERT INTO')).length;
+      expect(inserts, 3, reason: '2500 keys in 1000-row insert chunks');
+      expect(db.statements, hasLength(2 + 3 + 3),
+          reason: 'lookups + inserts + read-backs, all batched');
+      // Every key resolved, all ids persisted.
+      expect(db.table, hasLength(keys.length));
+      expect(resolver.resolve('wisa:0').value, isNotEmpty);
+      expect(resolver.resolve('wisa:${keys.length - 1}').value, isNotEmpty);
     });
 
     test('keys and ids are bound as parameters, never interpolated', () async {

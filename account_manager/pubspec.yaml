@@ -17,6 +17,14 @@ dependencies:
   # Bare version: resolved through the root workspace.
   account_state:
 
+  # Directly-imported lower layers of the reconcile screen: the domain types
+  # (ILog, Origin, linked records), the action engine (dry-run/apply), and the
+  # WISA + Smartschool connectors the bootstrap wires up.
+  account_core:
+  account_actions:
+  wisa_api:
+  smartschool_api:
+
   # The Graph connector: needed here for the auth seam types the sign-in layer
   # implements (AzureAuthProvider, AzureCredentials, TokenCache).
   azure_api:
@@ -24,6 +32,14 @@ dependencies:
   # For the interactive loopback fallback's injectable HTTP client (the token
   # endpoint), shared with the OAuthAuthProvider reused from azure_api.
   http: ^1.2.0
+
+  # The loopback broker's silent leg redeems the held refresh token for
+  # another resource's scopes (oauth2.Credentials.refresh with newScopes).
+  oauth2: ^2.0.0
+
+  # FFI helpers (malloc, Utf16) for the DPAPI cipher that encrypts the
+  # persisted token cache at rest (#103).
+  ffi: ^2.1.0
 
   # Plink Labs design system — Flutter binding, external to this workspace
   # (not on pub.dev). Consumed as a git dependency so it resolves everywhere

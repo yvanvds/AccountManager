@@ -6,12 +6,15 @@ import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
+import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:azure_api/azure_api.dart' show AzureCredentials;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
+
+import '../test/reconcile/reconcile_fakes.dart';
 
 /// End-to-end runs of the *real* app in the real engine, with the Plink fonts
 /// bundled by the design-system package. This is the layer that catches
@@ -64,6 +67,74 @@ void main() {
     final TextStyle? display = Theme.of(context).textTheme.displaySmall;
     expect(display?.fontFamily, contains('Fraunces'));
     expect(find.text('Account Manager'), findsOneWidget);
+
+    // The shell carries the Reconcile destination; with no AAD config the
+    // screen renders its "not configured" panel instead of bootstrapping.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ReconcileScreen), findsOneWidget);
+    expect(find.text('Not configured'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the reconcile flow runs end-to-end: sign-in → sync → overview → '
+      'actions → dry-run → apply → unchanged re-sync',
+      (WidgetTester tester) async {
+    // The real app composition — shell, navigation, theme — over the offline
+    // reconcile harness (scripted syncers + recording transports), driven the
+    // way the operator drives it.
+    final harness = ReconcileHarness();
+    final broker = _FakeBroker(silent: (_) => _token('AT'));
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(broker),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byType(AppShell), findsOneWidget);
+
+    // Open the reconcile screen; the stack bootstraps lazily.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-sync')), findsOneWidget);
+
+    // Sync: all three systems pull, the overview + pending actions render.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.wisaSyncs, 1);
+    expect(harness.ssSyncs, 1);
+    expect(harness.azSyncs, 1);
+    expect(find.text('Linked overview'), findsOneWidget);
+    expect(find.textContaining('Pending actions'), findsOneWidget);
+    expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
+
+    // Dry-run: the projected changes render and nothing is written.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-dry-run')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-dry-run')));
+    await tester.pumpAndSettle();
+    expect(find.text('Dry-run result'), findsOneWidget);
+    expect(harness.soap.soapActions, isEmpty);
+
+    // Apply: confirm the dialog, the Smartschool write happens for real
+    // (against the recording transport).
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-apply')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(harness.soap.soapActions, isNotEmpty);
+
+    // Re-sync with unchanged WISA: the smart diff reports "no changes
+    // needed" and leaves Smartschool / Azure unread.
+    harness.wisaResult =
+        wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('no account changes needed'), findsWidgets);
+    expect(harness.ssSyncs, 1);
+    expect(harness.azSyncs, 1);
   });
 
   testWidgets('silent sign-in leads straight into the shell',
