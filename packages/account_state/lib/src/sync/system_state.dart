@@ -90,6 +90,26 @@ class SystemState<S extends core.Snapshot> {
     }
   }
 
+  /// Installs [snapshot] as the current [snapshot] **without running a sync** —
+  /// the incremental-refresh primitive (#72).
+  ///
+  /// The State layer uses this to splice an action's mutated connector record
+  /// into the in-memory snapshot after a successful `apply`, so a re-`link()`
+  /// sees the change with no network re-sync (the incremental-refresh
+  /// constraint from #40). [lastSync] is deliberately left untouched: a local
+  /// patch is not a fresh fetch, so the dashboard freshness badge must not
+  /// reset. Callers build [snapshot] by copying the current one with the single
+  /// record replaced/removed and reusing its `fetchedAt`.
+  ///
+  /// Rejected while a [sync] is in flight — patching the shared snapshot slot
+  /// under an in-flight sync would race the fresh result in.
+  void patch(S snapshot) {
+    if (_syncing) {
+      throw StateError('Cannot patch $system while a sync is in progress');
+    }
+    _snapshot = snapshot;
+  }
+
   /// Probes the connector with [tester] and records the outcome in
   /// [connection] ([core.ConnectionState.ok] / [core.ConnectionState.failed]).
   /// A tester that throws counts as a failed probe. The result is transient

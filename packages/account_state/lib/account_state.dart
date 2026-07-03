@@ -29,6 +29,13 @@
 ///   wired through a [PlacementResolver] built from the injected
 ///   [SmartschoolClassTree] (#55 / #65).
 ///
+/// Driving the action engine and keeping the snapshots consistent afterwards:
+///
+/// - [StateApplier] — runs an action's dry-run-capable `apply()`, then on a
+///   real write patches the owning snapshot from the mutated record and
+///   re-runs `link()` with no re-sync, or (for a `DontImportFromWisa` rule)
+///   accumulates it in [WisaImportRules] and re-syncs WISA (#72).
+///
 /// Pure Dart plus `dart:io`. No Flutter.
 library;
 
@@ -38,6 +45,8 @@ library;
 export 'package:account_core/account_core.dart' show PersonId, PersonIdResolver;
 export 'package:account_store/account_store.dart' show FilePersonIdResolver;
 
+export 'src/apply/state_applier.dart';
+export 'src/apply/wisa_import_rules.dart';
 export 'src/link/linked_state.dart';
 export 'src/link/placement.dart';
 export 'src/passwords/password_entry.dart';
