@@ -24,6 +24,7 @@ dependencies:
   azure_api:
   account_linker:
   account_actions:
+  uuid: ^4.5.0
 
 dev_dependencies:
   lints: ^5.1.0

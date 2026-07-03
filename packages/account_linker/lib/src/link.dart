@@ -53,6 +53,112 @@ LinkedSnapshot link(
   PersonIdResolver resolver, {
   required String schoolPrefix,
 }) {
+  // Build the student and staff records first, in that order, so the two
+  // populations' duplicate-mail warnings accumulate student-then-staff exactly
+  // as before. Group linking carries no identity, so it stays separate.
+  final warnings = <LinkWarning>[];
+  final studentRecords = _buildStudentRecords(
+    wisaSnapshot,
+    smartschoolSnapshot,
+    azureSnapshot,
+    schoolPrefix: schoolPrefix,
+    warnings: warnings,
+  );
+  final staffRecords = _buildStaffRecords(
+    wisaSnapshot,
+    smartschoolSnapshot,
+    azureSnapshot,
+    schoolPrefix: schoolPrefix,
+    warnings: warnings,
+  );
+
+  // Resolve a stable identity and confidence for each record — students first,
+  // then staff, so [resolver.resolve] is called in the same order as before
+  // (a sequential/minting resolver assigns ids in that order).
+  final accounts = <LinkedAccount>[
+    for (final rec in studentRecords)
+      LinkedAccount(
+        id: LinkedAccountId(resolver.resolve(_naturalKey(rec)).value),
+        role: PersonRole.student,
+        wisa: rec.wisa,
+        smartschool: rec.smartschool,
+        azure: rec.azure,
+        confidence: _confidence(rec),
+      ),
+  ];
+  final staff = <LinkedStaff>[
+    for (final rec in staffRecords)
+      LinkedStaff(
+        id: LinkedAccountId(resolver.resolve(_naturalStaffKey(rec)).value),
+        role: rec.smartschool?.role ?? PersonRole.teacher,
+        wisa: rec.wisa,
+        smartschool: rec.smartschool,
+        azure: rec.azure,
+        confidence: _staffConfidence(rec),
+      ),
+  ];
+
+  final groups = _linkGroups(wisaSnapshot, smartschoolSnapshot, azureSnapshot);
+
+  return LinkedSnapshot.fromRecords(
+    accounts: accounts,
+    staff: staff,
+    groups: groups,
+    warnings: warnings,
+  );
+}
+
+/// The set of natural keys [link] will hand to the [PersonIdResolver] for the
+/// same three snapshots — every student and staff key, deduplicated — derived
+/// by running the identical record-building passes but minting nothing.
+///
+/// A network-backed resolver cannot do I/O inside the synchronous
+/// `PersonIdResolver.resolve`, so it uses this to mint-or-fetch every id in one
+/// transaction *before* the pure [link] pass (see
+/// `PreparablePersonIdResolver`). Sharing the record-building with [link] keeps
+/// the key set and the resolve calls from ever drifting: any key returned here
+/// is exactly one [link] will resolve, and vice versa. Group records carry no
+/// [PersonId] (a group is keyed by name), so groups contribute nothing.
+Set<String> naturalKeysFor(
+  wapi.WisaSnapshot wisaSnapshot,
+  ss.SmartschoolSnapshot smartschoolSnapshot,
+  az.AzureSnapshot azureSnapshot, {
+  required String schoolPrefix,
+}) {
+  // The duplicate-mail warnings are a byproduct of building; discarded here.
+  final warnings = <LinkWarning>[];
+  final studentRecords = _buildStudentRecords(
+    wisaSnapshot,
+    smartschoolSnapshot,
+    azureSnapshot,
+    schoolPrefix: schoolPrefix,
+    warnings: warnings,
+  );
+  final staffRecords = _buildStaffRecords(
+    wisaSnapshot,
+    smartschoolSnapshot,
+    azureSnapshot,
+    schoolPrefix: schoolPrefix,
+    warnings: warnings,
+  );
+  return <String>{
+    for (final rec in studentRecords) _naturalKey(rec),
+    for (final rec in staffRecords) _naturalStaffKey(rec),
+  };
+}
+
+/// Builds one student [_Record] per linked person from the three snapshots,
+/// running the student bridges (spec `docs/domain-model.md` §6.2) but leaving
+/// identity resolution to the caller. Records are returned in creation order so
+/// the output is a deterministic function of the input order (INV-20).
+/// Duplicate-mail warnings (INV-23) are appended to [warnings].
+List<_Record> _buildStudentRecords(
+  wapi.WisaSnapshot wisaSnapshot,
+  ss.SmartschoolSnapshot smartschoolSnapshot,
+  az.AzureSnapshot azureSnapshot, {
+  required String schoolPrefix,
+  required List<LinkWarning> warnings,
+}) {
   // Records in creation order; the output preserves this order so the result
   // is a deterministic function of the input lists' order (INV-20).
   final records = <_Record>[];
@@ -60,7 +166,6 @@ LinkedSnapshot link(
   final byMail = <String, List<_Record>>{};
   // Normalized wisaId/accountId -> the first record indexed under it.
   final byWisaId = <String, _Record>{};
-  final warnings = <LinkWarning>[];
 
   // 1. Seed one record per Smartschool student account, in snapshot order.
   //    Staff (teacher/director role) are linked separately below, so they are
@@ -136,47 +241,18 @@ LinkedSnapshot link(
     // else: a user belonging to another school — not our concern, dropped.
   }
 
-  // 4. Resolve a stable identity and confidence for each record.
-  final accounts = <LinkedAccount>[
-    for (final rec in records)
-      LinkedAccount(
-        id: LinkedAccountId(resolver.resolve(_naturalKey(rec)).value),
-        role: PersonRole.student,
-        wisa: rec.wisa,
-        smartschool: rec.smartschool,
-        azure: rec.azure,
-        confidence: _confidence(rec),
-      ),
-  ];
-
-  final staff = _linkStaff(
-    wisaSnapshot,
-    smartschoolSnapshot,
-    azureSnapshot,
-    resolver,
-    schoolPrefix: schoolPrefix,
-    warnings: warnings,
-  );
-
-  final groups = _linkGroups(wisaSnapshot, smartschoolSnapshot, azureSnapshot);
-
-  return LinkedSnapshot.fromRecords(
-    accounts: accounts,
-    staff: staff,
-    groups: groups,
-    warnings: warnings,
-  );
+  return records;
 }
 
-/// Links the staff population, mirroring the student passes above but using
-/// the staff-specific bridges (see the `link` doc-comment): WISA staff match
-/// Smartschool by `code` (≡ `accountId`) and Azure by `wisaId` (≡
-/// `employeeId`). Appends any duplicate-mail warnings to [warnings].
-List<LinkedStaff> _linkStaff(
+/// Builds one staff [_StaffRecord] per linked staff member, mirroring
+/// [_buildStudentRecords] but using the staff-specific bridges (see the [link]
+/// doc-comment): WISA staff match Smartschool by `code` (≡ `accountId`) and
+/// Azure by `wisaId` (≡ `employeeId`). Appends any duplicate-mail warnings to
+/// [warnings].
+List<_StaffRecord> _buildStaffRecords(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
-  az.AzureSnapshot azureSnapshot,
-  PersonIdResolver resolver, {
+  az.AzureSnapshot azureSnapshot, {
   required String schoolPrefix,
   required List<LinkWarning> warnings,
 }) {
@@ -266,18 +342,7 @@ List<LinkedStaff> _linkStaff(
     // else: a user belonging to another school/population — dropped.
   }
 
-  // 4. Resolve a stable identity, role, and confidence for each record.
-  return <LinkedStaff>[
-    for (final rec in records)
-      LinkedStaff(
-        id: LinkedAccountId(resolver.resolve(_naturalStaffKey(rec)).value),
-        role: rec.smartschool?.role ?? PersonRole.teacher,
-        wisa: rec.wisa,
-        smartschool: rec.smartschool,
-        azure: rec.azure,
-        confidence: _staffConfidence(rec),
-      ),
-  ];
+  return records;
 }
 
 /// Links the class-group population, ported from legacy

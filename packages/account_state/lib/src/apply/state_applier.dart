@@ -94,8 +94,12 @@ class StateApplier {
   /// The current derived linked view over [app]'s snapshots, built with the
   /// uniqueness-aware configs. Rebuild the UI's action lists from this after
   /// every sync or apply. Throws [StateError] if a system has not synced yet
-  /// (see [LinkedState.fromApplication]).
-  LinkedState link() => LinkedState.fromApplication(
+  /// (see [LinkedState.fromApplicationAsync]).
+  ///
+  /// Asynchronous because [resolver] may be a [PreparablePersonIdResolver] (the
+  /// DB-backed identity map), which is primed before the pure `link()` runs; a
+  /// file/in-memory resolver skips that step and this resolves immediately.
+  Future<LinkedState> link() => LinkedState.fromApplicationAsync(
         app,
         resolver: resolver,
         studentConfig: _studentConfig,
@@ -194,7 +198,7 @@ class StateApplier {
         );
     }
 
-    return ApplyResult(result, link());
+    return ApplyResult(result, await link());
   }
 }
 

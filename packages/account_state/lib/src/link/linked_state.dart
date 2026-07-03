@@ -97,6 +97,45 @@ class LinkedState {
     );
   }
 
+  /// The async counterpart of [LinkedState.recompute] for a
+  /// [PreparablePersonIdResolver] (the DB-backed [AzureSqlPersonIdResolver]).
+  ///
+  /// A network-backed resolver cannot mint inside the synchronous pure `link()`,
+  /// so its id map is populated up front: this computes the exact key set with
+  /// `naturalKeysFor` (over the same snapshots and `schoolPrefix` the linker
+  /// uses) and awaits `resolver.prepare(keys)` before delegating to the
+  /// synchronous [recompute]. A plain [PersonIdResolver] (file/in-memory) is not
+  /// preparable and mints lazily, so it skips the prepare step and this behaves
+  /// exactly like [recompute].
+  static Future<LinkedState> recomputeAsync({
+    required wapi.WisaSnapshot wisa,
+    required ss.SmartschoolSnapshot smartschool,
+    required az.AzureSnapshot azure,
+    required PersonIdResolver resolver,
+    required actions.StudentActionConfig studentConfig,
+    required actions.StaffActionConfig staffConfig,
+    SmartschoolClassTree classTree = const SmartschoolClassTree(),
+  }) async {
+    if (resolver is PreparablePersonIdResolver) {
+      final keys = naturalKeysFor(
+        wisa,
+        smartschool,
+        azure,
+        schoolPrefix: studentConfig.schoolPrefix,
+      );
+      await resolver.prepare(keys);
+    }
+    return LinkedState.recompute(
+      wisa: wisa,
+      smartschool: smartschool,
+      azure: azure,
+      resolver: resolver,
+      studentConfig: studentConfig,
+      staffConfig: staffConfig,
+      classTree: classTree,
+    );
+  }
+
   /// Recomputes the linked view from an [ApplicationState]'s current snapshots.
   ///
   /// Throws a [StateError] when any system has not synced yet (its snapshot is
@@ -109,6 +148,47 @@ class LinkedState {
     required actions.StaffActionConfig staffConfig,
     SmartschoolClassTree classTree = const SmartschoolClassTree(),
   }) {
+    final (wisa, smartschool, azure) = _syncedSnapshots(app);
+    return LinkedState.recompute(
+      wisa: wisa,
+      smartschool: smartschool,
+      azure: azure,
+      resolver: resolver,
+      studentConfig: studentConfig,
+      staffConfig: staffConfig,
+      classTree: classTree,
+    );
+  }
+
+  /// The async counterpart of [LinkedState.fromApplication] for a
+  /// [PreparablePersonIdResolver]: same "every system must have synced" guard,
+  /// then delegates to [recomputeAsync] so a DB-backed resolver is prepared
+  /// before linking. Use this (not [fromApplication]) whenever the resolver may
+  /// be network-backed.
+  static Future<LinkedState> fromApplicationAsync(
+    ApplicationState app, {
+    required PersonIdResolver resolver,
+    required actions.StudentActionConfig studentConfig,
+    required actions.StaffActionConfig staffConfig,
+    SmartschoolClassTree classTree = const SmartschoolClassTree(),
+  }) async {
+    final (wisa, smartschool, azure) = _syncedSnapshots(app);
+    return recomputeAsync(
+      wisa: wisa,
+      smartschool: smartschool,
+      azure: azure,
+      resolver: resolver,
+      studentConfig: studentConfig,
+      staffConfig: staffConfig,
+      classTree: classTree,
+    );
+  }
+
+  /// Returns [app]'s three current snapshots, or throws a [StateError] when any
+  /// system has not synced yet — linking needs all three views, mirroring how
+  /// the legacy dashboard only re-linked after the syncs had run.
+  static (wapi.WisaSnapshot, ss.SmartschoolSnapshot, az.AzureSnapshot)
+      _syncedSnapshots(ApplicationState app) {
     final wisa = app.wisa.snapshot;
     final smartschool = app.smartschool.snapshot;
     final azure = app.azure.snapshot;
@@ -119,14 +199,6 @@ class LinkedState {
         'azure: ${azure != null}).',
       );
     }
-    return LinkedState.recompute(
-      wisa: wisa,
-      smartschool: smartschool,
-      azure: azure,
-      resolver: resolver,
-      studentConfig: studentConfig,
-      staffConfig: staffConfig,
-      classTree: classTree,
-    );
+    return (wisa, smartschool, azure);
   }
 }

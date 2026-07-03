@@ -104,6 +104,20 @@ Sliced into per-adapter issues: **#82** foundation, **#83** settings, **#84**
 secrets, **#85** PersonId resolver, **#86** password queue, plus **#89** the
 concrete ODBC/FFI `SqlConnectionFactory` deferred out of #83.
 
+**#85 — resolve-ahead PersonId seam.** The one place a seam swap *does* ripple
+above it: the pure `link()` calls `PersonIdResolver.resolve` synchronously, but
+a DB read is async, so the Azure SQL resolver cannot mint lazily on a miss the
+way `FilePersonIdResolver` does. Instead it mints **ahead** of the pass — a new
+`PreparablePersonIdResolver.prepare(keys)` runs the transactional mint-or-fetch
+(insert-if-absent under the natural-key primary key, then read back the winner,
+so concurrent operators converge on one id) before any `LinkedAccount` is built,
+and `resolve` becomes a total in-memory lookup. `account_linker.naturalKeysFor`
+enumerates the exact key set from the same record-building passes `link` uses,
+and the State layer drives it through the async `LinkedState.recomputeAsync` /
+`fromApplicationAsync` (so `StateApplier.link` now returns a `Future`). A
+file/in-memory resolver is not preparable and keeps minting lazily, so the sync
+`recompute` path is unchanged.
+
 **Provisioned infrastructure** (subscription *Yvan's Azure*, region
 `belgiumcentral`, resource group `accountmanager-rg`):
 

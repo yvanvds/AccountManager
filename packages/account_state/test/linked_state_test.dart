@@ -177,6 +177,31 @@ class _SeqResolver implements core.PersonIdResolver {
       core.PersonId(_seen.putIfAbsent(naturalKey, () => 'p${_seen.length}'));
 }
 
+/// A [PreparablePersonIdResolver] stand-in (the shape of the DB-backed one):
+/// [resolve] is total and throws for any key not [prepare]d, so a test proves
+/// the async link path primes exactly the keys the pure pass will resolve.
+class _PreparableResolver implements core.PreparablePersonIdResolver {
+  final Map<String, String> _cache = {};
+  final List<Set<String>> prepareCalls = [];
+
+  @override
+  Future<void> prepare(Iterable<String> naturalKeys) async {
+    prepareCalls.add(naturalKeys.toSet());
+    for (final key in naturalKeys) {
+      _cache.putIfAbsent(key, () => 'db${_cache.length}');
+    }
+  }
+
+  @override
+  core.PersonId resolve(String naturalKey) {
+    final id = _cache[naturalKey];
+    if (id == null) {
+      throw StateError('resolve("$naturalKey") before prepare');
+    }
+    return core.PersonId(id);
+  }
+}
+
 final _studentConfig =
     StudentActionConfig(schoolPrefix: 'GBS', azureDomain: 'school.example');
 final _staffConfig =
@@ -468,6 +493,85 @@ void main() {
         ),
         throwsStateError,
       );
+    });
+  });
+
+  group('LinkedState async path primes a PreparablePersonIdResolver', () {
+    test('recomputeAsync prepares the natural keys before linking', () async {
+      final resolver = _PreparableResolver();
+      final wisa = _wSnap(students: [_wStudent(wisaId: '1', classGroup: '1A')]);
+
+      // A DB-backed resolver throws on an unprepared key, so this only succeeds
+      // if recomputeAsync primed the key set before running the pure link().
+      final state = await LinkedState.recomputeAsync(
+        wisa: wisa,
+        smartschool: _sSnap(),
+        azure: _aSnap(),
+        resolver: resolver,
+        studentConfig: _studentConfig,
+        staffConfig: _staffConfig,
+      );
+
+      expect(state.snapshot.accounts, hasLength(1));
+      expect(resolver.prepareCalls, hasLength(1));
+      expect(resolver.prepareCalls.single, contains('wisa:1'));
+      expect(state.snapshot.accounts.single.id.value, startsWith('db'));
+    });
+
+    test('fromApplicationAsync primes from an ApplicationState', () async {
+      final resolver = _PreparableResolver();
+      final app = ApplicationState(
+        wisa: _sys(
+          core.Origin.wisa,
+          _wSnap(students: [_wStudent(wisaId: '1', classGroup: '1A')]),
+        ),
+        smartschool: _sys(core.Origin.smartschool, _sSnap()),
+        azure: _sys(core.Origin.azure, _aSnap()),
+      );
+
+      final state = await LinkedState.fromApplicationAsync(
+        app,
+        resolver: resolver,
+        studentConfig: _studentConfig,
+        staffConfig: _staffConfig,
+      );
+
+      expect(state.snapshot.accounts, hasLength(1));
+      expect(resolver.prepareCalls.single, contains('wisa:1'));
+    });
+
+    test('fromApplicationAsync still guards on an unsynced system', () {
+      final app = ApplicationState(
+        wisa: _sys(core.Origin.wisa, _wSnap()),
+        smartschool: _sys(core.Origin.smartschool, _sSnap()),
+        azure: _sys<az.AzureSnapshot>(core.Origin.azure, null),
+      );
+
+      expect(
+        LinkedState.fromApplicationAsync(
+          app,
+          resolver: _PreparableResolver(),
+          studentConfig: _studentConfig,
+          staffConfig: _staffConfig,
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('a non-preparable resolver skips prepare and links unchanged',
+        () async {
+      // recomputeAsync must stay a drop-in for a file/in-memory resolver: no
+      // prepare capability, mints lazily inside resolve, same result.
+      final state = await LinkedState.recomputeAsync(
+        wisa: _wSnap(students: [_wStudent(wisaId: '1', classGroup: '1A')]),
+        smartschool: _sSnap(),
+        azure: _aSnap(),
+        resolver: _SeqResolver(),
+        studentConfig: _studentConfig,
+        staffConfig: _staffConfig,
+      );
+      expect(state.snapshot.accounts, hasLength(1));
+      expect(state.snapshot.accounts.single.id.value, startsWith('p'));
     });
   });
 }
