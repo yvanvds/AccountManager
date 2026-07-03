@@ -2,13 +2,37 @@
 
 Layer-5 orchestration package for the Arcadia Account Manager port.
 
-This is the seam-defining scaffold. It ships the **persistence interfaces**
-the orchestration layer (sync → link → apply, settings, password generation)
-will plug into, each with an in-memory default and a file-backed default — but
-**no orchestration logic yet**. Later slices add the engine on top of these
-seams without changing them.
+It ships the **persistence interfaces** the orchestration layer (sync → link →
+apply, settings, password generation) plugs into, each with an in-memory
+default and a file-backed default, plus the first slice of orchestration on top
+of them: **snapshot ownership and `sync`**. Later slices add link/apply without
+changing these seams.
 
 Pure Dart plus `dart:io`. No Flutter, no UI coupling.
+
+## Sync + snapshot ownership
+
+The State layer owns the three connector snapshots and drives syncs
+(domain-model §6.1):
+
+- `SystemState<S>` holds one system's last-good snapshot, its `lastSync`
+  (stamped from the snapshot's `fetchedAt`), and a **transient** connection-test
+  state (`ConnectionState`, starts `unknown` every session, never persisted).
+  `sync()` calls an injected `Syncer<S>` and replaces the stored snapshot only
+  on success — a failed sync leaves the previous snapshot and `lastSync`
+  intact. It mirrors a legacy per-system `*State` but carries no config, disk,
+  or observers.
+- `ApplicationState` owns the three `SystemState`s and exposes
+  `sync(Origin) → Future<Snapshot>`, dispatching to the matching system.
+
+The connector and its per-sync parameters live behind the `Syncer` seam
+(`Future<S> Function(S? previous)`), so this layer stays connector-agnostic and
+unit-testable against fakes. The `previous` argument is what threads
+incremental state: `azureSyncer` reads `previous.deltaToken` to run
+`/users/delta` from day one (PAIN-2) instead of re-pulling the whole tenant.
+WISA and Smartschool do a full read each sync, so their syncers are the
+one-liner `(_) => connector.sync(...)` written at the wiring site, where the
+WISA workdate and import-rule sets (folded in by a later slice) are available.
 
 ## Persist vs derive
 

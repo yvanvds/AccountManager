@@ -1,8 +1,7 @@
 /// Layer-5 orchestration package for the Arcadia Account Manager port.
 ///
-/// This slice ships only the **persistence seams** the orchestration layer
-/// will plug into — no sync/link/apply logic yet (spec `docs/domain-model.md`
-/// §7, PROJECT_OVERVIEW §5–§7):
+/// Persistence seams the orchestration layer plugs into (spec
+/// `docs/domain-model.md` §7, PROJECT_OVERVIEW §5–§7):
 ///
 /// - [SettingsStore] — load/save the [AppSettings] config model, including the
 ///   per-connector import-rule sets.
@@ -14,6 +13,14 @@
 /// Every seam has an in-memory default so the layer is testable headlessly
 /// with zero network and zero infra. The persist-vs-derive split — what is
 /// stored here vs recomputed by the linker — is described in the README.
+///
+/// On top of the seams, the sync layer owns the connector snapshots
+/// (domain-model §6.1):
+///
+/// - [SystemState] — one system's last-good snapshot, `lastSync`, and transient
+///   connection-test state; `sync()` replaces the snapshot only on success.
+/// - [ApplicationState] — the three [SystemState]s plus a `sync(Origin)` entry
+///   point. [azureSyncer] wires the delta-from-day-one behaviour (PAIN-2).
 ///
 /// Pure Dart plus `dart:io`. No Flutter.
 library;
@@ -29,3 +36,5 @@ export 'src/passwords/password_queue_store.dart';
 export 'src/settings/app_settings.dart';
 export 'src/settings/import_rule_codec.dart';
 export 'src/settings/settings_store.dart';
+export 'src/sync/application_state.dart';
+export 'src/sync/system_state.dart';
