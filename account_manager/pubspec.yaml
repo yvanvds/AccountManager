@@ -1,0 +1,33 @@
+name: account_manager
+description: Arcadia Account Manager — Flutter Windows desktop app.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # The orchestration layer (re-exports the lower pure-Dart packages).
+  # Bare version: resolved through the root workspace.
+  account_state:
+
+  # Plink Labs design system — Flutter binding, external to this workspace
+  # (not on pub.dev), so it stays an explicit path dependency.
+  plink_design_system:
+    path: ../../PlinkLabs/plink-design-system/bindings/flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

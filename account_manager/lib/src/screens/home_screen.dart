@@ -1,0 +1,43 @@
+import 'package:flutter/material.dart';
+import 'package:plink_design_system/plink_design_system.dart';
+
+/// The landing screen of the shell.
+///
+/// A placeholder for now: it confirms the app is alive, wrapped in the Plink
+/// theme, and names the views that later Phase C slices will wire in. It is
+/// intentionally content-light — the real work lands on the reconcile screen.
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final bool ink = Theme.of(context).brightness == Brightness.dark;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: Padding(
+          padding: const EdgeInsets.all(PlinkSpacing.s6),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Eyebrow('Arcadia · account synchronisation', onInk: ink),
+              const SizedBox(height: PlinkSpacing.s4),
+              Text('Account Manager', style: text.displaySmall),
+              const SizedBox(height: PlinkSpacing.s4),
+              Text(
+                'Reconciles user accounts and class groups across WISA, '
+                'Smartschool and Azure AD / Office 365. Views are added as '
+                'each Phase C slice lands — starting with sign-in and the '
+                'reconcile screen.',
+                style: text.bodyLarge,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
