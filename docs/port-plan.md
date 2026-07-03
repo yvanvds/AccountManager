@@ -165,6 +165,23 @@ fully covered by fake-transport unit tests, and — because it only reads — it
 opt-in live check (`KeyVaultLiveConfig`) is a genuine read against the vault, not
 a skipped placeholder.
 
+**Shared password queue (#86).** `AzureSqlPasswordQueueStore` backs the
+`PasswordQueueStore` seam against the same Azure SQL database, replacing
+`FilePasswordQueueStore` so the pending-password queue is shared rather than
+sitting on the generating operator's disk — the whole point being that one
+operator generates the passwords and another prints the sheets. Both
+`PasswordAccountKind`s live in one `dbo.PasswordQueue` table (the `Kind` column
+discriminates them, collapsing the legacy `Passwords.json` / `CoPasswords.json`
+split), every `PasswordEntry` field a typed column. `load`/`save` follow the
+same fresh-connection-per-call, whole-queue-replace-in-one-transaction shape as
+the settings store. Unlike the other Phase B tables it holds live plaintext
+passwords by design: they are **short-lived**, drained by a post-distribution
+`save` of the remaining (usually empty) list, and stored as the password itself
+rather than a Key Vault `SecretRef` because a one-shot distribution secret has no
+identity to resolve later. Covered by seam-fake unit tests; its write-capable
+live round-trip stays skipped until #89 (manual/opt-in per the live-testing
+policy, never in the read-only CI set).
+
 ### Phase C — Flutter Windows desktop app *(not started, epic #75)*
 
 Port the six WPF pages (Dashboard, Klassen, Accounts, Passwords, Acties,
