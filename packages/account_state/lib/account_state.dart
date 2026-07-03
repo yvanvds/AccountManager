@@ -22,6 +22,13 @@
 /// - [ApplicationState] — the three [SystemState]s plus a `sync(Origin)` entry
 ///   point. [azureSyncer] wires the delta-from-day-one behaviour (PAIN-2).
 ///
+/// On top of the snapshots, the linked view is **derived** (never persisted):
+///
+/// - [LinkedState] — re-runs the pure `link()` over the current snapshots and
+///   the three action dispatchers, with the membership/tree-dependent actions
+///   wired through a [PlacementResolver] built from the injected
+///   [SmartschoolClassTree] (#55 / #65).
+///
 /// Pure Dart plus `dart:io`. No Flutter.
 library;
 
@@ -31,6 +38,8 @@ library;
 export 'package:account_core/account_core.dart' show PersonId, PersonIdResolver;
 export 'package:account_store/account_store.dart' show FilePersonIdResolver;
 
+export 'src/link/linked_state.dart';
+export 'src/link/placement.dart';
 export 'src/passwords/password_entry.dart';
 export 'src/passwords/password_queue_store.dart';
 export 'src/settings/app_settings.dart';

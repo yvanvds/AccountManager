@@ -1,0 +1,224 @@
+import 'package:account_actions/account_actions.dart';
+import 'package:account_core/account_core.dart';
+import 'package:smartschool_api/smartschool_api.dart' as ss;
+import 'package:wisa_api/wisa_api.dart' as wapi;
+
+/// The Smartschool class-tree configuration used to resolve a new class's
+/// *logical parent* — the group a freshly created official class hangs under.
+///
+/// Ported from legacy `Connector.StudentYear` / `StudentGrade` / `StudentPath`
+/// and the `GroupManager.GetLogicalParent` switch on them
+/// (`legacy-wpf/AccountApi/Smartschool/GroupManager.cs`). A school configures
+/// **one** of two schemes:
+/// - [years]: seven group codes, one per school year (`1..7`); or
+/// - [grades]: three group codes, one per grade (years 1–2, 3–4, 5–7).
+///
+/// [path] is the fallback root code used when neither scheme is fully
+/// configured. All three default to empty, matching a not-yet-configured
+/// Smartschool tenant.
+///
+/// This is Smartschool live-config, deferred out of `AppSettings` like the
+/// connection credentials; the State layer injects it into [PlacementResolver]
+/// when it recomputes derived state, so the placement builder never reaches
+/// into connector config itself.
+class SmartschoolClassTree {
+  const SmartschoolClassTree({
+    this.years = const [],
+    this.grades = const [],
+    this.path = '',
+  });
+
+  /// Seven group codes, one per school year, or empty when the school
+  /// configures grades instead. Legacy `Connector.StudentYear`.
+  final List<String> years;
+
+  /// Three group codes, one per grade, or empty when the school configures
+  /// years instead. Legacy `Connector.StudentGrade`.
+  final List<String> grades;
+
+  /// Fallback root group code used when neither [years] nor [grades] is fully
+  /// configured. Legacy `Connector.StudentPath`.
+  final String path;
+
+  /// The logical-parent group *code* for a class whose name starts with
+  /// [year] (the class's first digit, `1..7`). Mirrors legacy
+  /// `GetLogicalParent`: prefer the per-year code, then the per-grade code,
+  /// then the flat [path].
+  ///
+  /// Returns `null` when [year] is out of the `1..7` range — legacy returned an
+  /// empty string there, which `FindByCode` never resolved; `null` makes the
+  /// "no parent" outcome explicit so [GroupPlacement.parent] is left unset.
+  String? parentCodeForYear(int year) {
+    if (year < 1 || year > 7) return null;
+    if (years.length == 7) return years[year - 1];
+    if (grades.length == 3) {
+      switch (year) {
+        case 1:
+        case 2:
+          return grades[0];
+        case 3:
+        case 4:
+          return grades[1];
+        default:
+          return grades[2];
+      }
+    }
+    return path;
+  }
+}
+
+/// Builds the [ClassPlacement] / [GroupPlacement] inputs the action engine's
+/// membership- and tree-dependent actions need, from the WISA and Smartschool
+/// snapshots (spec `docs/domain-model.md` §3.7, PAIN-1).
+///
+/// A [LinkedAccount] / [LinkedGroup] alone cannot answer "which official class
+/// is this student currently in?" or "does this WISA class hold students, and
+/// what Smartschool parent does it hang under?" — those live in the
+/// Smartschool memberships / group tree and the WISA class roster, which the
+/// linker does not project onto a linked record (which is why #55 / #65
+/// deferred the actions that need them). This resolver walks those snapshots
+/// **once** in its constructor and exposes two tear-off-friendly methods,
+/// [classPlacementFor] and [groupPlacementFor], that the State layer passes as
+/// the dispatchers' `placementFor` callbacks.
+///
+/// Keeping the walk here preserves `account_actions`' pure-function boundary:
+/// an action reads the placement it is handed, it never touches a snapshot.
+class PlacementResolver {
+  PlacementResolver({
+    required wapi.WisaSnapshot wisa,
+    required ss.SmartschoolSnapshot smartschool,
+    this.classTree = const SmartschoolClassTree(),
+  }) {
+    // Index the Smartschool tree by name (for resolveClass) and by code (for
+    // the current-class and logical-parent lookups). First wins on a
+    // collision, keeping the result a deterministic function of snapshot order.
+    for (final group in smartschool.groups) {
+      final name = _norm(group.name);
+      if (name != null) _groupsByName.putIfAbsent(name, () => group);
+      _groupsByCode.putIfAbsent(group.id.value, () => group);
+    }
+
+    // A student's current official class, keyed by Smartschool uid. Legacy
+    // `Smartschool.Account.Group` held a single class name; with first-class
+    // memberships (INV-30) we take the first membership that resolves to an
+    // official class group.
+    for (final membership in smartschool.memberships) {
+      final uid = _norm(membership.uid);
+      if (uid == null) continue;
+      final group = _groupsByCode[membership.groupId.value];
+      if (group == null ||
+          !group.official ||
+          group.type != GroupType.classGroup) {
+        continue;
+      }
+      _currentClassByUid.putIfAbsent(uid, () => group);
+    }
+
+    // WISA students, indexed by wisaId so [classPlacementFor] can recover the
+    // concrete record (class group / sub-group) from a [LinkedAccount], which
+    // only carries the `wisaId` linking key. Also collect the class names that
+    // currently hold a student — legacy `WisaClassGroup.ContainsStudents`
+    // (`student.ClassGroup == Name`).
+    for (final student in wisa.students) {
+      final wisaId = _norm(student.wisaId.value);
+      if (wisaId != null) {
+        _wisaStudentByWisaId.putIfAbsent(wisaId, () => student);
+      }
+      final classGroup = _norm(student.classGroup);
+      if (classGroup != null) _classGroupsWithStudents.add(classGroup);
+    }
+
+    // Class names that use sub-groups: legacy `ClassGroupManager.UseSubGroups`
+    // — a class whose rows carry more than one distinct admin code. Also index
+    // WISA classes by fullName so [groupPlacementFor] can recover the source
+    // class (bare name / year) from a [LinkedGroup] keyed by fullName.
+    final adminCodesByName = <String, Set<String>>{};
+    for (final group in wisa.classGroups) {
+      final name = _norm(group.name);
+      if (name != null) {
+        adminCodesByName
+            .putIfAbsent(name, () => <String>{})
+            .add(group.adminCode);
+      }
+      final fullName = _norm(group.fullName);
+      if (fullName != null) _wisaByFullName.putIfAbsent(fullName, () => group);
+    }
+    for (final entry in adminCodesByName.entries) {
+      if (entry.value.length > 1) _subGroupClassNames.add(entry.key);
+    }
+  }
+
+  /// The class-tree config driving [GroupPlacement.parent] resolution.
+  final SmartschoolClassTree classTree;
+
+  final Map<String, Group> _groupsByName = {};
+  final Map<String, Group> _groupsByCode = {};
+  final Map<String, Group> _currentClassByUid = {};
+  final Map<String, wapi.WisaStudent> _wisaStudentByWisaId = {};
+  final Set<String> _subGroupClassNames = {};
+  final Map<String, wapi.WisaClassGroup> _wisaByFullName = {};
+  final Set<String> _classGroupsWithStudents = {};
+
+  /// Builds the [ClassPlacement] for one student (the dispatcher only calls
+  /// this for `account.wisa != null` records; a WISA-less lifecycle account
+  /// never needs a placement).
+  ///
+  /// - [ClassPlacement.className] is the WISA `classGroup`, plus the
+  ///   `classSubGroup` when the class uses sub-groups (legacy
+  ///   `Student.ClassName`).
+  /// - [ClassPlacement.currentClass] is the student's current official
+  ///   Smartschool class, sourced from the memberships, or `null` when the
+  ///   student has no Smartschool account or no official class membership.
+  /// - [ClassPlacement.resolveClass] resolves a class name against the whole
+  ///   Smartschool tree (legacy `GroupManager.Root.Find`).
+  ClassPlacement classPlacementFor(LinkedAccount account) {
+    final wisaId = _norm(account.wisa?.wisaId.value);
+    final student = wisaId == null ? null : _wisaStudentByWisaId[wisaId];
+    final classGroup = student?.classGroup ?? '';
+    final subGroup = student?.classSubGroup ?? '';
+    final useSubGroups = _subGroupClassNames.contains(_norm(classGroup));
+    final className = useSubGroups ? '$classGroup $subGroup' : classGroup;
+
+    final uid = _norm(account.smartschool?.uid);
+    final currentClass = uid == null ? null : _currentClassByUid[uid];
+
+    return ClassPlacement(
+      className: className,
+      currentClass: currentClass,
+      resolveClass: (name) => _groupsByName[_norm(name)],
+    );
+  }
+
+  /// Builds the [GroupPlacement] for one WISA-only class (the dispatcher only
+  /// calls this for `wisa != null && smartschool == null` groups).
+  ///
+  /// - [GroupPlacement.containsStudents] is whether the WISA class currently
+  ///   holds students (legacy `WisaClassGroup.ContainsStudents`), which selects
+  ///   `AddToSmartschool` (populated) over `CreateInSmartschool` (empty).
+  /// - [GroupPlacement.parent] is the resolved Smartschool parent group
+  ///   (legacy `GetLogicalParent` → `Root.FindByCode`), or `null` when the
+  ///   class year is out of range or the parent node is absent from the tree.
+  GroupPlacement groupPlacementFor(LinkedGroup group) {
+    // [LinkedGroup.wisa] is keyed by fullName; recover the source WISA class to
+    // read its bare name and year.
+    final wisaClass = _wisaByFullName[_norm(group.wisa?.name)];
+    final containsStudents = wisaClass != null &&
+        _classGroupsWithStudents.contains(_norm(wisaClass.name));
+    final parentCode = classTree.parentCodeForYear(wisaClass?.year ?? -1);
+    final parent = parentCode == null ? null : _groupsByCode[parentCode];
+
+    return GroupPlacement(
+      containsStudents: containsStudents,
+      parent: parent,
+    );
+  }
+}
+
+/// Trims and lower-cases [value] for case-insensitive, whitespace-tolerant
+/// matching (INV-12), returning `null` for a null or blank input so an empty
+/// key never indexes or matches anything. Mirrors the linker's `_norm`.
+String? _norm(String? value) {
+  if (value == null) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed.toLowerCase();
+}
