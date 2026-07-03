@@ -2,7 +2,12 @@ import 'dart:convert';
 
 import 'package:account_manager/src/auth/auth.dart';
 import 'package:azure_api/azure_api.dart'
-    show AzureAuthException, AzureAuthProvider, AzureCredentials;
+    show
+        AzureAuthException,
+        AzureAuthProvider,
+        AzureCredentials,
+        InMemoryTokenCache,
+        TokenCache;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -100,6 +105,7 @@ void main() {
     /// refresh request and each authorizer invocation.
     (LoopbackAadBroker, List<Map<String, String>>, List<Uri>) build({
       bool rejectRefresh = false,
+      TokenCache Function(String resourceId)? cacheFactory,
     }) {
       final refreshRequests = <Map<String, String>>[];
       final authorizerCalls = <Uri>[];
@@ -108,6 +114,7 @@ void main() {
         tenantId: 'tenant-abc',
         azureDomain: 'school.example',
         schoolPrefix: 'GBS',
+        cacheFactory: cacheFactory,
         authorizer: (authUrl, redirect) async {
           authorizerCalls.add(authUrl);
           return {'code': 'auth-code-xyz'};
@@ -174,6 +181,28 @@ void main() {
 
       expect(await broker.acquireSilent(AadResource.sql), isNull);
       expect(refreshRequests, isNotEmpty, reason: 'the redeem was attempted');
+    });
+
+    test('a persistent cache survives a "restart" — silent, no browser',
+        () async {
+      // The same backing store handed to two broker instances models an app
+      // restart with the DPAPI file cache (#103): the second run signs in
+      // with no interactive prompt at all.
+      final store = <String, TokenCache>{};
+      TokenCache persistent(String id) =>
+          store.putIfAbsent(id, InMemoryTokenCache.new);
+
+      final (first, _, firstAuthorizer) = build(cacheFactory: persistent);
+      await first.acquireInteractive(graph);
+      expect(firstAuthorizer, hasLength(1));
+
+      final (second, _, secondAuthorizer) = build(cacheFactory: persistent);
+      final token = await second.acquireSilent(graph);
+
+      expect(token, isNotNull);
+      expect(token!.accessToken, 'INTERACTIVE-AT',
+          reason: 'the persisted, still-valid token is reused as-is');
+      expect(secondAuthorizer, isEmpty, reason: 'no browser on the re-run');
     });
   });
 }

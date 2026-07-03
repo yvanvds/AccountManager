@@ -18,10 +18,11 @@ import 'aad_resource.dart';
 /// AAD refresh token is issued per client (app), not per scope set, so once
 /// any resource has signed in interactively, [acquireSilent] redeems that
 /// refresh token for the next resource's scopes with no browser round-trip.
-/// Graph pays the one interactive prompt at startup; SQL and Key Vault are
-/// then acquired silently. Nothing persists across restarts — the caches are
-/// in-memory, so a fresh run pays one prompt again (#103 tracks the encrypted
-/// on-disk cache).
+/// With a persistent [cacheFactory] (the DPAPI-encrypted file cache, #103)
+/// the refresh token also survives restarts, so a returning operator signs in
+/// with no browser at all; the default in-memory caches pay one interactive
+/// prompt per run (Graph at startup — SQL and Key Vault always follow
+/// silently).
 ///
 /// One [OAuthAuthProvider] is built per resource (each with that resource's
 /// scopes + `offline_access`) and kept, so its cache survives across calls.
@@ -52,15 +53,25 @@ class LoopbackAadBroker implements AadBroker {
     http.Client? httpClient,
     Duration assumedLifetime = const Duration(minutes: 50),
     DateTime Function()? clock,
+    TokenCache Function(String resourceId)? cacheFactory,
   }) {
     final client = httpClient ?? http.Client();
     final now = clock ?? DateTime.now;
+    final makeCache = cacheFactory ?? ((_) => InMemoryTokenCache());
     final caches = <String, TokenCache>{};
     TokenCache cacheFor(String id) =>
-        caches.putIfAbsent(id, InMemoryTokenCache.new);
+        caches.putIfAbsent(id, () => makeCache(id));
 
+    // Materializes the cache on first use — with a persistent factory that
+    // is what reads the previous run's credentials back off disk.
     Future<oauth2.Credentials?> storedCredentials(String id) async {
-      final stored = await caches[id]?.read();
+      final String? stored;
+      try {
+        stored = await cacheFor(id).read();
+      } on FormatException {
+        // Undecryptable payload (tampered / another user's): no cache.
+        return null;
+      }
       if (stored == null || stored.isEmpty) return null;
       try {
         return oauth2.Credentials.fromJson(stored);
