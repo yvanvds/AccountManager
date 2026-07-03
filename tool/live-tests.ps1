@@ -17,17 +17,24 @@
   Each connector's test self-skips when its trigger var is absent, so a
   missing .env file just skips that connector rather than failing.
 
+  Azure SQL works the same way as Azure: the bearer token is minted fresh for
+  the SQL resource (https://database.windows.net/) rather than stored, and the
+  server/database names come from .azuresql.env. That check is read-only -- it
+  verifies the operator can mint a SQL-scoped token, and does not write to the
+  database.
+
 .PARAMETER Only
-  Restrict the run to one connector: wisa, smartschool, or azure.
+  Restrict the run to one connector: wisa, smartschool, azure, or azuresql.
   Default: all.
 
 .EXAMPLE
   ./tool/live-tests.ps1
   ./tool/live-tests.ps1 -Only azure
+  ./tool/live-tests.ps1 -Only azuresql
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('all', 'wisa', 'smartschool', 'azure')]
+  [ValidateSet('all', 'wisa', 'smartschool', 'azure', 'azuresql')]
   [string]$Only = 'all'
 )
 
@@ -71,6 +78,17 @@ try {
     }
     $env:AZURE_ACCESS_TOKEN = $tok
     $dirs += 'packages/azure_api/test/integration/'
+  }
+
+  if ($Only -in @('all', 'azuresql')) {
+    Import-EnvFile (Join-Path $repoRoot '.azuresql.env')
+    Write-Host "  minting fresh read-only Azure SQL token via az..."
+    $sqlTok = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sqlTok)) {
+      throw "az account get-access-token failed. Run 'az login' first (with an account that is an AAD admin on the SQL server)."
+    }
+    $env:AZURE_SQL_ACCESS_TOKEN = $sqlTok
+    $dirs += 'packages/account_state/test/integration/'
   }
 
   $dirList = $dirs -join ' '

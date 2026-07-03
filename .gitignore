@@ -305,3 +305,6 @@ packages/azure_api/captures/
 
 # Populated .azure.env (real token/ids). Only .azure.env.example is committed.
 .azure.env
+
+# Populated .azuresql.env (real server/db). Only .azuresql.env.example is committed.
+.azuresql.env

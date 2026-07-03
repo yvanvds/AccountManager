@@ -93,12 +93,42 @@ Two seams keep the model clean:
   an argument instead of reading `DateTime.now()` internally, so the model has
   no hidden clock and round-trips deterministically.
 
-### Phase B — centralized Azure SQL persistence *(not started, epic #74)*
+### Phase B — centralized Azure SQL persistence *(epic #74, in progress)*
 
 Swap the file-backed defaults (`FilePersonIdResolver`, `FileSettingsStore`,
 `FilePasswordQueueStore`) and the `InMemorySecretProvider` for centralized
 adapters — Azure SQL for the shared state, Key Vault for the secrets — so the
 tool can move to team maintenance. Nothing above the seams changes.
+
+Sliced into per-adapter issues: **#82** foundation (this slice), **#83**
+settings, **#84** secrets, **#85** PersonId resolver, **#86** password queue.
+
+**Provisioned infrastructure** (subscription *Yvan's Azure*, region
+`belgiumcentral`, resource group `accountmanager-rg`):
+
+| Resource | Name | Notes |
+|---|---|---|
+| SQL server | `accountmanager-sql-arcadia.database.windows.net` | AAD-only auth; no SQL login. AAD admin: the operator identity. |
+| SQL database | `accountmanager` | Serverless `GP_S_Gen5`, min 0.5 vCore, auto-pause 60 min, local backup — near-zero idle cost. |
+| Key Vault | `accountmanager-kv` (`https://accountmanager-kv.vault.azure.net/`) | RBAC-authorized; operator holds *Key Vault Secrets Officer*. |
+
+Firewall allows Azure services plus the operator's client IP. AAD-only means
+every connection carries a per-operator bearer token minted for
+`https://database.windows.net/` — no shared database secret exists.
+
+**Connectivity decision (spike, #82): ODBC Driver 18 via FFI.** Dart has no
+production-grade pure-Dart Azure SQL / TDS driver; the community Flutter plugins
+(`mssql_connection`, `sql_conn`) are method-channel/mobile-oriented, not pure
+Dart. Since the frontend is a **Windows desktop** app (Phase C), the adapters
+will use FFI over the Microsoft **ODBC Driver 18 for SQL Server** (`msodbcsql18`,
+a standard redistributable bundled with the installer), authenticated with the
+AAD token. A REST front (Data API builder / Function) was rejected because it
+reintroduces the hosting the epic deliberately avoids. The DB + AAD-only +
+token-auth round-trip was **proven end to end** during the spike (connect →
+create table → insert → read back `roundtrip-ok` → drop, `SUSER_SNAME()` =
+the operator UPN); the Dart-side ODBC factory and its DB round-trip test land
+with the first adapter slice (#83). The `account_state` connection/auth seam
+(`SqlConnection` / `SqlConnectionFactory` / `AadTokenProvider`) is in place now.
 
 ### Phase C — Flutter Windows desktop app *(not started, epic #75)*
 

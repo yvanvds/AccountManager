@@ -9,6 +9,10 @@
 /// - `PersonIdResolver` (re-exported from `account_core`) — the identity seam,
 ///   with `account_store`'s [FilePersonIdResolver] as the default
 ///   implementation.
+/// - [SqlConnection] / [SqlConnectionFactory] + [AadTokenProvider] — the
+///   connection/auth seam the Phase B Azure SQL adapters plug into (#74). The
+///   database is AAD-only, so a connection is authenticated with a per-operator
+///   bearer token; the concrete ODBC/FFI factory lands with the first adapter.
 ///
 /// Every seam has an in-memory default so the layer is testable headlessly
 /// with zero network and zero infra. The persist-vs-derive split — what is
@@ -57,5 +61,9 @@ export 'src/settings/import_rule_codec.dart';
 export 'src/settings/secret_provider.dart';
 export 'src/settings/settings_store.dart';
 export 'src/settings/work_date.dart';
+export 'src/sql/aad_token_provider.dart';
+export 'src/sql/azure_sql_config.dart';
+export 'src/sql/azure_sql_live_config.dart';
+export 'src/sql/sql_connection.dart';
 export 'src/sync/application_state.dart';
 export 'src/sync/system_state.dart';
