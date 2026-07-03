@@ -110,6 +110,15 @@ Future<ReconcileServices> bootstrapReconcile({
       );
   final AppSettings settings;
   try {
+    // First-run provisioning on the real SQL path: the schema DDL ships with
+    // account_state as idempotent statements (IF OBJECT_ID ... IS NULL), so
+    // running it on every launch is a cheap no-op once the tables exist and
+    // saves the team a manual deployment step. The person-identity table is
+    // included because the resolver hits it at the first link. An injected
+    // settings store means a test (or another persistence backend) — no DDL.
+    if (settingsStore == null) {
+      await _provisionSchema(factory, sqlConfig, sqlTokens);
+    }
     settings = await store.load();
   } on Object catch (e) {
     // IM002 is the ODBC driver manager's "no such driver" state: the
@@ -257,6 +266,29 @@ Future<ReconcileServices> bootstrapReconcile({
     ),
     log: logBuffer,
   );
+}
+
+/// Runs the idempotent schema DDL for the tables this screen touches: the
+/// settings singleton + import rules (read at bootstrap) and the person-id
+/// identity map (read/minted at every link). The password-queue table is
+/// deliberately not provisioned here — password distribution is a follow-up
+/// slice and its adapter can provision its own table when it lands.
+Future<void> _provisionSchema(
+  SqlConnectionFactory factory,
+  AzureSqlConfig config,
+  AadTokenProvider tokens,
+) async {
+  final connection = await factory.open(config, tokens);
+  try {
+    for (final ddl in <String>[
+      ...settingsSchemaStatements,
+      ...personIdentitySchemaStatements,
+    ]) {
+      await connection.execute(ddl);
+    }
+  } finally {
+    await connection.close();
+  }
 }
 
 /// The Smartschool class-tree live-config, derived from the persisted

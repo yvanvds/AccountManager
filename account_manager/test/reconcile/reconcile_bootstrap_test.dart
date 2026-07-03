@@ -34,6 +34,47 @@ class _UnreachableFactory implements SqlConnectionFactory {
       throw StateError('bootstrap must not open a SQL connection');
 }
 
+/// Records every statement run through it; queries return no rows (an
+/// unprovisioned/empty database).
+class _RecordingConnection implements SqlConnection {
+  _RecordingConnection(this.executed);
+
+  final List<String> executed;
+  bool closed = false;
+
+  @override
+  Future<List<SqlRow>> query(String sql, [List<Object?>? params]) async =>
+      const [];
+
+  @override
+  Future<int> execute(String sql, [List<Object?>? params]) async {
+    executed.add(sql);
+    return 0;
+  }
+
+  @override
+  Future<T> transaction<T>(Future<T> Function(SqlConnection tx) action) =>
+      action(this);
+
+  @override
+  Future<void> close() async => closed = true;
+}
+
+class _RecordingFactory implements SqlConnectionFactory {
+  final List<String> executed = <String>[];
+  final List<_RecordingConnection> connections = <_RecordingConnection>[];
+
+  @override
+  Future<SqlConnection> open(
+    AzureSqlConfig config,
+    AadTokenProvider tokens,
+  ) async {
+    final connection = _RecordingConnection(executed);
+    connections.add(connection);
+    return connection;
+  }
+}
+
 AppSettings _settings({
   String server = 'wisa.local',
   String port = '9000',
@@ -137,6 +178,38 @@ void main() {
         () => _bootstrap(store: const _ThrowingStore('login timed out')),
         throwsA('login timed out'),
       );
+    });
+
+    test('the real SQL path provisions the schema before the first load',
+        () async {
+      // No injected settings store → the Azure SQL store over the (fake)
+      // factory. The empty database yields a default AppSettings, whose blank
+      // WISA profile then fails validation — but by that point the idempotent
+      // DDL for the settings and person-identity tables must have run.
+      final factory = _RecordingFactory();
+
+      await expectLater(
+        bootstrapReconcile(
+          session: SignInSession(FakeBroker()),
+          aad: _aad,
+          secretProvider: _secrets(),
+          sqlFactory: factory,
+        ),
+        throwsA(isA<ReconcileConfigException>().having(
+          (e) => e.message,
+          'message',
+          contains('WISA connection profile'),
+        )),
+      );
+
+      final ddl = factory.executed.join('\n');
+      expect(ddl, contains('CREATE TABLE dbo.AppSettings'));
+      expect(ddl, contains('CREATE TABLE dbo.ImportRules'));
+      expect(ddl, contains('CREATE TABLE dbo.PersonIdentity'));
+      expect(ddl, isNot(contains('dbo.PasswordQueue')),
+          reason: 'the password queue is a follow-up slice');
+      expect(factory.connections.every((c) => c.closed), isTrue,
+          reason: 'the provisioning connection must not leak');
     });
   });
 
