@@ -40,4 +40,11 @@ class AadResource {
     id: 'sql',
     scopes: <String>['https://database.windows.net/.default'],
   );
+
+  /// The centralized Key Vault data plane (`https://vault.azure.net/`), where
+  /// the WISA password and Smartschool passphrase live (issue #84).
+  static const AadResource vault = AadResource(
+    id: 'vault',
+    scopes: <String>['https://vault.azure.net/.default'],
+  );
 }

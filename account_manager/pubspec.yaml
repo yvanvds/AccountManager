@@ -17,6 +17,14 @@ dependencies:
   # Bare version: resolved through the root workspace.
   account_state:
 
+  # Directly-imported lower layers of the reconcile screen: the domain types
+  # (ILog, Origin, linked records), the action engine (dry-run/apply), and the
+  # WISA + Smartschool connectors the bootstrap wires up.
+  account_core:
+  account_actions:
+  wisa_api:
+  smartschool_api:
+
   # The Graph connector: needed here for the auth seam types the sign-in layer
   # implements (AzureAuthProvider, AzureCredentials, TokenCache).
   azure_api:

@@ -10,6 +10,7 @@ import 'src/auth/composite_broker.dart';
 import 'src/auth/loopback_aad_broker.dart';
 import 'src/auth/method_channel_aad_broker.dart';
 import 'src/auth/sign_in_session.dart';
+import 'src/reconcile/reconcile_bootstrap.dart';
 
 void main() {
   // Azure AD app-registration values come from --dart-define (see
@@ -43,6 +44,12 @@ void main() {
     AccountManagerApp(
       session: session,
       graph: config.isConfigured ? config.graph : null,
+      // The reconcile stack (settings from Azure SQL, secrets from Key Vault,
+      // the three connectors) is assembled lazily, the first time the screen
+      // is opened — after the sign-in gate has a session to mint tokens from.
+      reconcileBootstrap: config.isConfigured
+          ? () => bootstrapReconcile(session: session, aad: config)
+          : null,
     ),
   );
 }

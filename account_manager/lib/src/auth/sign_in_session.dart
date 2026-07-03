@@ -1,4 +1,5 @@
-import 'package:account_state/account_state.dart' show AadTokenProvider;
+import 'package:account_state/account_state.dart'
+    show AadTokenProvider, KeyVaultTokenProvider;
 import 'package:azure_api/azure_api.dart'
     show AzureAuthException, AzureAuthProvider;
 
@@ -116,4 +117,16 @@ class SqlSessionTokenProvider implements AadTokenProvider {
 
   @override
   Future<String> databaseAccessToken() => _session.tokenFor(AadResource.sql);
+}
+
+/// Adapts a [SignInSession] to the Key Vault auth seam ([KeyVaultTokenProvider])
+/// so the WISA password and Smartschool passphrase are read with the operator's
+/// own AAD identity (Key Vault Secrets Officer), no stored vault secret.
+class VaultSessionTokenProvider implements KeyVaultTokenProvider {
+  VaultSessionTokenProvider(this._session);
+
+  final SignInSession _session;
+
+  @override
+  Future<String> vaultAccessToken() => _session.tokenFor(AadResource.vault);
 }
