@@ -1,0 +1,132 @@
+import 'package:account_actions/account_actions.dart' as actions;
+import 'package:account_core/account_core.dart';
+import 'package:account_linker/account_linker.dart';
+import 'package:azure_api/azure_api.dart' as az;
+import 'package:smartschool_api/smartschool_api.dart' as ss;
+import 'package:wisa_api/wisa_api.dart' as wapi;
+
+import '../sync/application_state.dart';
+import 'placement.dart';
+
+/// The State layer's **derived** view of one link+dispatch pass: the pure
+/// [LinkedSnapshot] plus the per-family action lists the UI renders.
+///
+/// Ties the three layers together (spec `docs/domain-model.md` §6.2–§6.4):
+/// the pure `link()` reconciles the current connector snapshots, then the
+/// action dispatchers derive the applicable actions — with the membership- and
+/// tree-dependent ones wired through a [PlacementResolver] so
+/// `MoveToSmartschoolClassGroup`, the placement step in `AddStudentToSmartschool`,
+/// and the group `AddToSmartschool` / `CreateInSmartschool` actions are
+/// considered (#55 / #65).
+///
+/// **Never persisted.** This is recomputed from the snapshots on demand, never
+/// written to disk — legacy `LinkedState.SaveContent` deliberately threw, and
+/// the port keeps that by giving the linked view no persistence seam at all
+/// (README "persist vs derive"). Rebuild it with [LinkedState.fromApplication]
+/// (or [LinkedState.recompute]) whenever a sync replaces a snapshot.
+class LinkedState {
+  const LinkedState({
+    required this.snapshot,
+    required this.studentActions,
+    required this.staffActions,
+    required this.groupActions,
+  });
+
+  /// The reconciled output of `link()` over the three current snapshots.
+  final LinkedSnapshot snapshot;
+
+  /// Applicable student actions, in snapshot order, with class placement wired.
+  final List<actions.StudentAction> studentActions;
+
+  /// Applicable staff actions, in snapshot order. Staff carry no placement
+  /// (their Office 365 group actions are out of the port's scope), so this is a
+  /// plain dispatch — included here so [LinkedState] is the one derived view of
+  /// every family, not just the placement-bearing two.
+  final List<actions.StaffAction> staffActions;
+
+  /// Applicable group actions, in snapshot order, with group placement wired.
+  final List<actions.GroupAction> groupActions;
+
+  /// Recomputes the linked view from three concrete snapshots.
+  ///
+  /// Runs the pure `link()` (scoped by the shared `schoolPrefix` the
+  /// [studentConfig] / [staffConfig] carry) and then the three dispatchers,
+  /// binding a [PlacementResolver] built from the WISA + Smartschool snapshots
+  /// and the injected [classTree] to the student and group `placementFor`
+  /// callbacks.
+  factory LinkedState.recompute({
+    required wapi.WisaSnapshot wisa,
+    required ss.SmartschoolSnapshot smartschool,
+    required az.AzureSnapshot azure,
+    required PersonIdResolver resolver,
+    required actions.StudentActionConfig studentConfig,
+    required actions.StaffActionConfig staffConfig,
+    SmartschoolClassTree classTree = const SmartschoolClassTree(),
+  }) {
+    assert(
+      studentConfig.schoolPrefix == staffConfig.schoolPrefix,
+      'student/staff configs must share the school prefix the linker scopes by',
+    );
+
+    final snapshot = link(
+      wisa,
+      smartschool,
+      azure,
+      resolver,
+      schoolPrefix: studentConfig.schoolPrefix,
+    );
+
+    final placements = PlacementResolver(
+      wisa: wisa,
+      smartschool: smartschool,
+      classTree: classTree,
+    );
+
+    return LinkedState(
+      snapshot: snapshot,
+      studentActions: actions.studentActions(
+        snapshot,
+        studentConfig,
+        placementFor: placements.classPlacementFor,
+      ),
+      staffActions: actions.staffActions(snapshot, staffConfig),
+      groupActions: actions.groupActions(
+        snapshot,
+        placementFor: placements.groupPlacementFor,
+      ),
+    );
+  }
+
+  /// Recomputes the linked view from an [ApplicationState]'s current snapshots.
+  ///
+  /// Throws a [StateError] when any system has not synced yet (its snapshot is
+  /// still `null`): linking needs all three views, mirroring how the legacy
+  /// dashboard only re-linked after the syncs had run.
+  factory LinkedState.fromApplication(
+    ApplicationState app, {
+    required PersonIdResolver resolver,
+    required actions.StudentActionConfig studentConfig,
+    required actions.StaffActionConfig staffConfig,
+    SmartschoolClassTree classTree = const SmartschoolClassTree(),
+  }) {
+    final wisa = app.wisa.snapshot;
+    final smartschool = app.smartschool.snapshot;
+    final azure = app.azure.snapshot;
+    if (wisa == null || smartschool == null || azure == null) {
+      throw StateError(
+        'Cannot link before every system has synced at least once '
+        '(wisa: ${wisa != null}, smartschool: ${smartschool != null}, '
+        'azure: ${azure != null}).',
+      );
+    }
+    return LinkedState.recompute(
+      wisa: wisa,
+      smartschool: smartschool,
+      azure: azure,
+      resolver: resolver,
+      studentConfig: studentConfig,
+      staffConfig: staffConfig,
+      classTree: classTree,
+    );
+  }
+}
