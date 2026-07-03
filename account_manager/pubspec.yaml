@@ -18,9 +18,14 @@ dependencies:
   account_state:
 
   # Plink Labs design system — Flutter binding, external to this workspace
-  # (not on pub.dev), so it stays an explicit path dependency.
+  # (not on pub.dev). Consumed as a git dependency so it resolves everywhere
+  # (CI + fresh clones), pinned to a commit for reproducibility. To hack on the
+  # design system locally, add a path override in dependency_overrides.
   plink_design_system:
-    path: ../../PlinkLabs/plink-design-system/bindings/flutter
+    git:
+      url: https://github.com/plinklabs/plink-design-system.git
+      path: bindings/flutter
+      ref: 527e2dc0e350b1a21b78d6cefcfd847c16e9f501
 
 dev_dependencies:
   flutter_test:
