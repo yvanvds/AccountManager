@@ -108,7 +108,22 @@ Future<ReconcileServices> bootstrapReconcile({
         config: sqlConfig,
         tokens: sqlTokens,
       );
-  final settings = await store.load();
+  final AppSettings settings;
+  try {
+    settings = await store.load();
+  } on Object catch (e) {
+    // IM002 is the ODBC driver manager's "no such driver" state: the
+    // machine is missing the msodbcsql18 prerequisite, not misconfigured
+    // settings — surface that as the actionable problem.
+    if (e.toString().contains('IM002')) {
+      throw const ReconcileConfigException(
+        'The Microsoft ODBC Driver 18 for SQL Server is not installed on '
+        'this machine, so the settings store cannot be reached. Install it '
+        '(winget install Microsoft.msodbcsql.18) and try again.',
+      );
+    }
+    rethrow;
+  }
 
   final secrets = secretProvider ??
       KeyVaultSecretProvider(

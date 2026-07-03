@@ -30,6 +30,7 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
   ReconcileServices? _services;
   Object? _bootstrapError;
   bool _bootstrapping = false;
+  int _attempts = 0;
 
   @override
   void initState() {
@@ -41,6 +42,7 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
     final make = widget.bootstrap;
     if (make == null) return;
     setState(() {
+      _attempts++;
       _bootstrapping = true;
       _bootstrapError = null;
     });
@@ -67,10 +69,13 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
     }
     final error = _bootstrapError;
     if (error != null) {
+      // A fast failure makes a retry look like a dead button — say the
+      // attempt happened.
+      final retryNote = _attempts > 1 ? '\n\n(Attempt $_attempts failed.)' : '';
       return _MessagePanel(
         eyebrow: 'Arcadia · reconcile',
         title: 'Could not prepare the reconcile screen',
-        message: error.toString(),
+        message: '$error$retryNote',
         action: FilledButton(
           key: const ValueKey('reconcile-bootstrap-retry'),
           onPressed: _bootstrap,

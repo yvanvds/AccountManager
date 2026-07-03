@@ -48,6 +48,24 @@ void main() {
     expect(find.byKey(const ValueKey('reconcile-sync')), findsOneWidget);
   });
 
+  testWidgets('a retry that fails again visibly reports the new attempt',
+      (WidgetTester tester) async {
+    // A fast repeat failure re-renders an identical panel, which reads as a
+    // dead button — the attempt note is the feedback that the retry ran.
+    await tester.pumpWidget(_wrap(ReconcileScreen(
+      bootstrap: () async =>
+          throw const ReconcileConfigException('driver missing'),
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('(Attempt'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-bootstrap-retry')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('(Attempt 2 failed.)'), findsOneWidget);
+  });
+
   testWidgets(
       'sync → overview → pending actions → dry-run → apply → unchanged banner',
       (WidgetTester tester) async {
