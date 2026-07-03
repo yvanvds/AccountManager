@@ -20,9 +20,47 @@ void main() {
       expect(actions.map((a) => a.runtimeType), [ModifySmartschoolData]);
     });
 
-    test('WISA only → DoNotImportFromWisa', () {
+    test('WISA only, no placement → DoNotImportFromWisa only (#54 behaviour)',
+        () {
       final actions = groupActionsFor(linkedGroup(wisa: wisaGroup()));
       expect(actions.map((a) => a.runtimeType), [DoNotImportFromWisa]);
+    });
+
+    test('WISA only with students → DoNotImportFromWisa + AddToSmartschool',
+        () {
+      final actions = groupActionsFor(
+        linkedGroup(wisa: wisaGroup()),
+        placementFor: (_) => groupPlacement(containsStudents: true),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromWisa, AddToSmartschool],
+      );
+    });
+
+    test('WISA only, empty class → DoNotImportFromWisa + CreateInSmartschool',
+        () {
+      final actions = groupActionsFor(
+        linkedGroup(wisa: wisaGroup()),
+        placementFor: (_) => groupPlacement(containsStudents: false),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromWisa, CreateInSmartschool],
+      );
+    });
+
+    test('placement is not consulted for a both-present class', () {
+      var called = false;
+      final actions = groupActionsFor(
+        fullySyncedGroup(),
+        placementFor: (_) {
+          called = true;
+          return groupPlacement();
+        },
+      );
+      expect(actions, isEmpty);
+      expect(called, isFalse, reason: 'only WISA-only classes need placement');
     });
 
     test('Smartschool only → DoNotImportFromSmartschool (informational)', () {
@@ -56,6 +94,26 @@ void main() {
       expect(
         actions.map((a) => a.runtimeType),
         [DoNotImportFromWisa, ModifySmartschoolData],
+      );
+    });
+
+    test('threads placementFor so WISA-only classes gain a create action', () {
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [],
+        staff: const [],
+        groups: [
+          linkedGroup(wisa: wisaGroup(name: '1A')), // WISA-only, has students
+          fullySyncedGroup(), // clean → none, placement untouched
+        ],
+      );
+
+      final actions = groupActions(
+        snapshot,
+        placementFor: (_) => groupPlacement(containsStudents: true),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromWisa, AddToSmartschool],
       );
     });
   });

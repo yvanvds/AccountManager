@@ -39,6 +39,69 @@ void main() {
       expect(field.after, 'Nieuw');
     });
 
+    test('ModifySmartschoolData reports Untis drift converging to the name',
+        () {
+      // Institute + description agree; only the Untis code drifted.
+      final action = ModifySmartschoolData(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(untis: 'stale-untis'),
+        ),
+      );
+      final field = action.describeChanges().fields.single;
+      expect(field.field, 'untis');
+      expect(field.before, 'stale-untis');
+      expect(field.after, '3A');
+    });
+
+    test(
+        'AddToSmartschool.describeChanges is deterministic and names the parent',
+        () {
+      final action = AddToSmartschool(
+        linkedGroup(wisa: wisaGroup(name: '3A')),
+        groupPlacement(),
+      );
+      final a = action.describeChanges();
+      final b = action.describeChanges();
+      expect(a.system, Origin.smartschool);
+      expect(
+        a.fields.map((f) => '${f.field}:${f.after}'),
+        b.fields.map((f) => '${f.field}:${f.after}'),
+      );
+      expect(
+        a.fields.firstWhere((f) => f.field == 'parent').after,
+        'jaar-3',
+      );
+    });
+
+    test('AddToSmartschool.evaluate keys on the membership signal', () {
+      final group = linkedGroup(wisa: wisaGroup());
+      expect(
+        AddToSmartschool(group, groupPlacement(containsStudents: true))
+            .evaluate(),
+        isTrue,
+      );
+      expect(
+        AddToSmartschool(group, groupPlacement(containsStudents: false))
+            .evaluate(),
+        isFalse,
+      );
+    });
+
+    test('CreateInSmartschool.evaluate is the empty-class complement', () {
+      final group = linkedGroup(wisa: wisaGroup());
+      expect(
+        CreateInSmartschool(group, groupPlacement(containsStudents: false))
+            .evaluate(),
+        isTrue,
+      );
+      expect(
+        CreateInSmartschool(group, groupPlacement(containsStudents: true))
+            .evaluate(),
+        isFalse,
+      );
+    });
+
     test('DoNotImportFromWisa describes the rule it would add', () {
       final change =
           DoNotImportFromWisa(linkedGroup(wisa: wisaGroup(name: '3A')))

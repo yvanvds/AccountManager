@@ -22,6 +22,13 @@ class Group {
 
   final String? instituteNumber;
   final int? adminNumber;
+
+  /// The Untis timetable code Smartschool stores for the class. Empty when the
+  /// system carries none: WISA exposes no Untis value, and a freshly imported
+  /// Smartschool class has it blank until it is set to the class [name]. Legacy
+  /// `IGroup.Untis`; `ModifySmartschoolData` converges a drifted value to [name].
+  final String untis;
+
   final Origin origin;
 
   const Group({
@@ -33,6 +40,7 @@ class Group {
     this.parentId,
     this.instituteNumber,
     this.adminNumber,
+    this.untis = '',
     required this.origin,
   });
 
@@ -45,6 +53,7 @@ class Group {
         if (parentId != null) 'parentId': parentId!.toJson(),
         if (instituteNumber != null) 'instituteNumber': instituteNumber,
         if (adminNumber != null) 'adminNumber': adminNumber,
+        if (untis.isNotEmpty) 'untis': untis,
         'origin': origin.toJson(),
       };
 
@@ -59,6 +68,7 @@ class Group {
             : GroupId(json['parentId'] as String),
         instituteNumber: json['instituteNumber'] as String?,
         adminNumber: json['adminNumber'] as int?,
+        untis: json['untis'] as String? ?? '',
         origin: Origin.fromJson(json['origin'] as String),
       );
 
@@ -74,6 +84,7 @@ class Group {
           parentId == other.parentId &&
           instituteNumber == other.instituteNumber &&
           adminNumber == other.adminNumber &&
+          untis == other.untis &&
           origin == other.origin;
 
   @override
@@ -86,6 +97,7 @@ class Group {
         parentId,
         instituteNumber,
         adminNumber,
+        untis,
         origin,
       );
 }

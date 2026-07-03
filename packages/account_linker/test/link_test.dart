@@ -230,6 +230,28 @@ void main() {
       expect(g.confidence, LinkConfidence.medium);
     });
 
+    test('WISA projection carries adminCode as adminNumber, empty untis (#65)',
+        () {
+      final snapshot = link(
+        wisaSnap(
+          const [],
+          classGroups: [
+            wisaClassGroup('3B', schoolCode: '456', adminCode: '42'),
+          ],
+        ),
+        ssSnap(const []),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final wisa = snapshot.groups.single.wisa!;
+      expect(wisa.instituteNumber, '456');
+      expect(wisa.adminNumber, 42);
+      // WISA carries no Untis code; AddToSmartschool seeds it from the name.
+      expect(wisa.untis, '');
+    });
+
     test('Smartschool-only orphan group is kept (#52)', () {
       final snapshot = link(
         wisaSnap(const []),

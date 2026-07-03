@@ -58,7 +58,8 @@ class SmartschoolGroup {
         children = children ?? <SmartschoolGroup>[];
 
   /// Projects this node to an immutable [core.Group]. `parentId` is set from
-  /// [parentCode] when it is non-empty.
+  /// [parentCode] when it is non-empty. [untis] is carried through so the
+  /// action engine can detect Untis-only drift (`ModifySmartschoolData`).
   core.Group toCoreGroup() => core.Group(
         id: core.GroupId(code),
         name: name,
@@ -70,6 +71,7 @@ class SmartschoolGroup {
             : null,
         instituteNumber: instituteNumber.isEmpty ? null : instituteNumber,
         adminNumber: adminNumber == 0 ? null : adminNumber,
+        untis: untis,
         origin: core.Origin.smartschool,
       );
 }

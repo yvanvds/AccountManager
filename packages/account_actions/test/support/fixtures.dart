@@ -297,11 +297,13 @@ LinkedStaff fullySyncedStaff() => linkedStaff(
 
 /// A WISA-side canonical [Group], as the linker's `_wisaToCoreGroup` projects a
 /// class group: named by its `fullName`, always an official class, `schoolCode`
-/// as the institute number, and no tree edge or admin number.
+/// as the institute number, `adminCode` as the admin number, no tree edge and
+/// no Untis code.
 Group wisaGroup({
   String name = '3A',
   String description = 'Klas 3A',
   String? instituteNumber = '123456',
+  int? adminNumber = 7,
 }) =>
     Group(
       id: GroupId(name),
@@ -310,12 +312,14 @@ Group wisaGroup({
       type: GroupType.classGroup,
       official: true,
       instituteNumber: instituteNumber,
+      adminNumber: adminNumber,
       origin: Origin.wisa,
     );
 
 /// A Smartschool-side canonical [Group] (an official class), with a tree parent
 /// and admin number the WISA side lacks. Defaults line up with [wisaGroup] so a
-/// [fullySyncedGroup] triggers no action.
+/// [fullySyncedGroup] triggers no action — including [untis], which defaults to
+/// [name] (no Untis drift); pass a different value to force drift.
 Group ssGroup({
   String code = '3A',
   String name = '3A',
@@ -323,6 +327,7 @@ Group ssGroup({
   String? instituteNumber = '123456',
   int? adminNumber = 7,
   String? parentId = 'jaar-3',
+  String? untis,
 }) =>
     Group(
       id: GroupId(code),
@@ -333,7 +338,35 @@ Group ssGroup({
       parentId: parentId == null ? null : GroupId(parentId),
       instituteNumber: instituteNumber,
       adminNumber: adminNumber,
+      untis: untis ?? name,
       origin: Origin.smartschool,
+    );
+
+/// The logical parent [AddToSmartschool] hangs a new class under — legacy
+/// `GroupManager.GetLogicalParent` resolved through `Root.FindByCode`. A
+/// non-official year/grade node in the Smartschool tree.
+Group ssParentGroup({String code = 'jaar-3', String name = 'Derde jaar'}) =>
+    Group(
+      id: GroupId(code),
+      name: name,
+      description: '',
+      type: GroupType.group,
+      official: false,
+      origin: Origin.smartschool,
+    );
+
+/// A [GroupPlacement] for a WISA-only class. Defaults to a populated class
+/// (`containsStudents: true`) with a resolvable parent — the [AddToSmartschool]
+/// happy path. Pass `containsStudents: false` for the [CreateInSmartschool]
+/// case, or `withParent: false` to simulate an unresolvable parent.
+GroupPlacement groupPlacement({
+  bool containsStudents = true,
+  Group? parent,
+  bool withParent = true,
+}) =>
+    GroupPlacement(
+      containsStudents: containsStudents,
+      parent: parent ?? (withParent ? ssParentGroup() : null),
     );
 
 /// Builds a [LinkedGroup] from optional per-system records. Omit a system to

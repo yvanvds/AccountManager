@@ -6,6 +6,7 @@ import 'action_result.dart';
 import 'apply_options.dart';
 import 'change_set.dart';
 import 'connectors.dart';
+import 'group_placement.dart';
 
 /// The group action family (spec `docs/domain-model.md` §3.10). One subclass
 /// per legacy `Action\Group\*` class, mirroring [StudentAction]/[StaffAction].
@@ -30,14 +31,16 @@ import 'connectors.dart';
 ///   [ActionResult.group] (a [Group]), not [ActionResult.smartschool] (a
 ///   `SmartschoolAccount`).
 ///
-/// **Scope (issue #54, "fitting subset").** Only the actions the [LinkedGroup]
-/// model can express ship here: [DoNotImportFromWisa], [DoNotImportFromSmartschool]
-/// (informational), and [ModifySmartschoolData]. The legacy `AddToSmartschool` /
-/// `CreateInSmartschool` actions, and standalone Untis-drift detection, need
-/// data the canonical [Group] does not carry — WISA class membership
+/// **Scope.** The whole family ships here. [DoNotImportFromWisa],
+/// [DoNotImportFromSmartschool] (informational), and [ModifySmartschoolData]
+/// derive everything from the WISA/Smartschool group pair (#54). The remaining
+/// three — [AddToSmartschool], [CreateInSmartschool] (informational), and
+/// standalone Untis-drift inside [ModifySmartschoolData] — need data the
+/// canonical [Group] does not carry on its own: WISA class membership
 /// (`ContainsStudents`), the Smartschool group tree for parent placement, and a
-/// `untis` field — and are tracked as a follow-up (see the package README),
-/// mirroring how the student/staff slices deferred their class-group placement.
+/// `untis` field (#65). The `untis` field now lives on [Group]; the membership
+/// and parent-tree inputs arrive through an injected [GroupPlacement], exactly
+/// as the student/staff class placements arrive through [ClassPlacement].
 sealed class GroupAction {
   /// The linked class group this action targets, bound at construction.
   final LinkedGroup group;
@@ -133,6 +136,164 @@ class DoNotImportFromWisa extends GroupAction {
   }
 }
 
+/// Create an official Smartschool class from a populated WISA class. Ported from
+/// `Action\Group\AddToSmartschool`: the class exists in WISA (with students)
+/// but not Smartschool, so it is created under its logical parent in the
+/// Smartschool group tree.
+///
+/// The membership signal and the resolved parent come from the injected
+/// [GroupPlacement] — a [LinkedGroup] carries neither. [evaluate] mirrors legacy
+/// (`Wisa.Linked && !Smartschool.Linked && ContainsStudents()`); it does not
+/// gate on the parent, matching legacy, which offers the action regardless and
+/// only checks the parent at apply time.
+///
+/// **Key divergence.** Legacy builds the class `Code`/`Name`/`Untis` from the
+/// raw WISA `Group.Name`; the canonical [LinkedGroup.wisa] carries only the
+/// `fullName` (the cross-system match key), so the created class is keyed on
+/// that. Identical for a single-group class (`groupName == "00"`); for a
+/// subgrouped class the two differ — a limitation of the linked-record model,
+/// shared with [DoNotImportFromWisa].
+class AddToSmartschool extends GroupAction {
+  /// The membership + resolved-parent context, injected by the dispatch.
+  final GroupPlacement placement;
+
+  const AddToSmartschool(super.group, this.placement);
+
+  @override
+  bool evaluate() =>
+      group.wisa != null &&
+      group.smartschool == null &&
+      placement.containsStudents;
+
+  /// The official Smartschool class to create, derived from the WISA class and
+  /// the resolved parent. Untis is set to the class name (legacy
+  /// `group.Untis = wisa.Name`); the institute and admin numbers ride in on the
+  /// WISA-projected [Group].
+  Group _created() => Group(
+        id: _wisa.id,
+        name: _wisa.name,
+        description: _wisa.description,
+        type: GroupType.classGroup,
+        official: true,
+        parentId: placement.parent?.id,
+        instituteNumber: _wisa.instituteNumber,
+        adminNumber: _wisa.adminNumber,
+        untis: _wisa.name,
+        origin: Origin.smartschool,
+      );
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.smartschool,
+        summary: 'Voeg deze klas toe aan Smartschool',
+        fields: [
+          FieldChange('name', after: _wisa.name),
+          FieldChange('description', after: _wisa.description),
+          FieldChange('parent', after: placement.parent?.id.value ?? ''),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+    final created = _created();
+
+    // Legacy silently does nothing when the logical parent can't be resolved;
+    // we surface it as a failure instead (retry-safe, INV-41).
+    if (placement.parent == null) {
+      return _failed(
+        changes,
+        Origin.smartschool,
+        StateError(
+          'cannot resolve a Smartschool parent for class ${_wisa.name}',
+        ),
+      );
+    }
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.smartschool,
+        group: created,
+      );
+    }
+
+    try {
+      final ok = await _requireSmartschool(connectors).saveClass(
+        name: created.name,
+        description: created.description,
+        code: created.id.value,
+        parentCode: created.parentId!.value,
+        untis: created.untis,
+        instituteNumber: created.instituteNumber ?? '',
+        adminNumber: created.adminNumber ?? 0,
+      );
+      if (!ok) {
+        return _failed(
+          changes,
+          Origin.smartschool,
+          StateError('Smartschool saveClass returned failure'),
+        );
+      }
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.smartschool,
+        group: created,
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.smartschool, e);
+    }
+  }
+}
+
+/// An empty WISA class with no Smartschool counterpart. Ported from
+/// `Action\Group\CreateInSmartschool`, whose legacy `Apply` throws
+/// `NotImplementedException` — it is **informational only** (legacy
+/// `CanBeApplied == false`): the WISA class holds no students yet, so there is
+/// nothing to create downstream. It tells the operator they may delete the WISA
+/// class by hand or wait until it is populated, at which point
+/// [AddToSmartschool] takes over. There is no automated write, so [canApply] is
+/// `false` and [apply] throws.
+///
+/// Distinguished from [AddToSmartschool] purely by the [GroupPlacement]
+/// membership signal: same WISA-only shape, but `!containsStudents`.
+class CreateInSmartschool extends GroupAction {
+  /// The membership context, injected by the dispatch. Only
+  /// [GroupPlacement.containsStudents] matters here (it must be `false`).
+  final GroupPlacement placement;
+
+  const CreateInSmartschool(super.group, this.placement);
+
+  @override
+  bool evaluate() =>
+      group.wisa != null &&
+      group.smartschool == null &&
+      !placement.containsStudents;
+
+  @override
+  bool get canApply => false;
+
+  @override
+  ChangeSet describeChanges() => const ChangeSet(
+        system: Origin.smartschool,
+        summary: 'Deze WISA-klas bevat nog geen leerlingen. Verwijder ze '
+            'manueel als ze niet meer nodig is, of wacht tot ze leerlingen '
+            'bevat.',
+      );
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      throw UnsupportedError(
+        'CreateInSmartschool is informational and cannot be applied '
+        '(canApply is false)',
+      );
+}
+
 /// An orphan Smartschool class with no matching WISA class. Ported from
 /// `Action\Group\DoNotImportFromSmartschool`, whose legacy `Apply` throws
 /// `NotImplementedException` — it is **informational only** (legacy
@@ -172,33 +333,40 @@ class DoNotImportFromSmartschool extends GroupAction {
 /// `Action\Group\ModifySmartschoolData`, evaluated only when both systems carry
 /// the class.
 ///
-/// Legacy syncs three fields — institute number, Untis id, and description.
-/// The canonical [Group] does not carry `untis`, so **standalone Untis-drift
-/// detection is deferred** (a follow-up adds `Group.untis`); this action
-/// evaluates on the two representable fields:
+/// Legacy syncs three fields, and now so does this action:
 /// - **institute number** (`Group.instituteNumber`): WISA `schoolCode` → Smartschool.
+/// - **Untis code** (`Group.untis`): converged to the class `name`.
 /// - **description** (`Group.description`): WISA → Smartschool.
 ///
-/// **Untis on write.** Smartschool's `saveClass` rewrites the whole class, so
-/// [apply] must supply a `untis` value. Legacy's remediation target is always
-/// `Untis == Name`, so the write passes the class name — the write stays
-/// correct (it converges Untis to its desired value) even though drift on Untis
-/// alone can't yet *trigger* the action.
+/// **Untis drift is Smartschool-local.** Legacy triggers on
+/// `Smartschool.Untis != Smartschool.Name` and remediates by setting
+/// `Untis = Name` — it never reads a WISA Untis (WISA has none). Now that
+/// [Group.untis] exists, this action detects that drift directly, so a class
+/// whose only problem is a stale Untis code raises the action on its own.
+/// (Smartschool's `saveClass` rewrites the whole class, so [apply] has always
+/// passed `untis = name`; the change here is that Untis can now *trigger* the
+/// action too.)
 class ModifySmartschoolData extends GroupAction {
   const ModifySmartschoolData(super.group);
 
   bool get _instituteDiffers => _ss.instituteNumber != _wisa.instituteNumber;
   bool get _descriptionDiffers => _ss.description != _wisa.description;
 
+  /// Legacy `Smartschool.Untis != Smartschool.Name`: the class's stored Untis
+  /// code has drifted from its name. Purely a Smartschool-side comparison.
+  bool get _untisDiffers => _ss.untis != _ss.name;
+
   @override
   bool evaluate() =>
       group.wisa != null &&
       group.smartschool != null &&
-      (_instituteDiffers || _descriptionDiffers);
+      (_instituteDiffers || _untisDiffers || _descriptionDiffers);
 
-  /// The Smartschool group as it will look once synced. The two drifting fields
-  /// are pulled from WISA; everything else (id/name/type/official/parent/admin
-  /// number) is preserved. Idempotent for a field that already agrees.
+  /// The Smartschool group as it will look once synced. Institute number and
+  /// description are pulled from WISA; Untis is converged to the class name
+  /// (legacy's fixed remediation target); everything else
+  /// (id/name/type/official/parent/admin number) is preserved. Idempotent for a
+  /// field that already agrees.
   Group _synced() => Group(
         id: _ss.id,
         name: _ss.name,
@@ -208,6 +376,7 @@ class ModifySmartschoolData extends GroupAction {
         parentId: _ss.parentId,
         instituteNumber: _wisa.instituteNumber,
         adminNumber: _ss.adminNumber,
+        untis: _ss.name,
         origin: _ss.origin,
       );
 
@@ -222,6 +391,8 @@ class ModifySmartschoolData extends GroupAction {
               before: _ss.instituteNumber,
               after: _wisa.instituteNumber,
             ),
+          if (_untisDiffers)
+            FieldChange('untis', before: _ss.untis, after: _ss.name),
           if (_descriptionDiffers)
             FieldChange(
               'description',

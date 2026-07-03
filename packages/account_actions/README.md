@@ -80,20 +80,43 @@ copy-code.
 legacy `GroupActionParser`. The split is on the WISA/Smartschool **pair** rather
 than all three systems (there is no Azure group action):
 
-- **Missing from WISA or Smartschool** → the lifecycle-style actions:
-  `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass` rule) and
-  `DoNotImportFromSmartschool` (orphan Smartschool class; informational).
-- **Present in both** → only `ModifySmartschoolData` (sync institute number and
-  description down from WISA).
+- **Missing from WISA or Smartschool** → the lifecycle-style actions, in legacy
+  parser order: `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass`
+  rule), `AddToSmartschool` (WISA-only class **with students**; creates the
+  official class in Smartschool), `CreateInSmartschool` (WISA-only class with
+  **no** students; informational), and `DoNotImportFromSmartschool` (orphan
+  Smartschool class; informational). A WISA-only class therefore raises
+  `DoNotImportFromWisa` plus exactly one of `AddToSmartschool` /
+  `CreateInSmartschool`.
+- **Present in both** → only `ModifySmartschoolData` (sync institute number,
+  Untis code, and description).
 
 A group action returns its mutated record through `ActionResult.group` (a
 `Group`), not `ActionResult.smartschool` (a `SmartschoolAccount`). It takes no
-config — the shippable group actions derive everything from the WISA/Smartschool
-pair. `DoNotImportFromWisa`, like the staff `DontImportFromWisa`, writes nothing
-and returns a `WisaImportRule` via `ActionResult.wisaRule`.
-`DoNotImportFromSmartschool` is **informational** (`canApply == false`, legacy
-`CanBeApplied == false`): it surfaces a diagnosis and its `apply` throws
+config — the group actions derive everything from the WISA/Smartschool pair plus,
+for the two creation actions, an injected `GroupPlacement` (see below).
+`DoNotImportFromWisa`, like the staff `DontImportFromWisa`, writes nothing and
+returns a `WisaImportRule` via `ActionResult.wisaRule`. `DoNotImportFromSmartschool`
+and `CreateInSmartschool` are **informational** (`canApply == false`, legacy
+`CanBeApplied == false`): they surface a diagnosis and their `apply` throws
 `UnsupportedError`.
+
+### Group placement (#65)
+
+`AddToSmartschool` and `CreateInSmartschool` are **membership-dependent**: both
+branch on whether the WISA class currently holds students (legacy
+`ContainsStudents()`), a signal a `LinkedGroup` does not carry, and
+`AddToSmartschool` also needs the Smartschool group tree to resolve the parent
+the new class hangs under (legacy `GetLogicalParent` → `Root.FindByCode`). They
+take an injected `GroupPlacement` — the group analogue of `ClassPlacement` —
+carrying `containsStudents` and the resolved `parent` group. It is **opt-in**:
+`groupActions` / `groupActionsFor` take a `placementFor` callback invoked only
+for WISA-only classes; without it the dispatch is exactly as it shipped in #54
+(no creation actions). When `AddToSmartschool` cannot resolve a parent it reports
+a failure rather than legacy's silent no-op. `AddToSmartschool` seeds the created
+class's Untis from the class name (legacy `group.Untis = wisa.Name`) and carries
+the institute and admin numbers projected onto the WISA `Group`
+(`schoolCode`/`adminCode`).
 
 ## Configuration
 
@@ -138,18 +161,6 @@ connector leaves that guard to the caller), so an ANS/BNS student whose
   `AddStaffToSmartschool` are **not** ported: they evaluate against Office 365 /
   Smartschool group membership, which `LinkedStaff` does not carry. Same
   membership-aware follow-up.
-- **Group `AddToSmartschool`** / **`CreateInSmartschool`** are **not** ported:
-  both branch on the WISA class's `ContainsStudents()`, and `AddToSmartschool`
-  additionally needs the Smartschool group tree to resolve a parent
-  (`GetLogicalParent`) — neither is carried by the canonical `LinkedGroup`
-  (`Group`), the same membership/tree gap as the student/staff placements above.
-  Tracked in the group follow-up.
-- **Group Untis-drift detection.** Legacy `ModifySmartschoolData` also syncs the
-  Untis id, but the canonical `Group` drops `untis`, so drift on *Untis alone*
-  can't trigger the action. When it *does* fire (institute number / description
-  drift), the `saveClass` write still sets `untis = name` — legacy's own
-  remediation target — so Untis converges. Full detection waits on a `Group.untis`
-  field (group follow-up).
 - **`ChangeEmail`** (legacy) is dead code — not wired into the parser — and is
   intentionally omitted.
 - **`SetStaffCopyCode` idempotency fix.** Legacy `SetCopyCode` compares the

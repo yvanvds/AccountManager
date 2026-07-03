@@ -121,4 +121,117 @@ void main() {
       );
     });
   });
+
+  group('ModifySmartschoolData converges a drifted Untis code (#65)', () {
+    test('Untis-only drift: applies and sets untis to the class name',
+        () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      // Institute + description agree; only Untis has drifted.
+      final action = ModifySmartschoolData(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(untis: 'stale-untis'),
+        ),
+      );
+
+      expect(action.evaluate(), isTrue);
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(transport.calledMethod('saveClass'), isTrue);
+      // Converged to the class name (legacy's fixed remediation target).
+      expect(result.group?.untis, '3A');
+    });
+  });
+
+  group('AddToSmartschool creates an official class (#65)', () {
+    test('dry run: no SOAP call, projected class returned', () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = AddToSmartschool(
+        linkedGroup(wisa: wisaGroup(name: '3A')),
+        groupPlacement(),
+      );
+
+      final result = await action.apply(connectors, ApplyOptions.dry);
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect(transport.soapActions, isEmpty);
+      expect(result.group?.id.value, '3A');
+      expect(result.group?.official, isTrue);
+      expect(result.group?.origin, Origin.smartschool);
+      expect(result.group?.parentId?.value, 'jaar-3');
+      // Untis is seeded from the class name (legacy group.Untis = wisa.Name).
+      expect(result.group?.untis, '3A');
+    });
+
+    test('real apply: calls saveClass and returns the created class', () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = AddToSmartschool(
+        linkedGroup(
+          wisa: wisaGroup(
+            name: '3A',
+            instituteNumber: '123456',
+            adminNumber: 42,
+          ),
+        ),
+        groupPlacement(),
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(transport.calledMethod('saveClass'), isTrue);
+      expect(result.system, Origin.smartschool);
+      expect(result.group?.instituteNumber, '123456');
+      expect(result.group?.adminNumber, 42);
+    });
+
+    test('unresolvable parent: fails instead of legacy silent no-op (INV-41)',
+        () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = AddToSmartschool(
+        linkedGroup(wisa: wisaGroup()),
+        groupPlacement(withParent: false),
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.error, isNotNull);
+      // No write was attempted.
+      expect(transport.soapActions, isEmpty);
+    });
+
+    test('a failed saveClass surfaces as a failure (INV-41)', () async {
+      final transport = RecordingSmartschoolTransport(resultCode: 1);
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = AddToSmartschool(
+        linkedGroup(wisa: wisaGroup()),
+        groupPlacement(),
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.error, isNotNull);
+    });
+  });
+
+  group('CreateInSmartschool is informational (#65)', () {
+    test('canApply is false and apply throws UnsupportedError', () {
+      final action = CreateInSmartschool(
+        linkedGroup(wisa: wisaGroup()),
+        groupPlacement(containsStudents: false),
+      );
+      expect(action.canApply, isFalse);
+      expect(
+        () => action.apply(const Connectors(), const ApplyOptions()),
+        throwsUnsupportedError,
+      );
+    });
+  });
 }
