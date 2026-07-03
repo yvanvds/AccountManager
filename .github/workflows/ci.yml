@@ -26,10 +26,10 @@ name: CI
 
 on:
   pull_request:
-    branches: [dev]
+    branches: [develop]
   # Manual trigger as an escape hatch (e.g. to refresh the SonarCloud
-  # baseline on `dev` after a merge). Plain pushes to `dev` do NOT run CI
-  # by design — quality gates run pre-merge, on the PR.
+  # baseline on `develop` after a merge). Plain pushes to `develop` do NOT
+  # run CI by design — quality gates run pre-merge, on the PR.
   workflow_dispatch:
 
 permissions:
@@ -57,13 +57,20 @@ jobs:
             echo "::notice title=No Dart workspace yet::Skipping Dart steps. CI will become meaningful once issue #19 (account_core) lands a root pubspec.yaml."
           fi
 
-      - name: Set up Dart
+      # The workspace root now includes the Flutter app (account_manager), so
+      # it resolves with the Flutter SDK. Flutter bundles Dart, so the
+      # `dart analyze` / `dart test` steps below are unchanged.
+      - name: Set up Flutter
         if: steps.workspace.outputs.exists == 'true'
-        uses: dart-lang/setup-dart@v1
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
 
-      - name: dart pub get
+      - name: flutter pub get
         if: steps.workspace.outputs.exists == 'true'
-        run: dart pub get
+        run: flutter pub get
 
       - name: dart analyze
         if: steps.workspace.outputs.exists == 'true'

@@ -13,6 +13,7 @@ workspace:
   - packages/account_linker
   - packages/account_actions
   - packages/account_state
+  - account_manager
 
 dev_dependencies:
   lints: ^5.1.0
