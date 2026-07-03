@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:account_core/account_core.dart';
 import 'package:uuid/uuid.dart';
 
@@ -17,12 +19,23 @@ import 'sql_connection.dart';
 /// **Why two phases.** The linker calls `resolve` synchronously inside its pure
 /// pass, but a database read is asynchronous, so this resolver cannot mint
 /// lazily on a miss the way the file resolver does. Instead it is
-/// [prepare]d up front: [prepare] loads the whole map and mints-or-fetches every
-/// still-unknown key in one transaction, then [resolve] is a pure, synchronous,
-/// *total* lookup into the primed cache (an unknown key means the caller forgot
-/// to prepare it — a programming error, not a normal miss). The State layer
-/// computes the exact key set with `account_linker`'s `naturalKeysFor` and
-/// awaits [prepare] before it links (see `PreparablePersonIdResolver`).
+/// [prepare]d up front: [prepare] fetches the still-unknown keys and
+/// mints-or-fetches every one still absent in one transaction, then [resolve] is
+/// a pure, synchronous, *total* lookup into the primed cache (an unknown key
+/// means the caller forgot to prepare it — a programming error, not a normal
+/// miss). The State layer computes the exact key set with `account_linker`'s
+/// `naturalKeysFor` and awaits [prepare] before it links (see
+/// `PreparablePersonIdResolver`).
+///
+/// **Warm cache (#93).** The [_cache] survives across [prepare] calls within a
+/// session, and [prepare] never reloads the whole table: it fetches only the
+/// keys it does not already hold, batched under the SQL Server parameter limit
+/// (`WHERE NaturalKey IN (...)`). Since one link pass runs [prepare] once —
+/// including after every apply-triggered incremental relink — a full-table
+/// `SELECT *` per call reloaded the same rows many times over for no gain. The
+/// convergence guarantee below is what makes the narrow fetch safe: dropping the
+/// proactive full reload cannot miss an id another operator minted, because the
+/// mint-or-fetch path already adopts it on write.
 ///
 /// **Convergence.** For a brand-new key two operators may both mint a fresh
 /// UUID. The insert is guarded by the natural-key primary key
@@ -57,21 +70,36 @@ class AzureSqlPersonIdResolver implements PreparablePersonIdResolver {
   /// and grown with freshly minted (or adopted) ids by [prepare].
   final Map<String, PersonId> _cache = {};
 
+  /// The maximum number of natural keys bound into one `WHERE NaturalKey IN
+  /// (...)` lookup.
+  /// SQL Server caps a single statement at ~2100 parameters, so a larger key set
+  /// is split into this-sized chunks. Kept well under the ceiling for headroom.
+  static const int maxKeysPerLookup = 2000;
+
   static String _defaultMint() => const Uuid().v4();
 
   @override
   Future<void> prepare(Iterable<String> naturalKeys) async {
-    // Idempotent: keys already resolved this session need no work.
+    // Idempotent: keys already resolved this session need no work. The cache is
+    // warm across calls, so a re-prepare only ever fetches genuinely new keys.
     final wanted = naturalKeys.toSet()..removeWhere(_cache.containsKey);
     if (wanted.isEmpty) return;
 
     final connection = await _factory.open(_config, _tokens);
     try {
-      // Load the whole identity map — one small row per person, mirroring the
-      // file resolver reading its whole file — so every already-minted id is
-      // served without a round-trip per key.
-      for (final row in await connection.query(_selectAllSql)) {
-        _cache[_string(row['NaturalKey'])] = PersonId(_string(row['PersonId']));
+      // Fetch only the keys we do not already hold — never the whole table.
+      // Batched under [maxKeysPerLookup] so a large key set stays under the SQL
+      // Server parameter limit; each already-minted id is served without a
+      // round-trip per key.
+      final lookup = wanted.toList();
+      for (var i = 0; i < lookup.length; i += maxKeysPerLookup) {
+        final chunk =
+            lookup.sublist(i, math.min(i + maxKeysPerLookup, lookup.length));
+        for (final row
+            in await connection.query(_selectInSql(chunk.length), chunk)) {
+          _cache[_string(row['NaturalKey'])] =
+              PersonId(_string(row['PersonId']));
+        }
       }
 
       final missing = [
@@ -113,10 +141,14 @@ class AzureSqlPersonIdResolver implements PreparablePersonIdResolver {
   }
 }
 
-/// Loads the whole identity map. Small — one row per person — so reading it
-/// whole to seed the cache is simpler and safe rather than a bottleneck.
-const String _selectAllSql =
-    'SELECT NaturalKey, PersonId FROM $personIdentityTableName';
+/// Reads the rows for a batch of [count] natural keys — the warm-cache fetch
+/// that replaced the full-table load (#93). The placeholders are generated (not
+/// interpolated data): the keys themselves are bound positionally as parameters,
+/// so a key can never be read as SQL. Callers chunk [count] under the SQL Server
+/// parameter limit (see `AzureSqlPersonIdResolver.maxKeysPerLookup`).
+String _selectInSql(int count) =>
+    'SELECT NaturalKey, PersonId FROM $personIdentityTableName '
+    'WHERE NaturalKey IN (${List.filled(count, '?').join(', ')})';
 
 /// Reads back the row that owns [NaturalKey] after a guarded insert — either the
 /// id this operator just minted or the one a concurrent operator committed first.

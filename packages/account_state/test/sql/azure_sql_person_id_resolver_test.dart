@@ -5,7 +5,7 @@ import 'package:test/test.dart';
 /// opened against it — the way one Azure SQL database is shared by every
 /// operator. It models `INSERT ... WHERE NOT EXISTS` (guarded insert) so the
 /// unique-key arbitration the resolver relies on is exercised for real, and can
-/// optionally hide its rows from the full-map load to simulate the window where
+/// optionally hide its rows from the keyed lookup to simulate the window where
 /// one operator has committed a row the other hasn't seen yet.
 class _FakePersonIdDb implements SqlConnection {
   _FakePersonIdDb({this.hideOnLoad = false});
@@ -13,9 +13,14 @@ class _FakePersonIdDb implements SqlConnection {
   /// The persisted map — the singular source of truth all connections share.
   final Map<String, String> table = {};
 
-  /// When true, the full-map load reports an empty table even though [table]
-  /// may hold rows: the "stale load" a concurrent minter races against.
+  /// When true, the keyed lookup reports no rows even though [table] may hold
+  /// them: the "stale load" a concurrent minter races against.
   final bool hideOnLoad;
+
+  /// The parameter list of each `WHERE NaturalKey IN (...)` lookup, in order —
+  /// so a test can assert the warm cache only fetches uncached keys and that a
+  /// large key set is chunked under the parameter limit.
+  final List<List<Object?>> lookups = [];
 
   final List<String> statements = [];
   final List<List<Object?>> params = [];
@@ -27,12 +32,15 @@ class _FakePersonIdDb implements SqlConnection {
   Future<List<SqlRow>> query(String sql, [List<Object?> p = const []]) async {
     statements.add(sql);
     params.add(p);
-    // Full-map load: SELECT NaturalKey, PersonId FROM ...
+    // Keyed lookup: SELECT NaturalKey, PersonId FROM ... WHERE NaturalKey IN (?, ...)
     if (sql.contains('SELECT NaturalKey, PersonId')) {
+      lookups.add(p);
       if (hideOnLoad) return [];
+      final keys = p.cast<String>();
       return [
-        for (final e in table.entries)
-          {'NaturalKey': e.key, 'PersonId': e.value},
+        for (final key in keys)
+          if (table.containsKey(key))
+            {'NaturalKey': key, 'PersonId': table[key]!},
       ];
     }
     // Read-back of one row: SELECT PersonId FROM ... WHERE NaturalKey = ?
@@ -170,6 +178,52 @@ void main() {
       await resolver.prepare(['wisa:1', 'wisa:2']);
       expect(resolver.resolve('wisa:1'), const PersonId('existing'));
       expect(resolver.resolve('wisa:2'), const PersonId('minted-0'));
+    });
+  });
+
+  group('warm cache across prepare() calls (#93)', () {
+    test('a re-prepare fetches only the keys not already cached', () async {
+      final db = _FakePersonIdDb();
+      final resolver = resolverOver(db);
+
+      await resolver.prepare(['wisa:1']);
+      // A second pass over a superset must fetch only the new key — the warm
+      // cache already holds wisa:1, so it is never looked up again.
+      await resolver.prepare(['wisa:1', 'wisa:2']);
+
+      expect(db.lookups, [
+        ['wisa:1'],
+        ['wisa:2'],
+      ]);
+    });
+
+    test('never reloads the whole table: an uncached key is not fetched',
+        () async {
+      // Another operator minted wisa:other; we never ask for it, so the narrow
+      // lookup must not pull it into our cache (the old SELECT * would have).
+      final db = _FakePersonIdDb()..table['wisa:other'] = 'someone-else';
+      final resolver = resolverOver(db);
+
+      await resolver.prepare(['wisa:1']);
+
+      expect(db.lookups, [
+        ['wisa:1'],
+      ]);
+      expect(() => resolver.resolve('wisa:other'), throwsStateError);
+    });
+
+    test('a large key set is chunked under the parameter limit', () async {
+      final db = _FakePersonIdDb();
+      final resolver = resolverOver(db);
+      const limit = AzureSqlPersonIdResolver.maxKeysPerLookup;
+      final keys = [for (var i = 0; i < limit + 500; i++) 'wisa:$i'];
+
+      await resolver.prepare(keys);
+
+      // Split into bounded lookups, none exceeding the limit, covering every key.
+      expect(db.lookups.length, 2);
+      expect(db.lookups.every((p) => p.length <= limit), isTrue);
+      expect(db.lookups.expand((p) => p).toSet(), keys.toSet());
     });
   });
 
