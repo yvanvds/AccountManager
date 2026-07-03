@@ -67,11 +67,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Dart
-        uses: dart-lang/setup-dart@v1
+      # The workspace now includes the Flutter app (account_manager), so the
+      # root resolves with the Flutter SDK, not bare Dart. Flutter bundles
+      # Dart, so `dart format/analyze/test` below are unchanged — only the SDK
+      # setup and `pub get` switch to Flutter.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
 
-      - name: dart pub get
-        run: dart pub get
+      - name: flutter pub get
+        run: flutter pub get
 
       - name: dart format (check only)
         # Must run AFTER pub get: since Dart 3.7 the formatter styles each
@@ -92,6 +100,13 @@ jobs:
         # this job — the integration tests self-skip, see each package's
         # test/integration/.
         run: dart test packages/*/test
+
+      - name: flutter test (account_manager widget tests)
+        # The Flutter app's own tests aren't picked up by the packages/* glob
+        # above; its widget tests run headless on any platform. The Windows
+        # end-to-end integration test runs in the separate app-integration job.
+        working-directory: account_manager
+        run: flutter test
 
   live-test:
     name: WISA + Smartschool + Azure live integration
@@ -129,11 +144,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Dart
-        uses: dart-lang/setup-dart@v1
+      # Flutter SDK (bundles Dart) — the workspace root now includes the
+      # Flutter app, so it resolves with `flutter pub get`.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
 
-      - name: dart pub get
-        run: dart pub get
+      - name: flutter pub get
+        run: flutter pub get
 
       # --- Azure: mint a fresh read-only Graph token via OIDC ---
       # Gated on AZURE_CLIENT_ID so the job still runs (and the Azure test
@@ -168,3 +189,28 @@ jobs:
         # and Azure live tests are read-only (sync only); see the
         # live-testing policy.
         run: dart test packages/wisa_api/test/integration/ packages/smartschool_api/test/integration/ packages/azure_api/test/integration/
+
+  app-integration:
+    name: account_manager Windows integration test
+    needs: test
+    # The Flutter app is Windows-only; its end-to-end launch test builds and
+    # runs the real .exe, so it needs a Windows runner (the offline `test` job
+    # above runs only the headless widget tests). No secrets — safe on forks.
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter test (integration, Windows)
+        working-directory: account_manager
+        run: flutter test integration_test -d windows
