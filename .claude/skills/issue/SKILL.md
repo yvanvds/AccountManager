@@ -1,6 +1,6 @@
 ---
 name: issue
-description: GitHub issue-driven workflow for this repo. Use it to (a) file a new issue as bug/feature/enhancement/question, (b) break an agreed implementation plan into a list of issues, (c) start work on an existing issue by creating a branch from dev, or (d) open a PR back to dev when the work is ready. Invoke proactively when you encounter work that is out-of-scope for the current task and should be tracked, or when the user agrees to a multi-step implementation plan. Also user-invocable as /issue.
+description: GitHub issue-driven workflow for this repo. Use it to (a) file a new issue as bug/feature/enhancement/question, (b) break an agreed implementation plan into a list of issues, (c) start work on an existing issue by creating a branch from develop, or (d) open a PR back to develop when the work is ready. Invoke proactively when you encounter work that is out-of-scope for the current task and should be tracked, or when the user agrees to a multi-step implementation plan. Also user-invocable as /issue.
 ---
 
 # Issue-driven workflow
@@ -13,11 +13,11 @@ All work on this repo flows through GitHub issues. Pick the flow below that matc
    - Windows: `winget install --id GitHub.cli --source winget`
    - Then `gh auth login` (user must complete in browser).
    Do not proceed until `gh auth status` succeeds.
-2. **`dev` branch exists on origin.** Run `git rev-parse --verify origin/dev`. If it fails, stop and tell the user to create it manually:
+2. **`develop` branch exists on origin.** Run `git rev-parse --verify origin/develop`. If it fails, stop and tell the user to create it manually:
    ```
-   git checkout master && git pull && git checkout -b dev && git push -u origin dev
+   git checkout master && git pull && git checkout -b develop && git push -u origin develop
    ```
-   Do **not** auto-create the `dev` branch.
+   Do **not** auto-create the `develop` branch.
 3. **Labels exist.** First time only, run `gh label list`. If any of `bug`, `feature`, `enhancement`, `question` are missing, create them:
    ```
    gh label create bug         --color d73a4a --description "Something is broken"
@@ -66,10 +66,10 @@ Use when the user says something like "start working on issue #42", "let's tackl
    If state is `CLOSED`, stop and confirm with the user.
 2. Generate the branch name: `issue-<num>-<slug>` where `<slug>` is the title kebab-cased, articles and filler words dropped, max ~50 chars.
    - Example: issue #42 "Port the WISA connector to Dart" → `issue-42-port-wisa-connector-to-dart`
-3. Branch from the latest `dev`:
+3. Branch from the latest `develop`:
    ```
-   git checkout dev
-   git pull origin dev
+   git checkout develop
+   git pull origin develop
    git checkout -b issue-<num>-<slug>
    ```
 4. Tell the user the branch name and confirm it's ready for work.
@@ -82,9 +82,9 @@ Use when the user says the work is ready, or asks to open a PR.
    - **Modified/staged files** — ask whether to commit them first. Do not push a partial state.
    - **Untracked files** — `gh pr create` will warn "N uncommitted change(s)" even though they're untracked. Decide explicitly per file: stage and commit it, add to `.gitignore`, or surface the warning to the user and proceed knowingly. Don't silently ship the warning.
 2. Push the branch if not already pushed: `git push -u origin <branch>`.
-3. Open the PR **against `dev`** (never against `master`). Use a HEREDOC so the body formats correctly:
+3. Open the PR **against `develop`** (never against `master`). Use a HEREDOC so the body formats correctly:
    ```
-   gh pr create --base dev --title "<title>" --body "$(cat <<'EOF'
+   gh pr create --base develop --title "<title>" --body "$(cat <<'EOF'
    ## Summary
    - <bullet>
    - <bullet>
@@ -109,7 +109,7 @@ Use when the user says the work is ready, or asks to open a PR.
 
 ## Hard rules
 
-- **Never** target `master` from this skill — PRs always go to `dev`.
-- **Never** push directly to `master` or `dev`.
-- **Never** auto-create the `dev` branch; the user owns that decision.
+- **Never** target `master` from this skill — PRs always go to `develop`.
+- **Never** push directly to `master` or `develop`.
+- **Never** auto-create the `develop` branch; the user owns that decision.
 - If the user is mid-task and a new concern surfaces, ask "file as issue, or fold into current work?" — don't silently expand scope.
