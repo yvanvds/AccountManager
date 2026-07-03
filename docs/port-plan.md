@@ -100,8 +100,9 @@ Swap the file-backed defaults (`FilePersonIdResolver`, `FileSettingsStore`,
 adapters — Azure SQL for the shared state, Key Vault for the secrets — so the
 tool can move to team maintenance. Nothing above the seams changes.
 
-Sliced into per-adapter issues: **#82** foundation (this slice), **#83**
-settings, **#84** secrets, **#85** PersonId resolver, **#86** password queue.
+Sliced into per-adapter issues: **#82** foundation, **#83** settings, **#84**
+secrets, **#85** PersonId resolver, **#86** password queue, plus **#89** the
+concrete ODBC/FFI `SqlConnectionFactory` deferred out of #83.
 
 **Provisioned infrastructure** (subscription *Yvan's Azure*, region
 `belgiumcentral`, resource group `accountmanager-rg`):
@@ -126,9 +127,13 @@ AAD token. A REST front (Data API builder / Function) was rejected because it
 reintroduces the hosting the epic deliberately avoids. The DB + AAD-only +
 token-auth round-trip was **proven end to end** during the spike (connect →
 create table → insert → read back `roundtrip-ok` → drop, `SUSER_SNAME()` =
-the operator UPN); the Dart-side ODBC factory and its DB round-trip test land
-with the first adapter slice (#83). The `account_state` connection/auth seam
-(`SqlConnection` / `SqlConnectionFactory` / `AadTokenProvider`) is in place now.
+the operator UPN). The `account_state` connection/auth seam (`SqlConnection` /
+`SqlConnectionFactory` / `AadTokenProvider`) is in place now; the concrete
+Dart-side ODBC/FFI factory and its live DB round-trip are **deferred to #89**
+(carved out of #83 because the FFI-over-`msodbcsql18` binding is Windows-only
+and can't be unit-tested headlessly). Adapters are written and fully tested
+against the seam with a scripted fake; their opt-in live round-trip tests stay
+skipped until #89 wires the driver.
 
 ### Phase C — Flutter Windows desktop app *(not started, epic #75)*
 

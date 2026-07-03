@@ -64,6 +64,8 @@ export 'src/settings/work_date.dart';
 export 'src/sql/aad_token_provider.dart';
 export 'src/sql/azure_sql_config.dart';
 export 'src/sql/azure_sql_live_config.dart';
+export 'src/sql/azure_sql_settings_store.dart';
+export 'src/sql/settings_schema.dart';
 export 'src/sql/sql_connection.dart';
 export 'src/sync/application_state.dart';
 export 'src/sync/system_state.dart';
