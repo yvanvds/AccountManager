@@ -67,6 +67,7 @@ void main() {
       expect(g.official, isTrue);
       expect(g.adminNumber, 12345);
       expect(g.instituteNumber, '30024');
+      expect(g.untis, '1A');
       expect(g.origin, core.Origin.smartschool);
 
       final root = forest.first.toCoreGroup();

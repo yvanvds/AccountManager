@@ -8,9 +8,11 @@
 ///
 /// This package ships the **student**, **staff**, and **group** families and
 /// their dispatchers, mirroring how the linker shipped student/staff/group as
-/// separate slices (#43/#44/#45). The group family ships the subset the
-/// `LinkedGroup` model can express (#54); membership/tree-dependent group
-/// actions are tracked as a follow-up (see the package README).
+/// separate slices (#43/#44/#45). The membership/tree-dependent actions in each
+/// family (student/staff class placement, group `AddToSmartschool` /
+/// `CreateInSmartschool`) take an injected placement value object — a
+/// `ClassPlacement` or `GroupPlacement` — so the action layer stays pure while
+/// still expressing what a `LinkedRecord` alone cannot (#55/#65).
 ///
 /// Pure Dart — no Flutter, no UI coupling. Legacy reference (read-only):
 /// `legacy-wpf/AccountManager/Action/`.
@@ -23,6 +25,7 @@ export 'src/class_placement.dart';
 export 'src/connectors.dart';
 export 'src/group_action.dart';
 export 'src/group_dispatch.dart';
+export 'src/group_placement.dart';
 export 'src/staff_action.dart';
 export 'src/staff_action_config.dart';
 export 'src/staff_dispatch.dart';

@@ -1,6 +1,7 @@
 import 'package:account_core/account_core.dart';
 
 import 'group_action.dart';
+import 'group_placement.dart';
 
 /// Derives the applicable [GroupAction]s for one [LinkedGroup], ported from the
 /// legacy `GroupActionParser.AddActions` dispatch (§6.3).
@@ -9,21 +10,37 @@ import 'group_action.dart';
 /// the split is on the WISA/Smartschool pair rather than all three systems
 /// (there is no Azure group action):
 /// - If the class is missing from WISA **or** Smartschool, the lifecycle-style
-///   actions ([DoNotImportFromWisa], [DoNotImportFromSmartschool]) are
-///   considered.
+///   actions ([DoNotImportFromWisa], [AddToSmartschool], [CreateInSmartschool],
+///   [DoNotImportFromSmartschool]) are considered — in that legacy order, so a
+///   WISA-only class raises both [DoNotImportFromWisa] and exactly one of
+///   [AddToSmartschool] / [CreateInSmartschool].
 /// - If it is present in both, only [ModifySmartschoolData] is considered.
 ///
-/// The legacy `AddToSmartschool` / `CreateInSmartschool` actions are **not**
-/// dispatched here: they need WISA class membership (`ContainsStudents`) and the
-/// Smartschool group tree, which a [LinkedGroup] does not carry (see the package
-/// README). An Azure-only orphan group (`wisa == null && smartschool == null`,
-/// #52) yields no action.
+/// [placementFor] wires the membership-dependent creation actions (#65). When
+/// supplied it is called for each WISA-only class (`wisa != null &&
+/// smartschool == null`) to build its [GroupPlacement]: the membership signal
+/// selects [AddToSmartschool] (class has students) or [CreateInSmartschool]
+/// (empty), and the resolved parent lets [AddToSmartschool] place the new class.
+/// When omitted, the dispatch is exactly as it shipped in #54 — no create
+/// actions — because a [LinkedGroup] alone cannot answer "does the WISA class
+/// have students?". It is only called for WISA-only classes; a both-present or
+/// Smartschool-only class never needs it.
+///
+/// An Azure-only orphan group (`wisa == null && smartschool == null`, #52)
+/// yields no action.
 ///
 /// Each candidate is constructed bound to [group] and kept only when its pure
 /// [GroupAction.evaluate] returns true. Pure and deterministic (INV-40): same
-/// group ⇒ same list.
-List<GroupAction> groupActionsFor(LinkedGroup group) {
+/// group (+ same [placementFor]) ⇒ same list.
+List<GroupAction> groupActionsFor(
+  LinkedGroup group, {
+  GroupPlacement Function(LinkedGroup group)? placementFor,
+}) {
   final both = group.wisa != null && group.smartschool != null;
+  final wisaOnly = group.wisa != null && group.smartschool == null;
+
+  final placement =
+      (placementFor != null && wisaOnly) ? placementFor(group) : null;
 
   final candidates = both
       ? <GroupAction>[
@@ -31,6 +48,8 @@ List<GroupAction> groupActionsFor(LinkedGroup group) {
         ]
       : <GroupAction>[
           DoNotImportFromWisa(group),
+          if (placement != null) AddToSmartschool(group, placement),
+          if (placement != null) CreateInSmartschool(group, placement),
           DoNotImportFromSmartschool(group),
         ];
 
@@ -44,7 +63,13 @@ List<GroupAction> groupActionsFor(LinkedGroup group) {
 /// groups, in snapshot order (§6.3). Pure and deterministic.
 ///
 /// Only [LinkedSnapshot.groups] are considered; students and staff are handled
-/// by their own families.
-List<GroupAction> groupActions(LinkedSnapshot snapshot) => [
-      for (final group in snapshot.groups) ...groupActionsFor(group),
+/// by their own families. [placementFor] is threaded through to
+/// [groupActionsFor] to enable the membership-dependent creation actions (#65).
+List<GroupAction> groupActions(
+  LinkedSnapshot snapshot, {
+  GroupPlacement Function(LinkedGroup group)? placementFor,
+}) =>
+    [
+      for (final group in snapshot.groups)
+        ...groupActionsFor(group, placementFor: placementFor),
     ];

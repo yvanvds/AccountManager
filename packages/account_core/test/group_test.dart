@@ -8,6 +8,7 @@ Group _group({
   String? parent,
   String? institute,
   int? admin,
+  String untis = '',
   GroupType type = GroupType.classGroup,
   bool official = true,
 }) =>
@@ -20,6 +21,7 @@ Group _group({
       parentId: parent == null ? null : GroupId(parent),
       instituteNumber: institute,
       adminNumber: admin,
+      untis: untis,
       origin: Origin.wisa,
     );
 
@@ -30,25 +32,33 @@ void main() {
       expect(Group.fromJson(g.toJson()), equals(g));
     });
 
-    test('full (parent, institute, admin)', () {
-      final g = _group(parent: 'root', institute: '12345', admin: 7);
+    test('full (parent, institute, admin, untis)', () {
+      final g =
+          _group(parent: 'root', institute: '12345', admin: 7, untis: '5A');
       expect(Group.fromJson(g.toJson()), equals(g));
     });
 
     test('survives encode/decode through dart:convert', () {
-      final g = _group(parent: 'root', institute: '12345', admin: 7);
+      final g =
+          _group(parent: 'root', institute: '12345', admin: 7, untis: '5A');
       final encoded = jsonEncode(g.toJson());
       final decoded =
           Group.fromJson(jsonDecode(encoded) as Map<String, dynamic>);
       expect(decoded, equals(g));
     });
 
-    test('omits null optionals from JSON', () {
+    test('omits null optionals and empty untis from JSON', () {
       final g = _group();
       final json = g.toJson();
       expect(json.containsKey('parentId'), isFalse);
       expect(json.containsKey('instituteNumber'), isFalse);
       expect(json.containsKey('adminNumber'), isFalse);
+      expect(json.containsKey('untis'), isFalse);
+    });
+
+    test('legacy JSON without untis decodes to an empty untis', () {
+      final json = _group(institute: '12345').toJson()..remove('untis');
+      expect(Group.fromJson(json).untis, '');
     });
   });
 
@@ -57,6 +67,7 @@ void main() {
       expect(_group(), equals(_group()));
       expect(_group().hashCode, equals(_group().hashCode));
       expect(_group(official: true), isNot(equals(_group(official: false))));
+      expect(_group(untis: '5A'), isNot(equals(_group(untis: 'stale'))));
       expect(
         _group(type: GroupType.group),
         isNot(equals(_group(type: GroupType.classGroup))),

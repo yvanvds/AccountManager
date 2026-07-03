@@ -407,9 +407,11 @@ bool _looksLikeClassGroup(String? displayName) {
 /// [LinkedGroup.wisa] expects. The group is identified and named by its
 /// `fullName` (the cross-system match key); WISA class groups are always real
 /// classes, hence `official: true` and [GroupType.classGroup]. `schoolCode`
-/// becomes the institute number; WISA exposes no tree edge or numeric admin
-/// number for a class group, so [Group.parentId] and [Group.adminNumber] stay
-/// null.
+/// becomes the institute number and `adminCode` the numeric admin number (both
+/// feed `AddToSmartschool` when it creates the Smartschool class). WISA exposes
+/// no tree edge, so [Group.parentId] stays null, and no Untis code, so
+/// [Group.untis] is empty — the created Smartschool class derives its Untis
+/// from the class name instead.
 Group _wisaToCoreGroup(wapi.WisaClassGroup g) => Group(
       id: GroupId(g.fullName),
       name: g.fullName,
@@ -417,6 +419,7 @@ Group _wisaToCoreGroup(wapi.WisaClassGroup g) => Group(
       type: GroupType.classGroup,
       official: true,
       instituteNumber: g.schoolCode.isEmpty ? null : g.schoolCode,
+      adminNumber: int.tryParse(g.adminCode),
       origin: Origin.wisa,
     );
 

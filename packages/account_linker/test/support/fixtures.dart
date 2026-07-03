@@ -138,12 +138,13 @@ wapi.WisaClassGroup wisaClassGroup(
   String name, {
   String groupName = '00',
   String schoolCode = '123',
+  String adminCode = '',
 }) =>
     wapi.WisaClassGroup(
       name: name,
       groupName: groupName,
       description: '',
-      adminCode: '',
+      adminCode: adminCode,
       schoolCode: schoolCode,
       schoolId: 1,
     );
