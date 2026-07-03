@@ -46,7 +46,8 @@ library;
 // Identity seam: reuse account_core's interface; account_store ships the
 // file-backed default. Re-exported so consumers get the whole persistence
 // surface from one import.
-export 'package:account_core/account_core.dart' show PersonId, PersonIdResolver;
+export 'package:account_core/account_core.dart'
+    show PersonId, PersonIdResolver, PreparablePersonIdResolver;
 export 'package:account_store/account_store.dart' show FilePersonIdResolver;
 
 export 'src/apply/state_applier.dart';
@@ -69,7 +70,9 @@ export 'src/settings/work_date.dart';
 export 'src/sql/aad_token_provider.dart';
 export 'src/sql/azure_sql_config.dart';
 export 'src/sql/azure_sql_live_config.dart';
+export 'src/sql/azure_sql_person_id_resolver.dart';
 export 'src/sql/azure_sql_settings_store.dart';
+export 'src/sql/person_id_schema.dart';
 export 'src/sql/settings_schema.dart';
 export 'src/sql/sql_connection.dart';
 export 'src/sync/application_state.dart';
