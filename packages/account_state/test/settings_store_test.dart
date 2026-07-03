@@ -6,17 +6,43 @@ import 'package:smartschool_api/smartschool_api.dart';
 import 'package:test/test.dart';
 import 'package:wisa_api/wisa_api.dart';
 
-/// A representative config exercising both flags and every import-rule variant.
-AppSettings _sampleSettings() => const AppSettings(
+/// A representative config exercising the flags, all three connection profiles
+/// (including the work-date pair and the grade/year vocabulary), and every
+/// import-rule variant.
+AppSettings _sampleSettings() => AppSettings(
       schoolPrefix: 'SMA',
       debugMode: true,
-      wisaRules: [
+      wisa: WisaConnection(
+        server: 'db.example',
+        port: '1521',
+        database: 'WISA',
+        username: 'svc',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 6, 30)),
+        virtualWorkDate:
+            WorkDateSetting(isNow: false, date: DateTime(2027, 9, 1)),
+      ),
+      smartschool: SmartschoolConnection(
+        uri: 'https://school.smartschool.be',
+        testUser: 'test.user',
+        studentGroup: 'Leerlingen',
+        staffGroup: 'Personeel',
+        useGrades: true,
+        useYears: true,
+        grades: const ['graad 1', 'graad 2', 'graad 3'],
+        years: const ['1', '2', '3', '4', '5', '6', '7'],
+      ),
+      azure: const AzureConnection(
+        clientId: 'client-123',
+        tenantId: 'tenant-456',
+        domain: 'sma.onmicrosoft.com',
+      ),
+      wisaRules: const [
         DontImportClass('1A'),
         DontImportUserFromWisa('U42'),
         ReplaceInstitute(original: '001', replacement: '002'),
         MarkAsVirtual('VIRT'),
       ],
-      smartschoolRules: [
+      smartschoolRules: const [
         DiscardSmartschoolGroup('Archief'),
         NoSmartschoolSubgroups('Klassen'),
       ],
@@ -25,6 +51,9 @@ AppSettings _sampleSettings() => const AppSettings(
 void expectSameSettings(AppSettings a, AppSettings b) {
   expect(a.schoolPrefix, b.schoolPrefix);
   expect(a.debugMode, b.debugMode);
+  expect(a.wisa, b.wisa);
+  expect(a.smartschool, b.smartschool);
+  expect(a.azure, b.azure);
   expect(encodeRules(a.wisaRules, encodeWisaRule),
       equals(encodeRules(b.wisaRules, encodeWisaRule)));
   expect(encodeRules(a.smartschoolRules, encodeSmartschoolRule),
@@ -49,6 +78,25 @@ void main() {
       expect(settings.debugMode, isFalse);
       expect(settings.wisaRules, isEmpty);
       expect(settings.smartschoolRules, isEmpty);
+      // A config predating the connection profiles loads with default ones.
+      expect(settings.wisa, const WisaConnection());
+      expect(settings.smartschool, SmartschoolConnection());
+      expect(settings.azure, const AzureConnection());
+    });
+
+    test('models secrets as refs, never as values in the blob', () {
+      // The model has no field to hold a secret value: the WISA password and
+      // Smartschool passphrase are only ever a SecretRef, resolved out of band
+      // through a SecretProvider. The blob carries the (non-sensitive) ref
+      // names and no `password`/`passphrase` value key.
+      final decoded = jsonDecode(jsonEncode(_sampleSettings().toJson()))
+          as Map<String, dynamic>;
+      final wisa = decoded['wisa'] as Map<String, dynamic>;
+      final smartschool = decoded['smartschool'] as Map<String, dynamic>;
+      expect(wisa['passwordRef'], 'wisa.password');
+      expect(smartschool['passphraseRef'], 'smartschool.passphrase');
+      expect(wisa.containsKey('password'), isFalse);
+      expect(smartschool.containsKey('passphrase'), isFalse);
     });
 
     test('throws on an unknown rule type tag', () {
@@ -63,10 +111,132 @@ void main() {
     });
 
     test('copyWith replaces only the given fields', () {
-      const base = AppSettings(schoolPrefix: 'A', debugMode: true);
-      final copy = base.copyWith(schoolPrefix: 'B');
+      const base = AppSettings(
+        schoolPrefix: 'A',
+        debugMode: true,
+        azure: AzureConnection(clientId: 'keep'),
+      );
+      final copy = base.copyWith(
+        schoolPrefix: 'B',
+        wisa: const WisaConnection(server: 'new-host'),
+      );
       expect(copy.schoolPrefix, 'B');
       expect(copy.debugMode, isTrue);
+      expect(copy.wisa.server, 'new-host');
+      expect(copy.azure.clientId, 'keep');
+    });
+  });
+
+  group('WorkDateSetting', () {
+    final now = DateTime(2026, 7, 3);
+
+    test('resolves to now when tracking the live date', () {
+      const setting = WorkDateSetting(isNow: true);
+      expect(setting.resolve(now), now);
+    });
+
+    test('resolves to the pinned date when not tracking now', () {
+      final pinned = DateTime(2026, 6, 30);
+      final setting = WorkDateSetting(isNow: false, date: pinned);
+      expect(setting.resolve(now), pinned);
+    });
+
+    test('falls back to now when pinned but no date is set', () {
+      const setting = WorkDateSetting(isNow: false);
+      expect(setting.resolve(now), now);
+    });
+
+    test('round-trips through JSON', () {
+      final setting =
+          WorkDateSetting(isNow: false, date: DateTime(2026, 6, 30));
+      expect(WorkDateSetting.fromJson(setting.toJson()), setting);
+    });
+
+    test('defaults to live-now with no pinned date from an empty map', () {
+      final setting = WorkDateSetting.fromJson(const {});
+      expect(setting.isNow, isTrue);
+      expect(setting.date, isNull);
+    });
+  });
+
+  group('connection profiles', () {
+    test('WisaConnection round-trips including the work-date pair', () {
+      final conn = WisaConnection(
+        server: 'db',
+        port: '1521',
+        database: 'WISA',
+        username: 'svc',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 6, 30)),
+        virtualWorkDate: const WorkDateSetting(),
+      );
+      expect(WisaConnection.fromJson(conn.toJson()), conn);
+    });
+
+    test('SmartschoolConnection normalizes its label arrays to fixed length',
+        () {
+      final conn = SmartschoolConnection(
+        grades: const ['  a  ', 'b'], // short + untrimmed
+        years: const ['1', '2', '3', '4', '5', '6', '7', 'overflow'],
+      );
+      expect(conn.grades, ['a', 'b', '']); // padded to 3, trimmed
+      expect(conn.years, ['1', '2', '3', '4', '5', '6', '7']); // capped at 7
+    });
+
+    test('SmartschoolConnection round-trips every field', () {
+      final conn = SmartschoolConnection(
+        uri: 'https://x',
+        testUser: 'tu',
+        studentGroup: 'S',
+        staffGroup: 'P',
+        useGrades: true,
+        useYears: true,
+        grades: const ['g1', 'g2', 'g3'],
+        years: const ['1', '2', '3', '4', '5', '6', '7'],
+      );
+      expect(SmartschoolConnection.fromJson(conn.toJson()), conn);
+    });
+
+    test('AzureConnection round-trips and carries no secret ref', () {
+      const conn = AzureConnection(
+        clientId: 'c',
+        tenantId: 't',
+        domain: 'd.onmicrosoft.com',
+      );
+      expect(AzureConnection.fromJson(conn.toJson()), conn);
+      expect(conn.toJson().keys, isNot(contains('passwordRef')));
+    });
+
+    test('a non-default SecretRef round-trips through the profile', () {
+      const conn = WisaConnection(passwordRef: SecretRef('vault/wisa-pw'));
+      expect(WisaConnection.fromJson(conn.toJson()).passwordRef,
+          const SecretRef('vault/wisa-pw'));
+    });
+  });
+
+  group('InMemorySecretProvider', () {
+    const ref = SecretRef('wisa.password');
+
+    test('reads null for an unconfigured ref', () async {
+      expect(await InMemorySecretProvider().read(ref), isNull);
+    });
+
+    test('write then read returns the stored value', () async {
+      final provider = InMemorySecretProvider();
+      await provider.write(ref, 'hunter2');
+      expect(await provider.read(ref), 'hunter2');
+    });
+
+    test('delete removes a stored value', () async {
+      final provider = InMemorySecretProvider({ref: 'hunter2'});
+      await provider.delete(ref);
+      expect(await provider.read(ref), isNull);
+    });
+
+    test('is seeded from the initial map without aliasing it', () async {
+      final seed = {ref: 'hunter2'};
+      final provider = InMemorySecretProvider(seed);
+      await provider.write(ref, 'changed');
+      expect(seed[ref], 'hunter2'); // the caller's map is untouched
     });
   });
 

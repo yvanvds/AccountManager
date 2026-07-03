@@ -62,16 +62,35 @@ zero network and zero infra.
 | Interface | Model | Defaults | Legacy counterpart |
 |---|---|---|---|
 | `SettingsStore` | `AppSettings` (+ import-rule codecs) | `InMemorySettingsStore`, `FileSettingsStore` | `config.json` / `SettingsState` |
+| `SecretProvider` | `SecretRef` → value | `InMemorySecretProvider` | inline secrets in `config.json` |
 | `PersonIdResolver` (from `account_core`) | `PersonId` | `FilePersonIdResolver` (from `account_store`) | — |
 | `PasswordQueueStore` | `PasswordEntry` | `InMemoryPasswordQueueStore`, `FilePasswordQueueStore` | `PasswordManager` / `Passwords.json` |
 
+## Config model
+
+`AppSettings` gathers everything the legacy per-system `*State` classes each
+persisted into one immutable value (PROJECT_OVERVIEW §6.2):
+
+- global flags — `schoolPrefix`, `debugMode` (legacy `SettingsState`);
+- three **connection profiles** — `WisaConnection` (endpoint + the real/virtual
+  `WorkDateSetting` pair), `SmartschoolConnection` (endpoint, group paths, the
+  `useGrades`/`useYears` flags and fixed-length grade/year label arrays), and
+  `AzureConnection` (app registration + domain);
+- the per-connector **import-rule sets** applied at snapshot construction
+  (spec §3.11).
+
+**Secrets never enter the blob.** The WISA password and Smartschool passphrase
+are modeled as a `SecretRef` on their profile and resolved through a
+`SecretProvider`; `toJson` emits only the (non-sensitive) ref name. Phase B
+swaps `InMemorySecretProvider` for a Key-Vault-backed implementation without
+touching anything above the seam. `WorkDateSetting.resolve(now)` keeps the live
+clock out of the model, mirroring `WisaLiveConfig.resolveWorkDate`.
+
 ## Scope notes
 
-- `AppSettings` models the global flags and import-rule sets only. Connection
-  credentials and the WISA workdate pair stay with the connectors' own
-  live-config and are folded in by a later slice.
 - `PasswordEntry` models the legacy `AccountPassword` fields; the co-account
   `Co1..Co6` addresses are deferred until the Passwords page is ported.
 
 Spec: [`docs/domain-model.md`](../../docs/domain-model.md) §7,
-[`PROJECT_OVERVIEW.md`](../../PROJECT_OVERVIEW.md) §5–§7.
+[`PROJECT_OVERVIEW.md`](../../PROJECT_OVERVIEW.md) §5–§7. Overall strategy:
+[`docs/port-plan.md`](../../docs/port-plan.md).

@@ -1,18 +1,27 @@
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
+import 'connection.dart';
 import 'import_rule_codec.dart';
 
 /// The persisted configuration model for the Arcadia Account Manager.
 ///
 /// This is the Dart counterpart of the legacy `config.json` (PROJECT_OVERVIEW
-/// §7): the operator-tunable settings that survive across runs. This scaffold
-/// slice models the two pieces the State layer needs first — the global flags
-/// ([schoolPrefix], [debugMode], mirroring the legacy `SettingsState`) and the
-/// per-connector **import-rule sets** applied at snapshot construction (spec
-/// §3.11). Connection credentials and the WISA workdate pair are deliberately
-/// out of scope here; they are the connectors' own live-config concern and
-/// will be folded in by a later slice.
+/// §6.2): the operator-tunable settings that survive across runs. It gathers
+/// what the legacy per-system `*State` classes each persisted into one
+/// immutable value:
+///
+/// - the global flags ([schoolPrefix], [debugMode]) — legacy `SettingsState`;
+/// - the three **connection profiles** ([wisa], [smartschool], [azure]),
+///   including the WISA work-date pair and the Smartschool grade/year
+///   vocabulary — the config half of the legacy `WisaState`/`SmartschoolState`/
+///   `AzureState`;
+/// - the per-connector **import-rule sets** applied at snapshot construction
+///   (spec §3.11).
+///
+/// Secrets are **not** here. The WISA password and Smartschool passphrase are
+/// modeled as a [SecretRef] on their profile and resolved through a
+/// [SecretProvider], so no credential is ever written to the settings blob.
 ///
 /// The model is immutable — mutate by [copyWith] and hand the result to a
 /// [SettingsStore]. It carries its own `toJson`/`fromJson` so the file-backed
@@ -21,9 +30,12 @@ class AppSettings {
   const AppSettings({
     this.schoolPrefix = '',
     this.debugMode = false,
+    this.wisa = const WisaConnection(),
+    this.azure = const AzureConnection(),
+    SmartschoolConnection? smartschool,
     this.wisaRules = const [],
     this.smartschoolRules = const [],
-  });
+  }) : _smartschool = smartschool;
 
   /// The school prefix used by the linker to scope Azure users to this school
   /// (INV-22). Legacy `SettingsState.SchoolPrefix`.
@@ -31,6 +43,21 @@ class AppSettings {
 
   /// Whether verbose diagnostics are enabled. Legacy `SettingsState.DebugMode`.
   final bool debugMode;
+
+  /// WISA connection profile (endpoint, credentials seam, work-date pair).
+  final WisaConnection wisa;
+
+  /// Azure AD / Office 365 connection profile (app registration + domain).
+  final AzureConnection azure;
+
+  // Held nullable so the constructor can stay `const` — [SmartschoolConnection]
+  // normalizes its label arrays in a body initializer and so has no const ctor.
+  final SmartschoolConnection? _smartschool;
+
+  /// Smartschool connection profile (endpoint, credentials seam, group paths,
+  /// grade/year vocabulary).
+  SmartschoolConnection get smartschool =>
+      _smartschool ?? SmartschoolConnection();
 
   /// WISA import rules applied at snapshot construction (spec §3.11).
   final List<WisaImportRule> wisaRules;
@@ -42,22 +69,32 @@ class AppSettings {
   AppSettings copyWith({
     String? schoolPrefix,
     bool? debugMode,
+    WisaConnection? wisa,
+    AzureConnection? azure,
+    SmartschoolConnection? smartschool,
     List<WisaImportRule>? wisaRules,
     List<SmartschoolImportRule>? smartschoolRules,
   }) {
     return AppSettings(
       schoolPrefix: schoolPrefix ?? this.schoolPrefix,
       debugMode: debugMode ?? this.debugMode,
+      wisa: wisa ?? this.wisa,
+      azure: azure ?? this.azure,
+      smartschool: smartschool ?? this.smartschool,
       wisaRules: wisaRules ?? this.wisaRules,
       smartschoolRules: smartschoolRules ?? this.smartschoolRules,
     );
   }
 
-  /// Serializes to a JSON-encodable map.
+  /// Serializes to a JSON-encodable map. No secret value is written — the
+  /// profiles emit only a [SecretRef] name.
   Map<String, dynamic> toJson() {
     return {
       'schoolPrefix': schoolPrefix,
       'debugMode': debugMode,
+      'wisa': wisa.toJson(),
+      'smartschool': smartschool.toJson(),
+      'azure': azure.toJson(),
       'wisaRules': wisaRules.map(encodeWisaRule).toList(),
       'smartschoolRules': smartschoolRules.map(encodeSmartschoolRule).toList(),
     };
@@ -72,9 +109,21 @@ class AppSettings {
     final wisa = (json['wisaRules'] as List<dynamic>?) ?? const [];
     final smartschool =
         (json['smartschoolRules'] as List<dynamic>?) ?? const [];
+    final wisaConn = json['wisa'] as Map<String, dynamic>?;
+    final smartschoolConn = json['smartschool'] as Map<String, dynamic>?;
+    final azureConn = json['azure'] as Map<String, dynamic>?;
     return AppSettings(
       schoolPrefix: (json['schoolPrefix'] as String?) ?? '',
       debugMode: (json['debugMode'] as bool?) ?? false,
+      wisa: wisaConn == null
+          ? const WisaConnection()
+          : WisaConnection.fromJson(wisaConn),
+      smartschool: smartschoolConn == null
+          ? null
+          : SmartschoolConnection.fromJson(smartschoolConn),
+      azure: azureConn == null
+          ? const AzureConnection()
+          : AzureConnection.fromJson(azureConn),
       wisaRules: [
         for (final r in wisa) decodeWisaRule(r as Map<String, dynamic>),
       ],
