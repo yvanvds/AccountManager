@@ -51,6 +51,11 @@ export 'package:account_store/account_store.dart' show FilePersonIdResolver;
 
 export 'src/apply/state_applier.dart';
 export 'src/apply/wisa_import_rules.dart';
+export 'src/keyvault/key_vault_config.dart';
+export 'src/keyvault/key_vault_live_config.dart';
+export 'src/keyvault/key_vault_secret_provider.dart';
+export 'src/keyvault/key_vault_token_provider.dart';
+export 'src/keyvault/key_vault_transport.dart';
 export 'src/link/linked_state.dart';
 export 'src/link/placement.dart';
 export 'src/passwords/password_entry.dart';

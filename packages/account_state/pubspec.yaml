@@ -18,6 +18,7 @@ resolution: workspace
 dependencies:
   account_core:
   account_store:
+  http: ^1.2.0
   wisa_api:
   smartschool_api:
   azure_api:
