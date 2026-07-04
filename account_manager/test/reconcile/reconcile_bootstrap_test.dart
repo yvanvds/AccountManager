@@ -50,11 +50,13 @@ class _EmptyCosmosClient implements CosmosClient {
       true;
 
   @override
-  Future<void> upsertDocument({
+  Future<WriteOutcome> upsertDocument({
     required String container,
     required Map<String, dynamic> document,
     required String partitionKey,
-  }) async {}
+    String? ifMatch,
+  }) async =>
+      const WriteOutcome.applied(null);
 
   @override
   Future<void> deleteDocument({
