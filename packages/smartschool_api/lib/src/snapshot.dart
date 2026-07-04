@@ -35,4 +35,32 @@ class SmartschoolSnapshot implements core.Snapshot {
   })  : groups = UnmodifiableListView(List.of(groups)),
         accounts = UnmodifiableListView(List.of(accounts)),
         memberships = UnmodifiableListView(List.of(memberships));
+
+  /// Serializes the whole snapshot to a JSON-encodable map. Round-trips with
+  /// [SmartschoolSnapshot.fromJson] — the payload form the cold `snapshots`
+  /// store persists so a passive session trusts the stored Smartschool state
+  /// instead of re-pulling it (#107).
+  Map<String, dynamic> toJson() => {
+        'fetchedAt': fetchedAt.toIso8601String(),
+        'groups': [for (final g in groups) g.toJson()],
+        'accounts': [for (final a in accounts) a.toJson()],
+        'memberships': [for (final m in memberships) m.toJson()],
+      };
+
+  factory SmartschoolSnapshot.fromJson(Map<String, dynamic> json) =>
+      SmartschoolSnapshot(
+        fetchedAt: DateTime.parse(json['fetchedAt'] as String),
+        groups: [
+          for (final e in (json['groups'] as List<dynamic>? ?? const []))
+            core.Group.fromJson(e as Map<String, dynamic>),
+        ],
+        accounts: [
+          for (final e in (json['accounts'] as List<dynamic>? ?? const []))
+            SmartschoolAccount.fromJson(e as Map<String, dynamic>),
+        ],
+        memberships: [
+          for (final e in (json['memberships'] as List<dynamic>? ?? const []))
+            SmartschoolMembership.fromJson(e as Map<String, dynamic>),
+        ],
+      );
 }

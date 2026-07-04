@@ -32,6 +32,21 @@ class SmartschoolMembership {
     this.accountType = core.AccountType.student,
   });
 
+  /// Serializes to the connector's own snapshot shape. Round-trips with
+  /// [SmartschoolMembership.fromJson] for the persisted cold snapshot (#107).
+  Map<String, dynamic> toJson() => {
+        'uid': uid,
+        'groupId': groupId.toJson(),
+        'accountType': accountType.toJson(),
+      };
+
+  factory SmartschoolMembership.fromJson(Map<String, dynamic> json) =>
+      SmartschoolMembership(
+        uid: json['uid'] as String,
+        groupId: core.GroupId(json['groupId'] as String),
+        accountType: core.AccountType.fromJson(json['accountType'] as String),
+      );
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

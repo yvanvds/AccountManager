@@ -151,6 +151,66 @@ class SmartschoolAccount implements core.SmartschoolAccount {
         coAccounts: coAccounts ?? this.coAccounts,
       );
 
+  /// Serializes to the connector's own snapshot shape. Round-trips with
+  /// [SmartschoolAccount.fromJson] for the persisted cold snapshot (#107).
+  Map<String, dynamic> toJson() => {
+        'uid': uid,
+        'accountId': accountId,
+        'mail': mail,
+        'registerId': registerId,
+        'stemId': stemId,
+        if (role != null) 'role': role!.toJson(),
+        'givenName': givenName,
+        'surname': surname,
+        'extraNames': extraNames,
+        'initials': initials,
+        'preferredName': preferredName,
+        'gender': gender.toJson(),
+        if (birthDate != null) 'birthDate': birthDate!.toIso8601String(),
+        'birthPlace': birthPlace,
+        'birthCountry': birthCountry,
+        'address': address.toJson(),
+        'mobilePhone': mobilePhone,
+        'homePhone': homePhone,
+        'fax': fax,
+        'untisId': untisId,
+        'status': status,
+        'coAccounts': [for (final c in coAccounts) c.toJson()],
+      };
+
+  factory SmartschoolAccount.fromJson(Map<String, dynamic> json) =>
+      SmartschoolAccount(
+        uid: json['uid'] as String,
+        accountId: json['accountId'] as String,
+        mail: json['mail'] as String,
+        registerId: json['registerId'] as String,
+        stemId: json['stemId'] as int,
+        role: json['role'] == null
+            ? null
+            : core.PersonRole.fromJson(json['role'] as String),
+        givenName: json['givenName'] as String,
+        surname: json['surname'] as String,
+        extraNames: json['extraNames'] as String,
+        initials: json['initials'] as String,
+        preferredName: json['preferredName'] as String,
+        gender: core.Gender.fromJson(json['gender'] as String),
+        birthDate: json['birthDate'] == null
+            ? null
+            : DateTime.parse(json['birthDate'] as String),
+        birthPlace: json['birthPlace'] as String,
+        birthCountry: json['birthCountry'] as String,
+        address: core.Address.fromJson(json['address'] as Map<String, dynamic>),
+        mobilePhone: json['mobilePhone'] as String,
+        homePhone: json['homePhone'] as String,
+        fax: json['fax'] as String,
+        untisId: json['untisId'] as String,
+        status: json['status'] as String,
+        coAccounts: [
+          for (final e in (json['coAccounts'] as List<dynamic>? ?? const []))
+            CoAccountSlot.fromJson(e as Map<String, dynamic>),
+        ],
+      );
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

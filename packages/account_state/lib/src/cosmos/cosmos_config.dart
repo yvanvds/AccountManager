@@ -88,3 +88,12 @@ const String passwordQueueDocumentId = 'queue';
 
 /// The constant partition-key value the password-queue document carries.
 const String passwordQueuePartitionKeyValue = 'queue';
+
+/// The cold-snapshot metadata container (#107): one document per system
+/// (`wisa` / `smartschool` / `azure`) holding `fetchedAt`, `syncedBy`, the Azure
+/// `deltaToken`, and either the raw payload inline or a `blobRef` when the
+/// payload exceeds Cosmos's 2 MB document limit. Partitioned by `/id`, so each
+/// system's document is its own logical partition and a point read/upsert is
+/// atomic. Only the sync/drift process reads these — the dashboard never does.
+/// Provisioned out of band (data-plane RBAC cannot create containers).
+const String snapshotsContainer = 'snapshots';

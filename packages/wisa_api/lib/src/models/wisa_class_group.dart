@@ -30,6 +30,26 @@ class WisaClassGroup {
     required this.schoolId,
   });
 
+  /// Serializes to the connector's own snapshot shape. Round-trips with
+  /// [WisaClassGroup.fromJson] for the persisted cold snapshot (#107).
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'groupName': groupName,
+        'description': description,
+        'adminCode': adminCode,
+        'schoolCode': schoolCode,
+        'schoolId': schoolId,
+      };
+
+  factory WisaClassGroup.fromJson(Map<String, dynamic> json) => WisaClassGroup(
+        name: json['name'] as String,
+        groupName: json['groupName'] as String,
+        description: json['description'] as String,
+        adminCode: json['adminCode'] as String,
+        schoolCode: json['schoolCode'] as String,
+        schoolId: json['schoolId'] as int,
+      );
+
   /// `"name groupName"` when subgroups apply, otherwise just `name`.
   /// Mirrors legacy `ClassGroup.FullName`.
   String get fullName => groupName == '00' ? name : '$name $groupName';

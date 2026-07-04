@@ -1,6 +1,7 @@
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/log_buffer.dart';
+import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'reconcile_fakes.dart';
@@ -86,6 +87,88 @@ void main() {
       expect(h.azSyncs, 2);
       expect(h.wisaSyncs, 1, reason: 'drift check does not re-pull WISA');
       expect(h.controller.linked, isNotNull);
+    });
+  });
+
+  group('cross-session snapshot persistence (#107)', () {
+    test('a first sync persists all three snapshots to the store', () async {
+      final store = InMemorySnapshotStore();
+      final h = ReconcileHarness(store: store);
+
+      await h.controller.sync();
+
+      expect(
+        store.storedSystems,
+        containsAll([
+          core.Origin.wisa,
+          core.Origin.smartschool,
+          core.Origin.azure,
+        ]),
+      );
+      expect(
+          store.peek(core.Origin.azure)!.syncedBy, 'operator@school.example');
+    });
+
+    test('a fresh session seeded from the store reuses Smartschool + Azure',
+        () async {
+      final store = InMemorySnapshotStore();
+      // Session 1 pulls and persists everything.
+      await ReconcileHarness(store: store).controller.sync();
+
+      // Session 2: a fresh controller over the same store.
+      final resumed = await ReconcileHarness.resume(store: store);
+      await resumed.controller.sync();
+
+      // WISA is still pulled (the smart diff needs a fresh WISA read), but the
+      // Smartschool and Azure snapshots are trusted from the store — no pull.
+      expect(resumed.wisaSyncs, 1);
+      expect(resumed.ssSyncs, 0,
+          reason: 'Smartschool is seeded from the store, not re-pulled');
+      expect(resumed.azSyncs, 0,
+          reason: 'Azure is seeded from the store, not re-pulled');
+      expect(resumed.controller.linked, isNotNull,
+          reason: 'the linked view is derived from the seeded snapshots');
+      expect(resumed.log.entries.where((e) => e.isError), isEmpty);
+    });
+
+    test('check-for-drift re-pulls and replaces the stored copies', () async {
+      final store = InMemorySnapshotStore();
+      await ReconcileHarness(store: store).controller.sync();
+      expect(store.peek(core.Origin.smartschool)!.fetchedAt, kFixtureDate);
+
+      final resumed = await ReconcileHarness.resume(store: store);
+      // The drift pull returns snapshots stamped later than the stored copies.
+      final driftAt = kFixtureDate.add(const Duration(hours: 3));
+      resumed.ssResult = ssSnap(fetchedAt: driftAt);
+      resumed.azResult = azSnap(fetchedAt: driftAt);
+
+      await resumed.controller.checkDrift();
+
+      // A drift check re-reads Smartschool + Azure from the connectors…
+      expect(resumed.ssSyncs, 1);
+      expect(resumed.azSyncs, 1);
+      // …and replaces the stored snapshots with the fresh pulls.
+      expect(store.peek(core.Origin.smartschool)!.fetchedAt, driftAt);
+      expect(store.peek(core.Origin.azure)!.fetchedAt, driftAt);
+    });
+
+    test('the Azure delta token survives across sessions', () async {
+      final store = InMemorySnapshotStore();
+      final s1 = ReconcileHarness(
+        store: store,
+        azure: az.AzureSnapshot(
+          fetchedAt: kFixtureDate,
+          deltaToken: 'DELTA-42',
+          users: [azUser()],
+          groups: const [],
+        ),
+      );
+      await s1.controller.sync();
+
+      // The seeded Azure snapshot carries the delta token forward, priming the
+      // next incremental /users/delta.
+      final resumed = await ReconcileHarness.resume(store: store);
+      expect(resumed.app.azure.snapshot?.deltaToken, 'DELTA-42');
     });
   });
 

@@ -19,6 +19,8 @@ class StoreEndpoints {
     required this.cosmosEndpoint,
     required this.cosmosDatabase,
     required this.vaultUri,
+    required this.blobEndpoint,
+    required this.blobContainer,
   });
 
   factory StoreEndpoints.fromEnvironment() => const StoreEndpoints(
@@ -35,11 +37,26 @@ class StoreEndpoints {
           'KEY_VAULT_URI',
           defaultValue: 'https://accountmanager-kv.vault.azure.net/',
         ),
+        blobEndpoint: String.fromEnvironment(
+          'BLOB_ENDPOINT',
+          defaultValue: 'https://accountmanagerarcadia.blob.core.windows.net',
+        ),
+        blobContainer: String.fromEnvironment(
+          'BLOB_SNAPSHOTS_CONTAINER',
+          defaultValue: 'snapshots',
+        ),
       );
 
   final String cosmosEndpoint;
   final String cosmosDatabase;
   final String vaultUri;
+
+  /// The Blob Storage account endpoint holding cold-snapshot overflow payloads
+  /// (#107).
+  final String blobEndpoint;
+
+  /// The container within [blobEndpoint] the snapshot overflow blobs live in.
+  final String blobContainer;
 }
 
 /// The assembled reconcile stack for one signed-in session: settings loaded
@@ -91,6 +108,8 @@ Future<ReconcileServices> bootstrapReconcile({
   SettingsStore? settingsStore,
   SecretProvider? secretProvider,
   CosmosClient? cosmosClient,
+  BlobStore? blobStore,
+  SnapshotStore? snapshotStore,
   LogBuffer? log,
   DateTime Function()? clock,
 }) async {
@@ -110,6 +129,23 @@ Future<ReconcileServices> bootstrapReconcile({
 
   final store = settingsStore ?? CosmosSettingsStore(client);
   final settings = await store.load();
+
+  // The cold snapshot store (#107): a fresh session seeds its SystemStates from
+  // here instead of pulling, and every successful sync writes the fresh
+  // snapshot back. Only the sync/drift process reads or writes it.
+  final blobs = blobStore ??
+      HttpBlobStore(
+        config: BlobConfig(
+          endpoint: ends.blobEndpoint,
+          container: ends.blobContainer,
+        ),
+        transport: HttpBlobTransport(),
+        tokens: BlobSessionTokenProvider(session),
+      );
+  final snapshots = snapshotStore ?? CosmosSnapshotStore(client, blobs);
+  final syncedBy = session.account ?? '';
+  void logSnapshotIssue(core.Origin system, Object error) =>
+      logBuffer.addError(system, 'Snapshot store: $error');
 
   final secrets = secretProvider ??
       KeyVaultSecretProvider(
@@ -178,34 +214,83 @@ Future<ReconcileServices> bootstrapReconcile({
 
   final wisaRules = WisaImportRules(initial: settings.wisaRules);
 
+  // Seed each SystemState from the stored cold snapshot so a fresh session
+  // trusts the persisted state (#107): WISA seeds the smart-diff baseline,
+  // Smartschool/Azure are reused rather than re-pulled, and the Azure seed
+  // restores the delta token so the next sync resumes `/users/delta`.
+  final wisaSeed = await seedSnapshot<wapi.WisaSnapshot>(
+    system: core.Origin.wisa,
+    store: snapshots,
+    fromPayload: wapi.WisaSnapshot.fromJson,
+    onError: (e) => logSnapshotIssue(core.Origin.wisa, e),
+  );
+  final ssSeed = await seedSnapshot<ss.SmartschoolSnapshot>(
+    system: core.Origin.smartschool,
+    store: snapshots,
+    fromPayload: ss.SmartschoolSnapshot.fromJson,
+    onError: (e) => logSnapshotIssue(core.Origin.smartschool, e),
+  );
+  final azureSeed = await seedSnapshot<az.AzureSnapshot>(
+    system: core.Origin.azure,
+    store: snapshots,
+    fromPayload: az.AzureSnapshot.fromJson,
+    onError: (e) => logSnapshotIssue(core.Origin.azure, e),
+  );
+
   final app = ApplicationState(
     wisa: SystemState<wapi.WisaSnapshot>(
       system: core.Origin.wisa,
+      initial: wisaSeed,
       // Schools are re-read per sync so a WISA-side school change is picked
       // up; MarkAsVirtual rules are applied to them before the row pulls, the
       // other rules at snapshot construction. Rules are read live from the
       // shared holder so a DontImportFromWisa apply affects the re-sync (#72).
-      syncer: (_) async {
-        final schools = wapi.WisaConnector.applySchoolRules(
-          await wisaConnector.loadSchools(),
-          wisaRules.rules,
-        );
-        final at = now();
-        return wisaConnector.sync(
-          schools: schools,
-          workDate: settings.wisa.workDate.resolve(at),
-          virtualWorkDate: settings.wisa.virtualWorkDate.resolve(at),
-          rules: wisaRules.rules,
-        );
-      },
+      // The pull is wrapped so each fresh snapshot is persisted (#107).
+      syncer: persistingSyncer<wapi.WisaSnapshot>(
+        system: core.Origin.wisa,
+        store: snapshots,
+        syncedBy: syncedBy,
+        payloadOf: (s) => s.toJson(),
+        onError: (e) => logSnapshotIssue(core.Origin.wisa, e),
+        inner: (_) async {
+          final schools = wapi.WisaConnector.applySchoolRules(
+            await wisaConnector.loadSchools(),
+            wisaRules.rules,
+          );
+          final at = now();
+          return wisaConnector.sync(
+            schools: schools,
+            workDate: settings.wisa.workDate.resolve(at),
+            virtualWorkDate: settings.wisa.virtualWorkDate.resolve(at),
+            rules: wisaRules.rules,
+          );
+        },
+      ),
     ),
     smartschool: SystemState<ss.SmartschoolSnapshot>(
       system: core.Origin.smartschool,
-      syncer: (_) => ssConnector.sync(rules: settings.smartschoolRules),
+      initial: ssSeed,
+      syncer: persistingSyncer<ss.SmartschoolSnapshot>(
+        system: core.Origin.smartschool,
+        store: snapshots,
+        syncedBy: syncedBy,
+        payloadOf: (s) => s.toJson(),
+        onError: (e) => logSnapshotIssue(core.Origin.smartschool, e),
+        inner: (_) => ssConnector.sync(rules: settings.smartschoolRules),
+      ),
     ),
     azure: SystemState<az.AzureSnapshot>(
       system: core.Origin.azure,
-      syncer: azureSyncer(azConnector),
+      initial: azureSeed,
+      syncer: persistingSyncer<az.AzureSnapshot>(
+        system: core.Origin.azure,
+        store: snapshots,
+        syncedBy: syncedBy,
+        payloadOf: (s) => s.toJson(),
+        deltaTokenOf: (s) => s.deltaToken,
+        onError: (e) => logSnapshotIssue(core.Origin.azure, e),
+        inner: azureSyncer(azConnector),
+      ),
     ),
   );
 

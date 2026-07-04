@@ -21,6 +21,22 @@ class WisaSchool {
     this.isVirtual = false,
   });
 
+  /// Serializes to the connector's own snapshot shape. Round-trips with
+  /// [WisaSchool.fromJson] for the persisted cold snapshot (#107).
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'isVirtual': isVirtual,
+      };
+
+  factory WisaSchool.fromJson(Map<String, dynamic> json) => WisaSchool(
+        id: json['id'] as int,
+        name: json['name'] as String,
+        description: json['description'] as String,
+        isVirtual: (json['isVirtual'] as bool?) ?? false,
+      );
+
   WisaSchool copyWith({bool? isVirtual}) => WisaSchool(
         id: id,
         name: name,

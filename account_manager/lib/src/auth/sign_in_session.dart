@@ -1,5 +1,5 @@
 import 'package:account_state/account_state.dart'
-    show CosmosTokenProvider, KeyVaultTokenProvider;
+    show BlobTokenProvider, CosmosTokenProvider, KeyVaultTokenProvider;
 import 'package:azure_api/azure_api.dart'
     show AzureAuthException, AzureAuthProvider;
 
@@ -130,4 +130,16 @@ class VaultSessionTokenProvider implements KeyVaultTokenProvider {
 
   @override
   Future<String> vaultAccessToken() => _session.tokenFor(AadResource.vault);
+}
+
+/// Adapts a [SignInSession] to the Blob auth seam ([BlobTokenProvider]) so
+/// cold-snapshot overflow blobs are read/written with the operator's own AAD
+/// identity (Storage Blob Data Contributor), no stored account key (#107).
+class BlobSessionTokenProvider implements BlobTokenProvider {
+  BlobSessionTokenProvider(this._session);
+
+  final SignInSession _session;
+
+  @override
+  Future<String> blobAccessToken() => _session.tokenFor(AadResource.storage);
 }

@@ -137,6 +137,38 @@ void main() {
     expect(harness.azSyncs, 1);
   });
 
+  testWidgets(
+      'a resumed session trusts the stored state: Synchronise pulls no '
+      'Smartschool/Azure (#107)', (WidgetTester tester) async {
+    // Session 1 (offline harness over a shared cold-snapshot store): a full
+    // sync persists all three connector snapshots.
+    final store = InMemorySnapshotStore();
+    await ReconcileHarness(store: store).controller.sync();
+
+    // Session 2 is the real app, freshly bootstrapped over the *same* store —
+    // its SystemStates seed from what session 1 persisted.
+    final resumed = await ReconcileHarness.resume(store: store);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-sync')), findsOneWidget);
+
+    // Drive Synchronise from the real UI: WISA is re-read for the smart diff,
+    // but Smartschool and Azure are trusted from the store — no connector pull.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(resumed.wisaSyncs, 1);
+    expect(resumed.ssSyncs, 0, reason: 'Smartschool seeded from the store');
+    expect(resumed.azSyncs, 0, reason: 'Azure seeded from the store');
+    expect(find.text('Linked overview'), findsOneWidget);
+  });
+
   testWidgets('silent sign-in leads straight into the shell',
       (WidgetTester tester) async {
     final broker = _FakeBroker(silent: (_) => _token('AT'));

@@ -47,4 +47,12 @@ class AadResource {
     id: 'vault',
     scopes: <String>['https://vault.azure.net/.default'],
   );
+
+  /// The centralized Blob Storage account (`https://storage.azure.com`), where
+  /// cold snapshot payloads too large for a Cosmos document overflow (#107). The
+  /// operator holds a *Storage Blob Data Contributor* data-plane role.
+  static const AadResource storage = AadResource(
+    id: 'storage',
+    scopes: <String>['https://storage.azure.com/.default'],
+  );
 }
