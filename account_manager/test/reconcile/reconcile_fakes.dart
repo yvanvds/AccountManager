@@ -394,6 +394,7 @@ class ReconcileHarness {
         schoolPrefix: 'GBS',
         azureDomain: 'school.example',
       ),
+      passwordQueue: passwordQueue,
     );
 
     final signalHub = hub;
@@ -488,6 +489,10 @@ class ReconcileHarness {
   late final StateApplier applier;
   late final ReconcileController controller;
 
+  /// The shared password-distribution queue (#105): the applier appends to it on
+  /// every account-creating apply, and the Passwords view reads and drains it.
+  final InMemoryPasswordQueueStore passwordQueue = InMemoryPasswordQueueStore();
+
   /// The bundle the screen's bootstrap seam expects.
   ReconcileServices get services => ReconcileServices(
         settings: const AppSettings(),
@@ -495,6 +500,7 @@ class ReconcileHarness {
         applier: applier,
         controller: controller,
         log: log,
+        passwordQueue: passwordQueue,
       );
 
   /// A ready-made bootstrap closure for [ReconcileScreen]/[AccountManagerApp].

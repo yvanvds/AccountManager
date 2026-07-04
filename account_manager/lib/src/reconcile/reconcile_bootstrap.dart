@@ -87,6 +87,7 @@ class ReconcileServices {
     required this.applier,
     required this.controller,
     required this.log,
+    required this.passwordQueue,
   });
 
   final AppSettings settings;
@@ -94,6 +95,12 @@ class ReconcileServices {
   final StateApplier applier;
   final ReconcileController controller;
   final LogBuffer log;
+
+  /// The shared password-distribution queue (#105) the [applier] appends to
+  /// when an apply creates an account, and the Passwords view reads and drains.
+  /// The same instance is wired into [applier], so an apply and the view see the
+  /// one queue.
+  final PasswordQueueStore passwordQueue;
 }
 
 /// A configuration problem the operator can act on (missing secret, malformed
@@ -128,6 +135,7 @@ Future<ReconcileServices> bootstrapReconcile({
   BlobStore? blobStore,
   SnapshotStore? snapshotStore,
   LinkedStore? linkedStore,
+  PasswordQueueStore? passwordQueueStore,
   SignalPublisher? publisher,
   SignalSubscriber? subscriber,
   LogBuffer? log,
@@ -167,6 +175,13 @@ Future<ReconcileServices> bootstrapReconcile({
   // docs + rollups here, and every passive session reads the overview back with
   // no pull and no link().
   final linked = linkedStore ?? CosmosLinkedStore(client);
+
+  // The shared password-distribution queue (#105): the whole team's pending
+  // password sheets in one Cosmos document, so one operator can generate and
+  // another print. The same instance is wired into the applier (which appends on
+  // every account-creating apply) and handed to the Passwords view (which reads
+  // and drains it).
+  final passwordQueue = passwordQueueStore ?? CosmosPasswordQueueStore(client);
 
   // The realtime seam (#116 publish, #124 subscribe): a sync/apply broadcasts a
   // small change signal so other operators refetch just the changed shard, and
@@ -354,6 +369,7 @@ Future<ReconcileServices> bootstrapReconcile({
       azureDomain: azureDomain,
     ),
     classTree: classTreeFrom(settings.smartschool),
+    passwordQueue: passwordQueue,
   );
 
   // The live SignalR subscriber (#124): on every (re)connect it re-reads the
@@ -390,6 +406,7 @@ Future<ReconcileServices> bootstrapReconcile({
     applier: applier,
     controller: controller,
     log: logBuffer,
+    passwordQueue: passwordQueue,
   );
 }
 

@@ -3,6 +3,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../reconcile/reconcile_bootstrap.dart';
 import '../screens/home_screen.dart';
+import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
 
 /// One navigable destination in the [AppShell].
@@ -46,6 +47,11 @@ class _AppShellState extends State<AppShell> {
       label: 'Reconcile',
       icon: Icons.sync_alt_outlined,
       builder: (_) => ReconcileScreen(bootstrap: widget.reconcileBootstrap),
+    ),
+    ShellDestination(
+      label: 'Passwords',
+      icon: Icons.password_outlined,
+      builder: (_) => PasswordsScreen(bootstrap: widget.reconcileBootstrap),
     ),
   ];
 

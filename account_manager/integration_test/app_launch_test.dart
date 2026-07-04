@@ -8,6 +8,7 @@ import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
+import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
@@ -647,6 +648,64 @@ void main() {
     expect(decisions, hasLength(1));
     expect(harness.controller.duplicateWarnings.single.accepted, isTrue);
     expect(find.byKey(const ValueKey('dup-revoke-$mail')), findsOneWidget);
+  });
+
+  testWidgets(
+      'creating an account captures its password into the Passwords view, which '
+      'distributes it out of the shared queue (#105)',
+      (WidgetTester tester) async {
+    // A brand-new student: present in WISA and Azure but not yet in Smartschool,
+    // so the dispatcher yields exactly one AddStudentToSmartschool — an
+    // account-creating apply that mints (and must capture) a password.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [wisaStudent()]),
+      azure: azSnap(users: [azUser()]),
+      smartschool: ssSnap(accounts: const [], memberships: const []),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Reconcile → sync → the create is pending. The queue starts empty.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(find.text('Maak een nieuw Smartschool account'), findsWidgets);
+    expect(await harness.passwordQueue.load(), isEmpty);
+
+    // Apply it for real (against the recording SOAP transport): the create runs
+    // and its minted password is captured into the shared queue.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-apply')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+    final queued = await harness.passwordQueue.load();
+    expect(queued, hasLength(1),
+        reason: 'the created account\'s password landed in the queue');
+    expect(queued.single.smartschoolPassword, isNotNull);
+
+    // Switch to the Passwords view: the freshly captured sheet is listed in the
+    // real, laid-out app.
+    await tester.tap(find.text('Passwords'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PasswordsScreen), findsOneWidget);
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(find.text('Smartschool:'), findsOneWidget);
+
+    // Mark it distributed → it drains from the shared queue (saved remainder is
+    // empty) and the view falls back to the all-distributed state.
+    await tester.tap(find.byIcon(Icons.done_all));
+    await tester.pumpAndSettle();
+    expect(find.text('Jane Doe'), findsNothing);
+    expect(find.byKey(const ValueKey('passwords-empty')), findsOneWidget);
+    expect(await harness.passwordQueue.load(), isEmpty);
   });
 
   testWidgets('silent sign-in leads straight into the shell',
