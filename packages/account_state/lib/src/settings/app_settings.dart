@@ -3,6 +3,7 @@ import 'package:wisa_api/wisa_api.dart';
 
 import 'connection.dart';
 import 'import_rule_codec.dart';
+import 'wisa_school_profile.dart';
 
 /// The persisted configuration model for the Arcadia Account Manager.
 ///
@@ -35,6 +36,7 @@ class AppSettings {
     SmartschoolConnection? smartschool,
     this.wisaRules = const [],
     this.smartschoolRules = const [],
+    this.wisaSchools = const [],
   }) : _smartschool = smartschool;
 
   /// The school prefix used by the linker to scope Azure users to this school
@@ -65,6 +67,11 @@ class AppSettings {
   /// Smartschool import rules applied at snapshot construction (spec §3.11).
   final List<SmartschoolImportRule> smartschoolRules;
 
+  /// Per-WISA-school ownership entries (the `MarkAsOurs` counterpart persisted
+  /// by school id). Empty means no school has been marked managed yet — the
+  /// group-membership plumbing #113 slice 2 reads, but no action fires here.
+  final List<WisaSchoolProfile> wisaSchools;
+
   /// Returns a copy with the given fields replaced.
   AppSettings copyWith({
     String? schoolPrefix,
@@ -74,6 +81,7 @@ class AppSettings {
     SmartschoolConnection? smartschool,
     List<WisaImportRule>? wisaRules,
     List<SmartschoolImportRule>? smartschoolRules,
+    List<WisaSchoolProfile>? wisaSchools,
   }) {
     return AppSettings(
       schoolPrefix: schoolPrefix ?? this.schoolPrefix,
@@ -83,6 +91,7 @@ class AppSettings {
       smartschool: smartschool ?? this.smartschool,
       wisaRules: wisaRules ?? this.wisaRules,
       smartschoolRules: smartschoolRules ?? this.smartschoolRules,
+      wisaSchools: wisaSchools ?? this.wisaSchools,
     );
   }
 
@@ -97,6 +106,7 @@ class AppSettings {
       'azure': azure.toJson(),
       'wisaRules': wisaRules.map(encodeWisaRule).toList(),
       'smartschoolRules': smartschoolRules.map(encodeSmartschoolRule).toList(),
+      'wisaSchools': wisaSchools.map((p) => p.toJson()).toList(),
     };
   }
 
@@ -112,6 +122,7 @@ class AppSettings {
     final wisaConn = json['wisa'] as Map<String, dynamic>?;
     final smartschoolConn = json['smartschool'] as Map<String, dynamic>?;
     final azureConn = json['azure'] as Map<String, dynamic>?;
+    final wisaSchools = (json['wisaSchools'] as List<dynamic>?) ?? const [];
     return AppSettings(
       schoolPrefix: (json['schoolPrefix'] as String?) ?? '',
       debugMode: (json['debugMode'] as bool?) ?? false,
@@ -130,6 +141,10 @@ class AppSettings {
       smartschoolRules: [
         for (final r in smartschool)
           decodeSmartschoolRule(r as Map<String, dynamic>),
+      ],
+      wisaSchools: [
+        for (final p in wisaSchools)
+          WisaSchoolProfile.fromJson(p as Map<String, dynamic>),
       ],
     );
   }

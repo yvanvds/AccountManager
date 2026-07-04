@@ -88,6 +88,38 @@ void main() {
     });
   });
 
+  group('MarkAsOurs', () {
+    test('flips isOurs on matching school name only', () {
+      const schools = [
+        WisaSchool(id: 1, name: 'SMA', description: 'Sint Maria'),
+        WisaSchool(id: 2, name: 'SDK', description: 'Sint Dimphna'),
+      ];
+      final out = applyRulesToSchools(schools, const [MarkAsOurs('SMA')]);
+      expect(out[0].isOurs, isTrue);
+      expect(out[1].isOurs, isFalse);
+      // No cross-contamination with the virtual marker.
+      expect(out[0].isVirtual, isFalse);
+    });
+
+    test('MarkAsVirtual and MarkAsOurs flag independently on one school', () {
+      const schools = [WisaSchool(id: 1, name: 'SMA', description: 'X')];
+      final out = applyRulesToSchools(
+        schools,
+        const [MarkAsVirtual('SMA'), MarkAsOurs('SMA')],
+      );
+      expect(out.single.isVirtual, isTrue);
+      expect(out.single.isOurs, isTrue);
+    });
+
+    test('is a no-op for class groups and staff', () {
+      final groups = [_g('1A')];
+      expect(
+          applyRulesToClassGroups(groups, const [MarkAsOurs('SMA')]), groups);
+      final staff = [_s('AAAAA')];
+      expect(applyRulesToStaff(staff, const [MarkAsOurs('SMA')]), staff);
+    });
+  });
+
   group('rule interactions', () {
     test('ReplaceInstitute then DontImportClass on same class group', () {
       // 1A gets its institute rewritten, then is filtered out.

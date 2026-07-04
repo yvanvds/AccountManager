@@ -28,6 +28,7 @@ import 'package:account_state/account_state.dart'
         SignalRTransport,
         StaticSignalRTokenProvider,
         WisaConnection,
+        WisaSchoolProfile,
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart' show AzureCredentials;
 import 'package:flutter/material.dart';
@@ -770,6 +771,57 @@ void main() {
       find.byKey(const ValueKey('settings-wisa-password')),
     );
     expect(field.controller!.text, isEmpty);
+  });
+
+  testWidgets(
+      'the Settings view marks a WISA school as "ours" end-to-end, persisting '
+      'the ownership flag to the store (#133)', (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams. The store
+    // already knows one group school (id 42), not yet managed.
+    useTallWindow(tester);
+    final settings = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [WisaSchoolProfile(schoolId: 42)],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Open Settings; the seeded school renders in the real, laid-out form with
+    // its managed switch off.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    // The WISA-schools section sits below the fold; the form is a lazy ListView,
+    // so scroll the switch into view (and build it) before reading it.
+    final ourSwitch =
+        find.byKey(const ValueKey('settings-wisa-school-42-ours'));
+    await tester.scrollUntilVisible(
+      ourSwitch,
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(tester.widget<SwitchListTile>(ourSwitch).value, isFalse);
+
+    // Mark it managed and save.
+    await tester.tap(ourSwitch);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('settings-save')),
+      -400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // The ownership flag landed in the store.
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.schoolId, 42);
+    expect(saved.wisaSchools.single.ours, isTrue);
   });
 
   testWidgets('silent sign-in leads straight into the shell',
