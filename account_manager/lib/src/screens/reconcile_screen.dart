@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart'
-    show LinkedState, MaterializedAccount, Rollup;
+    show LinkedState, MaterializedAccount, MaterializedGroup, Rollup;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -160,6 +160,9 @@ class _ReconcileBody extends StatelessWidget {
                         if (controller.selectedClassroom != null) ...<Widget>[
                           const SizedBox(height: PlinkSpacing.s5),
                           _ClassroomDetail(controller: controller),
+                        ] else if (controller.showingGroups) ...<Widget>[
+                          const SizedBox(height: PlinkSpacing.s5),
+                          _GroupsDetail(controller: controller),
                         ] else if (controller.hasOverview) ...<Widget>[
                           const SizedBox(height: PlinkSpacing.s5),
                           _DrillDownSection(controller: controller),
@@ -617,6 +620,7 @@ class _DrillDownSection extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final Color hairline = Theme.of(context).dividerColor;
     final schools = controller.schoolRollups;
+    final groups = controller.groupRollup;
     final freshness = _freshness();
 
     return Column(
@@ -628,9 +632,9 @@ class _DrillDownSection extends StatelessWidget {
           Text(freshness, style: text.bodySmall),
         ],
         const SizedBox(height: PlinkSpacing.s3),
-        if (schools.isEmpty)
+        if (schools.isEmpty && groups == null)
           Text('Nog geen gematerialiseerd overzicht.', style: text.bodyMedium)
-        else
+        else ...<Widget>[
           for (final school in schools)
             Container(
               margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
@@ -651,7 +655,120 @@ class _DrillDownSection extends StatelessWidget {
                 ],
               ),
             ),
+          // The group-family node (#119): class-group actions live outside the
+          // school → grade-year → classroom tree, so they get their own entry.
+          if (groups != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+              decoration: BoxDecoration(
+                border: Border.all(color: hairline),
+                borderRadius:
+                    const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+              ),
+              child: ListTile(
+                key: const ValueKey('rollup-groups'),
+                title: Text(groups.label, style: text.bodyLarge),
+                subtitle: Text('${groups.accountCount} klasgroep(en)',
+                    style: text.bodySmall),
+                trailing: _PendingBadge(count: groups.pendingCount),
+                onTap: controller.openGroups,
+              ),
+            ),
+        ],
       ],
+    );
+  }
+}
+
+/// The "Klasgroepen" drill-down (#119): the per-group docs for the group-action
+/// family, lazily loaded from the store — the group counterpart of
+/// [_ClassroomDetail]. Renders even in a passive session that never linked.
+class _GroupsDetail extends StatelessWidget {
+  const _GroupsDetail({required this.controller});
+
+  final ReconcileController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final groups = controller.groupDocs;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            TextButton.icon(
+              key: const ValueKey('reconcile-groups-back'),
+              onPressed: controller.closeGroups,
+              icon: const Icon(Icons.arrow_back, size: 16),
+              label: const Text('Overzicht'),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Text(controller.groupRollup?.label ?? 'Klasgroepen',
+                style: text.titleMedium),
+          ],
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        if (controller.loadingGroups)
+          const LinearProgressIndicator()
+        else if (groups == null || groups.isEmpty)
+          Text('Geen klasgroepen met openstaande acties.',
+              style: text.bodyMedium)
+        else
+          for (final group in groups) _GroupTile(group: group),
+      ],
+    );
+  }
+}
+
+class _GroupTile extends StatelessWidget {
+  const _GroupTile({required this.group});
+
+  final MaterializedGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final Color hairline = Theme.of(context).dividerColor;
+    final systems = <String>[
+      if (group.inWisa) 'WISA',
+      if (group.inSmartschool) 'Smartschool',
+      if (group.inAzure) 'Azure',
+    ];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        border: Border.all(color: hairline),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(child: Text(group.label, style: text.bodyLarge)),
+              _PendingBadge(
+                  count: group.candidates.where((c) => c.canApply).length),
+            ],
+          ),
+          const SizedBox(height: PlinkSpacing.s2),
+          Wrap(
+            spacing: PlinkSpacing.s2,
+            children: <Widget>[for (final s in systems) PlinkBadge(s)],
+          ),
+          for (final c in group.candidates)
+            Padding(
+              padding: const EdgeInsets.only(top: PlinkSpacing.s1),
+              child: Text(
+                c.canApply ? '• ${c.summary}' : '• ${c.summary} (manueel)',
+                style: text.bodySmall,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

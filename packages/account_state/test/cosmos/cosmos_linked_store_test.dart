@@ -126,11 +126,33 @@ MaterializedAccount _account(String id,
       ],
     );
 
-MaterializedView _view(List<MaterializedAccount> accounts,
-        {int generation = 1}) =>
+MaterializedGroup _group(String name) => MaterializedGroup(
+      id: core.LinkedAccountId('group|$name'),
+      label: name,
+      confidence: core.LinkConfidence.medium,
+      inWisa: false,
+      inSmartschool: true,
+      inAzure: false,
+      candidates: const [
+        CandidateAction(
+          family: 'group',
+          kind: 'DoNotImportFromSmartschool',
+          system: core.Origin.smartschool,
+          summary: 'Orphan',
+          canApply: false,
+        ),
+      ],
+    );
+
+MaterializedView _view(
+  List<MaterializedAccount> accounts, {
+  int generation = 1,
+  List<MaterializedGroup> groups = const [],
+}) =>
     MaterializedView(
       generation: generation,
       accounts: accounts,
+      groups: groups,
       rollups: buildRollups(accounts),
     );
 
@@ -157,6 +179,30 @@ void main() {
 
       final classroom = await store.readClassroom(school: '1', classroom: '3C');
       expect(classroom.map((a) => a.id.value), containsAll(['p0', 'p1']));
+    });
+
+    test('write then read: group docs, deleted on a groupless re-sync (#119)',
+        () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+
+      await store.writeMaterialized(
+        _view([_account('p0')], groups: [_group('9Z'), _group('8A')]),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      final groups = await store.readGroups();
+      expect(groups.map((g) => g.label), containsAll(['9Z', '8A']));
+      expect(groups.every((g) => g.school == groupsPartition), isTrue);
+
+      // A re-sync with no groups deletes the stragglers.
+      await store.writeMaterialized(
+        _view([_account('p0')], generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      expect(await store.readGroups(), isEmpty);
     });
 
     test('a re-sync deletes the docs no longer present', () async {

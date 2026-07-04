@@ -12,11 +12,12 @@ import 'materialized_state.dart';
 /// drill-down.
 ///
 /// Pure — no I/O. The sync process calls this after `link()`, then hands the
-/// result (with decisions merged in) to the `LinkedStore`. Group actions are
-/// **not** materialized here: they target a `LinkedGroup`, not an account, so
-/// they do not fit the per-account/classroom shape and are tracked separately
-/// (follow-up). The account and staff families — everything the drill-down
-/// renders — are covered.
+/// result (with decisions merged in) to the `LinkedStore`. Group actions target
+/// a `LinkedGroup`, not an account, so they do not fit the per-account/classroom
+/// shape: each targeted group becomes its own [MaterializedGroup] in the
+/// [groupsPartition], and a single group [Rollup] ("Klasgroepen") surfaces them
+/// in the drill-down beside the school tree (#119). The account, staff, and
+/// group families — everything the drill-down renders — are covered.
 ///
 /// [schoolLabels] maps a WISA school id to its human name (from the WISA
 /// snapshot's schools list); a student's school partition falls back to the id
@@ -81,10 +82,67 @@ MaterializedView materialize(
     ));
   }
 
+  final groups = _materializeGroups(linked.groupActions);
+
+  final rollups = buildRollups(accounts);
+  final groupsRollup = _buildGroupsRollup(groups);
+
   return MaterializedView(
     generation: generation,
     accounts: accounts,
-    rollups: buildRollups(accounts),
+    groups: groups,
+    rollups: [...rollups, if (groupsRollup != null) groupsRollup],
+  );
+}
+
+/// Turns the dispatched group actions into one [MaterializedGroup] per targeted
+/// class group, in first-seen (snapshot) order. Each targeted group carries the
+/// candidate actions raised against it — including the informational ones
+/// (`canApply == false`), which surface an orphan/empty-class notice.
+List<MaterializedGroup> _materializeGroups(
+  List<actions.GroupAction> groupActions,
+) {
+  final byGroup = <String, List<CandidateAction>>{};
+  final targets = <String, core.LinkedGroup>{};
+  for (final a in groupActions) {
+    final key = _groupKey(a.target);
+    (byGroup[key] ??= <CandidateAction>[])
+        .add(_candidate('group', a, a.describeChanges(), canApply: a.canApply));
+    targets.putIfAbsent(key, () => a.target);
+  }
+  return [
+    for (final entry in targets.entries)
+      MaterializedGroup(
+        id: core.LinkedAccountId(entry.key),
+        label: _groupLabel(entry.value),
+        confidence: entry.value.confidence,
+        inWisa: entry.value.wisa != null,
+        inSmartschool: entry.value.smartschool != null,
+        inAzure: entry.value.azure != null,
+        candidates: byGroup[entry.key]!,
+      ),
+  ];
+}
+
+/// The single "Klasgroepen" [Rollup] over every [MaterializedGroup], or `null`
+/// when no group has a pending action (nothing to drill into). [accountCount] is
+/// the number of group docs, [pendingCount] their applyable actions.
+Rollup? _buildGroupsRollup(List<MaterializedGroup> groups) {
+  if (groups.isEmpty) return null;
+  var pending = 0;
+  for (final g in groups) {
+    pending += g.candidates.where((c) => c.canApply).length;
+  }
+  return Rollup(
+    level: RollupLevel.groups,
+    key: groupsPartition,
+    parentKey: null,
+    school: groupsPartition,
+    label: _groupsLabel,
+    gradeYear: '',
+    classroom: '',
+    accountCount: groups.length,
+    pendingCount: pending,
   );
 }
 
@@ -152,6 +210,7 @@ const String _unassignedSchool = 'unassigned';
 const String _unassignedLabel = 'Niet toegewezen';
 const String _noGrade = 'Overig';
 const String _noClassroom = 'Zonder klas';
+const String _groupsLabel = 'Klasgroepen';
 
 class _Placement {
   const _Placement({
@@ -271,6 +330,19 @@ String _staffMemberLabel(core.LinkedStaff s) {
       wisa?.code.value ??
       '(personeelslid)';
 }
+
+/// The stable cross-system key for a group document (#119): its name (the
+/// linker's cross-system match key), namespaced so it never collides with an
+/// account id. A group always carries at least one system record.
+String _groupKey(core.LinkedGroup g) => 'group|${_groupName(g) ?? '?'}';
+
+/// Display label for a group — its WISA / Smartschool / Azure name.
+String _groupLabel(core.LinkedGroup g) => _groupName(g) ?? '(groep)';
+
+String? _groupName(core.LinkedGroup g) =>
+    _nonEmpty(g.wisa?.name ?? '') ??
+    _nonEmpty(g.smartschool?.name ?? '') ??
+    _nonEmpty(g.azure?.displayName ?? '');
 
 String? _personLabel(
     core.SmartschoolAccount? smartschool, core.AzureUser? azure) {

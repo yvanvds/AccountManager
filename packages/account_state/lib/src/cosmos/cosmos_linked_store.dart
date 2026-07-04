@@ -62,6 +62,18 @@ class CosmosLinkedStore implements LinkedStore {
   }
 
   @override
+  Future<List<MaterializedGroup>> readGroups() async {
+    // The whole group set lives in one logical partition (groupsPartition) and
+    // is small, so a single scoped query returns it all (#119).
+    final docs = await _client.queryDocuments(
+      container: linkedGroupsContainer,
+      query: 'SELECT * FROM c',
+      partitionKey: groupsPartition,
+    );
+    return [for (final d in docs) MaterializedGroup.fromJson(d)];
+  }
+
+  @override
   Future<List<AccountDecision>> readDecisions() async {
     final docs = await _client.queryDocuments(
       container: decisionsContainer,
@@ -92,6 +104,16 @@ class CosmosLinkedStore implements LinkedStore {
       docsById: {
         for (final a in view.accounts)
           a.id.value: (pk: a.school, doc: a.toJson()),
+      },
+    );
+    // Per-group docs: same wholesale replace, in the single groups partition
+    // (#119).
+    await _replaceContainer(
+      container: linkedGroupsContainer,
+      freshIds: {for (final g in view.groups) g.id.value},
+      docsById: {
+        for (final g in view.groups)
+          g.id.value: (pk: g.school, doc: g.toJson()),
       },
     );
     // Rollups: same replace, keyed by the rollup node key.

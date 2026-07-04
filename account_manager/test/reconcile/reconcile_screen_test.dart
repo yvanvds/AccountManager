@@ -323,6 +323,47 @@ void main() {
     expect(find.textContaining('Generatie 1'), findsNothing);
   });
 
+  testWidgets(
+      'the drill-down surfaces the Klasgroepen node and opens the group '
+      'detail (#119)', (WidgetTester tester) async {
+    final linkedStore = InMemoryLinkedStore();
+    final snapshots = InMemorySnapshotStore();
+
+    // Session 1 syncs and materializes the shared view (the fixture's two
+    // Smartschool-only classes raise the informational orphan notice).
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    // Session 2 renders the shared overview passively.
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ReconcileScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The group node sits in the drill-down beside the school tree.
+    expect(find.text('Overzicht'), findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-groups')), findsOneWidget);
+    expect(find.text('Klasgroepen'), findsWidgets);
+
+    // Opening it lists the orphan classes with their notice — no pull, no link.
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-groups-back')), findsOneWidget);
+    expect(find.text('2B'), findsWidgets);
+    expect(
+        find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
+    expect(s2.controller.linked, isNull);
+
+    // Back to the overview.
+    await tester.tap(find.byKey(const ValueKey('reconcile-groups-back')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-groups')), findsOneWidget);
+  });
+
   testWidgets('the log panel clears on demand', (WidgetTester tester) async {
     final harness = ReconcileHarness();
     await tester.pumpWidget(

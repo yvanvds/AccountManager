@@ -225,6 +225,52 @@ void main() {
   });
 
   testWidgets(
+      'a passive session surfaces pending group actions in the drill-down '
+      'with no pull and no link() (#119)', (WidgetTester tester) async {
+    // Session 1 (offline harness) syncs and materializes the shared view. The
+    // fixture's two Smartschool-only classes (2B, 3C) raise the informational
+    // orphan-class notice — the group-action family.
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    // Session 2 is the real app over the same stores. It never syncs.
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // The class-group node is part of the shared overview, straight from the
+    // store — no Synchronise tapped.
+    expect(find.text('Overzicht'), findsOneWidget);
+    expect(find.text('Klasgroepen'), findsWidgets);
+
+    // Drilling into it lists the orphan Smartschool classes with their notice.
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-groups-back')), findsOneWidget);
+    expect(
+        find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
+    // …all without a single connector pull or link().
+    expect(resumed.wisaSyncs, 0);
+    expect(resumed.ssSyncs, 0);
+    expect(resumed.azSyncs, 0);
+    expect(resumed.controller.linked, isNull);
+  });
+
+  testWidgets(
       'a passive session shows the shared freshness and, while another '
       'operator holds the sync lease, disables Synchronise (#108)',
       (WidgetTester tester) async {
