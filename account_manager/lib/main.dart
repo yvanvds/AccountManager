@@ -56,13 +56,38 @@ void main() {
       session: session,
       graph: config.isConfigured ? config.graph : null,
       // The reconcile stack (settings from Azure SQL, secrets from Key Vault,
-      // the three connectors) is assembled lazily, the first time the screen
-      // is opened — after the sign-in gate has a session to mint tokens from.
+      // the three connectors) is assembled lazily, the first time a screen that
+      // needs it is opened — after the sign-in gate has a session to mint tokens
+      // from. Memoized so the Reconcile and Passwords screens share **one** stack
+      // (and so one queue instance links an apply to the Passwords view); a
+      // failed attempt is not cached, so the reconcile screen's retry re-runs it.
       reconcileBootstrap: config.isConfigured
-          ? () => bootstrapReconcile(session: session, aad: config)
+          ? _memoizeOnSuccess(
+              () => bootstrapReconcile(session: session, aad: config),
+            )
           : null,
     ),
   );
+}
+
+/// Wraps [make] so all callers share the first successful `Future`, while a
+/// failed attempt clears the cache so the next call retries. Keeps the reconcile
+/// stack a singleton without breaking the reconcile screen's retry-on-error.
+Future<T> Function() _memoizeOnSuccess<T>(Future<T> Function() make) {
+  Future<T>? pending;
+  return () {
+    final existing = pending;
+    if (existing != null) return existing;
+    final started = make().then(
+      (value) => value,
+      onError: (Object error, StackTrace stack) {
+        pending = null;
+        Error.throwWithStackTrace(error, stack);
+      },
+    );
+    pending = started;
+    return started;
+  };
 }
 
 /// The persistent, encrypted token cache for one resource: ciphertext in

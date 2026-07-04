@@ -2,9 +2,12 @@ import 'package:account_actions/account_actions.dart';
 import 'package:account_core/account_core.dart' as core;
 import 'package:azure_api/azure_api.dart' as az;
 import 'package:smartschool_api/smartschool_api.dart' as ss;
+import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import '../link/linked_state.dart';
 import '../link/placement.dart';
+import '../passwords/password_entry.dart';
+import '../passwords/password_queue_store.dart';
 import '../sync/application_state.dart';
 import 'wisa_import_rules.dart';
 
@@ -62,6 +65,7 @@ class StateApplier {
     required StudentActionConfig studentConfig,
     required StaffActionConfig staffConfig,
     this.classTree = const SmartschoolClassTree(),
+    this.passwordQueue,
   })  : _studentConfig = _uniqueStudentConfig(studentConfig, _uidsFrom(app)),
         _staffConfig = _uniqueStaffConfig(staffConfig, _uidsFrom(app));
 
@@ -81,6 +85,16 @@ class StateApplier {
 
   /// Smartschool class-tree live-config the placement resolver needs.
   final SmartschoolClassTree classTree;
+
+  /// The shared password-distribution queue (#105). When wired, every apply that
+  /// **creates** an account drops the password it minted into this store, keyed
+  /// by [core.PersonId], so one operator can generate while another prints and
+  /// distributes. Azure-create and Smartschool-create for the same person merge
+  /// onto a single [PasswordEntry] (both backends on one sheet, matching legacy
+  /// `AccountPassword`). Left null when the caller does not centralize passwords
+  /// (e.g. headless linking-only paths), in which case the minted password is
+  /// still written to the target system but not queued.
+  final PasswordQueueStore? passwordQueue;
 
   final StudentActionConfig _studentConfig;
   final StaffActionConfig _staffConfig;
@@ -198,8 +212,165 @@ class StateApplier {
         );
     }
 
-    return ApplyResult(result, await link());
+    final linked = await link();
+    // A create action carries the password it minted; drop it in the shared
+    // queue keyed by person (#105), merging Azure- and Smartschool-create onto
+    // one sheet. Every other action leaves [generatedPassword] null.
+    if (result.generatedPassword != null) {
+      await _enqueuePassword(linked, result);
+    }
+    return ApplyResult(result, linked);
   }
+
+  /// Merges the freshly minted password from [result] into [passwordQueue],
+  /// keyed by the created person's [core.PersonId] (the `id` the linker built
+  /// from the resolver). A person's Azure and Smartschool creates land on **one**
+  /// [PasswordEntry] — the second create fills the empty backend field on the
+  /// entry the first create left — matching the legacy one-sheet-per-student
+  /// `AccountPassword`. A no-op when no queue is wired or the created record
+  /// cannot be matched in the fresh linked view.
+  Future<void> _enqueuePassword(LinkedState linked, ActionResult result) async {
+    final store = passwordQueue;
+    final password = result.generatedPassword;
+    if (store == null || password == null) return;
+
+    final target = _passwordTargetFor(linked, result);
+    if (target == null) return;
+
+    final toAzure = result.system == core.Origin.azure;
+    final queue = await store.load();
+    final index = queue.indexWhere(
+      (e) =>
+          e.personId.value == target.personId.value &&
+          e.kind == PasswordAccountKind.account,
+    );
+    final existing = index >= 0 ? queue[index] : null;
+
+    final merged = PasswordEntry(
+      personId: target.personId,
+      kind: PasswordAccountKind.account,
+      accountName: target.accountName,
+      displayName: target.displayName,
+      // Prefer the freshly linked view's fields (the second create sees a more
+      // complete record), falling back to whatever the first create recorded.
+      mail: target.mail ?? existing?.mail,
+      classGroup: target.classGroup ?? existing?.classGroup,
+      smartschoolPassword: toAzure ? existing?.smartschoolPassword : password,
+      azurePassword: toAzure ? password : existing?.azurePassword,
+    );
+
+    final updated = [...queue];
+    if (index >= 0) {
+      updated[index] = merged;
+    } else {
+      updated.add(merged);
+    }
+    await store.save(updated);
+  }
+
+  /// Locates the created record in the fresh linked view and reads the fields a
+  /// [PasswordEntry] prints, or null when it cannot be matched (which should not
+  /// happen right after a successful create). Matches on the connector identity
+  /// the write returned — Smartschool `uid` or Azure `id` — because the
+  /// [core.PersonId] is only known through the linked record.
+  _PasswordTarget? _passwordTargetFor(LinkedState linked, ActionResult result) {
+    final snapshot = linked.snapshot;
+    switch (result.system) {
+      case core.Origin.smartschool:
+        final uid = result.smartschool?.uid;
+        if (uid == null) return null;
+        for (final a in snapshot.accounts) {
+          if (a.smartschool?.uid == uid) return _targetFromAccount(a);
+        }
+        for (final s in snapshot.staff) {
+          if (s.smartschool?.uid == uid) return _targetFromStaff(s);
+        }
+        return null;
+      case core.Origin.azure:
+        final id = result.azure?.id;
+        if (id == null) return null;
+        for (final a in snapshot.accounts) {
+          if (a.azure?.id == id) return _targetFromAccount(a);
+        }
+        for (final s in snapshot.staff) {
+          if (s.azure?.id == id) return _targetFromStaff(s);
+        }
+        return null;
+      case core.Origin.wisa:
+      case core.Origin.all:
+      case core.Origin.other:
+        return null;
+    }
+  }
+
+  // The rich name/class/mail fields live on the concrete connector records, not
+  // the minimal `account_core` interfaces `LinkedAccount` exposes. The applier
+  // already downcasts these snapshot records elsewhere (see `_putAccount`), so
+  // the same casts are safe here.
+
+  _PasswordTarget _targetFromAccount(core.LinkedAccount a) {
+    final wisa = a.wisa as wapi.WisaStudent?;
+    final ssAccount = a.smartschool as ss.SmartschoolAccount?;
+    final azUser = a.azure as az.AzureUser?;
+    return _PasswordTarget(
+      personId: core.PersonId(a.id.value),
+      accountName: ssAccount?.uid ?? _localPart(azUser?.upn),
+      displayName:
+          wisa?.fullName ?? azUser?.displayName ?? _nameOf(ssAccount) ?? '',
+      mail: azUser?.upn ?? ssAccount?.mail,
+      classGroup: wisa?.classGroup ?? azUser?.department,
+    );
+  }
+
+  _PasswordTarget _targetFromStaff(core.LinkedStaff s) {
+    final wisa = s.wisa as wapi.WisaStaff?;
+    final ssAccount = s.smartschool as ss.SmartschoolAccount?;
+    final azUser = s.azure as az.AzureUser?;
+    return _PasswordTarget(
+      personId: core.PersonId(s.id.value),
+      accountName: ssAccount?.uid ?? _localPart(azUser?.upn),
+      displayName: azUser?.displayName ??
+          _nameOf(ssAccount) ??
+          [wisa?.firstName, wisa?.lastName]
+              .whereType<String>()
+              .join(' ')
+              .trim(),
+      mail: azUser?.upn ?? ssAccount?.mail,
+      classGroup: azUser?.department,
+    );
+  }
+}
+
+/// The fields a [PasswordEntry] needs, read from the freshly linked record the
+/// created account now belongs to.
+class _PasswordTarget {
+  const _PasswordTarget({
+    required this.personId,
+    required this.accountName,
+    required this.displayName,
+    this.mail,
+    this.classGroup,
+  });
+
+  final core.PersonId personId;
+  final String accountName;
+  final String displayName;
+  final String? mail;
+  final String? classGroup;
+}
+
+/// The local part of an email/UPN (`jane.doe` from `jane.doe@x.be`); '' when
+/// [mail] is null so the entry always has a non-null account name.
+String _localPart(String? mail) {
+  if (mail == null) return '';
+  return mail.contains('@') ? mail.split('@').first : mail;
+}
+
+/// A display name assembled from a Smartschool record's given + surname, or null
+/// when no record is present.
+String? _nameOf(ss.SmartschoolAccount? account) {
+  if (account == null) return null;
+  return '${account.givenName} ${account.surname}'.trim();
 }
 
 // ---------------------------------------------------------------------------
