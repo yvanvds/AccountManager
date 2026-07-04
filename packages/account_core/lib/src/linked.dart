@@ -23,6 +23,35 @@ enum LinkConfidence {
   static LinkConfidence fromJson(String s) => values.byName(s);
 }
 
+/// Where a linked student sits in the *aggregated* WISA snapshot relative to
+/// the schools we actually manage (#113/#134).
+///
+/// The shared credentials pull **every** WISA school the group can see, so a
+/// student's [LinkedAccount.wisa] being non-null only means they are somewhere
+/// in the group — not necessarily in one of our schools. This enum makes the
+/// distinction the departure actions turn on:
+///
+/// - [ours]: present in WISA in at least one school we manage — the normal
+///   "still here" case. Also the backward-compatible default when no school is
+///   flagged as ours (ownership unconfigured ⇒ every WISA-present student is
+///   treated as ours), so a group that hasn't adopted the aggregated pull keeps
+///   its pre-#134 behaviour.
+/// - [groupOnly]: present in the aggregated snapshot but only in sibling group
+///   schools we do **not** manage. The student left *our* school yet is still in
+///   the group — remove them from *our* Smartschool but **keep** Azure.
+/// - [absent]: no WISA record at all — gone from the whole group. Remove from
+///   Smartschool *and* Azure (the "incomplete Azure-only record flagged for
+///   deletion", per the no-alumni rule).
+enum WisaPresence {
+  ours,
+  groupOnly,
+  absent,
+  ;
+
+  String toJson() => name;
+  static WisaPresence fromJson(String s) => values.byName(s);
+}
+
 /// Output of the linker: one record per identified person.
 ///
 /// Any of [wisa], [smartschool], [azure] may be null; when all three are
@@ -36,6 +65,19 @@ class LinkedAccount {
   final AzureUser? azure;
   final LinkConfidence confidence;
 
+  /// The WISA school ids this student's record was found in — the raw
+  /// per-school membership the linker joins against the managed-school set
+  /// (#133). Empty when [wisa] is null. Retained on the record so the ours-vs-
+  /// group distinction is auditable, not just its derived [wisaPresence].
+  final Set<int> wisaSchoolIds;
+
+  /// Where this student sits relative to the schools we manage — the signal the
+  /// departure actions turn on (#134). Defaults to [WisaPresence.ours]; the
+  /// convenience getters below always fold in [wisa] nullness, so a hand-built
+  /// record left on the default but carrying no WISA record still reads as
+  /// having left.
+  final WisaPresence wisaPresence;
+
   const LinkedAccount({
     required this.id,
     required this.role,
@@ -43,7 +85,25 @@ class LinkedAccount {
     this.smartschool,
     this.azure,
     required this.confidence,
+    this.wisaSchoolIds = const <int>{},
+    this.wisaPresence = WisaPresence.ours,
   });
+
+  /// Whether this student is present in WISA in a school we manage. False when
+  /// absent from WISA entirely or present only in sibling group schools.
+  bool get isInOurWisa => wisa != null && wisaPresence == WisaPresence.ours;
+
+  /// Whether this student has left the schools we manage — moved to a sibling
+  /// group school, or gone from the group entirely. Drives the Smartschool
+  /// departure actions (unregister / delete).
+  bool get hasLeftOurSchool => !isInOurWisa;
+
+  /// Whether this student is gone from the **entire** group — absent from the
+  /// aggregated WISA snapshot. Drives the delete-both vs keep-Azure split: only
+  /// a group-departure removes the Azure account. A student still present in a
+  /// sibling group school ([WisaPresence.groupOnly]) keeps a non-null [wisa],
+  /// so this is false and their Azure removal is suppressed.
+  bool get hasLeftGroup => wisa == null;
 }
 
 /// Output of the linker: one record per identified staff member.

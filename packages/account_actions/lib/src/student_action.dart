@@ -113,7 +113,7 @@ class AddStudentToAzure extends StudentAction {
   const AddStudentToAzure(super.account, super.config);
 
   @override
-  bool evaluate() => account.wisa != null && account.azure == null;
+  bool evaluate() => account.isInOurWisa && account.azure == null;
 
   @override
   ChangeSet describeChanges() {
@@ -215,7 +215,7 @@ class AddStudentToSmartschool extends StudentAction {
 
   @override
   bool evaluate() =>
-      account.wisa != null &&
+      account.isInOurWisa &&
       account.azure != null &&
       account.smartschool == null;
 
@@ -336,13 +336,15 @@ class AddStudentToSmartschool extends StudentAction {
 }
 
 /// Unregister (but keep) a still-active Smartschool account whose student has
-/// left WISA. Ported from `Action\StudentAccount\UnregisterSmartschool`.
+/// left *our* school — gone from WISA entirely, or moved to a sibling group
+/// school we don't manage (#134). Ported from
+/// `Action\StudentAccount\UnregisterSmartschool`.
 class UnregisterStudentFromSmartschool extends StudentAction {
   const UnregisterStudentFromSmartschool(super.account, super.config);
 
   @override
   bool evaluate() =>
-      account.wisa == null &&
+      account.hasLeftOurSchool &&
       account.smartschool != null &&
       _ss.status == 'actief';
 
@@ -403,13 +405,14 @@ class UnregisterStudentFromSmartschool extends StudentAction {
   }
 }
 
-/// Delete a Smartschool account whose student no longer exists in WISA. Ported
-/// from `Action\StudentAccount\DeleteFromSmartschool`.
+/// Delete a Smartschool account whose student has left *our* school — gone from
+/// WISA entirely, or moved to a sibling group school we don't manage (#134).
+/// Ported from `Action\StudentAccount\DeleteFromSmartschool`.
 class DeleteStudentFromSmartschool extends StudentAction {
   const DeleteStudentFromSmartschool(super.account, super.config);
 
   @override
-  bool evaluate() => account.wisa == null && account.smartschool != null;
+  bool evaluate() => account.hasLeftOurSchool && account.smartschool != null;
 
   /// Delete and [UnregisterStudentFromSmartschool] are the two mutually
   /// exclusive resolutions of a WISA-departed Smartschool account (#110). Delete
@@ -465,15 +468,20 @@ class DeleteStudentFromSmartschool extends StudentAction {
   }
 }
 
-/// Delete an Azure-only account for a former student (no WISA, no Smartschool)
-/// carrying the school's `companyName`. Ported from
-/// `Action\StudentAccount\RemoveFromAzure`.
+/// Delete an Azure-only account for a student gone from the **whole group** (no
+/// WISA anywhere, no Smartschool) carrying the school's `companyName`. Ported
+/// from `Action\StudentAccount\RemoveFromAzure`.
+///
+/// A student who merely left *our* school but is still present in a sibling
+/// group school keeps a non-null WISA record ([WisaPresence.groupOnly]), so
+/// [LinkedAccount.hasLeftGroup] is false and their Azure account is **kept**
+/// (#134) — only a genuine group-departure removes it.
 class RemoveStudentFromAzure extends StudentAction {
   const RemoveStudentFromAzure(super.account, super.config);
 
   @override
   bool evaluate() =>
-      account.wisa == null &&
+      account.hasLeftGroup &&
       account.smartschool == null &&
       account.azure != null &&
       _eq(_az.companyName, config.schoolPrefix);

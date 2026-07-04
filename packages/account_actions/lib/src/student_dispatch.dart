@@ -31,11 +31,15 @@ List<StudentAction> studentActionsFor(
   StudentActionConfig config, {
   ClassPlacement Function(LinkedAccount account)? placementFor,
 }) {
-  final complete = account.wisa != null &&
+  // "Complete" (modify branch) requires presence in *our* WISA, not merely
+  // anywhere in the group (#134): a student who moved to a sibling group school
+  // still carries a WISA record but must fall to the lifecycle branch so the
+  // Smartschool departure fires (while their Azure account is kept).
+  final complete = account.isInOurWisa &&
       account.smartschool != null &&
       account.azure != null;
 
-  final placement = (placementFor != null && account.wisa != null)
+  final placement = (placementFor != null && account.isInOurWisa)
       ? placementFor(account)
       : null;
 

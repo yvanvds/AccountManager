@@ -46,13 +46,29 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// [schoolPrefix] is the Azure `companyName` value the school stamps on its
 /// own users; an Azure-only user carrying it is a former student kept as an
 /// incomplete record so the action engine can flag it for deletion (INV-22).
+/// [ourSchoolIds] is the set of WISA school ids we actually **manage** (#133).
+/// The shared credentials pull every group school, so this set is what tells a
+/// student who left *our* school (but is still in a sibling group school) from
+/// one who is genuinely present here. When null, it is derived from the
+/// snapshot's own `WisaSchool.isOurs` flags (the `MarkAsOurs` import rule). When
+/// that derived set is also empty — ownership unconfigured — every WISA-present
+/// student is treated as ours, preserving the pre-#134 behaviour. Membership
+/// never changes which records exist or their identity keys, only how each is
+/// classified ([WisaPresence]).
 LinkedSnapshot link(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
   az.AzureSnapshot azureSnapshot,
   PersonIdResolver resolver, {
   required String schoolPrefix,
+  Set<int>? ourSchoolIds,
 }) {
+  final effectiveOurSchoolIds = ourSchoolIds ??
+      <int>{
+        for (final school in wisaSnapshot.schools)
+          if (school.isOurs) school.id,
+      };
+
   // Build the student and staff records first, in that order, so the two
   // populations' duplicate-mail warnings accumulate student-then-staff exactly
   // as before. Group linking carries no identity, so it stays separate.
@@ -84,6 +100,8 @@ LinkedSnapshot link(
         smartschool: rec.smartschool,
         azure: rec.azure,
         confidence: _confidence(rec),
+        wisaSchoolIds: rec.wisaSchoolIds,
+        wisaPresence: _presence(rec.wisaSchoolIds, effectiveOurSchoolIds),
       ),
   ];
   final staff = <LinkedStaff>[
@@ -203,8 +221,10 @@ List<_Record> _buildStudentRecords(
     final match = key == null ? null : byWisaId[key];
     if (match != null && match.wisa == null) {
       match.wisa = student;
+      match.wisaSchoolIds.add(student.schoolId);
     } else {
-      final placeholder = _Record(wisa: student);
+      final placeholder = _Record(wisa: student)
+        ..wisaSchoolIds.add(student.schoolId);
       records.add(placeholder);
       if (key != null) byWisaId.putIfAbsent(key, () => placeholder);
     }
@@ -495,6 +515,11 @@ class _Record {
   wapi.WisaStudent? wisa;
   az.AzureUser? azure;
 
+  /// The WISA school ids this record's student was found in — accumulated as
+  /// WISA rows attach (a single id in the common case; more only for a student
+  /// enrolled across group schools). Frozen onto [LinkedAccount.wisaSchoolIds].
+  final Set<int> wisaSchoolIds = <int>{};
+
   _Record({this.smartschool, this.wisa, this.azure});
 }
 
@@ -536,6 +561,22 @@ String? _norm(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed.toLowerCase();
+}
+
+/// Classifies a student's WISA presence (#134) from the [wisaSchoolIds] its
+/// record was found in and the set of schools we manage ([ourSchoolIds]).
+///
+/// No WISA record ⇒ [WisaPresence.absent] (gone from the whole group). When
+/// [ourSchoolIds] is empty the ownership link is unconfigured, so any WISA
+/// presence counts as [WisaPresence.ours] — the pre-#134 behaviour. Otherwise a
+/// record is [WisaPresence.ours] when it was found in at least one managed
+/// school, and [WisaPresence.groupOnly] when found only in sibling schools.
+WisaPresence _presence(Set<int> wisaSchoolIds, Set<int> ourSchoolIds) {
+  if (wisaSchoolIds.isEmpty) return WisaPresence.absent;
+  if (ourSchoolIds.isEmpty) return WisaPresence.ours;
+  return wisaSchoolIds.any(ourSchoolIds.contains)
+      ? WisaPresence.ours
+      : WisaPresence.groupOnly;
 }
 
 /// Whether an Azure user's [companyName] marks it as one of the school's own

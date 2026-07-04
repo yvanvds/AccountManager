@@ -187,4 +187,58 @@ void main() {
       expect(smartschool.accountId, 'W9');
     });
   });
+
+  group('group-wide leave: applying the dispatched resolution (#134)', () {
+    test(
+        'keep-Azure — a sibling-school departure applies the Smartschool '
+        'unregister and leaves Azure untouched', () async {
+      final soap = RecordingSmartschoolTransport();
+      final graph = RecordingGraphTransport();
+      final connectors = Connectors(
+        smartschool: smartschoolConnector(soap),
+        azure: azureConnector(graph),
+      );
+      // The student moved to a sibling group school: all three systems present,
+      // but WISA only in a school we don't manage (groupOnly).
+      final account = linked(
+        wisa: wisaStudent(),
+        smartschool: ssAccount(status: 'actief'),
+        azure: azureUser(companyName: 'SSM'),
+        wisaPresence: WisaPresence.groupOnly,
+        wisaSchoolIds: const {2},
+      );
+      final dispatched = studentActionsFor(account, cfg);
+
+      // Apply the safe default (unregister) — never the Azure removal.
+      final unregister =
+          dispatched.whereType<UnregisterStudentFromSmartschool>().single;
+      final result = await unregister.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.system, Origin.smartschool);
+      expect(soap.soapActions, isNotEmpty, reason: 'the unregister ran');
+      // Azure was never touched — the account is kept.
+      expect(graph.requests, isEmpty);
+      expect(dispatched.whereType<RemoveStudentFromAzure>(), isEmpty);
+    });
+
+    test(
+        'delete-both — a whole-group departure with only Azure left applies '
+        'the Azure removal', () async {
+      final graph = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(graph));
+      // Absent from WISA everywhere, no Smartschool: the terminal delete-both
+      // stage the two-phase resolution reaches once Smartschool is gone.
+      final account =
+          linked(azure: azureUser(id: 'az-gone', companyName: 'SSM'));
+      final dispatched = studentActionsFor(account, cfg);
+
+      final remove = dispatched.whereType<RemoveStudentFromAzure>().single;
+      final result = await remove.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.removed, isTrue);
+      expect(graph.sent('DELETE', pathContains: 'az-gone'), isTrue);
+    });
+  });
 }

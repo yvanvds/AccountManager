@@ -125,11 +125,18 @@ az.AzureUser azureUser({
 
 /// Builds a [LinkedAccount] from optional per-system records. Omit a system to
 /// simulate it missing (drives the lifecycle-action branch).
+///
+/// [wisaPresence] controls the ours-vs-group classification (#134): the default
+/// [WisaPresence.ours] means a WISA-present student is one of ours (pre-#134
+/// behaviour), while [WisaPresence.groupOnly] models a student who moved to a
+/// sibling group school we don't manage.
 LinkedAccount linked({
   wapi.WisaStudent? wisa,
   ss.SmartschoolAccount? smartschool,
   az.AzureUser? azure,
   String id = 'p0',
+  WisaPresence wisaPresence = WisaPresence.ours,
+  Set<int> wisaSchoolIds = const <int>{},
 }) =>
     LinkedAccount(
       id: LinkedAccountId(id),
@@ -138,6 +145,8 @@ LinkedAccount linked({
       smartschool: smartschool,
       azure: azure,
       confidence: LinkConfidence.high,
+      wisaPresence: wisaPresence,
+      wisaSchoolIds: wisaSchoolIds,
     );
 
 /// A fully-synced student present in all three systems with matching fields —
