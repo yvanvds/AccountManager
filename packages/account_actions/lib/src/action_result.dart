@@ -68,6 +68,16 @@ class ActionResult {
   /// non-WISA action.
   final WisaImportRule? wisaRule;
 
+  /// The password minted for a **freshly created** account, so the State layer
+  /// can drop it into the shared password-distribution queue (#105) instead of
+  /// the account-creating action generating it and forgetting it.
+  ///
+  /// Set only by the account-creating actions on a real [ActionOutcome.applied]
+  /// write — the value they passed to the connector. Null for every modify or
+  /// delete action, and null on a dry run (no write, so no password is minted
+  /// and nothing must leak into the queue).
+  final String? generatedPassword;
+
   /// The failure cause; non-null only when [outcome] is [ActionOutcome.failed].
   final Object? error;
 
@@ -80,6 +90,7 @@ class ActionResult {
     this.group,
     this.removed = false,
     this.wisaRule,
+    this.generatedPassword,
     this.error,
   });
 

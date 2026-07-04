@@ -154,10 +154,11 @@ class AddStaffToAzure extends StaffAction {
         config.azureDomain,
         isStudent: false,
       );
+      final password = config.newAccountPassword();
       final created = await users.createUser(
         userPrincipalName: upn,
         displayName: _displayName,
-        password: config.newAccountPassword(),
+        password: password,
         givenName: wisa.firstName,
         surname: wisa.lastName,
         employeeId: wisa.wisaId?.value,
@@ -169,6 +170,7 @@ class AddStaffToAzure extends StaffAction {
         changes: changes,
         system: Origin.azure,
         azure: created,
+        generatedPassword: password,
       );
     } on Object catch (e) {
       return _failed(changes, Origin.azure, e);
@@ -256,9 +258,10 @@ class AddStaffToSmartschool extends StaffAction {
     }
 
     try {
+      final password = config.newAccountPassword();
       final ok = await _requireSmartschool(connectors).saveAccount(
         built,
-        password: config.newAccountPassword(),
+        password: password,
       );
       if (!ok) {
         return _failed(
@@ -272,6 +275,7 @@ class AddStaffToSmartschool extends StaffAction {
         changes: changes,
         system: Origin.smartschool,
         smartschool: built,
+        generatedPassword: password,
       );
     } on Object catch (e) {
       return _failed(changes, Origin.smartschool, e);
