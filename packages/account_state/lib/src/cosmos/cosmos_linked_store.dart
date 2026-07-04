@@ -262,15 +262,47 @@ class CosmosLinkedStore implements LinkedStore {
 
   @override
   Future<void> putDecision(AccountDecision decision) async {
-    await _client.upsertDocument(
-      container: decisionsContainer,
-      partitionKey: decision.accountId.value,
-      document: {
-        'id': decisionDocId(decision),
-        'pk': decision.accountId.value,
-        ...decision.toJson(),
-      },
-    );
+    final id = decisionDocId(decision);
+    final pk = decision.accountId.value;
+    final document = {
+      'id': id,
+      'pk': pk,
+      ...decision.toJson(),
+    };
+    // Per-document optimistic concurrency (#121). Decisions are frequent,
+    // per-account writes that the coarse sync lease deliberately does not gate,
+    // so two operators writing decisions on *different* accounts touch
+    // different docs and never contend, while two writing the *same* account's
+    // decision serialize through the ETag: the first commits, the second's
+    // If-Match is stale, and it re-reads the winner's ETag and retries. Each
+    // iteration makes progress (some writer committed), so the loop converges.
+    while (true) {
+      final existing = await _client.readDocument(
+        container: decisionsContainer,
+        id: id,
+        partitionKey: pk,
+      );
+      if (existing == null) {
+        // No doc yet: an atomic create wins iff we are first. A concurrent
+        // create races to a 409, on which we re-read to condition the retry.
+        final created = await _client.createDocument(
+          container: decisionsContainer,
+          partitionKey: pk,
+          document: document,
+        );
+        if (created) return;
+        continue;
+      }
+      final outcome = await _client.upsertDocument(
+        container: decisionsContainer,
+        partitionKey: pk,
+        document: document,
+        ifMatch: existing['_etag'] as String?,
+      );
+      if (outcome.applied) return;
+      // Stale: another operator wrote this decision between our read and write.
+      // Loop to re-read its ETag and retry.
+    }
   }
 
   /// Upserts every document in [docsById], then deletes any document currently

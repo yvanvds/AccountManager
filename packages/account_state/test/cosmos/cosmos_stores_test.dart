@@ -118,5 +118,54 @@ void main() {
       await store.save(const []);
       expect(await store.load(), isEmpty);
     });
+
+    test('two operators saving the shared queue serialize via the ETag (#121)',
+        () async {
+      // One centralized queue, two operators with their own store instances —
+      // one generated passwords, the other prints and drains.
+      final client = FakeCosmosClient();
+      final generator = CosmosPasswordQueueStore(client);
+      final printer = CosmosPasswordQueueStore(client);
+
+      // Seed the queue so both operators load a concrete version (ETag).
+      const seeded = [
+        PasswordEntry(
+          personId: PersonId('p1'),
+          kind: PasswordAccountKind.account,
+          accountName: 'seed',
+          displayName: 'Seed',
+        ),
+      ];
+      await CosmosPasswordQueueStore(client).save(seeded);
+
+      // Both load the same version, then race to write off it.
+      await generator.load();
+      await printer.load();
+
+      const appended = [
+        ...seeded,
+        PasswordEntry(
+          personId: PersonId('p2'),
+          kind: PasswordAccountKind.account,
+          accountName: 'fresh',
+          displayName: 'Fresh',
+        ),
+      ];
+      await Future.wait([
+        generator.save(appended), // appended a newly generated password
+        printer.save(const []), // drained after printing
+      ]);
+
+      // The later writer's If-Match was stale; it reloaded and retried, so its
+      // write landed against the winner's version rather than clobbering blind.
+      expect(client.staleCount, greaterThanOrEqualTo(1),
+          reason: 'the same queue doc under two writers must race');
+      // Exactly one of the two intended states survives — not a torn mix.
+      final finalQueue = await CosmosPasswordQueueStore(client).load();
+      expect(
+        finalQueue.map((e) => e.accountName).toList(),
+        anyOf(isEmpty, equals(['seed', 'fresh'])),
+      );
+    });
   });
 }

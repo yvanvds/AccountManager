@@ -11,11 +11,24 @@ import 'package:account_state/account_state.dart';
 /// instance exercise a realistic race. Instances may be shared to simulate the
 /// one centralized account seen by every operator.
 class FakeCosmosClient implements CosmosClient {
-  /// container → (id → document).
+  /// container → (id → document). Each stored document carries a Cosmos-style
+  /// `_etag` that is re-stamped on every write, mirroring the real account.
   final Map<String, Map<String, Map<String, dynamic>>> _store = {};
 
   int queryCount = 0;
   int createCount = 0;
+  int upsertCount = 0;
+
+  /// How many conditioned upserts were rejected as stale (412). Lets a
+  /// concurrency test assert that two writers to the *same* doc actually raced
+  /// (one lost and re-read) rather than trivially both succeeding (#121).
+  int staleCount = 0;
+
+  int _etagSeq = 0;
+
+  /// A fresh monotonic ETag. `Date.now`/random are avoided; a counter is enough
+  /// for the fake and keeps writes deterministic across a test run.
+  String _nextEtag() => 'etag-${++_etagSeq}';
 
   Map<String, Map<String, dynamic>> _container(String name) =>
       _store.putIfAbsent(name, () => {});
@@ -28,6 +41,7 @@ class FakeCosmosClient implements CosmosClient {
       'pk': identityPartitionKeyValue,
       'naturalKey': naturalKey,
       'personId': personId,
+      '_etag': _nextEtag(),
     };
   }
 
@@ -56,18 +70,33 @@ class FakeCosmosClient implements CosmosClient {
     }
     final id = document['id'] as String;
     if (docs.containsKey(id)) return false; // id conflict
-    docs[id] = Map<String, dynamic>.from(document);
+    docs[id] = Map<String, dynamic>.from(document)..['_etag'] = _nextEtag();
     return true;
   }
 
   @override
-  Future<void> upsertDocument({
+  Future<WriteOutcome> upsertDocument({
     required String container,
     required Map<String, dynamic> document,
     required String partitionKey,
+    String? ifMatch,
   }) async {
-    _container(container)[document['id'] as String] =
-        Map<String, dynamic>.from(document);
+    upsertCount++;
+    final docs = _container(container);
+    final id = document['id'] as String;
+    if (ifMatch != null) {
+      // Optimistic concurrency: the write applies only if the stored ETag still
+      // matches. A missing doc can't satisfy an If-Match either — both are the
+      // 412 the real account returns.
+      final current = docs[id]?['_etag'];
+      if (current != ifMatch) {
+        staleCount++;
+        return const WriteOutcome.stale();
+      }
+    }
+    final etag = _nextEtag();
+    docs[id] = Map<String, dynamic>.from(document)..['_etag'] = etag;
+    return WriteOutcome.applied(etag);
   }
 
   @override

@@ -10,6 +10,12 @@ class _FakeClient implements CosmosClient {
   final Map<String, Map<String, Map<String, dynamic>>> _store = {};
   int deletes = 0;
 
+  /// Conditioned upserts rejected as stale (412) — for the concurrency test.
+  int staleWrites = 0;
+  int _etagSeq = 0;
+
+  String _nextEtag() => 'etag-${++_etagSeq}';
+
   Map<String, Map<String, dynamic>> _c(String name) =>
       _store.putIfAbsent(name, () => {});
 
@@ -39,17 +45,25 @@ class _FakeClient implements CosmosClient {
     // The sync/drift lease relies on this to keep two acquirers from both
     // "creating" the lease document.
     if (_c(container).containsKey(id)) return false;
-    _c(container)[id] = Map.of(document);
+    _c(container)[id] = Map.of(document)..['_etag'] = _nextEtag();
     return true;
   }
 
   @override
-  Future<void> upsertDocument({
+  Future<WriteOutcome> upsertDocument({
     required String container,
     required Map<String, dynamic> document,
     required String partitionKey,
+    String? ifMatch,
   }) async {
-    _c(container)[document['id'] as String] = Map.of(document);
+    final id = document['id'] as String;
+    if (ifMatch != null && _c(container)[id]?['_etag'] != ifMatch) {
+      staleWrites++;
+      return const WriteOutcome.stale();
+    }
+    final etag = _nextEtag();
+    _c(container)[id] = Map.of(document)..['_etag'] = etag;
+    return WriteOutcome.applied(etag);
   }
 
   @override
@@ -235,6 +249,60 @@ void main() {
       expect(state.generation, 1, reason: 'metadata touch is not a view write');
       expect(state.systems[core.Origin.wisa]?.syncedBy, 'jan@school');
       expect(state.systems[core.Origin.azure]?.syncedBy, 'mieke@school');
+    });
+  });
+
+  group('CosmosLinkedStore putDecision ETag concurrency (#121)', () {
+    AccountDecision decisionFor(String accountId, {String by = 'op@school'}) =>
+        AccountDecision(
+          accountId: core.LinkedAccountId(accountId),
+          kind: DecisionKind.chosenAlternative,
+          targetKind: 'MoveToSmartschoolClassGroup',
+          decidedBy: by,
+          decidedAt: _d,
+        );
+
+    test('two applies to different accounts both succeed with no contention',
+        () async {
+      // The two operators share the one centralized account.
+      final client = _FakeClient();
+      final a = CosmosLinkedStore(client);
+      final b = CosmosLinkedStore(client);
+
+      await Future.wait([
+        a.putDecision(decisionFor('p0')),
+        b.putDecision(decisionFor('p1')),
+      ]);
+
+      final decisions = await CosmosLinkedStore(client).readDecisions();
+      expect(
+          decisions.map((d) => d.accountId.value), containsAll(['p0', 'p1']));
+      expect(client.staleWrites, 0,
+          reason: 'different docs never share an ETag, so no write is stale');
+    });
+
+    test('two applies to the same decision doc serialize via the ETag',
+        () async {
+      final client = _FakeClient();
+      // Seed the decision doc so both concurrent writers take the conditioned
+      // upsert path (rather than one racing an atomic create).
+      await CosmosLinkedStore(client)
+          .putDecision(decisionFor('p0', by: 'seed'));
+
+      final a = CosmosLinkedStore(client);
+      final b = CosmosLinkedStore(client);
+      await Future.wait([
+        a.putDecision(decisionFor('p0', by: 'jan')),
+        b.putDecision(decisionFor('p0', by: 'mieke')),
+      ]);
+
+      // One writer's If-Match went stale and it re-read the winner's ETag and
+      // retried — so both converge to a single, present decision doc.
+      expect(client.staleWrites, greaterThanOrEqualTo(1),
+          reason: 'the same doc under two writers must race at least once');
+      final decisions = await CosmosLinkedStore(client).readDecisions();
+      expect(decisions, hasLength(1));
+      expect(['jan', 'mieke'], contains(decisions.single.decidedBy));
     });
   });
 
