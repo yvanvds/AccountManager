@@ -70,6 +70,7 @@ class RecordingGraph implements az.GraphTransport {
 wapi.WisaStudent wisaStudent({
   String wisaId = '1',
   String classGroup = '3C',
+  int schoolId = 1,
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
@@ -86,8 +87,13 @@ wapi.WisaStudent wisaStudent({
       nationality: '',
       address: _addr,
       classChange: kFixtureDate,
-      schoolId: 1,
+      schoolId: schoolId,
     );
+
+/// A WISA school, optionally flagged [ours] (the managed-school signal the
+/// linker joins student `schoolId` against, #133/#134).
+wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
+    wapi.WisaSchool(id: id, name: 'School $id', description: '', isOurs: ours);
 
 ss.SmartschoolAccount ssAccount({
   String uid = 'jane',
@@ -151,13 +157,14 @@ ss.SmartschoolMembership member(String uid, String groupCode) =>
 wapi.WisaSnapshot wisaSnap({
   DateTime? fetchedAt,
   List<wapi.WisaStudent>? students,
+  List<wapi.WisaSchool> schools = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
       students: students ?? [wisaStudent()],
       staff: const [],
       classGroups: const [],
-      schools: const [],
+      schools: schools,
     );
 
 ss.SmartschoolSnapshot ssSnap({
@@ -225,6 +232,24 @@ ReconcileHarness manyDepartedHarness({int count = 2000}) => ReconcileHarness(
         memberships: const [],
       ),
       azure: azSnap(users: const []),
+    );
+
+/// A reconcile harness for the group-wide-leave keep-Azure case (#134): one
+/// student still in *our* Smartschool and Azure, but whose WISA record now sits
+/// only in a sibling group school (id 2) we don't manage — school 1 is flagged
+/// ours. The dispatcher must raise the Smartschool departure (unregister/delete)
+/// while **keeping** Azure (no `RemoveStudentFromAzure`).
+ReconcileHarness movedToSiblingHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 2)],
+        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azUser()]),
     );
 
 az.AzureSnapshot azSnap({DateTime? fetchedAt, List<az.AzureUser>? users}) =>

@@ -238,6 +238,58 @@ void main() {
   });
 
   testWidgets(
+      'a student who left our school but stayed in the group shows the '
+      'Smartschool departure and keeps Azure end-to-end (#134)',
+      (WidgetTester tester) async {
+    // The student is still in our Smartschool + Azure, but their WISA record now
+    // sits only in a sibling group school we do not manage. The dispatcher must
+    // raise the Smartschool departure while keeping Azure — never a removal.
+    useTallWindow(tester);
+    final harness = movedToSiblingHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The departed student is a pending entry carrying the unregister/delete
+    // choice — and no Azure removal anywhere in the pending set.
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    expect(entry.choices.single.isChoice, isTrue);
+    expect(find.byKey(ValueKey('entry-student-${entry.targetId}')),
+        findsOneWidget);
+    final allKinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind);
+    expect(allKinds, isNot(contains('RemoveStudentFromAzure')),
+        reason: 'the account is still in the group ⇒ Azure is kept');
+
+    // Apply for real: the Smartschool departure writes against the recording
+    // SOAP transport; Azure (Graph) is never called.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-apply')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(harness.soap.soapActions, isNotEmpty);
+    expect(harness.graph.requests, isEmpty, reason: 'Azure account is kept');
+    final summaries =
+        harness.controller.applyResults!.map((r) => r.changes.summary);
+    expect(summaries, contains('Schrijf de leerling uit in Smartschool'));
+    expect(summaries, isNot(contains('Verwijder Azure account')));
+  });
+
+  testWidgets(
       'a large pending set virtualizes in the real app: only a bounded number '
       'of entry tiles build, and scrolling loads more (#111)',
       (WidgetTester tester) async {

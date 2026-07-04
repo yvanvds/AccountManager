@@ -18,9 +18,11 @@ const Address _blankAddress = Address(
   country: '',
 );
 
-/// A WISA student carrying only the fields the linker reads (`wisaId`); the
-/// rest are inert defaults.
-wapi.WisaStudent wisaStudent(String wisaId) => wapi.WisaStudent(
+/// A WISA student carrying only the fields the linker reads (`wisaId`,
+/// `schoolId`); the rest are inert defaults. [schoolId] selects which group
+/// school the student sits in (the ours-vs-group join, #134).
+wapi.WisaStudent wisaStudent(String wisaId, {int schoolId = 1}) =>
+    wapi.WisaStudent(
       wisaId: WisaId(wisaId),
       classGroup: '',
       classSubGroup: '',
@@ -35,8 +37,13 @@ wapi.WisaStudent wisaStudent(String wisaId) => wapi.WisaStudent(
       nationality: '',
       address: _blankAddress,
       classChange: _fixedDate,
-      schoolId: 1,
+      schoolId: schoolId,
     );
+
+/// A WISA school, optionally flagged [ours] (the `MarkAsOurs` import-rule
+/// outcome the linker derives the managed-school set from, #133/#134).
+wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
+    wapi.WisaSchool(id: id, name: 'S$id', description: '', isOurs: ours);
 
 /// A Smartschool **student** account. [accountId] holds the WISA id by
 /// convention; [mail] is the Azure-UPN bridge.
@@ -177,13 +184,14 @@ wapi.WisaSnapshot wisaSnap(
   List<wapi.WisaStudent> students, {
   List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaClassGroup> classGroups = const [],
+  List<wapi.WisaSchool> schools = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: _fixedDate,
       students: students,
       staff: staff,
       classGroups: classGroups,
-      schools: const [],
+      schools: schools,
     );
 
 ss.SmartschoolSnapshot ssSnap(

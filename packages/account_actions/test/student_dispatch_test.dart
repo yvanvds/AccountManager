@@ -1,4 +1,5 @@
 import 'package:account_actions/account_actions.dart';
+import 'package:account_core/account_core.dart';
 import 'package:test/test.dart';
 
 import 'support/fixtures.dart';
@@ -147,6 +148,99 @@ void main() {
       );
       expect(actions.whereType<AddStudentToAzure>(), isEmpty);
       expect(actions.whereType<DeleteStudentFromSmartschool>(), isEmpty);
+    });
+  });
+
+  group('dispatch §6.3 — group-wide leave detection (#134)', () {
+    test(
+        'a student moved to a sibling group school → Smartschool departure, '
+        'NOT RemoveStudentFromAzure (Azure is kept)', () {
+      // All three systems carry the student, but their WISA record is only in a
+      // sibling school we do not manage (groupOnly). Pre-#134 this looked
+      // "complete" and yielded no departure at all.
+      final actions = studentActionsFor(
+        linked(
+          wisa: wisaStudent(),
+          smartschool: ssAccount(status: 'actief'),
+          azure: azureUser(companyName: 'SSM'),
+          wisaPresence: WisaPresence.groupOnly,
+          wisaSchoolIds: const {2},
+        ),
+        cfg,
+      );
+      expect(
+        types(actions),
+        [UnregisterStudentFromSmartschool, DeleteStudentFromSmartschool],
+      );
+      expect(actions.whereType<RemoveStudentFromAzure>(), isEmpty,
+          reason: 'still in the group ⇒ Azure removal is suppressed');
+      // Nor any modify action: a departure is never the modify branch.
+      expect(actions.whereType<ModifyAzureName>(), isEmpty);
+    });
+
+    test(
+        'a sibling-school student already removed from our Smartschool keeps '
+        'Azure: no action at all', () {
+      // The settled keep-Azure end state: gone from our Smartschool, WISA still
+      // in a sibling school, Azure retained. Nothing further must fire — in
+      // particular not AddStudentToSmartschool (never re-add a departed student)
+      // nor RemoveStudentFromAzure.
+      final actions = studentActionsFor(
+        linked(
+          wisa: wisaStudent(),
+          azure: azureUser(companyName: 'SSM'),
+          wisaPresence: WisaPresence.groupOnly,
+          wisaSchoolIds: const {2},
+        ),
+        cfg,
+      );
+      expect(actions, isEmpty);
+    });
+
+    test(
+        'a student gone from the whole group (still in our Smartschool) → '
+        'Smartschool departure, Azure removal deferred until SS is gone', () {
+      // No WISA anywhere (absent). Smartschool + Azure still present. Legacy
+      // gates Azure removal behind !Smartschool.Exists, so this pass yields only
+      // the Smartschool departure.
+      final actions = studentActionsFor(
+        linked(
+          smartschool: ssAccount(status: 'actief'),
+          azure: azureUser(companyName: 'SSM'),
+        ),
+        cfg,
+      );
+      expect(
+        types(actions),
+        [UnregisterStudentFromSmartschool, DeleteStudentFromSmartschool],
+      );
+      expect(actions.whereType<RemoveStudentFromAzure>(), isEmpty);
+    });
+
+    test(
+        'a student gone from the whole group with only Azure left → '
+        'RemoveStudentFromAzure (delete-both completes)', () {
+      final actions = studentActionsFor(
+        linked(azure: azureUser(companyName: 'SSM')),
+        cfg,
+      );
+      expect(types(actions), [RemoveStudentFromAzure]);
+    });
+
+    test(
+        'a WISA-only sibling-school student is never provisioned into our '
+        'systems (no AddStudentToAzure)', () {
+      // A student present only in a sibling group school, with nothing of ours
+      // yet. They are not ours, so we must not create Azure/Smartschool accounts.
+      final actions = studentActionsFor(
+        linked(
+          wisa: wisaStudent(),
+          wisaPresence: WisaPresence.groupOnly,
+          wisaSchoolIds: const {2},
+        ),
+        cfg,
+      );
+      expect(actions, isEmpty);
     });
   });
 }

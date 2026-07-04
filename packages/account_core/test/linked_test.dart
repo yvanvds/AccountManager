@@ -90,6 +90,76 @@ void main() {
     expect(alumni.azure, isNotNull);
   });
 
+  group('WisaPresence classification getters (#134)', () {
+    const wisa = _FakeWisaStudent(WisaId('w-1'));
+    const ss = _FakeSmartschoolAccount(
+      uid: 'a',
+      mail: 'a@s.be',
+      accountId: 'w-1',
+      accountType: AccountType.student,
+    );
+    const az = _FakeAzureUser(id: 'az-1', upn: 'a@s.be', employeeId: 'w-1');
+
+    test('present in our WISA → in our WISA, not left', () {
+      const acc = LinkedAccount(
+        id: LinkedAccountId('la-ours'),
+        role: PersonRole.student,
+        wisa: wisa,
+        smartschool: ss,
+        azure: az,
+        confidence: LinkConfidence.high,
+        wisaSchoolIds: {1},
+      );
+      expect(acc.isInOurWisa, isTrue);
+      expect(acc.hasLeftOurSchool, isFalse);
+      expect(acc.hasLeftGroup, isFalse);
+      expect(acc.wisaSchoolIds, {1});
+    });
+
+    test('moved to a sibling group school → left our school, still in group',
+        () {
+      const acc = LinkedAccount(
+        id: LinkedAccountId('la-group'),
+        role: PersonRole.student,
+        wisa: wisa,
+        smartschool: ss,
+        azure: az,
+        confidence: LinkConfidence.medium,
+        wisaSchoolIds: {2},
+        wisaPresence: WisaPresence.groupOnly,
+      );
+      expect(acc.isInOurWisa, isFalse);
+      expect(acc.hasLeftOurSchool, isTrue);
+      // Still somewhere in the group ⇒ not a group-departure (Azure is kept).
+      expect(acc.hasLeftGroup, isFalse);
+    });
+
+    test(
+        'no WISA record → gone from the whole group, regardless of the '
+        'default presence enum', () {
+      // The default WisaPresence.ours must not leak through when there is no
+      // WISA record: the getters fold in wisa-nullness.
+      const acc = LinkedAccount(
+        id: LinkedAccountId('la-absent'),
+        role: PersonRole.student,
+        azure: az,
+        confidence: LinkConfidence.medium,
+      );
+      expect(acc.wisaPresence, WisaPresence.ours,
+          reason: 'the field default, deliberately masked by the getters');
+      expect(acc.isInOurWisa, isFalse);
+      expect(acc.hasLeftOurSchool, isTrue);
+      expect(acc.hasLeftGroup, isTrue);
+      expect(acc.wisaSchoolIds, isEmpty);
+    });
+
+    test('WisaPresence round-trips through JSON', () {
+      for (final p in WisaPresence.values) {
+        expect(WisaPresence.fromJson(p.toJson()), p);
+      }
+    });
+  });
+
   test('LinkedStaff distinguishes from LinkedAccount via WisaStaff', () {
     const staff = LinkedStaff(
       id: LinkedAccountId('ls-1'),

@@ -1,6 +1,7 @@
 import 'package:account_core/account_core.dart';
 import 'package:account_linker/account_linker.dart';
 import 'package:test/test.dart';
+import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'support/fixtures.dart';
 
@@ -634,6 +635,92 @@ void main() {
 
       expect(snapshot.accounts.single.smartschool?.uid, 'stagiair1');
       expect(snapshot.staff.single.smartschool?.uid, 'begeleider');
+    });
+  });
+
+  group('link — WISA-school membership + ours-vs-group (#134)', () {
+    /// A student fully linked across the three systems whose WISA row sits in
+    /// [schoolId]. [schools] carries the managed-school flags the linker derives
+    /// its ownership set from; [ourSchoolIds] overrides that derivation.
+    LinkedSnapshot linkStudentIn(
+      int schoolId, {
+      List<wapi.WisaSchool> schools = const [],
+      Set<int>? ourSchoolIds,
+    }) =>
+        link(
+          wisaSnap([wisaStudent('W1', schoolId: schoolId)], schools: schools),
+          ssSnap([ssAccount(uid: 'jane', accountId: 'W1', mail: 'jane@s.be')]),
+          azSnap([
+            azureUser(
+              id: 'az-1',
+              upn: 'jane@s.be',
+              employeeId: 'W1',
+              companyName: _prefix,
+            ),
+          ]),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test('the record retains the WISA school ids it was found in', () {
+      final a = linkStudentIn(7).accounts.single;
+      expect(a.wisaSchoolIds, {7});
+    });
+
+    test('ownership unconfigured → any WISA presence counts as ours', () {
+      // No managed-school flags anywhere: pre-#134 behaviour, every WISA-present
+      // student is ours.
+      final a = linkStudentIn(2).accounts.single;
+      expect(a.wisaPresence, WisaPresence.ours);
+      expect(a.isInOurWisa, isTrue);
+      expect(a.hasLeftOurSchool, isFalse);
+    });
+
+    test('present in a managed school (explicit set) → ours', () {
+      final a = linkStudentIn(1, ourSchoolIds: {1}).accounts.single;
+      expect(a.wisaPresence, WisaPresence.ours);
+      expect(a.isInOurWisa, isTrue);
+    });
+
+    test('present only in a sibling group school → groupOnly, has left ours',
+        () {
+      final a = linkStudentIn(2, ourSchoolIds: {1}).accounts.single;
+      expect(a.wisaPresence, WisaPresence.groupOnly);
+      expect(a.isInOurWisa, isFalse);
+      expect(a.hasLeftOurSchool, isTrue);
+      // Still in the group ⇒ not a group-departure.
+      expect(a.hasLeftGroup, isFalse);
+    });
+
+    test('the managed-school set is derived from WisaSchool.isOurs by default',
+        () {
+      // No explicit ourSchoolIds: the snapshot's own isOurs flags decide.
+      final ours = linkStudentIn(
+        1,
+        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
+      ).accounts.single;
+      expect(ours.wisaPresence, WisaPresence.ours);
+
+      final sibling = linkStudentIn(
+        2,
+        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
+      ).accounts.single;
+      expect(sibling.wisaPresence, WisaPresence.groupOnly);
+    });
+
+    test('a WISA-absent (Azure-only) record is classified absent', () {
+      final snapshot = link(
+        wisaSnap(const [], schools: [wisaSchool(1, ours: true)]),
+        ssSnap(const []),
+        azSnap([azureUser(id: 'az-9', upn: 'gone@s.be', companyName: _prefix)]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      final a = snapshot.accounts.single;
+      expect(a.wisaPresence, WisaPresence.absent);
+      expect(a.wisaSchoolIds, isEmpty);
+      expect(a.hasLeftGroup, isTrue);
     });
   });
 }
