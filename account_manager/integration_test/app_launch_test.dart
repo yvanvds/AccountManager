@@ -10,12 +10,15 @@ import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
+import 'package:account_manager/src/screens/settings_screen.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
     show
+        AppSettings,
         ChangeSignal,
         InMemoryLinkedStore,
         InMemorySignalHub,
+        SecretRef,
         SignalRConfig,
         SignalRRequest,
         SignalRResponse,
@@ -24,6 +27,7 @@ import 'package:account_state/account_state.dart'
         SignalRSubscriber,
         SignalRTransport,
         StaticSignalRTokenProvider,
+        WisaConnection,
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart' show AzureCredentials;
 import 'package:flutter/material.dart';
@@ -32,6 +36,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../test/reconcile/reconcile_fakes.dart';
+import '../test/screens/settings_fakes.dart';
 
 /// End-to-end runs of the *real* app in the real engine, with the Plink fonts
 /// bundled by the design-system package. This is the layer that catches
@@ -706,6 +711,65 @@ void main() {
     expect(find.text('Jane Doe'), findsNothing);
     expect(find.byKey(const ValueKey('passwords-empty')), findsOneWidget);
     expect(await harness.passwordQueue.load(), isEmpty);
+  });
+
+  testWidgets(
+      'the Settings view edits a profile field and a secret, saving both '
+      'against the fakes — the secret through the provider, never into the blob '
+      '(#106)', (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams. The store
+    // already holds a partial config (the #99 seed) with a stale prefix.
+    useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final settings = SettingsHarness(
+      initial: const AppSettings(
+        schoolPrefix: 'OLD',
+        wisa: WisaConnection(server: 'old.host'),
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byType(AppShell), findsOneWidget);
+
+    // Open Settings; the stored document is read into the real, laid-out form.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(find.text('OLD'), findsOneWidget);
+    expect(find.text('old.host'), findsOneWidget);
+
+    // Edit a profile field and enter a write-only secret, then save.
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-school-prefix')),
+      'GBS-KA',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-wisa-server')),
+      'wisa.new.host',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-wisa-password')),
+      'typed-secret',
+    );
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // The profile edits landed in the store…
+    final saved = await settings.store.load();
+    expect(saved.schoolPrefix, 'GBS-KA');
+    expect(saved.wisa.server, 'wisa.new.host');
+    // …the secret went through the provider, not into the settings document…
+    expect(await settings.secrets.read(passwordRef), 'typed-secret');
+    expect(saved.toJson().toString(), isNot(contains('typed-secret')));
+    // …and the secret field was cleared, never echoing the value back.
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('settings-wisa-password')),
+    );
+    expect(field.controller!.text, isEmpty);
   });
 
   testWidgets('silent sign-in leads straight into the shell',

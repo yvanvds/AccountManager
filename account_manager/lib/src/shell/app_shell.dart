@@ -5,6 +5,8 @@ import '../reconcile/reconcile_bootstrap.dart';
 import '../screens/home_screen.dart';
 import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
+import '../screens/settings_screen.dart';
+import '../settings/settings_bootstrap.dart';
 
 /// One navigable destination in the [AppShell].
 class ShellDestination {
@@ -26,11 +28,19 @@ class ShellDestination {
 /// the shell is built to grow, not to mirror the seven legacy WPF pages up
 /// front.
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, this.reconcileBootstrap});
+  const AppShell({
+    super.key,
+    this.reconcileBootstrap,
+    this.settingsBootstrap,
+  });
 
   /// Assembles the reconcile stack on first use, or `null` when Azure AD is
   /// not configured for this build.
   final Future<ReconcileServices> Function()? reconcileBootstrap;
+
+  /// Assembles the settings seams (store + secret provider) on first use, or
+  /// `null` when Azure AD is not configured for this build.
+  final Future<SettingsServices> Function()? settingsBootstrap;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -52,6 +62,11 @@ class _AppShellState extends State<AppShell> {
       label: 'Passwords',
       icon: Icons.password_outlined,
       builder: (_) => PasswordsScreen(bootstrap: widget.reconcileBootstrap),
+    ),
+    ShellDestination(
+      label: 'Settings',
+      icon: Icons.settings_outlined,
+      builder: (_) => SettingsScreen(bootstrap: widget.settingsBootstrap),
     ),
   ];
 

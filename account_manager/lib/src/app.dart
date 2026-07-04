@@ -5,6 +5,7 @@ import 'auth/aad_resource.dart';
 import 'auth/sign_in_gate.dart';
 import 'auth/sign_in_session.dart';
 import 'reconcile/reconcile_bootstrap.dart';
+import 'settings/settings_bootstrap.dart';
 import 'shell/app_shell.dart';
 
 /// This app's per-product accent (Plink DS-5): one colour that is clearly
@@ -24,6 +25,7 @@ class AccountManagerApp extends StatelessWidget {
     required this.session,
     required this.graph,
     this.reconcileBootstrap,
+    this.settingsBootstrap,
   });
 
   /// The operator's Azure AD session, used by the sign-in gate and, later, by
@@ -37,6 +39,11 @@ class AccountManagerApp extends StatelessWidget {
   /// when AAD is not configured. Injectable so tests can bind the screen to
   /// fakes; the real closure is built in `main()`.
   final Future<ReconcileServices> Function()? reconcileBootstrap;
+
+  /// Assembles the settings seams (store + secret provider) when the Settings
+  /// screen is first opened, or `null` when AAD is not configured. Injectable so
+  /// tests can bind the screen to fakes; the real closure is built in `main()`.
+  final Future<SettingsServices> Function()? settingsBootstrap;
 
   ThemeData _themed(ThemeData base) => base.copyWith(
         extensions: const <ThemeExtension<dynamic>>[
@@ -54,7 +61,10 @@ class AccountManagerApp extends StatelessWidget {
       home: SignInGate(
         session: session,
         graph: graph,
-        child: AppShell(reconcileBootstrap: reconcileBootstrap),
+        child: AppShell(
+          reconcileBootstrap: reconcileBootstrap,
+          settingsBootstrap: settingsBootstrap,
+        ),
       ),
     );
   }

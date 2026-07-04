@@ -18,6 +18,7 @@ import 'src/auth/loopback_aad_broker.dart';
 import 'src/auth/method_channel_aad_broker.dart';
 import 'src/auth/sign_in_session.dart';
 import 'src/reconcile/reconcile_bootstrap.dart';
+import 'src/settings/settings_bootstrap.dart';
 
 void main() {
   // Azure AD app-registration values come from --dart-define (see
@@ -65,6 +66,15 @@ void main() {
           ? _memoizeOnSuccess(
               () => bootstrapReconcile(session: session, aad: config),
             )
+          : null,
+      // The settings seams (Cosmos-backed store + Key Vault secrets) are
+      // assembled lazily the first time the Settings screen is opened, memoized
+      // so repeat visits reuse the one store/provider. Kept separate from the
+      // reconcile stack on purpose: the Settings view exists to fix an
+      // incomplete config, so it must not depend on the connectors bootstrapping
+      // successfully.
+      settingsBootstrap: config.isConfigured
+          ? _memoizeOnSuccess(() => bootstrapSettings(session: session))
           : null,
     ),
   );
