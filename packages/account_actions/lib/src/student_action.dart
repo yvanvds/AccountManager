@@ -49,6 +49,19 @@ sealed class StudentAction {
   /// diff UI and the dry-run path.
   ChangeSet describeChanges();
 
+  /// The key shared by the mutually-exclusive alternatives that resolve the
+  /// **same situation** (#110). Two actions bound to the same account that
+  /// return the same non-null key are alternatives — the operator picks one and
+  /// must never run both (e.g. unregister *vs* delete a departed student). A
+  /// `null` key (the default) means the action stands on its own. Pure; lets the
+  /// UI group alternatives without pattern-matching on concrete action types.
+  String? get alternativeGroup => null;
+
+  /// Within an [alternativeGroup], whether this action is the sensible default
+  /// pre-selection. Exactly one alternative in a group should return `true`;
+  /// ignored when [alternativeGroup] is `null`.
+  bool get isDefaultAlternative => false;
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3).
@@ -83,6 +96,12 @@ sealed class StudentAction {
   bool _isOfficialClass(Group group) =>
       group.official && group.type == GroupType.classGroup;
 }
+
+/// The [StudentAction.alternativeGroup] key shared by the two mutually
+/// exclusive resolutions of a WISA-departed Smartschool account (#110):
+/// [UnregisterStudentFromSmartschool] (keep, the default) and
+/// [DeleteStudentFromSmartschool] (remove).
+const String smartschoolDepartureAlternative = 'smartschool-departure';
 
 // ---------------------------------------------------------------------------
 // Lifecycle actions — evaluated only when a system is missing (§6.3).
@@ -323,6 +342,16 @@ class UnregisterStudentFromSmartschool extends StudentAction {
       account.smartschool != null &&
       _ss.status == 'actief';
 
+  /// Unregister and [DeleteStudentFromSmartschool] are the two mutually
+  /// exclusive resolutions of a WISA-departed Smartschool account (#110).
+  @override
+  String? get alternativeGroup => smartschoolDepartureAlternative;
+
+  /// Unregistering keeps the account (the conservative resolution), so it is the
+  /// pre-selected default of the departure choice.
+  @override
+  bool get isDefaultAlternative => true;
+
   @override
   ChangeSet describeChanges() => const ChangeSet(
         system: Origin.smartschool,
@@ -377,6 +406,12 @@ class DeleteStudentFromSmartschool extends StudentAction {
 
   @override
   bool evaluate() => account.wisa == null && account.smartschool != null;
+
+  /// Delete and [UnregisterStudentFromSmartschool] are the two mutually
+  /// exclusive resolutions of a WISA-departed Smartschool account (#110). Delete
+  /// is the destructive alternative, so it is not the default.
+  @override
+  String? get alternativeGroup => smartschoolDepartureAlternative;
 
   @override
   ChangeSet describeChanges() => ChangeSet(

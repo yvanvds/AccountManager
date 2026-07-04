@@ -111,32 +111,6 @@ class _ReconcileBody extends StatelessWidget {
   final ReconcileController controller;
   final LogBuffer log;
 
-  Future<void> _confirmApply(BuildContext context) async {
-    final count = controller.applyableCount;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Apply pending actions?'),
-        content: Text(
-          'This writes $count change(s) to Smartschool and Azure AD. '
-          'Run a dry-run first to preview the exact changes.',
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey('reconcile-apply-confirm'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Apply'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed ?? false) await controller.applyAll();
-  }
-
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -171,10 +145,7 @@ class _ReconcileBody extends StatelessWidget {
                           const SizedBox(height: PlinkSpacing.s5),
                           _OverviewSection(linked: linked),
                           const SizedBox(height: PlinkSpacing.s5),
-                          _ActionsSection(
-                            controller: controller,
-                            onApply: () => _confirmApply(context),
-                          ),
+                          _ActionsSection(controller: controller),
                         ],
                         ..._results(context),
                       ],
@@ -486,28 +457,68 @@ class _WarningLine extends StatelessWidget {
   }
 }
 
+/// Shows the apply-confirmation dialog and, on confirm, runs [apply] (#110).
+/// Shared by the global, per-situation, and per-entry apply affordances so a
+/// write is always one deliberate confirmation.
+Future<void> _confirmAndApply(
+  BuildContext context, {
+  required String title,
+  required int count,
+  required Future<void> Function() apply,
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Text(
+        'This writes $count change(s) to Smartschool and Azure AD. '
+        'Run a dry-run first to preview the exact changes.',
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('reconcile-apply-confirm'),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Apply'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed ?? false) await apply();
+}
+
+/// The pending-actions list (#110): **one entry per account**, mutually
+/// exclusive resolutions rendered as a choice, and per-entry / per-situation
+/// apply as the primary affordances. The global "apply all" is kept as a
+/// secondary escape hatch, not the headline.
 class _ActionsSection extends StatelessWidget {
-  const _ActionsSection({required this.controller, required this.onApply});
+  const _ActionsSection({required this.controller});
 
   final ReconcileController controller;
-  final VoidCallback onApply;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final pending = controller.pendingViews;
+    final entries = controller.pendingEntries;
+    final situations = controller.pendingSituations;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Pending actions (${pending.length})', style: text.titleMedium),
+        Text('Pending actions (${entries.length})', style: text.titleMedium),
         const SizedBox(height: PlinkSpacing.s3),
-        if (pending.isEmpty)
+        if (entries.isEmpty)
           Text(
             'Everything is in sync — no pending actions.',
             style: text.bodyMedium,
           )
         else ...<Widget>[
+          for (final subset in situations)
+            _SituationSection(controller: controller, entries: subset),
+          const SizedBox(height: PlinkSpacing.s3),
           Wrap(
             spacing: PlinkSpacing.s3,
             children: <Widget>[
@@ -519,33 +530,112 @@ class _ActionsSection extends StatelessWidget {
                 icon: const Icon(Icons.visibility_outlined),
                 label: const Text('Dry-run all'),
               ),
-              FilledButton.icon(
+              TextButton.icon(
                 key: const ValueKey('reconcile-apply'),
                 onPressed: controller.busy || controller.applyableCount == 0
                     ? null
-                    : onApply,
+                    : () => _confirmAndApply(
+                          context,
+                          title: 'Apply pending actions?',
+                          count: controller.applyableCount,
+                          apply: controller.applyAll,
+                        ),
                 icon: const Icon(Icons.play_arrow_outlined),
                 label: const Text('Apply all'),
               ),
             ],
           ),
-          const SizedBox(height: PlinkSpacing.s3),
-          ...pending.map((p) => _PendingActionTile(view: p)),
         ],
       ],
     );
   }
 }
 
-class _PendingActionTile extends StatelessWidget {
-  const _PendingActionTile({required this.view});
+/// One "same situation" subset (#110): the entries whose situation matches, with
+/// a bulk "apply this resolution to all" affordance that honours each entry's
+/// own chosen alternative. The bulk header only appears when more than one
+/// account is in the situation — a lone entry is resolved from its own tile.
+class _SituationSection extends StatelessWidget {
+  const _SituationSection({required this.controller, required this.entries});
 
-  final PendingActionView view;
+  final ReconcileController controller;
+  final List<PendingAccountEntry> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final key = entries.first.situationKey;
+    final applyable = entries.where((e) => e.canApply).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (entries.length > 1) ...<Widget>[
+          Padding(
+            padding: const EdgeInsets.only(
+              top: PlinkSpacing.s2,
+              bottom: PlinkSpacing.s2,
+            ),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '${entries.first.situationLabel} — ${entries.length} '
+                    'accounts in the same situation',
+                    style: text.titleSmall,
+                  ),
+                ),
+                const SizedBox(width: PlinkSpacing.s2),
+                OutlinedButton(
+                  key: ValueKey('situation-dry-run-$key'),
+                  onPressed: controller.busy || applyable == 0
+                      ? null
+                      : () => controller.dryRunSituation(key),
+                  child: const Text('Dry-run all'),
+                ),
+                const SizedBox(width: PlinkSpacing.s2),
+                FilledButton(
+                  key: ValueKey('situation-apply-$key'),
+                  onPressed: controller.busy || applyable == 0
+                      ? null
+                      : () => _confirmAndApply(
+                            context,
+                            title: 'Apply to ${entries.length} accounts?',
+                            count: applyable,
+                            apply: () => controller.applySituation(key),
+                          ),
+                  child: Text('Apply to all ($applyable)'),
+                ),
+              ],
+            ),
+          ),
+        ],
+        for (final entry in entries)
+          _PendingEntryTile(controller: controller, entry: entry),
+      ],
+    );
+  }
+}
+
+/// One account's pending resolution (#110): a single expandable row showing the
+/// selected summary, the mutually-exclusive choice (as radios) when there is
+/// one, the per-field diff, and per-entry dry-run / apply.
+class _PendingEntryTile extends StatelessWidget {
+  const _PendingEntryTile({required this.controller, required this.entry});
+
+  final ReconcileController controller;
+  final PendingAccountEntry entry;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final Color hairline = Theme.of(context).dividerColor;
+
+    String lineFor(PendingChoice c) {
+      final summary = c.selected.changes.summary;
+      if (c.isChoice) return '$summary (keuze)';
+      return c.selected.canApply ? summary : '$summary (manueel)';
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
@@ -554,15 +644,18 @@ class _PendingActionTile extends StatelessWidget {
         borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
       ),
       child: ExpansionTile(
+        key: ValueKey('entry-${entry.family}-${entry.targetId}'),
         shape: const Border(),
         collapsedShape: const Border(),
-        leading: PlinkBadge(view.family),
-        title: Text(view.target, style: text.bodyLarge),
-        subtitle: Text(
-          view.canApply
-              ? view.changes.summary
-              : '${view.changes.summary} (manual — not applied automatically)',
-          style: text.bodySmall,
+        leading: PlinkBadge(entry.family),
+        title: Text(entry.target, style: text.bodyLarge),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            for (final c in entry.choices)
+              Text(lineFor(c), style: text.bodySmall),
+          ],
         ),
         childrenPadding: const EdgeInsets.fromLTRB(
           PlinkSpacing.s5,
@@ -571,24 +664,143 @@ class _PendingActionTile extends StatelessWidget {
           PlinkSpacing.s4,
         ),
         expandedCrossAxisAlignment: CrossAxisAlignment.start,
-        children: view.changes.fields.isEmpty
-            ? <Widget>[
-                Text(
-                  'Lifecycle action — no per-field diff.',
-                  style: text.bodySmall,
-                ),
-              ]
-            : <Widget>[
-                for (final f in view.changes.fields)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
-                    child: Text(
-                      '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}',
-                      style: text.bodySmall,
-                    ),
-                  ),
-              ],
+        children: <Widget>[
+          for (final choice in entry.choices)
+            if (choice.isChoice)
+              _ChoiceControl(
+                controller: controller,
+                entry: entry,
+                choice: choice,
+              )
+            else
+              _OptionDetail(option: choice.selected),
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            children: <Widget>[
+              OutlinedButton(
+                key: ValueKey('entry-dry-run-${entry.targetId}'),
+                onPressed: controller.busy || !entry.canApply
+                    ? null
+                    : () => controller.dryRunEntry(entry),
+                child: const Text('Dry-run'),
+              ),
+              const SizedBox(width: PlinkSpacing.s2),
+              FilledButton(
+                key: ValueKey('entry-apply-${entry.targetId}'),
+                onPressed: controller.busy || !entry.canApply
+                    ? null
+                    : () => _confirmAndApply(
+                          context,
+                          title: 'Apply for ${entry.target}?',
+                          count: entry.choices
+                              .where((c) => c.selected.canApply)
+                              .length,
+                          apply: () => controller.applyEntry(entry),
+                        ),
+                child: const Text('Apply'),
+              ),
+            ],
+          ),
+        ],
       ),
+    );
+  }
+}
+
+/// The radio group for a mutually-exclusive choice (#110): the operator picks
+/// exactly one resolution; the selected one is what an apply runs.
+class _ChoiceControl extends StatelessWidget {
+  const _ChoiceControl({
+    required this.controller,
+    required this.entry,
+    required this.choice,
+  });
+
+  final ReconcileController controller;
+  final PendingAccountEntry entry;
+  final PendingChoice choice;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Kies één oplossing:',
+          style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        for (final option in choice.alternatives)
+          InkWell(
+            key: ValueKey('alt-${entry.targetId}-${option.kind}'),
+            onTap: controller.busy
+                ? null
+                : () => controller.chooseAlternative(
+                      entry: entry,
+                      group: option.group!,
+                      kind: option.kind,
+                    ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s1),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Icon(
+                    option.kind == choice.selected.kind
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    size: 18,
+                    color: option.kind == choice.selected.kind
+                        ? colors.primary
+                        : Theme.of(context).disabledColor,
+                  ),
+                  const SizedBox(width: PlinkSpacing.s2),
+                  Expanded(
+                    child: Text(option.changes.summary, style: text.bodySmall),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The per-field diff (or a lifecycle note) for a single, non-choice option.
+class _OptionDetail extends StatelessWidget {
+  const _OptionDetail({required this.option});
+
+  final PendingActionOption option;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final fields = option.changes.fields;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: fields.isEmpty
+          ? <Widget>[
+              Text(
+                option.canApply
+                    ? 'Lifecycle action — no per-field diff.'
+                    : '${option.changes.summary} '
+                        '(manual — not applied automatically)',
+                style: text.bodySmall,
+              ),
+            ]
+          : <Widget>[
+              for (final f in fields)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+                  child: Text(
+                    '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}',
+                    style: text.bodySmall,
+                  ),
+                ),
+            ],
     );
   }
 }
