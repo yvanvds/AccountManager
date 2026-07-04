@@ -236,6 +236,8 @@ class ReconcileHarness {
     az.AzureSnapshot? azure,
     this.store,
     InMemoryLinkedStore? linkedStore,
+    this.hub,
+    SignalPublisher? publisher,
     wapi.WisaSnapshot? wisaInitial,
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
@@ -340,12 +342,15 @@ class ReconcileHarness {
       ),
     );
 
+    final signalHub = hub;
     controller = ReconcileController(
       app: app,
       applier: applier,
       log: log,
       store: this.linkedStore,
       syncedBy: syncedBy,
+      publisher: publisher ?? signalHub?.publisher(),
+      subscriber: signalHub?.subscriber(),
       clock: () => kFixtureDate,
     );
   }
@@ -359,6 +364,11 @@ class ReconcileHarness {
   /// wiring (#107). `null` for the plain in-memory scenarios.
   final SnapshotStore? store;
 
+  /// The shared realtime fan-out (#116): when set, this session's controller
+  /// publishes change signals to it and subscribes for others'. Share one hub
+  /// across sessions to model operators nudging each other in real time.
+  final InMemorySignalHub? hub;
+
   /// The operator (UPN) this session syncs as — the lease owner and the
   /// per-system sync-metadata author (#108). Vary it to model a second operator
   /// sharing the same [linkedStore].
@@ -370,6 +380,7 @@ class ReconcileHarness {
   static Future<ReconcileHarness> resume({
     required SnapshotStore store,
     InMemoryLinkedStore? linkedStore,
+    InMemorySignalHub? hub,
     wapi.WisaSnapshot? wisa,
     ss.SmartschoolSnapshot? smartschool,
     az.AzureSnapshot? azure,
@@ -395,6 +406,7 @@ class ReconcileHarness {
       azure: azure,
       store: store,
       linkedStore: linkedStore,
+      hub: hub,
       wisaInitial: wisaSeed,
       ssInitial: ssSeed,
       azureInitial: azSeed,

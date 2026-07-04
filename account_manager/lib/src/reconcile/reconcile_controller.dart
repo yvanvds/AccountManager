@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
@@ -89,8 +91,13 @@ class ReconcileController extends ChangeNotifier {
     required this.log,
     required this.store,
     this.syncedBy = '',
+    this.publisher,
+    this.subscriber,
     DateTime Function()? clock,
-  }) : _now = clock ?? DateTime.now;
+  }) : _now = clock ?? DateTime.now {
+    final sub = subscriber;
+    if (sub != null) _signalSub = sub.signals.listen(_onSignal);
+  }
 
   /// The three connector snapshots (owned by the State layer).
   final ApplicationState app;
@@ -109,7 +116,20 @@ class ReconcileController extends ChangeNotifier {
   /// The operator (UPN) whose session writes the materialized view.
   final String syncedBy;
 
+  /// Publishes a [ChangeSignal] when this session takes/releases the sync lease
+  /// or writes a new view generation, so other operators are nudged in real time
+  /// (#116). Null when no realtime transport is wired — the store's `generation`
+  /// marker still lets a client detect staleness on its next read.
+  final SignalPublisher? publisher;
+
+  /// Receives other operators' [ChangeSignal]s so this session reacts live: a
+  /// `viewChanged` refetches the changed shard, a `syncStarted` / `syncEnded`
+  /// re-reads the lease to disable/enable Synchronise. Null when unwired (#116).
+  final SignalSubscriber? subscriber;
+
   final DateTime Function() _now;
+
+  StreamSubscription<ChangeSignal>? _signalSub;
 
   ReconcilePhase _phase = ReconcilePhase.idle;
   LinkedState? _linked;
@@ -572,6 +592,9 @@ class ReconcileController extends ChangeNotifier {
         // The store merges this pass's pulls over what it had; mirror that here.
         systems: {...previous.systems, ..._pulled},
       );
+      // Nudge every passive session to refetch: the whole view was rewritten,
+      // so the signal names no narrower shard (#116).
+      await _publish(ChangeSignal.viewChanged(generation: view.generation));
       // A re-sync invalidates any open drill-down; the next open re-reads.
       _selectedClassroom = null;
       _classroomAccounts = null;
@@ -632,6 +655,8 @@ class ReconcileController extends ChangeNotifier {
       final outcome = await store.acquireLease(owner: syncedBy, now: _now());
       if (outcome.acquired) {
         _lock = null;
+        // Nudge other operators to disable their Synchronise/Check-for-drift.
+        await _publish(ChangeSignal.syncStarted(owner: syncedBy));
         return true;
       }
       _lock = outcome.lease;
@@ -672,6 +697,8 @@ class ReconcileController extends ChangeNotifier {
   Future<void> _releaseLock() async {
     try {
       await store.releaseLease(owner: syncedBy);
+      // Only after the lease is actually gone — nudge others to re-enable.
+      await _publish(ChangeSignal.syncEnded(owner: syncedBy));
     } on Object catch (e) {
       log.addError(core.Origin.all, 'Could not release the sync lock: $e');
     }
@@ -690,9 +717,51 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
+  /// Reacts to another operator's realtime signal (#116). A `viewChanged` drives
+  /// the same stale-generation refetch as a direct [onStoreChanged]; a lease
+  /// signal re-reads the *authoritative* lease from the store (the signal is only
+  /// the nudge, the lease document is the truth). This session's own echoed
+  /// signals are harmless: [onStoreChanged] no-ops on its own generation, and a
+  /// lease signal is ignored while this session is the one syncing.
+  Future<void> _onSignal(ChangeSignal signal) async {
+    switch (signal.kind) {
+      case ChangeSignalKind.viewChanged:
+        final generation = signal.generation;
+        if (generation != null) await onStoreChanged(generation);
+      case ChangeSignalKind.syncStarted:
+      case ChangeSignalKind.syncEnded:
+        // While this session runs its own pass it owns the lease; ignore the
+        // echo so it never disables its own buttons.
+        if (busy) return;
+        await _refreshLock();
+        notifyListeners();
+    }
+  }
+
+  /// Best-effort publish of [signal] to the realtime transport (#116). A failed
+  /// push is logged but never fails the pass that triggered it — the stored
+  /// generation marker is the fallback source of truth. A no-op when no
+  /// publisher is wired.
+  Future<void> _publish(ChangeSignal signal) async {
+    final p = publisher;
+    if (p == null) return;
+    try {
+      await p.publish(signal);
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not publish a change signal: $e');
+    }
+  }
+
   void _finish(ReconcilePhase phase) {
     _phase = phase;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _signalSub?.cancel();
+    subscriber?.close();
+    super.dispose();
   }
 
   void _fail(Object e) {

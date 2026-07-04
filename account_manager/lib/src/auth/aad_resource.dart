@@ -55,4 +55,13 @@ class AadResource {
     id: 'storage',
     scopes: <String>['https://storage.azure.com/.default'],
   );
+
+  /// The centralized Azure SignalR service (`https://signalr.azure.com`), where a
+  /// writer broadcasts change signals over the REST/management endpoint (#116).
+  /// The operator holds a *SignalR Service Owner* / *SignalR App Server*
+  /// data-plane role — AAD-only, no access key.
+  static const AadResource signalr = AadResource(
+    id: 'signalr',
+    scopes: <String>['https://signalr.azure.com/.default'],
+  );
 }

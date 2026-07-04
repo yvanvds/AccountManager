@@ -1,5 +1,9 @@
 import 'package:account_state/account_state.dart'
-    show BlobTokenProvider, CosmosTokenProvider, KeyVaultTokenProvider;
+    show
+        BlobTokenProvider,
+        CosmosTokenProvider,
+        KeyVaultTokenProvider,
+        SignalRTokenProvider;
 import 'package:azure_api/azure_api.dart'
     show AzureAuthException, AzureAuthProvider;
 
@@ -142,4 +146,16 @@ class BlobSessionTokenProvider implements BlobTokenProvider {
 
   @override
   Future<String> blobAccessToken() => _session.tokenFor(AadResource.storage);
+}
+
+/// Adapts a [SignInSession] to the SignalR auth seam ([SignalRTokenProvider]) so
+/// change signals are broadcast with the operator's own AAD identity (SignalR
+/// Service Owner), no stored access key (#116).
+class SignalRSessionTokenProvider implements SignalRTokenProvider {
+  SignalRSessionTokenProvider(this._session);
+
+  final SignInSession _session;
+
+  @override
+  Future<String> signalRAccessToken() => _session.tokenFor(AadResource.signalr);
 }

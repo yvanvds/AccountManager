@@ -230,6 +230,99 @@ void main() {
     expect(find.textContaining('Generatie 1'), findsNothing);
   });
 
+  testWidgets(
+      'a "syncing" signal disables sync/drift and names the owner; '
+      '"synced" re-enables (#116)', (WidgetTester tester) async {
+    final hub = InMemorySignalHub();
+    final linkedStore = InMemoryLinkedStore();
+    // A first session leaves an overview so the passive screen has something to
+    // sit on (no hub, so it does not publish into this test).
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+    final passive = ReconcileHarness(linkedStore: linkedStore, hub: hub);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: passive.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // No lock yet — both heavy actions are live.
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
+
+    // Another operator takes the lease and broadcasts that it is syncing.
+    await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+    await hub
+        .publisher()
+        .publish(const ChangeSignal.syncStarted(owner: 'mieke@school'));
+    await tester.pumpAndSettle();
+
+    // The screen names the owner and disables both heavy actions — no reload.
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsOneWidget);
+    expect(find.textContaining('mieke@school'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNull,
+    );
+
+    // They finish: release + broadcast → the screen re-enables.
+    await linkedStore.releaseLease(owner: 'mieke@school');
+    await hub
+        .publisher()
+        .publish(const ChangeSignal.syncEnded(owner: 'mieke@school'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('a "changed" signal alone refetches the passive overview (#116)',
+      (WidgetTester tester) async {
+    final hub = InMemorySignalHub();
+    final linkedStore = InMemoryLinkedStore();
+    final snapshots = InMemorySnapshotStore();
+
+    // Session 1 materializes generation 1 and broadcasts on the shared hub.
+    final s1 =
+        ReconcileHarness(store: snapshots, linkedStore: linkedStore, hub: hub);
+    await s1.controller.sync();
+
+    // Session 2 renders the shared overview passively, on the same hub.
+    final s2 = await ReconcileHarness.resume(
+        store: snapshots, linkedStore: linkedStore, hub: hub);
+    await tester.pumpWidget(_wrap(ReconcileScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Generatie 1'), findsOneWidget);
+
+    // Session 1 re-syncs a change → generation 2. Unlike the #108 test above,
+    // nothing here calls onStoreChanged directly — the signal alone drives it.
+    s1.wisaResult = wisaSnap(
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+      students: [wisaStudent(classGroup: '3D')],
+    );
+    await s1.controller.sync();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Generatie 2'), findsOneWidget);
+    expect(find.textContaining('Generatie 1'), findsNothing);
+  });
+
   testWidgets('the log panel clears on demand', (WidgetTester tester) async {
     final harness = ReconcileHarness();
     await tester.pumpWidget(
