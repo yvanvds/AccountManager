@@ -154,4 +154,49 @@ void main() {
       expect(h.controller.applyableCount, 2);
     });
   });
+
+  group('pendingEntries memoization (#111)', () {
+    test('repeated reads return the identical cached list', () async {
+      final h = departedHarness();
+      await h.controller.sync();
+
+      final first = h.controller.pendingEntries;
+      final second = h.controller.pendingEntries;
+      expect(identical(first, second), isTrue,
+          reason: 'the entries are built once and cached, not per read');
+    });
+
+    test('choosing an alternative invalidates the cache', () async {
+      final h = departedHarness();
+      await h.controller.sync();
+
+      final before = h.controller.pendingEntries;
+      h.controller.chooseAlternative(
+        entry: before.firstWhere((e) => e.family == 'student'),
+        group: actions.smartschoolDepartureAlternative,
+        kind: 'DeleteStudentFromSmartschool',
+      );
+      final after = h.controller.pendingEntries;
+
+      expect(identical(before, after), isFalse,
+          reason: 'a new pick must rebuild the entries so the choice shows');
+      // …and the pick is reflected in the freshly built entry.
+      final entry = after.firstWhere((e) => e.family == 'student');
+      expect(
+          entry.choices.single.selected.kind, 'DeleteStudentFromSmartschool');
+    });
+
+    test('a re-link rebuilds the cache from the fresh view', () async {
+      final h = departedHarness();
+      await h.controller.sync();
+      final before = h.controller.pendingEntries;
+
+      // A drift re-read re-links, replacing the linked view.
+      await h.controller.checkDrift();
+      final after = h.controller.pendingEntries;
+
+      expect(identical(before, after), isFalse,
+          reason: 'a fresh linked view must not serve a stale cached list');
+    });
+  });
 }

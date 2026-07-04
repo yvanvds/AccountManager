@@ -321,6 +321,18 @@ class ReconcileController extends ChangeNotifier {
   /// means the situation still shows its default alternative.
   final Map<String, String> _choices = {};
 
+  /// Memoized [pendingEntries] (#111). Building the entries runs
+  /// `describeChanges()` for every pending action, and the screen reads
+  /// `pendingEntries` (directly and via `pendingSituations` / `applyableCount`)
+  /// several times per frame — recomputing it each time is what janks a large
+  /// pending set. The cache is keyed on the identity of the linked view (a fresh
+  /// `link()` / apply-refresh replaces it) and a version bumped on every
+  /// [chooseAlternative], so a stale entry can never be served.
+  List<PendingAccountEntry>? _pendingEntriesCache;
+  LinkedState? _pendingCacheKey;
+  int _choicesVersion = 0;
+  int _pendingCacheChoicesVersion = -1;
+
   /// The persisted operator decisions loaded from the shared store (#109/#110),
   /// used to tell which duplicate-mail collisions have been accepted. Refreshed
   /// on every overview read and after each accept/revoke.
@@ -394,6 +406,11 @@ class ReconcileController extends ChangeNotifier {
   List<PendingAccountEntry> get pendingEntries {
     final l = _linked;
     if (l == null) return const [];
+    if (identical(_pendingCacheKey, l) &&
+        _pendingCacheChoicesVersion == _choicesVersion &&
+        _pendingEntriesCache != null) {
+      return _pendingEntriesCache!;
+    }
     final entries = <PendingAccountEntry>[];
     entries.addAll(_entriesFor(
       family: 'student',
@@ -425,6 +442,9 @@ class ReconcileController extends ChangeNotifier {
       changes: (a) => a.describeChanges(),
       canApply: (a) => a.canApply,
     ));
+    _pendingCacheKey = l;
+    _pendingCacheChoicesVersion = _choicesVersion;
+    _pendingEntriesCache = entries;
     return entries;
   }
 
@@ -535,6 +555,7 @@ class ReconcileController extends ChangeNotifier {
     required String kind,
   }) {
     _choices['${entry.targetId}|$group'] = kind;
+    _choicesVersion++;
     notifyListeners();
   }
 
