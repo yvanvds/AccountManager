@@ -40,4 +40,74 @@ void main() {
   test('is a core.Snapshot', () {
     expect(snapshot, isA<core.Snapshot>());
   });
+
+  test('toJson/fromJson round-trips groups, accounts, memberships (#107)', () {
+    final full = SmartschoolSnapshot(
+      fetchedAt: DateTime.utc(2026, 6, 5, 8, 15),
+      groups: [
+        const core.Group(
+          id: core.GroupId('C1A'),
+          name: '1A',
+          description: 'First',
+          type: core.GroupType.classGroup,
+          official: true,
+          untis: '1A',
+          origin: core.Origin.smartschool,
+        ),
+      ],
+      accounts: const [
+        SmartschoolAccount(
+          uid: 'jand',
+          accountId: '150001',
+          mail: 'jan.doe@student.school.example',
+          registerId: '01010112345',
+          stemId: 20000001,
+          role: core.PersonRole.student,
+          givenName: 'Jan',
+          surname: 'Doe',
+          extraNames: '',
+          initials: 'JD',
+          preferredName: 'Jantje',
+          gender: core.Gender.male,
+          birthDate: null,
+          birthPlace: 'Gent',
+          birthCountry: 'BE',
+          address: core.Address(
+            street: 'Kerkstraat',
+            houseNumber: '1',
+            postalCode: '9000',
+            city: 'Gent',
+            country: 'BE',
+          ),
+          mobilePhone: '',
+          homePhone: '',
+          fax: '',
+          untisId: '',
+          status: 'actief',
+          coAccounts: [
+            CoAccountSlot(
+              slot: 1,
+              firstName: 'Mama',
+              lastName: 'Doe',
+              email: 'mama@doe.example',
+              phone: '',
+              mobile: '0470',
+              type: 'Moeder',
+            ),
+          ],
+        ),
+      ],
+      memberships: const [
+        SmartschoolMembership(uid: 'jand', groupId: core.GroupId('C1A')),
+      ],
+    );
+
+    final restored = SmartschoolSnapshot.fromJson(full.toJson());
+    expect(restored.fetchedAt, full.fetchedAt);
+    expect(restored.groups, full.groups);
+    expect(restored.accounts, full.accounts);
+    expect(restored.memberships, full.memberships);
+    // Co-account slots survive the round-trip (they were the point of #21).
+    expect(restored.accounts.single.coAccounts, hasLength(1));
+  });
 }

@@ -49,6 +49,44 @@ void main() {
       mutableSchools.clear();
       expect(snap.schools, hasLength(1));
     });
+
+    test('toJson/fromJson round-trips every list and field (#107)', () {
+      final full = WisaSnapshot(
+        fetchedAt: DateTime.utc(2026, 5, 20, 9, 30, 15),
+        students: [_anyStudent()],
+        staff: const [
+          WisaStaff(
+            code: core.WisaStaffCode('T01'),
+            wisaId: core.WisaId('900001'),
+            firstName: 'Ann',
+            lastName: 'Teacher',
+          ),
+          // A staff member with no numeric id — the nullable branch.
+          WisaStaff(
+              code: core.WisaStaffCode('T02'), firstName: 'Bo', lastName: 'X'),
+        ],
+        classGroups: const [
+          WisaClassGroup(
+            name: '1A',
+            groupName: '00',
+            description: 'First',
+            adminCode: 'A1',
+            schoolCode: '012345',
+            schoolId: 1,
+          ),
+        ],
+        schools: const [
+          WisaSchool(id: 1, name: 'SMA', description: 'X', isVirtual: true),
+        ],
+      );
+
+      final restored = WisaSnapshot.fromJson(full.toJson());
+      expect(restored.fetchedAt, full.fetchedAt);
+      expect(restored.students, full.students);
+      expect(restored.staff, full.staff);
+      expect(restored.classGroups, full.classGroups);
+      expect(restored.schools, full.schools);
+    });
   });
 }
 

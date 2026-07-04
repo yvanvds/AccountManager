@@ -14,6 +14,12 @@
 ///   AAD-only, so each request is authenticated with a per-operator bearer
 ///   token; [HttpCosmosClient] binds the pure-Dart HTTPS+JSON data plane, so
 ///   there is no native driver dependency.
+/// - [SnapshotStore] — the cold store the three connector snapshots (WISA,
+///   Smartschool, Azure + delta token) persist to, so a fresh session seeds
+///   from the store instead of re-pulling (#107). [CosmosSnapshotStore] keeps
+///   the metadata in Cosmos and overflows large payloads to a [BlobStore]
+///   ([HttpBlobStore] over the same AAD-token discipline). [persistingSyncer]
+///   and [seedSnapshot] compose that persistence over a [SystemState]'s syncer.
 ///
 /// Every seam has an in-memory default so the layer is testable headlessly
 /// with zero network and zero infra. The persist-vs-derive split — what is
@@ -53,6 +59,9 @@ export 'package:account_store/account_store.dart' show FilePersonIdResolver;
 
 export 'src/apply/state_applier.dart';
 export 'src/apply/wisa_import_rules.dart';
+export 'src/blob/blob_store.dart';
+export 'src/blob/blob_token_provider.dart';
+export 'src/blob/blob_transport.dart';
 export 'src/keyvault/key_vault_config.dart';
 export 'src/keyvault/key_vault_live_config.dart';
 export 'src/keyvault/key_vault_secret_provider.dart';
@@ -74,8 +83,10 @@ export 'src/cosmos/cosmos_live_config.dart';
 export 'src/cosmos/cosmos_password_queue_store.dart';
 export 'src/cosmos/cosmos_person_id_resolver.dart';
 export 'src/cosmos/cosmos_settings_store.dart';
+export 'src/cosmos/cosmos_snapshot_store.dart';
 export 'src/cosmos/cosmos_token_provider.dart';
 export 'src/cosmos/cosmos_transport.dart';
 export 'src/sync/application_state.dart';
+export 'src/sync/snapshot_persistence.dart';
 export 'src/sync/system_state.dart';
 export 'src/sync/wisa_snapshot_diff.dart';

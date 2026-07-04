@@ -24,6 +24,24 @@ class WisaStaff implements core.WisaStaff {
     required this.lastName,
   });
 
+  /// Serializes to the connector's own snapshot shape. Round-trips with
+  /// [WisaStaff.fromJson] for the persisted cold snapshot (#107).
+  Map<String, dynamic> toJson() => {
+        'code': code.toJson(),
+        if (wisaId != null) 'wisaId': wisaId!.toJson(),
+        'firstName': firstName,
+        'lastName': lastName,
+      };
+
+  factory WisaStaff.fromJson(Map<String, dynamic> json) => WisaStaff(
+        code: core.WisaStaffCode(json['code'] as String),
+        wisaId: json['wisaId'] == null
+            ? null
+            : core.WisaId(json['wisaId'] as String),
+        firstName: json['firstName'] as String,
+        lastName: json['lastName'] as String,
+      );
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

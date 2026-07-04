@@ -161,20 +161,22 @@ wapi.WisaSnapshot wisaSnap({
     );
 
 ss.SmartschoolSnapshot ssSnap({
+  DateTime? fetchedAt,
   List<core.Group>? groups,
   List<ss.SmartschoolAccount>? accounts,
   List<ss.SmartschoolMembership>? memberships,
 }) =>
     ss.SmartschoolSnapshot(
-      fetchedAt: kFixtureDate,
+      fetchedAt: fetchedAt ?? kFixtureDate,
       groups: groups ??
           [ssGroup('2B', code: '2B_ss'), ssGroup('3C', code: '3C_ss')],
       accounts: accounts ?? [ssAccount()],
       memberships: memberships ?? [member('jane', '2B_ss')],
     );
 
-az.AzureSnapshot azSnap({List<az.AzureUser>? users}) => az.AzureSnapshot(
-      fetchedAt: kFixtureDate,
+az.AzureSnapshot azSnap({DateTime? fetchedAt, List<az.AzureUser>? users}) =>
+    az.AzureSnapshot(
+      fetchedAt: fetchedAt ?? kFixtureDate,
       users: users ?? [azUser()],
       groups: const [],
     );
@@ -186,6 +188,38 @@ class SeqResolver implements core.PersonIdResolver {
   @override
   core.PersonId resolve(String naturalKey) =>
       core.PersonId(_seen.putIfAbsent(naturalKey, () => 'p${_seen.length}'));
+}
+
+/// An in-memory [SnapshotStore] shared across two "sessions" of a test, so a
+/// second [ReconcileHarness] can seed from what the first persisted (#107). The
+/// Cosmos+Blob overflow behaviour is covered by `account_state`'s unit tests;
+/// here only the seed/reuse/drift wiring matters.
+class InMemorySnapshotStore implements SnapshotStore {
+  final Map<core.Origin, StoredSnapshot> _byOrigin = {};
+
+  /// Which systems currently have a stored snapshot — for test assertions.
+  Iterable<core.Origin> get storedSystems => _byOrigin.keys;
+
+  StoredSnapshot? peek(core.Origin system) => _byOrigin[system];
+
+  @override
+  Future<StoredSnapshot?> load(core.Origin system) async => _byOrigin[system];
+
+  @override
+  Future<void> save(
+    core.Origin system, {
+    required Map<String, dynamic> payload,
+    required DateTime fetchedAt,
+    required String syncedBy,
+    String? deltaToken,
+  }) async {
+    _byOrigin[system] = StoredSnapshot(
+      payload: payload,
+      fetchedAt: fetchedAt,
+      syncedBy: syncedBy,
+      deltaToken: deltaToken,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -200,35 +234,75 @@ class ReconcileHarness {
     wapi.WisaSnapshot? wisa,
     ss.SmartschoolSnapshot? smartschool,
     az.AzureSnapshot? azure,
+    this.store,
+    wapi.WisaSnapshot? wisaInitial,
+    ss.SmartschoolSnapshot? ssInitial,
+    az.AzureSnapshot? azureInitial,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()) {
     log = LogBuffer(clock: () => kFixtureDate);
     final wisaRules = WisaImportRules();
 
+    // The scripted per-system pulls (with call counters). When a [store] is
+    // wired, each is wrapped so a successful pull persists — mirroring how
+    // bootstrap composes persistence over the real syncers (#107).
+    Syncer<wapi.WisaSnapshot> wisaSync = (_) async {
+      wisaSyncs++;
+      final error = wisaError;
+      if (error != null) throw error;
+      return wisaResult;
+    };
+    Syncer<ss.SmartschoolSnapshot> ssSync = (_) async {
+      ssSyncs++;
+      return ssResult;
+    };
+    Syncer<az.AzureSnapshot> azSync = (_) async {
+      azSyncs++;
+      return azResult;
+    };
+
+    final s = store;
+    if (s != null) {
+      wisaSync = persistingSyncer<wapi.WisaSnapshot>(
+        system: core.Origin.wisa,
+        store: s,
+        syncedBy: 'operator@school.example',
+        payloadOf: (snap) => snap.toJson(),
+        inner: wisaSync,
+      );
+      ssSync = persistingSyncer<ss.SmartschoolSnapshot>(
+        system: core.Origin.smartschool,
+        store: s,
+        syncedBy: 'operator@school.example',
+        payloadOf: (snap) => snap.toJson(),
+        inner: ssSync,
+      );
+      azSync = persistingSyncer<az.AzureSnapshot>(
+        system: core.Origin.azure,
+        store: s,
+        syncedBy: 'operator@school.example',
+        payloadOf: (snap) => snap.toJson(),
+        deltaTokenOf: (snap) => snap.deltaToken,
+        inner: azSync,
+      );
+    }
+
     app = ApplicationState(
       wisa: SystemState<wapi.WisaSnapshot>(
         system: core.Origin.wisa,
-        syncer: (_) async {
-          wisaSyncs++;
-          final error = wisaError;
-          if (error != null) throw error;
-          return wisaResult;
-        },
+        initial: wisaInitial,
+        syncer: wisaSync,
       ),
       smartschool: SystemState<ss.SmartschoolSnapshot>(
         system: core.Origin.smartschool,
-        syncer: (_) async {
-          ssSyncs++;
-          return ssResult;
-        },
+        initial: ssInitial,
+        syncer: ssSync,
       ),
       azure: SystemState<az.AzureSnapshot>(
         system: core.Origin.azure,
-        syncer: (_) async {
-          azSyncs++;
-          return azResult;
-        },
+        initial: azureInitial,
+        syncer: azSync,
       ),
     );
 
@@ -264,6 +338,45 @@ class ReconcileHarness {
     );
 
     controller = ReconcileController(app: app, applier: applier, log: log);
+  }
+
+  /// The shared cold-snapshot store, when this harness models the persistence
+  /// wiring (#107). `null` for the plain in-memory scenarios.
+  final SnapshotStore? store;
+
+  /// Builds a "second session" seeded from [store] — a fresh controller over
+  /// the state another harness already persisted, the way bootstrap seeds each
+  /// [SystemState] from the store on app open (#107).
+  static Future<ReconcileHarness> resume({
+    required SnapshotStore store,
+    wapi.WisaSnapshot? wisa,
+    ss.SmartschoolSnapshot? smartschool,
+    az.AzureSnapshot? azure,
+  }) async {
+    final wisaSeed = await seedSnapshot<wapi.WisaSnapshot>(
+      system: core.Origin.wisa,
+      store: store,
+      fromPayload: wapi.WisaSnapshot.fromJson,
+    );
+    final ssSeed = await seedSnapshot<ss.SmartschoolSnapshot>(
+      system: core.Origin.smartschool,
+      store: store,
+      fromPayload: ss.SmartschoolSnapshot.fromJson,
+    );
+    final azSeed = await seedSnapshot<az.AzureSnapshot>(
+      system: core.Origin.azure,
+      store: store,
+      fromPayload: az.AzureSnapshot.fromJson,
+    );
+    return ReconcileHarness(
+      wisa: wisa,
+      smartschool: smartschool,
+      azure: azure,
+      store: store,
+      wisaInitial: wisaSeed,
+      ssInitial: ssSeed,
+      azureInitial: azSeed,
+    );
   }
 
   /// What the next sync of each system returns. Mutate to simulate a change

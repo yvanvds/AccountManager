@@ -43,6 +43,44 @@ class WisaStudent implements core.WisaStudent {
     required this.schoolId,
   });
 
+  /// Serializes to the connector's own snapshot shape. Round-trips with
+  /// [WisaStudent.fromJson] for the persisted cold snapshot (#107).
+  Map<String, dynamic> toJson() => {
+        'wisaId': wisaId.toJson(),
+        'classGroup': classGroup,
+        'classSubGroup': classSubGroup,
+        'name': name,
+        'firstName': firstName,
+        'preferredName': preferredName,
+        'birthDate': birthDate.toIso8601String(),
+        'stemId': stemId,
+        'gender': gender.toJson(),
+        'nationalId': nationalId,
+        'birthPlace': birthPlace,
+        'nationality': nationality,
+        'address': address.toJson(),
+        'classChange': classChange.toIso8601String(),
+        'schoolId': schoolId,
+      };
+
+  factory WisaStudent.fromJson(Map<String, dynamic> json) => WisaStudent(
+        wisaId: core.WisaId(json['wisaId'] as String),
+        classGroup: json['classGroup'] as String,
+        classSubGroup: json['classSubGroup'] as String,
+        name: json['name'] as String,
+        firstName: json['firstName'] as String,
+        preferredName: json['preferredName'] as String,
+        birthDate: DateTime.parse(json['birthDate'] as String),
+        stemId: json['stemId'] as String,
+        gender: core.Gender.fromJson(json['gender'] as String),
+        nationalId: json['nationalId'] as String,
+        birthPlace: json['birthPlace'] as String,
+        nationality: json['nationality'] as String,
+        address: core.Address.fromJson(json['address'] as Map<String, dynamic>),
+        classChange: DateTime.parse(json['classChange'] as String),
+        schoolId: json['schoolId'] as int,
+      );
+
   /// Display name: `preferredName` when non-empty, otherwise `firstName`,
   /// followed by `name`. Mirrors legacy `Student.FullName`.
   String get fullName {

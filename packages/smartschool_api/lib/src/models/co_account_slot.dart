@@ -32,6 +32,28 @@ class CoAccountSlot {
     required this.type,
   });
 
+  /// Serializes to the connector's own snapshot shape. Round-trips with
+  /// [CoAccountSlot.fromJson] for the persisted cold snapshot (#107).
+  Map<String, dynamic> toJson() => {
+        'slot': slot,
+        'firstName': firstName,
+        'lastName': lastName,
+        'email': email,
+        'phone': phone,
+        'mobile': mobile,
+        'type': type,
+      };
+
+  factory CoAccountSlot.fromJson(Map<String, dynamic> json) => CoAccountSlot(
+        slot: json['slot'] as int,
+        firstName: json['firstName'] as String,
+        lastName: json['lastName'] as String,
+        email: json['email'] as String,
+        phone: json['phone'] as String,
+        mobile: json['mobile'] as String,
+        type: json['type'] as String,
+      );
+
   /// The [core.AccountType] this slot corresponds to
   /// (`coAccount1`..`coAccount6`).
   core.AccountType get accountType =>
