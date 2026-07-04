@@ -9,7 +9,7 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
-  const sql = AadResource.sql;
+  const cosmos = AadResource.cosmos;
 
   MethodChannelAadBroker brokerUnderTest() => MethodChannelAadBroker(
         clientId: 'client-123',
@@ -33,13 +33,13 @@ void main() {
       };
     });
 
-    final result = await brokerUnderTest().acquireSilent(sql);
+    final result = await brokerUnderTest().acquireSilent(cosmos);
 
     expect(seen!.method, 'acquireSilent');
     final args = seen!.arguments as Map;
     expect(args['clientId'], 'client-123');
     expect(args['authority'], 'https://login.microsoftonline.com/tenant-abc');
-    expect(args['scopes'], ['https://database.windows.net/.default']);
+    expect(args['scopes'], ['https://cosmos.azure.com/.default']);
     expect(result!.accessToken, 'AT');
     expect(result.account, 'op@school.example');
     expect(result.expiresOn, DateTime.utc(2030));
@@ -51,7 +51,7 @@ void main() {
       throw PlatformException(code: 'no_account', message: 'nothing cached');
     });
 
-    expect(await brokerUnderTest().acquireSilent(sql), isNull);
+    expect(await brokerUnderTest().acquireSilent(cosmos), isNull);
   });
 
   test('surfaces other PlatformExceptions as AadBrokerException with the code',
@@ -61,7 +61,7 @@ void main() {
     });
 
     await expectLater(
-      brokerUnderTest().acquireInteractive(sql),
+      brokerUnderTest().acquireInteractive(cosmos),
       throwsA(
         isA<AadBrokerException>()
             .having((e) => e.code, 'code', 'user_cancelled')
@@ -73,7 +73,7 @@ void main() {
   test('maps a missing native plugin to broker_unavailable', () async {
     // No handler registered → MissingPluginException.
     await expectLater(
-      brokerUnderTest().acquireSilent(sql),
+      brokerUnderTest().acquireSilent(cosmos),
       throwsA(
         isA<AadBrokerException>()
             .having((e) => e.isBrokerUnavailable, 'isBrokerUnavailable', true),
@@ -87,7 +87,7 @@ void main() {
     });
 
     await expectLater(
-      brokerUnderTest().acquireInteractive(sql),
+      brokerUnderTest().acquireInteractive(cosmos),
       throwsA(isA<AadBrokerException>()
           .having((e) => e.code, 'code', 'malformed_result')),
     );

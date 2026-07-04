@@ -3,7 +3,7 @@
 /// Phase B backs the [SecretProvider] seam with Key Vault (issue #84),
 /// replacing the plaintext-in-config credentials the port removes
 /// (PROJECT_OVERVIEW §6.2). This value type names *where* the vault lives — its
-/// data-plane base URI — and nothing more. Like [AzureSqlConfig] it is
+/// data-plane base URI — and nothing more. Like [CosmosConfig] it is
 /// deliberately free of credentials: authentication is a separate seam
 /// ([KeyVaultTokenProvider]), so the target can round-trip through settings or a
 /// log line without leaking a secret.

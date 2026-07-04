@@ -6,9 +6,9 @@
 /// (`https://vault.azure.net/`). There is no stored vault secret — exactly the
 /// plaintext-credential removal the port is about (PROJECT_OVERVIEW §6.2).
 ///
-/// This mirrors [AadTokenProvider], which does the same for the Azure SQL
+/// This mirrors [CosmosTokenProvider], which does the same for the Cosmos
 /// resource: the two stay separate because a bearer token is scoped to one
-/// resource and the vault and database tokens are not interchangeable.
+/// resource and the vault and Cosmos tokens are not interchangeable.
 /// Production wires an interactive / `az` / MSAL-backed implementation (deferred
 /// to the app wiring); tests and headless runs inject a
 /// [StaticKeyVaultTokenProvider].
@@ -25,7 +25,7 @@ abstract interface class KeyVaultTokenProvider {
 /// The default for headless tests and the opt-in live check: the token is
 /// minted outside the process (e.g. `az account get-access-token --resource
 /// https://vault.azure.net/`) and handed in, so the package never shells out or
-/// drives an interactive sign-in. Mirrors [StaticAadTokenProvider].
+/// drives an interactive sign-in. Mirrors [StaticCosmosTokenProvider].
 class StaticKeyVaultTokenProvider implements KeyVaultTokenProvider {
   const StaticKeyVaultTokenProvider(this._token);
 

@@ -9,10 +9,11 @@
 /// - `PersonIdResolver` (re-exported from `account_core`) — the identity seam,
 ///   with `account_store`'s [FilePersonIdResolver] as the default
 ///   implementation.
-/// - [SqlConnection] / [SqlConnectionFactory] + [AadTokenProvider] — the
-///   connection/auth seam the Phase B Azure SQL adapters plug into (#74). The
-///   database is AAD-only, so a connection is authenticated with a per-operator
-///   bearer token; the concrete ODBC/FFI factory lands with the first adapter.
+/// - [CosmosClient] / [CosmosTransport] + [CosmosTokenProvider] — the
+///   data-plane/auth seam the Cosmos adapters plug into (#114). The account is
+///   AAD-only, so each request is authenticated with a per-operator bearer
+///   token; [HttpCosmosClient] binds the pure-Dart HTTPS+JSON data plane, so
+///   there is no native driver dependency.
 ///
 /// Every seam has an in-memory default so the layer is testable headlessly
 /// with zero network and zero infra. The persist-vs-derive split — what is
@@ -67,17 +68,14 @@ export 'src/settings/import_rule_codec.dart';
 export 'src/settings/secret_provider.dart';
 export 'src/settings/settings_store.dart';
 export 'src/settings/work_date.dart';
-export 'src/sql/aad_token_provider.dart';
-export 'src/sql/azure_sql_config.dart';
-export 'src/sql/azure_sql_live_config.dart';
-export 'src/sql/azure_sql_password_queue_store.dart';
-export 'src/sql/azure_sql_person_id_resolver.dart';
-export 'src/sql/azure_sql_settings_store.dart';
-export 'src/sql/odbc/odbc_sql_connection.dart' show OdbcSqlConnectionFactory;
-export 'src/sql/password_queue_schema.dart';
-export 'src/sql/person_id_schema.dart';
-export 'src/sql/settings_schema.dart';
-export 'src/sql/sql_connection.dart';
+export 'src/cosmos/cosmos_client.dart';
+export 'src/cosmos/cosmos_config.dart';
+export 'src/cosmos/cosmos_live_config.dart';
+export 'src/cosmos/cosmos_password_queue_store.dart';
+export 'src/cosmos/cosmos_person_id_resolver.dart';
+export 'src/cosmos/cosmos_settings_store.dart';
+export 'src/cosmos/cosmos_token_provider.dart';
+export 'src/cosmos/cosmos_transport.dart';
 export 'src/sync/application_state.dart';
 export 'src/sync/system_state.dart';
 export 'src/sync/wisa_snapshot_diff.dart';

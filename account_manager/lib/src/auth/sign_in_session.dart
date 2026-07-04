@@ -1,5 +1,5 @@
 import 'package:account_state/account_state.dart'
-    show AadTokenProvider, KeyVaultTokenProvider;
+    show CosmosTokenProvider, KeyVaultTokenProvider;
 import 'package:azure_api/azure_api.dart'
     show AzureAuthException, AzureAuthProvider;
 
@@ -108,15 +108,16 @@ class GraphSessionAuthProvider implements AzureAuthProvider {
   }
 }
 
-/// Adapts a [SignInSession] to the Azure SQL auth seam ([AadTokenProvider]) so
-/// each connection is authenticated with the operator's own AAD identity.
-class SqlSessionTokenProvider implements AadTokenProvider {
-  SqlSessionTokenProvider(this._session);
+/// Adapts a [SignInSession] to the Cosmos auth seam ([CosmosTokenProvider]) so
+/// each data-plane request is authenticated with the operator's own AAD
+/// identity (Cosmos DB Built-in Data Contributor), no stored account key.
+class CosmosSessionTokenProvider implements CosmosTokenProvider {
+  CosmosSessionTokenProvider(this._session);
 
   final SignInSession _session;
 
   @override
-  Future<String> databaseAccessToken() => _session.tokenFor(AadResource.sql);
+  Future<String> cosmosAccessToken() => _session.tokenFor(AadResource.cosmos);
 }
 
 /// Adapts a [SignInSession] to the Key Vault auth seam ([KeyVaultTokenProvider])

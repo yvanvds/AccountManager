@@ -93,10 +93,10 @@ flutter run -d windows \
   --dart-define=SCHOOL_PREFIX=<prefix>
 ```
 
-Signing in for Graph mints the Graph token; the Azure SQL token
-(`database.windows.net`) is acquired the same way when a SQL connection is first
-opened (a later slice) — that currently triggers a second browser prompt, which
-the WAM broker (single sign-on) removes once wired.
+Signing in for Graph mints the Graph token; the Cosmos data-plane token
+(`cosmos.azure.com`) is acquired the same way when the store is first read —
+that currently triggers a second browser prompt, which the WAM broker (single
+sign-on) removes once wired.
 
 ## Manual verification (school-account machine)
 
