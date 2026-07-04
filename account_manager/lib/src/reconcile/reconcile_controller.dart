@@ -186,6 +186,57 @@ class PendingAccountEntry {
   bool get canApply => choices.any((c) => c.selected.canApply);
 }
 
+/// One colliding Smartschool account inside a [DuplicateMailWarning] (#109),
+/// flattened for display: the fields the drill-down lists so the operator can
+/// tell the accounts apart before accepting the collision.
+class DuplicateAccountRow {
+  const DuplicateAccountRow({
+    required this.uid,
+    required this.name,
+    required this.accountType,
+    required this.role,
+  });
+
+  /// The Smartschool username / login.
+  final String uid;
+
+  /// Display name (`givenName surname`), or the uid when the concrete record
+  /// carries no name.
+  final String name;
+
+  /// The account type (`student` or a co-account slot).
+  final String accountType;
+
+  /// The account's role, or `onbekend` when unknown.
+  final String role;
+}
+
+/// A duplicate-mail warning (INV-23) shaped for the reconcile screen (#109): the
+/// shared [mail], the colliding [accounts] the drill-down lists, and whether the
+/// operator has [accepted] this exact collision (persisted as a decision). An
+/// accepted collision is demoted, not hidden, so it can be reviewed and revoked.
+class DuplicateMailWarning {
+  const DuplicateMailWarning({
+    required this.mail,
+    required this.accounts,
+    required this.accepted,
+  });
+
+  /// The address the [accounts] share (as the linker normalized it).
+  final String mail;
+
+  /// Every Smartschool account claiming [mail]; at least two.
+  final List<DuplicateAccountRow> accounts;
+
+  /// True when the current colliding set has been accepted as deliberate. A
+  /// changed set (a third account appears) resets this to false so the warning
+  /// re-surfaces.
+  final bool accepted;
+
+  /// The colliding uids, sorted — the stable key an acceptance covers.
+  List<String> get uids => sortedDuplicateUids(accounts.map((a) => a.uid));
+}
+
 /// Drives the reconcile loop over the State layer (#99): **sync → linked
 /// overview → pending actions → dry-run → apply**, with progress and failures
 /// reported through the shared [LogBuffer].
@@ -269,6 +320,11 @@ class ReconcileController extends ChangeNotifier {
   /// `<targetId>|<alternativeGroup>` → the chosen action kind. A missing entry
   /// means the situation still shows its default alternative.
   final Map<String, String> _choices = {};
+
+  /// The persisted operator decisions loaded from the shared store (#109/#110),
+  /// used to tell which duplicate-mail collisions have been accepted. Refreshed
+  /// on every overview read and after each accept/revoke.
+  List<AccountDecision> _decisions = const [];
 
   ReconcilePhase get phase => _phase;
 
@@ -482,6 +538,148 @@ class ReconcileController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The duplicate-mail warnings of the current linked view (INV-23), each with
+  /// its colliding accounts flattened for the drill-down and tagged with whether
+  /// this exact collision has been [DuplicateMailWarning.accepted] (#109). Empty
+  /// before a sync this session (a passive session has no live snapshot). Ordered
+  /// as the linker raised them.
+  List<DuplicateMailWarning> get duplicateWarnings {
+    final l = _linked;
+    if (l == null) return const [];
+    return [
+      for (final w in l.snapshot.warnings)
+        if (w is core.ResolveDuplicateMail)
+          DuplicateMailWarning(
+            mail: w.mail,
+            accounts: [for (final a in w.accounts) _duplicateRow(a)],
+            accepted: duplicateAccepted(
+              _decisions,
+              mail: w.mail,
+              uids: w.accounts.map((a) => a.uid),
+            ),
+          ),
+    ];
+  }
+
+  DuplicateAccountRow _duplicateRow(core.SmartschoolAccount account) {
+    final concrete = account is ss.SmartschoolAccount ? account : null;
+    final name = concrete == null
+        ? account.uid
+        : (_nonEmpty('${concrete.givenName} ${concrete.surname}') ??
+            account.uid);
+    return DuplicateAccountRow(
+      uid: account.uid,
+      name: name,
+      accountType: account.accountType.toJson(),
+      role: concrete?.role?.toJson() ?? 'onbekend',
+    );
+  }
+
+  /// Accepts the duplicate-mail collision on [mail] as deliberate (#109),
+  /// persisting an [AccountDecision] keyed to one of the colliding accounts so it
+  /// survives a re-sync (re-attached by the decisions merge). A no-op when no
+  /// live warning matches [mail]. The warning is demoted immediately.
+  Future<void> acceptDuplicate(String mail) async {
+    final warning = _duplicateWarningFor(mail);
+    if (warning == null) return;
+    final uids = warning.accounts.map((a) => a.uid);
+    final accountId = _linkedIdForUids(uids);
+    if (accountId == null) {
+      log.addError(
+        core.Origin.smartschool,
+        'Kon geen account vinden voor de dubbele mail "$mail".',
+      );
+      return;
+    }
+    final decision = acceptedDuplicateDecision(
+      accountId: accountId,
+      mail: mail,
+      uids: uids,
+      decidedBy: syncedBy,
+      decidedAt: _now(),
+    );
+    try {
+      await store.putDecision(decision);
+      _decisions = [
+        for (final d in _decisions)
+          if (decisionDocId(d) != decisionDocId(decision)) d,
+        decision,
+      ];
+      log.addMessage(
+        core.Origin.smartschool,
+        'Dubbele mail "$mail" geaccepteerd.',
+      );
+      notifyListeners();
+    } on Object catch (e) {
+      log.addError(
+          core.Origin.smartschool, 'Kon de acceptatie niet opslaan: $e');
+    }
+  }
+
+  /// Revokes a previously accepted duplicate-mail collision on [mail] (#109), so
+  /// it warns again. A no-op when the collision is not currently accepted.
+  Future<void> revokeDuplicate(String mail) async {
+    final warning = _duplicateWarningFor(mail);
+    if (warning == null) return;
+    final decision = findAcceptedDuplicate(
+      _decisions,
+      mail: mail,
+      uids: warning.accounts.map((a) => a.uid),
+    );
+    if (decision == null) return;
+    try {
+      await store.deleteDecision(decision);
+      _decisions = [
+        for (final d in _decisions)
+          if (decisionDocId(d) != decisionDocId(decision)) d,
+      ];
+      log.addMessage(
+        core.Origin.smartschool,
+        'Acceptatie van dubbele mail "$mail" ingetrokken.',
+      );
+      notifyListeners();
+    } on Object catch (e) {
+      log.addError(
+        core.Origin.smartschool,
+        'Kon de acceptatie niet intrekken: $e',
+      );
+    }
+  }
+
+  core.ResolveDuplicateMail? _duplicateWarningFor(String mail) {
+    final l = _linked;
+    if (l == null) return null;
+    final want = normalizeDuplicateMail(mail);
+    for (final w in l.snapshot.warnings) {
+      if (w is core.ResolveDuplicateMail &&
+          normalizeDuplicateMail(w.mail) == want) {
+        return w;
+      }
+    }
+    return null;
+  }
+
+  /// The linked-account id of the first (sorted) [uids] that resolves to a linked
+  /// account or staff member — the stable target an accepted-duplicate decision
+  /// attaches to, so the merge keeps it while that account still carries the
+  /// warning. Null when none of the uids maps (defensive; the colliding accounts
+  /// are always in the snapshot per INV-23).
+  core.LinkedAccountId? _linkedIdForUids(Iterable<String> uids) {
+    final l = _linked;
+    if (l == null) return null;
+    final byUid = <String, core.LinkedAccountId>{
+      for (final a in l.snapshot.accounts)
+        if (a.smartschool?.uid case final uid?) uid: a.id,
+      for (final s in l.snapshot.staff)
+        if (s.smartschool?.uid case final uid?) uid: s.id,
+    };
+    for (final uid in sortedDuplicateUids(uids)) {
+      final id = byUid[uid];
+      if (id != null) return id;
+    }
+    return null;
+  }
+
   /// The stored freshness + generation marker of the materialized view.
   SyncState get syncState => _syncState;
 
@@ -663,6 +861,7 @@ class ReconcileController extends ChangeNotifier {
     try {
       _syncState = await store.readSyncState();
       _rollups = await store.readRollups();
+      _decisions = await store.readDecisions();
       await _refreshLock();
       if (_phase == ReconcilePhase.idle) _phase = ReconcilePhase.ready;
       notifyListeners();
@@ -705,6 +904,7 @@ class ReconcileController extends ChangeNotifier {
   Future<void> _refetchFromStore() async {
     _syncState = await store.readSyncState();
     _rollups = await store.readRollups();
+    _decisions = await store.readDecisions();
     await _refreshLock();
     final open = _selectedClassroom;
     if (open != null) {
@@ -957,6 +1157,9 @@ class ReconcileController extends ChangeNotifier {
         groups: view.groups,
         existing: await store.readDecisions(),
       );
+      // The surviving decisions are what the store keeps; mirror them so the
+      // live duplicate-warning demotion reflects the post-sync truth (#109).
+      _decisions = merge.surviving;
       final merged = MaterializedView(
         generation: view.generation,
         accounts: merge.accounts,

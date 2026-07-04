@@ -752,6 +752,84 @@ void main() {
     });
   });
 
+  group('accepted duplicate-mail (#109)', () {
+    test('a synced collision surfaces one warning with its colliding accounts',
+        () async {
+      final h = dupMailHarness();
+      await h.controller.sync();
+
+      final warnings = h.controller.duplicateWarnings;
+      expect(warnings, hasLength(1));
+      final w = warnings.single;
+      expect(w.mail, 'shared@school.example');
+      expect(w.accepted, isFalse);
+      expect(w.accounts.map((a) => a.uid).toSet(), {'admin', 'user'});
+      // The colliding accounts carry their display detail for the drill-down.
+      expect(w.accounts.every((a) => a.name.isNotEmpty), isTrue);
+      expect(w.accounts.every((a) => a.accountType == 'student'), isTrue);
+    });
+
+    test(
+        'accepting persists a decision and demotes the warning; revoke restores',
+        () async {
+      final linkedStore = InMemoryLinkedStore();
+      final h = dupMailHarness(linkedStore: linkedStore);
+      await h.controller.sync();
+
+      await h.controller.acceptDuplicate('shared@school.example');
+      // Persisted as an acceptedDuplicate decision keyed to a colliding account.
+      final stored = await linkedStore.readDecisions();
+      expect(stored, hasLength(1));
+      expect(stored.single.kind, DecisionKind.acceptedDuplicate);
+      // …and the live warning is now demoted (accepted).
+      expect(h.controller.duplicateWarnings.single.accepted, isTrue);
+
+      await h.controller.revokeDuplicate('shared@school.example');
+      expect(await linkedStore.readDecisions(), isEmpty);
+      expect(h.controller.duplicateWarnings.single.accepted, isFalse);
+    });
+
+    test('an accepted collision survives a re-sync (re-attached decision)',
+        () async {
+      final linkedStore = InMemoryLinkedStore();
+      // A snapshot store makes the re-sync path materialize + merge decisions.
+      final h = ReconcileHarness(
+        wisa: wisaSnap(students: const []),
+        smartschool: dupMailSnap(),
+        azure: azSnap(users: const []),
+        store: InMemorySnapshotStore(),
+        linkedStore: linkedStore,
+      );
+      await h.controller.sync();
+      await h.controller.acceptDuplicate('shared@school.example');
+      expect(h.controller.duplicateWarnings.single.accepted, isTrue);
+
+      // Re-read Smartschool/Azure and re-link; the view is rewritten wholesale.
+      await h.controller.checkDrift();
+
+      // The decision survived the rewrite (merge re-attached it), still accepted.
+      expect(await linkedStore.readDecisions(), hasLength(1));
+      expect(h.controller.duplicateWarnings.single.accepted, isTrue);
+    });
+
+    test('a changed colliding set re-warns even after acceptance', () async {
+      final linkedStore = InMemoryLinkedStore();
+      final h = dupMailHarness(linkedStore: linkedStore);
+      await h.controller.sync();
+      await h.controller.acceptDuplicate('shared@school.example');
+      expect(h.controller.duplicateWarnings.single.accepted, isTrue);
+
+      // A third account joins the same mail: re-read Smartschool via drift.
+      h.ssResult = dupMailSnap(uids: const ['admin', 'user', 'intruder']);
+      await h.controller.checkDrift();
+
+      final w = h.controller.duplicateWarnings.single;
+      expect(w.accounts, hasLength(3));
+      expect(w.accepted, isFalse,
+          reason: 'a new colliding account must re-surface the warning');
+    });
+  });
+
   group('LogBuffer', () {
     test('caps its entries and reports errors', () {
       final log = LogBuffer(capacity: 3, clock: () => kFixtureDate);

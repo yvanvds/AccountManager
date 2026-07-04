@@ -57,6 +57,11 @@ abstract interface class LinkedStore {
   /// through it.
   Future<void> putDecision(AccountDecision decision);
 
+  /// Deletes one operator decision (matched by its [decisionDocId]). The revoke
+  /// path #109 uses to un-accept a duplicate: a no-op when the decision is not
+  /// present (already revoked, or swept by a merge).
+  Future<void> deleteDecision(AccountDecision decision);
+
   /// Merges [systemSyncs] into the stored per-system last-sync metadata
   /// **without** rewriting the view or bumping the generation (#108) — the light
   /// write the smart-sync "WISA unchanged" path uses to still stamp who/when it
@@ -172,6 +177,11 @@ class InMemoryLinkedStore implements LinkedStore {
   @override
   Future<void> putDecision(AccountDecision decision) async {
     _decisions[decisionDocId(decision)] = decision;
+  }
+
+  @override
+  Future<void> deleteDecision(AccountDecision decision) async {
+    _decisions.remove(decisionDocId(decision));
   }
 
   @override

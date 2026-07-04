@@ -143,7 +143,10 @@ class _ReconcileBody extends StatelessWidget {
                         ],
                         if (linked != null) ...<Widget>[
                           const SizedBox(height: PlinkSpacing.s5),
-                          _OverviewSection(linked: linked),
+                          _OverviewSection(
+                            linked: linked,
+                            controller: controller,
+                          ),
                           const SizedBox(height: PlinkSpacing.s5),
                           _ActionsSection(controller: controller),
                         ],
@@ -358,14 +361,16 @@ class _StatusBanner extends StatelessWidget {
 }
 
 class _OverviewSection extends StatelessWidget {
-  const _OverviewSection({required this.linked});
+  const _OverviewSection({required this.linked, required this.controller});
 
   final LinkedState linked;
+  final ReconcileController controller;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final snapshot = linked.snapshot;
+    final duplicates = controller.duplicateWarnings;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -381,9 +386,10 @@ class _OverviewSection extends StatelessWidget {
             _CountTile(system: 'Azure AD', counts: snapshot.azure),
           ],
         ),
-        if (snapshot.warnings.isNotEmpty) ...<Widget>[
+        if (duplicates.isNotEmpty) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s3),
-          ...snapshot.warnings.map((w) => _WarningLine(warning: w)),
+          for (final w in duplicates)
+            _DuplicateWarningTile(controller: controller, warning: w),
         ],
       ],
     );
@@ -430,26 +436,91 @@ class _CountTile extends StatelessWidget {
   }
 }
 
-class _WarningLine extends StatelessWidget {
-  const _WarningLine({required this.warning});
+/// A duplicate-mail warning as an expandable drill-down (#109): the header
+/// names the collision (demoted when accepted), and expanding it lists every
+/// colliding account (uid, name, account type, role) with an "accept this
+/// duplicate" / "revoke" action. Accepting persists a decision so the collision
+/// stops warning until the colliding set changes.
+class _DuplicateWarningTile extends StatelessWidget {
+  const _DuplicateWarningTile({
+    required this.controller,
+    required this.warning,
+  });
 
-  final core.LinkWarning warning;
+  final ReconcileController controller;
+  final DuplicateMailWarning warning;
 
   @override
   Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
-    final String message = switch (warning) {
-      core.ResolveDuplicateMail(:final mail, :final accounts) =>
-        'Duplicate mail "$mail" on ${accounts.length} Smartschool accounts.',
-    };
-    return Padding(
-      padding: const EdgeInsets.only(top: PlinkSpacing.s1),
-      child: Row(
+    final Color hairline = Theme.of(context).dividerColor;
+    final accepted = warning.accepted;
+
+    final headline = 'Dubbele mail "${warning.mail}" op '
+        '${warning.accounts.length} Smartschool-accounts'
+        '${accepted ? ' — geaccepteerd' : ''}.';
+
+    return Container(
+      margin: const EdgeInsets.only(top: PlinkSpacing.s2),
+      decoration: BoxDecoration(
+        border: Border.all(color: hairline),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: ExpansionTile(
+        key: ValueKey('dup-warning-${warning.mail}'),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: Icon(
+          accepted ? Icons.check_circle_outline : Icons.warning_amber_outlined,
+          size: 20,
+          color: accepted ? colors.primary : colors.error,
+        ),
+        title: Text(
+          headline,
+          style: text.bodySmall?.copyWith(
+            color: accepted ? Theme.of(context).disabledColor : null,
+          ),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          PlinkSpacing.s5,
+          0,
+          PlinkSpacing.s5,
+          PlinkSpacing.s4,
+        ),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Icon(Icons.warning_amber_outlined, size: 16, color: colors.error),
-          const SizedBox(width: PlinkSpacing.s2),
-          Expanded(
-            child: Text(message, style: Theme.of(context).textTheme.bodySmall),
+          for (final a in warning.accounts)
+            Padding(
+              padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(a.name, style: text.bodyMedium),
+                  Text(
+                    '${a.uid} · ${a.accountType} · ${a.role}',
+                    style: text.bodySmall
+                        ?.copyWith(color: Theme.of(context).disabledColor),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: PlinkSpacing.s2),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: accepted
+                ? OutlinedButton.icon(
+                    key: ValueKey('dup-revoke-${warning.mail}'),
+                    onPressed: () => controller.revokeDuplicate(warning.mail),
+                    icon: const Icon(Icons.undo, size: 16),
+                    label: const Text('Acceptatie intrekken'),
+                  )
+                : FilledButton.icon(
+                    key: ValueKey('dup-accept-${warning.mail}'),
+                    onPressed: () => controller.acceptDuplicate(warning.mail),
+                    icon: const Icon(Icons.check, size: 16),
+                    label: const Text('Deze dubbele mail accepteren'),
+                  ),
           ),
         ],
       ),

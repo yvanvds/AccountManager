@@ -174,6 +174,37 @@ ss.SmartschoolSnapshot ssSnap({
       memberships: memberships ?? [member('jane', '2B_ss')],
     );
 
+/// A Smartschool snapshot whose [uids] accounts all share one [mail] — the
+/// INV-23 duplicate-mail collision the reconcile screen surfaces (#109). No
+/// WISA or Azure counterpart, so the linker keeps every colliding account and
+/// raises exactly one [core.ResolveDuplicateMail] warning over them.
+ss.SmartschoolSnapshot dupMailSnap({
+  List<String> uids = const ['admin', 'user'],
+  String mail = 'shared@school.example',
+}) =>
+    ssSnap(
+      groups: const [],
+      accounts: [
+        for (final u in uids) ssAccount(uid: u, accountId: u, mail: mail),
+      ],
+      memberships: const [],
+    );
+
+/// A reconcile harness over the [dupMailSnap] collision: a WISA-/Azure-empty
+/// scenario so the only linked artifact is the shared-mail warning (#109).
+ReconcileHarness dupMailHarness({
+  List<String> uids = const ['admin', 'user'],
+  InMemoryLinkedStore? linkedStore,
+  String syncedBy = 'operator@school.example',
+}) =>
+    ReconcileHarness(
+      wisa: wisaSnap(students: const []),
+      smartschool: dupMailSnap(uids: uids),
+      azure: azSnap(users: const []),
+      linkedStore: linkedStore,
+      syncedBy: syncedBy,
+    );
+
 az.AzureSnapshot azSnap({DateTime? fetchedAt, List<az.AzureUser>? users}) =>
     az.AzureSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
