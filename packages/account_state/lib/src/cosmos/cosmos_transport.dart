@@ -46,6 +46,21 @@ class CosmosResponse {
   /// the signal `CosmosPersonIdResolver` reads to adopt the winning id.
   bool get isConflict => statusCode == 409;
 
+  /// `true` when Cosmos rejected a conditioned write because the `If-Match`
+  /// ETag was stale (the document changed since it was read). The signal the
+  /// write-path stores read to reload and retry — distinct from the [isConflict]
+  /// a create races on (#121).
+  bool get isPreconditionFailed => statusCode == 412;
+
+  /// The document's current `_etag`, from the `etag` response header Cosmos
+  /// returns on a point read or a write. `null` when absent. Header names are
+  /// case-insensitive on the wire (`package:http` lower-cases them), so callers
+  /// read this rather than the raw header.
+  String? get etag {
+    final value = headers['etag'];
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
   /// The `x-ms-continuation` token for a paged query, or `null` when the query
   /// is exhausted. Header names are case-insensitive on the wire; callers read
   /// this rather than the raw header.

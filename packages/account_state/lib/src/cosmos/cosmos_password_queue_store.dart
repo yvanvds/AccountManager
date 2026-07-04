@@ -24,6 +24,12 @@ class CosmosPasswordQueueStore implements PasswordQueueStore {
 
   final CosmosClient _client;
 
+  /// The ETag observed at the last [load] (and refreshed after each [save]), so
+  /// a [save] conditions on the version this session actually read. `null` means
+  /// "no version observed yet" — the queue doc has never been read, so the first
+  /// write creates it unconditioned (#121).
+  String? _etag;
+
   @override
   Future<List<PasswordEntry>> load() async {
     final doc = await _client.readDocument(
@@ -32,7 +38,11 @@ class CosmosPasswordQueueStore implements PasswordQueueStore {
       partitionKey: passwordQueuePartitionKeyValue,
     );
     // A never-persisted queue reads as an empty list, not an error.
-    if (doc == null) return [];
+    if (doc == null) {
+      _etag = null;
+      return [];
+    }
+    _etag = doc['_etag'] as String?;
     final entries = doc['entries'];
     if (entries is! List) return [];
     return [
@@ -43,14 +53,37 @@ class CosmosPasswordQueueStore implements PasswordQueueStore {
 
   @override
   Future<void> save(List<PasswordEntry> entries) async {
-    await _client.upsertDocument(
-      container: passwordQueueContainer,
-      partitionKey: passwordQueuePartitionKeyValue,
-      document: {
-        'id': passwordQueueDocumentId,
-        'pk': passwordQueuePartitionKeyValue,
-        'entries': [for (final e in entries) e.toJson()],
-      },
-    );
+    final document = {
+      'id': passwordQueueDocumentId,
+      'pk': passwordQueuePartitionKeyValue,
+      'entries': [for (final e in entries) e.toJson()],
+    };
+    // Guard the shared queue with per-document optimistic concurrency (#121).
+    // One operator generates passwords while another drains the queue after
+    // printing; both computed their list from an earlier [load], so an
+    // unconditioned write would let the later save silently clobber the other's.
+    // Conditioning on the loaded ETag serializes them: whoever commits first
+    // wins, the other's If-Match is stale, and it reloads the current ETag and
+    // retries. Each iteration follows a committed write, so the loop converges.
+    while (true) {
+      final outcome = await _client.upsertDocument(
+        container: passwordQueueContainer,
+        partitionKey: passwordQueuePartitionKeyValue,
+        document: document,
+        ifMatch: _etag,
+      );
+      if (outcome.applied) {
+        _etag = outcome.etag;
+        return;
+      }
+      // Stale: the queue changed under us. Re-read to refresh the ETag, then
+      // retry the write against the current version.
+      final doc = await _client.readDocument(
+        container: passwordQueueContainer,
+        id: passwordQueueDocumentId,
+        partitionKey: passwordQueuePartitionKeyValue,
+      );
+      _etag = doc?['_etag'] as String?;
+    }
   }
 }

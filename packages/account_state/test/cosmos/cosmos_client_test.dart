@@ -121,6 +121,104 @@ void main() {
           'true');
     });
 
+    test('a point read surfaces the _etag from the body', () async {
+      final transport = _FakeTransport([
+        _ok({'id': 'settings', '_etag': '"abc"'}),
+      ]);
+      final doc = await _client(transport).readDocument(
+        container: 'settings',
+        id: 'settings',
+        partitionKey: 'settings',
+      );
+      expect(doc!['_etag'], '"abc"');
+    });
+
+    test('a point read falls back to the etag response header', () async {
+      final transport = _FakeTransport([
+        const CosmosResponse(
+          statusCode: 200,
+          headers: {'etag': '"hdr"'},
+          body: '{"id":"settings"}',
+        ),
+      ]);
+      final doc = await _client(transport).readDocument(
+        container: 'settings',
+        id: 'settings',
+        partitionKey: 'settings',
+      );
+      expect(doc!['_etag'], '"hdr"');
+    });
+
+    test('a conditioned upsert sends If-Match and returns the new etag',
+        () async {
+      final transport = _FakeTransport([
+        const CosmosResponse(
+          statusCode: 200,
+          headers: {'etag': '"v2"'},
+          body: '{"id":"q"}',
+        ),
+      ]);
+      final outcome = await _client(transport).upsertDocument(
+        container: 'passwordQueue',
+        partitionKey: 'queue',
+        document: {'id': 'q'},
+        ifMatch: '"v1"',
+      );
+      expect(outcome.applied, isTrue);
+      expect(outcome.etag, '"v2"');
+      expect(transport.requests.single.headers['If-Match'], '"v1"');
+    });
+
+    test('a stale conditioned upsert (412) yields WriteOutcome.stale, no throw',
+        () async {
+      final transport = _FakeTransport([
+        const CosmosResponse(
+          statusCode: 412,
+          body: '{"code":"PreconditionFailed"}',
+        ),
+      ]);
+      final outcome = await _client(transport).upsertDocument(
+        container: 'passwordQueue',
+        partitionKey: 'queue',
+        document: {'id': 'q'},
+        ifMatch: '"stale"',
+      );
+      expect(outcome.applied, isFalse);
+      expect(outcome.stale, isTrue);
+    });
+
+    test('an unconditioned upsert omits If-Match and is always applied',
+        () async {
+      final transport =
+          _FakeTransport([const CosmosResponse(statusCode: 200, body: '{}')]);
+      final outcome = await _client(transport).upsertDocument(
+        container: 'settings',
+        partitionKey: 'settings',
+        document: {'id': 'settings'},
+      );
+      expect(outcome.applied, isTrue);
+      expect(
+          transport.requests.single.headers.containsKey('If-Match'), isFalse);
+    });
+
+    test('a 412 without an If-Match still throws (unexpected precondition)',
+        () async {
+      // A 412 with no conditioned write is not the modelled stale outcome — it
+      // is an unexpected error and must surface, not be swallowed.
+      final transport = _FakeTransport([
+        const CosmosResponse(statusCode: 412, body: '{"code":"X"}'),
+      ]);
+      await expectLater(
+        _client(transport).upsertDocument(
+          container: 'settings',
+          partitionKey: 'settings',
+          document: {'id': 'settings'},
+        ),
+        throwsA(isA<CosmosException>()
+            .having((e) => e.statusCode, 'statusCode', 412)),
+      );
+    });
+
     test('deleteDocument tolerates a 404 as already-gone', () async {
       final transport = _FakeTransport([const CosmosResponse(statusCode: 404)]);
       await _client(transport).deleteDocument(

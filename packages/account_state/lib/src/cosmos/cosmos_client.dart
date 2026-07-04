@@ -4,6 +4,36 @@ import 'cosmos_config.dart';
 import 'cosmos_token_provider.dart';
 import 'cosmos_transport.dart';
 
+/// The result of a write that may be conditioned on an `If-Match` ETag (#121).
+///
+/// An unconditioned write (no `ifMatch`) is always [applied]. A conditioned
+/// write is [applied] when the ETag still matched, carrying the document's new
+/// [etag] for chaining the next write in a read → mutate → write loop; it is
+/// [stale] when Cosmos rejected it with **412 Precondition Failed** because the
+/// document changed since it was read — the signal to reload and retry.
+class WriteOutcome {
+  const WriteOutcome._(this.applied, this.etag);
+
+  /// The write was accepted; [etag] is the document's new ETag (when Cosmos
+  /// returned one) for the next conditioned write in a read-modify-write chain.
+  const WriteOutcome.applied(String? etag) : this._(true, etag);
+
+  /// The conditioned write was rejected: the `If-Match` ETag was stale. The
+  /// caller must reload the document and retry.
+  const WriteOutcome.stale() : this._(false, null);
+
+  /// Whether the write was accepted (`true`) or rejected as stale (`false`).
+  final bool applied;
+
+  /// The document's new ETag after an [applied] write, or `null` when the write
+  /// was [stale] or Cosmos returned no ETag.
+  final String? etag;
+
+  /// The inverse of [applied]: the conditioned write lost the race and must be
+  /// retried against a fresh read.
+  bool get stale => !applied;
+}
+
 /// The typed document surface the Cosmos-backed stores and resolver plug into.
 ///
 /// The seam the three Phase B adapters (`CosmosSettingsStore`,
@@ -17,6 +47,10 @@ abstract interface class CosmosClient {
   /// Point-reads the document [id] in [container] from logical partition
   /// [partitionKey]. Returns `null` on 404 (no such document), so first-run has
   /// no special case; throws [CosmosException] on any other non-2xx.
+  ///
+  /// The returned map carries the document's Cosmos `_etag`, so a caller doing
+  /// a read → mutate → conditioned-write loop can pass `doc['_etag']` back as
+  /// [upsertDocument]'s `ifMatch` (#121).
   Future<Map<String, dynamic>?> readDocument({
     required String container,
     required String id,
@@ -36,10 +70,19 @@ abstract interface class CosmosClient {
   /// Creates-or-replaces [document] in [container] under [partitionKey]
   /// (`x-ms-documentdb-is-upsert`). A single-document write is atomic, so this
   /// is how the settings and password-queue stores "replace the whole value".
-  Future<void> upsertDocument({
+  ///
+  /// When [ifMatch] is given the write is conditioned on that ETag (`If-Match`):
+  /// Cosmos applies it only if the stored document still carries that ETag, and
+  /// rejects it with **412** — surfaced as [WriteOutcome.stale] — when another
+  /// writer changed it first. This is the per-document optimistic-concurrency
+  /// guard the concurrent apply / password write path uses so two operators
+  /// writing the *same* doc can't clobber each other (#121); an unconditioned
+  /// write (no [ifMatch]) is always [WriteOutcome.applied].
+  Future<WriteOutcome> upsertDocument({
     required String container,
     required Map<String, dynamic> document,
     required String partitionKey,
+    String? ifMatch,
   });
 
   /// Deletes the document [id] in [container] from [partitionKey]. A 404 is
@@ -111,7 +154,12 @@ class HttpCosmosClient implements CosmosClient {
     );
     if (resp.isNotFound) return null;
     _ensureSuccess(resp);
-    return resp.json;
+    final doc = resp.json;
+    // Cosmos returns `_etag` in the document body; fall back to the `etag`
+    // response header so a conditioned-write caller always finds it under the
+    // well-known `_etag` key (#121).
+    if (doc['_etag'] == null && resp.etag != null) doc['_etag'] = resp.etag;
+    return doc;
   }
 
   @override
@@ -132,19 +180,30 @@ class HttpCosmosClient implements CosmosClient {
   }
 
   @override
-  Future<void> upsertDocument({
+  Future<WriteOutcome> upsertDocument({
     required String container,
     required Map<String, dynamic> document,
     required String partitionKey,
+    String? ifMatch,
   }) async {
     final resp = await _send(
       'POST',
       _docsPath(container),
       partitionKey: partitionKey,
       body: jsonEncode(document),
-      extraHeaders: const {'x-ms-documentdb-is-upsert': 'true'},
+      extraHeaders: {
+        'x-ms-documentdb-is-upsert': 'true',
+        if (ifMatch != null) 'If-Match': ifMatch,
+      },
     );
+    // A conditioned write that lost the race: reload and retry, don't throw.
+    if (ifMatch != null && resp.isPreconditionFailed) {
+      return const WriteOutcome.stale();
+    }
     _ensureSuccess(resp);
+    // Cosmos echoes the stored document (with its new `_etag`) and sets the
+    // `etag` header; surface it for the next write in a read-modify-write chain.
+    return WriteOutcome.applied(resp.etag ?? resp.json['_etag'] as String?);
   }
 
   @override
