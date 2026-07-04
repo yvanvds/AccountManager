@@ -13,7 +13,7 @@ const _aad = AadAppConfig(
   schoolPrefix: 'GBS',
 );
 
-/// A settings store whose [load] throws — models a broken SQL path.
+/// A settings store whose [load] throws — models a broken store path.
 class _ThrowingStore implements SettingsStore {
   const _ThrowingStore(this.error);
 
@@ -26,53 +26,51 @@ class _ThrowingStore implements SettingsStore {
   Future<void> save(AppSettings settings) async {}
 }
 
-/// The bootstrap never opens a SQL connection itself when the settings store
-/// is injected, so any [open] call is a wiring regression.
-class _UnreachableFactory implements SqlConnectionFactory {
-  @override
-  Future<SqlConnection> open(AzureSqlConfig config, AadTokenProvider tokens) =>
-      throw StateError('bootstrap must not open a SQL connection');
-}
-
-/// Records every statement run through it; queries return no rows (an
-/// unprovisioned/empty database).
-class _RecordingConnection implements SqlConnection {
-  _RecordingConnection(this.executed);
-
-  final List<String> executed;
-  bool closed = false;
+/// A Cosmos client backed by an empty account: every container reads as absent,
+/// so the real `CosmosSettingsStore` path yields a default `AppSettings`. Writes
+/// and queries are inert. Used to prove the bootstrap wires Cosmos without a
+/// live account.
+class _EmptyCosmosClient implements CosmosClient {
+  const _EmptyCosmosClient();
 
   @override
-  Future<List<SqlRow>> query(String sql, [List<Object?>? params]) async =>
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async =>
+      null;
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async =>
+      true;
+
+  @override
+  Future<void> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async {}
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {}
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async =>
       const [];
-
-  @override
-  Future<int> execute(String sql, [List<Object?>? params]) async {
-    executed.add(sql);
-    return 0;
-  }
-
-  @override
-  Future<T> transaction<T>(Future<T> Function(SqlConnection tx) action) =>
-      action(this);
-
-  @override
-  Future<void> close() async => closed = true;
-}
-
-class _RecordingFactory implements SqlConnectionFactory {
-  final List<String> executed = <String>[];
-  final List<_RecordingConnection> connections = <_RecordingConnection>[];
-
-  @override
-  Future<SqlConnection> open(
-    AzureSqlConfig config,
-    AadTokenProvider tokens,
-  ) async {
-    final connection = _RecordingConnection(executed);
-    connections.add(connection);
-    return connection;
-  }
 }
 
 AppSettings _settings({
@@ -107,7 +105,7 @@ Future<ReconcileServices> _bootstrap({
       aad: _aad,
       settingsStore: store ?? InMemorySettingsStore(_settings()),
       secretProvider: secrets ?? _secrets(),
-      sqlFactory: _UnreachableFactory(),
+      cosmosClient: const _EmptyCosmosClient(),
     );
 
 void main() {
@@ -155,45 +153,24 @@ void main() {
       );
     });
 
-    test('a missing ODBC driver (IM002) names the msodbcsql18 prerequisite',
-        () {
-      expect(
-        () => _bootstrap(
-          store: const _ThrowingStore(
-            'OdbcException(SQLDriverConnect): [IM002] [Microsoft]'
-            '[ODBC Driver Manager] Data source name not found and no '
-            'default driver specified',
-          ),
-        ),
-        throwsA(isA<ReconcileConfigException>().having(
-          (e) => e.message,
-          'message',
-          contains('ODBC Driver 18'),
-        )),
-      );
-    });
-
-    test('other settings-store failures propagate unmapped', () {
+    test('settings-store failures propagate unmapped', () {
       expect(
         () => _bootstrap(store: const _ThrowingStore('login timed out')),
         throwsA('login timed out'),
       );
     });
 
-    test('the real SQL path provisions the schema before the first load',
-        () async {
-      // No injected settings store → the Azure SQL store over the (fake)
-      // factory. The empty database yields a default AppSettings, whose blank
-      // WISA profile then fails validation — but by that point the idempotent
-      // DDL for the settings and person-identity tables must have run.
-      final factory = _RecordingFactory();
-
+    test('the real Cosmos path reads settings from the container', () async {
+      // No injected settings store → the real CosmosSettingsStore over the
+      // (empty) fake client. An empty container yields a default AppSettings,
+      // whose blank WISA profile then fails validation — proving the settings
+      // load went through the Cosmos seam rather than a stub.
       await expectLater(
         bootstrapReconcile(
           session: SignInSession(FakeBroker()),
           aad: _aad,
           secretProvider: _secrets(),
-          sqlFactory: factory,
+          cosmosClient: const _EmptyCosmosClient(),
         ),
         throwsA(isA<ReconcileConfigException>().having(
           (e) => e.message,
@@ -201,15 +178,6 @@ void main() {
           contains('WISA connection profile'),
         )),
       );
-
-      final ddl = factory.executed.join('\n');
-      expect(ddl, contains('CREATE TABLE dbo.AppSettings'));
-      expect(ddl, contains('CREATE TABLE dbo.ImportRules'));
-      expect(ddl, contains('CREATE TABLE dbo.PersonIdentity'));
-      expect(ddl, isNot(contains('dbo.PasswordQueue')),
-          reason: 'the password queue is a follow-up slice');
-      expect(factory.connections.every((c) => c.closed), isTrue,
-          reason: 'the provisioning connection must not leak');
     });
   });
 

@@ -123,13 +123,20 @@ file/in-memory resolver is not preparable and keeps minting lazily, so the sync
 
 | Resource | Name | Notes |
 |---|---|---|
-| SQL server | `accountmanager-sql-arcadia.database.windows.net` | AAD-only auth; no SQL login. AAD admin: the operator identity. |
-| SQL database | `accountmanager` | Serverless `GP_S_Gen5`, min 0.5 vCore, auto-pause 60 min, local backup — near-zero idle cost. |
+| Cosmos DB account | `accountmanager-cosmos-arcadia` (`https://accountmanager-cosmos-arcadia.documents.azure.com/`) | SQL API, **serverless**, AAD-only (`disableLocalAuth`); operator holds *Cosmos DB Built-in Data Contributor*. Replaced the SQL server below (#114). |
+| Cosmos database | `accountmanager` | Containers: `identity` (pk `/pk` single logical partition, unique key `/naturalKey`), `settings` (pk `/id`), `passwordQueue` (pk `/pk`). Provisioned out of band with `az` — data-plane RBAC cannot create containers. |
 | Key Vault | `accountmanager-kv` (`https://accountmanager-kv.vault.azure.net/`) | RBAC-authorized; operator holds *Key Vault Secrets Officer*. |
+| ~~SQL server / database~~ | ~~`accountmanager-sql-arcadia`~~ | **Retired (#114).** Deleted; the ODBC/FFI path is gone. |
 
 Firewall allows Azure services plus the operator's client IP. AAD-only means
 every connection carries a per-operator bearer token minted for
 `https://database.windows.net/` — no shared database secret exists.
+
+> **Superseded by #114 (Cosmos migration).** The ODBC/FFI decision below is kept
+> for history. The shared state moved off Azure SQL onto Cosmos DB — the data is
+> document-shaped, Cosmos needs no native driver (pure-Dart HTTPS+JSON,
+> cross-platform), has no cold-start pause, and keeps the AAD/no-stored-secret
+> property via data-plane RBAC. See "Phase B → Cosmos migration" below.
 
 **Connectivity decision (spike, #82): ODBC Driver 18 via FFI.** Dart has no
 production-grade pure-Dart Azure SQL / TDS driver; the community Flutter plugins
@@ -185,6 +192,41 @@ rather than a Key Vault `SecretRef` because a one-shot distribution secret has n
 identity to resolve later. Covered by seam-fake unit tests; its write-capable
 live round-trip stays skipped until #89 (manual/opt-in per the live-testing
 policy, never in the read-only CI set).
+
+### Phase B → Cosmos migration (#114, epic #112)
+
+The multi-operator re-evaluation (epic #112) moved the shared state off Azure SQL
+onto **Cosmos DB (serverless) + Blob**. #114 stands up the account/containers and
+ports the three existing seams, retiring the SQL/ODBC layer:
+
+- **Client seam.** A pure-Dart data-plane client (`account_state/lib/src/cosmos/`)
+  replaces `SqlConnection`/`SqlConnectionFactory` and the whole `sql/odbc/*`
+  FFI layer. `CosmosClient` (point read / create / upsert / delete / paged query)
+  runs over a swappable `CosmosTransport` (mirroring `KeyVaultTransport`), AAD-
+  authenticated with a per-request bearer token for `https://cosmos.azure.com`
+  in Cosmos's `type=aad&ver=1.0&sig=<token>` header scheme. No `msodbcsql18`, no
+  `ffi` dependency.
+- **PersonId (the riskiest seam).** `CosmosPersonIdResolver` replaces the SQL
+  guarded insert with a **conditional create on the `identity` container**: the
+  `/naturalKey` unique key admits only the first create for a key and rejects the
+  rest with `409`, so the loser adopts the winner's id — the direct analogue of
+  `INSERT … WHERE NOT EXISTS`. The `PreparablePersonIdResolver.prepare(keys)`
+  batch-read contract (warm cache, chunked `ARRAY_CONTAINS` query) is preserved,
+  and creates fan out under a concurrency bound rather than the old sequential
+  per-key round-trips.
+- **Stores.** `CosmosSettingsStore` and `CosmosPasswordQueueStore` each persist a
+  **single JSON document** (the config; the whole queue), reusing the existing
+  `toJson`/`fromJson` codecs — a single-document upsert is atomic, so the
+  whole-replace semantics carry over with no transaction.
+- **Provisioning.** The database and containers are created out of band with `az`
+  (data-plane RBAC cannot create them), so bootstrap only reads/writes items —
+  the launch-time `CREATE TABLE` DDL is gone.
+- **Live test.** Write-capable round-trip (`cosmos_live_test.dart`), manual/opt-in
+  per the live-testing policy — restores or deletes everything it writes, never
+  in the read-only CI set. Run via `/live-tests cosmos`.
+
+The cold containers (`snapshots` + Blob, `linkedAccounts`, `decisions`,
+`rollups`, `syncState`) are stood up by their own epic-#112 children.
 
 ### Phase C — Flutter Windows desktop app *(not started, epic #75)*
 

@@ -8,9 +8,9 @@ import 'package:azure_api/azure_api.dart' show AzureCredentials;
 ///   - Microsoft Graph — the delegated read/write scopes from
 ///     [AzureCredentials.scopes] (minus the OIDC/`offline_access` scopes, which
 ///     the broker adds itself).
-///   - Azure SQL — the single `.default` scope under
-///     `https://database.windows.net/`, matching the AAD-only database the port
-///     provisions (issue #82).
+///   - Cosmos DB — the single `.default` scope under `https://cosmos.azure.com`,
+///     matching the AAD-only account the port provisions (issue #114). The
+///     operator holds the *Cosmos DB Built-in Data Contributor* data-plane role.
 ///
 /// [id] is a stable, human-readable key used only to cache tokens per resource
 /// inside a [SignInSession]; it is never sent to Azure.
@@ -35,10 +35,10 @@ class AadResource {
             .toList(growable: false),
       );
 
-  /// The centralized Azure SQL database (`https://database.windows.net/`).
-  static const AadResource sql = AadResource(
-    id: 'sql',
-    scopes: <String>['https://database.windows.net/.default'],
+  /// The centralized Cosmos DB account (`https://cosmos.azure.com`).
+  static const AadResource cosmos = AadResource(
+    id: 'cosmos',
+    scopes: <String>['https://cosmos.azure.com/.default'],
   );
 
   /// The centralized Key Vault data plane (`https://vault.azure.net/`), where

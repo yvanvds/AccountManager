@@ -98,7 +98,7 @@ class LinkedState {
   }
 
   /// The async counterpart of [LinkedState.recompute] for a
-  /// [PreparablePersonIdResolver] (the DB-backed [AzureSqlPersonIdResolver]).
+  /// [PreparablePersonIdResolver] (the DB-backed [CosmosPersonIdResolver]).
   ///
   /// A network-backed resolver cannot mint inside the synchronous pure `link()`,
   /// so its id map is populated up front: this computes the exact key set with

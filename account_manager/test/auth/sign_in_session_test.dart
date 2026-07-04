@@ -93,10 +93,10 @@ void main() {
 
   group('sign in once, then silent for the second resource', () {
     test('interactive is paid at most once across resources', () async {
-      // Graph needs interactive (dev laptop); once signed in, SQL is silent.
+      // Graph needs interactive (dev laptop); once signed in, Cosmos is silent.
       var signedIn = false;
       final broker = FakeBroker(
-        silent: (_) => signedIn ? fakeToken('SQL-AT') : null,
+        silent: (_) => signedIn ? fakeToken('COSMOS-AT') : null,
         interactive: (_) {
           signedIn = true;
           return fakeToken('GRAPH-AT');
@@ -105,9 +105,9 @@ void main() {
       final session = SignInSession(broker);
 
       expect(await session.tokenFor(graph), 'GRAPH-AT');
-      expect(await session.tokenFor(AadResource.sql), 'SQL-AT');
-      expect(broker.interactiveCalls, ['graph']); // never for sql
-      expect(broker.silentCalls, ['graph', 'sql']);
+      expect(await session.tokenFor(AadResource.cosmos), 'COSMOS-AT');
+      expect(broker.interactiveCalls, ['graph']); // never for cosmos
+      expect(broker.silentCalls, ['graph', 'cosmos']);
     });
   });
 
@@ -156,14 +156,14 @@ void main() {
       );
     });
 
-    test('SqlSessionTokenProvider mints a token for the SQL resource',
+    test('CosmosSessionTokenProvider mints a token for the Cosmos resource',
         () async {
-      final broker = FakeBroker(silent: (r) => fakeToken('SQL-${r.id}'));
+      final broker = FakeBroker(silent: (r) => fakeToken('COSMOS-${r.id}'));
       final session = SignInSession(broker);
-      final provider = SqlSessionTokenProvider(session);
+      final provider = CosmosSessionTokenProvider(session);
 
-      expect(await provider.databaseAccessToken(), 'SQL-sql');
-      expect(broker.silentCalls, ['sql']);
+      expect(await provider.cosmosAccessToken(), 'COSMOS-cosmos');
+      expect(broker.silentCalls, ['cosmos']);
     });
   });
 
@@ -179,8 +179,8 @@ void main() {
       expect(graph.scopes, isNot(contains('offline_access')));
     });
 
-    test('sql requests the database.windows.net default scope', () {
-      expect(AadResource.sql.scopes, ['https://database.windows.net/.default']);
+    test('cosmos requests the cosmos.azure.com default scope', () {
+      expect(AadResource.cosmos.scopes, ['https://cosmos.azure.com/.default']);
     });
   });
 }

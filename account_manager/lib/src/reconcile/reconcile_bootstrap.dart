@@ -16,18 +16,19 @@ import 'reconcile_controller.dart';
 /// overridden per environment with `--dart-define`.
 class StoreEndpoints {
   const StoreEndpoints({
-    required this.sqlServer,
-    required this.sqlDatabase,
+    required this.cosmosEndpoint,
+    required this.cosmosDatabase,
     required this.vaultUri,
   });
 
   factory StoreEndpoints.fromEnvironment() => const StoreEndpoints(
-        sqlServer: String.fromEnvironment(
-          'SQL_SERVER',
-          defaultValue: 'accountmanager-sql-arcadia.database.windows.net',
+        cosmosEndpoint: String.fromEnvironment(
+          'COSMOS_ENDPOINT',
+          defaultValue:
+              'https://accountmanager-cosmos-arcadia.documents.azure.com:443/',
         ),
-        sqlDatabase: String.fromEnvironment(
-          'SQL_DATABASE',
+        cosmosDatabase: String.fromEnvironment(
+          'COSMOS_DATABASE',
           defaultValue: 'accountmanager',
         ),
         vaultUri: String.fromEnvironment(
@@ -36,8 +37,8 @@ class StoreEndpoints {
         ),
       );
 
-  final String sqlServer;
-  final String sqlDatabase;
+  final String cosmosEndpoint;
+  final String cosmosDatabase;
   final String vaultUri;
 }
 
@@ -73,21 +74,23 @@ class ReconcileConfigException implements Exception {
   String toString() => message;
 }
 
-/// Builds the real reconcile stack (#99): loads [AppSettings] from the Azure
-/// SQL settings store using the operator's SQL token, resolves the WISA
-/// password and Smartschool passphrase from Key Vault, constructs the three
+/// Builds the real reconcile stack (#114): loads [AppSettings] from the Cosmos
+/// settings container using the operator's Cosmos data-plane token, resolves the
+/// WISA password and Smartschool passphrase from Key Vault, constructs the three
 /// connectors (Graph calls carry the session token from #98), and assembles
 /// `ApplicationState` → `StateApplier` → [ReconcileController].
 ///
 /// The optional parameters are test seams; production callers pass only
-/// [session] and [aad].
+/// [session] and [aad]. The Cosmos containers are provisioned out of band (see
+/// `docs/port-plan.md`) — data-plane RBAC cannot create them — so bootstrap only
+/// reads and writes items.
 Future<ReconcileServices> bootstrapReconcile({
   required SignInSession session,
   required AadAppConfig aad,
   StoreEndpoints? endpoints,
   SettingsStore? settingsStore,
   SecretProvider? secretProvider,
-  SqlConnectionFactory? sqlFactory,
+  CosmosClient? cosmosClient,
   LogBuffer? log,
   DateTime Function()? clock,
 }) async {
@@ -95,44 +98,18 @@ Future<ReconcileServices> bootstrapReconcile({
   final logBuffer = log ?? LogBuffer();
   final now = clock ?? DateTime.now;
 
-  final sqlTokens = SqlSessionTokenProvider(session);
-  final factory = sqlFactory ?? OdbcSqlConnectionFactory();
-  final sqlConfig = AzureSqlConfig(
-    server: ends.sqlServer,
-    database: ends.sqlDatabase,
-  );
+  final client = cosmosClient ??
+      HttpCosmosClient(
+        config: CosmosConfig(
+          endpoint: ends.cosmosEndpoint,
+          database: ends.cosmosDatabase,
+        ),
+        transport: HttpCosmosTransport(),
+        tokens: CosmosSessionTokenProvider(session),
+      );
 
-  final store = settingsStore ??
-      AzureSqlSettingsStore(
-        factory: factory,
-        config: sqlConfig,
-        tokens: sqlTokens,
-      );
-  final AppSettings settings;
-  try {
-    // First-run provisioning on the real SQL path: the schema DDL ships with
-    // account_state as idempotent statements (IF OBJECT_ID ... IS NULL), so
-    // running it on every launch is a cheap no-op once the tables exist and
-    // saves the team a manual deployment step. The person-identity table is
-    // included because the resolver hits it at the first link. An injected
-    // settings store means a test (or another persistence backend) — no DDL.
-    if (settingsStore == null) {
-      await _provisionSchema(factory, sqlConfig, sqlTokens);
-    }
-    settings = await store.load();
-  } on Object catch (e) {
-    // IM002 is the ODBC driver manager's "no such driver" state: the
-    // machine is missing the msodbcsql18 prerequisite, not misconfigured
-    // settings — surface that as the actionable problem.
-    if (e.toString().contains('IM002')) {
-      throw const ReconcileConfigException(
-        'The Microsoft ODBC Driver 18 for SQL Server is not installed on '
-        'this machine, so the settings store cannot be reached. Install it '
-        '(winget install Microsoft.msodbcsql.18) and try again.',
-      );
-    }
-    rethrow;
-  }
+  final store = settingsStore ?? CosmosSettingsStore(client);
+  final settings = await store.load();
 
   final secrets = secretProvider ??
       KeyVaultSecretProvider(
@@ -238,11 +215,7 @@ Future<ReconcileServices> bootstrapReconcile({
       smartschool: ssConnector,
       azure: azConnector,
     ),
-    resolver: AzureSqlPersonIdResolver(
-      factory: factory,
-      config: sqlConfig,
-      tokens: sqlTokens,
-    ),
+    resolver: CosmosPersonIdResolver(client: client),
     wisaRules: wisaRules,
     studentConfig: actions.StudentActionConfig(
       schoolPrefix: schoolPrefix,
@@ -266,29 +239,6 @@ Future<ReconcileServices> bootstrapReconcile({
     ),
     log: logBuffer,
   );
-}
-
-/// Runs the idempotent schema DDL for the tables this screen touches: the
-/// settings singleton + import rules (read at bootstrap) and the person-id
-/// identity map (read/minted at every link). The password-queue table is
-/// deliberately not provisioned here — password distribution is a follow-up
-/// slice and its adapter can provision its own table when it lands.
-Future<void> _provisionSchema(
-  SqlConnectionFactory factory,
-  AzureSqlConfig config,
-  AadTokenProvider tokens,
-) async {
-  final connection = await factory.open(config, tokens);
-  try {
-    for (final ddl in <String>[
-      ...settingsSchemaStatements,
-      ...personIdentitySchemaStatements,
-    ]) {
-      await connection.execute(ddl);
-    }
-  } finally {
-    await connection.close();
-  }
 }
 
 /// The Smartschool class-tree live-config, derived from the persisted

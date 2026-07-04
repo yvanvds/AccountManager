@@ -17,24 +17,25 @@
   Each connector's test self-skips when its trigger var is absent, so a
   missing .env file just skips that connector rather than failing.
 
-  Azure SQL works the same way as Azure: the bearer token is minted fresh for
-  the SQL resource (https://database.windows.net/) rather than stored, and the
-  server/database names come from .azuresql.env. That check is read-only -- it
-  verifies the operator can mint a SQL-scoped token, and does not write to the
-  database.
+  Cosmos works the same way as Azure: the bearer token is minted fresh for the
+  Cosmos resource (https://cosmos.azure.com) rather than stored, and the
+  endpoint/database names come from .cosmos.env. That check is write-capable
+  (it round-trips the settings/queue documents and mints a disposable identity
+  key), so it is manual/opt-in only -- not run in CI -- per the live-testing
+  policy, and each test restores or deletes what it wrote.
 
 .PARAMETER Only
-  Restrict the run to one connector: wisa, smartschool, azure, or azuresql.
+  Restrict the run to one connector: wisa, smartschool, azure, or cosmos.
   Default: all.
 
 .EXAMPLE
   ./tool/live-tests.ps1
   ./tool/live-tests.ps1 -Only azure
-  ./tool/live-tests.ps1 -Only azuresql
+  ./tool/live-tests.ps1 -Only cosmos
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('all', 'wisa', 'smartschool', 'azure', 'azuresql')]
+  [ValidateSet('all', 'wisa', 'smartschool', 'azure', 'cosmos')]
   [string]$Only = 'all'
 )
 
@@ -80,14 +81,14 @@ try {
     $dirs += 'packages/azure_api/test/integration/'
   }
 
-  if ($Only -in @('all', 'azuresql')) {
-    Import-EnvFile (Join-Path $repoRoot '.azuresql.env')
-    Write-Host "  minting fresh read-only Azure SQL token via az..."
-    $sqlTok = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sqlTok)) {
-      throw "az account get-access-token failed. Run 'az login' first (with an account that is an AAD admin on the SQL server)."
+  if ($Only -in @('all', 'cosmos')) {
+    Import-EnvFile (Join-Path $repoRoot '.cosmos.env')
+    Write-Host "  minting fresh Cosmos data-plane token via az..."
+    $cosmosTok = az account get-access-token --resource https://cosmos.azure.com --query accessToken -o tsv
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($cosmosTok)) {
+      throw "az account get-access-token failed. Run 'az login' first (with an account that holds the Cosmos DB Built-in Data Contributor role)."
     }
-    $env:AZURE_SQL_ACCESS_TOKEN = $sqlTok
+    $env:COSMOS_ACCESS_TOKEN = $cosmosTok
     $dirs += 'packages/account_state/test/integration/'
   }
 

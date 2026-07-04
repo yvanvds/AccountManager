@@ -141,7 +141,7 @@ void main() {
     test('returns null when no resource has signed in yet', () async {
       final (broker, refreshRequests, authorizerCalls) = build();
 
-      expect(await broker.acquireSilent(AadResource.sql), isNull);
+      expect(await broker.acquireSilent(AadResource.cosmos), isNull);
       expect(refreshRequests, isEmpty);
       expect(authorizerCalls, isEmpty);
     });
@@ -154,21 +154,21 @@ void main() {
       await broker.acquireInteractive(graph);
       expect(authorizerCalls, hasLength(1));
 
-      // …then SQL is minted silently from Graph's refresh token, with the
-      // SQL scopes requested on the refresh grant.
-      final sql = await broker.acquireSilent(AadResource.sql);
-      expect(sql, isNotNull);
-      expect(sql!.accessToken, 'REFRESHED-AT');
+      // …then cosmos is minted silently from Graph's refresh token, with the
+      // cosmos scopes requested on the refresh grant.
+      final cosmos = await broker.acquireSilent(AadResource.cosmos);
+      expect(cosmos, isNotNull);
+      expect(cosmos!.accessToken, 'REFRESHED-AT');
       expect(authorizerCalls, hasLength(1), reason: 'no second prompt');
       expect(refreshRequests, hasLength(1));
       expect(
         refreshRequests.single['scope'],
-        contains('https://database.windows.net/.default'),
+        contains('https://cosmos.azure.com/.default'),
       );
 
       // The minted credentials are cached: a repeat silent acquisition needs
       // neither the authorizer nor the token endpoint.
-      final again = await broker.acquireSilent(AadResource.sql);
+      final again = await broker.acquireSilent(AadResource.cosmos);
       expect(again!.accessToken, 'REFRESHED-AT');
       expect(refreshRequests, hasLength(1));
     });
@@ -179,7 +179,7 @@ void main() {
 
       await broker.acquireInteractive(graph);
 
-      expect(await broker.acquireSilent(AadResource.sql), isNull);
+      expect(await broker.acquireSilent(AadResource.cosmos), isNull);
       expect(refreshRequests, isNotEmpty, reason: 'the redeem was attempted');
     });
 

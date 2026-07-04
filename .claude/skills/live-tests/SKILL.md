@@ -1,6 +1,6 @@
 ---
 name: live-tests
-description: Run the opt-in live integration tests against the real WISA, Smartschool, and Azure hosts. Loads the local .*.env credential files and, for Azure, mints a fresh read-only Graph token via the Azure CLI (a stored bearer token expires in ~1h). All live tests are read-only (sync only) per the project's live-testing policy. User-invocable as /live-tests; pass a connector name (wisa, smartschool, azure) to run just one.
+description: Run the opt-in live integration tests against the real WISA, Smartschool, Azure, and Cosmos hosts. Loads the local .*.env credential files and mints a fresh token via the Azure CLI where needed (a stored bearer token expires in ~1h). The connector syncs are read-only; the Cosmos data-store round-trip is write-capable and restores what it wrote (manual/opt-in only, not CI) per the project's live-testing policy. User-invocable as /live-tests; pass a target name (wisa, smartschool, azure, cosmos) to run just one.
 ---
 
 # Run live integration tests
@@ -15,9 +15,12 @@ and `.azure.env` files. Wraps [`tool/live-tests.ps1`](../../../tool/live-tests.p
 - The user asks to run the live/integration tests against real WISA,
   Smartschool, or Azure.
 
-These tests hit production school systems. They are **read-only** (sync only)
-by design — never extend them to writes here; write coverage stays manual and
-local per the live-testing policy.
+The connector tests (WISA / Smartschool / Azure) hit production school systems
+and are **read-only** (sync only) by design — never extend them to writes here.
+The **Cosmos** target is different: it exercises the app's own datastore, so it
+is **write-capable** (round-trips the settings/queue documents, mints a
+disposable identity key) but restores or deletes everything it writes. Per the
+live-testing policy it is manual/opt-in only and never runs in CI.
 
 ## Prerequisites
 
@@ -30,12 +33,13 @@ local per the live-testing policy.
 
 ## Steps
 
-1. Pick the scope from the argument: `wisa`, `smartschool`, `azure`, or (no
-   argument) all three.
+1. Pick the scope from the argument: `wisa`, `smartschool`, `azure`, `cosmos`,
+   or (no argument) all of them.
 2. Run the helper from the repo root:
    ```powershell
-   ./tool/live-tests.ps1            # all connectors
+   ./tool/live-tests.ps1            # all targets
    ./tool/live-tests.ps1 -Only azure
+   ./tool/live-tests.ps1 -Only cosmos
    ```
 3. Report the result. The Azure sync takes ~30s (per-group member fetch); the
    test carries a 3-minute timeout. Each connector logs counts only, never row
