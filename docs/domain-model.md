@@ -314,7 +314,8 @@ Rules are applied **at snapshot construction time** (inside the connector or jus
 - **Post:** Returns a fresh snapshot. The previous snapshot is replaced only after success.
 - **Notes:**
   - Azure connector uses Graph `$filter`, `$select`, and `/users/delta` from day one. The legacy "download 6000 users to filter ~1000" pattern is replaced (PAIN-2).
-  - Snapshots are cached to disk for offline-first UI render.
+  - Raw snapshots are cold storage in the shared datastore (#107): only the sync/drift process reads them, seeding a fresh session instead of re-pulling.
+  - **The derived linked view is materialized and persisted, not transient (#112/#115).** Superseding the earlier "derived state stays in RAM" stance: after `link()`, the sync process writes one document per linked account plus school/grade-year/classroom rollups to the shared store, so a passive session renders the reconcile overview cheaply from the store with no pull and no `link()`. Operator decisions live in separate documents and are re-attached on each sync.
 
 ### 6.2 `link(wisa, smartschool, azure) → LinkedSnapshot`
 

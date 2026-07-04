@@ -19,11 +19,16 @@ import 'placement.dart';
 /// and the group `AddToSmartschool` / `CreateInSmartschool` actions are
 /// considered (#55 / #65).
 ///
-/// **Never persisted.** This is recomputed from the snapshots on demand, never
-/// written to disk — legacy `LinkedState.SaveContent` deliberately threw, and
-/// the port keeps that by giving the linked view no persistence seam at all
-/// (README "persist vs derive"). Rebuild it with [LinkedState.fromApplication]
-/// (or [LinkedState.recompute]) whenever a sync replaces a snapshot.
+/// **Transient in-RAM view.** This is recomputed from the snapshots on demand
+/// by the session that runs a sync; rebuild it with [LinkedState.fromApplication]
+/// (or [LinkedState.recompute]) whenever a sync replaces a snapshot. Its
+/// *materialized* form — the shared, versioned per-account documents + rollups a
+/// passive session reads without pulling or re-linking — is produced by
+/// `materialize()` and written through the `LinkedStore` (#115, keystone of
+/// #112). This corrects the earlier "the linked view is never persisted" stance
+/// (legacy `LinkedState.SaveContent` deliberately threw): the *derived* view is
+/// now shared state, even though this transient object still carries the live
+/// action objects the apply pass drives.
 class LinkedState {
   const LinkedState({
     required this.snapshot,

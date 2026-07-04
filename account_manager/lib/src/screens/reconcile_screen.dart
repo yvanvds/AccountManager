@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
-import 'package:account_state/account_state.dart' show LinkedState;
+import 'package:account_state/account_state.dart'
+    show LinkedState, MaterializedAccount, Rollup;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -49,6 +52,9 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
     try {
       final services = await make();
       if (mounted) setState(() => _services = services);
+      // Passive-session read (#115): show the shared overview from the store
+      // without pulling or re-linking. Fire-and-forget; it notifies listeners.
+      unawaited(services.controller.loadOverview());
     } on Object catch (e) {
       if (mounted) setState(() => _bootstrapError = e);
     } finally {
@@ -151,6 +157,13 @@ class _ReconcileBody extends StatelessWidget {
                         _Header(controller: controller),
                         const SizedBox(height: PlinkSpacing.s5),
                         _StatusBanner(controller: controller),
+                        if (controller.selectedClassroom != null) ...<Widget>[
+                          const SizedBox(height: PlinkSpacing.s5),
+                          _ClassroomDetail(controller: controller),
+                        ] else if (controller.hasOverview) ...<Widget>[
+                          const SizedBox(height: PlinkSpacing.s5),
+                          _DrillDownSection(controller: controller),
+                        ],
                         if (linked != null) ...<Widget>[
                           const SizedBox(height: PlinkSpacing.s5),
                           _OverviewSection(linked: linked),
@@ -539,6 +552,212 @@ class _PendingActionTile extends StatelessWidget {
                     ),
                   ),
               ],
+      ),
+    );
+  }
+}
+
+/// The materialized overview (#115): the school → grade-year → classroom
+/// drill-down driven by the stored rollups, so it renders from the shared state
+/// even in a passive session that never pulled or re-linked.
+class _DrillDownSection extends StatelessWidget {
+  const _DrillDownSection({required this.controller});
+
+  final ReconcileController controller;
+
+  String? _freshness() {
+    final state = controller.syncState;
+    if (state.generation == 0) return null;
+    final at = state.updatedAt;
+    final when = at == null
+        ? ''
+        : ' · ${at.toLocal().hour.toString().padLeft(2, '0')}:'
+            '${at.toLocal().minute.toString().padLeft(2, '0')}';
+    final who = state.updatedBy == null || state.updatedBy!.isEmpty
+        ? ''
+        : ' door ${state.updatedBy}';
+    return 'Generatie ${state.generation}$when$who';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final Color hairline = Theme.of(context).dividerColor;
+    final schools = controller.schoolRollups;
+    final freshness = _freshness();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('Overzicht', style: text.titleMedium),
+        if (freshness != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s1),
+          Text(freshness, style: text.bodySmall),
+        ],
+        const SizedBox(height: PlinkSpacing.s3),
+        if (schools.isEmpty)
+          Text('Nog geen gematerialiseerd overzicht.', style: text.bodyMedium)
+        else
+          for (final school in schools)
+            Container(
+              margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+              decoration: BoxDecoration(
+                border: Border.all(color: hairline),
+                borderRadius:
+                    const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+              ),
+              child: ExpansionTile(
+                key: ValueKey('rollup-school-${school.key}'),
+                shape: const Border(),
+                collapsedShape: const Border(),
+                title: Text(school.label, style: text.bodyLarge),
+                trailing: _PendingBadge(count: school.pendingCount),
+                children: <Widget>[
+                  for (final grade in controller.childrenOf(school.key))
+                    _GradeNode(controller: controller, grade: grade),
+                ],
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+class _GradeNode extends StatelessWidget {
+  const _GradeNode({required this.controller, required this.grade});
+
+  final ReconcileController controller;
+  final Rollup grade;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return ExpansionTile(
+      key: ValueKey('rollup-grade-${grade.key}'),
+      shape: const Border(),
+      collapsedShape: const Border(),
+      tilePadding: const EdgeInsets.only(left: PlinkSpacing.s5, right: 16),
+      title: Text('Jaar ${grade.label}', style: text.bodyMedium),
+      trailing: _PendingBadge(count: grade.pendingCount),
+      children: <Widget>[
+        for (final classroom in controller.childrenOf(grade.key))
+          ListTile(
+            key: ValueKey('rollup-class-${classroom.key}'),
+            contentPadding:
+                const EdgeInsets.only(left: PlinkSpacing.s6, right: 16),
+            title: Text(classroom.label, style: text.bodyMedium),
+            subtitle: Text('${classroom.accountCount} account(s)',
+                style: text.bodySmall),
+            trailing: _PendingBadge(count: classroom.pendingCount),
+            onTap: () => controller.openClassroom(classroom),
+          ),
+      ],
+    );
+  }
+}
+
+class _PendingBadge extends StatelessWidget {
+  const _PendingBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0) {
+      return Icon(Icons.check,
+          size: 16, color: Theme.of(context).disabledColor);
+    }
+    return PlinkBadge('$count');
+  }
+}
+
+/// One classroom's accounts, lazily loaded from the store on drill-down.
+class _ClassroomDetail extends StatelessWidget {
+  const _ClassroomDetail({required this.controller});
+
+  final ReconcileController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final classroom = controller.selectedClassroom;
+    final accounts = controller.classroomAccounts;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            TextButton.icon(
+              key: const ValueKey('reconcile-classroom-back'),
+              onPressed: controller.closeClassroom,
+              icon: const Icon(Icons.arrow_back, size: 16),
+              label: const Text('Overzicht'),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Text(classroom?.label ?? '', style: text.titleMedium),
+          ],
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        if (controller.loadingClassroom)
+          const LinearProgressIndicator()
+        else if (accounts == null || accounts.isEmpty)
+          Text('Geen accounts in deze klas.', style: text.bodyMedium)
+        else
+          for (final account in accounts) _AccountTile(account: account),
+      ],
+    );
+  }
+}
+
+class _AccountTile extends StatelessWidget {
+  const _AccountTile({required this.account});
+
+  final MaterializedAccount account;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final Color hairline = Theme.of(context).dividerColor;
+    final systems = <String>[
+      if (account.inWisa) 'WISA',
+      if (account.inSmartschool) 'Smartschool',
+      if (account.inAzure) 'Azure',
+    ];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        border: Border.all(color: hairline),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(child: Text(account.label, style: text.bodyLarge)),
+              _PendingBadge(
+                  count: account.candidates.where((c) => c.canApply).length),
+            ],
+          ),
+          const SizedBox(height: PlinkSpacing.s2),
+          Wrap(
+            spacing: PlinkSpacing.s2,
+            children: <Widget>[for (final s in systems) PlinkBadge(s)],
+          ),
+          for (final w in account.warnings)
+            Padding(
+              padding: const EdgeInsets.only(top: PlinkSpacing.s1),
+              child: Text(w, style: text.bodySmall),
+            ),
+          for (final c in account.candidates)
+            Padding(
+              padding: const EdgeInsets.only(top: PlinkSpacing.s1),
+              child: Text('• ${c.summary}', style: text.bodySmall),
+            ),
+        ],
       ),
     );
   }

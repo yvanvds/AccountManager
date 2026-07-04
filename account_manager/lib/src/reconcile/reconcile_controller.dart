@@ -87,7 +87,10 @@ class ReconcileController extends ChangeNotifier {
     required this.app,
     required this.applier,
     required this.log,
-  });
+    required this.store,
+    this.syncedBy = '',
+    DateTime Function()? clock,
+  }) : _now = clock ?? DateTime.now;
 
   /// The three connector snapshots (owned by the State layer).
   final ApplicationState app;
@@ -98,12 +101,28 @@ class ReconcileController extends ChangeNotifier {
   /// Shared sink for progress and failure messages.
   final LogBuffer log;
 
+  /// The materialized-view store (#115): a sync writes the derived per-account
+  /// docs + rollups here, and a passive session reads the overview back with no
+  /// connector pull and no `link()`.
+  final LinkedStore store;
+
+  /// The operator (UPN) whose session writes the materialized view.
+  final String syncedBy;
+
+  final DateTime Function() _now;
+
   ReconcilePhase _phase = ReconcilePhase.idle;
   LinkedState? _linked;
   bool _noChangesNeeded = false;
   String? _error;
   List<ActionOutcomeEntry>? _dryRunResults;
   List<ActionOutcomeEntry>? _applyResults;
+
+  SyncState _syncState = SyncState.initial;
+  List<Rollup> _rollups = const [];
+  Rollup? _selectedClassroom;
+  List<MaterializedAccount>? _classroomAccounts;
+  bool _loadingClassroom = false;
 
   ReconcilePhase get phase => _phase;
 
@@ -163,6 +182,43 @@ class ReconcileController extends ChangeNotifier {
         ),
     ];
   }
+
+  /// The stored freshness + generation marker of the materialized view.
+  SyncState get syncState => _syncState;
+
+  /// Whether the store holds a materialized overview (rollups) to drill into —
+  /// true after any session has synced, even without a pull this session.
+  bool get hasOverview => _rollups.isNotEmpty;
+
+  /// The school-level rollups, alphabetical — the top of the drill-down.
+  List<Rollup> get schoolRollups {
+    final schools = [
+      for (final r in _rollups)
+        if (r.level == RollupLevel.school) r,
+    ]..sort((a, b) => a.label.compareTo(b.label));
+    return schools;
+  }
+
+  /// The rollup nodes directly under [parentKey] (grade-years of a school, or
+  /// classrooms of a grade-year), alphabetical.
+  List<Rollup> childrenOf(String parentKey) {
+    final children = [
+      for (final r in _rollups)
+        if (r.parentKey == parentKey) r,
+    ]..sort((a, b) => a.label.compareTo(b.label));
+    return children;
+  }
+
+  /// The classroom whose accounts are currently open in the drill-down, or
+  /// `null` when none is selected.
+  Rollup? get selectedClassroom => _selectedClassroom;
+
+  /// The per-account docs of [selectedClassroom], lazily loaded from the store;
+  /// `null` until a classroom is opened.
+  List<MaterializedAccount>? get classroomAccounts => _classroomAccounts;
+
+  /// Whether a classroom drill-down read is in flight.
+  bool get loadingClassroom => _loadingClassroom;
 
   /// How many pending actions an apply pass would actually write (the
   /// informational group actions are excluded).
@@ -245,6 +301,50 @@ class ReconcileController extends ChangeNotifier {
     } on Object catch (e) {
       _fail(e);
     }
+  }
+
+  /// Loads the materialized overview from the store **without pulling or
+  /// re-linking** (#115) — the passive-session read path. A session that opened
+  /// only to change a password renders the reconcile overview from the shared
+  /// rollups another operator's sync wrote.
+  Future<void> loadOverview() async {
+    if (busy) return;
+    try {
+      _syncState = await store.readSyncState();
+      _rollups = await store.readRollups();
+      if (_phase == ReconcilePhase.idle) _phase = ReconcilePhase.ready;
+      notifyListeners();
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not load the overview: $e');
+    }
+  }
+
+  /// Opens a classroom in the drill-down, lazily reading its per-account docs
+  /// from the store (no pull, no `link()`).
+  Future<void> openClassroom(Rollup classroom) async {
+    _selectedClassroom = classroom;
+    _classroomAccounts = null;
+    _loadingClassroom = true;
+    notifyListeners();
+    try {
+      _classroomAccounts = await store.readClassroom(
+        school: classroom.school,
+        classroom: classroom.classroom,
+      );
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not open ${classroom.label}: $e');
+      _classroomAccounts = const [];
+    } finally {
+      _loadingClassroom = false;
+      notifyListeners();
+    }
+  }
+
+  /// Closes the classroom drill-down, back to the overview.
+  void closeClassroom() {
+    _selectedClassroom = null;
+    _classroomAccounts = null;
+    notifyListeners();
   }
 
   /// Dry-runs every pending action (PAIN-3): the full apply path, zero writes.
@@ -373,7 +473,59 @@ class ReconcileController extends ChangeNotifier {
       '${s.groups.length} groups; ${pendingActions.length} pending '
       'action(s), ${s.warnings.length} warning(s).',
     );
+    await _persist(_linked!);
   }
+
+  /// Materializes the fresh linked view and writes it to the shared store
+  /// (#115): one document per account, the rollup aggregates, and a bumped
+  /// generation. Still-applicable operator decisions are re-attached and only
+  /// the ones whose situation is gone are dropped, so a re-sync never clobbers
+  /// in-progress work. A store failure is logged but does not fail the sync —
+  /// the in-memory view is still usable this session.
+  Future<void> _persist(LinkedState linked) async {
+    try {
+      final previous = await store.readSyncState();
+      final view = materialize(
+        linked,
+        generation: previous.generation + 1,
+        schoolLabels: _schoolLabels(),
+      );
+      final merge = mergeDecisions(
+        accounts: view.accounts,
+        existing: await store.readDecisions(),
+      );
+      final merged = MaterializedView(
+        generation: view.generation,
+        accounts: merge.accounts,
+        rollups: view.rollups,
+      );
+      final at = _now();
+      await store.writeMaterialized(
+        merged,
+        syncedBy: syncedBy,
+        at: at,
+        droppedDecisions: merge.dropped,
+      );
+      _rollups = merged.rollups;
+      _syncState = SyncState(
+        generation: view.generation,
+        updatedAt: at,
+        updatedBy: syncedBy,
+      );
+      // A re-sync invalidates any open drill-down; the next open re-reads.
+      _selectedClassroom = null;
+      _classroomAccounts = null;
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not persist the linked view: $e');
+    }
+  }
+
+  /// The WISA school-id → name map for the materializer's school labels, from
+  /// the current WISA snapshot's schools list (empty before the first pull).
+  Map<int, String> _schoolLabels() => {
+        for (final s in app.wisa.snapshot?.schools ?? const <wapi.WisaSchool>[])
+          s.id: s.name,
+      };
 
   void _begin(ReconcilePhase phase) {
     _phase = phase;

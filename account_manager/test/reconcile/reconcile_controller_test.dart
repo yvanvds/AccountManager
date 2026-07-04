@@ -1,6 +1,7 @@
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/log_buffer.dart';
+import 'package:account_state/account_state.dart';
 import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter_test/flutter_test.dart';
 
@@ -263,6 +264,116 @@ void main() {
         h.controller.applyResults!.map((r) => r.outcome),
         isNot(contains(actions.ActionOutcome.failed)),
       );
+    });
+  });
+
+  group('materialized view (#115)', () {
+    test('a sync writes per-account docs + rollups + bumps the generation',
+        () async {
+      final h = ReconcileHarness();
+
+      await h.controller.sync();
+
+      final state = await h.linkedStore.readSyncState();
+      expect(state.generation, 1, reason: 'first sync bumps 0 → 1');
+      expect(state.updatedBy, 'operator@school.example');
+
+      expect(h.linkedStore.accountCount, 1);
+      final rollups = await h.linkedStore.readRollups();
+      final classroom =
+          rollups.singleWhere((r) => r.level == RollupLevel.classroom);
+      expect(classroom.accountCount, 1);
+      expect(classroom.classroom, '3C');
+
+      expect(h.controller.hasOverview, isTrue);
+      expect(h.controller.syncState.generation, 1);
+    });
+
+    test('re-sync bumps the generation again', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      // A changed WISA pull forces a re-link + re-materialize.
+      h.wisaResult = wisaSnap(
+        fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await h.controller.sync();
+
+      expect((await h.linkedStore.readSyncState()).generation, 2);
+    });
+
+    test('a persisted decision survives a re-sync whose situation still exists',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      // Stand in for what #110's UI will write: a decision on the pending move.
+      final accountId = h.controller.linked!.studentActions.first.target.id;
+      await h.linkedStore.putDecision(AccountDecision(
+        accountId: accountId,
+        kind: DecisionKind.chosenAlternative,
+        targetKind: 'MoveToSmartschoolClassGroup',
+        decidedBy: 'operator@school.example',
+        decidedAt: kFixtureDate,
+      ));
+
+      // Re-sync (WISA changed but the move situation persists).
+      h.wisaResult = wisaSnap(
+        fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await h.controller.sync();
+
+      final decisions = await h.linkedStore.readDecisions();
+      expect(decisions, hasLength(1),
+          reason: 'the move is still due, so the decision is kept');
+      final classroom =
+          await h.linkedStore.readClassroom(school: '1', classroom: '3D');
+      expect(classroom.single.decisions, hasLength(1),
+          reason: 'the surviving decision is re-attached to the account doc');
+    });
+  });
+
+  group('passive session reads the store (#115)', () {
+    test(
+        'a resumed session renders the overview and drills into a classroom '
+        'without any pull or link()', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+
+      // Session 1 syncs and materializes the shared view.
+      final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+      await s1.controller.sync();
+
+      // Session 2: a fresh controller over the same stores, passive.
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+
+      // No connector pull and no linked view derived this session.
+      expect(s2.wisaSyncs, 0);
+      expect(s2.ssSyncs, 0);
+      expect(s2.azSyncs, 0);
+      expect(s2.controller.linked, isNull, reason: 'link() was never called');
+
+      // The overview came from the store.
+      expect(s2.controller.hasOverview, isTrue);
+      expect(s2.controller.syncState.generation, 1);
+      final classroom = s2.controller.schoolRollups
+          .expand((s) => s2.controller.childrenOf(s.key))
+          .expand((g) => s2.controller.childrenOf(g.key))
+          .single;
+
+      await s2.controller.openClassroom(classroom);
+
+      expect(s2.controller.selectedClassroom, classroom);
+      expect(s2.controller.classroomAccounts, hasLength(1));
+      // Still no pull.
+      expect(s2.wisaSyncs, 0);
+      expect(s2.ssSyncs, 0);
+      expect(s2.azSyncs, 0);
     });
   });
 

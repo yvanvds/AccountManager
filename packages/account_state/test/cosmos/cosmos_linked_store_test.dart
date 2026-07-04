@@ -1,0 +1,194 @@
+import 'package:account_core/account_core.dart' as core;
+import 'package:account_state/account_state.dart';
+import 'package:test/test.dart';
+
+/// A small in-memory [CosmosClient] covering the query shapes
+/// [CosmosLinkedStore] issues: `SELECT * FROM c`, the classroom filter, and the
+/// `SELECT c.id, c.pk FROM c` id/pk projection — honouring [partitionKey]
+/// scoping via each document's `pk` field.
+class _FakeClient implements CosmosClient {
+  final Map<String, Map<String, Map<String, dynamic>>> _store = {};
+  int deletes = 0;
+
+  Map<String, Map<String, dynamic>> _c(String name) =>
+      _store.putIfAbsent(name, () => {});
+
+  List<Map<String, dynamic>> _all(String container, String? pk) => [
+        for (final d in _c(container).values)
+          if (pk == null || d['pk'] == pk) Map<String, dynamic>.from(d),
+      ];
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {
+    final d = _c(container)[id];
+    return d == null ? null : Map<String, dynamic>.from(d);
+  }
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async {
+    _c(container)[document['id'] as String] = Map.of(document);
+    return true;
+  }
+
+  @override
+  Future<void> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async {
+    _c(container)[document['id'] as String] = Map.of(document);
+  }
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {
+    if (_c(container).remove(id) != null) deletes++;
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async {
+    var rows = _all(container, partitionKey);
+    if (query.contains('c.classroom = @classroom')) {
+      final want = parameters['@classroom'];
+      rows = [
+        for (final d in rows)
+          if (d['classroom'] == want) d
+      ];
+    }
+    if (query.contains('SELECT c.id, c.pk')) {
+      return [
+        for (final d in rows) {'id': d['id'], 'pk': d['pk']},
+      ];
+    }
+    return rows;
+  }
+}
+
+final DateTime _d = DateTime.utc(2026, 7, 1);
+
+MaterializedAccount _account(String id,
+        {String school = '1', String classroom = '3C'}) =>
+    MaterializedAccount(
+      id: core.LinkedAccountId(id),
+      school: school,
+      schoolLabel: 'School $school',
+      gradeYear: '3',
+      classroom: classroom,
+      role: core.PersonRole.student,
+      isStaff: false,
+      confidence: core.LinkConfidence.high,
+      label: 'Jane $id',
+      inWisa: true,
+      inSmartschool: true,
+      inAzure: true,
+      candidates: const [
+        CandidateAction(
+          family: 'student',
+          kind: 'MoveToSmartschoolClassGroup',
+          system: core.Origin.smartschool,
+          summary: 'Move',
+        ),
+      ],
+    );
+
+MaterializedView _view(List<MaterializedAccount> accounts,
+        {int generation = 1}) =>
+    MaterializedView(
+      generation: generation,
+      accounts: accounts,
+      rollups: buildRollups(accounts),
+    );
+
+void main() {
+  group('CosmosLinkedStore', () {
+    test('write then read: sync state, rollups, classroom drill-down',
+        () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+
+      await store.writeMaterialized(
+        _view([_account('p0'), _account('p1', classroom: '3C')]),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      final state = await store.readSyncState();
+      expect(state.generation, 1);
+      expect(state.updatedBy, 'op@school.example');
+
+      final rollups = await store.readRollups();
+      expect(
+          rollups.where((r) => r.level == RollupLevel.classroom), hasLength(1));
+
+      final classroom = await store.readClassroom(school: '1', classroom: '3C');
+      expect(classroom.map((a) => a.id.value), containsAll(['p0', 'p1']));
+    });
+
+    test('a re-sync deletes the docs no longer present', () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+
+      await store.writeMaterialized(
+        _view([_account('p0'), _account('p1')]),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      // Second sync: p1 is gone.
+      await store.writeMaterialized(
+        _view([_account('p0')], generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      final remaining = await store.readClassroom(school: '1', classroom: '3C');
+      expect(remaining.map((a) => a.id.value), ['p0']);
+      expect((await store.readSyncState()).generation, 2);
+    });
+
+    test('putDecision round-trips and writeMaterialized drops the ones passed',
+        () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final decision = AccountDecision(
+        accountId: const core.LinkedAccountId('p0'),
+        kind: DecisionKind.chosenAlternative,
+        targetKind: 'MoveToSmartschoolClassGroup',
+        decidedBy: 'op@school.example',
+        decidedAt: _d,
+      );
+
+      await store.putDecision(decision);
+      expect(await store.readDecisions(), hasLength(1));
+
+      await store.writeMaterialized(
+        _view([_account('p0')]),
+        syncedBy: 'op@school.example',
+        at: _d,
+        droppedDecisions: [decision],
+      );
+      expect(await store.readDecisions(), isEmpty);
+    });
+
+    test('reading before any sync yields the initial generation', () async {
+      final store = CosmosLinkedStore(_FakeClient());
+      expect((await store.readSyncState()).generation, 0);
+      expect(await store.readRollups(), isEmpty);
+    });
+  });
+}
