@@ -2,6 +2,8 @@
 // still mounted and the tester drives the frames synchronously.
 // ignore_for_file: use_build_context_synchronously
 
+import 'dart:async';
+
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -9,7 +11,19 @@ import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
-    show ChangeSignal, InMemoryLinkedStore, InMemorySignalHub;
+    show
+        ChangeSignal,
+        InMemoryLinkedStore,
+        InMemorySignalHub,
+        SignalRConfig,
+        SignalRRequest,
+        SignalRResponse,
+        SignalRSocket,
+        SignalRSocketConnector,
+        SignalRSubscriber,
+        SignalRTransport,
+        StaticSignalRTokenProvider,
+        signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart' show AzureCredentials;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -387,6 +401,88 @@ void main() {
     );
   });
 
+  testWidgets(
+      'the live SignalR subscriber decodes a pushed wire signal and the '
+      'running app catches up over it (#124)', (WidgetTester tester) async {
+    // Session 1 (offline harness) materializes generation 1 into shared stores
+    // (the student sits in 3C).
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+    await s1.controller.sync();
+
+    // Session 2 is the real app, its ReconcileController driven by the *real*
+    // SignalRSubscriber — the production receive code — over a fake WebSocket +
+    // negotiate. This proves the wire→ChangeSignal→controller→UI path end to
+    // end, with only the live Azure socket faked (that leg is /live-tests only).
+    final connector = _FakeSignalRConnector();
+    final subscriber = SignalRSubscriber(
+      config: const SignalRConfig(
+        endpoint: 'https://demo.service.signalr.net',
+        hub: 'reconcile',
+      ),
+      tokens: const StaticSignalRTokenProvider('tok'),
+      transport: _FakeNegotiateTransport(),
+      connector: connector,
+      // No timers left pending at settle: pings and reconnect are pushed far out
+      // and the subscriber is closed before the test ends.
+      pingInterval: const Duration(hours: 1),
+      reconnectDelay: const Duration(hours: 1),
+    );
+    addTearDown(subscriber.close);
+
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+      subscriber: subscriber,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // The overview rendered at generation 1 and the subscriber connected.
+    expect(find.text('Overzicht'), findsOneWidget);
+    expect(resumed.controller.syncState.generation, 1);
+    final socket = connector.sockets.single;
+    socket.serverSend('{}$signalRRecordSeparator'); // handshake ack
+    await tester.pumpAndSettle();
+
+    // Session 1 moves the student to 3D and re-syncs → the store is at
+    // generation 2. Session 2 has not seen it yet.
+    s1.wisaResult = wisaSnap(
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+      students: [wisaStudent(classGroup: '3D')],
+    );
+    await s1.controller.sync();
+    expect((await linkedStore.readSyncState()).generation, 2);
+    expect(resumed.controller.syncState.generation, 1,
+        reason: 'no nudge received yet');
+
+    // A writer broadcasts the viewChanged as a real SignalR invocation frame.
+    // The running app decodes it off the socket and catches up — no reload.
+    socket.serverSend(
+      '{"type":1,"target":"signal","arguments":'
+      '[{"kind":"viewChanged","generation":2}]}$signalRRecordSeparator',
+    );
+    await tester.pumpAndSettle();
+
+    expect(resumed.controller.syncState.generation, 2,
+        reason: 'the app caught up from the decoded wire signal alone');
+    // Drill down to prove the refreshed rollups reached the UI: 3D now exists.
+    await tester.tap(find.text('School 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(find.text('3D'), findsOneWidget);
+
+    await subscriber.close();
+  });
+
   testWidgets('silent sign-in leads straight into the shell',
       (WidgetTester tester) async {
     final broker = _FakeBroker(silent: (_) => _token('AT'));
@@ -487,3 +583,46 @@ BrokerToken _token(String v) => BrokerToken(
       expiresOn: DateTime.now().toUtc().add(const Duration(hours: 1)),
       account: 'operator@school.example',
     );
+
+/// A negotiate transport that hands back a scripted client URL + token, so the
+/// real [SignalRSubscriber] gets past negotiate with no network (#124).
+class _FakeNegotiateTransport implements SignalRTransport {
+  @override
+  Future<SignalRResponse> send(SignalRRequest request) async => SignalRResponse(
+        statusCode: 200,
+        body: '{"url":"wss://demo.service.signalr.net/client",'
+            '"accessToken":"ct"}',
+      );
+}
+
+/// A fake WebSocket connector that records the sockets it opens so the test can
+/// push server frames in — the one leg faked so the receive loop runs offline.
+class _FakeSignalRConnector implements SignalRSocketConnector {
+  final List<_FakeSignalRSocket> sockets = <_FakeSignalRSocket>[];
+
+  @override
+  Future<SignalRSocket> connect(Uri url) async {
+    final socket = _FakeSignalRSocket();
+    sockets.add(socket);
+    return socket;
+  }
+}
+
+class _FakeSignalRSocket implements SignalRSocket {
+  final StreamController<String> _incoming = StreamController<String>();
+
+  @override
+  Stream<String> get messages => _incoming.stream;
+
+  @override
+  void send(String data) {}
+
+  @override
+  Future<void> close() async {
+    if (!_incoming.isClosed) await _incoming.close();
+  }
+
+  void serverSend(String frame) {
+    if (!_incoming.isClosed) _incoming.add(frame);
+  }
+}

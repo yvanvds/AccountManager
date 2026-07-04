@@ -401,6 +401,30 @@ class ReconcileController extends ChangeNotifier {
   /// no-op, so a duplicate notification does no work.
   Future<void> onStoreChanged(int generation) async {
     if (busy || generation <= _syncState.generation) return;
+    await _refetchFromStore();
+  }
+
+  /// Catches this session up from the shared store after the realtime client
+  /// (re)connects (#124). Unlike [onStoreChanged] there is **no** generation
+  /// gate: a reconnecting client cannot know which nudges it missed while
+  /// disconnected, so it always re-reads and adopts the store's own generation
+  /// as the truth — the SignalR signal is only the nudge, the store is the
+  /// source of truth. A no-op while a local pass runs (that pass writes and
+  /// broadcasts the fresh view itself), and a store failure is logged rather
+  /// than thrown into the background reconnect loop.
+  Future<void> resyncFromStore() async {
+    if (busy) return;
+    try {
+      await _refetchFromStore();
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not catch up after reconnect: $e');
+    }
+  }
+
+  /// Re-reads the shared overview (sync state, rollups, lease) and any open
+  /// drill-down from the store — the refetch [onStoreChanged] and
+  /// [resyncFromStore] share (no pull, no `link()`).
+  Future<void> _refetchFromStore() async {
     _syncState = await store.readSyncState();
     _rollups = await store.readRollups();
     await _refreshLock();

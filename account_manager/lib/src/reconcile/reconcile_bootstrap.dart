@@ -129,6 +129,7 @@ Future<ReconcileServices> bootstrapReconcile({
   SnapshotStore? snapshotStore,
   LinkedStore? linkedStore,
   SignalPublisher? publisher,
+  SignalSubscriber? subscriber,
   LogBuffer? log,
   DateTime Function()? clock,
 }) async {
@@ -167,19 +168,20 @@ Future<ReconcileServices> bootstrapReconcile({
   // no pull and no link().
   final linked = linkedStore ?? CosmosLinkedStore(client);
 
-  // The realtime publisher (#116): a sync/apply broadcasts a small change signal
-  // so other operators refetch just the changed shard. Wired only when a SignalR
-  // endpoint is configured — until the service is provisioned, no publisher is
-  // set and the pass falls back to the store's generation marker. The subscriber
-  // (a persistent WebSocket) is a follow-up; this session only publishes for now.
+  // The realtime seam (#116 publish, #124 subscribe): a sync/apply broadcasts a
+  // small change signal so other operators refetch just the changed shard, and
+  // this session holds a persistent SignalR WebSocket that receives theirs.
+  // Both are wired only when a SignalR endpoint is configured — until the
+  // service is provisioned, neither is set and the pass falls back to the
+  // store's `generation` marker, so the app runs unchanged.
+  final signalConfig = ends.signalrEndpoint.isEmpty
+      ? null
+      : SignalRConfig(endpoint: ends.signalrEndpoint, hub: ends.signalrHub);
   final signalPublisher = publisher ??
-      (ends.signalrEndpoint.isEmpty
+      (signalConfig == null
           ? null
           : SignalRPublisher(
-              config: SignalRConfig(
-                endpoint: ends.signalrEndpoint,
-                hub: ends.signalrHub,
-              ),
+              config: signalConfig,
               tokens: SignalRSessionTokenProvider(session),
               transport: HttpSignalRTransport(),
             ));
@@ -354,19 +356,39 @@ Future<ReconcileServices> bootstrapReconcile({
     classTree: classTreeFrom(settings.smartschool),
   );
 
+  // The live SignalR subscriber (#124): on every (re)connect it re-reads the
+  // shared store so a session that missed a nudge while disconnected catches up.
+  // The catch-up hook closes over [controller] (assigned just below) — safe
+  // because the socket opens asynchronously, well after this returns.
+  late final ReconcileController controller;
+  final signalSubscriber = subscriber ??
+      (signalConfig == null
+          ? null
+          : SignalRSubscriber(
+              config: signalConfig,
+              tokens: SignalRSessionTokenProvider(session),
+              transport: HttpSignalRTransport(),
+              connector: const WebSocketSignalRConnector(),
+              onReconnect: () => controller.resyncFromStore(),
+              log: logBuffer,
+            ));
+
+  controller = ReconcileController(
+    app: app,
+    applier: applier,
+    log: logBuffer,
+    store: linked,
+    syncedBy: syncedBy,
+    publisher: signalPublisher,
+    subscriber: signalSubscriber,
+    clock: now,
+  );
+
   return ReconcileServices(
     settings: settings,
     app: app,
     applier: applier,
-    controller: ReconcileController(
-      app: app,
-      applier: applier,
-      log: logBuffer,
-      store: linked,
-      syncedBy: syncedBy,
-      publisher: signalPublisher,
-      clock: now,
-    ),
+    controller: controller,
     log: logBuffer,
   );
 }
