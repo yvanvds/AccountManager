@@ -63,5 +63,6 @@ class WisaImportRules {
         DontImportUserFromWisa(:final userCode) => 'user:$userCode',
         ReplaceInstitute(:final original) => 'institute:$original',
         MarkAsVirtual(:final schoolCode) => 'virtual:$schoolCode',
+        MarkAsOurs(:final schoolCode) => 'ours:$schoolCode',
       };
 }

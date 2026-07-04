@@ -41,10 +41,15 @@ AppSettings _sampleSettings() => AppSettings(
         DontImportUserFromWisa('U42'),
         ReplaceInstitute(original: '001', replacement: '002'),
         MarkAsVirtual('VIRT'),
+        MarkAsOurs('SMA'),
       ],
       smartschoolRules: const [
         DiscardSmartschoolGroup('Archief'),
         NoSmartschoolSubgroups('Klassen'),
+      ],
+      wisaSchools: const [
+        WisaSchoolProfile(schoolId: 1, ours: true, prefix: 'SMA'),
+        WisaSchoolProfile(schoolId: 2),
       ],
     );
 
@@ -58,6 +63,7 @@ void expectSameSettings(AppSettings a, AppSettings b) {
       equals(encodeRules(b.wisaRules, encodeWisaRule)));
   expect(encodeRules(a.smartschoolRules, encodeSmartschoolRule),
       equals(encodeRules(b.smartschoolRules, encodeSmartschoolRule)));
+  expect(a.wisaSchools, equals(b.wisaSchools));
 }
 
 List<Map<String, dynamic>> encodeRules<T>(
@@ -97,6 +103,25 @@ void main() {
       expect(smartschool['passphraseRef'], 'smartschool.passphrase');
       expect(wisa.containsKey('password'), isFalse);
       expect(smartschool.containsKey('passphrase'), isFalse);
+    });
+
+    test('per-WISA-school ownership list round-trips through JSON', () {
+      const original = AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 10, ours: true, prefix: 'KA'),
+          WisaSchoolProfile(schoolId: 20),
+        ],
+      );
+      final restored = AppSettings.fromJson(original.toJson());
+      expect(restored.wisaSchools, original.wisaSchools);
+      expect(restored.wisaSchools.first.ours, isTrue);
+      expect(restored.wisaSchools.first.prefix, 'KA');
+      expect(restored.wisaSchools.last.ours, isFalse);
+    });
+
+    test('a config predating wisaSchools loads with an empty list', () {
+      final settings = AppSettings.fromJson({'schoolPrefix': 'X'});
+      expect(settings.wisaSchools, isEmpty);
     });
 
     test('throws on an unknown rule type tag', () {

@@ -63,6 +63,18 @@ class MarkAsVirtual extends WisaImportRule {
   bool matches(WisaSchool s) => s.name == schoolCode;
 }
 
+/// Flags schools whose [WisaSchool.name] equals [schoolCode] as *ours*
+/// (managed). Group-wide leave detection (#113) uses the flag to tell a
+/// student gone from *our* school but still in the group from one gone from
+/// the whole group. Mirrors [MarkAsVirtual] — a snapshot-time school marker
+/// keyed by the WISA school name.
+class MarkAsOurs extends WisaImportRule {
+  final String schoolCode;
+  const MarkAsOurs(this.schoolCode);
+
+  bool matches(WisaSchool s) => s.name == schoolCode;
+}
+
 /// Applies all rules in [rules] to [groups], in order. Returns a new list;
 /// the input is not mutated.
 ///
@@ -89,6 +101,7 @@ List<WisaClassGroup> applyRulesToClassGroups(
           g = r.apply(g);
         case DontImportUserFromWisa():
         case MarkAsVirtual():
+        case MarkAsOurs():
           break;
       }
     }
@@ -114,17 +127,20 @@ List<WisaStaff> applyRulesToStaff(
   return result;
 }
 
-/// Applies all [MarkAsVirtual] rules in [rules] to [schools]. Returns a
-/// new list with `isVirtual` flipped on matching schools; the input is
-/// not mutated.
+/// Applies the school-marking rules ([MarkAsVirtual], [MarkAsOurs]) in
+/// [rules] to [schools]. Returns a new list with `isVirtual` / `isOurs`
+/// flipped on matching schools; the input is not mutated. A school can be
+/// flagged by both rules independently.
 List<WisaSchool> applyRulesToSchools(
   Iterable<WisaSchool> schools,
   Iterable<WisaImportRule> rules,
 ) {
   return [
     for (final s in schools)
-      rules.any((r) => r is MarkAsVirtual && r.matches(s))
-          ? s.copyWith(isVirtual: true)
-          : s,
+      s.copyWith(
+        isVirtual:
+            s.isVirtual || rules.any((r) => r is MarkAsVirtual && r.matches(s)),
+        isOurs: s.isOurs || rules.any((r) => r is MarkAsOurs && r.matches(s)),
+      ),
   ];
 }

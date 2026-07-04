@@ -203,6 +203,68 @@ void main() {
     expect(find.text('STORED'), findsOneWidget);
   });
 
+  testWidgets('toggling a WISA school\'s "ours" flag round-trips to the store',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 42),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The seeded (unmanaged) school renders with its switch off.
+    final ourSwitch =
+        find.byKey(const ValueKey('settings-wisa-school-42-ours'));
+    expect(ourSwitch, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(ourSwitch).value, isFalse);
+
+    // Flip it on and save.
+    await tester.tap(ourSwitch);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.schoolId, 42);
+    expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
+  testWidgets('adding a WISA school by id appends a managed entry',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // No schools yet — the empty note shows.
+    expect(find.byKey(const ValueKey('settings-wisa-schools-empty')),
+        findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-wisa-school-add')),
+      '7',
+    );
+    await tester
+        .tap(find.byKey(const ValueKey('settings-wisa-school-add-btn')));
+    await tester.pumpAndSettle();
+
+    // The new row appears, defaults to managed, and saves.
+    expect(find.byKey(const ValueKey('settings-wisa-school-7-ours')),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.schoolId, 7);
+    expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
   testWidgets('accumulated import rules render read-only',
       (WidgetTester tester) async {
     _useTallWindow(tester);

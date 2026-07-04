@@ -121,6 +121,26 @@ void main() {
       expect(a.copyWith().isVirtual, isFalse);
     });
 
+    test('isOurs participates in equality and copyWith and round-trips', () {
+      const a = WisaSchool(id: 1, name: 'SMA', description: 'X');
+      const managed = WisaSchool(
+        id: 1,
+        name: 'SMA',
+        description: 'X',
+        isOurs: true,
+      );
+      expect(a, isNot(managed));
+      expect(a.copyWith(isOurs: true).isOurs, isTrue);
+      expect(a.copyWith().isOurs, isFalse);
+      expect(WisaSchool.fromJson(managed.toJson()), managed);
+      // Old snapshots without the key default to not-ours.
+      expect(
+        WisaSchool.fromJson(const {'id': 1, 'name': 'SMA', 'description': 'X'})
+            .isOurs,
+        isFalse,
+      );
+    });
+
     test('toString includes id, name, and virtual flag', () {
       const a = WisaSchool(id: 1, name: 'SMA', description: 'X');
       final s = a.toString();

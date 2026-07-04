@@ -29,6 +29,8 @@ Map<String, dynamic> encodeWisaRule(WisaImportRule rule) {
       };
     case MarkAsVirtual():
       return {'type': 'markAsVirtual', 'schoolCode': rule.schoolCode};
+    case MarkAsOurs():
+      return {'type': 'markAsOurs', 'schoolCode': rule.schoolCode};
   }
 }
 
@@ -50,6 +52,8 @@ WisaImportRule decodeWisaRule(Map<String, dynamic> json) {
       );
     case 'markAsVirtual':
       return MarkAsVirtual(json['schoolCode'] as String);
+    case 'markAsOurs':
+      return MarkAsOurs(json['schoolCode'] as String);
     default:
       throw FormatException('Unknown WisaImportRule type: $type');
   }

@@ -84,6 +84,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _azTenantId = TextEditingController();
   final _azDomain = TextEditingController();
 
+  // Per-WISA-school ownership (#113). Held as a mutable working copy edited in
+  // place; committed to the settings document on save.
+  List<WisaSchoolProfile> _wisaSchools = const <WisaSchoolProfile>[];
+  final _wisaSchoolToAdd = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -107,6 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _azClientId,
       _azTenantId,
       _azDomain,
+      _wisaSchoolToAdd,
       ..._grades,
       ..._years,
     ]) {
@@ -197,6 +203,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _azClientId.text = s.azure.clientId;
     _azTenantId.text = s.azure.tenantId;
     _azDomain.text = s.azure.domain;
+
+    _wisaSchools = List<WisaSchoolProfile>.of(s.wisaSchools);
+    _wisaSchoolToAdd.clear();
+  }
+
+  /// Flips the `ours` flag on the profile at [index] (the toggle the operator
+  /// uses to mark a managed school).
+  void _toggleSchoolOurs(int index, bool ours) {
+    toggle(
+        () => _wisaSchools[index] = _wisaSchools[index].copyWith(ours: ours));
+  }
+
+  /// Appends a managed-school entry for the id typed in the add field, ignoring
+  /// blanks, non-numbers, and ids already present.
+  void _addWisaSchool() {
+    final id = int.tryParse(_wisaSchoolToAdd.text.trim());
+    if (id == null) return;
+    if (_wisaSchools.any((p) => p.schoolId == id)) {
+      _wisaSchoolToAdd.clear();
+      return;
+    }
+    toggle(() {
+      _wisaSchools = <WisaSchoolProfile>[
+        ..._wisaSchools,
+        WisaSchoolProfile(schoolId: id, ours: true),
+      ];
+      _wisaSchoolToAdd.clear();
+    });
+  }
+
+  /// Drops the managed-school entry at [index].
+  void _removeWisaSchool(int index) {
+    toggle(() {
+      _wisaSchools = <WisaSchoolProfile>[..._wisaSchools]..removeAt(index);
+    });
   }
 
   /// Assembles an [AppSettings] from the form, preserving the loaded document's
@@ -231,6 +272,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         tenantId: _azTenantId.text.trim(),
         domain: _azDomain.text.trim(),
       ),
+      wisaSchools: List<WisaSchoolProfile>.of(_wisaSchools),
     );
   }
 
@@ -462,6 +504,14 @@ class _SettingsForm extends StatelessWidget {
                       state.toggle(() => state._virtualWorkDateIsNow = v),
                   onPick: () => state._pickWorkDate(virtual: true),
                 ),
+              ],
+            ),
+
+            // WISA schools (managed/"ours" flag — #113).
+            _Section(
+              title: 'WISA-scholen (beheerd)',
+              children: <Widget>[
+                _WisaSchoolsEditor(state: state),
               ],
             ),
 
@@ -721,6 +771,7 @@ class _RulesList extends StatelessWidget {
         ReplaceInstitute(:final original, :final replacement) =>
           'Vervang instituut: $original → $replacement',
         MarkAsVirtual(:final schoolCode) => 'Markeer als virtueel: $schoolCode',
+        MarkAsOurs(:final schoolCode) => 'Markeer als beheerd: $schoolCode',
       };
 
   static String _describeSmartschool(SmartschoolImportRule rule) =>
@@ -755,6 +806,91 @@ class _RulesList extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
             child: Text('• ${_describeSmartschool(r)}', style: text.bodyMedium),
           ),
+      ],
+    );
+  }
+}
+
+/// Editor for the per-WISA-school ownership list (#113): one switch per known
+/// school toggling its `ours`/managed flag, plus an add-by-id affordance. The
+/// shared credentials pull every group school; this is where the operator marks
+/// which ones we manage. Keyed by school id so a widget/integration test can
+/// seed a profile and flip it against the in-memory store.
+class _WisaSchoolsEditor extends StatelessWidget {
+  const _WisaSchoolsEditor({required this.state});
+
+  final _SettingsScreenState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final schools = state._wisaSchools;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Alle groepsscholen worden opgehaald; markeer hier welke we beheren.',
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s2),
+        if (schools.isEmpty)
+          Text(
+            'Nog geen scholen toegevoegd.',
+            key: const ValueKey('settings-wisa-schools-empty'),
+            style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+          ),
+        for (var i = 0; i < schools.length; i++)
+          Row(
+            key: ValueKey('settings-wisa-school-${schools[i].schoolId}'),
+            children: <Widget>[
+              Expanded(
+                child: SwitchListTile(
+                  key: ValueKey(
+                    'settings-wisa-school-${schools[i].schoolId}-ours',
+                  ),
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('School ${schools[i].schoolId}'),
+                  subtitle: const Text('Beheerd'),
+                  value: schools[i].ours,
+                  onChanged: (v) => state._toggleSchoolOurs(i, v),
+                ),
+              ),
+              IconButton(
+                key: ValueKey(
+                  'settings-wisa-school-${schools[i].schoolId}-remove',
+                ),
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Verwijderen',
+                onPressed: () => state._removeWisaSchool(i),
+              ),
+            ],
+          ),
+        const SizedBox(height: PlinkSpacing.s3),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: TextField(
+                key: const ValueKey('settings-wisa-school-add'),
+                controller: state._wisaSchoolToAdd,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'School-id toevoegen',
+                  border: OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => state._addWisaSchool(),
+              ),
+            ),
+            const SizedBox(width: PlinkSpacing.s3),
+            OutlinedButton.icon(
+              key: const ValueKey('settings-wisa-school-add-btn'),
+              onPressed: state._addWisaSchool,
+              icon: const Icon(Icons.add),
+              label: const Text('Toevoegen'),
+            ),
+          ],
+        ),
       ],
     );
   }
