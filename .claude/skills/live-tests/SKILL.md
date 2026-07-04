@@ -1,6 +1,6 @@
 ---
 name: live-tests
-description: Run the opt-in live integration tests against the real WISA, Smartschool, Azure, and Cosmos hosts. Loads the local .*.env credential files and mints a fresh token via the Azure CLI where needed (a stored bearer token expires in ~1h). The connector syncs are read-only; the Cosmos data-store round-trip is write-capable and restores what it wrote (manual/opt-in only, not CI) per the project's live-testing policy. User-invocable as /live-tests; pass a target name (wisa, smartschool, azure, cosmos) to run just one.
+description: Run the opt-in live integration tests against the real WISA, Smartschool, Azure, Cosmos, and SignalR hosts. Loads the local .*.env credential files and mints a fresh token via the Azure CLI where needed (a stored bearer token expires in ~1h). The connector syncs are read-only; the Cosmos data-store round-trip and the SignalR broadcast are write-capable and self-contained (manual/opt-in only, not CI) per the project's live-testing policy. User-invocable as /live-tests; pass a target name (wisa, smartschool, azure, cosmos, signalr) to run just one.
 ---
 
 # Run live integration tests
@@ -20,7 +20,11 @@ and are **read-only** (sync only) by design — never extend them to writes here
 The **Cosmos** target is different: it exercises the app's own datastore, so it
 is **write-capable** (round-trips the settings/queue documents, mints a
 disposable identity key) but restores or deletes everything it writes. Per the
-live-testing policy it is manual/opt-in only and never runs in CI.
+live-testing policy it is manual/opt-in only and never runs in CI. The
+**SignalR** target (#124) opens a real subscriber WebSocket and broadcasts a
+probe signal to prove the round-trip, so it is **write-capable** too (the probe
+carries a sentinel generation and no data, and writes to no store) and is
+likewise manual/opt-in only.
 
 ## Prerequisites
 
@@ -34,12 +38,13 @@ live-testing policy it is manual/opt-in only and never runs in CI.
 ## Steps
 
 1. Pick the scope from the argument: `wisa`, `smartschool`, `azure`, `cosmos`,
-   or (no argument) all of them.
+   `signalr`, or (no argument) all of them.
 2. Run the helper from the repo root:
    ```powershell
    ./tool/live-tests.ps1            # all targets
    ./tool/live-tests.ps1 -Only azure
    ./tool/live-tests.ps1 -Only cosmos
+   ./tool/live-tests.ps1 -Only signalr
    ```
 3. Report the result. The Azure sync takes ~30s (per-group member fetch); the
    test carries a 3-minute timeout. Each connector logs counts only, never row

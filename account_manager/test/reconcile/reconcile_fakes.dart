@@ -238,6 +238,7 @@ class ReconcileHarness {
     InMemoryLinkedStore? linkedStore,
     this.hub,
     SignalPublisher? publisher,
+    SignalSubscriber? subscriber,
     wapi.WisaSnapshot? wisaInitial,
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
@@ -350,7 +351,7 @@ class ReconcileHarness {
       store: this.linkedStore,
       syncedBy: syncedBy,
       publisher: publisher ?? signalHub?.publisher(),
-      subscriber: signalHub?.subscriber(),
+      subscriber: subscriber ?? signalHub?.subscriber(),
       clock: () => kFixtureDate,
     );
   }
@@ -381,6 +382,7 @@ class ReconcileHarness {
     required SnapshotStore store,
     InMemoryLinkedStore? linkedStore,
     InMemorySignalHub? hub,
+    SignalSubscriber? subscriber,
     wapi.WisaSnapshot? wisa,
     ss.SmartschoolSnapshot? smartschool,
     az.AzureSnapshot? azure,
@@ -407,6 +409,7 @@ class ReconcileHarness {
       store: store,
       linkedStore: linkedStore,
       hub: hub,
+      subscriber: subscriber,
       wisaInitial: wisaSeed,
       ssInitial: ssSeed,
       azureInitial: azSeed,

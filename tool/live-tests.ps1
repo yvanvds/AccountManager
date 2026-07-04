@@ -24,18 +24,27 @@
   key), so it is manual/opt-in only -- not run in CI -- per the live-testing
   policy, and each test restores or deletes what it wrote.
 
+  SignalR (#124) is likewise token-minted fresh, for the SignalR resource
+  (https://signalr.azure.com), with the endpoint/hub coming from .signalr.env.
+  Its live subscriber opens a real WebSocket and the check broadcasts a probe
+  signal to prove the round-trip, so it too is write-capable and manual/opt-in
+  only -- the probe carries a sentinel generation and no data and writes to no
+  store. It shares the account_state integration dir with Cosmos, so the dir is
+  deduped and each test self-skips on a missing token.
+
 .PARAMETER Only
-  Restrict the run to one connector: wisa, smartschool, azure, or cosmos.
+  Restrict the run to one target: wisa, smartschool, azure, cosmos, or signalr.
   Default: all.
 
 .EXAMPLE
   ./tool/live-tests.ps1
   ./tool/live-tests.ps1 -Only azure
   ./tool/live-tests.ps1 -Only cosmos
+  ./tool/live-tests.ps1 -Only signalr
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('all', 'wisa', 'smartschool', 'azure', 'cosmos')]
+  [ValidateSet('all', 'wisa', 'smartschool', 'azure', 'cosmos', 'signalr')]
   [string]$Only = 'all'
 )
 
@@ -92,6 +101,20 @@ try {
     $dirs += 'packages/account_state/test/integration/'
   }
 
+  if ($Only -in @('all', 'signalr')) {
+    Import-EnvFile (Join-Path $repoRoot '.signalr.env')
+    Write-Host "  minting fresh Azure SignalR data-plane token via az..."
+    $signalrTok = az account get-access-token --resource https://signalr.azure.com --query accessToken -o tsv
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($signalrTok)) {
+      throw "az account get-access-token failed. Run 'az login' first (with an account that holds a SignalR data-plane role)."
+    }
+    $env:SIGNALR_ACCESS_TOKEN = $signalrTok
+    # Same integration dir as cosmos; deduped below so it runs once.
+    $dirs += 'packages/account_state/test/integration/'
+  }
+
+  # Cosmos and SignalR share one integration dir — run it at most once.
+  $dirs = $dirs | Select-Object -Unique
   $dirList = $dirs -join ' '
   Write-Host ""
   Write-Host "dart test $dirList"

@@ -98,16 +98,29 @@ InMemorySecretProvider _secrets({bool wisa = true, bool smartschool = true}) =>
       if (smartschool) const SecretRef('smartschool.passphrase'): 'zin',
     });
 
+StoreEndpoints _endpoints({String signalrEndpoint = ''}) => StoreEndpoints(
+      cosmosEndpoint: 'https://cosmos.example/',
+      cosmosDatabase: 'db',
+      vaultUri: 'https://vault.example/',
+      blobEndpoint: 'https://blob.example',
+      blobContainer: 'snapshots',
+      signalrEndpoint: signalrEndpoint,
+    );
+
 Future<ReconcileServices> _bootstrap({
   SettingsStore? store,
   SecretProvider? secrets,
+  StoreEndpoints? endpoints,
+  SignalSubscriber? subscriber,
 }) =>
     bootstrapReconcile(
       session: SignInSession(FakeBroker()),
       aad: _aad,
+      endpoints: endpoints,
       settingsStore: store ?? InMemorySettingsStore(_settings()),
       secretProvider: secrets ?? _secrets(),
       cosmosClient: const _EmptyCosmosClient(),
+      subscriber: subscriber,
     );
 
 void main() {
@@ -120,6 +133,35 @@ void main() {
           reason: 'nothing synced yet at bootstrap');
       expect(services.controller.linked, isNull);
       expect(identical(services.controller.log, services.log), isTrue);
+    });
+
+    test('wires no realtime publisher or subscriber without a SignalR endpoint',
+        () async {
+      // The default endpoints leave SIGNALR_ENDPOINT empty, so the realtime
+      // seam stays unwired and sync falls back to the generation marker (#124).
+      final services = await _bootstrap();
+      expect(services.controller.publisher, isNull);
+      expect(services.controller.subscriber, isNull);
+    });
+
+    test('wires the SignalR publisher + subscriber when an endpoint is set',
+        () async {
+      final services = await _bootstrap(
+        endpoints: _endpoints(
+          signalrEndpoint: 'https://demo.service.signalr.net',
+        ),
+      );
+      addTearDown(() => services.controller.subscriber?.close());
+      expect(services.controller.publisher, isA<SignalRPublisher>());
+      expect(services.controller.subscriber, isA<SignalRSubscriber>());
+    });
+
+    test('passes an injected subscriber through to the controller', () async {
+      final hub = InMemorySignalHub();
+      final injected = hub.subscriber();
+      final services = await _bootstrap(subscriber: injected);
+      addTearDown(injected.close);
+      expect(identical(services.controller.subscriber, injected), isTrue);
     });
 
     test('a missing WISA password is an actionable config error', () {

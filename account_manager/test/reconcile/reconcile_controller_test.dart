@@ -583,6 +583,51 @@ void main() {
       await h.controller.onStoreChanged(1);
       expect(h.controller.syncState.generation, 1);
     });
+
+    test(
+        'resyncFromStore catches a reconnecting session up regardless of '
+        'generation (#124)', () async {
+      final linkedStore = InMemoryLinkedStore();
+      final snapshots = InMemorySnapshotStore();
+
+      // Session 1 materializes generation 1 (the student sits in 3C).
+      final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+      await s1.controller.sync();
+
+      // Session 2 renders the shared overview and drills into 3C.
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+      final classroom3c = s2.controller.schoolRollups
+          .expand((s) => s2.controller.childrenOf(s.key))
+          .expand((g) => s2.controller.childrenOf(g.key))
+          .singleWhere((c) => c.classroom == '3C');
+      await s2.controller.openClassroom(classroom3c);
+      expect(s2.controller.classroomAccounts, hasLength(1));
+
+      // Session 1 moves the student to 3D → generation 2. Session 2 was
+      // "disconnected" and never saw the nudge.
+      s1.wisaResult = wisaSnap(
+        fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await s1.controller.sync();
+
+      // A reconnect drives the catch-up with no generation argument — it
+      // re-reads unconditionally and the open 3C shard refreshes to empty.
+      await s2.controller.resyncFromStore();
+      expect(s2.controller.syncState.generation, 2);
+      expect(s2.controller.classroomAccounts, isEmpty);
+      expect(
+        s2.controller.schoolRollups
+            .expand((s) => s2.controller.childrenOf(s.key))
+            .expand((g) => s2.controller.childrenOf(g.key))
+            .map((c) => c.classroom),
+        contains('3D'),
+      );
+    });
   });
 
   group('realtime signals (#116)', () {
