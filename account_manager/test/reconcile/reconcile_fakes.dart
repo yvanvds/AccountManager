@@ -239,6 +239,7 @@ class ReconcileHarness {
     wapi.WisaSnapshot? wisaInitial,
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
+    this.syncedBy = 'operator@school.example',
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
@@ -269,21 +270,21 @@ class ReconcileHarness {
       wisaSync = persistingSyncer<wapi.WisaSnapshot>(
         system: core.Origin.wisa,
         store: s,
-        syncedBy: 'operator@school.example',
+        syncedBy: syncedBy,
         payloadOf: (snap) => snap.toJson(),
         inner: wisaSync,
       );
       ssSync = persistingSyncer<ss.SmartschoolSnapshot>(
         system: core.Origin.smartschool,
         store: s,
-        syncedBy: 'operator@school.example',
+        syncedBy: syncedBy,
         payloadOf: (snap) => snap.toJson(),
         inner: ssSync,
       );
       azSync = persistingSyncer<az.AzureSnapshot>(
         system: core.Origin.azure,
         store: s,
-        syncedBy: 'operator@school.example',
+        syncedBy: syncedBy,
         payloadOf: (snap) => snap.toJson(),
         deltaTokenOf: (snap) => snap.deltaToken,
         inner: azSync,
@@ -344,7 +345,7 @@ class ReconcileHarness {
       applier: applier,
       log: log,
       store: this.linkedStore,
-      syncedBy: 'operator@school.example',
+      syncedBy: syncedBy,
       clock: () => kFixtureDate,
     );
   }
@@ -357,6 +358,11 @@ class ReconcileHarness {
   /// The shared cold-snapshot store, when this harness models the persistence
   /// wiring (#107). `null` for the plain in-memory scenarios.
   final SnapshotStore? store;
+
+  /// The operator (UPN) this session syncs as — the lease owner and the
+  /// per-system sync-metadata author (#108). Vary it to model a second operator
+  /// sharing the same [linkedStore].
+  final String syncedBy;
 
   /// Builds a "second session" seeded from [store] — a fresh controller over
   /// the state another harness already persisted, the way bootstrap seeds each

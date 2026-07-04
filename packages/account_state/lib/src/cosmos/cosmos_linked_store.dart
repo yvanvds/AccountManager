@@ -1,3 +1,5 @@
+import 'package:account_core/account_core.dart' as core;
+
 import '../materialize/linked_store.dart';
 import '../materialize/materialized_state.dart';
 import 'cosmos_client.dart';
@@ -74,7 +76,14 @@ class CosmosLinkedStore implements LinkedStore {
     required String syncedBy,
     required DateTime at,
     List<AccountDecision> droppedDecisions = const [],
+    Map<core.Origin, SystemSyncMeta> systemSyncs = const {},
   }) async {
+    // Merge the systems pulled this pass over whatever the last write recorded,
+    // so a system this pass did not pull keeps its earlier stamp (#108).
+    final systems = {
+      ...(await readSyncState()).systems,
+      ...systemSyncs,
+    };
     // Per-account docs: upsert the fresh set, then delete the stragglers no
     // longer present so a departed account's doc does not linger.
     await _replaceContainer(
@@ -114,10 +123,142 @@ class CosmosLinkedStore implements LinkedStore {
           generation: view.generation,
           updatedAt: at,
           updatedBy: syncedBy,
+          systems: systems,
         ).toJson(),
       },
     );
   }
+
+  @override
+  Future<void> recordSystemSync(
+    Map<core.Origin, SystemSyncMeta> systemSyncs,
+  ) async {
+    if (systemSyncs.isEmpty) return;
+    // Merge into the existing sync-state doc, preserving the generation and the
+    // materialize freshness — this is a metadata-only touch, not a view rewrite.
+    final current = await readSyncState();
+    await _client.upsertDocument(
+      container: syncStateContainer,
+      partitionKey: syncStateDocumentId,
+      document: {
+        'id': syncStateDocumentId,
+        ...SyncState(
+          generation: current.generation,
+          updatedAt: current.updatedAt,
+          updatedBy: current.updatedBy,
+          systems: {...current.systems, ...systemSyncs},
+        ).toJson(),
+      },
+    );
+  }
+
+  @override
+  Future<SyncLease?> readLease(DateTime now) async {
+    final doc = await _client.readDocument(
+      container: syncStateContainer,
+      id: syncLeaseDocumentId,
+      partitionKey: syncLeaseDocumentId,
+    );
+    if (doc == null) return null;
+    final lease = SyncLease.fromJson(doc);
+    return lease.isExpiredAt(now) ? null : lease;
+  }
+
+  @override
+  Future<LeaseOutcome> acquireLease({
+    required String owner,
+    required DateTime now,
+  }) async {
+    // Fast path: an atomic create wins iff no lease document exists (a released
+    // lease is deleted, and a crashed holder's is TTL-swept). This is the hot,
+    // contended path and it is race-free — two acquirers cannot both create.
+    final created = await _client.createDocument(
+      container: syncStateContainer,
+      partitionKey: syncLeaseDocumentId,
+      document: _leaseDoc(owner, now),
+    );
+    if (created) {
+      return LeaseOutcome(acquired: true, lease: _lease(owner, now));
+    }
+    // A document already exists. Read it to decide.
+    final doc = await _client.readDocument(
+      container: syncStateContainer,
+      id: syncLeaseDocumentId,
+      partitionKey: syncLeaseDocumentId,
+    );
+    // Vanished between create and read (TTL sweep / release) — try once more.
+    if (doc == null) return acquireLease(owner: owner, now: now);
+    final existing = SyncLease.fromJson(doc);
+    // Live lease held by someone else — blocked.
+    if (existing.isLiveAt(now) && existing.owner != owner) {
+      return LeaseOutcome(acquired: false, lease: existing);
+    }
+    // Ours already, or a crashed holder's the TTL has not yet swept: take it.
+    // Overwriting an expired lease races only on crash-recovery (rare); the
+    // hot path above never reaches here. Hardened further by #121.
+    await _writeLease(owner, now);
+    return LeaseOutcome(acquired: true, lease: _lease(owner, now));
+  }
+
+  @override
+  Future<LeaseOutcome> renewLease({
+    required String owner,
+    required DateTime now,
+  }) async {
+    final doc = await _client.readDocument(
+      container: syncStateContainer,
+      id: syncLeaseDocumentId,
+      partitionKey: syncLeaseDocumentId,
+    );
+    if (doc != null) {
+      final existing = SyncLease.fromJson(doc);
+      if (existing.isLiveAt(now) && existing.owner != owner) {
+        // Lost it: it expired while we worked and another operator took over.
+        return LeaseOutcome(acquired: false, lease: existing);
+      }
+    }
+    await _writeLease(owner, now);
+    return LeaseOutcome(acquired: true, lease: _lease(owner, now));
+  }
+
+  @override
+  Future<void> releaseLease({required String owner}) async {
+    final doc = await _client.readDocument(
+      container: syncStateContainer,
+      id: syncLeaseDocumentId,
+      partitionKey: syncLeaseDocumentId,
+    );
+    if (doc == null) return;
+    if (SyncLease.fromJson(doc).owner != owner) return; // taken over — leave it
+    await _client.deleteDocument(
+      container: syncStateContainer,
+      id: syncLeaseDocumentId,
+      partitionKey: syncLeaseDocumentId,
+    );
+  }
+
+  SyncLease _lease(String owner, DateTime now) => SyncLease(
+        owner: owner,
+        heartbeatAt: now,
+        expiresAt: now.add(syncLeaseTtl),
+      );
+
+  Future<void> _writeLease(String owner, DateTime now) =>
+      _client.upsertDocument(
+        container: syncStateContainer,
+        partitionKey: syncLeaseDocumentId,
+        document: _leaseDoc(owner, now),
+      );
+
+  /// The lease document: the [SyncLease] fields plus the id/partition key and a
+  /// Cosmos `ttl` (seconds) so an abandoned lease is physically swept, freeing a
+  /// fresh acquire.
+  Map<String, dynamic> _leaseDoc(String owner, DateTime now) => {
+        'id': syncLeaseDocumentId,
+        'pk': syncLeaseDocumentId,
+        'ttl': syncLeaseTtl.inSeconds,
+        ..._lease(owner, now).toJson(),
+      };
 
   @override
   Future<void> putDecision(AccountDecision decision) async {

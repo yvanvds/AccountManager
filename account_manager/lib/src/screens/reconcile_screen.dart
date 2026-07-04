@@ -217,27 +217,40 @@ class _Header extends StatelessWidget {
 
   final ReconcileController controller;
 
+  /// The shared per-system freshness line ("Last sync — WISA 09:12 by jan@…"),
+  /// read from the materialized store so it names *whichever* operator last
+  /// synced each system — not just this session (#108). Null before any sync.
   String? _freshness() {
-    final app = controller.app;
-    String stamp(DateTime? t) => t == null
-        ? '—'
-        : '${t.toLocal().hour.toString().padLeft(2, '0')}:'
-            '${t.toLocal().minute.toString().padLeft(2, '0')}';
-    if (app.wisa.lastSync == null &&
-        app.smartschool.lastSync == null &&
-        app.azure.lastSync == null) {
-      return null;
+    final systems = controller.syncState.systems;
+    String? stamp(core.Origin system, String label) {
+      final meta = systems[system];
+      if (meta == null) return null;
+      final t = meta.at.toLocal();
+      final hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+          '${t.minute.toString().padLeft(2, '0')}';
+      final by = meta.syncedBy.isEmpty ? '' : ' by ${meta.syncedBy}';
+      return '$label $hhmm$by';
     }
-    return 'Last sync — WISA ${stamp(app.wisa.lastSync)} · '
-        'Smartschool ${stamp(app.smartschool.lastSync)} · '
-        'Azure ${stamp(app.azure.lastSync)}';
+
+    final parts = <String>[
+      for (final (system, label) in const [
+        (core.Origin.wisa, 'WISA'),
+        (core.Origin.smartschool, 'Smartschool'),
+        (core.Origin.azure, 'Azure'),
+      ])
+        if (stamp(system, label) case final s?) s,
+    ];
+    if (parts.isEmpty) return null;
+    return 'Last sync — ${parts.join(' · ')}';
   }
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
     final bool ink = Theme.of(context).brightness == Brightness.dark;
     final freshness = _freshness();
+    final lockedByOther = controller.syncLockedByOther;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -253,19 +266,39 @@ class _Header extends StatelessWidget {
           children: <Widget>[
             FilledButton.icon(
               key: const ValueKey('reconcile-sync'),
-              onPressed: controller.busy ? null : controller.sync,
+              onPressed:
+                  controller.busy || lockedByOther ? null : controller.sync,
               icon: const Icon(Icons.sync),
               label: const Text('Synchronise'),
             ),
             OutlinedButton.icon(
               key: const ValueKey('reconcile-drift'),
-              onPressed: controller.busy ? null : controller.checkDrift,
+              onPressed: controller.busy || lockedByOther
+                  ? null
+                  : controller.checkDrift,
               icon: const Icon(Icons.difference_outlined),
               label: const Text('Check for drift'),
             ),
             if (freshness != null) Text(freshness, style: text.bodySmall),
           ],
         ),
+        if (lockedByOther) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            key: const ValueKey('reconcile-sync-lock'),
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.lock_clock_outlined, size: 16, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(
+                child: Text(
+                  '${controller.syncLockOwner} is aan het synchroniseren…',
+                  style: text.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
         if (controller.busy) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s4),
           const LinearProgressIndicator(),

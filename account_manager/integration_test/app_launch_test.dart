@@ -223,6 +223,52 @@ void main() {
     expect(resumed.azSyncs, 0);
   });
 
+  testWidgets(
+      'a passive session shows the shared freshness and, while another '
+      'operator holds the sync lease, disables Synchronise (#108)',
+      (WidgetTester tester) async {
+    // Session 1 (offline harness) syncs, materializing the shared view and
+    // stamping per-system freshness into the LinkedStore both sessions share.
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+    // A different operator is mid-sync, holding the coarse sync/drift lease.
+    await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+
+    // Session 2 is the real app over the same stores. It never syncs.
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // The shared per-system freshness line renders (who last synced each
+    // system, from the store — not this passive session).
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(find.textContaining('by operator@school.example'), findsOneWidget);
+
+    // The lock is surfaced by name and Synchronise/Check-for-drift are disabled
+    // so two operators cannot sync at once.
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsOneWidget);
+    expect(find.textContaining('mieke@school'), findsOneWidget);
+    final sync = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('reconcile-sync')),
+    );
+    expect(sync.onPressed, isNull);
+    expect(resumed.wisaSyncs, 0,
+        reason: 'a blocked passive session never pulls');
+  });
+
   testWidgets('silent sign-in leads straight into the shell',
       (WidgetTester tester) async {
     final broker = _FakeBroker(silent: (_) => _token('AT'));

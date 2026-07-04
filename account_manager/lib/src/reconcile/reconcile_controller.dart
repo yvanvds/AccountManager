@@ -123,6 +123,11 @@ class ReconcileController extends ChangeNotifier {
   Rollup? _selectedClassroom;
   List<MaterializedAccount>? _classroomAccounts;
   bool _loadingClassroom = false;
+  SyncLease? _lock;
+
+  /// The per-system last-sync metadata this pass pulled, stamped as each system
+  /// is read and folded into the shared store on persist (#108).
+  final Map<core.Origin, SystemSyncMeta> _pulled = {};
 
   ReconcilePhase get phase => _phase;
 
@@ -186,6 +191,18 @@ class ReconcileController extends ChangeNotifier {
   /// The stored freshness + generation marker of the materialized view.
   SyncState get syncState => _syncState;
 
+  /// The coarse sync/drift lease held by **another** operator, or `null` when the
+  /// lock is free (or held by this session's own in-flight pass). While non-null,
+  /// Synchronise and Check-for-drift are disabled and the holder is named (#108).
+  SyncLease? get syncLock => _lock;
+
+  /// Whether another operator is currently syncing, blocking this session's
+  /// Synchronise / Check-for-drift.
+  bool get syncLockedByOther => _lock != null;
+
+  /// The operator (UPN) holding the sync/drift lease, when [syncLockedByOther].
+  String? get syncLockOwner => _lock?.owner;
+
   /// Whether the store holds a materialized overview (rollups) to drill into —
   /// true after any session has synced, even without a pull this session.
   bool get hasOverview => _rollups.isNotEmpty;
@@ -235,11 +252,13 @@ class ReconcileController extends ChangeNotifier {
   /// missing systems and re-link.
   Future<void> sync() async {
     if (busy) return;
+    if (!await _acquireLock()) return;
     _begin(ReconcilePhase.syncing);
     try {
       final previous = app.wisa.snapshot;
       log.addMessage(core.Origin.wisa, 'Syncing WISA…');
       final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
+      _recordPull(core.Origin.wisa, fresh);
       log.addMessage(
         core.Origin.wisa,
         'WISA sync done: ${fresh.students.length} students, '
@@ -255,24 +274,30 @@ class ReconcileController extends ChangeNotifier {
           'WISA is unchanged since the previous sync — '
           'no account changes needed.',
         );
+        await _persistSystemMeta();
         _finish(ReconcilePhase.ready);
         return;
       }
 
       // First pass of the session: the linked view needs all three systems.
       if (app.smartschool.snapshot == null) {
+        await _renewLock();
         log.addMessage(core.Origin.smartschool, 'Syncing Smartschool…');
-        await app.sync(core.Origin.smartschool);
+        _recordPull(
+            core.Origin.smartschool, await app.sync(core.Origin.smartschool));
       }
       if (app.azure.snapshot == null) {
+        await _renewLock();
         log.addMessage(core.Origin.azure, 'Syncing Azure AD…');
-        await app.sync(core.Origin.azure);
+        _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
       }
 
       await _relink();
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       _fail(e);
+    } finally {
+      await _releaseLock();
     }
   }
 
@@ -281,25 +306,31 @@ class ReconcileController extends ChangeNotifier {
   /// [sync] is for.
   Future<void> checkDrift() async {
     if (busy) return;
+    if (!await _acquireLock()) return;
     _begin(ReconcilePhase.syncing);
     try {
       log.addMessage(
         core.Origin.smartschool,
         'Checking Smartschool for drift…',
       );
-      await app.sync(core.Origin.smartschool);
+      _recordPull(
+          core.Origin.smartschool, await app.sync(core.Origin.smartschool));
+      await _renewLock();
       log.addMessage(core.Origin.azure, 'Checking Azure AD for drift…');
-      await app.sync(core.Origin.azure);
+      _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
 
       if (app.wisa.snapshot == null) {
+        await _renewLock();
         log.addMessage(core.Origin.wisa, 'Syncing WISA…');
-        await app.sync(core.Origin.wisa);
+        _recordPull(core.Origin.wisa, await app.sync(core.Origin.wisa));
       }
 
       await _relink();
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       _fail(e);
+    } finally {
+      await _releaseLock();
     }
   }
 
@@ -312,11 +343,37 @@ class ReconcileController extends ChangeNotifier {
     try {
       _syncState = await store.readSyncState();
       _rollups = await store.readRollups();
+      await _refreshLock();
       if (_phase == ReconcilePhase.idle) _phase = ReconcilePhase.ready;
       notifyListeners();
     } on Object catch (e) {
       log.addError(core.Origin.all, 'Could not load the overview: $e');
     }
+  }
+
+  /// Reacts to another operator's sync bumping the stored generation past this
+  /// session's cached copy (#108): refetch the shared overview and re-read any
+  /// open classroom so a passive session catches up — no pull, no `link()`. The
+  /// realtime transport (#116) drives this from a SignalR change notification;
+  /// until then it is exercised directly. A stale-or-equal [generation] is a
+  /// no-op, so a duplicate notification does no work.
+  Future<void> onStoreChanged(int generation) async {
+    if (busy || generation <= _syncState.generation) return;
+    _syncState = await store.readSyncState();
+    _rollups = await store.readRollups();
+    await _refreshLock();
+    final open = _selectedClassroom;
+    if (open != null) {
+      try {
+        _classroomAccounts = await store.readClassroom(
+          school: open.school,
+          classroom: open.classroom,
+        );
+      } on Object catch (e) {
+        log.addError(core.Origin.all, 'Could not refresh ${open.label}: $e');
+      }
+    }
+    notifyListeners();
   }
 
   /// Opens a classroom in the drill-down, lazily reading its per-account docs
@@ -505,12 +562,15 @@ class ReconcileController extends ChangeNotifier {
         syncedBy: syncedBy,
         at: at,
         droppedDecisions: merge.dropped,
+        systemSyncs: _pulled,
       );
       _rollups = merged.rollups;
       _syncState = SyncState(
         generation: view.generation,
         updatedAt: at,
         updatedBy: syncedBy,
+        // The store merges this pass's pulls over what it had; mirror that here.
+        systems: {...previous.systems, ..._pulled},
       );
       // A re-sync invalidates any open drill-down; the next open re-reads.
       _selectedClassroom = null;
@@ -533,7 +593,101 @@ class ReconcileController extends ChangeNotifier {
     _noChangesNeeded = false;
     _dryRunResults = null;
     _applyResults = null;
+    _pulled.clear();
     notifyListeners();
+  }
+
+  /// Stamps [snapshot]'s fetch time against [system] for this pass, folded into
+  /// the shared store's per-system freshness on persist (#108).
+  void _recordPull(core.Origin system, core.Snapshot snapshot) {
+    _pulled[system] =
+        SystemSyncMeta(syncedBy: syncedBy, at: snapshot.fetchedAt);
+  }
+
+  /// Stamps the smart-sync "WISA unchanged" path: nothing was re-linked, so the
+  /// view is untouched, but WISA was still pulled — record its freshness with a
+  /// light metadata write that does not bump the generation (#108).
+  Future<void> _persistSystemMeta() async {
+    if (_pulled.isEmpty) return;
+    try {
+      await store.recordSystemSync(_pulled);
+      _syncState = SyncState(
+        generation: _syncState.generation,
+        updatedAt: _syncState.updatedAt,
+        updatedBy: _syncState.updatedBy,
+        systems: {..._syncState.systems, ..._pulled},
+      );
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not record sync metadata: $e');
+    }
+  }
+
+  /// Takes the coarse sync/drift lease before a heavy pass (#108). Returns true
+  /// when this session may proceed — it acquired the lease, or the lease store
+  /// is unreachable (a coordination hiccup must not turn Synchronise into a dead
+  /// button; the pass's own writes would surface a real outage). Returns false,
+  /// naming the holder, when another operator is already syncing.
+  Future<bool> _acquireLock() async {
+    try {
+      final outcome = await store.acquireLease(owner: syncedBy, now: _now());
+      if (outcome.acquired) {
+        _lock = null;
+        return true;
+      }
+      _lock = outcome.lease;
+      log.addMessage(
+        core.Origin.all,
+        '${outcome.lease.owner} is bezig met synchroniseren — probeer straks '
+        'opnieuw.',
+      );
+      notifyListeners();
+      return false;
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not take the sync lock: $e');
+      return true;
+    }
+  }
+
+  /// Heart-beats the held lease between the per-system pulls, so its expiry
+  /// tracks the work done rather than a wall clock (#108). Best-effort: a failed
+  /// heartbeat is logged but never aborts an in-flight pass. Losing the lease
+  /// (expired and taken over) is surfaced but the current write still finishes.
+  Future<void> _renewLock() async {
+    try {
+      final outcome = await store.renewLease(owner: syncedBy, now: _now());
+      if (!outcome.acquired) {
+        log.addError(
+          core.Origin.all,
+          'Sync-vergrendeling verlopen; ${outcome.lease.owner} heeft ze '
+          'overgenomen.',
+        );
+      }
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not renew the sync lock: $e');
+    }
+  }
+
+  /// Releases the held lease at the end of a pass, freeing the next operator.
+  /// Best-effort; an abandoned lease also expires on its own (#108).
+  Future<void> _releaseLock() async {
+    try {
+      await store.releaseLease(owner: syncedBy);
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not release the sync lock: $e');
+    }
+  }
+
+  /// Reads the current lease and records whether **another** operator holds it,
+  /// so a passive session disables Synchronise/Check-for-drift and names the
+  /// holder (#108). Our own lease never blocks us.
+  Future<void> _refreshLock() async {
+    try {
+      final lease = await store.readLease(_now());
+      _lock = (lease != null && lease.owner != syncedBy) ? lease : null;
+    } on Object catch (_) {
+      // Leave the last-known lock state; a transient read failure must not
+      // spuriously enable or disable the buttons.
+    }
   }
 
   void _finish(ReconcilePhase phase) {
