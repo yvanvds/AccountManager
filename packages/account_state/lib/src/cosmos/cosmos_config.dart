@@ -105,9 +105,19 @@ const String snapshotsContainer = 'snapshots';
 /// only reads them on drill-down.
 const String linkedAccountsContainer = 'linkedAccounts';
 
+/// The materialized linked-groups container (#119): one document per class
+/// group that carries a pending group action (an orphan Smartschool class, a
+/// WISA class to create/modify), `{ id, pk, … }`. Every document shares the one
+/// [groupsPartition] logical partition — class groups have no natural school
+/// partition — so a passive session reads them all in one partition query when
+/// the "Klasgroepen" node is opened. Rewritten wholesale by the sync process,
+/// like [linkedAccountsContainer]. Provisioned out of band.
+const String linkedGroupsContainer = 'linkedGroups';
+
 /// The rollup-aggregates container (#115): the small school / grade-year /
 /// classroom count documents that drive the drill-down without touching the
-/// per-account docs. Partitioned by `/pk` (school).
+/// per-account docs. Partitioned by `/pk` (school). Also holds the single group
+/// rollup node (#119), partitioned under the [groupsPartition].
 const String rollupsContainer = 'rollups';
 
 /// The operator-decisions container (#115): one document per decision

@@ -30,6 +30,11 @@ abstract interface class LinkedStore {
     required String classroom,
   });
 
+  /// Every per-group doc (#119), loaded lazily when the "Klasgroepen" node is
+  /// opened. Reads the single [groupsPartition]; there are few, so no narrower
+  /// filter is needed.
+  Future<List<MaterializedGroup>> readGroups();
+
   /// Every persisted operator decision (read by the sync path to merge).
   Future<List<AccountDecision>> readDecisions();
 
@@ -102,6 +107,7 @@ String decisionDocId(AccountDecision d) =>
 /// wire behaviour is covered separately by `CosmosLinkedStore`'s unit tests.
 class InMemoryLinkedStore implements LinkedStore {
   final Map<String, MaterializedAccount> _accounts = {};
+  final Map<String, MaterializedGroup> _groups = {};
   List<Rollup> _rollups = const [];
   final Map<String, AccountDecision> _decisions = {};
   SyncState _syncState = SyncState.initial;
@@ -109,6 +115,9 @@ class InMemoryLinkedStore implements LinkedStore {
 
   /// How many accounts are currently stored — for test assertions.
   int get accountCount => _accounts.length;
+
+  /// How many group docs are currently stored — for test assertions.
+  int get groupCount => _groups.length;
 
   @override
   Future<SyncState> readSyncState() async => _syncState;
@@ -127,6 +136,9 @@ class InMemoryLinkedStore implements LinkedStore {
       ];
 
   @override
+  Future<List<MaterializedGroup>> readGroups() async => List.of(_groups.values);
+
+  @override
   Future<List<AccountDecision>> readDecisions() async =>
       List.of(_decisions.values);
 
@@ -141,6 +153,9 @@ class InMemoryLinkedStore implements LinkedStore {
     _accounts
       ..clear()
       ..addEntries(view.accounts.map((a) => MapEntry(a.id.value, a)));
+    _groups
+      ..clear()
+      ..addEntries(view.groups.map((g) => MapEntry(g.id.value, g)));
     _rollups = List.of(view.rollups);
     for (final d in droppedDecisions) {
       _decisions.remove(decisionDocId(d));

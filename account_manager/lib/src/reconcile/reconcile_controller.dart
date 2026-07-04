@@ -143,6 +143,9 @@ class ReconcileController extends ChangeNotifier {
   Rollup? _selectedClassroom;
   List<MaterializedAccount>? _classroomAccounts;
   bool _loadingClassroom = false;
+  bool _showingGroups = false;
+  List<MaterializedGroup>? _groupDocs;
+  bool _loadingGroups = false;
   SyncLease? _lock;
 
   /// The per-system last-sync metadata this pass pulled, stamped as each system
@@ -256,6 +259,25 @@ class ReconcileController extends ChangeNotifier {
 
   /// Whether a classroom drill-down read is in flight.
   bool get loadingClassroom => _loadingClassroom;
+
+  /// The single "Klasgroepen" rollup node (#119), or `null` when no group has a
+  /// pending action to drill into.
+  Rollup? get groupRollup {
+    for (final r in _rollups) {
+      if (r.level == RollupLevel.groups) return r;
+    }
+    return null;
+  }
+
+  /// Whether the group ("Klasgroepen") drill-down is currently open.
+  bool get showingGroups => _showingGroups;
+
+  /// The per-group docs of the open group drill-down, lazily loaded from the
+  /// store; `null` until the "Klasgroepen" node is opened (#119).
+  List<MaterializedGroup>? get groupDocs => _groupDocs;
+
+  /// Whether a group drill-down read is in flight.
+  bool get loadingGroups => _loadingGroups;
 
   /// How many pending actions an apply pass would actually write (the
   /// informational group actions are excluded).
@@ -393,6 +415,13 @@ class ReconcileController extends ChangeNotifier {
         log.addError(core.Origin.all, 'Could not refresh ${open.label}: $e');
       }
     }
+    if (_showingGroups) {
+      try {
+        _groupDocs = await store.readGroups();
+      } on Object catch (e) {
+        log.addError(core.Origin.all, 'Could not refresh the class groups: $e');
+      }
+    }
     notifyListeners();
   }
 
@@ -421,6 +450,34 @@ class ReconcileController extends ChangeNotifier {
   void closeClassroom() {
     _selectedClassroom = null;
     _classroomAccounts = null;
+    notifyListeners();
+  }
+
+  /// Opens the "Klasgroepen" drill-down (#119), lazily reading the per-group
+  /// docs from the store (no pull, no `link()`) — the group-family counterpart
+  /// of [openClassroom].
+  Future<void> openGroups() async {
+    _showingGroups = true;
+    _selectedClassroom = null;
+    _classroomAccounts = null;
+    _groupDocs = null;
+    _loadingGroups = true;
+    notifyListeners();
+    try {
+      _groupDocs = await store.readGroups();
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Could not open the class groups: $e');
+      _groupDocs = const [];
+    } finally {
+      _loadingGroups = false;
+      notifyListeners();
+    }
+  }
+
+  /// Closes the group drill-down, back to the overview.
+  void closeGroups() {
+    _showingGroups = false;
+    _groupDocs = null;
     notifyListeners();
   }
 
@@ -569,11 +626,13 @@ class ReconcileController extends ChangeNotifier {
       );
       final merge = mergeDecisions(
         accounts: view.accounts,
+        groups: view.groups,
         existing: await store.readDecisions(),
       );
       final merged = MaterializedView(
         generation: view.generation,
         accounts: merge.accounts,
+        groups: merge.groups,
         rollups: view.rollups,
       );
       final at = _now();
@@ -598,6 +657,8 @@ class ReconcileController extends ChangeNotifier {
       // A re-sync invalidates any open drill-down; the next open re-reads.
       _selectedClassroom = null;
       _classroomAccounts = null;
+      _showingGroups = false;
+      _groupDocs = null;
     } on Object catch (e) {
       log.addError(core.Origin.all, 'Could not persist the linked view: $e');
     }

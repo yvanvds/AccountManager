@@ -124,6 +124,61 @@ LinkedState _movePendingLinked() => LinkedState.recompute(
       staffConfig: _staffConfig,
     );
 
+/// A class present in **both** WISA and Smartschool whose institute number
+/// drifts, so the group dispatch yields exactly one *applyable*
+/// `ModifySmartschoolData` — used to prove the group rollup counts pending.
+LinkedState _modifyPendingLinked() => LinkedState.recompute(
+      wisa: wapi.WisaSnapshot(
+        fetchedAt: _d,
+        students: const [],
+        staff: const [],
+        classGroups: [
+          const wapi.WisaClassGroup(
+            name: '3C',
+            groupName: '00',
+            description: '',
+            adminCode: '',
+            schoolCode: '123',
+            schoolId: 1,
+          ),
+        ],
+        schools: const [],
+      ),
+      smartschool: ss.SmartschoolSnapshot(
+        fetchedAt: _d,
+        groups: [_ssGroup('3C', code: '3C_ss')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: az.AzureSnapshot(fetchedAt: _d, users: const [], groups: const []),
+      resolver: _SeqResolver(),
+      studentConfig: _studentConfig,
+      staffConfig: _staffConfig,
+    );
+
+/// A linked view with no class groups at all (empty on both sides), so the
+/// materializer emits no group docs and no group rollup.
+LinkedState _noGroupsLinked() => LinkedState.recompute(
+      wisa: wapi.WisaSnapshot(
+        fetchedAt: _d,
+        students: [_wStudent()],
+        staff: const [],
+        classGroups: const [],
+        schools: const [],
+      ),
+      smartschool: ss.SmartschoolSnapshot(
+        fetchedAt: _d,
+        groups: const [],
+        accounts: [_ssAccount()],
+        memberships: const [],
+      ),
+      azure:
+          az.AzureSnapshot(fetchedAt: _d, users: [_azUser()], groups: const []),
+      resolver: _SeqResolver(),
+      studentConfig: _studentConfig,
+      staffConfig: _staffConfig,
+    );
+
 MaterializedAccount _account({
   String id = 'p0',
   String school = '1',
@@ -257,6 +312,66 @@ void main() {
     });
   });
 
+  group('materialize groups (#119)', () {
+    test('a group action → a group doc in the groups partition + rollup', () {
+      // The Smartschool-only 2B class raises the informational orphan notice.
+      final view = materialize(_movePendingLinked(), generation: 2);
+
+      expect(view.groups, hasLength(1));
+      final group = view.groups.single;
+      expect(group.id.value, 'group|2B');
+      expect(group.label, '2B');
+      expect(group.school, groupsPartition,
+          reason: 'partition = groups bucket');
+      expect(group.inSmartschool, isTrue);
+      expect(group.inWisa, isFalse);
+      expect(group.candidates, isNotEmpty);
+      expect(group.candidates.every((c) => c.family == 'group'), isTrue);
+      // The orphan notice is informational — nothing to apply.
+      expect(group.hasPending, isFalse);
+
+      final rollup =
+          view.rollups.firstWhere((r) => r.level == RollupLevel.groups);
+      expect(rollup.key, groupsPartition);
+      expect(rollup.school, groupsPartition);
+      expect(rollup.label, 'Klasgroepen');
+      expect(rollup.accountCount, 1);
+      expect(rollup.pendingCount, 0,
+          reason: 'the orphan notice is informational');
+    });
+
+    test('an applyable group action counts toward the group rollup pending',
+        () {
+      final view = materialize(_modifyPendingLinked(), generation: 1);
+
+      final group = view.groups.single;
+      expect(group.inWisa && group.inSmartschool, isTrue);
+      expect(group.candidates.map((c) => c.kind),
+          contains('ModifySmartschoolData'));
+      expect(group.hasPending, isTrue);
+
+      final rollup =
+          view.rollups.firstWhere((r) => r.level == RollupLevel.groups);
+      expect(rollup.pendingCount, greaterThan(0));
+    });
+
+    test('no group actions → no group docs and no group rollup', () {
+      final view = materialize(_noGroupsLinked(), generation: 1);
+      expect(view.groups, isEmpty);
+      expect(view.rollups.where((r) => r.level == RollupLevel.groups), isEmpty);
+    });
+
+    test('every group doc round-trips through JSON', () {
+      final group =
+          materialize(_movePendingLinked(), generation: 1).groups.single;
+      final restored = MaterializedGroup.fromJson(group.toJson());
+      expect(restored.id, group.id);
+      expect(restored.label, group.label);
+      expect(restored.inSmartschool, isTrue);
+      expect(restored.candidates, hasLength(group.candidates.length));
+    });
+  });
+
   group('gradeYearOf', () {
     test('takes the leading digits of the class group', () {
       expect(gradeYearOf('3C'), '3');
@@ -321,6 +436,81 @@ void main() {
       expect(merge.surviving, isEmpty);
     });
 
+    MaterializedGroup group(String key,
+            {List<CandidateAction> candidates = const []}) =>
+        MaterializedGroup(
+          id: id(key),
+          label: key,
+          confidence: core.LinkConfidence.high,
+          inWisa: true,
+          inSmartschool: true,
+          inAzure: false,
+          candidates: candidates,
+        );
+
+    const modifyGroupCandidate = CandidateAction(
+      family: 'group',
+      kind: 'ModifySmartschoolData',
+      system: core.Origin.smartschool,
+      summary: 'Werk de klasgegevens bij in Smartschool',
+    );
+
+    test('re-attaches a group decision whose situation still exists (#119)',
+        () {
+      final merge = mergeDecisions(
+        accounts: const [],
+        groups: [
+          group('group|3C', candidates: const [modifyGroupCandidate]),
+        ],
+        existing: [
+          decision('group|3C', 'ModifySmartschoolData',
+              kind: DecisionKind.appliedStatus),
+        ],
+      );
+
+      expect(merge.surviving, hasLength(1));
+      expect(merge.dropped, isEmpty);
+      expect(merge.groups.single.decisions, hasLength(1));
+    });
+
+    test('drops a group decision whose candidate is gone (#119)', () {
+      final merge = mergeDecisions(
+        accounts: const [],
+        groups: [
+          group('group|3C', candidates: const [modifyGroupCandidate]),
+        ],
+        existing: [
+          decision('group|3C', 'AddToSmartschool',
+              kind: DecisionKind.appliedStatus),
+        ],
+      );
+
+      expect(merge.surviving, isEmpty);
+      expect(merge.dropped, hasLength(1));
+      expect(merge.groups.single.decisions, isEmpty);
+    });
+
+    test('a group decision is not dropped by the account pass (#119)', () {
+      // Accounts and groups share one decisions container; the merge must
+      // consider groups so a group decision is not wrongly dropped for lacking
+      // a matching account.
+      final merge = mergeDecisions(
+        accounts: [
+          _account(id: 'p0', candidates: const [_moveCandidate])
+        ],
+        groups: [
+          group('group|3C', candidates: const [modifyGroupCandidate]),
+        ],
+        existing: [
+          decision('group|3C', 'ModifySmartschoolData',
+              kind: DecisionKind.appliedStatus),
+        ],
+      );
+
+      expect(merge.dropped, isEmpty);
+      expect(merge.surviving, hasLength(1));
+    });
+
     test('an accepted-duplicate survives while the warning is present', () {
       final withWarning = [
         _account(id: 'p0', warnings: const ['Dubbele mail']),
@@ -357,7 +547,11 @@ void main() {
       expect(state.generation, 1);
       expect(state.updatedBy, 'op@school.example');
 
-      expect(await store.readRollups(), hasLength(3));
+      // Three account rollups (school / grade / classroom) plus the single
+      // group rollup (#119).
+      final rollups = await store.readRollups();
+      expect(rollups.where((r) => r.level != RollupLevel.groups), hasLength(3));
+      expect(rollups.where((r) => r.level == RollupLevel.groups), hasLength(1));
 
       final classroom = await store.readClassroom(school: '1', classroom: '3C');
       expect(classroom, hasLength(1));
@@ -387,6 +581,30 @@ void main() {
       );
       expect(store.accountCount, 0);
       expect((await store.readSyncState()).generation, 2);
+    });
+
+    test('write then read: group docs, cleared on a groupless re-sync (#119)',
+        () async {
+      final store = InMemoryLinkedStore();
+      final view = materialize(_movePendingLinked(), generation: 1);
+      expect(view.groups, isNotEmpty);
+
+      await store.writeMaterialized(view,
+          syncedBy: 'op@school.example', at: _d);
+
+      final groups = await store.readGroups();
+      expect(groups.map((g) => g.label), contains('2B'));
+      expect(store.groupCount, view.groups.length);
+
+      // A re-sync whose view has no groups clears the stored group docs.
+      await store.writeMaterialized(
+        const MaterializedView(
+            generation: 2, accounts: [], rollups: [], groups: []),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      expect(store.groupCount, 0);
+      expect(await store.readGroups(), isEmpty);
     });
 
     test('putDecision persists; writeMaterialized drops the ones passed',

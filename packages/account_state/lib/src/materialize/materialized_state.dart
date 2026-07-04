@@ -112,12 +112,18 @@ enum DecisionKind {
   static DecisionKind fromJson(String s) => values.byName(s);
 }
 
-/// A persisted operator decision about one account.
+/// A persisted operator decision about one account **or class group**.
 ///
 /// [targetKind] is the "situation" the decision resolves — the [kind] of the
 /// [CandidateAction] it applies to, or a warning id for [acceptedDuplicate]. On
-/// the next sync the merge keeps this decision only while an account still has
+/// the next sync the merge keeps this decision only while its target still has
 /// a matching situation (see [mergeDecisions]).
+///
+/// [accountId] is the stable key of the target the decision belongs to: a
+/// [MaterializedAccount.id] for an account/staff decision, or a
+/// [MaterializedGroup.id] for a group decision (#119). Both share this one
+/// decisions container, so the merge considers accounts and groups together and
+/// never drops a group decision just because it is not an account.
 class AccountDecision {
   const AccountDecision({
     required this.accountId,
@@ -128,6 +134,8 @@ class AccountDecision {
     required this.decidedAt,
   });
 
+  /// The stable key of the target (an account/staff id, or a group id) this
+  /// decision belongs to.
   final core.LinkedAccountId accountId;
   final DecisionKind kind;
 
@@ -300,11 +308,120 @@ class MaterializedAccount {
       );
 }
 
+/// The synthetic partition (and rollup school) every [MaterializedGroup] and the
+/// group [Rollup] share (#119). Class groups have no natural school partition the
+/// way a student does, so they live in one logical partition of their own — the
+/// mirror of the `staff` bucket accounts use.
+const String groupsPartition = 'groups';
+
+/// One linked **class group** as a stored document (#119).
+///
+/// The group-family counterpart of [MaterializedAccount]: where a per-account
+/// doc drills down through school / grade-year / classroom, a group action
+/// targets a `LinkedGroup` (an orphan Smartschool class, a WISA class that needs
+/// creating downstream, a class whose data drifted), which does not fit that
+/// per-account shape. So the materializer emits these as their own documents in
+/// the [groupsPartition], surfaced by the passive drill-down under a single
+/// "Klasgroepen" node rather than inside a classroom.
+///
+/// Like [MaterializedAccount] it is rewritten wholesale every sync, carries the
+/// per-system presence and the computed [candidates], and re-attaches the
+/// still-applicable operator [decisions] the last merge kept.
+class MaterializedGroup {
+  const MaterializedGroup({
+    required this.id,
+    required this.label,
+    required this.confidence,
+    required this.inWisa,
+    required this.inSmartschool,
+    required this.inAzure,
+    this.candidates = const [],
+    this.decisions = const [],
+  });
+
+  /// The stable cross-system key of the group — the document id, and the key an
+  /// [AccountDecision] targets a group by.
+  final core.LinkedAccountId id;
+
+  /// Display name for the group (its WISA/Smartschool/Azure name).
+  final String label;
+
+  final core.LinkConfidence confidence;
+
+  final bool inWisa;
+  final bool inSmartschool;
+  final bool inAzure;
+
+  /// The computed candidate group actions (e.g. an orphan-class notice, a
+  /// create/modify). Some are informational (`canApply == false`).
+  final List<CandidateAction> candidates;
+
+  /// Still-applicable operator decisions re-attached by the last sync.
+  final List<AccountDecision> decisions;
+
+  /// The partition every group document shares — [groupsPartition].
+  String get school => groupsPartition;
+
+  /// Whether an apply pass would write anything here: at least one applyable
+  /// candidate (the informational notices do not count).
+  bool get hasPending => candidates.any((c) => c.canApply);
+
+  MaterializedGroup withDecisions(List<AccountDecision> decisions) =>
+      MaterializedGroup(
+        id: id,
+        label: label,
+        confidence: confidence,
+        inWisa: inWisa,
+        inSmartschool: inSmartschool,
+        inAzure: inAzure,
+        candidates: candidates,
+        decisions: decisions,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id.toJson(),
+        'pk': groupsPartition,
+        'label': label,
+        'confidence': confidence.toJson(),
+        'inWisa': inWisa,
+        'inSmartschool': inSmartschool,
+        'inAzure': inAzure,
+        if (candidates.isNotEmpty)
+          'candidates': [for (final c in candidates) c.toJson()],
+        if (decisions.isNotEmpty)
+          'decisions': [for (final d in decisions) d.toJson()],
+      };
+
+  factory MaterializedGroup.fromJson(Map<String, dynamic> json) =>
+      MaterializedGroup(
+        id: core.LinkedAccountId(json['id'] as String),
+        label: json['label'] as String,
+        confidence: core.LinkConfidence.fromJson(json['confidence'] as String),
+        inWisa: json['inWisa'] as bool? ?? false,
+        inSmartschool: json['inSmartschool'] as bool? ?? false,
+        inAzure: json['inAzure'] as bool? ?? false,
+        candidates: [
+          for (final c in (json['candidates'] as List? ?? const []))
+            CandidateAction.fromJson(c as Map<String, dynamic>),
+        ],
+        decisions: [
+          for (final d in (json['decisions'] as List? ?? const []))
+            AccountDecision.fromJson(d as Map<String, dynamic>),
+        ],
+      );
+}
+
 /// Which level of the drill-down a [Rollup] aggregates.
 enum RollupLevel {
   school,
   gradeYear,
   classroom,
+
+  /// The single top-level "Klasgroepen" node aggregating every
+  /// [MaterializedGroup] (#119). It sits outside the school → grade-year →
+  /// classroom tree; its [Rollup.accountCount] counts the group docs and
+  /// [Rollup.pendingCount] their applyable actions.
+  groups,
   ;
 
   String toJson() => name;
@@ -539,16 +656,21 @@ class LeaseOutcome {
   bool get heldByOther => !acquired;
 }
 
-/// The complete materialized output of one sync: the per-account docs plus the
-/// derived [rollups], stamped with the [generation] the store will write.
+/// The complete materialized output of one sync: the per-account docs, the
+/// per-group docs (#119), and the derived [rollups] (which include the single
+/// group node), stamped with the [generation] the store will write.
 class MaterializedView {
   const MaterializedView({
     required this.generation,
     required this.accounts,
     required this.rollups,
+    this.groups = const [],
   });
 
   final int generation;
   final List<MaterializedAccount> accounts;
+
+  /// The per-group documents for the group-action family (#119).
+  final List<MaterializedGroup> groups;
   final List<Rollup> rollups;
 }

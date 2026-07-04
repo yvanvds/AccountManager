@@ -342,6 +342,58 @@ void main() {
     });
   });
 
+  group('materialized group actions (#119)', () {
+    test('a sync materializes group docs + a group rollup', () async {
+      // The fixture's two Smartschool-only classes (2B, 3C) raise the
+      // informational orphan notice — the group family.
+      final h = ReconcileHarness();
+
+      await h.controller.sync();
+
+      expect(h.linkedStore.groupCount, greaterThan(0));
+      final groups = await h.linkedStore.readGroups();
+      expect(groups.map((g) => g.label), containsAll(['2B', '3C']));
+      expect(h.controller.groupRollup, isNotNull);
+      expect(h.controller.groupRollup!.accountCount, groups.length);
+    });
+
+    test(
+        'a passive session opens the Klasgroepen drill-down with no pull or '
+        'link()', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+
+      // Session 1 syncs and materializes the shared view.
+      await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+          .controller
+          .sync();
+
+      // Session 2: a fresh, passive controller over the same stores.
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+
+      expect(s2.controller.groupRollup, isNotNull,
+          reason: 'the group rollup came from the shared store');
+
+      await s2.controller.openGroups();
+
+      expect(s2.controller.showingGroups, isTrue);
+      expect(s2.controller.groupDocs, isNotEmpty);
+      // No connector pull and no linked view derived this session.
+      expect(s2.wisaSyncs, 0);
+      expect(s2.ssSyncs, 0);
+      expect(s2.azSyncs, 0);
+      expect(s2.controller.linked, isNull);
+
+      s2.controller.closeGroups();
+      expect(s2.controller.showingGroups, isFalse);
+      expect(s2.controller.groupDocs, isNull);
+    });
+  });
+
   group('passive session reads the store (#115)', () {
     test(
         'a resumed session renders the overview and drills into a classroom '
