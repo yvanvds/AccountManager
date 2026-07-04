@@ -8,6 +8,18 @@ import 'reconcile_fakes.dart';
 
 Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
+/// Gives the reconcile screen a tall viewport so the below-the-fold sections
+/// (overview, pending actions, results) are laid out without scrolling. The
+/// body is now a lazy [CustomScrollView] (#111), so — unlike the old eager
+/// `SingleChildScrollView` — off-screen slivers are not built; a tall window
+/// keeps these presence-only assertions honest without a scroll on every one.
+/// Width is left at the default 800 so horizontal layout is unchanged.
+void _useTallWindow(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 2400);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+}
+
 void main() {
   testWidgets('shows the not-configured panel when AAD is absent',
       (WidgetTester tester) async {
@@ -70,6 +82,7 @@ void main() {
   testWidgets(
       'sync → overview → pending actions → dry-run → apply → unchanged banner',
       (WidgetTester tester) async {
+    _useTallWindow(tester);
     final harness = ReconcileHarness();
     await tester.pumpWidget(
       _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
@@ -131,6 +144,7 @@ void main() {
 
   testWidgets('cancelling the apply dialog writes nothing',
       (WidgetTester tester) async {
+    _useTallWindow(tester);
     final harness = ReconcileHarness();
     await tester.pumpWidget(
       _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
@@ -388,6 +402,7 @@ void main() {
       'a departed student renders one entry with a unregister/delete choice; '
       'picking delete applies delete, not unregister (#110)',
       (WidgetTester tester) async {
+    _useTallWindow(tester);
     final harness = departedHarness();
     await tester
         .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
@@ -437,6 +452,7 @@ void main() {
   testWidgets(
       'a same-situation subset offers a bulk apply that respects each row\'s '
       'choice (#110)', (WidgetTester tester) async {
+    _useTallWindow(tester);
     final harness = departedHarness(count: 2);
     await tester
         .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
@@ -469,6 +485,7 @@ void main() {
   testWidgets(
       'a duplicate-mail warning drills down to its accounts; accepting demotes '
       'it and revoking restores it (#109)', (WidgetTester tester) async {
+    _useTallWindow(tester);
     final linkedStore = InMemoryLinkedStore();
     final harness = dupMailHarness(linkedStore: linkedStore);
     await tester
@@ -504,6 +521,57 @@ void main() {
     await tester.pumpAndSettle();
     expect(await linkedStore.readDecisions(), isEmpty);
     expect(find.byKey(const ValueKey('dup-accept-$mail')), findsOneWidget);
+  });
+
+  testWidgets(
+      'a large pending set virtualizes: only a bounded number of entry tiles '
+      'build, and scrolling builds/unloads them (#111)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = manyDepartedHarness(count: 2000);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // All 2000 accounts are one pending entry each (one situation subset).
+    expect(harness.controller.pendingEntries, hasLength(2000));
+
+    // The lazy SliverList builds only the on-screen tiles — nowhere near 2000.
+    final entryTiles = find.byWidgetPredicate(
+      (w) =>
+          w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('entry-'),
+    );
+    final builtInitially = entryTiles.evaluate().length;
+    expect(builtInitially, greaterThan(0));
+    expect(
+      builtInitially,
+      lessThan(200),
+      reason: 'virtualized: on-screen tiles only, not all 2000',
+    );
+
+    // A far-off entry is not built yet…
+    final entries = harness.controller.pendingEntries;
+    final firstKey = ValueKey('entry-student-${entries.first.targetId}');
+    final lastKey = ValueKey('entry-student-${entries.last.targetId}');
+    expect(find.byKey(lastKey), findsNothing);
+
+    // …scrolling to it builds it on demand (and unloads the top of the list).
+    await tester.scrollUntilVisible(
+      find.byKey(lastKey),
+      5000,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 200,
+    );
+    expect(find.byKey(lastKey), findsOneWidget);
+    expect(
+      find.byKey(firstKey),
+      findsNothing,
+      reason: 'the first tile unloaded once scrolled far off-screen',
+    );
   });
 
   testWidgets('the log panel clears on demand', (WidgetTester tester) async {

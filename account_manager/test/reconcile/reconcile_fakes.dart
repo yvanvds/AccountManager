@@ -205,6 +205,28 @@ ReconcileHarness dupMailHarness({
       syncedBy: syncedBy,
     );
 
+/// A reconcile harness over [count] WISA-departed, Smartschool-only active
+/// accounts (no WISA, no Azure): each raises the mutually-exclusive
+/// unregister/delete choice (#110), so the pending list holds [count] entries in
+/// one "same situation" subset — a large set to exercise list virtualization
+/// (#111).
+ReconcileHarness manyDepartedHarness({int count = 2000}) => ReconcileHarness(
+      wisa: wisaSnap(students: const []),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          for (var i = 0; i < count; i++)
+            ssAccount(
+              uid: 'user$i',
+              accountId: '$i',
+              mail: 'user$i@student.school.example',
+            ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+
 az.AzureSnapshot azSnap({DateTime? fetchedAt, List<az.AzureUser>? users}) =>
     az.AzureSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,

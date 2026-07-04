@@ -105,6 +105,27 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
   }
 }
 
+/// One row of the flattened pending-actions list (#111): a same-situation
+/// bulk header or a single account entry. Flattening the situation → entries
+/// tree into a linear list lets a lazy [SliverList] build only the on-screen
+/// rows, so a September changeover's hundreds/thousands of tiles no longer all
+/// build, lay out, and paint every frame.
+sealed class _PendingRow {
+  const _PendingRow();
+}
+
+class _SituationHeaderRow extends _PendingRow {
+  const _SituationHeaderRow(this.entries);
+
+  final List<PendingAccountEntry> entries;
+}
+
+class _EntryRow extends _PendingRow {
+  const _EntryRow(this.entry);
+
+  final PendingAccountEntry entry;
+}
+
 class _ReconcileBody extends StatelessWidget {
   const _ReconcileBody({required this.controller, required this.log});
 
@@ -116,44 +137,19 @@ class _ReconcileBody extends StatelessWidget {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        final linked = controller.linked;
         return Column(
           children: <Widget>[
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(PlinkSpacing.s6),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 960),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        _Header(controller: controller),
-                        const SizedBox(height: PlinkSpacing.s5),
-                        _StatusBanner(controller: controller),
-                        if (controller.selectedClassroom != null) ...<Widget>[
-                          const SizedBox(height: PlinkSpacing.s5),
-                          _ClassroomDetail(controller: controller),
-                        ] else if (controller.showingGroups) ...<Widget>[
-                          const SizedBox(height: PlinkSpacing.s5),
-                          _GroupsDetail(controller: controller),
-                        ] else if (controller.hasOverview) ...<Widget>[
-                          const SizedBox(height: PlinkSpacing.s5),
-                          _DrillDownSection(controller: controller),
-                        ],
-                        if (linked != null) ...<Widget>[
-                          const SizedBox(height: PlinkSpacing.s5),
-                          _OverviewSection(
-                            linked: linked,
-                            controller: controller,
-                          ),
-                          const SizedBox(height: PlinkSpacing.s5),
-                          _ActionsSection(controller: controller),
-                        ],
-                        ..._results(context),
-                      ],
-                    ),
-                  ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  // A CustomScrollView with lazy SliverLists for the pending
+                  // actions and the results, so only the visible tiles are
+                  // built — the fixed header/overview/banner stay as adapters
+                  // (#111). Slivers sit directly under the scroll view (not in a
+                  // SliverMainAxisGroup) so the scroll cache extent reaches the
+                  // sections below the fold.
+                  child: CustomScrollView(slivers: _slivers()),
                 ),
               ),
             ),
@@ -165,28 +161,143 @@ class _ReconcileBody extends StatelessWidget {
     );
   }
 
-  List<Widget> _results(BuildContext context) {
+  /// The horizontal inset that stands in for the old body padding; vertical
+  /// insets are the leading/trailing gaps and the inter-section [_gap]s.
+  static const EdgeInsets _hPad =
+      EdgeInsets.symmetric(horizontal: PlinkSpacing.s6);
+
+  /// A fixed-size section: its child laid out once, inset to the body margin.
+  static Widget _section(Widget child) => SliverPadding(
+        padding: _hPad,
+        sliver: SliverToBoxAdapter(child: child),
+      );
+
+  /// A vertical spacer between sections (no horizontal inset needed).
+  static SliverToBoxAdapter _gap(double height) =>
+      SliverToBoxAdapter(child: SizedBox(height: height));
+
+  List<Widget> _slivers() {
+    final linked = controller.linked;
+    final slivers = <Widget>[
+      _gap(PlinkSpacing.s6),
+      _section(_Header(controller: controller)),
+      _gap(PlinkSpacing.s5),
+      _section(_StatusBanner(controller: controller)),
+    ];
+    if (controller.selectedClassroom != null) {
+      slivers
+        ..add(_gap(PlinkSpacing.s5))
+        ..add(_section(_ClassroomDetail(controller: controller)));
+    } else if (controller.showingGroups) {
+      slivers
+        ..add(_gap(PlinkSpacing.s5))
+        ..add(_section(_GroupsDetail(controller: controller)));
+    } else if (controller.hasOverview) {
+      slivers
+        ..add(_gap(PlinkSpacing.s5))
+        ..add(_section(_DrillDownSection(controller: controller)));
+    }
+    if (linked != null) {
+      slivers
+        ..add(_gap(PlinkSpacing.s5))
+        ..add(
+            _section(_OverviewSection(linked: linked, controller: controller)))
+        ..add(_gap(PlinkSpacing.s5))
+        ..addAll(_actionsSlivers());
+    }
+    slivers
+      ..addAll(_resultsSlivers())
+      ..add(_gap(PlinkSpacing.s6));
+    return slivers;
+  }
+
+  /// The pending-actions section (#110/#111): the title and dry-run/apply
+  /// buttons stay as adapters, but the situation headers and per-account entry
+  /// tiles render through a lazy [SliverList] so a huge pending set does not
+  /// build every tile up front.
+  List<Widget> _actionsSlivers() {
+    final entries = controller.pendingEntries;
+    if (entries.isEmpty) {
+      return <Widget>[_section(const _PendingActionsHeader(count: 0))];
+    }
+    final rows = _pendingRows(controller.pendingSituations);
+    return <Widget>[
+      _section(_PendingActionsHeader(count: entries.length)),
+      SliverPadding(
+        padding: _hPad,
+        sliver: SliverList.builder(
+          itemCount: rows.length,
+          itemBuilder: (context, index) {
+            final row = rows[index];
+            return switch (row) {
+              _SituationHeaderRow(:final entries) =>
+                _SituationHeader(controller: controller, entries: entries),
+              _EntryRow(:final entry) =>
+                _PendingEntryTile(controller: controller, entry: entry),
+            };
+          },
+        ),
+      ),
+      _section(_PendingActionsFooter(controller: controller)),
+    ];
+  }
+
+  static List<_PendingRow> _pendingRows(
+    List<List<PendingAccountEntry>> situations,
+  ) {
+    final rows = <_PendingRow>[];
+    for (final subset in situations) {
+      if (subset.length > 1) rows.add(_SituationHeaderRow(subset));
+      for (final entry in subset) {
+        rows.add(_EntryRow(entry));
+      }
+    }
+    return rows;
+  }
+
+  List<Widget> _resultsSlivers() {
     final dry = controller.dryRunResults;
     final applied = controller.applyResults;
-    return <Widget>[
-      if (dry != null) ...<Widget>[
-        const SizedBox(height: PlinkSpacing.s5),
-        _ResultsSection(
+    final slivers = <Widget>[];
+    if (dry != null) {
+      slivers
+        ..add(_gap(PlinkSpacing.s5))
+        ..addAll(_resultSectionSlivers(
           title: 'Dry-run result',
           subtitle: 'No changes were written. This is what an apply would do.',
           results: dry,
-        ),
-      ],
-      if (applied != null) ...<Widget>[
-        const SizedBox(height: PlinkSpacing.s5),
-        _ResultsSection(
+        ));
+    }
+    if (applied != null) {
+      slivers
+        ..add(_gap(PlinkSpacing.s5))
+        ..addAll(_resultSectionSlivers(
           title: 'Apply result',
           subtitle: 'Written to the target systems.',
           results: applied,
-        ),
-      ],
-    ];
+        ));
+    }
+    return slivers;
   }
+
+  /// One dry-run/apply result set (#111): its header is an adapter and its
+  /// outcome rows render through a lazy [SliverList] — an apply over thousands
+  /// of accounts yields thousands of rows.
+  List<Widget> _resultSectionSlivers({
+    required String title,
+    required String subtitle,
+    required List<ActionOutcomeEntry> results,
+  }) =>
+      <Widget>[
+        _section(_ResultsHeader(title: title, subtitle: subtitle)),
+        SliverPadding(
+          padding: _hPad,
+          sliver: SliverList.builder(
+            itemCount: results.length,
+            itemBuilder: (context, index) => _ResultRow(result: results[index]),
+          ),
+        ),
+      ];
 }
 
 class _Header extends StatelessWidget {
@@ -561,73 +672,81 @@ Future<void> _confirmAndApply(
   if (confirmed ?? false) await apply();
 }
 
-/// The pending-actions list (#110): **one entry per account**, mutually
-/// exclusive resolutions rendered as a choice, and per-entry / per-situation
-/// apply as the primary affordances. The global "apply all" is kept as a
-/// secondary escape hatch, not the headline.
-class _ActionsSection extends StatelessWidget {
-  const _ActionsSection({required this.controller});
+/// The pending-actions title (#110/#111): the "Pending actions (N)" heading,
+/// plus the "everything is in sync" line when there is nothing to do. Kept a
+/// fixed-size adapter above the lazy entry list.
+class _PendingActionsHeader extends StatelessWidget {
+  const _PendingActionsHeader({required this.count});
 
-  final ReconcileController controller;
+  final int count;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final entries = controller.pendingEntries;
-    final situations = controller.pendingSituations;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Pending actions (${entries.length})', style: text.titleMedium),
+        Text('Pending actions ($count)', style: text.titleMedium),
         const SizedBox(height: PlinkSpacing.s3),
-        if (entries.isEmpty)
+        if (count == 0)
           Text(
             'Everything is in sync — no pending actions.',
             style: text.bodyMedium,
-          )
-        else ...<Widget>[
-          for (final subset in situations)
-            _SituationSection(controller: controller, entries: subset),
-          const SizedBox(height: PlinkSpacing.s3),
-          Wrap(
-            spacing: PlinkSpacing.s3,
-            children: <Widget>[
-              OutlinedButton.icon(
-                key: const ValueKey('reconcile-dry-run'),
-                onPressed: controller.busy || controller.applyableCount == 0
-                    ? null
-                    : controller.dryRun,
-                icon: const Icon(Icons.visibility_outlined),
-                label: const Text('Dry-run all'),
-              ),
-              TextButton.icon(
-                key: const ValueKey('reconcile-apply'),
-                onPressed: controller.busy || controller.applyableCount == 0
-                    ? null
-                    : () => _confirmAndApply(
-                          context,
-                          title: 'Apply pending actions?',
-                          count: controller.applyableCount,
-                          apply: controller.applyAll,
-                        ),
-                icon: const Icon(Icons.play_arrow_outlined),
-                label: const Text('Apply all'),
-              ),
-            ],
           ),
-        ],
       ],
     );
   }
 }
 
-/// One "same situation" subset (#110): the entries whose situation matches, with
-/// a bulk "apply this resolution to all" affordance that honours each entry's
-/// own chosen alternative. The bulk header only appears when more than one
-/// account is in the situation — a lone entry is resolved from its own tile.
-class _SituationSection extends StatelessWidget {
-  const _SituationSection({required this.controller, required this.entries});
+/// The global dry-run/apply affordances (#110): the secondary escape hatch that
+/// acts on every pending entry's chosen resolution. Sits below the lazy entry
+/// list as a fixed-size adapter (#111).
+class _PendingActionsFooter extends StatelessWidget {
+  const _PendingActionsFooter({required this.controller});
+
+  final ReconcileController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: PlinkSpacing.s3),
+      child: Wrap(
+        spacing: PlinkSpacing.s3,
+        children: <Widget>[
+          OutlinedButton.icon(
+            key: const ValueKey('reconcile-dry-run'),
+            onPressed: controller.busy || controller.applyableCount == 0
+                ? null
+                : controller.dryRun,
+            icon: const Icon(Icons.visibility_outlined),
+            label: const Text('Dry-run all'),
+          ),
+          TextButton.icon(
+            key: const ValueKey('reconcile-apply'),
+            onPressed: controller.busy || controller.applyableCount == 0
+                ? null
+                : () => _confirmAndApply(
+                      context,
+                      title: 'Apply pending actions?',
+                      count: controller.applyableCount,
+                      apply: controller.applyAll,
+                    ),
+            icon: const Icon(Icons.play_arrow_outlined),
+            label: const Text('Apply all'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The bulk header of one "same situation" subset (#110): the "apply this
+/// resolution to all" affordance that honours each entry's own chosen
+/// alternative. Rendered as its own row in the lazy list (#111), only when more
+/// than one account shares the situation — a lone entry is resolved from its
+/// own tile.
+class _SituationHeader extends StatelessWidget {
+  const _SituationHeader({required this.controller, required this.entries});
 
   final ReconcileController controller;
   final List<PendingAccountEntry> entries;
@@ -638,52 +757,43 @@ class _SituationSection extends StatelessWidget {
     final key = entries.first.situationKey;
     final applyable = entries.where((e) => e.canApply).length;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        if (entries.length > 1) ...<Widget>[
-          Padding(
-            padding: const EdgeInsets.only(
-              top: PlinkSpacing.s2,
-              bottom: PlinkSpacing.s2,
-            ),
-            child: Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    '${entries.first.situationLabel} — ${entries.length} '
-                    'accounts in the same situation',
-                    style: text.titleSmall,
-                  ),
-                ),
-                const SizedBox(width: PlinkSpacing.s2),
-                OutlinedButton(
-                  key: ValueKey('situation-dry-run-$key'),
-                  onPressed: controller.busy || applyable == 0
-                      ? null
-                      : () => controller.dryRunSituation(key),
-                  child: const Text('Dry-run all'),
-                ),
-                const SizedBox(width: PlinkSpacing.s2),
-                FilledButton(
-                  key: ValueKey('situation-apply-$key'),
-                  onPressed: controller.busy || applyable == 0
-                      ? null
-                      : () => _confirmAndApply(
-                            context,
-                            title: 'Apply to ${entries.length} accounts?',
-                            count: applyable,
-                            apply: () => controller.applySituation(key),
-                          ),
-                  child: Text('Apply to all ($applyable)'),
-                ),
-              ],
+    return Padding(
+      padding: const EdgeInsets.only(
+        top: PlinkSpacing.s2,
+        bottom: PlinkSpacing.s2,
+      ),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              '${entries.first.situationLabel} — ${entries.length} '
+              'accounts in the same situation',
+              style: text.titleSmall,
             ),
           ),
+          const SizedBox(width: PlinkSpacing.s2),
+          OutlinedButton(
+            key: ValueKey('situation-dry-run-$key'),
+            onPressed: controller.busy || applyable == 0
+                ? null
+                : () => controller.dryRunSituation(key),
+            child: const Text('Dry-run all'),
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          FilledButton(
+            key: ValueKey('situation-apply-$key'),
+            onPressed: controller.busy || applyable == 0
+                ? null
+                : () => _confirmAndApply(
+                      context,
+                      title: 'Apply to ${entries.length} accounts?',
+                      count: applyable,
+                      apply: () => controller.applySituation(key),
+                    ),
+            child: Text('Apply to all ($applyable)'),
+          ),
         ],
-        for (final entry in entries)
-          _PendingEntryTile(controller: controller, entry: entry),
-      ],
+      ),
     );
   }
 }
@@ -1196,22 +1306,17 @@ class _AccountTile extends StatelessWidget {
   }
 }
 
-class _ResultsSection extends StatelessWidget {
-  const _ResultsSection({
-    required this.title,
-    required this.subtitle,
-    required this.results,
-  });
+/// The header of a dry-run/apply result set: its title and subtitle, above the
+/// lazy list of outcome rows (#111).
+class _ResultsHeader extends StatelessWidget {
+  const _ResultsHeader({required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;
-  final List<ActionOutcomeEntry> results;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme colors = Theme.of(context).colorScheme;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -1219,34 +1324,47 @@ class _ResultsSection extends StatelessWidget {
         const SizedBox(height: PlinkSpacing.s1),
         Text(subtitle, style: text.bodySmall),
         const SizedBox(height: PlinkSpacing.s3),
-        for (final r in results)
-          Padding(
-            padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Icon(
-                  r.outcome == actions.ActionOutcome.failed
-                      ? Icons.close
-                      : Icons.check,
-                  size: 16,
-                  color: r.outcome == actions.ActionOutcome.failed
-                      ? colors.error
-                      : colors.primary,
-                ),
-                const SizedBox(width: PlinkSpacing.s2),
-                Expanded(
-                  child: Text(
-                    r.outcome == actions.ActionOutcome.failed
-                        ? '${r.target} — ${r.changes.summary}: ${r.error}'
-                        : '${r.target} — ${r.changes.summary}',
-                    style: text.bodySmall,
-                  ),
-                ),
-              ],
+      ],
+    );
+  }
+}
+
+/// One outcome row of a dry-run/apply pass (#111): the check/cross plus the
+/// target and its change summary (or the failure cause). Built lazily by the
+/// results [SliverList].
+class _ResultRow extends StatelessWidget {
+  const _ResultRow({required this.result});
+
+  final ActionOutcomeEntry result;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final failed = result.outcome == actions.ActionOutcome.failed;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            failed ? Icons.close : Icons.check,
+            size: 16,
+            color: failed ? colors.error : colors.primary,
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            child: Text(
+              failed
+                  ? '${result.target} — ${result.changes.summary}: '
+                      '${result.error}'
+                  : '${result.target} — ${result.changes.summary}',
+              style: text.bodySmall,
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 }

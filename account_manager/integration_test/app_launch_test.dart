@@ -52,6 +52,16 @@ void main() {
     schoolPrefix: 'GBS',
   ));
 
+  /// Gives the app a tall viewport so the reconcile screen's below-the-fold
+  /// sections lay out without scrolling. The body is a lazy [CustomScrollView]
+  /// (#111), so off-screen slivers are not built; a tall window keeps the
+  /// presence-only assertions honest. Reset after each test.
+  void useTallWindow(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
+
   testWidgets('the app launches into the Plink-themed Home shell',
       (WidgetTester tester) async {
     // The real main(): with no --dart-define config, AAD is not configured, so
@@ -99,6 +109,7 @@ void main() {
     // The real app composition — shell, navigation, theme — over the offline
     // reconcile harness (scripted syncers + recording transports), driven the
     // way the operator drives it.
+    useTallWindow(tester);
     final harness = ReconcileHarness();
     final broker = _FakeBroker(silent: (_) => _token('AT'));
     await tester.pumpWidget(AccountManagerApp(
@@ -160,6 +171,7 @@ void main() {
     // A WISA-departed student: a Smartschool-only active account (no WISA, no
     // Azure) whose dispatcher yields the mutually-exclusive unregister/delete
     // resolutions — the exact situation #110 fixes.
+    useTallWindow(tester);
     final harness = ReconcileHarness(
       wisa: wisaSnap(students: const []),
       smartschool: ssSnap(
@@ -216,6 +228,52 @@ void main() {
     expect(summaries, contains('Verwijder dit account uit Smartschool'));
     expect(summaries, isNot(contains('Schrijf de leerling uit in Smartschool')),
         reason: 'only the chosen resolution ran — never both');
+  });
+
+  testWidgets(
+      'a large pending set virtualizes in the real app: only a bounded number '
+      'of entry tiles build, and scrolling loads more (#111)',
+      (WidgetTester tester) async {
+    // A September-changeover-scale pending set (a thousand WISA-departed
+    // accounts) in the real, laid-out app. The old eager Column built every
+    // tile up front; the lazy CustomScrollView builds only the on-screen ones.
+    useTallWindow(tester);
+    final harness = manyDepartedHarness(count: 1000);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // All 1000 accounts are pending, but only a small window of tiles is built.
+    expect(harness.controller.pendingEntries, hasLength(1000));
+    final entryTiles = find.byWidgetPredicate(
+      (w) =>
+          w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('entry-'),
+    );
+    final builtInitially = entryTiles.evaluate().length;
+    expect(builtInitially, greaterThan(0));
+    expect(builtInitially, lessThan(200),
+        reason: 'virtualized: on-screen tiles only, not all 1000');
+
+    // A far-off entry is not built until scrolled to.
+    final entries = harness.controller.pendingEntries;
+    final lastKey = ValueKey('entry-student-${entries.last.targetId}');
+    expect(find.byKey(lastKey), findsNothing);
+    await tester.scrollUntilVisible(
+      find.byKey(lastKey),
+      5000,
+      scrollable: find.byType(Scrollable).first,
+      maxScrolls: 200,
+    );
+    expect(find.byKey(lastKey), findsOneWidget);
   });
 
   testWidgets(
@@ -554,6 +612,7 @@ void main() {
     // Two Smartschool accounts share one mail (INV-23) — the deliberate
     // admin+user collision the operator accepts. The whole run is offline over
     // the recording transports, driven the way the operator drives it.
+    useTallWindow(tester);
     final linkedStore = InMemoryLinkedStore();
     final harness = dupMailHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
