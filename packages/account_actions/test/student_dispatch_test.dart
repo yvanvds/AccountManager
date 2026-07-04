@@ -39,6 +39,31 @@ void main() {
       );
     });
 
+    test('unregister and delete are mutually exclusive alternatives (#110)',
+        () {
+      final actions = studentActionsFor(
+        linked(smartschool: ssAccount(status: 'actief')),
+        cfg,
+      );
+      final unregister =
+          actions.whereType<UnregisterStudentFromSmartschool>().single;
+      final delete = actions.whereType<DeleteStudentFromSmartschool>().single;
+
+      // Both expose the same non-null alternative group, so the UI can pair them.
+      expect(unregister.alternativeGroup, smartschoolDepartureAlternative);
+      expect(delete.alternativeGroup, smartschoolDepartureAlternative);
+      expect(unregister.alternativeGroup, delete.alternativeGroup);
+
+      // Unregister (keep the account) is the safe default; delete is not.
+      expect(unregister.isDefaultAlternative, isTrue);
+      expect(delete.isDefaultAlternative, isFalse);
+    });
+
+    test('a lone action carries no alternative group (#110)', () {
+      final actions = studentActionsFor(linked(wisa: wisaStudent()), cfg);
+      expect(actions.single.alternativeGroup, isNull);
+    });
+
     test('disabled Smartschool-only account → Delete only (not Unregister)',
         () {
       final actions = studentActionsFor(

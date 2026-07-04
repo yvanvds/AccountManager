@@ -73,6 +73,119 @@ class ActionOutcomeEntry {
   final Object? error;
 }
 
+/// One selectable resolution inside a [PendingAccountEntry] (#110).
+///
+/// Wraps the live action to run when this alternative is chosen, plus the pure
+/// description the list renders. [group] is the [actions.StudentAction]-style
+/// alternative-group key — non-null only when this option is one of several
+/// mutually-exclusive alternatives.
+class PendingActionOption {
+  const PendingActionOption({
+    required this.action,
+    required this.kind,
+    required this.group,
+    required this.isDefault,
+    required this.family,
+    required this.target,
+    required this.changes,
+    required this.canApply,
+  });
+
+  /// The live `StudentAction` / `StaffAction` / `GroupAction` this option runs.
+  final Object action;
+
+  /// The action's class name — the stable discriminator a decision keys on.
+  final String kind;
+
+  /// The mutually-exclusive-alternative key, or `null` when the option stands
+  /// alone (see [actions.StudentAction.alternativeGroup]).
+  final String? group;
+
+  /// Whether this is the pre-selected default of its alternative group.
+  final bool isDefault;
+
+  /// `student`, `staff`, or `group`.
+  final String family;
+
+  /// Human label of the target this option acts on (for the result rows).
+  final String target;
+
+  /// The action's pure diff (summary + field changes).
+  final actions.ChangeSet changes;
+
+  /// Whether an apply pass would actually write this option.
+  final bool canApply;
+}
+
+/// One decision point within a [PendingAccountEntry]: either a lone action or a
+/// set of mutually-exclusive alternatives, exactly one of which is [selected].
+///
+/// A departed student's "unregister *vs* delete" pair is a single choice with
+/// two [alternatives]; an ordinary modify action is a choice of one. Rendering
+/// the alternatives as one choice — rather than independent rows — is the core
+/// of #110: the operator picks one resolution and never runs both.
+class PendingChoice {
+  PendingChoice({required this.alternatives, required this.selected})
+      : assert(alternatives.isNotEmpty);
+
+  /// The mutually-exclusive options (one or more).
+  final List<PendingActionOption> alternatives;
+
+  /// The currently-chosen option (defaults to the group's default).
+  final PendingActionOption selected;
+
+  /// True when this is a real choice the operator must resolve (more than one
+  /// alternative), false for a lone action.
+  bool get isChoice => alternatives.length > 1;
+
+  /// The situation this choice resolves — the alternative-group key for a real
+  /// choice, else the single action kind. Drives the "same situation" grouping
+  /// so two departed students share one bulk-apply subset.
+  String get situationId => alternatives.first.group ?? alternatives.first.kind;
+}
+
+/// The pending actions for **one** linked account, staff member, or class group
+/// — the "one entry per account" the list renders (#110).
+class PendingAccountEntry {
+  const PendingAccountEntry({
+    required this.family,
+    required this.targetId,
+    required this.target,
+    required this.choices,
+  });
+
+  /// `student`, `staff`, or `group`.
+  final String family;
+
+  /// The stable key of the target this entry groups (the account/staff/group id).
+  final String targetId;
+
+  /// Human label of the target.
+  final String target;
+
+  /// The decision points for this target, in dispatch order.
+  final List<PendingChoice> choices;
+
+  /// A stable signature of this entry's *situation* — its family plus the sorted
+  /// set of its choices' [PendingChoice.situationId]. Two entries with the same
+  /// key are "in the same situation", so a bulk apply can act on the subset.
+  String get situationKey {
+    final ids = choices.map((c) => c.situationId).toList()..sort();
+    return '$family|${ids.join(',')}';
+  }
+
+  /// A short human description of the situation (the choices' summaries), used as
+  /// the header of a same-situation subset.
+  String get situationLabel => choices.map((c) {
+        if (!c.isChoice) return c.selected.changes.summary;
+        return c.alternatives.map((a) => a.changes.summary).join(' / ');
+      }).join('; ');
+
+  /// Whether an apply pass would write anything for this entry — at least one
+  /// selected option is applyable.
+  bool get canApply => choices.any((c) => c.selected.canApply);
+}
+
 /// Drives the reconcile loop over the State layer (#99): **sync → linked
 /// overview → pending actions → dry-run → apply**, with progress and failures
 /// reported through the shared [LogBuffer].
@@ -152,6 +265,11 @@ class ReconcileController extends ChangeNotifier {
   /// is read and folded into the shared store on persist (#108).
   final Map<core.Origin, SystemSyncMeta> _pulled = {};
 
+  /// The operator's chosen alternative per situation (#110), keyed by
+  /// `<targetId>|<alternativeGroup>` → the chosen action kind. A missing entry
+  /// means the situation still shows its default alternative.
+  final Map<String, String> _choices = {};
+
   ReconcilePhase get phase => _phase;
 
   /// Whether a pass is running (buttons disable on this).
@@ -209,6 +327,159 @@ class ReconcileController extends ChangeNotifier {
           canApply: a.canApply,
         ),
     ];
+  }
+
+  /// The pending actions grouped **one entry per target** (#110): each linked
+  /// account/staff/group becomes a single [PendingAccountEntry], and its
+  /// mutually-exclusive actions (unregister *vs* delete) collapse into one
+  /// [PendingChoice] rather than independent rows. Rebuilt from the live view on
+  /// every read; the operator's picks live in [_choices] so a rebuild preserves
+  /// them.
+  List<PendingAccountEntry> get pendingEntries {
+    final l = _linked;
+    if (l == null) return const [];
+    final entries = <PendingAccountEntry>[];
+    entries.addAll(_entriesFor(
+      family: 'student',
+      actionList: l.studentActions,
+      targetId: (a) => a.target.id.value,
+      label: (a) => _accountLabel(a.target),
+      group: (a) => a.alternativeGroup,
+      isDefault: (a) => a.isDefaultAlternative,
+      changes: (a) => a.describeChanges(),
+      canApply: (_) => true,
+    ));
+    entries.addAll(_entriesFor(
+      family: 'staff',
+      actionList: l.staffActions,
+      targetId: (a) => a.target.id.value,
+      label: (a) => _staffLabel(a.target),
+      group: (a) => a.alternativeGroup,
+      isDefault: (a) => a.isDefaultAlternative,
+      changes: (a) => a.describeChanges(),
+      canApply: (_) => true,
+    ));
+    entries.addAll(_entriesFor(
+      family: 'group',
+      actionList: l.groupActions,
+      targetId: (a) => _groupLabel(a.target),
+      label: (a) => _groupLabel(a.target),
+      group: (a) => a.alternativeGroup,
+      isDefault: (a) => a.isDefaultAlternative,
+      changes: (a) => a.describeChanges(),
+      canApply: (a) => a.canApply,
+    ));
+    return entries;
+  }
+
+  /// The pending entries grouped into "same situation" subsets (#110), in
+  /// first-seen order. Each subset shares a [PendingAccountEntry.situationKey],
+  /// so it can be bulk-applied ("apply this resolution to all departed
+  /// students") while each entry keeps its own chosen alternative.
+  List<List<PendingAccountEntry>> get pendingSituations {
+    final order = <String>[];
+    final bySituation = <String, List<PendingAccountEntry>>{};
+    for (final e in pendingEntries) {
+      final key = e.situationKey;
+      if (!bySituation.containsKey(key)) order.add(key);
+      (bySituation[key] ??= <PendingAccountEntry>[]).add(e);
+    }
+    return [for (final key in order) bySituation[key]!];
+  }
+
+  /// Builds one [PendingAccountEntry] per target from [actionList], collapsing
+  /// mutually-exclusive alternatives (shared non-null [group]) into a single
+  /// [PendingChoice].
+  List<PendingAccountEntry> _entriesFor<T>({
+    required String family,
+    required List<T> actionList,
+    required String Function(T) targetId,
+    required String Function(T) label,
+    required String? Function(T) group,
+    required bool Function(T) isDefault,
+    required actions.ChangeSet Function(T) changes,
+    required bool Function(T) canApply,
+  }) {
+    final order = <String>[];
+    final byTarget = <String, List<T>>{};
+    final labels = <String, String>{};
+    for (final a in actionList) {
+      final id = targetId(a);
+      if (!byTarget.containsKey(id)) order.add(id);
+      (byTarget[id] ??= <T>[]).add(a);
+      labels[id] = label(a);
+    }
+
+    return [
+      for (final id in order)
+        PendingAccountEntry(
+          family: family,
+          targetId: id,
+          target: labels[id]!,
+          choices: _choicesFor(
+            id,
+            [
+              for (final a in byTarget[id]!)
+                PendingActionOption(
+                  action: a as Object,
+                  kind: a.runtimeType.toString(),
+                  group: group(a),
+                  isDefault: isDefault(a),
+                  family: family,
+                  target: labels[id]!,
+                  changes: changes(a),
+                  canApply: canApply(a),
+                ),
+            ],
+          ),
+        ),
+    ];
+  }
+
+  /// Partitions one target's [options] into [PendingChoice]s: options sharing a
+  /// non-null [PendingActionOption.group] become one mutually-exclusive choice
+  /// (its selection honoured from [_choices], defaulting to the group default);
+  /// every other option is a choice of one.
+  List<PendingChoice> _choicesFor(
+    String targetId,
+    List<PendingActionOption> options,
+  ) {
+    final choices = <PendingChoice>[];
+    final groupOrder = <String>[];
+    final byGroup = <String, List<PendingActionOption>>{};
+    for (final o in options) {
+      final g = o.group;
+      if (g == null) {
+        choices.add(PendingChoice(alternatives: [o], selected: o));
+      } else {
+        if (!byGroup.containsKey(g)) groupOrder.add(g);
+        (byGroup[g] ??= <PendingActionOption>[]).add(o);
+      }
+    }
+    for (final g in groupOrder) {
+      final alts = byGroup[g]!;
+      final defaultKind =
+          alts.firstWhere((a) => a.isDefault, orElse: () => alts.first).kind;
+      final chosenKind = _choices['$targetId|$g'] ?? defaultKind;
+      final selected = alts.firstWhere(
+        (a) => a.kind == chosenKind,
+        orElse: () => alts.firstWhere((a) => a.kind == defaultKind),
+      );
+      choices.add(PendingChoice(alternatives: alts, selected: selected));
+    }
+    return choices;
+  }
+
+  /// Records the operator's pick of a mutually-exclusive alternative (#110):
+  /// within [entry]'s choice keyed by [group], select the option of [kind]. A
+  /// no-op for a lone action. Notifies so the list re-renders the new selection.
+  void chooseAlternative({
+    required PendingAccountEntry entry,
+    required String group,
+    required String kind,
+  }) {
+    _choices['${entry.targetId}|$group'] = kind;
+    notifyListeners();
   }
 
   /// The stored freshness + generation marker of the materialized view.
@@ -279,15 +550,22 @@ class ReconcileController extends ChangeNotifier {
   /// Whether a group drill-down read is in flight.
   bool get loadingGroups => _loadingGroups;
 
-  /// How many pending actions an apply pass would actually write (the
-  /// informational group actions are excluded).
-  int get applyableCount {
-    final l = _linked;
-    if (l == null) return 0;
-    return l.studentActions.length +
-        l.staffActions.length +
-        l.groupActions.where((a) => a.canApply).length;
-  }
+  /// How many pending actions an apply pass would actually write — the
+  /// **selected** applyable option of each choice (#110). A departed student
+  /// counts once (the chosen resolution), not twice, and the informational group
+  /// actions are excluded.
+  int get applyableCount => _selectedActions(pendingEntries).length;
+
+  /// The live actions to run for [entries]: the selected, applyable option of
+  /// every choice, in order.
+  List<PendingActionOption> _selectedActions(
+    Iterable<PendingAccountEntry> entries,
+  ) =>
+      [
+        for (final e in entries)
+          for (final c in e.choices)
+            if (c.selected.canApply) c.selected,
+      ];
 
   /// Runs the smart sync: pull WISA, diff against the retained snapshot, and
   /// only when something changed (or nothing is linked yet) pull the still-
@@ -505,18 +783,53 @@ class ReconcileController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Dry-runs every pending action (PAIN-3): the full apply path, zero writes.
-  /// Results land in [dryRunResults].
-  Future<void> dryRun() => _applyAll(dry: true);
+  /// Dry-runs the chosen resolution of **every** pending entry (PAIN-3): the
+  /// full apply path, zero writes. Results land in [dryRunResults].
+  Future<void> dryRun() => _run(_selectedActions(pendingEntries), dry: true);
 
-  /// Applies every pending action for real, refreshing the linked view from
-  /// the State layer's incremental patches as it goes. Results land in
+  /// Applies the chosen resolution of every pending entry for real, refreshing
+  /// the linked view from the State layer's incremental patches as it goes.
+  /// Only the **selected** alternative of each choice runs — a departed student
+  /// is unregistered *or* deleted, never both (#110). Results land in
   /// [applyResults].
-  Future<void> applyAll() => _applyAll(dry: false);
+  Future<void> applyAll() => _run(_selectedActions(pendingEntries), dry: false);
 
-  Future<void> _applyAll({required bool dry}) async {
-    final l = _linked;
-    if (busy || l == null) return;
+  /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
+  Future<void> dryRunEntry(PendingAccountEntry entry) =>
+      _run(_selectedActions([entry]), dry: true);
+
+  /// Applies one entry's chosen resolution (#110): the per-row apply.
+  Future<void> applyEntry(PendingAccountEntry entry) =>
+      _run(_selectedActions([entry]), dry: false);
+
+  /// Applies the chosen resolution to every entry in the same situation (#110):
+  /// "apply this resolution to all departed students". Each entry keeps its own
+  /// chosen alternative. [situationKey] matches [PendingAccountEntry.situationKey].
+  Future<void> applySituation(String situationKey) => _run(
+        _selectedActions(
+          pendingEntries.where((e) => e.situationKey == situationKey),
+        ),
+        dry: false,
+      );
+
+  /// Dry-runs every entry in the same situation (#110).
+  Future<void> dryRunSituation(String situationKey) => _run(
+        _selectedActions(
+          pendingEntries.where((e) => e.situationKey == situationKey),
+        ),
+        dry: true,
+      );
+
+  /// Runs [selected] — the pre-resolved, applyable options — through the apply
+  /// path (dry or real). Shared by the global, per-entry, and per-situation
+  /// affordances so all three behave identically (#110). Each option is bound to
+  /// its own target; on a real write the applier patches the snapshot and
+  /// returns a fresh linked view we adopt as the pass proceeds.
+  Future<void> _run(
+    List<PendingActionOption> selected, {
+    required bool dry,
+  }) async {
+    if (busy || _linked == null) return;
     _begin(ReconcilePhase.applying);
 
     final options =
@@ -525,36 +838,16 @@ class ReconcileController extends ChangeNotifier {
     final label = dry ? 'Dry-run' : 'Apply';
     log.addMessage(
       core.Origin.all,
-      '$label started for $applyableCount of ${pendingActions.length} '
+      '$label started for ${selected.length} of ${pendingActions.length} '
       'pending action(s).',
     );
 
     try {
-      // Walk the lists captured before the pass: each action is bound to its
-      // target, and on a real write the applier patches the snapshot and
-      // returns a fresh linked view we adopt as we go.
-      for (final action in l.studentActions) {
+      for (final option in selected) {
         results.add(await _applyOne(
-          () => applier.applyStudent(action, options: options),
-          _accountLabel(action.target),
-          action.describeChanges(),
-        ));
-      }
-      for (final action in l.staffActions) {
-        results.add(await _applyOne(
-          () => applier.applyStaff(action, options: options),
-          _staffLabel(action.target),
-          action.describeChanges(),
-        ));
-      }
-      for (final action in l.groupActions) {
-        // Informational actions (canApply false) carry no automated write —
-        // their apply() throws by contract, so the pass leaves them out.
-        if (!action.canApply) continue;
-        results.add(await _applyOne(
-          () => applier.applyGroup(action, options: options),
-          _groupLabel(action.target),
-          action.describeChanges(),
+          () => _applyAny(option.action, options),
+          option.target,
+          option.changes,
         ));
       }
 
@@ -582,6 +875,17 @@ class ReconcileController extends ChangeNotifier {
       }
       _fail(e);
     }
+  }
+
+  /// Dispatches one live action to the applier by its family.
+  Future<ApplyResult> _applyAny(Object action, actions.ApplyOptions options) {
+    if (action is actions.StudentAction) {
+      return applier.applyStudent(action, options: options);
+    }
+    if (action is actions.StaffAction) {
+      return applier.applyStaff(action, options: options);
+    }
+    return applier.applyGroup(action as actions.GroupAction, options: options);
   }
 
   Future<ActionOutcomeEntry> _applyOne(

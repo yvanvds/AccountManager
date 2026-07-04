@@ -154,6 +154,71 @@ void main() {
   });
 
   testWidgets(
+      'the pending list groups one entry per account and applies the chosen '
+      'alternative: choose delete → delete, not unregister (#110)',
+      (WidgetTester tester) async {
+    // A WISA-departed student: a Smartschool-only active account (no WISA, no
+    // Azure) whose dispatcher yields the mutually-exclusive unregister/delete
+    // resolutions — the exact situation #110 fixes.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const []),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssAccount(
+            uid: 'jane',
+            accountId: '1',
+            mail: 'jane.doe@student.school.example',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // One entry for the departed account (not two independent rows).
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    final id = entry.targetId;
+    expect(entry.choices.single.isChoice, isTrue,
+        reason: 'unregister vs delete collapse into a single choice');
+    expect(find.byKey(ValueKey('entry-student-$id')), findsOneWidget);
+
+    // Expand the entry, choose delete (the non-default), apply just this row.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(ValueKey('alt-$id-DeleteStudentFromSmartschool')));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(harness.soap.soapActions, isNotEmpty);
+    final summaries =
+        harness.controller.applyResults!.map((r) => r.changes.summary);
+    expect(summaries, contains('Verwijder dit account uit Smartschool'));
+    expect(summaries, isNot(contains('Schrijf de leerling uit in Smartschool')),
+        reason: 'only the chosen resolution ran — never both');
+  });
+
+  testWidgets(
       'a resumed session trusts the stored state: Synchronise pulls no '
       'Smartschool/Azure (#107)', (WidgetTester tester) async {
     // Session 1 (offline harness over a shared cold-snapshot store): a full

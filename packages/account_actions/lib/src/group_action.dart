@@ -63,6 +63,16 @@ sealed class GroupAction {
   /// (UI / State layer) gate the "apply" affordance on this.
   bool get canApply => true;
 
+  /// The key shared by mutually-exclusive alternatives resolving the same
+  /// situation (#110). No group action has alternatives today, so this is always
+  /// `null`; the getter exists so the pending-list grouping treats every family
+  /// uniformly. See [StudentAction.alternativeGroup].
+  String? get alternativeGroup => null;
+
+  /// Whether this action is the default alternative within its
+  /// [alternativeGroup]. Ignored when [alternativeGroup] is `null`.
+  bool get isDefaultAlternative => false;
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3). Throws [UnsupportedError] when

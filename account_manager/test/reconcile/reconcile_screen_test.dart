@@ -364,6 +364,108 @@ void main() {
     expect(find.byKey(const ValueKey('rollup-groups')), findsOneWidget);
   });
 
+  /// Builds a reconcile screen over a WISA-departed scenario: [count]
+  /// Smartschool-only active accounts (no WISA, no Azure), each raising the
+  /// mutually-exclusive unregister/delete choice (#110).
+  ReconcileHarness departedHarness({int count = 1}) => ReconcileHarness(
+        wisa: wisaSnap(students: const []),
+        smartschool: ssSnap(
+          groups: const [],
+          accounts: [
+            for (var i = 0; i < count; i++)
+              ssAccount(
+                uid: 'user$i',
+                accountId: '$i',
+                mail: 'user$i@student.school.example',
+              ),
+          ],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+      );
+
+  testWidgets(
+      'a departed student renders one entry with a unregister/delete choice; '
+      'picking delete applies delete, not unregister (#110)',
+      (WidgetTester tester) async {
+    final harness = departedHarness();
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // One entry for the departed account (not two independent rows).
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    final id = entry.targetId;
+    final entryKey = ValueKey('entry-student-$id');
+    expect(find.byKey(entryKey), findsOneWidget);
+
+    // Expand it to reveal the choice.
+    await tester.ensureVisible(find.byKey(entryKey));
+    await tester.tap(find.byKey(entryKey));
+    await tester.pumpAndSettle();
+
+    // Both mutually-exclusive resolutions are offered as one choice.
+    final unregisterAlt = ValueKey('alt-$id-UnregisterStudentFromSmartschool');
+    final deleteAlt = ValueKey('alt-$id-DeleteStudentFromSmartschool');
+    expect(find.byKey(unregisterAlt), findsOneWidget);
+    expect(find.byKey(deleteAlt), findsOneWidget);
+
+    // Pick delete (the non-default), then apply this one entry.
+    await tester.tap(find.byKey(deleteAlt));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(harness.soap.soapActions, isNotEmpty,
+        reason: 'delete is a real Smartschool write');
+    final summaries =
+        harness.controller.applyResults!.map((r) => r.changes.summary);
+    expect(summaries, contains('Verwijder dit account uit Smartschool'));
+    expect(summaries, isNot(contains('Schrijf de leerling uit in Smartschool')),
+        reason: 'only the chosen alternative runs — never both');
+  });
+
+  testWidgets(
+      'a same-situation subset offers a bulk apply that respects each row\'s '
+      'choice (#110)', (WidgetTester tester) async {
+    final harness = departedHarness(count: 2);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The two departed accounts are grouped into one "same situation" subset
+    // with a bulk affordance.
+    expect(
+        find.textContaining('accounts in the same situation'), findsOneWidget);
+    final key = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .situationKey;
+    final bulkApply = ValueKey('situation-apply-$key');
+    expect(find.byKey(bulkApply), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(bulkApply));
+    await tester.tap(find.byKey(bulkApply));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply result'), findsOneWidget);
+    // Two accounts, two writes (one chosen resolution each) — not four.
+    expect(harness.controller.applyResults, hasLength(2));
+  });
+
   testWidgets('the log panel clears on demand', (WidgetTester tester) async {
     final harness = ReconcileHarness();
     await tester.pumpWidget(
