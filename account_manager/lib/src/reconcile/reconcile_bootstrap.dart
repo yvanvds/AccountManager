@@ -21,6 +21,8 @@ class StoreEndpoints {
     required this.vaultUri,
     required this.blobEndpoint,
     required this.blobContainer,
+    this.signalrEndpoint = '',
+    this.signalrHub = 'reconcile',
   });
 
   factory StoreEndpoints.fromEnvironment() => const StoreEndpoints(
@@ -45,6 +47,11 @@ class StoreEndpoints {
           'BLOB_SNAPSHOTS_CONTAINER',
           defaultValue: 'snapshots',
         ),
+        signalrEndpoint: String.fromEnvironment('SIGNALR_ENDPOINT'),
+        signalrHub: String.fromEnvironment(
+          'SIGNALR_HUB',
+          defaultValue: 'reconcile',
+        ),
       );
 
   final String cosmosEndpoint;
@@ -57,6 +64,16 @@ class StoreEndpoints {
 
   /// The container within [blobEndpoint] the snapshot overflow blobs live in.
   final String blobContainer;
+
+  /// The Azure SignalR service endpoint change signals are broadcast to (#116),
+  /// e.g. `https://accountmanager-signalr.service.signalr.net`. Empty until the
+  /// service is provisioned and `SIGNALR_ENDPOINT` is set — bootstrap then wires
+  /// no publisher and sync behaves exactly as before (the generation marker still
+  /// carries staleness), so the app runs unchanged in environments without it.
+  final String signalrEndpoint;
+
+  /// The SignalR hub operators connect to and writers broadcast on (#116).
+  final String signalrHub;
 }
 
 /// The assembled reconcile stack for one signed-in session: settings loaded
@@ -111,6 +128,7 @@ Future<ReconcileServices> bootstrapReconcile({
   BlobStore? blobStore,
   SnapshotStore? snapshotStore,
   LinkedStore? linkedStore,
+  SignalPublisher? publisher,
   LogBuffer? log,
   DateTime Function()? clock,
 }) async {
@@ -148,6 +166,24 @@ Future<ReconcileServices> bootstrapReconcile({
   // docs + rollups here, and every passive session reads the overview back with
   // no pull and no link().
   final linked = linkedStore ?? CosmosLinkedStore(client);
+
+  // The realtime publisher (#116): a sync/apply broadcasts a small change signal
+  // so other operators refetch just the changed shard. Wired only when a SignalR
+  // endpoint is configured — until the service is provisioned, no publisher is
+  // set and the pass falls back to the store's generation marker. The subscriber
+  // (a persistent WebSocket) is a follow-up; this session only publishes for now.
+  final signalPublisher = publisher ??
+      (ends.signalrEndpoint.isEmpty
+          ? null
+          : SignalRPublisher(
+              config: SignalRConfig(
+                endpoint: ends.signalrEndpoint,
+                hub: ends.signalrHub,
+              ),
+              tokens: SignalRSessionTokenProvider(session),
+              transport: HttpSignalRTransport(),
+            ));
+
   final syncedBy = session.account ?? '';
   void logSnapshotIssue(core.Origin system, Object error) =>
       logBuffer.addError(system, 'Snapshot store: $error');
@@ -328,6 +364,7 @@ Future<ReconcileServices> bootstrapReconcile({
       log: logBuffer,
       store: linked,
       syncedBy: syncedBy,
+      publisher: signalPublisher,
       clock: now,
     ),
     log: logBuffer,

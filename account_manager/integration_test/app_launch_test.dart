@@ -8,7 +8,8 @@ import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
-import 'package:account_state/account_state.dart' show InMemoryLinkedStore;
+import 'package:account_state/account_state.dart'
+    show ChangeSignal, InMemoryLinkedStore, InMemorySignalHub;
 import 'package:azure_api/azure_api.dart' show AzureCredentials;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -267,6 +268,77 @@ void main() {
     expect(sync.onPressed, isNull);
     expect(resumed.wisaSyncs, 0,
         reason: 'a blocked passive session never pulls');
+  });
+
+  testWidgets(
+      'a SignalR "syncing" signal disables Synchronise live and names the '
+      'owner; "synced" re-enables it (#116)', (WidgetTester tester) async {
+    // Session 1 (offline harness) materializes the shared view. No hub here, so
+    // it does not publish into this scenario.
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    // Session 2 is the real app over the same stores, wired to a shared realtime
+    // hub — the SignalR fan-out other operators broadcast onto.
+    final hub = InMemorySignalHub();
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+      hub: hub,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // Nothing locked yet — Synchronise is live.
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
+
+    // Another operator takes the lease and broadcasts "syncing" — the running
+    // app receives it live and locks, without any reload or re-pull.
+    await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+    await hub
+        .publisher()
+        .publish(const ChangeSignal.syncStarted(owner: 'mieke@school'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsOneWidget);
+    expect(find.textContaining('mieke@school'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNull,
+    );
+    expect(resumed.wisaSyncs, 0, reason: 'the nudge never triggers a pull');
+
+    // They finish: "synced" is broadcast → the app re-enables Synchronise live.
+    await linkedStore.releaseLease(owner: 'mieke@school');
+    await hub
+        .publisher()
+        .publish(const ChangeSignal.syncEnded(owner: 'mieke@school'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
   });
 
   testWidgets('silent sign-in leads straight into the shell',

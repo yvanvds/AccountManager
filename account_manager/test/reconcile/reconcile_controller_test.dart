@@ -7,6 +7,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'reconcile_fakes.dart';
 
+/// A [SignalPublisher] whose every publish throws — to prove a broadcast
+/// failure is swallowed and never fails the pass that triggered it (#116).
+class _ThrowingPublisher implements SignalPublisher {
+  @override
+  Future<void> publish(ChangeSignal signal) async =>
+      throw StateError('signalr down');
+}
+
 void main() {
   group('first sync', () {
     test('pulls all three systems and derives the linked view + actions',
@@ -522,6 +530,128 @@ void main() {
       // Same generation the controller already holds → nothing refetched.
       await h.controller.onStoreChanged(1);
       expect(h.controller.syncState.generation, 1);
+    });
+  });
+
+  group('realtime signals (#116)', () {
+    test('a sync publishes syncStarted → viewChanged → syncEnded', () async {
+      final hub = InMemorySignalHub();
+      final h = ReconcileHarness(hub: hub);
+
+      await h.controller.sync();
+
+      expect(hub.published.map((s) => s.kind), [
+        ChangeSignalKind.syncStarted,
+        ChangeSignalKind.viewChanged,
+        ChangeSignalKind.syncEnded,
+      ]);
+      expect(hub.published.first.owner, h.syncedBy);
+      final changed = hub.published[1];
+      expect(changed.generation, 1);
+      expect(changed.shard, isNull,
+          reason: 'the sync path rewrites the whole view — no narrower shard');
+      expect(hub.published.last.owner, h.syncedBy);
+    });
+
+    test('an unchanged WISA re-sync does not publish a viewChanged', () async {
+      final hub = InMemorySignalHub();
+      final h = ReconcileHarness(hub: hub);
+      await h.controller.sync();
+      final before = hub.published.length;
+
+      // A fresh but identical WISA pull → "no changes needed", no re-link.
+      h.wisaResult =
+          wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+      await h.controller.sync();
+
+      final second = hub.published.sublist(before);
+      expect(second.map((s) => s.kind),
+          isNot(contains(ChangeSignalKind.viewChanged)),
+          reason: 'nothing materialized, so no view-change nudge');
+      // The lease is still taken and released around the (no-op) pass.
+      expect(second.map((s) => s.kind), [
+        ChangeSignalKind.syncStarted,
+        ChangeSignalKind.syncEnded,
+      ]);
+    });
+
+    test("another session's viewChanged refetches this session's overview",
+        () async {
+      final hub = InMemorySignalHub();
+      final linkedStore = InMemoryLinkedStore();
+      final snapshots = InMemorySnapshotStore();
+
+      // Session 1 materializes generation 1 and broadcasts.
+      final s1 = ReconcileHarness(
+          store: snapshots, linkedStore: linkedStore, hub: hub);
+      await s1.controller.sync();
+
+      // Session 2 renders the shared overview passively, on the same hub.
+      final s2 = await ReconcileHarness.resume(
+          store: snapshots, linkedStore: linkedStore, hub: hub);
+      await s2.controller.loadOverview();
+      expect(s2.controller.syncState.generation, 1);
+
+      // Session 1 moves the student and re-syncs → generation 2 is broadcast.
+      s1.wisaResult = wisaSnap(
+        fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await s1.controller.sync();
+      await pumpEventQueue();
+
+      // Session 2 caught up from the signal alone — no direct onStoreChanged.
+      expect(s2.controller.syncState.generation, 2);
+      expect(
+        s2.controller.schoolRollups
+            .expand((s) => s2.controller.childrenOf(s.key))
+            .expand((g) => s2.controller.childrenOf(g.key))
+            .map((c) => c.classroom),
+        contains('3D'),
+      );
+    });
+
+    test('a syncStarted signal locks a passive session; syncEnded unlocks',
+        () async {
+      final hub = InMemorySignalHub();
+      final linkedStore = InMemoryLinkedStore();
+      // A first session leaves an overview in the shared store (no hub, so it
+      // does not publish into this test).
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+      final passive = ReconcileHarness(linkedStore: linkedStore, hub: hub);
+      await passive.controller.loadOverview();
+      expect(passive.controller.syncLockedByOther, isFalse);
+
+      // Another operator takes the lease and nudges everyone.
+      await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+      await hub
+          .publisher()
+          .publish(const ChangeSignal.syncStarted(owner: 'mieke@school'));
+      await pumpEventQueue();
+      expect(passive.controller.syncLockedByOther, isTrue);
+      expect(passive.controller.syncLockOwner, 'mieke@school');
+
+      // They finish: release + nudge → the passive session re-enables.
+      await linkedStore.releaseLease(owner: 'mieke@school');
+      await hub
+          .publisher()
+          .publish(const ChangeSignal.syncEnded(owner: 'mieke@school'));
+      await pumpEventQueue();
+      expect(passive.controller.syncLockedByOther, isFalse);
+    });
+
+    test('a publish failure is logged but never fails the sync', () async {
+      final h = ReconcileHarness(publisher: _ThrowingPublisher());
+
+      await h.controller.sync();
+
+      expect(h.controller.error, isNull, reason: 'the pass still succeeds');
+      expect(h.controller.linked, isNotNull);
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(contains('Could not publish a change signal')),
+      );
     });
   });
 

@@ -20,6 +20,12 @@
 ///   the metadata in Cosmos and overflows large payloads to a [BlobStore]
 ///   ([HttpBlobStore] over the same AAD-token discipline). [persistingSyncer]
 ///   and [seedSnapshot] compose that persistence over a [SystemState]'s syncer.
+/// - [SignalPublisher] / [SignalSubscriber] — the realtime change-notification
+///   seam (#116): a writer publishes a small, data-free [ChangeSignal] and every
+///   connected operator is nudged to refetch just the changed shard, so the
+///   shared view stays live without polling the serverless stores awake.
+///   [InMemorySignalHub] is the fan-out fake; [SignalRPublisher] posts to Azure
+///   SignalR's REST endpoint over the same AAD / no-stored-secret discipline.
 ///
 /// Every seam has an in-memory default so the layer is testable headlessly
 /// with zero network and zero infra. The persist-vs-derive split — what is
@@ -75,6 +81,13 @@ export 'src/materialize/linked_store.dart';
 export 'src/materialize/materialized_state.dart';
 export 'src/passwords/password_entry.dart';
 export 'src/passwords/password_queue_store.dart';
+export 'src/realtime/change_signal.dart';
+export 'src/realtime/signal_channel.dart';
+export 'src/realtime/signalr_config.dart';
+export 'src/realtime/signalr_negotiate.dart';
+export 'src/realtime/signalr_publisher.dart';
+export 'src/realtime/signalr_token_provider.dart';
+export 'src/realtime/signalr_transport.dart';
 export 'src/settings/app_settings.dart';
 export 'src/settings/connection.dart';
 export 'src/settings/import_rule_codec.dart';
