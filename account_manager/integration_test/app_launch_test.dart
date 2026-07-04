@@ -8,6 +8,7 @@ import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
+import 'package:account_state/account_state.dart' show InMemoryLinkedStore;
 import 'package:azure_api/azure_api.dart' show AzureCredentials;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -167,6 +168,59 @@ void main() {
     expect(resumed.ssSyncs, 0, reason: 'Smartschool seeded from the store');
     expect(resumed.azSyncs, 0, reason: 'Azure seeded from the store');
     expect(find.text('Linked overview'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a passive session renders the materialized overview and drills into a '
+      'classroom with no pull and no link() (#115)',
+      (WidgetTester tester) async {
+    // Session 1 (offline harness) syncs and materializes the shared view into a
+    // LinkedStore both sessions share.
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    // Session 2 is the real app over the same stores. It never syncs.
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // The overview rendered straight from the store — no Synchronise tapped.
+    expect(find.text('Overzicht'), findsOneWidget);
+    expect(find.text('School 1'), findsOneWidget);
+    expect(resumed.wisaSyncs, 0);
+    expect(resumed.ssSyncs, 0);
+    expect(resumed.azSyncs, 0);
+    expect(resumed.controller.linked, isNull,
+        reason: 'link() is never called in a passive session');
+
+    // Drill down: school → grade-year → classroom.
+    await tester.tap(find.text('School 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+
+    // The classroom's account doc renders — still with no connector pull.
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('reconcile-classroom-back')), findsOneWidget);
+    expect(resumed.wisaSyncs, 0);
+    expect(resumed.ssSyncs, 0);
+    expect(resumed.azSyncs, 0);
   });
 
   testWidgets('silent sign-in leads straight into the shell',

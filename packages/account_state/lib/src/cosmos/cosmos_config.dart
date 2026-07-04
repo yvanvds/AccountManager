@@ -97,3 +97,30 @@ const String passwordQueuePartitionKeyValue = 'queue';
 /// atomic. Only the sync/drift process reads these — the dashboard never does.
 /// Provisioned out of band (data-plane RBAC cannot create containers).
 const String snapshotsContainer = 'snapshots';
+
+/// The materialized linked-accounts container (#115): one document per linked
+/// account, `{ id, pk (school), … }`, partitioned by `/pk` so a school's
+/// accounts share a logical partition and a classroom drill-down reads one
+/// partition. The sync process rewrites these wholesale; a passive session
+/// only reads them on drill-down.
+const String linkedAccountsContainer = 'linkedAccounts';
+
+/// The rollup-aggregates container (#115): the small school / grade-year /
+/// classroom count documents that drive the drill-down without touching the
+/// per-account docs. Partitioned by `/pk` (school).
+const String rollupsContainer = 'rollups';
+
+/// The operator-decisions container (#115): one document per decision
+/// (`chosenAlternative` / `acceptedDuplicate` / `appliedStatus`), partitioned by
+/// `/pk` (the account id). Kept separate from the derived docs so a re-sync
+/// re-attaches still-applicable decisions instead of clobbering them. The write
+/// UIs live in #109 / #110.
+const String decisionsContainer = 'decisions';
+
+/// The sync-state container (#115): a single document holding the `generation`
+/// counter and last-sync freshness. Partitioned by `/id`, so the singleton is
+/// its own logical partition and a point read/upsert is atomic.
+const String syncStateContainer = 'syncState';
+
+/// The id (and partition-key value) of the singleton sync-state document.
+const String syncStateDocumentId = 'syncState';

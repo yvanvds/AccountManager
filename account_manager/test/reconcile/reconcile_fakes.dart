@@ -235,12 +235,14 @@ class ReconcileHarness {
     ss.SmartschoolSnapshot? smartschool,
     az.AzureSnapshot? azure,
     this.store,
+    InMemoryLinkedStore? linkedStore,
     wapi.WisaSnapshot? wisaInitial,
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
-        azResult = (azure ?? azSnap()) {
+        azResult = (azure ?? azSnap()),
+        linkedStore = linkedStore ?? InMemoryLinkedStore() {
     log = LogBuffer(clock: () => kFixtureDate);
     final wisaRules = WisaImportRules();
 
@@ -337,8 +339,20 @@ class ReconcileHarness {
       ),
     );
 
-    controller = ReconcileController(app: app, applier: applier, log: log);
+    controller = ReconcileController(
+      app: app,
+      applier: applier,
+      log: log,
+      store: this.linkedStore,
+      syncedBy: 'operator@school.example',
+      clock: () => kFixtureDate,
+    );
   }
+
+  /// The shared materialized-view store (#115): a sync writes the derived
+  /// per-account docs + rollups here, and a resumed session reads the overview
+  /// back with no pull. Shared across sessions via [resume].
+  final InMemoryLinkedStore linkedStore;
 
   /// The shared cold-snapshot store, when this harness models the persistence
   /// wiring (#107). `null` for the plain in-memory scenarios.
@@ -349,6 +363,7 @@ class ReconcileHarness {
   /// [SystemState] from the store on app open (#107).
   static Future<ReconcileHarness> resume({
     required SnapshotStore store,
+    InMemoryLinkedStore? linkedStore,
     wapi.WisaSnapshot? wisa,
     ss.SmartschoolSnapshot? smartschool,
     az.AzureSnapshot? azure,
@@ -373,6 +388,7 @@ class ReconcileHarness {
       smartschool: smartschool,
       azure: azure,
       store: store,
+      linkedStore: linkedStore,
       wisaInitial: wisaSeed,
       ssInitial: ssSeed,
       azureInitial: azSeed,

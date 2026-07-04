@@ -110,6 +110,7 @@ Future<ReconcileServices> bootstrapReconcile({
   CosmosClient? cosmosClient,
   BlobStore? blobStore,
   SnapshotStore? snapshotStore,
+  LinkedStore? linkedStore,
   LogBuffer? log,
   DateTime Function()? clock,
 }) async {
@@ -143,6 +144,10 @@ Future<ReconcileServices> bootstrapReconcile({
         tokens: BlobSessionTokenProvider(session),
       );
   final snapshots = snapshotStore ?? CosmosSnapshotStore(client, blobs);
+  // The materialized-view store (#115): a sync writes the derived per-account
+  // docs + rollups here, and every passive session reads the overview back with
+  // no pull and no link().
+  final linked = linkedStore ?? CosmosLinkedStore(client);
   final syncedBy = session.account ?? '';
   void logSnapshotIssue(core.Origin system, Object error) =>
       logBuffer.addError(system, 'Snapshot store: $error');
@@ -321,6 +326,9 @@ Future<ReconcileServices> bootstrapReconcile({
       app: app,
       applier: applier,
       log: logBuffer,
+      store: linked,
+      syncedBy: syncedBy,
+      clock: now,
     ),
     log: logBuffer,
   );
