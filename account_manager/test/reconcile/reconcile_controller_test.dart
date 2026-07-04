@@ -377,6 +377,154 @@ void main() {
     });
   });
 
+  group('multi-operator coordination (#108)', () {
+    test('a sync records per-system freshness (who/when) in the shared store',
+        () async {
+      final h = ReconcileHarness();
+
+      await h.controller.sync();
+
+      final systems = (await h.linkedStore.readSyncState()).systems;
+      expect(
+          systems.keys,
+          containsAll(<core.Origin>[
+            core.Origin.wisa,
+            core.Origin.smartschool,
+            core.Origin.azure,
+          ]));
+      expect(systems[core.Origin.wisa]?.syncedBy, 'operator@school.example');
+      expect(systems[core.Origin.wisa]?.at, kFixtureDate);
+      // …and the controller mirrors it for the header.
+      expect(h.controller.syncState.systems[core.Origin.azure]?.syncedBy,
+          'operator@school.example');
+    });
+
+    test('the "WISA unchanged" path still stamps WISA freshness', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      // A later, identical WISA pull: no re-link, but WISA was still read.
+      final later = kFixtureDate.add(const Duration(hours: 1));
+      h.wisaResult = wisaSnap(fetchedAt: later);
+
+      await h.controller.sync();
+
+      expect(h.controller.noChangesNeeded, isTrue);
+      final systems = (await h.linkedStore.readSyncState()).systems;
+      expect(systems[core.Origin.wisa]?.at, later,
+          reason: 'WISA freshness advances even with no view change');
+      expect((await h.linkedStore.readSyncState()).generation, 1,
+          reason: 'an unchanged sync does not bump the generation');
+    });
+
+    test('a sync takes and releases the lease', () async {
+      final h = ReconcileHarness();
+
+      await h.controller.sync();
+
+      // Released at the end of the pass — free for the next operator.
+      expect(await h.linkedStore.readLease(kFixtureDate), isNull);
+      expect(h.controller.syncLockedByOther, isFalse);
+    });
+
+    test("another operator's live lease blocks this session's sync", () async {
+      final linkedStore = InMemoryLinkedStore();
+      final h = ReconcileHarness(linkedStore: linkedStore);
+      // A different operator is mid-sync.
+      await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+
+      await h.controller.sync();
+
+      expect(h.wisaSyncs, 0, reason: 'the blocked sync never pulls');
+      expect(h.controller.syncLockedByOther, isTrue);
+      expect(h.controller.syncLockOwner, 'mieke@school');
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(contains('mieke@school')),
+      );
+    });
+
+    test('a foreign lease blocks check-for-drift too', () async {
+      final linkedStore = InMemoryLinkedStore();
+      final h = ReconcileHarness(linkedStore: linkedStore);
+      await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+
+      await h.controller.checkDrift();
+
+      expect(h.ssSyncs, 0);
+      expect(h.controller.syncLockedByOther, isTrue);
+    });
+
+    test('loadOverview surfaces a lock held by another operator', () async {
+      final linkedStore = InMemoryLinkedStore();
+      // Session 1 materializes an overview.
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+      // A second operator grabs the lease.
+      await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+
+      final passive = ReconcileHarness(linkedStore: linkedStore);
+      await passive.controller.loadOverview();
+
+      expect(passive.controller.syncLockedByOther, isTrue);
+      expect(passive.controller.syncLockOwner, 'mieke@school');
+    });
+
+    test('onStoreChanged refetches the overview and the open classroom',
+        () async {
+      final linkedStore = InMemoryLinkedStore();
+      final snapshots = InMemorySnapshotStore();
+
+      // Session 1 materializes generation 1 (the student sits in 3C).
+      final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+      await s1.controller.sync();
+
+      // Session 2 renders the shared overview and drills into 3C.
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+      final classroom3c = s2.controller.schoolRollups
+          .expand((s) => s2.controller.childrenOf(s.key))
+          .expand((g) => s2.controller.childrenOf(g.key))
+          .singleWhere((c) => c.classroom == '3C');
+      await s2.controller.openClassroom(classroom3c);
+      expect(s2.controller.classroomAccounts, hasLength(1));
+
+      // Session 1 moves the student to 3D and re-syncs → generation 2.
+      s1.wisaResult = wisaSnap(
+        fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await s1.controller.sync();
+      expect((await linkedStore.readSyncState()).generation, 2);
+
+      // The realtime layer (#116) will call this on the generation bump.
+      await s2.controller.onStoreChanged(2);
+
+      expect(s2.controller.syncState.generation, 2);
+      // The open 3C shard was refetched — the student has left it.
+      expect(s2.controller.classroomAccounts, isEmpty);
+      // …and 3D now exists in the refreshed rollups.
+      expect(
+        s2.controller.schoolRollups
+            .expand((s) => s2.controller.childrenOf(s.key))
+            .expand((g) => s2.controller.childrenOf(g.key))
+            .map((c) => c.classroom),
+        contains('3D'),
+      );
+    });
+
+    test('onStoreChanged is a no-op for a stale-or-equal generation', () async {
+      final linkedStore = InMemoryLinkedStore();
+      final h = ReconcileHarness(linkedStore: linkedStore);
+      await h.controller.sync();
+
+      // Same generation the controller already holds → nothing refetched.
+      await h.controller.onStoreChanged(1);
+      expect(h.controller.syncState.generation, 1);
+    });
+  });
+
   group('LogBuffer', () {
     test('caps its entries and reports errors', () {
       final log = LogBuffer(capacity: 3, clock: () => kFixtureDate);

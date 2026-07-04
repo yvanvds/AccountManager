@@ -380,35 +380,77 @@ class Rollup {
       );
 }
 
+/// Who last synced one system, and when (#108).
+///
+/// Recorded per concrete system (WISA / Smartschool / Azure) so the reconcile
+/// screen can show "Last sync — WISA 09:12 by jan@…" from the *shared* store,
+/// not just this session's in-process [SystemState.lastSync]. Written into the
+/// [SyncState.systems] map by the operator whose sync pulled that system.
+class SystemSyncMeta {
+  const SystemSyncMeta({required this.syncedBy, required this.at});
+
+  /// The operator (AAD UPN) whose session pulled this system.
+  final String syncedBy;
+
+  /// When that pull's snapshot was fetched.
+  final DateTime at;
+
+  Map<String, dynamic> toJson() => {
+        'syncedBy': syncedBy,
+        'at': at.toIso8601String(),
+      };
+
+  factory SystemSyncMeta.fromJson(Map<String, dynamic> json) => SystemSyncMeta(
+        syncedBy: json['syncedBy'] as String,
+        at: DateTime.parse(json['at'] as String),
+      );
+}
+
 /// Freshness + version marker for the whole materialized view.
 ///
 /// [generation] is bumped on every sync that rewrites the view, so a
 /// just-connected client can detect a stale local copy (used more fully by the
-/// SignalR work in #116). [updatedAt] / [updatedBy] record who last synced.
+/// SignalR work in #116). [updatedAt] / [updatedBy] record who last ran the
+/// materialize; [systems] records who last pulled each individual system (#108).
 class SyncState {
   const SyncState({
     required this.generation,
     this.updatedAt,
     this.updatedBy,
+    this.systems = const {},
   });
 
   final int generation;
   final DateTime? updatedAt;
   final String? updatedBy;
 
+  /// Per-system last-sync metadata, keyed by concrete [core.Origin]
+  /// (wisa/smartschool/azure). Empty before the first sync of a given system.
+  final Map<core.Origin, SystemSyncMeta> systems;
+
   /// The initial state before any sync has ever run.
   static const SyncState initial = SyncState(generation: 0);
 
-  SyncState bumped({DateTime? at, String? by}) => SyncState(
+  SyncState bumped({
+    DateTime? at,
+    String? by,
+    Map<core.Origin, SystemSyncMeta>? systems,
+  }) =>
+      SyncState(
         generation: generation + 1,
         updatedAt: at ?? updatedAt,
         updatedBy: by ?? updatedBy,
+        systems: systems ?? this.systems,
       );
 
   Map<String, dynamic> toJson() => {
         'generation': generation,
         if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
         if (updatedBy != null) 'updatedBy': updatedBy,
+        if (systems.isNotEmpty)
+          'systems': {
+            for (final e in systems.entries) e.key.toJson(): e.value.toJson(),
+          },
       };
 
   factory SyncState.fromJson(Map<String, dynamic> json) => SyncState(
@@ -417,7 +459,84 @@ class SyncState {
             ? null
             : DateTime.parse(json['updatedAt'] as String),
         updatedBy: json['updatedBy'] as String?,
+        systems: {
+          for (final e
+              in (json['systems'] as Map<String, dynamic>? ?? const {}).entries)
+            core.Origin.fromJson(e.key):
+                SystemSyncMeta.fromJson(e.value as Map<String, dynamic>),
+        },
       );
+}
+
+/// The coarse, serialized **sync/drift lease** (#108).
+///
+/// Synchronise and Check-for-drift are rare, heavy, and global, so they run
+/// under a single lease rather than concurrently: while one operator holds it,
+/// every other operator's sync/drift is disabled. The lease carries its [owner]
+/// (AAD UPN), the last [heartbeatAt] the holder refreshed it, and an [expiresAt]
+/// so a *crashed* holder cannot keep it forever — once [expiresAt] passes the
+/// lease is free for the taking (backed in Cosmos by the document's TTL, so an
+/// abandoned lease is also physically swept).
+///
+/// Per-record apply / password changes are deliberately **not** gated by this
+/// lease — they are frequent and concurrent, guarded instead by per-document
+/// optimistic concurrency (#121).
+class SyncLease {
+  const SyncLease({
+    required this.owner,
+    required this.heartbeatAt,
+    required this.expiresAt,
+  });
+
+  /// The operator (AAD UPN) currently holding the lease.
+  final String owner;
+
+  /// When the holder last renewed the lease.
+  final DateTime heartbeatAt;
+
+  /// When the lease lapses if not renewed — a crashed holder's lease expires
+  /// here so another operator can take over.
+  final DateTime expiresAt;
+
+  /// Whether the lease has lapsed as of [now] (holder stopped heart-beating).
+  bool isExpiredAt(DateTime now) => !now.isBefore(expiresAt);
+
+  /// Whether the lease is still live and held by [owner] as of [now].
+  bool isLiveAt(DateTime now) => !isExpiredAt(now);
+
+  Map<String, dynamic> toJson() => {
+        'owner': owner,
+        'heartbeatAt': heartbeatAt.toIso8601String(),
+        'expiresAt': expiresAt.toIso8601String(),
+      };
+
+  factory SyncLease.fromJson(Map<String, dynamic> json) => SyncLease(
+        owner: json['owner'] as String,
+        heartbeatAt: DateTime.parse(json['heartbeatAt'] as String),
+        expiresAt: DateTime.parse(json['expiresAt'] as String),
+      );
+}
+
+/// How long a freshly acquired or renewed [SyncLease] stays live before it must
+/// be heart-beaten again. A holder renews well within this window; a crashed
+/// holder's lease frees after it (#108).
+const Duration syncLeaseTtl = Duration(seconds: 90);
+
+/// The outcome of an [LinkedStore.acquireLease] / [LinkedStore.renewLease]
+/// attempt: whether the caller [acquired] (now holds) the lease, and the
+/// [lease] as it currently stands — the caller's own when [acquired], otherwise
+/// the live lease held by another operator.
+class LeaseOutcome {
+  const LeaseOutcome({required this.acquired, required this.lease});
+
+  /// True when the caller now holds the lease (freshly taken or already theirs).
+  final bool acquired;
+
+  /// The current lease: the caller's when [acquired], else the blocking holder.
+  final SyncLease lease;
+
+  /// True when another operator holds a live lease, blocking the caller.
+  bool get heldByOther => !acquired;
 }
 
 /// The complete materialized output of one sync: the per-account docs plus the

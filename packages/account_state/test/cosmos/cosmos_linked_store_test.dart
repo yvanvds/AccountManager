@@ -34,7 +34,12 @@ class _FakeClient implements CosmosClient {
     required Map<String, dynamic> document,
     required String partitionKey,
   }) async {
-    _c(container)[document['id'] as String] = Map.of(document);
+    final id = document['id'] as String;
+    // Model Cosmos's atomic create: a 409 (→ false) when the id already exists.
+    // The sync/drift lease relies on this to keep two acquirers from both
+    // "creating" the lease document.
+    if (_c(container).containsKey(id)) return false;
+    _c(container)[id] = Map.of(document);
     return true;
   }
 
@@ -189,6 +194,95 @@ void main() {
       final store = CosmosLinkedStore(_FakeClient());
       expect((await store.readSyncState()).generation, 0);
       expect(await store.readRollups(), isEmpty);
+    });
+
+    test('writeMaterialized persists per-system sync metadata (#108)',
+        () async {
+      final store = CosmosLinkedStore(_FakeClient());
+
+      await store.writeMaterialized(
+        _view([_account('p0')]),
+        syncedBy: 'jan@school',
+        at: _d,
+        systemSyncs: {
+          core.Origin.wisa: SystemSyncMeta(syncedBy: 'jan@school', at: _d),
+        },
+      );
+
+      final state = await store.readSyncState();
+      expect(state.systems[core.Origin.wisa]?.syncedBy, 'jan@school');
+      expect(state.systems[core.Origin.wisa]?.at, _d);
+    });
+
+    test('recordSystemSync merges into the doc without bumping generation',
+        () async {
+      final store = CosmosLinkedStore(_FakeClient());
+      await store.writeMaterialized(
+        _view([_account('p0')]),
+        syncedBy: 'jan@school',
+        at: _d,
+        systemSyncs: {
+          core.Origin.wisa: SystemSyncMeta(syncedBy: 'jan@school', at: _d),
+        },
+      );
+
+      final later = _d.add(const Duration(hours: 2));
+      await store.recordSystemSync({
+        core.Origin.azure: SystemSyncMeta(syncedBy: 'mieke@school', at: later),
+      });
+
+      final state = await store.readSyncState();
+      expect(state.generation, 1, reason: 'metadata touch is not a view write');
+      expect(state.systems[core.Origin.wisa]?.syncedBy, 'jan@school');
+      expect(state.systems[core.Origin.azure]?.syncedBy, 'mieke@school');
+    });
+  });
+
+  group('CosmosLinkedStore sync/drift lease (#108)', () {
+    test('acquire creates the lease doc; readLease returns it', () async {
+      final store = CosmosLinkedStore(_FakeClient());
+
+      final out = await store.acquireLease(owner: 'jan@school', now: _d);
+      expect(out.acquired, isTrue);
+      expect((await store.readLease(_d))?.owner, 'jan@school');
+    });
+
+    test('a second operator is blocked by a live lease', () async {
+      final client = _FakeClient();
+      final a = CosmosLinkedStore(client);
+      final b = CosmosLinkedStore(client);
+      await a.acquireLease(owner: 'jan@school', now: _d);
+
+      final out = await b.acquireLease(owner: 'mieke@school', now: _d);
+      expect(out.acquired, isFalse);
+      expect(out.lease.owner, 'jan@school');
+    });
+
+    test('release deletes the doc so the next acquire succeeds', () async {
+      final client = _FakeClient();
+      final a = CosmosLinkedStore(client);
+      final b = CosmosLinkedStore(client);
+      await a.acquireLease(owner: 'jan@school', now: _d);
+
+      await a.releaseLease(owner: 'jan@school');
+      expect(await a.readLease(_d), isNull);
+
+      final out = await b.acquireLease(owner: 'mieke@school', now: _d);
+      expect(out.acquired, isTrue);
+    });
+
+    test('an expired lease is taken over, and readLease treats it as gone',
+        () async {
+      final client = _FakeClient();
+      final a = CosmosLinkedStore(client);
+      final b = CosmosLinkedStore(client);
+      await a.acquireLease(owner: 'jan@school', now: _d);
+      final afterExpiry = _d.add(syncLeaseTtl).add(const Duration(seconds: 1));
+
+      expect(await b.readLease(afterExpiry), isNull);
+      final out = await b.acquireLease(owner: 'mieke@school', now: afterExpiry);
+      expect(out.acquired, isTrue);
+      expect((await b.readLease(afterExpiry))?.owner, 'mieke@school');
     });
   });
 }

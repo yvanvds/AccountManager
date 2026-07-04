@@ -124,3 +124,11 @@ const String syncStateContainer = 'syncState';
 
 /// The id (and partition-key value) of the singleton sync-state document.
 const String syncStateDocumentId = 'syncState';
+
+/// The id (and partition-key value) of the sync/drift **lease** document (#108),
+/// a second singleton in the [syncStateContainer]. Its presence marks the lease
+/// held; it carries `owner` / `heartbeatAt` / `expiresAt` plus a Cosmos `ttl` so
+/// a crashed holder's lease is physically swept, freeing a fresh `create` to
+/// acquire it. The container must have time-to-live enabled for that sweep
+/// (provisioned out of band, like the other containers).
+const String syncLeaseDocumentId = 'syncLease';

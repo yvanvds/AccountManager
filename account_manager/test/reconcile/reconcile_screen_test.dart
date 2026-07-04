@@ -1,5 +1,6 @@
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
+import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -147,6 +148,86 @@ void main() {
 
     expect(harness.soap.soapActions, isEmpty);
     expect(find.text('Apply result'), findsNothing);
+  });
+
+  testWidgets(
+      'a lease held by another operator disables sync/drift and names them '
+      '(#108)', (WidgetTester tester) async {
+    final linkedStore = InMemoryLinkedStore();
+    // A different operator is mid-sync when this session opens.
+    await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+    final harness = ReconcileHarness(linkedStore: linkedStore);
+
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    // The lock indicator names the holder…
+    expect(find.byKey(const ValueKey('reconcile-sync-lock')), findsOneWidget);
+    expect(find.textContaining('mieke@school'), findsOneWidget);
+
+    // …and both heavy actions are disabled.
+    final sync = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('reconcile-sync')),
+    );
+    final drift = tester.widget<OutlinedButton>(
+      find.byKey(const ValueKey('reconcile-drift')),
+    );
+    expect(sync.onPressed, isNull);
+    expect(drift.onPressed, isNull);
+  });
+
+  testWidgets('the header shows the shared per-system freshness (#108)',
+      (WidgetTester tester) async {
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Who/when synced each system, read from the shared store.
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(
+      find.textContaining('by operator@school.example'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      "a generation bump refetches the passive session's overview "
+      '(#108)', (WidgetTester tester) async {
+    final linkedStore = InMemoryLinkedStore();
+    final snapshots = InMemorySnapshotStore();
+
+    // Session 1 materializes generation 1.
+    final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+    await s1.controller.sync();
+
+    // Session 2 renders the shared overview passively.
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ReconcileScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Generatie 1'), findsOneWidget);
+
+    // Session 1 re-syncs a change → generation 2. The realtime layer (#116)
+    // will call onStoreChanged on the bump; here we drive it directly.
+    s1.wisaResult = wisaSnap(
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+      students: [wisaStudent(classGroup: '3D')],
+    );
+    await s1.controller.sync();
+    await s2.controller.onStoreChanged(2);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Generatie 2'), findsOneWidget);
+    expect(find.textContaining('Generatie 1'), findsNothing);
   });
 
   testWidgets('the log panel clears on demand', (WidgetTester tester) async {
