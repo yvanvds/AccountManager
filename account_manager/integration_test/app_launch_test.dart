@@ -548,6 +548,48 @@ void main() {
     await subscriber.close();
   });
 
+  testWidgets(
+      'a duplicate-mail warning drills down and is accepted end-to-end (#109)',
+      (WidgetTester tester) async {
+    // Two Smartschool accounts share one mail (INV-23) — the deliberate
+    // admin+user collision the operator accepts. The whole run is offline over
+    // the recording transports, driven the way the operator drives it.
+    final linkedStore = InMemoryLinkedStore();
+    final harness = dupMailHarness(linkedStore: linkedStore);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The collision surfaces one warning line in the real, laid-out app.
+    const mail = 'shared@school.example';
+    final tile = find.byKey(const ValueKey('dup-warning-$mail'));
+    expect(tile, findsOneWidget);
+    expect(find.textContaining('Dubbele mail "$mail"'), findsOneWidget);
+
+    // Drilling it down lists the colliding accounts…
+    await tester.ensureVisible(tile);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('admin · student'), findsOneWidget);
+    expect(find.textContaining('user · student'), findsOneWidget);
+
+    // …and accepting persists a decision to the shared store and demotes it.
+    await tester.tap(find.byKey(const ValueKey('dup-accept-$mail')));
+    await tester.pumpAndSettle();
+    final decisions = await linkedStore.readDecisions();
+    expect(decisions, hasLength(1));
+    expect(harness.controller.duplicateWarnings.single.accepted, isTrue);
+    expect(find.byKey(const ValueKey('dup-revoke-$mail')), findsOneWidget);
+  });
+
   testWidgets('silent sign-in leads straight into the shell',
       (WidgetTester tester) async {
     final broker = _FakeBroker(silent: (_) => _token('AT'));

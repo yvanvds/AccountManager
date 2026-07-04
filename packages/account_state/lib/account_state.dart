@@ -75,6 +75,7 @@ export 'src/keyvault/key_vault_token_provider.dart';
 export 'src/keyvault/key_vault_transport.dart';
 export 'src/link/linked_state.dart';
 export 'src/link/placement.dart';
+export 'src/materialize/accepted_duplicates.dart';
 export 'src/materialize/decisions_merge.dart';
 export 'src/materialize/linked_state_materializer.dart';
 export 'src/materialize/linked_store.dart';

@@ -327,6 +327,15 @@ class CosmosLinkedStore implements LinkedStore {
     }
   }
 
+  @override
+  Future<void> deleteDecision(AccountDecision decision) async {
+    await _client.deleteDocument(
+      container: decisionsContainer,
+      id: decisionDocId(decision),
+      partitionKey: decision.accountId.value,
+    );
+  }
+
   /// Upserts every document in [docsById], then deletes any document currently
   /// in [container] whose id is not in [freshIds] — the "replace the whole set"
   /// the derived containers need without a container-level truncate.

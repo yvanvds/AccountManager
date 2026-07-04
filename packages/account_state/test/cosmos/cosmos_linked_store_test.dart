@@ -250,6 +250,24 @@ void main() {
       expect(await store.readDecisions(), isEmpty);
     });
 
+    test('deleteDecision removes the decision doc (revoke, #109)', () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final decision = acceptedDuplicateDecision(
+        accountId: const core.LinkedAccountId('p0'),
+        mail: 'shared@school.example',
+        uids: const ['admin', 'user'],
+        decidedBy: 'op@school.example',
+        decidedAt: _d,
+      );
+
+      await store.putDecision(decision);
+      expect(await store.readDecisions(), hasLength(1));
+
+      await store.deleteDecision(decision);
+      expect(await store.readDecisions(), isEmpty);
+    });
+
     test('reading before any sync yields the initial generation', () async {
       final store = CosmosLinkedStore(_FakeClient());
       expect((await store.readSyncState()).generation, 0);

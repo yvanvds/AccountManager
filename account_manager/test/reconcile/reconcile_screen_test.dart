@@ -466,6 +466,46 @@ void main() {
     expect(harness.controller.applyResults, hasLength(2));
   });
 
+  testWidgets(
+      'a duplicate-mail warning drills down to its accounts; accepting demotes '
+      'it and revoking restores it (#109)', (WidgetTester tester) async {
+    final linkedStore = InMemoryLinkedStore();
+    final harness = dupMailHarness(linkedStore: linkedStore);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The collision is surfaced as one line (not accepted yet).
+    const mail = 'shared@school.example';
+    final tile = find.byKey(const ValueKey('dup-warning-$mail'));
+    expect(tile, findsOneWidget);
+    expect(find.textContaining('Dubbele mail "$mail"'), findsOneWidget);
+
+    // Drilling down lists the colliding accounts (uid + type + role).
+    await tester.ensureVisible(tile);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('admin · student'), findsOneWidget);
+    expect(find.textContaining('user · student'), findsOneWidget);
+
+    // Accept it → persisted decision, demoted (accept becomes revoke).
+    await tester.tap(find.byKey(const ValueKey('dup-accept-$mail')));
+    await tester.pumpAndSettle();
+    expect(await linkedStore.readDecisions(), hasLength(1));
+    expect(find.textContaining('geaccepteerd'), findsWidgets);
+    expect(find.byKey(const ValueKey('dup-accept-$mail')), findsNothing);
+    expect(find.byKey(const ValueKey('dup-revoke-$mail')), findsOneWidget);
+
+    // Revoke it → decision gone, the warning is un-demoted again.
+    await tester.tap(find.byKey(const ValueKey('dup-revoke-$mail')));
+    await tester.pumpAndSettle();
+    expect(await linkedStore.readDecisions(), isEmpty);
+    expect(find.byKey(const ValueKey('dup-accept-$mail')), findsOneWidget);
+  });
+
   testWidgets('the log panel clears on demand', (WidgetTester tester) async {
     final harness = ReconcileHarness();
     await tester.pumpWidget(
