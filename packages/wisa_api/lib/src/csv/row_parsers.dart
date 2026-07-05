@@ -30,37 +30,71 @@ const String schoolCsvHeader = 'ID,NAME,DESCRIPTION';
 ///
 /// [schoolId] is the WISA school the row was fetched for — not present in
 /// the CSV itself. Throws [CsvRowParseException] if the row is malformed.
+///
+/// WISA emits the free-text columns (NAAM, VOORNAAM, ROEPNAAM, and the
+/// address block) unquoted even when they contain a literal comma — e.g. a
+/// ROEPNAAM of `Michelle, Servais` — which splits the row into more than the
+/// 18 header columns and, under fixed positional indices, shifts every
+/// subsequent column so GEBOORTEDATUM lands on a name fragment (issue #148,
+/// same failure class as #29 for class groups).
+///
+/// The two `d/M/yyyy` columns are the only typed landmarks that free text
+/// never mimics: GEBOORTEDATUM is the first date, and KLASWIJZIGING is the
+/// last column. We anchor on GEBOORTEDATUM — everything before it is the
+/// name block (KLAS, KLASGROEP, NAAM, VOORNAAM, ROEPNAAM), and the 13 typed,
+/// comma-free columns from GEBOORTEDATUM to KLASWIJZIGING follow it in order.
 WisaStudent parseStudentRow(String line, {required int schoolId}) {
   try {
     final f = splitCsvLine(line);
-    if (f.length < 18) {
+    // GEBOORTEDATUM sits at column 5 in a clean row; an unquoted comma in a
+    // name column pushes it right. It is the first date-shaped field.
+    final dateCol = f.indexWhere((v) => tryParseBelgianDate(v) != null);
+    if (dateCol < 5) {
       throw CsvRowParseException(
         line,
-        'Expected 18 columns, got ${f.length}',
+        'Could not locate GEBOORTEDATUM (no d/M/yyyy field at or after '
+        'column 5)',
       );
     }
+    // From GEBOORTEDATUM onward the columns are all typed (dates, ids,
+    // gender) or controlled-vocabulary address fields that do not contain
+    // commas, so exactly 13 fields must remain, ending on KLASWIJZIGING. A
+    // different count means a comma leaked from the address block — we throw
+    // a precise error rather than silently misalign the address.
+    if (f.length - dateCol != 13) {
+      throw CsvRowParseException(
+        line,
+        'Expected 13 columns from GEBOORTEDATUM onward, got '
+        '${f.length - dateCol}',
+      );
+    }
+    // NAAM and VOORNAAM come from single official-registry fields; any comma
+    // in the name block belongs to the human-entered ROEPNAAM, which absorbs
+    // the overflow (mirrors the OMSCHRIJVING rejoin in parseClassGroupRow).
     return WisaStudent(
       classGroup: f[0].trim(),
       classSubGroup: f[1].trim(),
       name: f[2].trim(),
       firstName: f[3].trim(),
-      preferredName: f[4].trim(),
-      birthDate: parseBelgianDate(f[5]),
-      wisaId: core.WisaId(f[6].trim()),
-      stemId: f[7].trim(),
-      gender: f[8].trim() == 'M' ? core.Gender.male : core.Gender.female,
-      nationalId: f[9].trim(),
-      birthPlace: f[10].trim(),
-      nationality: f[11].trim(),
+      preferredName: f.sublist(4, dateCol).join(',').trim(),
+      birthDate: parseBelgianDate(f[dateCol]),
+      wisaId: core.WisaId(f[dateCol + 1].trim()),
+      stemId: f[dateCol + 2].trim(),
+      gender:
+          f[dateCol + 3].trim() == 'M' ? core.Gender.male : core.Gender.female,
+      nationalId: f[dateCol + 4].trim(),
+      birthPlace: f[dateCol + 5].trim(),
+      nationality: f[dateCol + 6].trim(),
       address: core.Address(
-        street: f[12].trim(),
-        houseNumber: f[13].trim(),
-        houseNumberAdd: f[14].trim().isEmpty ? null : f[14].trim(),
-        postalCode: f[15].trim(),
-        city: f[16].trim(),
+        street: f[dateCol + 7].trim(),
+        houseNumber: f[dateCol + 8].trim(),
+        houseNumberAdd:
+            f[dateCol + 9].trim().isEmpty ? null : f[dateCol + 9].trim(),
+        postalCode: f[dateCol + 10].trim(),
+        city: f[dateCol + 11].trim(),
         country: 'BE',
       ),
-      classChange: parseBelgianDate(f[17]),
+      classChange: parseBelgianDate(f[dateCol + 12]),
       schoolId: schoolId,
     );
   } on CsvRowParseException {

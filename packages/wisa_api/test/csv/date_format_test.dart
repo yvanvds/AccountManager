@@ -32,6 +32,20 @@ void main() {
     });
   });
 
+  group('tryParseBelgianDate', () {
+    test('returns the date for a well-formed value', () {
+      expect(tryParseBelgianDate('19/07/2022'), DateTime(2022, 7, 19));
+    });
+
+    test('returns null instead of throwing on non-dates', () {
+      expect(tryParseBelgianDate(' Servais'), isNull);
+      expect(tryParseBelgianDate('Kerkstraat'), isNull);
+      expect(tryParseBelgianDate('2400013'), isNull);
+      expect(tryParseBelgianDate('1/1/24'), isNull);
+      expect(tryParseBelgianDate(''), isNull);
+    });
+  });
+
   group('formatWerkdatum', () {
     test('zero-pads single-digit day and month', () {
       expect(formatWerkdatum(DateTime(2024, 9, 1)), '01/09/2024');
