@@ -363,6 +363,11 @@ void main() {
     expect(find.text('Klasgroepen'), findsWidgets);
 
     // Opening it lists the orphan classes with their notice — no pull, no link.
+    // Bring it fully into view first: the draggable log divider (#152) is a
+    // touch larger than the old hairline, so this bottom-of-fold node can sit
+    // right on the panel boundary at the default window size.
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('rollup-groups')));
     await tester.pumpAndSettle();
 
@@ -572,6 +577,44 @@ void main() {
       findsNothing,
       reason: 'the first tile unloaded once scrolled far off-screen',
     );
+  });
+
+  testWidgets(
+      'dragging the divider handle grows the log panel and clamps to a min '
+      '(#152)', (WidgetTester tester) async {
+    // A fixed, comfortably tall window so the drag has room to grow the panel
+    // before hitting the "leave room for the content" cap.
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    final panel = find.byKey(const ValueKey('reconcile-log-panel'));
+    final handle = find.byKey(const ValueKey('reconcile-log-resize'));
+    expect(panel, findsOneWidget);
+    expect(handle, findsOneWidget);
+
+    // Opens at the default height.
+    final double initial = tester.getSize(panel).height;
+    expect(initial, 160);
+
+    // Dragging the handle up grows the log area by the drag distance. Slop is
+    // zeroed so the whole offset lands as one reported delta.
+    await tester.drag(handle, const Offset(0, -120),
+        touchSlopX: 0, touchSlopY: 0);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(panel).height, 280);
+
+    // Dragging far down clamps to the sensible minimum, never collapsing away.
+    await tester.drag(handle, const Offset(0, 2000),
+        touchSlopX: 0, touchSlopY: 0);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(panel).height, 64);
   });
 
   testWidgets('the log panel clears on demand', (WidgetTester tester) async {
