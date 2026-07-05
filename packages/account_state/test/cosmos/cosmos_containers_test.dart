@@ -43,5 +43,37 @@ void main() {
       );
       expect(client.ensuredContainers, {decisionsContainer: '/pk'});
     });
+
+    test(
+        'the bootstrap set provisions the snapshots container the snapshot '
+        'store needs (#151)', () async {
+      final client = FakeCosmosClient();
+
+      await ensureContainers(client, specs: bootstrapContainers);
+
+      // The snapshot-store write path (CosmosSnapshotStore -> snapshots)
+      // 404'd mid-sync because the container was never ensured; the bootstrap
+      // set now provisions it, keyed by /id like its singleton documents.
+      expect(client.ensuredContainers[snapshotsContainer], '/id');
+      // Still covers the sync-lock renewal container (already ensured by #150's
+      // linked-store set) so a regression can't silently drop it.
+      expect(client.ensuredContainers[syncStateContainer], '/id');
+    });
+
+    test('the bootstrap set is the linked-store set plus the snapshot set',
+        () async {
+      final client = FakeCosmosClient();
+
+      await ensureContainers(client, specs: bootstrapContainers);
+
+      expect(client.ensuredContainers, {
+        linkedAccountsContainer: '/pk',
+        linkedGroupsContainer: '/pk',
+        rollupsContainer: '/pk',
+        decisionsContainer: '/pk',
+        syncStateContainer: '/id',
+        snapshotsContainer: '/id',
+      });
+    });
   });
 }

@@ -268,12 +268,15 @@ void main() {
       );
     });
 
-    test('provisions the materialized-view containers, incl. decisions (#150)',
-        () async {
+    test(
+        'provisions every sync container: view docs, decisions (#150), '
+        'syncState + snapshots (#151)', () async {
       // Drive the real bootstrap assembly with a recording client to prove the
-      // ensure-containers preflight is wired: the operator `decisions` container
-      // (whose absence made "accept duplicate mail" 404) is provisioned before
-      // the reconcile controller can write a decision to it.
+      // ensure-containers preflight is wired for every container a sync writes:
+      // the operator `decisions` container (whose absence made "accept
+      // duplicate mail" 404, #150), and the `syncState` / `snapshots`
+      // containers whose absence 404'd the sync-lock renewal and the snapshot
+      // save between the Smartschool and Azure passes (#151).
       final client = _RecordingCosmosClient();
       await bootstrapReconcile(
         session: SignInSession(FakeBroker()),
@@ -289,6 +292,8 @@ void main() {
         containsAll(['linkedAccounts', 'linkedGroups', 'rollups', 'decisions']),
       );
       expect(client.ensured['syncState'], '/id');
+      // The snapshot store's container — the missing piece #151 adds.
+      expect(client.ensured['snapshots'], '/id');
     });
 
     test('the real Cosmos path reads settings from the container', () async {
