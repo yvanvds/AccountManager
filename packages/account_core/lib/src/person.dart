@@ -39,6 +39,32 @@ class Address {
     return buf.toString();
   }
 
+  /// True when this address denotes the same **home address** as [other] for
+  /// the purposes of the Smartschool student-address sync.
+  ///
+  /// Mirrors the legacy change detection in
+  /// `ModifySmartschoolStudentAddress.checkUserHomeAddress`
+  /// (`legacy-wpf/AccountManager/Action/StudentAccount/ModifySmartschoolStudentAddress.cs`
+  /// lines 59-67): it compares [street], [houseNumber], [houseNumberAdd],
+  /// [postalCode] and [city], and deliberately **ignores [country]**.
+  ///
+  /// This is the fix for #153. The WISA connector hardcodes `country` to `'BE'`
+  /// (`wisa_api` `row_parsers.dart`) while the Smartschool connector returns the
+  /// free-text `Land` field verbatim (`smartschool_api` `account_json.dart`), so
+  /// the two `country` values differ for essentially every student. Folding
+  /// `country` into the comparison (as `operator ==` does) therefore fired the
+  /// address action for ~all students with a visually identical before/after.
+  /// A null and an empty [houseNumberAdd] both denote "no bus number" and
+  /// compare equal (WISA maps an empty bus number to `null`, Smartschool to
+  /// `''`), so that representational gap no longer triggers a spurious change
+  /// either.
+  bool sameHomeAddressAs(Address other) =>
+      street == other.street &&
+      houseNumber == other.houseNumber &&
+      (houseNumberAdd ?? '') == (other.houseNumberAdd ?? '') &&
+      postalCode == other.postalCode &&
+      city == other.city;
+
   Map<String, dynamic> toJson() => {
         'street': street,
         'houseNumber': houseNumber,
