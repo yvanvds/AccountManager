@@ -395,220 +395,298 @@ class _SettingsForm extends StatelessWidget {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
-        child: ListView(
-          padding: const EdgeInsets.symmetric(
-            horizontal: PlinkSpacing.s6,
-            vertical: PlinkSpacing.s6,
-          ),
-          children: <Widget>[
-            Eyebrow('Arcadia · instellingen', onInk: ink),
-            const SizedBox(height: PlinkSpacing.s4),
-            Text('Instellingen', style: text.headlineMedium),
-            const SizedBox(height: PlinkSpacing.s3),
-            Text(
-              'Bewerk de configuratie en bewaar. Wachtwoorden worden alleen '
-              'geschreven — laat een veld leeg om de bestaande waarde te '
-              'behouden.',
-              style: text.bodyMedium,
-            ),
-            const SizedBox(height: PlinkSpacing.s4),
-            Wrap(
-              spacing: PlinkSpacing.s3,
-              runSpacing: PlinkSpacing.s2,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: <Widget>[
-                FilledButton.icon(
-                  key: const ValueKey('settings-save'),
-                  onPressed: state._busy ? null : state._save,
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text('Opslaan'),
+        child: DefaultTabController(
+          length: 4,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              // Shared header + actions: kept above the tabs so Save/Herladen
+              // act on the whole document regardless of the active tab.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  PlinkSpacing.s6,
+                  PlinkSpacing.s6,
+                  PlinkSpacing.s6,
+                  PlinkSpacing.s4,
                 ),
-                OutlinedButton.icon(
-                  key: const ValueKey('settings-reload'),
-                  onPressed: state._busy ? null : state._reload,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Herladen'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Eyebrow('Arcadia · instellingen', onInk: ink),
+                    const SizedBox(height: PlinkSpacing.s4),
+                    Text('Instellingen', style: text.headlineMedium),
+                    const SizedBox(height: PlinkSpacing.s3),
+                    Text(
+                      'Bewerk de configuratie en bewaar. Wachtwoorden worden '
+                      'alleen geschreven — laat een veld leeg om de bestaande '
+                      'waarde te behouden.',
+                      style: text.bodyMedium,
+                    ),
+                    const SizedBox(height: PlinkSpacing.s4),
+                    Wrap(
+                      spacing: PlinkSpacing.s3,
+                      runSpacing: PlinkSpacing.s2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        FilledButton.icon(
+                          key: const ValueKey('settings-save'),
+                          onPressed: state._busy ? null : state._save,
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('Opslaan'),
+                        ),
+                        OutlinedButton.icon(
+                          key: const ValueKey('settings-reload'),
+                          onPressed: state._busy ? null : state._reload,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Herladen'),
+                        ),
+                      ],
+                    ),
+                    if (state._busy) ...<Widget>[
+                      const SizedBox(height: PlinkSpacing.s4),
+                      const LinearProgressIndicator(),
+                    ],
+                  ],
                 ),
-              ],
-            ),
-            if (state._busy) ...<Widget>[
-              const SizedBox(height: PlinkSpacing.s4),
-              const LinearProgressIndicator(),
+              ),
+              const TabBar(
+                key: ValueKey('settings-tabs'),
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: <Widget>[
+                  Tab(key: ValueKey('settings-tab-algemeen'), text: 'Algemeen'),
+                  Tab(key: ValueKey('settings-tab-wisa'), text: 'Wisa'),
+                  Tab(
+                    key: ValueKey('settings-tab-smartschool'),
+                    text: 'Smartschool',
+                  ),
+                  Tab(key: ValueKey('settings-tab-azure'), text: 'Azure'),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: <Widget>[
+                    _algemeenTab(),
+                    _wisaTab(),
+                    _smartschoolTab(),
+                    _azureTab(),
+                  ],
+                ),
+              ),
             ],
-            const SizedBox(height: PlinkSpacing.s5),
-
-            // Global.
-            _Section(
-              title: 'Algemeen',
-              children: <Widget>[
-                _Field(
-                  keyValue: 'settings-school-prefix',
-                  label: 'Schoolprefix',
-                  controller: state._schoolPrefix,
-                ),
-                SwitchListTile(
-                  key: const ValueKey('settings-debug-mode'),
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Debugmodus'),
-                  value: state._debugMode,
-                  onChanged: (v) => state.toggle(() => state._debugMode = v),
-                ),
-              ],
-            ),
-
-            // WISA.
-            _Section(
-              title: 'WISA',
-              children: <Widget>[
-                _Field(
-                  keyValue: 'settings-wisa-server',
-                  label: 'Server',
-                  controller: state._wisaServer,
-                ),
-                _Field(
-                  keyValue: 'settings-wisa-port',
-                  label: 'Poort',
-                  controller: state._wisaPort,
-                  keyboardType: TextInputType.number,
-                ),
-                _Field(
-                  keyValue: 'settings-wisa-database',
-                  label: 'Database',
-                  controller: state._wisaDatabase,
-                ),
-                _Field(
-                  keyValue: 'settings-wisa-username',
-                  label: 'Gebruikersnaam',
-                  controller: state._wisaUsername,
-                ),
-                _SecretField(
-                  keyValue: 'settings-wisa-password',
-                  label: 'Wachtwoord (schrijf-alleen)',
-                  controller: state._wisaPassword,
-                ),
-                _WorkDateField(
-                  keyValue: 'settings-wisa-workdate',
-                  label: 'Werkdatum',
-                  isNow: state._workDateIsNow,
-                  date: state._workDate,
-                  onIsNowChanged: (v) =>
-                      state.toggle(() => state._workDateIsNow = v),
-                  onPick: () => state._pickWorkDate(virtual: false),
-                ),
-                _WorkDateField(
-                  keyValue: 'settings-wisa-virtual-workdate',
-                  label: 'Virtuele werkdatum',
-                  isNow: state._virtualWorkDateIsNow,
-                  date: state._virtualWorkDate,
-                  onIsNowChanged: (v) =>
-                      state.toggle(() => state._virtualWorkDateIsNow = v),
-                  onPick: () => state._pickWorkDate(virtual: true),
-                ),
-              ],
-            ),
-
-            // WISA schools (managed/"ours" flag — #113).
-            _Section(
-              title: 'WISA-scholen (beheerd)',
-              children: <Widget>[
-                _WisaSchoolsEditor(state: state),
-              ],
-            ),
-
-            // Smartschool.
-            _Section(
-              title: 'Smartschool',
-              children: <Widget>[
-                _Field(
-                  keyValue: 'settings-ss-uri',
-                  label: 'URI',
-                  controller: state._ssUri,
-                ),
-                _Field(
-                  keyValue: 'settings-ss-test-user',
-                  label: 'Testgebruiker',
-                  controller: state._ssTestUser,
-                ),
-                _Field(
-                  keyValue: 'settings-ss-student-group',
-                  label: 'Pad leerlingengroep',
-                  controller: state._ssStudentGroup,
-                ),
-                _Field(
-                  keyValue: 'settings-ss-staff-group',
-                  label: 'Pad personeelsgroep',
-                  controller: state._ssStaffGroup,
-                ),
-                _SecretField(
-                  keyValue: 'settings-ss-passphrase',
-                  label: 'Passphrase (schrijf-alleen)',
-                  controller: state._ssPassphrase,
-                ),
-                SwitchListTile(
-                  key: const ValueKey('settings-ss-use-grades'),
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Gebruik graden'),
-                  value: state._ssUseGrades,
-                  onChanged: (v) => state.toggle(() => state._ssUseGrades = v),
-                ),
-                for (var i = 0; i < state._grades.length; i++)
-                  _Field(
-                    keyValue: 'settings-ss-grade-$i',
-                    label: 'Graad ${i + 1}',
-                    controller: state._grades[i],
-                  ),
-                SwitchListTile(
-                  key: const ValueKey('settings-ss-use-years'),
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Gebruik jaren'),
-                  value: state._ssUseYears,
-                  onChanged: (v) => state.toggle(() => state._ssUseYears = v),
-                ),
-                for (var i = 0; i < state._years.length; i++)
-                  _Field(
-                    keyValue: 'settings-ss-year-$i',
-                    label: 'Jaar ${i + 1}',
-                    controller: state._years[i],
-                  ),
-              ],
-            ),
-
-            // Azure.
-            _Section(
-              title: 'Azure AD / Office 365',
-              children: <Widget>[
-                _Field(
-                  keyValue: 'settings-az-client-id',
-                  label: 'Client ID',
-                  controller: state._azClientId,
-                ),
-                _Field(
-                  keyValue: 'settings-az-tenant-id',
-                  label: 'Tenant ID',
-                  controller: state._azTenantId,
-                ),
-                _Field(
-                  keyValue: 'settings-az-domain',
-                  label: 'Domein',
-                  controller: state._azDomain,
-                ),
-              ],
-            ),
-
-            // Import rules (read-only).
-            _Section(
-              title: 'Importregels (alleen-lezen)',
-              children: <Widget>[
-                _RulesList(
-                  wisaRules: settings.wisaRules,
-                  smartschoolRules: settings.smartschoolRules,
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  /// A scrolling tab body with the shared page padding.
+  Widget _tab(String keyValue, List<Widget> children) {
+    return ListView(
+      key: ValueKey(keyValue),
+      padding: const EdgeInsets.symmetric(
+        horizontal: PlinkSpacing.s6,
+        vertical: PlinkSpacing.s5,
+      ),
+      children: children,
+    );
+  }
+
+  /// App-wide options: school prefix, debug mode, and the werkdatum controls
+  /// (app-wide, not connector-specific — #140).
+  Widget _algemeenTab() {
+    return _tab('settings-tab-algemeen-body', <Widget>[
+      _Section(
+        title: 'Algemeen',
+        children: <Widget>[
+          _Field(
+            keyValue: 'settings-school-prefix',
+            label: 'Schoolprefix',
+            controller: state._schoolPrefix,
+          ),
+          SwitchListTile(
+            key: const ValueKey('settings-debug-mode'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Debugmodus'),
+            value: state._debugMode,
+            onChanged: (v) => state.toggle(() => state._debugMode = v),
+          ),
+        ],
+      ),
+      _Section(
+        title: 'Werkdatum',
+        children: <Widget>[
+          _WorkDateField(
+            keyValue: 'settings-workdate',
+            label: 'Werkdatum',
+            isNow: state._workDateIsNow,
+            date: state._workDate,
+            onIsNowChanged: (v) => state.toggle(() => state._workDateIsNow = v),
+            onPick: () => state._pickWorkDate(virtual: false),
+          ),
+          _WorkDateField(
+            keyValue: 'settings-virtual-workdate',
+            label: 'Virtuele werkdatum',
+            isNow: state._virtualWorkDateIsNow,
+            date: state._virtualWorkDate,
+            onIsNowChanged: (v) =>
+                state.toggle(() => state._virtualWorkDateIsNow = v),
+            onPick: () => state._pickWorkDate(virtual: true),
+          ),
+        ],
+      ),
+    ]);
+  }
+
+  /// WISA connector config: connection, credentials, managed-school list, and
+  /// the WISA import rules (read-only).
+  Widget _wisaTab() {
+    return _tab('settings-tab-wisa-body', <Widget>[
+      _Section(
+        title: 'WISA',
+        children: <Widget>[
+          _Field(
+            keyValue: 'settings-wisa-server',
+            label: 'Server',
+            controller: state._wisaServer,
+          ),
+          _Field(
+            keyValue: 'settings-wisa-port',
+            label: 'Poort',
+            controller: state._wisaPort,
+            keyboardType: TextInputType.number,
+          ),
+          _Field(
+            keyValue: 'settings-wisa-database',
+            label: 'Database',
+            controller: state._wisaDatabase,
+          ),
+          _Field(
+            keyValue: 'settings-wisa-username',
+            label: 'Gebruikersnaam',
+            controller: state._wisaUsername,
+          ),
+          _SecretField(
+            keyValue: 'settings-wisa-password',
+            label: 'Wachtwoord (schrijf-alleen)',
+            controller: state._wisaPassword,
+          ),
+        ],
+      ),
+      _Section(
+        title: 'WISA-scholen (beheerd)',
+        children: <Widget>[
+          _WisaSchoolsEditor(state: state),
+        ],
+      ),
+      _Section(
+        title: 'Importregels (alleen-lezen)',
+        children: <Widget>[
+          _RulesList(
+            emptyKey: const ValueKey('settings-wisa-rules-empty'),
+            wisaRules: settings.wisaRules,
+          ),
+        ],
+      ),
+    ]);
+  }
+
+  /// Smartschool connector config: connection, credentials, grade/year
+  /// vocabulary, and the Smartschool import rules (read-only).
+  Widget _smartschoolTab() {
+    return _tab('settings-tab-smartschool-body', <Widget>[
+      _Section(
+        title: 'Smartschool',
+        children: <Widget>[
+          _Field(
+            keyValue: 'settings-ss-uri',
+            label: 'URI',
+            controller: state._ssUri,
+          ),
+          _Field(
+            keyValue: 'settings-ss-test-user',
+            label: 'Testgebruiker',
+            controller: state._ssTestUser,
+          ),
+          _Field(
+            keyValue: 'settings-ss-student-group',
+            label: 'Pad leerlingengroep',
+            controller: state._ssStudentGroup,
+          ),
+          _Field(
+            keyValue: 'settings-ss-staff-group',
+            label: 'Pad personeelsgroep',
+            controller: state._ssStaffGroup,
+          ),
+          _SecretField(
+            keyValue: 'settings-ss-passphrase',
+            label: 'Passphrase (schrijf-alleen)',
+            controller: state._ssPassphrase,
+          ),
+          SwitchListTile(
+            key: const ValueKey('settings-ss-use-grades'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Gebruik graden'),
+            value: state._ssUseGrades,
+            onChanged: (v) => state.toggle(() => state._ssUseGrades = v),
+          ),
+          for (var i = 0; i < state._grades.length; i++)
+            _Field(
+              keyValue: 'settings-ss-grade-$i',
+              label: 'Graad ${i + 1}',
+              controller: state._grades[i],
+            ),
+          SwitchListTile(
+            key: const ValueKey('settings-ss-use-years'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Gebruik jaren'),
+            value: state._ssUseYears,
+            onChanged: (v) => state.toggle(() => state._ssUseYears = v),
+          ),
+          for (var i = 0; i < state._years.length; i++)
+            _Field(
+              keyValue: 'settings-ss-year-$i',
+              label: 'Jaar ${i + 1}',
+              controller: state._years[i],
+            ),
+        ],
+      ),
+      _Section(
+        title: 'Importregels (alleen-lezen)',
+        children: <Widget>[
+          _RulesList(
+            emptyKey: const ValueKey('settings-ss-rules-empty'),
+            smartschoolRules: settings.smartschoolRules,
+          ),
+        ],
+      ),
+    ]);
+  }
+
+  /// Azure AD / Office 365 connector config.
+  Widget _azureTab() {
+    return _tab('settings-tab-azure-body', <Widget>[
+      _Section(
+        title: 'Azure AD / Office 365',
+        children: <Widget>[
+          _Field(
+            keyValue: 'settings-az-client-id',
+            label: 'Client ID',
+            controller: state._azClientId,
+          ),
+          _Field(
+            keyValue: 'settings-az-tenant-id',
+            label: 'Tenant ID',
+            controller: state._azTenantId,
+          ),
+          _Field(
+            keyValue: 'settings-az-domain',
+            label: 'Domein',
+            controller: state._azDomain,
+          ),
+        ],
+      ),
+    ]);
   }
 }
 
@@ -758,8 +836,15 @@ class _WorkDateField extends StatelessWidget {
 }
 
 class _RulesList extends StatelessWidget {
-  const _RulesList({required this.wisaRules, required this.smartschoolRules});
+  const _RulesList({
+    required this.emptyKey,
+    this.wisaRules = const <WisaImportRule>[],
+    this.smartschoolRules = const <SmartschoolImportRule>[],
+  });
 
+  /// Key stamped on the "no rules yet" placeholder, so each connector tab's
+  /// empty state is addressable on its own.
+  final Key emptyKey;
   final List<WisaImportRule> wisaRules;
   final List<SmartschoolImportRule> smartschoolRules;
 
@@ -789,7 +874,7 @@ class _RulesList extends StatelessWidget {
     if (wisaRules.isEmpty && smartschoolRules.isEmpty) {
       return Text(
         'Nog geen importregels verzameld.',
-        key: const ValueKey('settings-rules-empty'),
+        key: emptyKey,
         style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
       );
     }

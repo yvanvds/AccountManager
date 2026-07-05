@@ -69,6 +69,13 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
+  /// Switches the Settings view to the tab with [tabKey] (#140: config is split
+  /// across Algemeen / Wisa / Smartschool / Azure tabs).
+  Future<void> openSettingsTab(WidgetTester tester, String tabKey) async {
+    await tester.tap(find.byKey(ValueKey(tabKey)));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('the app launches into the Plink-themed Home shell',
       (WidgetTester tester) async {
     // The real main(): with no --dart-define config, AAD is not configured, so
@@ -792,14 +799,17 @@ void main() {
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
+    // The app-wide prefix shows on the default Algemeen tab.
     expect(find.text('OLD'), findsOneWidget);
-    expect(find.text('old.host'), findsOneWidget);
 
-    // Edit a profile field and enter a write-only secret, then save.
+    // Edit the app-wide prefix on Algemeen…
     await tester.enterText(
       find.byKey(const ValueKey('settings-school-prefix')),
       'GBS-KA',
     );
+    // …then the WISA connection + secret on the Wisa tab (#140).
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('old.host'), findsOneWidget);
     await tester.enterText(
       find.byKey(const ValueKey('settings-wisa-server')),
       'wisa.new.host',
@@ -818,7 +828,8 @@ void main() {
     // …the secret went through the provider, not into the settings document…
     expect(await settings.secrets.read(passwordRef), 'typed-secret');
     expect(saved.toJson().toString(), isNot(contains('typed-secret')));
-    // …and the secret field was cleared, never echoing the value back.
+    // …and the secret field (still on the Wisa tab) was cleared, never echoing
+    // the value back.
     final field = tester.widget<TextField>(
       find.byKey(const ValueKey('settings-wisa-password')),
     );
@@ -848,25 +859,18 @@ void main() {
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
-    // The WISA-schools section sits below the fold; the form is a lazy ListView,
-    // so scroll the switch into view (and build it) before reading it.
+    // The managed-school list lives under the Wisa tab now (#140); open it and
+    // bring the seeded school's switch into view before reading it.
+    await openSettingsTab(tester, 'settings-tab-wisa');
     final ourSwitch =
         find.byKey(const ValueKey('settings-wisa-school-42-ours'));
-    await tester.scrollUntilVisible(
-      ourSwitch,
-      400,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.ensureVisible(ourSwitch);
+    await tester.pumpAndSettle();
     expect(tester.widget<SwitchListTile>(ourSwitch).value, isFalse);
 
-    // Mark it managed and save.
+    // Mark it managed and save (the Save action sits in the shared header).
     await tester.tap(ourSwitch);
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('settings-save')),
-      -400,
-      scrollable: find.byType(Scrollable).first,
-    );
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
 
