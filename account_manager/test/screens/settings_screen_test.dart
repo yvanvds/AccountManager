@@ -16,6 +16,13 @@ void _useTallWindow(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
+/// Switches the settings view to the tab with [tabKey] (#140: the config is now
+/// split across Algemeen / Wisa / Smartschool / Azure tabs).
+Future<void> _openTab(WidgetTester tester, String tabKey) async {
+  await tester.tap(find.byKey(ValueKey(tabKey)));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('shows the not-configured panel when AAD is absent',
       (WidgetTester tester) async {
@@ -41,10 +48,36 @@ void main() {
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
+    // Algemeen is the default tab.
     expect(find.text('GBS'), findsOneWidget);
+
+    // Each connector's config lives under its own tab now (#140).
+    await _openTab(tester, 'settings-tab-wisa');
     expect(find.text('db.school.example'), findsOneWidget);
+
+    await _openTab(tester, 'settings-tab-smartschool');
     expect(find.text('Leerlingen'), findsOneWidget);
+
+    await _openTab(tester, 'settings-tab-azure');
     expect(find.text('school.onmicrosoft.com'), findsOneWidget);
+  });
+
+  testWidgets('the settings view exposes the four config tabs',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    for (final key in const <String>[
+      'settings-tab-algemeen',
+      'settings-tab-wisa',
+      'settings-tab-smartschool',
+      'settings-tab-azure',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsOneWidget);
+    }
   });
 
   testWidgets('edit → save round-trips a profile field to the store',
@@ -61,6 +94,7 @@ void main() {
       find.byKey(const ValueKey('settings-school-prefix')),
       'NEW',
     );
+    await _openTab(tester, 'settings-tab-wisa');
     await tester.enterText(
       find.byKey(const ValueKey('settings-wisa-server')),
       'wisa.host',
@@ -81,6 +115,7 @@ void main() {
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
+    await _openTab(tester, 'settings-tab-smartschool');
     await tester.enterText(
       find.byKey(const ValueKey('settings-ss-student-group')),
       'Leerlingen/2025',
@@ -111,6 +146,7 @@ void main() {
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
+    await _openTab(tester, 'settings-tab-wisa');
     // The value is nowhere in the rendered tree, and the field is empty.
     expect(find.text('super-secret-value'), findsNothing);
     final field = tester.widget<TextField>(
@@ -131,10 +167,12 @@ void main() {
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
+    await _openTab(tester, 'settings-tab-wisa');
     await tester.enterText(
       find.byKey(const ValueKey('settings-wisa-password')),
       'new-wisa-pw',
     );
+    await _openTab(tester, 'settings-tab-smartschool');
     await tester.enterText(
       find.byKey(const ValueKey('settings-ss-passphrase')),
       'new-passphrase',
@@ -151,6 +189,7 @@ void main() {
     expect(saved.toJson().toString(), isNot(contains('new-passphrase')));
 
     // The fields are cleared after a successful save (never re-shown).
+    await _openTab(tester, 'settings-tab-wisa');
     final field = tester.widget<TextField>(
       find.byKey(const ValueKey('settings-wisa-password')),
     );
@@ -217,6 +256,7 @@ void main() {
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
+    await _openTab(tester, 'settings-tab-wisa');
     // The seeded (unmanaged) school renders with its switch off.
     final ourSwitch =
         find.byKey(const ValueKey('settings-wisa-school-42-ours'));
@@ -242,6 +282,7 @@ void main() {
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
+    await _openTab(tester, 'settings-tab-wisa');
     // No schools yet — the empty note shows.
     expect(find.byKey(const ValueKey('settings-wisa-schools-empty')),
         findsOneWidget);
@@ -280,8 +321,11 @@ void main() {
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
+    // WISA import rules live under the Wisa tab now (#140).
+    await _openTab(tester, 'settings-tab-wisa');
     expect(find.textContaining('OKAN'), findsOneWidget);
     expect(find.textContaining('VIRT'), findsOneWidget);
-    expect(find.byKey(const ValueKey('settings-rules-empty')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('settings-wisa-rules-empty')), findsNothing);
   });
 }
