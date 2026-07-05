@@ -139,6 +139,29 @@ void main() {
       );
     });
 
+    test('parses a student whose ROEPNAAM has an unquoted comma (issue #148)',
+        () async {
+      // The fixture carries one row with a comma-bearing call name
+      // ("Pref9999, Servais"), emitted unquoted like real WISA data. The
+      // whole sync used to abort on it; now it flows through with every
+      // column aligned.
+      final t = _FakeTransport(fixtures);
+      final c = buildConnector(t);
+      final schools = await c.loadSchools();
+      final snapshot = await c.sync(
+        schools: [schools.firstWhere((s) => s.id == 25)],
+        workDate: DateTime(2024, 9, 1),
+      );
+      final student = snapshot.students
+          .firstWhere((s) => s.wisaId == const core.WisaId('99999'));
+      expect(student.name, 'Anon9999');
+      expect(student.firstName, 'First9999');
+      expect(student.preferredName, 'Pref9999, Servais');
+      expect(student.birthDate, DateTime(2011, 5, 7));
+      expect(student.address.city, 'ANON_CITY');
+      expect(student.classChange, DateTime(2025, 9, 1));
+    });
+
     test('sends Werkdatum=dd/MM/yyyy', () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);

@@ -75,6 +75,64 @@ void main() {
         throwsA(isA<CsvRowParseException>()),
       );
     });
+
+    test('handles an unquoted comma in ROEPNAAM without shifting (issue #148)',
+        () {
+      // WISA emits ROEPNAAM unquoted, so a call name like "Michelle, Servais"
+      // splits the row into 19 fields. Anchoring on the GEBOORTEDATUM date
+      // keeps every downstream column aligned; the naive fixed-index parser
+      // read " Servais" as the date and threw.
+      const row =
+          'K1,00,Braes,Michelle,Michelle, Servais,19/07/2022,35338,2400013,V,'
+          '22071917883,TIENEN,Belgische,Ramselsesteenweg,178,,2230,HERSELT,'
+          '1/09/2025';
+      final s = parseStudentRow(row, schoolId: 25);
+      expect(s.name, 'Braes');
+      expect(s.firstName, 'Michelle');
+      expect(s.preferredName, 'Michelle, Servais');
+      expect(s.birthDate, DateTime(2022, 7, 19));
+      expect(s.wisaId, const core.WisaId('35338'));
+      expect(s.stemId, '2400013');
+      expect(s.gender, core.Gender.female);
+      expect(s.nationalId, '22071917883');
+      expect(s.birthPlace, 'TIENEN');
+      expect(s.nationality, 'Belgische');
+      expect(s.address.street, 'Ramselsesteenweg');
+      expect(s.address.houseNumber, '178');
+      expect(s.address.houseNumberAdd, isNull);
+      expect(s.address.postalCode, '2230');
+      expect(s.address.city, 'HERSELT');
+      expect(s.classChange, DateTime(2025, 9, 1));
+    });
+
+    test('absorbs multiple commas in the name block into preferredName', () {
+      const row = '1A,00,Doe,Jan,a, b, c,1/9/2008,150001,20000001,M,,Genk,'
+          'Belgisch,Kerkstraat,5,,3000,Leuven,1/9/2024';
+      final s = parseStudentRow(row, schoolId: 25);
+      expect(s.name, 'Doe');
+      expect(s.firstName, 'Jan');
+      expect(s.preferredName, 'a, b, c');
+      expect(s.birthDate, DateTime(2008, 9, 1));
+      expect(s.address.city, 'Leuven');
+      expect(s.classChange, DateTime(2024, 9, 1));
+    });
+
+    test('throws a precise error on a comma in the address block', () {
+      // Not the reported failure, but the count guard must reject it with a
+      // clear message rather than silently corrupt the address.
+      const row = '1A,00,Doe,Jan,Janneke,1/9/2008,150001,20000001,M,,Genk,'
+          'Belgisch,Kerk,straat,5,,3000,Leuven,1/9/2024';
+      expect(
+        () => parseStudentRow(row, schoolId: 25),
+        throwsA(
+          isA<CsvRowParseException>().having(
+            (e) => e.message,
+            'message',
+            contains('GEBOORTEDATUM onward'),
+          ),
+        ),
+      );
+    });
   });
 
   group('parseStaffRow', () {
