@@ -306,6 +306,113 @@ void main() {
     expect(saved.wisaSchools.single.ours, isTrue);
   });
 
+  testWidgets(
+      'the fetch-schools action is disabled with a hint until the WISA config '
+      'is valid (#142)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // A blank WISA profile (no server/port) — config is not yet valid.
+    final harness = SettingsHarness(
+      fetchWisaSchools: FakeWisaSchoolFetcher(const []).call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    expect(button, findsOneWidget);
+    expect(tester.widget<FilledButton>(button).onPressed, isNull,
+        reason: 'no valid config yet ⇒ fetch disabled');
+    expect(
+        find.byKey(const ValueKey('settings-wisa-fetch-hint')), findsOneWidget);
+  });
+
+  testWidgets(
+      'fetch → tick a returned school → save persists the selection, no id '
+      'typed by hand (#142)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 3, name: 'Sint-Jan', description: 'SJ'),
+      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'SP'),
+    ]);
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    // A valid config lights the fetch button up.
+    final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+    expect(
+        find.byKey(const ValueKey('settings-wisa-fetch-hint')), findsNothing);
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    // The fetcher ran (with the stored password resolved) and both schools
+    // render by name for selection.
+    expect(fetcher.calls, 1);
+    expect(fetcher.lastPassword, 'stored-pw');
+    expect(fetcher.lastConnection?.server, 'db.school.example');
+    expect(find.text('Sint-Jan'), findsOneWidget);
+    expect(find.text('Sint-Pieter'), findsOneWidget);
+
+    // Tick one returned school; it becomes a managed selection and saves.
+    await tester
+        .tap(find.byKey(const ValueKey('settings-wisa-fetched-school-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.schoolId, 7);
+    expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
+  testWidgets('unticking a fetched school removes it from the selection (#142)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'SP'),
+    ]);
+    // Id 7 is already selected from a previous run.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [WisaSchoolProfile(schoolId: 7, ours: true)],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
+    await tester.pumpAndSettle();
+
+    // The already-selected school shows ticked; untick and save clears it.
+    final tile = find.byKey(const ValueKey('settings-wisa-fetched-school-7'));
+    expect(tester.widget<CheckboxListTile>(tile).value, isTrue);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools, isEmpty);
+  });
+
   testWidgets('accumulated import rules render read-only',
       (WidgetTester tester) async {
     _useTallWindow(tester);

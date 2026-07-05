@@ -89,6 +89,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<WisaSchoolProfile> _wisaSchools = const <WisaSchoolProfile>[];
   final _wisaSchoolToAdd = TextEditingController();
 
+  // The schools last fetched from the WISA API (#142). Null until the operator
+  // fetches; then the id+name list the operator ticks to build the selection.
+  List<WisaSchool>? _fetchedSchools;
+  bool _fetchingSchools = false;
+
   @override
   void initState() {
     super.initState();
@@ -213,6 +218,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _toggleSchoolOurs(int index, bool ours) {
     toggle(
         () => _wisaSchools[index] = _wisaSchools[index].copyWith(ours: ours));
+  }
+
+  /// Whether the persisted WISA connection is complete enough to fetch the
+  /// school list (#142): a non-empty server and a numeric port. Gated on the
+  /// *loaded* document — "config is valid" means a saved, valid profile — so the
+  /// operator saves a good profile before the fetch action lights up.
+  bool get _wisaConfigValid {
+    final w = _loaded?.wisa;
+    if (w == null) return false;
+    return w.server.trim().isNotEmpty && int.tryParse(w.port.trim()) != null;
+  }
+
+  /// Whether the "fetch schools" action can run right now: a valid config, a
+  /// wired fetcher, and no fetch already in flight.
+  bool get _canFetchSchools =>
+      _wisaConfigValid &&
+      !_fetchingSchools &&
+      _services?.fetchWisaSchools != null;
+
+  /// Whether the school with [id] is in the current (working) selection.
+  bool _isSchoolSelected(int id) => _wisaSchools.any((p) => p.schoolId == id);
+
+  /// Fetches the available WISA schools (id + name) from the API so the operator
+  /// can pick which to use instead of typing ids (#142). Prefers a freshly typed
+  /// password; otherwise resolves the stored secret. Failures surface as a toast.
+  Future<void> _fetchWisaSchools() async {
+    final services = _services;
+    final fetcher = services?.fetchWisaSchools;
+    final loaded = _loaded;
+    if (services == null || fetcher == null || loaded == null) return;
+    setState(() => _fetchingSchools = true);
+    try {
+      var password = _wisaPassword.text;
+      if (password.isEmpty) {
+        password = await services.secrets.read(loaded.wisa.passwordRef) ?? '';
+      }
+      if (password.isEmpty) {
+        if (mounted) {
+          _toast('Geen WISA-wachtwoord beschikbaar. Vul het wachtwoord in en '
+              'bewaar eerst.');
+        }
+        return;
+      }
+      final schools = await fetcher(loaded.wisa, password);
+      if (!mounted) return;
+      setState(() => _fetchedSchools = schools);
+      _toast('${schools.length} scholen opgehaald.');
+    } on Object catch (e) {
+      if (mounted) _toast('Kon scholen niet ophalen: $e');
+    } finally {
+      if (mounted) setState(() => _fetchingSchools = false);
+    }
+  }
+
+  /// Ticks or unticks a fetched school in the selection (#142): a tick appends a
+  /// managed [WisaSchoolProfile] for its id, an untick drops it. This replaces
+  /// the by-hand id entry as the normal way to build the school selection.
+  void _toggleFetchedSchool(int schoolId, bool selected) {
+    toggle(() {
+      if (selected) {
+        if (_wisaSchools.any((p) => p.schoolId == schoolId)) return;
+        _wisaSchools = <WisaSchoolProfile>[
+          ..._wisaSchools,
+          WisaSchoolProfile(schoolId: schoolId, ours: true),
+        ];
+      } else {
+        _wisaSchools = <WisaSchoolProfile>[
+          for (final p in _wisaSchools)
+            if (p.schoolId != schoolId) p,
+        ];
+      }
+    });
   }
 
   /// Appends a managed-school entry for the id typed in the add field, ignoring
@@ -923,11 +1000,70 @@ class _WisaSchoolsEditor extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
     final schools = state._wisaSchools;
+    final fetched = state._fetchedSchools;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        // Fetch-from-WISA affordance (#142): pull the available schools (id +
+        // name) and tick which to use, instead of typing ids by hand.
         Text(
-          'Alle groepsscholen worden opgehaald; markeer hier welke we beheren.',
+          'Haal de beschikbare scholen op uit WISA en kies welke je gebruikt.',
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s2),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            FilledButton.icon(
+              key: const ValueKey('settings-wisa-fetch-schools'),
+              onPressed:
+                  state._canFetchSchools ? state._fetchWisaSchools : null,
+              icon: const Icon(Icons.cloud_download_outlined),
+              label: const Text('Scholen ophalen'),
+            ),
+            if (state._fetchingSchools) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s3),
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ],
+          ],
+        ),
+        if (!state._wisaConfigValid)
+          Padding(
+            padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+            child: Text(
+              'Bewaar eerst een geldige WISA-configuratie (server en poort) om '
+              'scholen te kunnen ophalen.',
+              key: const ValueKey('settings-wisa-fetch-hint'),
+              style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+            ),
+          ),
+        if (fetched != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          if (fetched.isEmpty)
+            Text(
+              'Geen scholen gevonden.',
+              key: const ValueKey('settings-wisa-fetched-empty'),
+              style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+            )
+          else
+            for (final s in fetched)
+              CheckboxListTile(
+                key: ValueKey('settings-wisa-fetched-school-${s.id}'),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(s.name.isEmpty ? 'School ${s.id}' : s.name),
+                subtitle: Text('id: ${s.id}'),
+                value: state._isSchoolSelected(s.id),
+                onChanged: (v) => state._toggleFetchedSchool(s.id, v ?? false),
+              ),
+        ],
+        const Divider(height: PlinkSpacing.s6),
+        Text(
+          'Geselecteerde scholen — markeer welke we beheren.',
           style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
         ),
         const SizedBox(height: PlinkSpacing.s2),
@@ -964,6 +1100,11 @@ class _WisaSchoolsEditor extends StatelessWidget {
             ],
           ),
         const SizedBox(height: PlinkSpacing.s3),
+        Text(
+          'Optioneel: voeg een school handmatig toe via id.',
+          style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s2),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[

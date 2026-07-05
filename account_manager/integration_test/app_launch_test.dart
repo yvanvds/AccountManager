@@ -31,6 +31,7 @@ import 'package:account_state/account_state.dart'
         WisaSchoolProfile,
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart' show AzureCredentials;
+import 'package:wisa_api/wisa_api.dart' show WisaSchool;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -877,6 +878,67 @@ void main() {
     // The ownership flag landed in the store.
     final saved = await settings.store.load();
     expect(saved.wisaSchools.single.schoolId, 42);
+    expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
+  testWidgets(
+      'the Settings view fetches the WISA school list and persists the picked '
+      'selection end-to-end, no id typed by hand (#142)',
+      (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams. The store
+    // holds a valid WISA connection profile and the password sits in the vault,
+    // so the fetch action lights up. The fetcher is faked (offline) but wired
+    // exactly like production — real screen, real navigation, real layout.
+    useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 3, name: 'Sint-Jan', description: 'SJ'),
+      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'SP'),
+    ]);
+    final settings = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Open Settings → Wisa tab; the fetch action is available for a valid config.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+
+    // Fetch: both schools render by name, the stored password was resolved.
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(fetcher.calls, 1);
+    expect(fetcher.lastPassword, 'stored-pw');
+    expect(find.text('Sint-Jan'), findsOneWidget);
+    expect(find.text('Sint-Pieter'), findsOneWidget);
+
+    // Pick one returned school and save; the selection lands in the store with
+    // no id ever typed by hand.
+    final picked = find.byKey(const ValueKey('settings-wisa-fetched-school-7'));
+    await tester.ensureVisible(picked);
+    await tester.tap(picked);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.schoolId, 7);
     expect(saved.wisaSchools.single.ours, isTrue);
   });
 

@@ -1,7 +1,58 @@
 import 'package:account_state/account_state.dart';
+import 'package:wisa_api/wisa_api.dart';
 
 import '../auth/sign_in_session.dart';
 import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
+
+/// Fetches the selectable WISA schools (id + name) for a connection profile,
+/// with the password resolved out of band (#142). The Settings view calls this
+/// once the WISA config is valid so the operator can pick schools from the live
+/// list instead of typing ids by hand.
+typedef WisaSchoolFetcher = Future<List<WisaSchool>> Function(
+  WisaConnection connection,
+  String password,
+);
+
+/// A WISA school-list fetch that could not even be attempted because the
+/// connection profile is incomplete — distinct from a transport/SOAP failure,
+/// which surfaces from the connector itself.
+class WisaSchoolFetchException implements Exception {
+  const WisaSchoolFetchException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// The production [WisaSchoolFetcher]: builds a one-shot [WisaConnector] from
+/// the connection profile plus the resolved [password] and pulls the school
+/// list via the `SMAGetInst` query (legacy `SchoolManager.Load`). This is a
+/// read against WISA, safe to run from the settings screen.
+///
+/// [transport] is a test seam; production callers omit it and get the real HTTP
+/// SOAP transport.
+Future<List<WisaSchool>> fetchWisaSchoolsLive(
+  WisaConnection connection,
+  String password, {
+  WisaSoapTransport? transport,
+}) async {
+  final port = int.tryParse(connection.port.trim());
+  if (connection.server.trim().isEmpty || port == null) {
+    throw const WisaSchoolFetchException(
+      'De WISA-verbinding is onvolledig: vul een geldige server en poort in.',
+    );
+  }
+  final connector = WisaConnector.fromParts(
+    server: connection.server.trim(),
+    port: port,
+    database: connection.database.trim(),
+    username: connection.username.trim(),
+    password: password,
+    transport: transport,
+  );
+  return connector.loadSchools();
+}
 
 /// The two seams the Settings view edits against: the [SettingsStore] holding
 /// the [AppSettings] config document and the [SecretProvider] the WISA password
@@ -13,7 +64,11 @@ import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 /// to do (it throws [ReconcileConfigException]) precisely when a secret or a
 /// profile field is still missing.
 class SettingsServices {
-  const SettingsServices({required this.store, required this.secrets});
+  const SettingsServices({
+    required this.store,
+    required this.secrets,
+    this.fetchWisaSchools,
+  });
 
   /// The persistence seam for the [AppSettings] document (#114: Cosmos-backed).
   final SettingsStore store;
@@ -21,6 +76,12 @@ class SettingsServices {
   /// The write-only secret seam (Key Vault in production) the Settings view
   /// persists an operator-typed credential through — never read back into the UI.
   final SecretProvider secrets;
+
+  /// Pulls the selectable WISA schools (id + name) so the operator can pick
+  /// which schools to use instead of typing ids (#142). Null when the build
+  /// cannot fetch (no fetcher wired); the screen then keeps the manual-entry
+  /// path only.
+  final WisaSchoolFetcher? fetchWisaSchools;
 }
 
 /// Wires the Settings view's two seams for one signed-in session: a
@@ -38,6 +99,7 @@ Future<SettingsServices> bootstrapSettings({
   SettingsStore? settingsStore,
   SecretProvider? secretProvider,
   CosmosClient? cosmosClient,
+  WisaSchoolFetcher? fetchWisaSchools,
 }) async {
   final ends = endpoints ?? StoreEndpoints.fromEnvironment();
   final client = cosmosClient ??
@@ -55,5 +117,9 @@ Future<SettingsServices> bootstrapSettings({
         config: KeyVaultConfig(vaultUri: ends.vaultUri),
         tokens: VaultSessionTokenProvider(session),
       );
-  return SettingsServices(store: store, secrets: secrets);
+  return SettingsServices(
+    store: store,
+    secrets: secrets,
+    fetchWisaSchools: fetchWisaSchools ?? fetchWisaSchoolsLive,
+  );
 }
