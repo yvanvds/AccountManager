@@ -880,6 +880,55 @@ void main() {
     expect(saved.wisaSchools.single.ours, isTrue);
   });
 
+  testWidgets(
+      'the Settings/Algemeen werkdatum controls read clearly end-to-end: '
+      'renamed virtual label + right-aligned switch instruction (#141)',
+      (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams — real fonts,
+    // real window, real ListTile layout, which is exactly where a right-align
+    // that "works" in a widget test can drift.
+    useTallWindow(tester);
+    final settings = SettingsHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Open Settings; the werkdatum controls sit on the default Algemeen tab.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    // The virtual field carries the clearer label, and the old one is gone.
+    expect(find.text('Werkdatum Virtuele School'), findsOneWidget);
+    expect(find.text('Virtuele werkdatum'), findsNothing);
+
+    // The "volg de huidige datum" instruction is right-aligned against its
+    // switch, not merged into the field label on the left.
+    final tile = find.byKey(const ValueKey('settings-workdate-is-now'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    final label = find.descendant(of: tile, matching: find.text('Werkdatum'));
+    final instruction =
+        find.descendant(of: tile, matching: find.text('volg de huidige datum'));
+    final switchWidget =
+        find.descendant(of: tile, matching: find.byType(Switch));
+    expect(label, findsOneWidget);
+    expect(instruction, findsOneWidget);
+    expect(switchWidget, findsOneWidget);
+    final tileLeft = tester.getTopLeft(tile).dx;
+    final tileCenter = tester.getCenter(tile).dx;
+    final instrCenter = tester.getCenter(instruction).dx;
+    expect(instrCenter, greaterThan(tileCenter),
+        reason: 'the instruction sits in the right portion, by the switch');
+    final switchLeft = tester.getTopLeft(switchWidget).dx;
+    final instrRight = tester.getTopRight(instruction).dx;
+    expect(switchLeft - instrRight, lessThan(instrCenter - tileLeft),
+        reason: 'the instruction hugs the switch, away from the field label');
+  });
+
   testWidgets('silent sign-in leads straight into the shell',
       (WidgetTester tester) async {
     final broker = _FakeBroker(silent: (_) => _token('AT'));

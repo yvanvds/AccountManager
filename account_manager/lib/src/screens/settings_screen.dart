@@ -526,7 +526,7 @@ class _SettingsForm extends StatelessWidget {
           ),
           _WorkDateField(
             keyValue: 'settings-virtual-workdate',
-            label: 'Virtuele werkdatum',
+            label: 'Werkdatum Virtuele School',
             isNow: state._virtualWorkDateIsNow,
             date: state._virtualWorkDate,
             onIsNowChanged: (v) =>
@@ -813,7 +813,19 @@ class _WorkDateField extends StatelessWidget {
           SwitchListTile(
             key: ValueKey('$keyValue-is-now'),
             contentPadding: EdgeInsets.zero,
-            title: Text('$label — volg de huidige datum'),
+            // The field's label sits on the left; the "volg de huidige datum"
+            // instruction is pushed to the right so it reads against the switch
+            // it controls (currently off ⇒ today's date is *not* followed) —
+            // not against the werkdatum field on the left (#141).
+            title: Row(
+              children: <Widget>[
+                Expanded(child: Text(label)),
+                const Text(
+                  'volg de huidige datum',
+                  textAlign: TextAlign.right,
+                ),
+              ],
+            ),
             value: isNow,
             onChanged: onIsNowChanged,
           ),
