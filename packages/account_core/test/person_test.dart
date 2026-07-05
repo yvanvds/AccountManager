@@ -79,6 +79,71 @@ void main() {
     });
   });
 
+  group('Address.sameHomeAddressAs (Smartschool sync, #153)', () {
+    // A WISA-shaped address: country hardcoded to 'BE', no bus number (null).
+    Address wisa({
+      String street = 'Koophandelstraat',
+      String houseNumber = '32',
+      String? add,
+      String postalCode = '3270',
+      String city = 'Scherpenheuvel',
+    }) =>
+        Address(
+          street: street,
+          houseNumber: houseNumber,
+          houseNumberAdd: add,
+          postalCode: postalCode,
+          city: city,
+          country: 'BE',
+        );
+
+    // The Smartschool-shaped counterpart: a free-text country and an empty
+    // (never-null) bus number — the exact representational shape the connector
+    // produces.
+    Address ss({
+      String street = 'Koophandelstraat',
+      String houseNumber = '32',
+      String add = '',
+      String postalCode = '3270',
+      String city = 'Scherpenheuvel',
+      String country = 'België',
+    }) =>
+        Address(
+          street: street,
+          houseNumber: houseNumber,
+          houseNumberAdd: add,
+          postalCode: postalCode,
+          city: city,
+          country: country,
+        );
+
+    test('country-only difference is treated as the same home address', () {
+      // The systematic #153 false positive: identical street/number/postcode/
+      // city, differing only on the country representation ('BE' vs 'België').
+      expect(ss().sameHomeAddressAs(wisa()), isTrue);
+      // …even though full value equality (which folds in country) disagrees.
+      expect(ss() == wisa(), isFalse);
+    });
+
+    test('empty and null houseNumberAdd denote the same "no bus number"', () {
+      expect(ss(add: '').sameHomeAddressAs(wisa(add: null)), isTrue);
+    });
+
+    test('a real postalCode difference is not the same home address', () {
+      expect(ss(postalCode: '3271').sameHomeAddressAs(wisa()), isFalse);
+    });
+
+    test('a real houseNumberAdd difference is not the same home address', () {
+      expect(ss(add: 'A').sameHomeAddressAs(wisa()), isFalse);
+    });
+
+    test('street / houseNumber / city differences are detected', () {
+      expect(ss(street: 'Kerkstraat').sameHomeAddressAs(wisa()), isFalse);
+      expect(ss(houseNumber: '33').sameHomeAddressAs(wisa()), isFalse);
+      expect(ss(city: 'Gent').sameHomeAddressAs(wisa()), isFalse);
+    });
+  });
+
   group('Person JSON round-trip', () {
     test('minimal Person (only required fields)', () {
       const p = Person(

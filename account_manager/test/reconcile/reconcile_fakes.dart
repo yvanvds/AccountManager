@@ -71,6 +71,7 @@ wapi.WisaStudent wisaStudent({
   String wisaId = '1',
   String classGroup = '3C',
   int schoolId = 1,
+  core.Address address = _addr,
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
@@ -85,7 +86,7 @@ wapi.WisaStudent wisaStudent({
       nationalId: '',
       birthPlace: '',
       nationality: '',
-      address: _addr,
+      address: address,
       classChange: kFixtureDate,
       schoolId: schoolId,
     );
@@ -99,6 +100,7 @@ ss.SmartschoolAccount ssAccount({
   String uid = 'jane',
   String accountId = '1',
   String mail = 'jane.doe@student.school.example',
+  core.Address address = _addr,
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
@@ -116,7 +118,7 @@ ss.SmartschoolAccount ssAccount({
       birthDate: null,
       birthPlace: '',
       birthCountry: '',
-      address: _addr,
+      address: address,
       mobilePhone: '',
       homePhone: '',
       fax: '',

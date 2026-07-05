@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:account_core/account_core.dart' show Address;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -295,6 +296,66 @@ void main() {
         harness.controller.applyResults!.map((r) => r.changes.summary);
     expect(summaries, contains('Schrijf de leerling uit in Smartschool'));
     expect(summaries, isNot(contains('Verwijder Azure account')));
+  });
+
+  testWidgets(
+      'the Smartschool address action only fires on a real field drift and its '
+      'diff shows the differing field, not an identical row (#153)',
+      (WidgetTester tester) async {
+    // WISA (country hardcoded 'BE', empty bus number → null) vs Smartschool
+    // (free-text country, empty-string bus number). The student is in the same
+    // class in both systems, so the address is the only possible drift.
+    useTallWindow(tester);
+    const wisaAddr = Address(
+      street: 'Koophandelstraat',
+      houseNumber: '32',
+      postalCode: '3271', // WISA says 3271…
+      city: 'Scherpenheuvel',
+      country: 'BE',
+    );
+    const ssAddr = Address(
+      street: 'Koophandelstraat',
+      houseNumber: '32',
+      houseNumberAdd: '', // empty vs WISA's null — must not count as drift
+      postalCode: '3270', // …Smartschool still has 3270 (the real drift)
+      city: 'Scherpenheuvel',
+      country: 'België', // differs from 'BE' — must NOT drive the action
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [wisaStudent(address: wisaAddr)]),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss')],
+        accounts: [ssAccount(address: ssAddr)],
+        memberships: [member('jane', '3C_ss')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The address action is present (postalCode really drifted).
+    expect(find.text('Wijzig het adres in Smartschool'), findsWidgets);
+
+    // Expand the student entry: the previously-hidden differing field shows,
+    // and unchanged fields are not rendered as misleading "X → X" rows.
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    final entryKey = ValueKey('entry-student-${entry.targetId}');
+    await tester.ensureVisible(find.byKey(entryKey));
+    await tester.tap(find.byKey(entryKey));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('postalCode: 3270 → 3271'), findsOneWidget);
+    expect(find.textContaining('country'), findsNothing);
+    expect(find.textContaining('street:'), findsNothing);
   });
 
   testWidgets(

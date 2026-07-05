@@ -1,3 +1,4 @@
+import 'package:account_core/account_core.dart' show Address;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_state/account_state.dart';
@@ -635,5 +636,108 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No messages yet.'), findsOneWidget);
+  });
+
+  // --- Address sync (#153) -------------------------------------------------
+  // A WISA address (country hardcoded to 'BE', empty bus number → null) and its
+  // Smartschool counterpart (free-text country, empty-string bus number). The
+  // student sits in the same class in both systems, so the *only* possible
+  // pending action for her is the address change.
+  const wisaAddr = Address(
+    street: 'Koophandelstraat',
+    houseNumber: '32',
+    postalCode: '3270',
+    city: 'Scherpenheuvel',
+    country: 'BE',
+  );
+  Address ssAddr({String postalCode = '3270'}) => Address(
+        street: 'Koophandelstraat',
+        houseNumber: '32',
+        houseNumberAdd: '',
+        postalCode: postalCode,
+        city: 'Scherpenheuvel',
+        country: 'België',
+      );
+
+  ReconcileHarness addressHarness(
+          {required Address ss, required Address wisa}) =>
+      ReconcileHarness(
+        wisa: wisaSnap(students: [wisaStudent(address: wisa)]),
+        smartschool: ssSnap(
+          groups: [ssGroup('3C', code: '3C_ss')],
+          accounts: [ssAccount(address: ss)],
+          memberships: [member('jane', '3C_ss')],
+        ),
+      );
+
+  testWidgets(
+      'an address differing only on country / empty bus number raises NO '
+      'address action (#153)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = addressHarness(ss: ssAddr(), wisa: wisaAddr);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The spurious "identical before/after" address action must not appear at
+    // all (other unrelated fixture actions may exist — we assert on this one).
+    expect(find.text('Wijzig het adres in Smartschool'), findsNothing);
+    final labels =
+        harness.controller.pendingEntries.map((e) => e.situationLabel);
+    expect(
+      labels.any((l) => l.contains('Wijzig het adres in Smartschool')),
+      isFalse,
+      reason: 'country-only / empty-bus-number drift is not a real change',
+    );
+  });
+
+  testWidgets(
+      'a real postalCode drift raises the address action and its expanded diff '
+      'shows the differing field, not an identical row (#153)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness =
+        addressHarness(ss: ssAddr(postalCode: '3270'), wisa: wisaAddr);
+    // wisaAddr.postalCode is 3270; bump WISA to 3271 so only postalCode drifts.
+    harness.wisaResult = wisaSnap(students: [
+      wisaStudent(
+        address: const Address(
+          street: 'Koophandelstraat',
+          houseNumber: '32',
+          postalCode: '3271',
+          city: 'Scherpenheuvel',
+          country: 'BE',
+        ),
+      ),
+    ]);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wijzig het adres in Smartschool'), findsWidgets);
+
+    // Expand the student entry to reveal the per-field diff.
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    final entryKey = ValueKey('entry-student-${entry.targetId}');
+    await tester.ensureVisible(find.byKey(entryKey));
+    await tester.tap(find.byKey(entryKey));
+    await tester.pumpAndSettle();
+
+    // The previously-hidden differing field is now visible…
+    expect(
+      find.textContaining('postalCode: 3270 → 3271'),
+      findsOneWidget,
+    );
+    // …and the fields that did not change are not shown as misleading
+    // "Koophandelstraat 32 → Koophandelstraat 32" identical rows.
+    expect(find.textContaining('street:'), findsNothing);
+    expect(find.textContaining('city:'), findsNothing);
   });
 }

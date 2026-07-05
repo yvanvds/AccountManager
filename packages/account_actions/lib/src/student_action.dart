@@ -731,26 +731,43 @@ class ModifySmartschoolStudentEmail extends StudentAction {
 class ModifySmartschoolStudentAddress extends StudentAction {
   const ModifySmartschoolStudentAddress(super.account, super.config);
 
+  // The action fires only on a genuine *home-address* difference — the five
+  // fields the legacy `checkUserHomeAddress` compared. `country` is excluded
+  // on purpose (WISA hardcodes 'BE', Smartschool returns a free-text `Land`, so
+  // including it fired for ~all students, #153); a null/empty `houseNumberAdd`
+  // is treated as unchanged. See `Address.sameHomeAddressAs`.
   @override
-  bool evaluate() => _ss.address != _wisa.address;
+  bool evaluate() => !_ss.address.sameHomeAddressAs(_wisa.address);
 
   @override
-  ChangeSet describeChanges() => ChangeSet(
-        system: Origin.smartschool,
-        summary: 'Wijzig het adres in Smartschool',
-        fields: [
-          FieldChange(
-            'address',
-            before: _ss.address.streetAddress,
-            after: _wisa.address.streetAddress,
-          ),
-          FieldChange(
-            'city',
-            before: _ss.address.city,
-            after: _wisa.address.city,
-          ),
-        ],
-      );
+  ChangeSet describeChanges() {
+    final Address from = _ss.address;
+    final Address to = _wisa.address;
+    // Surface every field that actually differs — including postalCode and the
+    // house-number components — so no real change is ever hidden behind an
+    // identical-looking summary (#153). Fields that match are omitted rather
+    // than shown as a misleading "X → X" row.
+    final fields = <FieldChange>[
+      if (from.street != to.street)
+        FieldChange('street', before: from.street, after: to.street),
+      if (from.houseNumber != to.houseNumber)
+        FieldChange('houseNumber',
+            before: from.houseNumber, after: to.houseNumber),
+      if ((from.houseNumberAdd ?? '') != (to.houseNumberAdd ?? ''))
+        FieldChange('houseNumberAdd',
+            before: from.houseNumberAdd, after: to.houseNumberAdd),
+      if (from.postalCode != to.postalCode)
+        FieldChange('postalCode',
+            before: from.postalCode, after: to.postalCode),
+      if (from.city != to.city)
+        FieldChange('city', before: from.city, after: to.city),
+    ];
+    return ChangeSet(
+      system: Origin.smartschool,
+      summary: 'Wijzig het adres in Smartschool',
+      fields: fields,
+    );
+  }
 
   @override
   Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
@@ -758,7 +775,19 @@ class ModifySmartschoolStudentAddress extends StudentAction {
         connectors,
         options,
         describeChanges(),
-        _ss.copyWith(address: _wisa.address),
+        // Write WISA's home-address fields but preserve Smartschool's country:
+        // the legacy action never wrote Country, and WISA's hardcoded 'BE' is
+        // not an authoritative value to push (#153).
+        _ss.copyWith(
+          address: Address(
+            street: _wisa.address.street,
+            houseNumber: _wisa.address.houseNumber,
+            houseNumberAdd: _wisa.address.houseNumberAdd,
+            postalCode: _wisa.address.postalCode,
+            city: _wisa.address.city,
+            country: _ss.address.country,
+          ),
+        ),
       );
 }
 
