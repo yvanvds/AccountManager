@@ -991,6 +991,37 @@ void main() {
         reason: 'the instruction hugs the switch, away from the field label');
   });
 
+  testWidgets(
+      'the Settings secret fields read "(alleen schrijven)" end-to-end, not '
+      'the ungrammatical "(schrijf-alleen)" (#143)',
+      (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams — real fonts,
+    // real window, real tab navigation, which is where the rendered label copy
+    // is exercised as the operator actually sees it.
+    useTallWindow(tester);
+    final settings = SettingsHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    // WISA password label carries the corrected Dutch; the old calque is gone.
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('Wachtwoord (alleen schrijven)'), findsOneWidget);
+    expect(find.text('Wachtwoord (schrijf-alleen)'), findsNothing);
+
+    // Same for the Smartschool passphrase label.
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+    expect(find.text('Passphrase (alleen schrijven)'), findsOneWidget);
+    expect(find.text('Passphrase (schrijf-alleen)'), findsNothing);
+  });
+
   testWidgets('silent sign-in leads straight into the shell',
       (WidgetTester tester) async {
     final broker = _FakeBroker(silent: (_) => _token('AT'));

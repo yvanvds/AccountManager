@@ -437,6 +437,26 @@ void main() {
   });
 
   testWidgets(
+      'the secret fields read "(alleen schrijven)", not the ungrammatical '
+      '"(schrijf-alleen)" (#143)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // WISA password label (on the Wisa tab).
+    await _openTab(tester, 'settings-tab-wisa');
+    expect(find.text('Wachtwoord (alleen schrijven)'), findsOneWidget);
+    expect(find.text('Wachtwoord (schrijf-alleen)'), findsNothing);
+
+    // Smartschool passphrase label (on the Smartschool tab).
+    await _openTab(tester, 'settings-tab-smartschool');
+    expect(find.text('Passphrase (alleen schrijven)'), findsOneWidget);
+    expect(find.text('Passphrase (schrijf-alleen)'), findsNothing);
+  });
+
+  testWidgets(
       'the virtual werkdatum field is labelled "Werkdatum Virtuele '
       'School" (#141)', (WidgetTester tester) async {
     _useTallWindow(tester);

@@ -645,7 +645,7 @@ class _SettingsForm extends StatelessWidget {
           ),
           _SecretField(
             keyValue: 'settings-wisa-password',
-            label: 'Wachtwoord (schrijf-alleen)',
+            label: 'Wachtwoord (alleen schrijven)',
             controller: state._wisaPassword,
           ),
         ],
@@ -697,7 +697,7 @@ class _SettingsForm extends StatelessWidget {
           ),
           _SecretField(
             keyValue: 'settings-ss-passphrase',
-            label: 'Passphrase (schrijf-alleen)',
+            label: 'Passphrase (alleen schrijven)',
             controller: state._ssPassphrase,
           ),
           SwitchListTile(
