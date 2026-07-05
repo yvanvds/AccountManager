@@ -344,6 +344,39 @@ void main() {
   });
 
   testWidgets(
+      'the operator drags the log divider to grow the log panel end-to-end '
+      '(#152)', (WidgetTester tester) async {
+    // The real app composition — real fonts, real window, real Column layout —
+    // is where a resizable divider that "works" in a widget test can drift: the
+    // handle sits between a flexible scroll area and the fixed-height panel.
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    final panel = find.byKey(const ValueKey('reconcile-log-panel'));
+    final handle = find.byKey(const ValueKey('reconcile-log-resize'));
+    expect(panel, findsOneWidget);
+    expect(handle, findsOneWidget);
+
+    // Opens at the default height, then dragging the handle up enlarges it by
+    // the drag distance — the operator can read a multi-line Cosmos error.
+    final double initial = tester.getSize(panel).height;
+    expect(initial, 160);
+    await tester.drag(handle, const Offset(0, -200),
+        touchSlopX: 0, touchSlopY: 0);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(panel).height, 360);
+  });
+
+  testWidgets(
       'a resumed session trusts the stored state: Synchronise pulls no '
       'Smartschool/Azure (#107)', (WidgetTester tester) async {
     // Session 1 (offline harness over a shared cold-snapshot store): a full

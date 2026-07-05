@@ -137,25 +137,24 @@ class _ReconcileBody extends StatelessWidget {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        return Column(
-          children: <Widget>[
-            Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  // A CustomScrollView with lazy SliverLists for the pending
-                  // actions and the results, so only the visible tiles are
-                  // built — the fixed header/overview/banner stay as adapters
-                  // (#111). Slivers sit directly under the scroll view (not in a
-                  // SliverMainAxisGroup) so the scroll cache extent reaches the
-                  // sections below the fold.
-                  child: CustomScrollView(slivers: _slivers()),
-                ),
-              ),
+        // The scrollable content sits over the log panel, separated by a
+        // draggable handle the operator can use to grow/shrink the log (#152).
+        // The handle + panel height live in [_ResizableLogSection] so they
+        // persist across these controller-driven rebuilds.
+        return _ResizableLogSection(
+          log: log,
+          content: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 960),
+              // A CustomScrollView with lazy SliverLists for the pending
+              // actions and the results, so only the visible tiles are
+              // built — the fixed header/overview/banner stay as adapters
+              // (#111). Slivers sit directly under the scroll view (not in a
+              // SliverMainAxisGroup) so the scroll cache extent reaches the
+              // sections below the fold.
+              child: CustomScrollView(slivers: _slivers()),
             ),
-            const Divider(height: 1, thickness: 1),
-            _LogPanel(log: log),
-          ],
+          ),
         );
       },
     );
@@ -1369,10 +1368,100 @@ class _ResultRow extends StatelessWidget {
   }
 }
 
+/// The vertical extent the log panel opens to before the operator drags it, and
+/// the bounds a drag is clamped to (#152). The maximum is computed per layout so
+/// the content above always keeps at least [_ResizableLogSection._minContent].
+const double _kDefaultLogHeight = 160;
+const double _kMinLogHeight = 64;
+
+/// Wraps the reconcile [content] over a [_LogPanel] whose height the operator
+/// can change by dragging the [_LogResizeHandle] that replaces the old static
+/// divider (#152). The height is in-memory only — the app has no settings/prefs
+/// store yet, so a resized panel resets to [_kDefaultLogHeight] on restart.
+class _ResizableLogSection extends StatefulWidget {
+  const _ResizableLogSection({required this.content, required this.log});
+
+  final Widget content;
+  final LogBuffer log;
+
+  @override
+  State<_ResizableLogSection> createState() => _ResizableLogSectionState();
+}
+
+class _ResizableLogSectionState extends State<_ResizableLogSection> {
+  /// Kept for the content above the log so it never collapses to nothing.
+  static const double _minContent = 160;
+
+  double _logHeight = _kDefaultLogHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Grow the log as far as the viewport allows while leaving [_minContent]
+        // for the scroll area; clamp() keeps the stored height inside that band
+        // when the window (and so the available space) shrinks.
+        final double maxLog = (constraints.maxHeight - _minContent)
+            .clamp(_kMinLogHeight, double.infinity);
+        final double logHeight = _logHeight.clamp(_kMinLogHeight, maxLog);
+        return Column(
+          children: <Widget>[
+            Expanded(child: widget.content),
+            _LogResizeHandle(
+              onDrag: (double dy) => setState(() {
+                _logHeight = (logHeight - dy).clamp(_kMinLogHeight, maxLog);
+              }),
+            ),
+            _LogPanel(log: widget.log, height: logHeight),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// The draggable replacement for the static content/log divider: a thin rule
+/// with a centered grab bar. Dragging it vertically reports the delta up to
+/// [_ResizableLogSection], which owns the clamped height (#152).
+class _LogResizeHandle extends StatelessWidget {
+  const _LogResizeHandle({required this.onDrag});
+
+  final ValueChanged<double> onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeRow,
+      child: GestureDetector(
+        key: const ValueKey('reconcile-log-resize'),
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragUpdate: (DragUpdateDetails d) => onDrag(d.delta.dy),
+        child: Container(
+          height: 14,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: colors.outlineVariant)),
+          ),
+          child: Container(
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: colors.outlineVariant,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _LogPanel extends StatelessWidget {
-  const _LogPanel({required this.log});
+  const _LogPanel({required this.log, required this.height});
 
   final LogBuffer log;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
@@ -1380,7 +1469,8 @@ class _LogPanel extends StatelessWidget {
     final ColorScheme colors = Theme.of(context).colorScheme;
 
     return SizedBox(
-      height: 160,
+      key: const ValueKey('reconcile-log-panel'),
+      height: height,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
