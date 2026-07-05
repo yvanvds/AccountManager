@@ -328,4 +328,57 @@ void main() {
     expect(
         find.byKey(const ValueKey('settings-wisa-rules-empty')), findsNothing);
   });
+
+  testWidgets(
+      'the virtual werkdatum field is labelled "Werkdatum Virtuele '
+      'School" (#141)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The werkdatum controls live on the default Algemeen tab (#140).
+    expect(find.text('Werkdatum Virtuele School'), findsOneWidget);
+    expect(find.text('Virtuele werkdatum'), findsNothing);
+  });
+
+  testWidgets(
+      'the werkdatum switch tile right-aligns "volg de huidige datum" next to '
+      'its switch, not the field label (#141)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Scope everything to the primary werkdatum switch tile.
+    final tile = find.byKey(const ValueKey('settings-workdate-is-now'));
+    expect(tile, findsOneWidget);
+
+    final label = find.descendant(of: tile, matching: find.text('Werkdatum'));
+    final instruction =
+        find.descendant(of: tile, matching: find.text('volg de huidige datum'));
+    final switchWidget =
+        find.descendant(of: tile, matching: find.byType(Switch));
+    expect(label, findsOneWidget);
+    expect(instruction, findsOneWidget);
+    expect(switchWidget, findsOneWidget);
+
+    // The instruction is a separate widget (not merged into the field label),
+    // right-aligned into the right portion of the tile so it reads against the
+    // switch (currently off ⇒ today's date is *not* followed).
+    final tileLeft = tester.getTopLeft(tile).dx;
+    final tileCenter = tester.getCenter(tile).dx;
+    final instrCenter = tester.getCenter(instruction).dx;
+    expect(instrCenter, greaterThan(tileCenter),
+        reason: 'the instruction sits in the right portion, by the switch');
+
+    // And it hugs the trailing switch: nearer the switch than the tile's left
+    // edge where the field label lives.
+    final switchLeft = tester.getTopLeft(switchWidget).dx;
+    final instrRight = tester.getTopRight(instruction).dx;
+    expect(switchLeft - instrRight, lessThan(instrCenter - tileLeft),
+        reason: 'the instruction hugs the switch, away from the field label');
+  });
 }
