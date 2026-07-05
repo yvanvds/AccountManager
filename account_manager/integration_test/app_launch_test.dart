@@ -8,6 +8,7 @@ import 'package:account_core/account_core.dart' show Address;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
+import 'package:account_manager/src/screens/actions_screen.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
@@ -110,8 +111,10 @@ void main() {
     expect(display?.fontFamily, contains('Fraunces'));
     expect(find.text('Account Manager'), findsOneWidget);
 
-    // The shell carries the Reconcile destination; with no AAD config the
-    // screen renders its "not configured" panel instead of bootstrapping.
+    // The shell carries both the Reconcile and the new Actions destinations;
+    // with no AAD config the reconcile screen renders its "not configured"
+    // panel instead of bootstrapping.
+    expect(find.text('Actions'), findsOneWidget);
     await tester.tap(find.text('Reconcile'));
     await tester.pumpAndSettle();
     expect(find.byType(ReconcileScreen), findsOneWidget);
@@ -119,9 +122,9 @@ void main() {
   });
 
   testWidgets(
-      'the reconcile flow runs end-to-end: sign-in → sync → overview → '
-      'actions → dry-run → apply → unchanged re-sync',
-      (WidgetTester tester) async {
+      'the reconcile flow runs end-to-end: sign-in → sync → overview on '
+      'Reconcile → actions via the Actions tab drill-down → dry-run → apply → '
+      'unchanged re-sync (#154)', (WidgetTester tester) async {
     // The real app composition — shell, navigation, theme — over the offline
     // reconcile harness (scripted syncers + recording transports), driven the
     // way the operator drives it.
@@ -141,37 +144,60 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-sync')), findsOneWidget);
 
-    // Sync: all three systems pull, the overview + pending actions render.
+    // Sync: all three systems pull, the overview renders on Reconcile — but the
+    // pending actions do NOT (they moved to the Actions tab).
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(harness.wisaSyncs, 1);
     expect(harness.ssSyncs, 1);
     expect(harness.azSyncs, 1);
     expect(find.text('Linked overview'), findsOneWidget);
-    expect(find.textContaining('Pending actions'), findsOneWidget);
+    expect(find.textContaining('Pending actions'), findsNothing);
+    expect(
+      find.byWidgetPredicate((w) =>
+          w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('entry-')),
+      findsNothing,
+      reason: 'Reconcile no longer shows the flat pending-actions list',
+    );
+
+    // Switch to the Actions tab: the actions are browsed by the year → class
+    // drill-down. Drill into 3C to build that class's action tile.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ActionsScreen), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
+    await tester.tap(find.text('School 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
     expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
 
-    // Dry-run: the projected changes render and nothing is written.
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-dry-run')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-dry-run')));
+    // Dry-run all from the header: the projected changes render, nothing writes.
+    await tester.ensureVisible(find.byKey(const ValueKey('actions-dry-run')));
+    await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
     await tester.pumpAndSettle();
     expect(find.text('Dry-run result'), findsOneWidget);
     expect(harness.soap.soapActions, isEmpty);
 
-    // Apply: confirm the dialog, the Smartschool write happens for real
-    // (against the recording transport).
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-apply')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-apply')));
+    // Apply all: confirm the dialog, the Smartschool write happens for real.
+    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    await tester.tap(find.byKey(const ValueKey('actions-apply')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(find.text('Apply result'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty);
 
-    // Re-sync with unchanged WISA: the smart diff reports "no changes
-    // needed" and leaves Smartschool / Azure unread.
+    // Back on Reconcile, re-sync with unchanged WISA: the smart diff reports
+    // "no changes needed" and leaves Smartschool / Azure unread.
     harness.wisaResult =
         wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -215,6 +241,18 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
+    // The departed account is browsed on the Actions tab, under the
+    // "Niet toegewezen" → "Overig" → "Zonder klas" bucket.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Niet toegewezen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar Overig'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Zonder klas'));
+    await tester.tap(find.text('Zonder klas'));
+    await tester.pumpAndSettle();
+
     // One entry for the departed account (not two independent rows).
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student');
@@ -234,7 +272,7 @@ void main() {
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
     expect(find.text('Apply result'), findsOneWidget);
@@ -272,8 +310,6 @@ void main() {
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student');
     expect(entry.choices.single.isChoice, isTrue);
-    expect(find.byKey(ValueKey('entry-student-${entry.targetId}')),
-        findsOneWidget);
     final allKinds = harness.controller.pendingEntries
         .expand((e) => e.choices)
         .expand((c) => c.alternatives)
@@ -281,12 +317,26 @@ void main() {
     expect(allKinds, isNot(contains('RemoveStudentFromAzure')),
         reason: 'the account is still in the group ⇒ Azure is kept');
 
-    // Apply for real: the Smartschool departure writes against the recording
-    // SOAP transport; Azure (Graph) is never called.
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-apply')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-apply')));
+    // Browse it on the Actions tab: it sits under its sibling school in the
+    // drill-down (WISA still places it, in School 2).
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.tap(find.text('School 2'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('entry-student-${entry.targetId}')),
+        findsOneWidget);
+
+    // Apply all: the Smartschool departure writes against the recording SOAP
+    // transport; Azure (Graph) is never called.
+    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
     expect(find.text('Apply result'), findsOneWidget);
@@ -341,6 +391,17 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
+    // Browse the student on the Actions tab, drilling into her class (3C).
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('School 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+
     // The address action is present (postalCode really drifted).
     expect(find.text('Wijzig het adres in Smartschool'), findsWidgets);
 
@@ -359,12 +420,12 @@ void main() {
   });
 
   testWidgets(
-      'a large pending set virtualizes in the real app: only a bounded number '
-      'of entry tiles build, and scrolling loads more (#111)',
+      "a large class's actions virtualize in the real app: only a bounded "
+      'number of entry tiles build, and scrolling loads more (#111/#154)',
       (WidgetTester tester) async {
     // A September-changeover-scale pending set (a thousand WISA-departed
-    // accounts) in the real, laid-out app. The old eager Column built every
-    // tile up front; the lazy CustomScrollView builds only the on-screen ones.
+    // accounts, all in one bucket) in the real, laid-out app. Drilling into the
+    // class builds only the on-screen tiles through the lazy sliver list.
     useTallWindow(tester);
     final harness = manyDepartedHarness(count: 1000);
     await tester.pumpWidget(AccountManagerApp(
@@ -379,8 +440,19 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // All 1000 accounts are pending, but only a small window of tiles is built.
-    expect(harness.controller.pendingEntries, hasLength(1000));
+    // Browse them on the Actions tab: drill into their "Zonder klas" bucket.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Niet toegewezen'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar Overig'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Zonder klas'));
+    await tester.tap(find.text('Zonder klas'));
+    await tester.pumpAndSettle();
+
+    // All 1000 accounts sit in this one class, but only a small window builds.
+    expect(harness.controller.classroomPendingEntries, hasLength(1000));
     final entryTiles = find.byWidgetPredicate(
       (w) =>
           w.key is ValueKey<String> &&
@@ -392,7 +464,7 @@ void main() {
         reason: 'virtualized: on-screen tiles only, not all 1000');
 
     // A far-off entry is not built until scrolled to.
-    final entries = harness.controller.pendingEntries;
+    final entries = harness.controller.classroomPendingEntries;
     final lastKey = ValueKey('entry-student-${entries.last.targetId}');
     expect(find.byKey(lastKey), findsNothing);
     await tester.scrollUntilVisible(
@@ -493,10 +565,10 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Reconcile'));
+    // The overview lives on the Actions tab now — rendered straight from the
+    // store, no Synchronise tapped.
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
-
-    // The overview rendered straight from the store — no Synchronise tapped.
     expect(find.text('Overzicht'), findsOneWidget);
     expect(find.text('School 1'), findsOneWidget);
     expect(resumed.wisaSyncs, 0);
@@ -516,7 +588,7 @@ void main() {
     // The classroom's account doc renders — still with no connector pull.
     expect(find.text('Jane Doe'), findsOneWidget);
     expect(
-        find.byKey(const ValueKey('reconcile-classroom-back')), findsOneWidget);
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
     expect(resumed.wisaSyncs, 0);
     expect(resumed.ssSyncs, 0);
     expect(resumed.azSyncs, 0);
@@ -546,11 +618,11 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Reconcile'));
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
 
-    // The class-group node is part of the shared overview, straight from the
-    // store — no Synchronise tapped.
+    // The class-group node is part of the shared overview on the Actions tab,
+    // straight from the store — no Synchronise tapped.
     expect(find.text('Overzicht'), findsOneWidget);
     expect(find.text('Klasgroepen'), findsWidgets);
 
@@ -558,7 +630,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('rollup-groups')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('reconcile-groups-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
     expect(
         find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
     // …all without a single connector pull or link().
@@ -726,7 +798,7 @@ void main() {
       reconcileBootstrap: resumed.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Reconcile'));
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
 
     // The overview rendered at generation 1 and the subscriber connected.
@@ -835,15 +907,26 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
-    expect(find.text('Maak een nieuw Smartschool account'), findsWidgets);
     expect(await harness.passwordQueue.load(), isEmpty);
 
-    // Apply it for real (against the recording SOAP transport): the create runs
-    // and its minted password is captured into the shared queue.
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-apply')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-apply')));
+    // Browse the create on the Actions tab, in the student's class.
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('reconcile-apply-confirm')));
+    await tester.tap(find.text('School 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(find.text('Maak een nieuw Smartschool account'), findsWidgets);
+
+    // Apply all for real (against the recording SOAP transport): the create runs
+    // and its minted password is captured into the shared queue.
+    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(find.text('Apply result'), findsOneWidget);
     final queued = await harness.passwordQueue.load();

@@ -452,15 +452,70 @@ class ReconcileController extends ChangeNotifier {
   /// first-seen order. Each subset shares a [PendingAccountEntry.situationKey],
   /// so it can be bulk-applied ("apply this resolution to all departed
   /// students") while each entry keeps its own chosen alternative.
-  List<List<PendingAccountEntry>> get pendingSituations {
+  List<List<PendingAccountEntry>> get pendingSituations =>
+      _groupSituations(pendingEntries);
+
+  /// Groups [entries] into "same situation" subsets in first-seen order — the
+  /// shared grouping the global list and the per-classroom / per-group
+  /// drill-downs all use (#110/#154).
+  static List<List<PendingAccountEntry>> _groupSituations(
+    List<PendingAccountEntry> entries,
+  ) {
     final order = <String>[];
     final bySituation = <String, List<PendingAccountEntry>>{};
-    for (final e in pendingEntries) {
+    for (final e in entries) {
       final key = e.situationKey;
       if (!bySituation.containsKey(key)) order.add(key);
       (bySituation[key] ??= <PendingAccountEntry>[]).add(e);
     }
     return [for (final key in order) bySituation[key]!];
+  }
+
+  /// The live pending entries for the accounts of the currently-open classroom
+  /// (#154): the interactive tiles the Actions drill-down builds for one class,
+  /// joined to the lazily-loaded classroom docs by account id. Empty before a
+  /// classroom is opened, or in a passive session with no live view to act on.
+  List<PendingAccountEntry> get classroomPendingEntries {
+    final accounts = _classroomAccounts;
+    if (accounts == null || _linked == null) return const [];
+    final ids = <String>{for (final a in accounts) a.id.value};
+    return [
+      for (final e in pendingEntries)
+        if (ids.contains(e.targetId)) e,
+    ];
+  }
+
+  /// [classroomPendingEntries] grouped into same-situation subsets, so the
+  /// per-class list keeps the bulk-apply affordance of the old flat list (#154).
+  List<List<PendingAccountEntry>> get classroomPendingSituations =>
+      _groupSituations(classroomPendingEntries);
+
+  /// The live group ("Klasgroepen") pending entries (#154): the interactive
+  /// tiles the group drill-down builds. Empty in a passive session.
+  List<PendingAccountEntry> get groupPendingEntries {
+    if (_linked == null) return const [];
+    return [
+      for (final e in pendingEntries)
+        if (e.family == 'group') e,
+    ];
+  }
+
+  /// [groupPendingEntries] grouped into same-situation subsets (#154).
+  List<List<PendingAccountEntry>> get groupPendingSituations =>
+      _groupSituations(groupPendingEntries);
+
+  /// The count shown in the Actions header (#154): the live entry count in an
+  /// active session, or the summed top-level rollup pending counts in a passive
+  /// session that only read the materialized view (no live entries to build).
+  int get totalPendingCount {
+    if (_linked != null) return pendingEntries.length;
+    var total = 0;
+    for (final r in _rollups) {
+      if (r.level == RollupLevel.school || r.level == RollupLevel.groups) {
+        total += r.pendingCount;
+      }
+    }
+    return total;
   }
 
   /// Builds one [PendingAccountEntry] per target from [actionList], collapsing

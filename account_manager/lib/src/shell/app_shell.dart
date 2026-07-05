@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../reconcile/reconcile_bootstrap.dart';
+import '../screens/actions_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
@@ -57,6 +58,11 @@ class _AppShellState extends State<AppShell> {
       label: 'Reconcile',
       icon: Icons.sync_alt_outlined,
       builder: (_) => ReconcileScreen(bootstrap: widget.reconcileBootstrap),
+    ),
+    ShellDestination(
+      label: 'Actions',
+      icon: Icons.checklist_outlined,
+      builder: (_) => ActionsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
       label: 'Passwords',
