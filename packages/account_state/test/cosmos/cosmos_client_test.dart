@@ -295,6 +295,77 @@ void main() {
       expect(transport.requests[1].headers['x-ms-continuation'], 'PAGE2');
     });
 
+    test(
+        'ensureContainer on a present container reads metadata and does not '
+        'create it', () async {
+      final transport = _FakeTransport([
+        _ok({'id': 'decisions'})
+      ]);
+      final created = await _client(transport)
+          .ensureContainer(container: 'decisions', partitionKeyPath: '/pk');
+
+      expect(created, isFalse);
+      final req = transport.requests.single;
+      expect(req.method, 'GET');
+      expect(
+          req.url.toString(), endsWith('/dbs/accountmanager/colls/decisions'));
+    });
+
+    test('ensureContainer creates the container when the metadata read 404s',
+        () async {
+      final transport = _FakeTransport([
+        const CosmosResponse(statusCode: 404),
+        const CosmosResponse(statusCode: 201, body: '{"id":"decisions"}'),
+      ]);
+      final created = await _client(transport)
+          .ensureContainer(container: 'decisions', partitionKeyPath: '/pk');
+
+      expect(created, isTrue);
+      expect(transport.requests, hasLength(2));
+      final create = transport.requests[1];
+      expect(create.method, 'POST');
+      expect(create.url.toString(), endsWith('/dbs/accountmanager/colls'));
+      expect(jsonDecode(create.body!), {
+        'id': 'decisions',
+        'partitionKey': {
+          'paths': ['/pk'],
+          'kind': 'Hash',
+          'version': 2,
+        },
+      });
+    });
+
+    test('ensureContainer treats a create 409 as already-created (concurrent)',
+        () async {
+      final transport = _FakeTransport([
+        const CosmosResponse(statusCode: 404),
+        const CosmosResponse(statusCode: 409, body: '{"code":"Conflict"}'),
+      ]);
+      final created = await _client(transport)
+          .ensureContainer(container: 'decisions', partitionKeyPath: '/pk');
+      expect(created, isFalse);
+    });
+
+    test('ensureContainer surfaces a create 403 (identity cannot provision)',
+        () async {
+      // The honest failure mode: on an AAD-only account whose identity may not
+      // create containers, a genuinely missing container surfaces loudly rather
+      // than as a later silent item-write 404 (#150).
+      final transport = _FakeTransport([
+        const CosmosResponse(statusCode: 404),
+        const CosmosResponse(
+          statusCode: 403,
+          body: '{"code":"Forbidden","message":"no container-create right"}',
+        ),
+      ]);
+      await expectLater(
+        _client(transport)
+            .ensureContainer(container: 'decisions', partitionKeyPath: '/pk'),
+        throwsA(isA<CosmosException>()
+            .having((e) => e.statusCode, 'statusCode', 403)),
+      );
+    });
+
     test('a non-2xx (other than 404/409) throws CosmosException', () async {
       final transport = _FakeTransport([
         const CosmosResponse(

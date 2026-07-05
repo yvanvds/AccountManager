@@ -97,6 +97,93 @@ class _FakeClient implements CosmosClient {
     }
     return rows;
   }
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      true;
+}
+
+/// A [CosmosClient] that models an account where only *provisioned* containers
+/// accept items: every item operation on a container not yet [ensureContainer]d
+/// throws the `404 NotFound` the real account returns for a write to a
+/// non-existent container. Reproduces the #150 bug — `putDecision` 404s until
+/// the `decisions` container is provisioned.
+class _EnforcingFakeClient implements CosmosClient {
+  final Map<String, Map<String, Map<String, dynamic>>> _store = {};
+  final Set<String> _containers = {};
+
+  Map<String, Map<String, dynamic>> _c(String name) {
+    if (!_containers.contains(name)) {
+      throw CosmosException(
+        404,
+        '{"code":"NotFound","message":"Resource Not Found: container '
+        '\\"$name\\" is not provisioned."}',
+      );
+    }
+    return _store.putIfAbsent(name, () => {});
+  }
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      _containers.add(container);
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {
+    final d = _c(container)[id];
+    return d == null ? null : Map<String, dynamic>.from(d);
+  }
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async {
+    final docs = _c(container);
+    final id = document['id'] as String;
+    if (docs.containsKey(id)) return false;
+    docs[id] = Map.of(document);
+    return true;
+  }
+
+  @override
+  Future<WriteOutcome> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+    String? ifMatch,
+  }) async {
+    _c(container)[document['id'] as String] = Map.of(document);
+    return const WriteOutcome.applied('etag');
+  }
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {
+    _c(container).remove(id);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async =>
+      [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
 }
 
 final DateTime _d = DateTime.utc(2026, 7, 1);
@@ -248,6 +335,35 @@ void main() {
         droppedDecisions: [decision],
       );
       expect(await store.readDecisions(), isEmpty);
+    });
+
+    test(
+        'putDecision 404s until the decisions container is provisioned, then '
+        'persists (#150)', () async {
+      final client = _EnforcingFakeClient();
+      final store = CosmosLinkedStore(client);
+      final decision = acceptedDuplicateDecision(
+        accountId: const core.LinkedAccountId('p0'),
+        mail: 'shared@school.example',
+        uids: const ['admin', 'user'],
+        decidedBy: 'op@school.example',
+        decidedAt: _d,
+      );
+
+      // The bug: with the decisions container not provisioned, the accept write
+      // fails with the same 404 the operator saw ("Kon de acceptatie niet
+      // opslaan: CosmosException(404 ...)").
+      await expectLater(
+        store.putDecision(decision),
+        throwsA(isA<CosmosException>()
+            .having((e) => e.statusCode, 'statusCode', 404)),
+      );
+
+      // Provisioning the containers closes the gap: the same write now round-
+      // trips and the acceptance survives.
+      await ensureContainers(client);
+      await store.putDecision(decision);
+      expect(await store.readDecisions(), hasLength(1));
     });
 
     test('deleteDecision removes the decision doc (revoke, #109)', () async {

@@ -73,6 +73,70 @@ class _EmptyCosmosClient implements CosmosClient {
     String? partitionKey,
   }) async =>
       const [];
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      false;
+}
+
+/// A Cosmos client that records the containers bootstrap ensures, so a test can
+/// prove the materialized-view containers (the operator `decisions` container
+/// among them, #150) are provisioned at startup. Reads/writes are inert.
+class _RecordingCosmosClient implements CosmosClient {
+  final Map<String, String> ensured = {};
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async {
+    ensured[container] = partitionKeyPath;
+    return true;
+  }
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async =>
+      null;
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async =>
+      true;
+
+  @override
+  Future<WriteOutcome> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+    String? ifMatch,
+  }) async =>
+      const WriteOutcome.applied(null);
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {}
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async =>
+      const [];
 }
 
 AppSettings _settings({
@@ -202,6 +266,29 @@ void main() {
         () => _bootstrap(store: const _ThrowingStore('login timed out')),
         throwsA('login timed out'),
       );
+    });
+
+    test('provisions the materialized-view containers, incl. decisions (#150)',
+        () async {
+      // Drive the real bootstrap assembly with a recording client to prove the
+      // ensure-containers preflight is wired: the operator `decisions` container
+      // (whose absence made "accept duplicate mail" 404) is provisioned before
+      // the reconcile controller can write a decision to it.
+      final client = _RecordingCosmosClient();
+      await bootstrapReconcile(
+        session: SignInSession(FakeBroker()),
+        aad: _aad,
+        settingsStore: InMemorySettingsStore(_settings()),
+        secretProvider: _secrets(),
+        cosmosClient: client,
+      );
+
+      expect(client.ensured, containsPair('decisions', '/pk'));
+      expect(
+        client.ensured.keys,
+        containsAll(['linkedAccounts', 'linkedGroups', 'rollups', 'decisions']),
+      );
+      expect(client.ensured['syncState'], '/id');
     });
 
     test('the real Cosmos path reads settings from the container', () async {
