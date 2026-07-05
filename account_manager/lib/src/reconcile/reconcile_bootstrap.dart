@@ -157,13 +157,16 @@ Future<ReconcileServices> bootstrapReconcile({
         tokens: CosmosSessionTokenProvider(session),
       );
 
-  // Ensure the materialized-view containers (per-account/group docs, rollups,
-  // the operator decisions container, and the sync-state container) exist before
-  // anything reads or writes them. On the correctly-provisioned shared account
-  // this is a cheap metadata read that creates nothing; it closes the gap where
-  // a never-provisioned `decisions` container made "accept duplicate mail" fail
-  // with a Cosmos 404 (#150).
-  await ensureContainers(client);
+  // Ensure the Cosmos containers a sync reads or writes exist before anything
+  // touches them: the materialized-view containers (per-account/group docs,
+  // rollups, the operator decisions container, and the sync-state container)
+  // plus the cold-snapshot container. On the correctly-provisioned shared
+  // account this is a cheap metadata read that creates nothing; it closes the
+  // gap where a never-provisioned container surfaced only as a first-write 404
+  // mid-session — `decisions` for "accept duplicate mail" (#150), and
+  // `syncState` / `snapshots` for the sync-lock renewal and snapshot save that
+  // 404'd between the Smartschool and Azure passes (#151).
+  await ensureContainers(client, specs: bootstrapContainers);
 
   final store = settingsStore ?? CosmosSettingsStore(client);
   final settings = await store.load();

@@ -34,6 +34,33 @@ const List<CosmosContainerSpec> linkedStoreContainers = [
   CosmosContainerSpec(syncStateContainer, '/id'),
 ];
 
+/// The cold-snapshot containers [CosmosSnapshotStore] reads and writes (#107):
+/// the [snapshotsContainer], one metadata document per system, each its own
+/// logical partition keyed by `/id`.
+///
+/// A separate seam from the materialized-view [linkedStoreContainers], but it
+/// shared their 404-on-first-write gap: a never-provisioned snapshots container
+/// surfaced only when the sync tried to persist a fresh snapshot mid-run —
+/// `[smartschool] Snapshot store: CosmosException(404 NotFound)` (#151), the
+/// same failure #150 hit on the operator `decisions` container.
+const List<CosmosContainerSpec> snapshotStoreContainers = [
+  CosmosContainerSpec(snapshotsContainer, '/id'),
+];
+
+/// Every container the reconcile bootstrap preflight ensures: the
+/// materialized-view [linkedStoreContainers] plus the cold-snapshot
+/// [snapshotStoreContainers].
+///
+/// This is the set [ensureContainers] provisions at startup so no store path a
+/// sync exercises — lease renewal and the `generation` write ([syncStateContainer]),
+/// a decision write ([decisionsContainer]), or a snapshot save
+/// ([snapshotsContainer]) — can surface a first-write 404 mid-session
+/// (#150, #151).
+const List<CosmosContainerSpec> bootstrapContainers = [
+  ...linkedStoreContainers,
+  ...snapshotStoreContainers,
+];
+
 /// Ensures every container in [specs] exists, creating any that are missing.
 ///
 /// The materialized-view containers are provisioned out of band on the shared
