@@ -19,6 +19,11 @@ class FakeCosmosClient implements CosmosClient {
   int createCount = 0;
   int upsertCount = 0;
 
+  /// Container names ensured via [ensureContainer], mapped to the partition-key
+  /// path they were ensured with. Lets a bootstrap test assert which containers
+  /// the provisioning step created and with which key.
+  final Map<String, String> ensuredContainers = {};
+
   /// How many conditioned upserts were rejected as stale (412). Lets a
   /// concurrency test assert that two writers to the *same* doc actually raced
   /// (one lost and re-read) rather than trivially both succeeding (#121).
@@ -123,5 +128,15 @@ class FakeCosmosClient implements CosmosClient {
       for (final doc in _container(container).values)
         if (keys.contains(doc['naturalKey'])) Map<String, dynamic>.from(doc),
     ];
+  }
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async {
+    final existed = ensuredContainers.containsKey(container);
+    ensuredContainers[container] = partitionKeyPath;
+    return !existed;
   }
 }

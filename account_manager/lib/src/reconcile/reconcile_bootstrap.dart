@@ -123,8 +123,10 @@ class ReconcileConfigException implements Exception {
 ///
 /// The optional parameters are test seams; production callers pass only
 /// [session] and [aad]. The Cosmos containers are provisioned out of band (see
-/// `docs/port-plan.md`) — data-plane RBAC cannot create them — so bootstrap only
-/// reads and writes items.
+/// `docs/port-plan.md`); bootstrap additionally runs an idempotent
+/// [ensureContainers] preflight (a metadata read that creates nothing on the
+/// provisioned account) so a never-stood-up container surfaces at startup rather
+/// than as a silent item-write 404 mid-session (#150).
 Future<ReconcileServices> bootstrapReconcile({
   required SignInSession session,
   required AadAppConfig aad,
@@ -154,6 +156,14 @@ Future<ReconcileServices> bootstrapReconcile({
         transport: HttpCosmosTransport(),
         tokens: CosmosSessionTokenProvider(session),
       );
+
+  // Ensure the materialized-view containers (per-account/group docs, rollups,
+  // the operator decisions container, and the sync-state container) exist before
+  // anything reads or writes them. On the correctly-provisioned shared account
+  // this is a cheap metadata read that creates nothing; it closes the gap where
+  // a never-provisioned `decisions` container made "accept duplicate mail" fail
+  // with a Cosmos 404 (#150).
+  await ensureContainers(client);
 
   final store = settingsStore ?? CosmosSettingsStore(client);
   final settings = await store.load();

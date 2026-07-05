@@ -102,6 +102,7 @@ export 'src/settings/wisa_school_profile.dart';
 export 'src/settings/work_date.dart';
 export 'src/cosmos/cosmos_client.dart';
 export 'src/cosmos/cosmos_config.dart';
+export 'src/cosmos/cosmos_containers.dart';
 export 'src/cosmos/cosmos_live_config.dart';
 export 'src/cosmos/cosmos_password_queue_store.dart';
 export 'src/cosmos/cosmos_person_id_resolver.dart';

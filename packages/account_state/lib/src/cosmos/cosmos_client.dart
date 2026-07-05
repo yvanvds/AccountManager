@@ -105,6 +105,25 @@ abstract interface class CosmosClient {
     Map<String, Object?> parameters,
     String? partitionKey,
   });
+
+  /// Ensures [container] exists, creating it with [partitionKeyPath] (e.g.
+  /// `/pk`) when it is missing. Returns `true` when this call created it and
+  /// `false` when it already existed. Idempotent, so it is safe to call on every
+  /// bootstrap.
+  ///
+  /// The container's metadata is read first (the data-plane role's
+  /// `readMetadata`), so on a correctly-provisioned AAD-only account — where the
+  /// containers are created out of band and the identity holds no
+  /// container-management right — the container is found present and no create
+  /// is attempted. The create path only runs where the container is genuinely
+  /// absent (a fresh emulator/dev account, or one whose identity may create it);
+  /// where the identity may not create it, the missing container surfaces as a
+  /// [CosmosException] instead of the silent, resurfacing item-write 404 that
+  /// left an operator decision unpersisted (#150).
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  });
 }
 
 /// The default [CosmosClient], speaking the Cosmos DB SQL-API data plane over a
@@ -267,6 +286,37 @@ class HttpCosmosClient implements CosmosClient {
     return results;
   }
 
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async {
+    // Read the container's metadata first. `readMetadata` is in the data-plane
+    // role, so this succeeds on a correctly-provisioned AAD-only account and the
+    // create below is never reached there; only a genuinely absent container
+    // (404) falls through to the create.
+    final head = await _send('GET', _collPath(container));
+    if (head.isSuccess) return false;
+    if (!head.isNotFound) _ensureSuccess(head);
+
+    final resp = await _send(
+      'POST',
+      _collsPath(),
+      body: jsonEncode({
+        'id': container,
+        'partitionKey': {
+          'paths': [partitionKeyPath],
+          'kind': 'Hash',
+          'version': 2,
+        },
+      }),
+    );
+    // Another operator created it between our read and create — still fine.
+    if (resp.isConflict) return false;
+    _ensureSuccess(resp);
+    return true;
+  }
+
   Future<CosmosResponse> _send(
     String method,
     String path, {
@@ -300,11 +350,16 @@ class HttpCosmosClient implements CosmosClient {
     return e.endsWith('/') ? e.substring(0, e.length - 1) : e;
   }
 
-  String _docsPath(String container) =>
-      '/dbs/${_config.database}/colls/$container/docs';
+  String _docsPath(String container) => '${_collPath(container)}/docs';
 
   String _docPath(String container, String id) =>
       '${_docsPath(container)}/${Uri.encodeComponent(id)}';
+
+  /// The collections path (`/dbs/{db}/colls`) a container create posts to.
+  String _collsPath() => '/dbs/${_config.database}/colls';
+
+  /// A single collection's path (`/dbs/{db}/colls/{name}`) for a metadata read.
+  String _collPath(String container) => '${_collsPath()}/$container';
 
   void _ensureSuccess(CosmosResponse resp) {
     if (!resp.isSuccess) throw CosmosException(resp.statusCode, resp.body);
