@@ -1,9 +1,45 @@
+import 'dart:convert';
+
 import 'package:azure_api/azure_api.dart';
 import 'package:http/http.dart' as http;
 import 'package:oauth2/oauth2.dart' as oauth2;
 
 import 'aad_broker.dart';
 import 'aad_resource.dart';
+
+/// Best-effort extraction of the signed-in operator's UPN / e-mail from a JWT
+/// access token, so the session can name *who* signed in (#169): the value is
+/// stamped onto each per-system sync and shown in the reconcile freshness line
+/// ("Last sync — WISA 10:21 by yvan@…").
+///
+/// The loopback OAuth path only ever hands back a raw access-token string, so
+/// the identity has to be read off the token itself. This reads the standard
+/// identity claims in preference order (`upn` → `preferred_username` →
+/// `unique_name` → `email`) and returns `null` for an opaque or malformed
+/// token — an unknown operator then degrades gracefully (no dangling "by ").
+String? operatorAccountFromJwt(String token) {
+  final parts = token.split('.');
+  if (parts.length != 3) return null;
+  try {
+    final payload =
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+    final claims = jsonDecode(payload);
+    if (claims is! Map<String, dynamic>) return null;
+    for (final claim in const [
+      'upn',
+      'preferred_username',
+      'unique_name',
+      'email',
+    ]) {
+      final value = claims[claim];
+      if (value is String && value.isNotEmpty) return value;
+    }
+  } on FormatException {
+    // Not base64url, not JSON, or not UTF-8 — treat as an opaque token.
+    return null;
+  }
+  return null;
+}
 
 /// [AadBroker] backed by the interactive loopback OAuth flow — auth-code with
 /// PKCE through the system browser — reusing `azure_api`'s [OAuthAuthProvider]
@@ -84,6 +120,7 @@ class LoopbackAadBroker implements AadBroker {
           accessToken: credentials.accessToken,
           expiresOn: credentials.expiration?.toUtc() ??
               now().toUtc().add(assumedLifetime),
+          account: operatorAccountFromJwt(credentials.accessToken),
         );
 
     Future<BrokerToken?> silent(AadResource resource) async {
@@ -167,6 +204,7 @@ class LoopbackAadBroker implements AadBroker {
       return BrokerToken(
         accessToken: token,
         expiresOn: _clock().toUtc().add(_assumedLifetime),
+        account: operatorAccountFromJwt(token),
       );
     } on AzureAuthException catch (e) {
       throw AadBrokerException(e.message, cause: e);

@@ -27,6 +27,14 @@ class _FakeProvider implements AzureAuthProvider {
   }
 }
 
+/// Builds an unsigned JWT (`header.payload.signature`) carrying [claims]. The
+/// decoder never verifies the signature, so a literal `sig` segment suffices.
+String _jwt(Map<String, Object?> claims) {
+  String seg(Map<String, Object?> m) =>
+      base64Url.encode(utf8.encode(jsonEncode(m))).replaceAll('=', '');
+  return '${seg({'alg': 'none', 'typ': 'JWT'})}.${seg(claims)}.sig';
+}
+
 void main() {
   final graph = AadResource.graph(AzureCredentials(
     clientId: 'c',
@@ -54,6 +62,64 @@ void main() {
     final token = await broker.acquireInteractive(graph);
     expect(token.accessToken, 'AT');
     expect(token.expiresOn, now.add(const Duration(minutes: 50)));
+  });
+
+  test('acquireInteractive stamps the operator UPN decoded from the JWT (#169)',
+      () async {
+    final broker = LoopbackAadBroker(
+      providerFactory: (_) =>
+          _FakeProvider(_jwt({'upn': 'yvan@school.example'})),
+    );
+
+    final token = await broker.acquireInteractive(graph);
+    expect(token.account, 'yvan@school.example',
+        reason: 'so session.account is populated and syncedBy is non-empty');
+  });
+
+  test('an opaque (non-JWT) token leaves the operator unknown, gracefully',
+      () async {
+    final broker = LoopbackAadBroker(
+      providerFactory: (_) => _FakeProvider('opaque-access-token'),
+    );
+
+    final token = await broker.acquireInteractive(graph);
+    expect(token.account, isNull);
+  });
+
+  group('operatorAccountFromJwt', () {
+    test('prefers upn over the other identity claims', () {
+      final token = _jwt({
+        'upn': 'yvan@school.example',
+        'preferred_username': 'other@school.example',
+        'unique_name': 'nope@school.example',
+        'email': 'nope2@school.example',
+      });
+      expect(operatorAccountFromJwt(token), 'yvan@school.example');
+    });
+
+    test('falls back to preferred_username, then unique_name, then email', () {
+      expect(
+        operatorAccountFromJwt(
+            _jwt({'preferred_username': 'a@school.example'})),
+        'a@school.example',
+      );
+      expect(
+        operatorAccountFromJwt(_jwt({'unique_name': 'b@school.example'})),
+        'b@school.example',
+      );
+      expect(
+        operatorAccountFromJwt(_jwt({'email': 'c@school.example'})),
+        'c@school.example',
+      );
+    });
+
+    test('returns null for an opaque, truncated, or claimless token', () {
+      expect(operatorAccountFromJwt('opaque'), isNull);
+      expect(operatorAccountFromJwt('only.two'), isNull);
+      expect(operatorAccountFromJwt('not.base64!.sig'), isNull);
+      expect(operatorAccountFromJwt(_jwt({'sub': 'no-upn-here'})), isNull);
+      expect(operatorAccountFromJwt(_jwt({'upn': ''})), isNull);
+    });
   });
 
   test('reuses one provider per resource so its cache survives calls',
@@ -181,6 +247,26 @@ void main() {
 
       expect(await broker.acquireSilent(AadResource.cosmos), isNull);
       expect(refreshRequests, isNotEmpty, reason: 'the redeem was attempted');
+    });
+
+    test('the silent leg stamps the operator UPN from the refreshed JWT (#169)',
+        () async {
+      // The refresh grant returns a JWT access token; the silently-minted
+      // resource token then carries the decoded operator (the real seed for
+      // syncedBy in a resumed session).
+      final jwt = _jwt({'upn': 'yvan@school.example'});
+      final broker = LoopbackAadBroker.oauth(
+        clientId: 'client-123',
+        tenantId: 'tenant-abc',
+        azureDomain: 'school.example',
+        schoolPrefix: 'GBS',
+        authorizer: (authUrl, redirect) async => {'code': 'auth-code-xyz'},
+        httpClient: MockClient((req) async => jsonResp(tokenBody(jwt))),
+      );
+
+      await broker.acquireInteractive(graph);
+      final cosmos = await broker.acquireSilent(AadResource.cosmos);
+      expect(cosmos!.account, 'yvan@school.example');
     });
 
     test('a persistent cache survives a "restart" — silent, no browser',
