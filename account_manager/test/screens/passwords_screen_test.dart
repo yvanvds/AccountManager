@@ -1,4 +1,5 @@
 import 'package:account_core/account_core.dart' as core;
+import 'package:account_manager/src/passwords/password_controller.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -156,6 +157,32 @@ void main() {
     expect(harness.passwordBackends.azurePushes, hasLength(1));
     expect(harness.passwordBackends.smartschoolPushes.single.$3,
         harness.passwordBackends.azurePushes.single.$2);
+  });
+
+  testWidgets(
+      'Personeel: filter defaults to Voornaam and the list is alphabetical '
+      '(#186)', (WidgetTester tester) async {
+    // Three staff seeded out of alphabetical order across mixed casing; the
+    // Personeel tab must default its filter selector to voornaam and render the
+    // list sorted by the displayed "Voornaam Naam" name.
+    final harness = ReconcileHarness(ssInitial: staffOrderSnap());
+    await tester
+        .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    // The filter selector defaults to voornaam.
+    final dropdown = tester.widget<DropdownButton<StaffFilterField>>(
+        find.byKey(const ValueKey('passwords-staff-filter-field')));
+    expect(dropdown.value, StaffFilterField.voornaam);
+
+    // The tiles render top-to-bottom in alphabetical order: alice, Bob, Charlie.
+    double y(String uid) =>
+        tester.getTopLeft(find.byKey(ValueKey('passwords-staff-$uid'))).dy;
+    expect(y('alice'), lessThan(y('bob')));
+    expect(y('bob'), lessThan(y('charlie')));
   });
 
   testWidgets('Personeel filter narrows the staff list',

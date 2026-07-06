@@ -163,6 +163,8 @@ ss.SmartschoolAccount ssAccount({
   String uid = 'jane',
   String accountId = '1',
   String mail = 'jane.doe@student.school.example',
+  String givenName = 'Jane',
+  String surname = 'Doe',
   core.Address address = _addr,
 }) =>
     ss.SmartschoolAccount(
@@ -172,8 +174,8 @@ ss.SmartschoolAccount ssAccount({
       registerId: '',
       stemId: 0,
       role: core.PersonRole.student,
-      givenName: 'Jane',
-      surname: 'Doe',
+      givenName: givenName,
+      surname: surname,
       extraNames: '',
       initials: '',
       preferredName: '',
@@ -289,6 +291,34 @@ ss.SmartschoolSnapshot passwordsSnap() => ss.SmartschoolSnapshot(
         member('jane', '3C'),
         member('bob', '3C'),
         member('anna.smit', 'personeel'),
+      ],
+    );
+
+/// A Smartschool snapshot with a "Personeel" group holding three staff members
+/// seeded **out of alphabetical order** and across mixed casing (Charlie/alice/
+/// Bob) — the fixture for the Passwords personeel default-filter + sort rework
+/// (#186). The controller must expose them sorted by the displayed "Voornaam
+/// Naam" name (alice, Bob, Charlie) with voornaam as the default filter field.
+ss.SmartschoolSnapshot staffOrderSnap() => ss.SmartschoolSnapshot(
+      fetchedAt: kFixtureDate,
+      groups: <core.Group>[
+        ssGroup('Personeel', code: 'personeel', type: core.GroupType.group),
+      ],
+      accounts: <ss.SmartschoolAccount>[
+        ssAccount(
+            uid: 'charlie',
+            accountId: '1',
+            givenName: 'Charlie',
+            surname: 'Zulu'),
+        ssAccount(
+            uid: 'alice', accountId: '2', givenName: 'alice', surname: 'Bravo'),
+        ssAccount(
+            uid: 'bob', accountId: '3', givenName: 'Bob', surname: 'Alpha'),
+      ],
+      memberships: <ss.SmartschoolMembership>[
+        member('charlie', 'personeel'),
+        member('alice', 'personeel'),
+        member('bob', 'personeel'),
       ],
     );
 

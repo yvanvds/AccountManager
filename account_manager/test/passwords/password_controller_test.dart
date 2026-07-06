@@ -247,6 +247,24 @@ void main() {
       expect(c.staff.map((a) => a.uid), ['anna.smit']);
     });
 
+    test('defaults the staff filter field to voornaam (#186)', () {
+      expect(build().filterField, StaffFilterField.voornaam);
+    });
+
+    test('orders the staff list alphabetically by name (#186)', () {
+      // Three staff seeded out of alphabetical order across mixed casing; the
+      // controller must expose them sorted by display name (alice, Bob, Charlie).
+      final c = PasswordController(
+        snapshot: staffOrderSnap(),
+        queue: queue,
+        backends: backends,
+        generatePassword: _seqGenerator(),
+        writer: (name, content) async => 'C:/tmp/$name',
+      );
+      // Alphabetical by "Voornaam Naam", case-insensitive: alice, Bob, Charlie.
+      expect(c.staff.map((a) => a.uid), ['alice', 'bob', 'charlie']);
+    });
+
     test('filters staff by username', () {
       final c = build()
         ..setStaffFilterField(StaffFilterField.gebruikersnaam)

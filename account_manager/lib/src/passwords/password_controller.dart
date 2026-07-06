@@ -419,7 +419,8 @@ class PasswordController extends ChangeNotifier {
 
   String _filterText = '';
   String get filterText => _filterText;
-  StaffFilterField _filterField = StaffFilterField.naam;
+  // Voornaam (first name) is the more natural default to filter staff by (#186).
+  StaffFilterField _filterField = StaffFilterField.voornaam;
   StaffFilterField get filterField => _filterField;
 
   ss.SmartschoolAccount? _selectedStaff;
@@ -440,7 +441,13 @@ class PasswordController extends ChangeNotifier {
     }
 
     walk(root);
-    _allStaff.sort((a, b) => a.surname.compareTo(b.surname));
+    // Alphabetical by the displayed "Voornaam Naam" name, case-insensitive, so
+    // the list is easy to scan when locating a person to (re)generate a
+    // password for (#186).
+    _allStaff.sort((a, b) => '${a.givenName} ${a.surname}'
+        .trim()
+        .toLowerCase()
+        .compareTo('${b.givenName} ${b.surname}'.trim().toLowerCase()));
     _applyStaffFilter();
   }
 
