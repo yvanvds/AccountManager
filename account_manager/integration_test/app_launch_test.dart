@@ -575,16 +575,20 @@ void main() {
     expect(allKinds, isNot(contains('RemoveStudentFromAzure')),
         reason: 'the account is still in the group ⇒ Azure is kept');
 
-    // Browse it on the Actions tab: it sits under its sibling school in the
-    // drill-down (WISA still places it, in School 2).
+    // Browse it on the Actions tab: because school 2 is one we do NOT manage,
+    // its node is kept out of the drill-down (#178). The departed student is
+    // re-bucketed to "Niet toegewezen" so its Smartschool cleanup stays
+    // actionable — never surfacing a non-managed school node.
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('School 2'));
+    expect(find.text('School 2'), findsNothing,
+        reason: 'a school we do not manage never appears in Actions (#178)');
+    await tester.tap(find.text('Niet toegewezen'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
+    await tester.tap(find.text('Jaar Overig'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
+    await tester.ensureVisible(find.text('Zonder klas'));
+    await tester.tap(find.text('Zonder klas'));
     await tester.pumpAndSettle();
     expect(find.byKey(ValueKey('entry-student-${entry.targetId}')),
         findsOneWidget);
@@ -604,6 +608,70 @@ void main() {
         harness.controller.applyResults!.map((r) => r.changes.summary);
     expect(summaries, contains('Schrijf de leerling uit in Smartschool'));
     expect(summaries, isNot(contains('Verwijder Azure account')));
+  });
+
+  testWidgets(
+      'the Actions drill-down hides a school the operator does not manage in '
+      'Settings, re-bucketing its student to the leaver group (#178)',
+      (WidgetTester tester) async {
+    // A student enrolled in school 2, fully present in our Smartschool + Azure.
+    // The WISA schools carry no MarkAsOurs flag, so ownership comes solely from
+    // the Settings-derived managed set the applier is wired with — the exact
+    // "persisted but never consumed" wiring #178 closes. Here only school 1 is
+    // managed, so the school-2 student is groupOnly.
+    useTallWindow(tester);
+    final harness = managedSchoolsHarness(ourSchoolIds: const {1});
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Overzicht'), findsOneWidget);
+    // The non-managed school is not a node in the drill-down…
+    expect(find.text('School 2'), findsNothing,
+        reason: 'school 2 is not managed → no node in Actions');
+    // …but the departed student's cleanup stays actionable under the leaver
+    // bucket rather than vanishing entirely.
+    expect(find.text('Niet toegewezen'), findsOneWidget);
+  });
+
+  testWidgets(
+      'marking that same school as managed in Settings surfaces it in the '
+      'Actions drill-down end-to-end (#178)', (WidgetTester tester) async {
+    // The very same school-2 student, but now school 2 is one of ours: it must
+    // appear as a school node and the student sits under it. Proves the managed
+    // set from Settings — not the snapshot MarkAsOurs flags — drives which
+    // schools show.
+    useTallWindow(tester);
+    final harness = managedSchoolsHarness(ourSchoolIds: const {1, 2});
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('School 2'), findsOneWidget,
+        reason: 'managing school 2 surfaces it in Actions (#178)');
+    await tester.tap(find.text('School 2'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(find.text('3C'), findsWidgets);
   });
 
   testWidgets(

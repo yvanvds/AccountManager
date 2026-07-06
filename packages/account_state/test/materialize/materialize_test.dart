@@ -372,6 +372,136 @@ void main() {
     });
   });
 
+  group('managed schools only (#178)', () {
+    // A fully-linked student (WISA + our Smartschool + our Azure) whose WISA
+    // record sits in [schoolId]. [ourSchoolIds] is the operator's managed set;
+    // when it omits [schoolId] the student is classified groupOnly.
+    LinkedState linkedInSchool({
+      required int schoolId,
+      Set<int>? ourSchoolIds,
+      bool withOurAccounts = true,
+    }) =>
+        LinkedState.recompute(
+          wisa: wapi.WisaSnapshot(
+            fetchedAt: _d,
+            students: [_wStudent(schoolId: schoolId)],
+            staff: const [],
+            classGroups: const [],
+            schools: const [],
+          ),
+          smartschool: ss.SmartschoolSnapshot(
+            fetchedAt: _d,
+            groups: const [],
+            accounts: withOurAccounts ? [_ssAccount()] : const [],
+            memberships: const [],
+          ),
+          azure: az.AzureSnapshot(
+            fetchedAt: _d,
+            users: withOurAccounts ? [_azUser()] : const [],
+            groups: const [],
+          ),
+          resolver: _SeqResolver(),
+          studentConfig: _studentConfig,
+          staffConfig: _staffConfig,
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test('a student in a managed school is placed under that school node', () {
+      final view = materialize(linkedInSchool(schoolId: 1, ourSchoolIds: {1}),
+          generation: 1);
+
+      expect(view.accounts, hasLength(1));
+      expect(view.accounts.single.school, '1');
+      expect(
+        view.rollups.any((r) => r.school == '1'),
+        isTrue,
+        reason: 'the managed school shows a rollup node',
+      );
+    });
+
+    test(
+        'a student in a non-managed sibling school (groupOnly) but still in our '
+        'systems is re-bucketed to unassigned — no non-managed school node',
+        () {
+      // School 1 is ours; the student sits in school 2 → groupOnly, yet keeps a
+      // Smartschool + Azure account we must clean up (#134).
+      final view = materialize(linkedInSchool(schoolId: 2, ourSchoolIds: {1}),
+          generation: 1);
+
+      expect(view.accounts, hasLength(1),
+          reason:
+              'the departed student is kept (its cleanup stays actionable)');
+      expect(view.accounts.single.school, 'unassigned',
+          reason: 'not under the non-managed school 2');
+      expect(
+        view.rollups.any((r) => r.school == '2'),
+        isFalse,
+        reason: 'no rollup node for a school we do not manage',
+      );
+    });
+
+    test(
+        'a WISA-only student present only in a non-managed school is suppressed '
+        'entirely', () {
+      // No account of ours anywhere — a pure sibling-school student we never
+      // touch. They must not surface in the Actions view at all.
+      final view = materialize(
+        linkedInSchool(schoolId: 2, ourSchoolIds: {1}, withOurAccounts: false),
+        generation: 1,
+      );
+
+      expect(view.accounts, isEmpty);
+      expect(view.rollups.where((r) => r.level == RollupLevel.school), isEmpty);
+    });
+
+    test('toggling the managed set flips which schools appear', () {
+      // Same student in school 2. Not managing school 2 → suppressed from the
+      // school tree (re-bucketed to unassigned); managing it → it shows.
+      final unmanaged = materialize(
+          linkedInSchool(schoolId: 2, ourSchoolIds: {1}),
+          generation: 1);
+      expect(unmanaged.rollups.any((r) => r.school == '2'), isFalse);
+
+      final managed = materialize(
+          linkedInSchool(schoolId: 2, ourSchoolIds: {1, 2}),
+          generation: 1);
+      expect(managed.accounts.single.school, '2');
+      expect(managed.rollups.any((r) => r.school == '2'), isTrue);
+    });
+
+    test(
+        'with no managed set the snapshot MarkAsOurs flags still classify '
+        '(fallback preserved)', () {
+      // ourSchoolIds null → link() derives ownership from the snapshot schools.
+      // Here school 1 is flagged ours, so a school-1 student is placed normally.
+      final linked = LinkedState.recompute(
+        wisa: wapi.WisaSnapshot(
+          fetchedAt: _d,
+          students: [_wStudent(schoolId: 1)],
+          staff: const [],
+          classGroups: const [],
+          schools: const [
+            wapi.WisaSchool(id: 1, name: 'One', description: '', isOurs: true),
+          ],
+        ),
+        smartschool: ss.SmartschoolSnapshot(
+          fetchedAt: _d,
+          groups: const [],
+          accounts: [_ssAccount()],
+          memberships: const [],
+        ),
+        azure: az.AzureSnapshot(
+            fetchedAt: _d, users: [_azUser()], groups: const []),
+        resolver: _SeqResolver(),
+        studentConfig: _studentConfig,
+        staffConfig: _staffConfig,
+      );
+
+      final view = materialize(linked, generation: 1);
+      expect(view.accounts.single.school, '1');
+    });
+  });
+
   group('gradeYearOf', () {
     test('takes the leading digits of the class group', () {
       expect(gradeYearOf('3C'), '3');

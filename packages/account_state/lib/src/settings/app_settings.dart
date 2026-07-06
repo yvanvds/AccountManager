@@ -72,6 +72,16 @@ class AppSettings {
   /// group-membership plumbing #113 slice 2 reads, but no action fires here.
   final List<WisaSchoolProfile> wisaSchools;
 
+  /// The set of WISA school ids the operator manages — the `ours`-flagged
+  /// entries of [wisaSchools] (#178). This is what the linker joins student
+  /// membership against so `wisaPresence` is authoritative from Settings; empty
+  /// when no school is flagged (the caller then falls back to the snapshot's
+  /// `MarkAsOurs` flags rather than passing an empty managed set).
+  Set<int> get managedWisaSchoolIds => <int>{
+        for (final p in wisaSchools)
+          if (p.ours) p.schoolId,
+      };
+
   /// Returns a copy with the given fields replaced.
   AppSettings copyWith({
     String? schoolPrefix,

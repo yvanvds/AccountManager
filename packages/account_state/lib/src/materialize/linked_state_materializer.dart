@@ -45,6 +45,17 @@ MaterializedView materialize(
 
   final accounts = <MaterializedAccount>[];
   for (final account in linked.snapshot.accounts) {
+    // #178: keep the Actions view to schools we manage. A student present only
+    // in a sibling school we do not manage ([WisaPresence.groupOnly]) with no
+    // account of ours is purely a sibling-school student — never surface them.
+    // A groupOnly student who still has one of *our* accounts is a departed
+    // student whose Smartschool/Azure cleanup we keep (#134); [_placeAccount]
+    // re-buckets them to "Niet toegewezen" so no non-managed school node shows.
+    if (account.wisaPresence == core.WisaPresence.groupOnly &&
+        account.smartschool == null &&
+        account.azure == null) {
+      continue;
+    }
     final place = _placeAccount(account, schoolLabels);
     accounts.add(MaterializedAccount(
       id: account.id,
@@ -225,16 +236,19 @@ class _Placement {
   final String classroom;
 }
 
-/// A student's location comes from its WISA record (school id + class group).
-/// An account with no WISA record — an Azure-/Smartschool-only leaver flagged
-/// for deletion — has no class, so it lands in the `unassigned` bucket (there is
-/// no "alumni" state; a departed student is an incomplete account, per #47).
+/// A student's location comes from its WISA record (school id + class group),
+/// but only when they are present in a school we **manage**
+/// ([LinkedAccount.isInOurWisa]). A student who left our school — gone from the
+/// group ([WisaPresence.absent]) or moved to a sibling school we don't manage
+/// ([WisaPresence.groupOnly], #178) — has no class *of ours*, so it lands in the
+/// `unassigned` bucket rather than surfacing a non-managed school node. There is
+/// no "alumni" state; a departed student is an incomplete account (per #47).
 _Placement _placeAccount(
   core.LinkedAccount account,
   Map<int, String> schoolLabels,
 ) {
   final wisa = account.wisa;
-  if (wisa is wapi.WisaStudent) {
+  if (wisa is wapi.WisaStudent && account.isInOurWisa) {
     final school = wisa.schoolId.toString();
     return _Placement(
       school: school,

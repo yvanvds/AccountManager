@@ -122,6 +122,19 @@ void main() {
       expect(restored.wisaSchools.last.ours, isFalse);
     });
 
+    test('managedWisaSchoolIds is the set of ours-flagged school ids (#178)',
+        () {
+      const settings = AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 10, name: 'A', ours: true),
+          WisaSchoolProfile(schoolId: 20, name: 'B'),
+          WisaSchoolProfile(schoolId: 30, name: 'C', ours: true),
+        ],
+      );
+      expect(settings.managedWisaSchoolIds, {10, 30});
+      expect(const AppSettings().managedWisaSchoolIds, isEmpty);
+    });
+
     test(
         'a school profile predating the persisted name loads with an empty '
         'name (#171)', () {
