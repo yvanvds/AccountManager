@@ -67,15 +67,21 @@ class GraphClient {
   /// GET every page of a collection at [url], following `@odata.nextLink`.
   /// Returns the concatenated `value` arrays. [headers] (e.g. the advanced-
   /// query `ConsistencyLevel: eventual`) are sent on every page.
+  ///
+  /// [onPage], when supplied, is invoked after each page with the running
+  /// total of items gathered so far. Callers use it to emit progress while a
+  /// large multi-page pull is advancing (issue #177).
   Future<List<Map<String, dynamic>>> getCollection(
     Uri url, {
     Map<String, String>? headers,
+    void Function(int total)? onPage,
   }) async {
     final items = <Map<String, dynamic>>[];
     Uri? next = url;
     while (next != null) {
       final body = await getJson(next, headers: headers);
       items.addAll(_values(body));
+      onPage?.call(items.length);
       next = _nextLink(body);
     }
     return items;

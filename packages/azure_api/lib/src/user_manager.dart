@@ -39,6 +39,9 @@ class UserManager {
 
   static final String _select = AzureUser.graphSelectFields.join(',');
 
+  /// Emit a progress log line for every this-many accounts pulled (issue #177).
+  static const int _progressEvery = 100;
+
   /// Headers required for advanced directory queries (`$count`,
   /// `startswith`, `$filter` with `or`). Graph rejects these without
   /// `ConsistencyLevel: eventual`.
@@ -71,8 +74,11 @@ class UserManager {
         r'$filter': filterFor(schoolPrefix),
       },
     );
-    final rows =
-        await _graph.getCollection(url, headers: _advancedQueryHeaders);
+    final rows = await _graph.getCollection(
+      url,
+      headers: _advancedQueryHeaders,
+      onPage: _accountProgress(),
+    );
     final users = rows.map(AzureUser.fromGraphJson).toList();
     _log?.addMessage(
       core.Origin.azure,
@@ -87,7 +93,7 @@ class UserManager {
   /// than [load]; use only when [load]'s server-side filter is insufficient.
   Future<List<AzureUser>> loadClientFiltered(String schoolPrefix) async {
     final url = _graph.uri('users', query: {r'$select': _select});
-    final rows = await _graph.getCollection(url);
+    final rows = await _graph.getCollection(url, onPage: _accountProgress());
     final users = rows
         .map(AzureUser.fromGraphJson)
         .where((u) => _belongsToSchool(u, schoolPrefix))
@@ -287,6 +293,25 @@ class UserManager {
       candidate = '$local$suffix@$domain';
     }
     return candidate;
+  }
+
+  /// Builds an `onPage` callback that logs one line each time another
+  /// [_progressEvery] accounts have been pulled (issue #177), so a long Azure
+  /// bulk read visibly advances in the Log panel. Returns `null` when no log
+  /// sink is attached, so paging stays allocation-free in that case.
+  void Function(int total)? _accountProgress() {
+    final log = _log;
+    if (log == null) return null;
+    var nextMilestone = _progressEvery;
+    return (total) {
+      while (total >= nextMilestone) {
+        log.addMessage(
+          core.Origin.azure,
+          'Azure: $nextMilestone accounts opgehaald…',
+        );
+        nextMilestone += _progressEvery;
+      }
+    };
   }
 
   bool _belongsToSchool(AzureUser u, String prefix) {
