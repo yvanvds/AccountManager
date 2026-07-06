@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:account_core/account_core.dart' as core;
+import 'package:account_state/account_state.dart' show SystemSyncMeta;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -179,52 +180,12 @@ class _Header extends StatelessWidget {
 
   final ReconcileController controller;
 
-  /// The shared per-system freshness line, e.g. "Last sync — WISA 09:12 by
-  /// jan@… · drift check — Smartschool 10:24 · Azure 10:25". Read from the
-  /// materialized store so it names *whichever* operator last synced each system
-  /// — not just this session (#108). WISA (the Synchronise target) and the
-  /// drift-checked pair (Smartschool, Azure) render as two clauses so their
-  /// differing times are self-explanatory (#170). Null before any sync.
-  String? _freshness() {
-    final systems = controller.syncState.systems;
-    String? stamp(core.Origin system, String label) {
-      final meta = systems[system];
-      if (meta == null) return null;
-      final t = meta.at.toLocal();
-      final hhmm = '${t.hour.toString().padLeft(2, '0')}:'
-          '${t.minute.toString().padLeft(2, '0')}';
-      final by = meta.syncedBy.isEmpty ? '' : ' by ${meta.syncedBy}';
-      return '$label $hhmm$by';
-    }
-
-    // WISA is refreshed by Synchronise; Smartschool and Azure are refreshed by
-    // Check for drift. Present them as two labelled clauses so a later WISA-only
-    // smart-sync reads as "synced then, drift-checked earlier" rather than an
-    // unexplained gap between the timestamps (#170).
-    final segments = <String>[];
-    if (stamp(core.Origin.wisa, 'WISA') case final wisa?) {
-      segments.add('Last sync — $wisa');
-    }
-    final drift = <String>[
-      for (final (system, label) in const [
-        (core.Origin.smartschool, 'Smartschool'),
-        (core.Origin.azure, 'Azure'),
-      ])
-        if (stamp(system, label) case final s?) s,
-    ];
-    if (drift.isNotEmpty) {
-      segments.add('drift check — ${drift.join(' · ')}');
-    }
-    if (segments.isEmpty) return null;
-    return segments.join(' · ');
-  }
-
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
     final bool ink = Theme.of(context).brightness == Brightness.dark;
-    final freshness = _freshness();
+    final bool hasFreshness = controller.syncState.systems.isNotEmpty;
     final lockedByOther = controller.syncLockedByOther;
 
     return Column(
@@ -256,24 +217,9 @@ class _Header extends StatelessWidget {
             ),
           ],
         ),
-        if (freshness != null) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s3),
-          Row(
-            key: const ValueKey('reconcile-freshness'),
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(Icons.schedule_outlined, size: 16, color: colors.primary),
-              const SizedBox(width: PlinkSpacing.s2),
-              Flexible(
-                child: Text(
-                  freshness,
-                  style: text.bodyMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        if (hasFreshness) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s4),
+          _LastSyncBox(controller: controller),
         ],
         if (lockedByOther) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s3),
@@ -304,6 +250,140 @@ class _Header extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// The shared per-system "Last sync" box (#188): a bordered card headed
+/// "Last sync" with one row per system — WISA, Smartschool, Azure — each on its
+/// own line showing whether it was refreshed by a sync or a drift check, the
+/// time, and which operator ran it. This replaces the old run-on freshness line
+/// that packed all three systems into a single wrapped sentence.
+///
+/// Read from the materialized store so it names *whichever* operator last synced
+/// each system — not just this session (#108). WISA is the Synchronise target;
+/// Smartschool and Azure are refreshed by Check for drift, so a later WISA-only
+/// smart-sync reads as "synced then, drift-checked earlier" per row rather than
+/// an unexplained gap between timestamps (#170). Only rendered once at least one
+/// system has been synced.
+class _LastSyncBox extends StatelessWidget {
+  const _LastSyncBox({required this.controller});
+
+  final ReconcileController controller;
+
+  /// The systems in display order, each with its label and whether it is
+  /// refreshed by Synchronise (`isSync`) or by Check for drift.
+  static const List<(core.Origin, String, bool)> _rows =
+      <(core.Origin, String, bool)>[
+    (core.Origin.wisa, 'WISA', true),
+    (core.Origin.smartschool, 'Smartschool', false),
+    (core.Origin.azure, 'Azure', false),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final Color hairline = Theme.of(context).dividerColor;
+    final systems = controller.syncState.systems;
+
+    return Container(
+      key: const ValueKey('reconcile-last-sync'),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        border: Border.all(color: hairline),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.schedule_outlined, size: 18, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s2),
+              Text('Last sync', style: text.titleMedium),
+            ],
+          ),
+          const SizedBox(height: PlinkSpacing.s3),
+          for (final (system, label, isSync) in _rows)
+            _SystemRow(
+              system: system,
+              label: label,
+              isSync: isSync,
+              meta: systems[system],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One system's row inside the [_LastSyncBox]: a fixed-width name column so the
+/// three statuses line up, then the sync/drift icon and a "kind · time · by who"
+/// status. A system that has never been synced shows a muted placeholder rather
+/// than being dropped, so all three systems are always accounted for.
+class _SystemRow extends StatelessWidget {
+  const _SystemRow({
+    required this.system,
+    required this.label,
+    required this.isSync,
+    required this.meta,
+  });
+
+  final core.Origin system;
+  final String label;
+  final bool isSync;
+  final SystemSyncMeta? meta;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final SystemSyncMeta? meta = this.meta;
+
+    final String status;
+    if (meta == null) {
+      status = 'not synced yet';
+    } else {
+      final DateTime t = meta.at.toLocal();
+      final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+          '${t.minute.toString().padLeft(2, '0')}';
+      final String kind = isSync ? 'sync' : 'drift check';
+      final String by = meta.syncedBy.isEmpty ? '' : ' · by ${meta.syncedBy}';
+      status = '$kind · $hhmm$by';
+    }
+
+    return Padding(
+      key: ValueKey('reconcile-last-sync-${system.name}'),
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SizedBox(
+            width: 104,
+            child: Text(
+              label,
+              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(
+              isSync ? Icons.sync : Icons.difference_outlined,
+              size: 16,
+              color: meta == null ? colors.onSurfaceVariant : colors.primary,
+            ),
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            child: Text(
+              status,
+              style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

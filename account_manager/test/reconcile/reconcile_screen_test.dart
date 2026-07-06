@@ -189,35 +189,43 @@ void main() {
     expect(drift.onPressed, isNull);
   });
 
-  testWidgets('the header shows the shared per-system freshness (#108)',
-      (WidgetTester tester) async {
+  testWidgets(
+      'the header shows the shared per-system last-sync box with a row per '
+      'system (#108/#188)', (WidgetTester tester) async {
     final harness = ReconcileHarness();
     await tester.pumpWidget(
       _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
     );
     await tester.pumpAndSettle();
 
-    // No sync yet → no freshness row.
-    expect(find.byKey(const ValueKey('reconcile-freshness')), findsNothing);
+    // No sync yet → no box.
+    expect(find.byKey(const ValueKey('reconcile-last-sync')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // The freshness now sits in its own prominent row (#162), not trailing the
-    // buttons.
-    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
-    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    // The freshness now renders as a dedicated box headed "Last sync", with one
+    // row per system rather than a run-on line (#188).
+    expect(find.byKey(const ValueKey('reconcile-last-sync')), findsOneWidget);
+    expect(find.text('Last sync'), findsOneWidget);
     expect(
-      find.textContaining('by operator@school.example'),
-      findsOneWidget,
-    );
+        find.byKey(const ValueKey('reconcile-last-sync-wisa')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-last-sync-smartschool')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-last-sync-azure')),
+        findsOneWidget);
+    expect(find.text('WISA'), findsOneWidget);
+    expect(find.text('Smartschool'), findsOneWidget);
+    expect(find.text('Azure'), findsOneWidget);
+    // Each row names the operator who last synced it.
+    expect(find.textContaining('by operator@school.example'), findsWidgets);
   });
 
   testWidgets(
-      'the freshness line surfaces Smartschool and Azure as a drift check next '
-      'to the WISA sync time (#170)', (WidgetTester tester) async {
-    // Distinct fetch times per system so the line shows the WISA sync time and
-    // the (later) Smartschool/Azure drift-check times side by side.
+      'the last-sync box shows WISA as a sync and Smartschool/Azure as drift '
+      'checks, each on its own row (#170/#188)', (WidgetTester tester) async {
+    // Distinct fetch times per system so WISA carries its sync time and the
+    // (later) Smartschool/Azure rows carry their drift-check times.
     final wisaAt = kFixtureDate.add(const Duration(hours: 1));
     final ssAt = kFixtureDate.add(const Duration(hours: 1, minutes: 3));
     final azAt = kFixtureDate.add(const Duration(hours: 1, minutes: 4));
@@ -234,24 +242,27 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // One row, three systems, split into a "Last sync" clause (WISA) and a
-    // "drift check" clause (Smartschool · Azure).
-    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
-    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
-    expect(find.textContaining('drift check — Smartschool'), findsOneWidget);
-    // Azure rides in the same (single) freshness Text.
-    final freshness = tester.widget<Text>(
-      find.descendant(
-        of: find.byKey(const ValueKey('reconcile-freshness')),
-        matching: find.byType(Text),
-      ),
-    );
-    expect(freshness.data, contains('Azure'));
-    expect(freshness.data, contains('Smartschool'));
-    expect(freshness.data, contains('WISA'));
+    expect(find.byKey(const ValueKey('reconcile-last-sync')), findsOneWidget);
+
+    // Collect the text of one system's row.
+    String rowText(String system) => tester
+        .widgetList<Text>(find.descendant(
+          of: find.byKey(ValueKey('reconcile-last-sync-$system')),
+          matching: find.byType(Text),
+        ))
+        .map((t) => t.data)
+        .whereType<String>()
+        .join(' ');
+
+    // WISA is the sync; Smartschool and Azure are drift checks — each on its
+    // own row, no longer packed into one wrapped sentence.
+    expect(rowText('wisa'), contains('sync'));
+    expect(rowText('wisa'), isNot(contains('drift check')));
+    expect(rowText('smartschool'), contains('drift check'));
+    expect(rowText('azure'), contains('drift check'));
   });
 
-  testWidgets('the last-sync line survives a restart / passive session (#162)',
+  testWidgets('the last-sync box survives a restart / passive session (#162)',
       (WidgetTester tester) async {
     // Session 1 syncs and persists freshness to the shared store.
     final linkedStore = InMemoryLinkedStore();
@@ -265,12 +276,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(passive.wisaSyncs, 0, reason: 'a passive session pulls nothing');
-    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
-    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-last-sync')), findsOneWidget);
+    expect(find.text('Last sync'), findsOneWidget);
     expect(
-      find.textContaining('by operator@school.example'),
-      findsOneWidget,
-    );
+        find.byKey(const ValueKey('reconcile-last-sync-wisa')), findsOneWidget);
+    expect(find.textContaining('by operator@school.example'), findsWidgets);
   });
 
   testWidgets(

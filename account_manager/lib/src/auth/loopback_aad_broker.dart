@@ -9,8 +9,8 @@ import 'aad_resource.dart';
 
 /// Best-effort extraction of the signed-in operator's UPN / e-mail from a JWT
 /// access token, so the session can name *who* signed in (#169): the value is
-/// stamped onto each per-system sync and shown in the reconcile freshness line
-/// ("Last sync — WISA 10:21 by yvan@…").
+/// stamped onto each per-system sync and shown in the reconcile last-sync box
+/// (the WISA row reads "sync · 10:21 · by yvan@…").
 ///
 /// The loopback OAuth path only ever hands back a raw access-token string, so
 /// the identity has to be read off the token itself. This reads the standard
