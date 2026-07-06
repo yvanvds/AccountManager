@@ -108,15 +108,31 @@ void main() {
     test('per-WISA-school ownership list round-trips through JSON', () {
       const original = AppSettings(
         wisaSchools: [
-          WisaSchoolProfile(schoolId: 10, ours: true, prefix: 'KA'),
-          WisaSchoolProfile(schoolId: 20),
+          WisaSchoolProfile(
+              schoolId: 10, name: 'Sint-Jan', ours: true, prefix: 'KA'),
+          WisaSchoolProfile(schoolId: 20, name: 'Sint-Pieter'),
         ],
       );
       final restored = AppSettings.fromJson(original.toJson());
       expect(restored.wisaSchools, original.wisaSchools);
+      expect(restored.wisaSchools.first.name, 'Sint-Jan');
       expect(restored.wisaSchools.first.ours, isTrue);
       expect(restored.wisaSchools.first.prefix, 'KA');
+      expect(restored.wisaSchools.last.name, 'Sint-Pieter');
       expect(restored.wisaSchools.last.ours, isFalse);
+    });
+
+    test(
+        'a school profile predating the persisted name loads with an empty '
+        'name (#171)', () {
+      final settings = AppSettings.fromJson({
+        'wisaSchools': [
+          {'schoolId': 42, 'ours': true, 'prefix': ''},
+        ],
+      });
+      expect(settings.wisaSchools.single.schoolId, 42);
+      expect(settings.wisaSchools.single.name, isEmpty);
+      expect(settings.wisaSchools.single.ours, isTrue);
     });
 
     test('a config predating wisaSchools loads with an empty list', () {
