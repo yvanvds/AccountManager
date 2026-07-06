@@ -76,8 +76,8 @@ void main() {
   });
 
   testWidgets(
-      'sync renders the linked overview and keeps the pending actions off '
-      'Reconcile; an unchanged re-sync shows the no-changes banner (#154)',
+      'sync renders the category overview and keeps the pending actions off '
+      'Reconcile; an unchanged re-sync shows the no-changes banner (#154/#163)',
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = ReconcileHarness();
@@ -87,15 +87,25 @@ void main() {
     await tester.pumpAndSettle();
 
     // Idle: the explainer is shown, no overview yet.
-    expect(find.text('Linked overview'), findsNothing);
+    expect(find.text('Overview'), findsNothing);
+    expect(find.byKey(const ValueKey('reconcile-category-students')),
+        findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // The linked overview counts render on Reconcile…
-    expect(find.text('Linked overview'), findsOneWidget);
-    expect(find.text('WISA'), findsOneWidget);
-    expect(find.text('SMARTSCHOOL'), findsOneWidget); // PlinkBadge uppercases
+    // The per-category overview renders on Reconcile from the rollups (#163):
+    // students / staff / class-groups, each with a pending indicator.
+    expect(find.text('Overview'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-category-students')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('reconcile-category-staff')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-category-groups')),
+        findsOneWidget);
+    expect(find.text('LEERLINGEN'), findsOneWidget); // PlinkBadge uppercases
+    // The one fixture student's applyable actions surface as a pending indicator.
+    expect(find.text('2 openstaande acties'), findsOneWidget);
 
     // …but the pending actions moved to the Actions tab: neither the title, the
     // global apply, nor any entry tile is on the Reconcile screen (#154).
@@ -187,6 +197,36 @@ void main() {
       find.textContaining('by operator@school.example'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'a passive session renders the category overview from the stored rollups '
+      'with no live linked view (#163)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // Session 1 syncs and materializes the rollups into the shared store.
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+    // Session 2 opens fresh over the same store — no sync — and reads the
+    // overview back (loadOverview on bootstrap).
+    final passive = ReconcileHarness(linkedStore: linkedStore);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: passive.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The overview renders from the rollups alone — link() was never called.
+    expect(passive.controller.linked, isNull,
+        reason: 'a passive session never links');
+    expect(passive.wisaSyncs, 0, reason: 'a passive session pulls nothing');
+    expect(find.text('Overview'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-category-students')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('reconcile-category-staff')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-category-groups')),
+        findsOneWidget);
+    // The one fixture student is summed from the rollup, with a pending indicator.
+    expect(find.text('2 openstaande acties'), findsOneWidget);
   });
 
   testWidgets(

@@ -314,6 +314,13 @@ class MaterializedAccount {
 /// mirror of the `staff` bucket accounts use.
 const String groupsPartition = 'groups';
 
+/// The synthetic partition (and rollup school) every staff [MaterializedAccount]
+/// shares. Staff have no WISA class the way a student does, so they land in one
+/// logical bucket of their own — the counterpart of [groupsPartition]. Exposed
+/// so the reconcile overview can tell the staff school [Rollup] apart from the
+/// student-school rollups when it sums the per-category totals (#163).
+const String staffPartition = 'staff';
+
 /// One linked **class group** as a stored document (#119).
 ///
 /// The group-family counterpart of [MaterializedAccount]: where a per-account
