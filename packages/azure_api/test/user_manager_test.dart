@@ -67,6 +67,76 @@ void main() {
     });
   });
 
+  group('progress logging (#177)', () {
+    test('logs one line for every 100 accounts pulled while paging', () async {
+      // 250 users across three pages of 100 / 100 / 50.
+      final transport = FakeGraphTransport((req) {
+        switch (req.url.queryParameters[r'$skiptoken']) {
+          case 'P1':
+            return usersPage(startIndex: 100, count: 100, nextSkipToken: 'P2');
+          case 'P2':
+            return usersPage(startIndex: 200, count: 50);
+          default:
+            return usersPage(startIndex: 0, count: 100, nextSkipToken: 'P1');
+        }
+      });
+      final log = RecordingLog();
+      final users = UserManager(clientWith(transport), log: log);
+
+      final result = await users.load('GBS');
+
+      expect(result, hasLength(250));
+      // A line at each full hundred crossed (250 → 100 and 200), not the tail.
+      expect(
+        log.messages.where((m) => m.contains('accounts opgehaald')).toList(),
+        ['Azure: 100 accounts opgehaald…', 'Azure: 200 accounts opgehaald…'],
+      );
+    });
+
+    test('emits no progress line below the first 100 threshold', () async {
+      final transport =
+          FakeGraphTransport((_) => usersPage(startIndex: 0, count: 3));
+      final log = RecordingLog();
+      final users = UserManager(clientWith(transport), log: log);
+
+      await users.load('GBS');
+
+      expect(
+        log.messages.where((m) => m.contains('accounts opgehaald')),
+        isEmpty,
+      );
+    });
+
+    test('loadClientFiltered logs progress on the same cadence', () async {
+      final transport = FakeGraphTransport((req) {
+        switch (req.url.queryParameters[r'$skiptoken']) {
+          case 'P1':
+            return usersPage(startIndex: 100, count: 50);
+          default:
+            return usersPage(startIndex: 0, count: 100, nextSkipToken: 'P1');
+        }
+      });
+      final log = RecordingLog();
+      final users = UserManager(clientWith(transport), log: log);
+
+      await users.loadClientFiltered('GBS');
+
+      expect(
+        log.messages.where((m) => m.contains('accounts opgehaald')).toList(),
+        ['Azure: 100 accounts opgehaald…'],
+      );
+    });
+
+    test('no progress lines are emitted when no log sink is attached',
+        () async {
+      final transport =
+          FakeGraphTransport((_) => usersPage(startIndex: 0, count: 100));
+      final users = UserManager(clientWith(transport));
+      // Must not throw despite a page crossing the 100 threshold.
+      expect(await users.load('GBS'), hasLength(100));
+    });
+  });
+
   group('delta', () {
     test(
         'uses the supplied token, filters by prefix, captures removals + token',

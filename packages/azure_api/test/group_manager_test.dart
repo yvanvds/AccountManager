@@ -50,6 +50,47 @@ void main() {
     });
   });
 
+  group('progress logging (#177)', () {
+    GraphResponse routeWithGroups(GraphRequest req, int total) {
+      if (req.url.path.contains('/members')) {
+        return jsonOk({'value': const <Object>[]});
+      }
+      return jsonOk({
+        'value': [
+          for (var i = 0; i < total; i++)
+            {'id': 'g$i', 'displayName': 'GBS-$i', 'securityEnabled': true},
+        ],
+      });
+    }
+
+    test('logs one line for every 20 groups pulled', () async {
+      final transport = FakeGraphTransport((req) => routeWithGroups(req, 45));
+      final log = RecordingLog();
+      final groups = GroupManager(clientWith(transport), log: log);
+
+      final result = await groups.listGroups('GBS');
+
+      expect(result, hasLength(45));
+      expect(
+        log.messages.where((m) => m.contains('groepen opgehaald')).toList(),
+        ['Azure: 20 groepen opgehaald…', 'Azure: 40 groepen opgehaald…'],
+      );
+    });
+
+    test('emits no progress line below the first 20 threshold', () async {
+      final transport = FakeGraphTransport((req) => routeWithGroups(req, 5));
+      final log = RecordingLog();
+      final groups = GroupManager(clientWith(transport), log: log);
+
+      await groups.listGroups('GBS');
+
+      expect(
+        log.messages.where((m) => m.contains('groepen opgehaald')),
+        isEmpty,
+      );
+    });
+  });
+
   group('membership writes', () {
     test('addMember POSTs an @odata.id directoryObjects ref', () async {
       final transport = FakeGraphTransport.constant(noContent());

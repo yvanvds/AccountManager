@@ -22,6 +22,9 @@ class GroupManager {
 
   static final String _select = AzureGroup.graphSelectFields.join(',');
 
+  /// Emit a progress log line for every this-many groups pulled (issue #177).
+  static const int _progressEvery = 20;
+
   static const Map<String, String> _advancedQueryHeaders = {
     'ConsistencyLevel': 'eventual',
   };
@@ -46,6 +49,12 @@ class GroupManager {
       final id = (row['id'] as String?) ?? '';
       final members = await loadMemberIds(id);
       groups.add(AzureGroup.fromGraphJson(row, members: members));
+      if (groups.length % _progressEvery == 0) {
+        _log?.addMessage(
+          core.Origin.azure,
+          'Azure: ${groups.length} groepen opgehaald…',
+        );
+      }
     }
     _log?.addMessage(
       core.Origin.azure,

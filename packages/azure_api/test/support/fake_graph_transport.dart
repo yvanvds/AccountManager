@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:account_core/account_core.dart' as core;
 import 'package:azure_api/azure_api.dart';
 
 /// A [GraphTransport] that records every outgoing [GraphRequest] and replays a
@@ -64,3 +65,39 @@ String readFixture(String name) {
 /// Reads and decodes a JSON fixture object.
 Map<String, dynamic> readJsonFixture(String name) =>
     jsonDecode(readFixture(name)) as Map<String, dynamic>;
+
+/// An [core.ILog] that records every message and error for assertions.
+class RecordingLog implements core.ILog {
+  final List<String> messages = [];
+  final List<String> errors = [];
+
+  @override
+  void addMessage(core.Origin origin, String message) => messages.add(message);
+
+  @override
+  void addError(core.Origin origin, String message) => errors.add(message);
+}
+
+/// Builds a `200 OK` Graph `/users` collection page carrying [count] synthetic
+/// users numbered from [startIndex]. When [nextSkipToken] is non-null the page
+/// includes an `@odata.nextLink` pointing at that skiptoken, so paging in
+/// [GraphClient.getCollection] continues to the next page. Lets tests exercise
+/// the multi-page progress logging (issue #177) without giant fixtures.
+GraphResponse usersPage({
+  required int startIndex,
+  required int count,
+  String? nextSkipToken,
+}) =>
+    jsonOk({
+      if (nextSkipToken != null)
+        '@odata.nextLink':
+            'https://graph.microsoft.com/v1.0/users?\$skiptoken=$nextSkipToken',
+      'value': [
+        for (var i = startIndex; i < startIndex + count; i++)
+          {
+            'id': 'id-$i',
+            'userPrincipalName': 'user$i@student.school.example',
+            'companyName': 'GBS',
+          },
+      ],
+    });
