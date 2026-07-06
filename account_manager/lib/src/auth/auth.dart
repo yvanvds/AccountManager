@@ -13,7 +13,8 @@ export 'aad_resource.dart' show AadResource;
 export 'composite_broker.dart' show CompositeBroker;
 export 'dpapi.dart' show Dpapi;
 export 'file_token_cache.dart' show FileTokenCache;
-export 'loopback_aad_broker.dart' show LoopbackAadBroker;
+export 'loopback_aad_broker.dart'
+    show LoopbackAadBroker, operatorAccountFromJwt;
 export 'method_channel_aad_broker.dart' show MethodChannelAadBroker;
 export 'sign_in_session.dart'
     show CosmosSessionTokenProvider, GraphSessionAuthProvider, SignInSession;

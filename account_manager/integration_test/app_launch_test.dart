@@ -3,6 +3,7 @@
 // ignore_for_file: use_build_context_synchronously
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:account_core/account_core.dart' show Address;
 import 'package:account_manager/main.dart' as app;
@@ -32,7 +33,8 @@ import 'package:account_state/account_state.dart'
         WisaConnection,
         WisaSchoolProfile,
         signalRRecordSeparator;
-import 'package:azure_api/azure_api.dart' show AzureCredentials;
+import 'package:azure_api/azure_api.dart'
+    show AzureCredentials, StaticAuthProvider;
 import 'package:wisa_api/wisa_api.dart' show WisaSchool;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -255,6 +257,53 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.textContaining('Sync complete — no account changes needed. Ready.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'the operator decoded from the real loopback broker JWT names the last '
+      'sync in the freshness line end-to-end (#169)',
+      (WidgetTester tester) async {
+    // The production sign-in path on a machine without the native WAM broker:
+    // the *real* LoopbackAadBroker signs in and now decodes the operator UPN
+    // from the JWT access token — the piece that was empty, which left the
+    // freshness line without its "by …". Drive the real app with that broker
+    // and a JWT-bearing provider, sync, and read the line the operator sees.
+    useTallWindow(tester);
+    final jwt = _jwt({'upn': 'yvan@school.example'});
+    final session = SignInSession(
+      LoopbackAadBroker(providerFactory: (_) => StaticAuthProvider(jwt)),
+    );
+    // Sign in through the real broker → the UPN is decoded off the JWT. This is
+    // what production's bootstrap reads into syncedBy (`session.account ?? ''`,
+    // covered by the bootstrap unit test); the harness stands in for that one
+    // line so the render path can be exercised end-to-end.
+    await session.tokenFor(graph);
+    expect(session.account, 'yvan@school.example',
+        reason: 'the loopback broker now resolves the operator UPN');
+    final harness = ReconcileHarness(syncedBy: session.account ?? '');
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: session,
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byType(AppShell), findsOneWidget);
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The freshness line names the signed-in operator…
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(find.textContaining('by yvan@school.example'), findsOneWidget);
+    // …and the terminal "Sync complete" line names them too (#169).
+    expect(
+      find.textContaining('Operator: yvan@school.example'),
       findsOneWidget,
     );
   });
@@ -1455,6 +1504,15 @@ BrokerToken _token(String v) => BrokerToken(
       expiresOn: DateTime.now().toUtc().add(const Duration(hours: 1)),
       account: 'operator@school.example',
     );
+
+/// An unsigned JWT (`header.payload.signature`) carrying [claims] — the real
+/// loopback broker decodes the operator UPN off its payload (#169). The
+/// signature is never verified, so a literal `sig` segment suffices.
+String _jwt(Map<String, Object?> claims) {
+  String seg(Map<String, Object?> m) =>
+      base64Url.encode(utf8.encode(jsonEncode(m))).replaceAll('=', '');
+  return '${seg({'alg': 'none', 'typ': 'JWT'})}.${seg(claims)}.sig';
+}
 
 /// A negotiate transport that hands back a scripted client URL + token, so the
 /// real [SignalRSubscriber] gets past negotiate with no network (#124).

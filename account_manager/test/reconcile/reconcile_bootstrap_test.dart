@@ -1,4 +1,5 @@
 import 'package:account_manager/src/auth/aad_app_config.dart';
+import 'package:account_manager/src/auth/auth.dart' show AadResource;
 import 'package:account_manager/src/auth/sign_in_session.dart';
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_state/account_state.dart';
@@ -294,6 +295,39 @@ void main() {
       expect(client.ensured['syncState'], '/id');
       // The snapshot store's container — the missing piece #151 adds.
       expect(client.ensured['snapshots'], '/id');
+    });
+
+    test('threads the signed-in operator UPN into the sync author (#169)',
+        () async {
+      // The session is signed in as an operator whose broker token carries the
+      // UPN (the loopback broker now decodes it from the JWT). Warm it first —
+      // in production the Cosmos-container preflight acquires a token before
+      // bootstrap reads session.account; here the injected client skips that, so
+      // acquire once by hand to model a signed-in session.
+      final session = SignInSession(
+        FakeBroker(
+            silent: (_) => fakeToken('AT', account: 'yvan@school.example')),
+      );
+      await session.tokenFor(AadResource.cosmos);
+
+      final services = await bootstrapReconcile(
+        session: session,
+        aad: _aad,
+        settingsStore: InMemorySettingsStore(_settings()),
+        secretProvider: _secrets(),
+        cosmosClient: const _EmptyCosmosClient(),
+      );
+
+      expect(services.controller.syncedBy, 'yvan@school.example',
+          reason: 'so each pull is stamped and the freshness line names them');
+    });
+
+    test('an unsigned session leaves the sync author empty (graceful) (#169)',
+        () async {
+      // No token was ever acquired, so session.account is null and syncedBy
+      // degrades to '' — the freshness line then shows no dangling "by ".
+      final services = await _bootstrap();
+      expect(services.controller.syncedBy, '');
     });
 
     test('the real Cosmos path reads settings from the container', () async {

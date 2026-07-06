@@ -967,9 +967,12 @@ class ReconcileController extends ChangeNotifier {
   /// successful [sync] (#162). The [noChangesNeeded] path says so explicitly;
   /// otherwise it names how many pending actions await the operator.
   void _logSyncComplete() {
+    // Name the operator who ran the pass when known (#169); an empty/unknown
+    // operator degrades gracefully (nothing appended, no dangling "by ").
+    final by = syncedBy.isEmpty ? '' : ' Operator: $syncedBy.';
     final message = _noChangesNeeded
-        ? 'Sync complete — no account changes needed. Ready.'
-        : 'Sync complete — ${pendingActions.length} pending action(s). Ready.';
+        ? 'Sync complete — no account changes needed. Ready.$by'
+        : 'Sync complete — ${pendingActions.length} pending action(s). Ready.$by';
     log.addMessage(core.Origin.all, message);
   }
 

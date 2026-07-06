@@ -94,12 +94,26 @@ void main() {
       await h.controller.sync();
 
       // The count mirrors the relink summary's pendingActions.length (the
-      // fixture derives four pending actions across the families).
+      // fixture derives four pending actions across the families), and the line
+      // names the operator who ran the pass (#169).
       expect(
         h.log.entries.map((e) => e.message),
-        contains('Sync complete — 4 pending action(s). Ready.'),
+        contains('Sync complete — 4 pending action(s). Ready. '
+            'Operator: operator@school.example.'),
       );
       // It is the *last* line — the operator sees it closing the pass.
+      expect(
+          h.log.entries.last.message,
+          'Sync complete — 4 pending action(s). Ready. '
+          'Operator: operator@school.example.');
+    });
+
+    test('an empty operator degrades gracefully — no dangling "by" (#169)',
+        () async {
+      final h = ReconcileHarness(syncedBy: '');
+
+      await h.controller.sync();
+
       expect(h.log.entries.last.message,
           'Sync complete — 4 pending action(s). Ready.');
     });
@@ -116,10 +130,13 @@ void main() {
       expect(h.controller.noChangesNeeded, isTrue);
       expect(
         h.log.entries.map((e) => e.message),
-        contains('Sync complete — no account changes needed. Ready.'),
+        contains('Sync complete — no account changes needed. Ready. '
+            'Operator: operator@school.example.'),
       );
-      expect(h.log.entries.last.message,
-          'Sync complete — no account changes needed. Ready.');
+      expect(
+          h.log.entries.last.message,
+          'Sync complete — no account changes needed. Ready. '
+          'Operator: operator@school.example.');
     });
   });
 
