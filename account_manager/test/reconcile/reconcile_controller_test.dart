@@ -639,6 +639,83 @@ void main() {
           reason: 'an unchanged sync does not bump the generation');
     });
 
+    test(
+        'a later WISA-only smart-sync keeps the Smartschool/Azure freshness '
+        '(#170)', () async {
+      final store = InMemoryLinkedStore();
+      final h = ReconcileHarness(linkedStore: store);
+      // First full sync: all three systems are pulled and stamped at the
+      // fixture time.
+      await h.controller.sync();
+      final first = (await store.readSyncState()).systems;
+      expect(
+        first.keys,
+        containsAll(<core.Origin>[
+          core.Origin.wisa,
+          core.Origin.smartschool,
+          core.Origin.azure,
+        ]),
+        reason: 'the first full sync records every system',
+      );
+
+      // A later smart-sync where only WISA changed: Smartschool and Azure are
+      // not re-pulled (their in-session snapshots are present).
+      final later = kFixtureDate.add(const Duration(hours: 1));
+      h.wisaResult = wisaSnap(
+        fetchedAt: later,
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await h.controller.sync();
+
+      expect(h.ssSyncs, 1,
+          reason: 'Smartschool is not re-pulled by smart-sync');
+      expect(h.azSyncs, 1, reason: 'Azure is not re-pulled by smart-sync');
+
+      // The store must still carry all three — WISA advanced, the drift-checked
+      // pair keeps its earlier stamp rather than being overwritten.
+      final stored = (await store.readSyncState()).systems;
+      expect(stored[core.Origin.wisa]?.at, later);
+      expect(stored[core.Origin.smartschool]?.at, kFixtureDate);
+      expect(stored[core.Origin.azure]?.at, kFixtureDate);
+      // …and the operator stamp from the earlier pull survives too (#169).
+      expect(
+          stored[core.Origin.smartschool]?.syncedBy, 'operator@school.example');
+      expect(stored[core.Origin.azure]?.syncedBy, 'operator@school.example');
+
+      // The controller mirrors the merged store for the header line.
+      final live = h.controller.syncState.systems;
+      expect(
+        live.keys,
+        containsAll(<core.Origin>[
+          core.Origin.wisa,
+          core.Origin.smartschool,
+          core.Origin.azure,
+        ]),
+      );
+      expect(live[core.Origin.wisa]?.at, later);
+      expect(live[core.Origin.smartschool]?.at, kFixtureDate);
+      expect(live[core.Origin.azure]?.at, kFixtureDate);
+    });
+
+    test('a Check for drift stamps Smartschool and Azure freshness (#170)',
+        () async {
+      final store = InMemoryLinkedStore();
+      final h = ReconcileHarness(linkedStore: store);
+      await h.controller.sync();
+
+      // Drift check re-pulls Smartschool and Azure at a later time.
+      final later = kFixtureDate.add(const Duration(hours: 2));
+      h.ssResult = ssSnap(fetchedAt: later);
+      h.azResult = azSnap(fetchedAt: later);
+      await h.controller.checkDrift();
+
+      final systems = (await store.readSyncState()).systems;
+      expect(systems[core.Origin.smartschool]?.at, later);
+      expect(systems[core.Origin.azure]?.at, later);
+      // WISA keeps its earlier sync stamp (drift does not re-pull it here).
+      expect(systems[core.Origin.wisa]?.at, kFixtureDate);
+    });
+
     test('a sync takes and releases the lease', () async {
       final h = ReconcileHarness();
 

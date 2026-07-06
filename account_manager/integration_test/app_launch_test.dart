@@ -5,7 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:account_core/account_core.dart' show Address;
+import 'package:account_core/account_core.dart' show Address, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -259,6 +259,60 @@ void main() {
       find.textContaining('Sync complete — no account changes needed. Ready.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'the freshness line surfaces Smartschool and Azure as a drift check '
+      'alongside the WISA sync, and a Check for drift advances only those two '
+      '(#170)', (WidgetTester tester) async {
+    // The real app over the offline harness: a first full sync stamps all three
+    // systems, then Check for drift re-reads Smartschool/Azure at a later time
+    // while WISA keeps its earlier sync stamp. The freshness line must show both
+    // clauses throughout — the WISA sync time and the drift-checked pair.
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // After the first full sync all three systems appear, split into the WISA
+    // "Last sync" clause and the Smartschool/Azure "drift check" clause.
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
+    Text freshnessText() => tester.widget<Text>(
+          find.descendant(
+            of: find.byKey(const ValueKey('reconcile-freshness')),
+            matching: find.byType(Text),
+          ),
+        );
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(find.textContaining('drift check — Smartschool'), findsOneWidget);
+    expect(freshnessText().data, contains('Azure'));
+
+    // Check for drift re-pulls Smartschool and Azure at a later time; WISA is
+    // not re-pulled, so its sync stamp stays put while the drift pair advances.
+    final driftAt = kFixtureDate.add(const Duration(hours: 3));
+    harness.ssResult = ssSnap(fetchedAt: driftAt);
+    harness.azResult = azSnap(fetchedAt: driftAt);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    // The line still carries both clauses, and the underlying state proves the
+    // drift pair advanced while WISA held its earlier sync time.
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(find.textContaining('drift check — Smartschool'), findsOneWidget);
+    final systems = harness.controller.syncState.systems;
+    expect(systems[Origin.wisa]?.at, kFixtureDate);
+    expect(systems[Origin.smartschool]?.at, driftAt);
+    expect(systems[Origin.azure]?.at, driftAt);
   });
 
   testWidgets(

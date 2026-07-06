@@ -179,9 +179,12 @@ class _Header extends StatelessWidget {
 
   final ReconcileController controller;
 
-  /// The shared per-system freshness line ("Last sync — WISA 09:12 by jan@…"),
-  /// read from the materialized store so it names *whichever* operator last
-  /// synced each system — not just this session (#108). Null before any sync.
+  /// The shared per-system freshness line, e.g. "Last sync — WISA 09:12 by
+  /// jan@… · drift check — Smartschool 10:24 · Azure 10:25". Read from the
+  /// materialized store so it names *whichever* operator last synced each system
+  /// — not just this session (#108). WISA (the Synchronise target) and the
+  /// drift-checked pair (Smartschool, Azure) render as two clauses so their
+  /// differing times are self-explanatory (#170). Null before any sync.
   String? _freshness() {
     final systems = controller.syncState.systems;
     String? stamp(core.Origin system, String label) {
@@ -194,16 +197,26 @@ class _Header extends StatelessWidget {
       return '$label $hhmm$by';
     }
 
-    final parts = <String>[
+    // WISA is refreshed by Synchronise; Smartschool and Azure are refreshed by
+    // Check for drift. Present them as two labelled clauses so a later WISA-only
+    // smart-sync reads as "synced then, drift-checked earlier" rather than an
+    // unexplained gap between the timestamps (#170).
+    final segments = <String>[];
+    if (stamp(core.Origin.wisa, 'WISA') case final wisa?) {
+      segments.add('Last sync — $wisa');
+    }
+    final drift = <String>[
       for (final (system, label) in const [
-        (core.Origin.wisa, 'WISA'),
         (core.Origin.smartschool, 'Smartschool'),
         (core.Origin.azure, 'Azure'),
       ])
         if (stamp(system, label) case final s?) s,
     ];
-    if (parts.isEmpty) return null;
-    return 'Last sync — ${parts.join(' · ')}';
+    if (drift.isNotEmpty) {
+      segments.add('drift check — ${drift.join(' · ')}');
+    }
+    if (segments.isEmpty) return null;
+    return segments.join(' · ');
   }
 
   @override
