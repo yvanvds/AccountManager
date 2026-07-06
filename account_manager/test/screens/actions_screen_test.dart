@@ -261,6 +261,82 @@ void main() {
         reason: 'the first tile unloaded once scrolled far off-screen');
   });
 
+  // --- Personeel / Leerlingen family tabs (#179) ---------------------------
+
+  testWidgets(
+      'the Actions view splits staff and student actions into Personeel and '
+      'Leerlingen tabs, each drilling only its own family (#179)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // One student (default fixture) plus one WISA staff member, so both
+    // families carry a rollup node.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [wisaStudent()], staff: [wisaStaff()]),
+    );
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The horizontal family tab bar carries both tabs.
+    expect(
+        find.byKey(const ValueKey('actions-tab-leerlingen')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-tab-personeel')), findsOneWidget);
+
+    // The counts are partitioned by family, and together they sum the total —
+    // nothing dropped or double-counted.
+    expect(harness.controller.staffPendingCount, greaterThan(0));
+    expect(harness.controller.studentPendingCount, greaterThan(0));
+    expect(
+      harness.controller.staffPendingCount +
+          harness.controller.studentPendingCount,
+      harness.controller.totalPendingCount,
+    );
+
+    // Default tab = Leerlingen: the student school node is a drill root and the
+    // class-groups node shows; the staff ("Personeel") school node does not.
+    expect(
+        find.byKey(const ValueKey('rollup-school-school|1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-groups')), findsWidgets);
+    expect(
+        find.byKey(const ValueKey('rollup-school-school|staff')), findsNothing);
+
+    // Switch to Personeel: the staff node appears and the student school /
+    // class-groups nodes are gone — each tab shows only its own family.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-school-school|staff')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-school-school|1')), findsNothing);
+    expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
+  });
+
+  testWidgets(
+      'switching tabs mid-drill closes the open classroom so each tab opens at '
+      'its own overview (#179)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [wisaStudent()], staff: [wisaStaff()]),
+    );
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Drill into a student class on the Leerlingen tab.
+    await _drill(tester, school: 'School 1', grade: '3', classroom: '3C');
+    expect(harness.controller.selectedClassroom?.classroom, '3C');
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+
+    // Switching to Personeel closes the drill-down; that tab opens at its own
+    // staff overview rather than showing the student class.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom, isNull);
+    expect(find.byKey(const ValueKey('actions-classroom-back')), findsNothing);
+    expect(find.byKey(const ValueKey('rollup-school-school|staff')),
+        findsOneWidget);
+  });
+
   // --- Address diff in the drill-down (#153) -------------------------------
   const wisaAddr = Address(
     street: 'Koophandelstraat',
