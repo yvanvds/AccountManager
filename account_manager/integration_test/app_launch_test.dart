@@ -807,6 +807,37 @@ void main() {
   });
 
   testWidgets(
+      'the Passwords personeel tab defaults its filter to Voornaam and lists '
+      'staff alphabetically end-to-end (#186)', (WidgetTester tester) async {
+    // The real app, real fonts, real window: a "Personeel" group holding three
+    // staff seeded out of alphabetical order across mixed casing. On opening the
+    // personeel tab the filter selector must default to Voornaam and the list
+    // must render sorted by the displayed "Voornaam Naam" name.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(ssInitial: staffOrderSnap());
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Passwords'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    // The filter selector renders its default selection: Voornaam.
+    expect(find.text('Voornaam'), findsOneWidget);
+
+    // The tiles render top-to-bottom in alphabetical order: alice, Bob, Charlie.
+    double y(String uid) =>
+        tester.getTopLeft(find.byKey(ValueKey('passwords-staff-$uid'))).dy;
+    expect(y('alice'), lessThan(y('bob')));
+    expect(y('bob'), lessThan(y('charlie')));
+  });
+
+  testWidgets(
       'the Smartschool address action only fires on a real field drift and its '
       'diff shows the differing field, not an identical row (#153)',
       (WidgetTester tester) async {
