@@ -242,9 +242,27 @@ class _Header extends StatelessWidget {
               icon: const Icon(Icons.difference_outlined),
               label: const Text('Check for drift'),
             ),
-            if (freshness != null) Text(freshness, style: text.bodySmall),
           ],
         ),
+        if (freshness != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            key: const ValueKey('reconcile-freshness'),
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.schedule_outlined, size: 16, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(
+                child: Text(
+                  freshness,
+                  style: text.bodyMedium?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         if (lockedByOther) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s3),
           Row(

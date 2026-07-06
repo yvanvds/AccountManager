@@ -207,6 +207,53 @@ void main() {
   });
 
   testWidgets(
+      'a completed sync logs a terminal "Sync complete … Ready." line and the '
+      'prominent last-sync freshness row renders end-to-end (#162)',
+      (WidgetTester tester) async {
+    // The real app composition over the offline harness, driven the way the
+    // operator drives it. (Restart survival of the freshness line is covered by
+    // the passive-session freshness scenario below and the widget test.)
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // Before syncing there is no freshness row yet.
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The terminal ready line is logged (newest-first in the log panel) so the
+    // operator knows the pass finished, and it names the pending-action count.
+    expect(
+      find.textContaining('Sync complete — 4 pending action(s). Ready.'),
+      findsOneWidget,
+    );
+    // The last-sync freshness now renders in its own prominent row.
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(find.textContaining('by operator@school.example'), findsOneWidget);
+
+    // A second, unchanged re-sync logs the no-change ready line too.
+    harness.wisaResult =
+        wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Sync complete — no account changes needed. Ready.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
       'the pending list groups one entry per account and applies the chosen '
       'alternative: choose delete → delete, not unregister (#110)',
       (WidgetTester tester) async {
@@ -669,8 +716,10 @@ void main() {
     await tester.tap(find.text('Reconcile'));
     await tester.pumpAndSettle();
 
-    // The shared per-system freshness line renders (who last synced each
-    // system, from the store — not this passive session).
+    // The shared per-system freshness line renders in its prominent row (#162)
+    // straight from the store (who last synced each system — not this passive
+    // session), proving it survives a restart.
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
     expect(find.textContaining('Last sync — WISA'), findsOneWidget);
     expect(find.textContaining('by operator@school.example'), findsOneWidget);
 
