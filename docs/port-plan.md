@@ -124,7 +124,7 @@ file/in-memory resolver is not preparable and keeps minting lazily, so the sync
 | Resource | Name | Notes |
 |---|---|---|
 | Cosmos DB account | `accountmanager-cosmos-arcadia` (`https://accountmanager-cosmos-arcadia.documents.azure.com/`) | SQL API, **serverless**, AAD-only (`disableLocalAuth`); operator holds *Cosmos DB Built-in Data Contributor*. Replaced the SQL server below (#114). |
-| Cosmos database | `accountmanager` | Containers: `identity` (pk `/pk` single logical partition, unique key `/naturalKey`), `settings` (pk `/id`), `passwordQueue` (pk `/pk`), plus the materialized-view containers `linkedAccounts` (pk `/pk`), `linkedGroups` (pk `/pk`), `rollups` (pk `/pk`), `decisions` (pk `/pk`), `syncState` (pk `/id`, TTL enabled for the lease), and `snapshots` (pk `/id`). Provisioned out of band with `az` — data-plane RBAC cannot create containers. Bootstrap runs an idempotent `ensureContainers` preflight (a metadata read, no create on the provisioned account) over the materialized-view set so a never-stood-up container surfaces at startup rather than as a silent item-write 404 (#150). |
+| Cosmos database | `accountmanager` | Containers: `identity` (pk `/pk` single logical partition, unique key `/naturalKey`), `settings` (pk `/id`), `passwordQueue` (pk `/pk`), plus the materialized-view containers `linkedAccounts` (pk `/pk`), `linkedGroups` (pk `/pk`), `rollups` (pk `/pk`), `decisions` (pk `/pk`), `syncState` (pk `/id`, TTL enabled for the lease), and `snapshots` (pk `/id`). Provisioned by the checked-in idempotent script [`tool/provision-cosmos.ps1`](../tool/provision-cosmos.ps1) (control-plane `az cosmosdb sql …`) — data-plane RBAC cannot create containers. Bootstrap runs an idempotent `ensureContainers` preflight (a metadata read, no create on the provisioned account) over the materialized-view set so a never-stood-up container surfaces at startup rather than as a silent item-write 404 (#150). |
 | Key Vault | `accountmanager-kv` (`https://accountmanager-kv.vault.azure.net/`) | RBAC-authorized; operator holds *Key Vault Secrets Officer*. |
 | ~~SQL server / database~~ | ~~`accountmanager-sql-arcadia`~~ | **Retired (#114).** Deleted; the ODBC/FFI path is gone. |
 
@@ -218,9 +218,15 @@ ports the three existing seams, retiring the SQL/ODBC layer:
   **single JSON document** (the config; the whole queue), reusing the existing
   `toJson`/`fromJson` codecs — a single-document upsert is atomic, so the
   whole-replace semantics carry over with no transaction.
-- **Provisioning.** The database and containers are created out of band with `az`
-  (data-plane RBAC cannot create them), so the launch-time `CREATE TABLE` DDL is
-  gone. Bootstrap runs an idempotent `ensureContainers` preflight over the
+- **Provisioning.** The database and containers are stood up by the checked-in
+  idempotent script [`tool/provision-cosmos.ps1`](../tool/provision-cosmos.ps1) —
+  the source of truth for the full nine-container set (partition keys, the
+  `identity` `/naturalKey` unique key, and the `syncState` TTL). It runs the
+  control-plane `az cosmosdb sql database/container create` commands, each guarded
+  by an `exists` check so it is safe to re-run against an already-provisioned
+  account, because data-plane RBAC cannot create databases or containers. So the
+  launch-time `CREATE TABLE` DDL is gone. Bootstrap runs an idempotent
+  `ensureContainers` preflight over the
   materialized-view containers: on the provisioned account it is a cheap metadata
   read that creates nothing, but a genuinely un-provisioned container (or a fresh
   dev/emulator account) is created where the identity may, and otherwise surfaces
