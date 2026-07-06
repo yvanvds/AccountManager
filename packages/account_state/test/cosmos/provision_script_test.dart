@@ -102,4 +102,53 @@ void main() {
       expect(script, contains("'create'"));
     });
   });
+
+  // The Blob Storage side of the state backend (#161). The cold-snapshot store
+  // (#107) overflows to Blob; the storage account, its `snapshots` container,
+  // and the operator data role were provisioned by hand and never scripted —
+  // the same drift the Cosmos guards above close. These assertions fail loudly
+  // if the storage provisioning is dropped from the script.
+  group('provision-cosmos.ps1 — Blob Storage (#161)', () {
+    final script = locateScript().readAsStringSync();
+
+    test('registers the Microsoft.Storage resource provider', () {
+      // Storage ARM calls return SubscriptionNotFound until the provider is
+      // registered, so the script must register it.
+      expect(script, contains('Microsoft.Storage'));
+      expect(script, contains("'register'"));
+    });
+
+    test('provisions the storage account, AAD-only, via a presence guard', () {
+      expect(script, contains('accountmanagerarcadia'));
+      expect(
+        script,
+        contains("'storage', 'account', 'create'"),
+        reason: 'the storage account must be created by the script',
+      );
+      // AAD-only: shared-key access disabled, mirroring Cosmos disableLocalAuth.
+      expect(
+        script,
+        contains('--allow-shared-key-access'),
+        reason: 'the account must be AAD-only (shared-key access disabled)',
+      );
+      expect(script, contains('StorageV2'));
+    });
+
+    test('provisions the snapshots overflow container over AAD', () {
+      expect(
+        script,
+        contains("'storage', 'container', 'create'"),
+        reason: 'the overflow container must be created by the script',
+      );
+      // With shared-key access disabled, container ops must authenticate via AAD.
+      expect(script, contains('--auth-mode'));
+    });
+
+    test('grants the operator Storage Blob Data Contributor', () {
+      // The app reaches Blob as the signed-in operator, who needs this data
+      // role — the missing scope/role is what made Blob writes fail (#161).
+      expect(script, contains('Storage Blob Data Contributor'));
+      expect(script, contains("'role', 'assignment'"));
+    });
+  });
 }
