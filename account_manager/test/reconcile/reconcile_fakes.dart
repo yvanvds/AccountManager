@@ -98,6 +98,23 @@ wapi.WisaStudent wisaStudent({
 wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
     wapi.WisaSchool(id: id, name: 'School $id', description: '', isOurs: ours);
 
+/// A WISA staff record — the personeel counterpart of [wisaStudent]. A staff
+/// member present only in WISA (no Smartschool / Azure counterpart) links as a
+/// [core.LinkedStaff] and materializes into the synthetic "Personeel" school
+/// rollup the Actions Personeel tab drills into (#179).
+wapi.WisaStaff wisaStaff({
+  String code = 'SMIT',
+  String wisaId = '42',
+  String firstName = 'Anna',
+  String lastName = 'Smit',
+}) =>
+    wapi.WisaStaff(
+      code: core.WisaStaffCode(code),
+      wisaId: core.WisaId(wisaId),
+      firstName: firstName,
+      lastName: lastName,
+    );
+
 ss.SmartschoolAccount ssAccount({
   String uid = 'jane',
   String accountId = '1',
@@ -161,12 +178,13 @@ ss.SmartschoolMembership member(String uid, String groupCode) =>
 wapi.WisaSnapshot wisaSnap({
   DateTime? fetchedAt,
   List<wapi.WisaStudent>? students,
+  List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaSchool> schools = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
       students: students ?? [wisaStudent()],
-      staff: const [],
+      staff: staff,
       classGroups: const [],
       schools: schools,
     );

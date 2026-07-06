@@ -127,10 +127,55 @@ class _EntryRow extends _PendingRow {
   final PendingAccountEntry entry;
 }
 
-class _ActionsBody extends StatelessWidget {
+/// The two family tabs (#179): staff and student actions are reviewed as
+/// separate workflows, so the Actions view splits them across a horizontal tab
+/// bar rather than one combined rollup. Index order matches the Reconcile
+/// overview's category order (Leerlingen, then Personeel).
+enum _ActionFamilyTab { leerlingen, personeel }
+
+class _ActionsBody extends StatefulWidget {
   const _ActionsBody({required this.controller});
 
   final ReconcileController controller;
+
+  @override
+  State<_ActionsBody> createState() => _ActionsBodyState();
+}
+
+class _ActionsBodyState extends State<_ActionsBody>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs;
+  int _shownIndex = 0;
+
+  ReconcileController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: _ActionFamilyTab.values.length, vsync: this)
+      ..addListener(_onTabChanged);
+  }
+
+  @override
+  void dispose() {
+    _tabs
+      ..removeListener(_onTabChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  /// Rebuilds the sliver content for the newly-selected family, and — when the
+  /// selected family actually changed — closes any open drill-down so each tab
+  /// opens at its own overview rather than showing the other family's detail.
+  void _onTabChanged() {
+    final index = _tabs.index;
+    if (index != _shownIndex) {
+      _shownIndex = index;
+      if (controller.selectedClassroom != null) controller.closeClassroom();
+      if (controller.showingGroups) controller.closeGroups();
+    }
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -163,13 +208,32 @@ class _ActionsBody extends StatelessWidget {
       _gap(PlinkSpacing.s6),
       _section(_ActionsHeader(controller: controller)),
       _gap(PlinkSpacing.s5),
+      _section(_FamilyTabBar(controller: controller, tabs: _tabs)),
+      _gap(PlinkSpacing.s4),
     ];
+    final staffTab = _tabs.index == _ActionFamilyTab.personeel.index;
     if (controller.selectedClassroom != null) {
       slivers.addAll(_classroomSlivers(context));
     } else if (controller.showingGroups) {
       slivers.addAll(_groupSlivers(context));
     } else if (controller.hasOverview) {
-      slivers.add(_section(_DrillDownSection(controller: controller)));
+      // Partition the drill-down by family: the Personeel tab shows only the
+      // synthetic staff school node; the Leerlingen tab shows the student
+      // schools plus the class-groups node (class groups are student-oriented).
+      final staffRollup = controller.staffSchoolRollup;
+      slivers.add(_section(staffTab
+          ? _DrillDownSection(
+              controller: controller,
+              schools: <Rollup>[if (staffRollup != null) staffRollup],
+              groups: null,
+              emptyLabel: 'Geen openstaande personeelsacties.',
+            )
+          : _DrillDownSection(
+              controller: controller,
+              schools: controller.studentSchoolRollups,
+              groups: controller.groupRollup,
+              emptyLabel: 'Nog geen gematerialiseerd overzicht.',
+            )));
     } else {
       slivers.add(_section(_EmptyState(controller: controller)));
     }
@@ -400,6 +464,58 @@ class _ActionsHeader extends StatelessWidget {
   }
 }
 
+/// The horizontal family tab bar (#179): switches the drill-down below between
+/// the Leerlingen (student + class-group) and Personeel (staff) action
+/// families, each carrying a pending-count badge so the operator sees where the
+/// work sits without opening both. Staff and student actions are reviewed as
+/// separate workflows, mirroring the legacy WPF app.
+class _FamilyTabBar extends StatelessWidget {
+  const _FamilyTabBar({required this.controller, required this.tabs});
+
+  final ReconcileController controller;
+  final TabController tabs;
+
+  @override
+  Widget build(BuildContext context) {
+    return TabBar(
+      controller: tabs,
+      isScrollable: true,
+      tabAlignment: TabAlignment.start,
+      tabs: <Widget>[
+        _tab(
+          keyValue: 'actions-tab-leerlingen',
+          label: 'Leerlingen',
+          count: controller.studentPendingCount,
+        ),
+        _tab(
+          keyValue: 'actions-tab-personeel',
+          label: 'Personeel',
+          count: controller.staffPendingCount,
+        ),
+      ],
+    );
+  }
+
+  Widget _tab({
+    required String keyValue,
+    required String label,
+    required int count,
+  }) =>
+      Tab(
+        key: ValueKey(keyValue),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(label),
+            if (count > 0) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s2),
+              PlinkBadge('$count'),
+            ],
+          ],
+        ),
+      );
+}
+
 /// The empty state before any sync/overview exists: nothing to browse yet.
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.controller});
@@ -465,9 +581,25 @@ Future<void> _confirmAndApply(
 /// even in a passive session that never pulled or re-linked. Tapping a classroom
 /// (or the Klasgroepen node) lazily loads just that node's actions (#154).
 class _DrillDownSection extends StatelessWidget {
-  const _DrillDownSection({required this.controller});
+  const _DrillDownSection({
+    required this.controller,
+    required this.schools,
+    required this.groups,
+    required this.emptyLabel,
+  });
 
   final ReconcileController controller;
+
+  /// The school-level rollup roots to render — student schools for the
+  /// Leerlingen tab, the single staff node for the Personeel tab (#179).
+  final List<Rollup> schools;
+
+  /// The "Klasgroepen" rollup node to append below [schools], or `null` when
+  /// this tab carries no group family (the Personeel tab).
+  final Rollup? groups;
+
+  /// The message shown when this tab has nothing to browse.
+  final String emptyLabel;
 
   String? _freshness() {
     final state = controller.syncState;
@@ -487,9 +619,8 @@ class _DrillDownSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final Color hairline = Theme.of(context).dividerColor;
-    final schools = controller.schoolRollups;
-    final groups = controller.groupRollup;
     final freshness = _freshness();
+    final groupsNode = groups;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -500,8 +631,8 @@ class _DrillDownSection extends StatelessWidget {
           Text(freshness, style: text.bodySmall),
         ],
         const SizedBox(height: PlinkSpacing.s3),
-        if (schools.isEmpty && groups == null)
-          Text('Nog geen gematerialiseerd overzicht.', style: text.bodyMedium)
+        if (schools.isEmpty && groupsNode == null)
+          Text(emptyLabel, style: text.bodyMedium)
         else ...<Widget>[
           for (final school in schools)
             Container(
@@ -523,7 +654,7 @@ class _DrillDownSection extends StatelessWidget {
                 ],
               ),
             ),
-          if (groups != null)
+          if (groupsNode != null)
             Container(
               margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
               decoration: BoxDecoration(
@@ -533,10 +664,10 @@ class _DrillDownSection extends StatelessWidget {
               ),
               child: ListTile(
                 key: const ValueKey('rollup-groups'),
-                title: Text(groups.label, style: text.bodyLarge),
-                subtitle: Text('${groups.accountCount} klasgroep(en)',
+                title: Text(groupsNode.label, style: text.bodyLarge),
+                subtitle: Text('${groupsNode.accountCount} klasgroep(en)',
                     style: text.bodySmall),
-                trailing: _PendingBadge(count: groups.pendingCount),
+                trailing: _PendingBadge(count: groupsNode.pendingCount),
                 onTap: controller.openGroups,
               ),
             ),

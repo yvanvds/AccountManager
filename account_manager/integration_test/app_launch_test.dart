@@ -675,6 +675,71 @@ void main() {
   });
 
   testWidgets(
+      'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
+      'staff drill in one tab, students in the other (#179)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real window: one student plus one WISA staff
+    // member so both families have a rollup node. The Actions view must browse
+    // them as two separate workflows — a horizontal tab bar with a per-family
+    // drill-down — not one combined rollup.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [wisaStudent()], staff: [wisaStaff()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // On the Actions tab the family tab bar carries both families.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-tab-leerlingen')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-tab-personeel')), findsOneWidget);
+
+    // Default Leerlingen tab: the student school node drills; the staff node
+    // does not appear here.
+    expect(
+        find.byKey(const ValueKey('rollup-school-school|1')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('rollup-school-school|staff')), findsNothing);
+
+    // Switch to Personeel and drill down to the staff member — the drill-down
+    // is preserved within the tab, showing only staff.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-school-school|1')), findsNothing);
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    expect(staffSchool, findsOneWidget);
+
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+
+    // The staff member's account is browsed inside the Personeel tab.
+    expect(find.text('Anna Smit'), findsWidgets);
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+  });
+
+  testWidgets(
       'the Smartschool address action only fires on a real field drift and its '
       'diff shows the differing field, not an identical row (#153)',
       (WidgetTester tester) async {

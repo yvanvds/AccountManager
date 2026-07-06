@@ -565,6 +565,35 @@ class ReconcileController extends ChangeNotifier {
     return total;
   }
 
+  /// The pending-action count shown on the Personeel tab's badge (#179): the
+  /// live staff-family entry count in an active session, else the staff school
+  /// rollup's stored pending count in a passive session.
+  int get staffPendingCount {
+    if (_linked != null) {
+      return pendingEntries.where((e) => e.family == 'staff').length;
+    }
+    return staffSchoolRollup?.pendingCount ?? 0;
+  }
+
+  /// The pending-action count shown on the Leerlingen tab's badge (#179): the
+  /// live student- and group-family entry count in an active session, else the
+  /// summed student-school and "Klasgroepen" rollup pending counts in a passive
+  /// session. Together with [staffPendingCount] this partitions
+  /// [totalPendingCount] with no overlap or double-counting.
+  int get studentPendingCount {
+    if (_linked != null) {
+      return pendingEntries.where((e) => e.family != 'staff').length;
+    }
+    var total = 0;
+    for (final r in _rollups) {
+      if (r.level == RollupLevel.groups ||
+          (r.level == RollupLevel.school && r.school != staffPartition)) {
+        total += r.pendingCount;
+      }
+    }
+    return total;
+  }
+
   /// Builds one [PendingAccountEntry] per target from [actionList], collapsing
   /// mutually-exclusive alternatives (shared non-null [group]) into a single
   /// [PendingChoice].
@@ -829,6 +858,24 @@ class ReconcileController extends ChangeNotifier {
         if (r.level == RollupLevel.school) r,
     ]..sort((a, b) => a.label.compareTo(b.label));
     return schools;
+  }
+
+  /// The student-school rollups — every school-level rollup **except** the
+  /// synthetic staff bucket — sorted alphabetically. The drill-down roots of the
+  /// Leerlingen tab (#179), which shows only the student action family.
+  List<Rollup> get studentSchoolRollups => [
+        for (final r in schoolRollups)
+          if (r.school != staffPartition) r,
+      ];
+
+  /// The single synthetic staff ("Personeel") school rollup, or `null` when no
+  /// staff account has been materialized — the drill-down root of the Personeel
+  /// tab (#179), which shows only the staff action family.
+  Rollup? get staffSchoolRollup {
+    for (final r in _rollups) {
+      if (r.level == RollupLevel.school && r.school == staffPartition) return r;
+    }
+    return null;
   }
 
   /// The rollup nodes directly under [parentKey] (grade-years of a school, or
