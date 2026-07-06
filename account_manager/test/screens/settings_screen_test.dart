@@ -242,13 +242,17 @@ void main() {
     expect(find.text('STORED'), findsOneWidget);
   });
 
-  testWidgets('toggling a WISA school\'s "ours" flag round-trips to the store',
-      (WidgetTester tester) async {
+  testWidgets(
+      'the stored known-school list renders by name in a grid on open, no '
+      're-fetch (#171)', (WidgetTester tester) async {
     _useTallWindow(tester);
+    // Two schools already persisted (with names): one managed, one not. Opening
+    // the tab shows the complete list by name — no fetch needed.
     final harness = SettingsHarness(
       initial: const AppSettings(
         wisaSchools: [
-          WisaSchoolProfile(schoolId: 42),
+          WisaSchoolProfile(schoolId: 42, name: 'Sint-Jan', ours: true),
+          WisaSchoolProfile(schoolId: 43, name: 'Sint-Pieter'),
         ],
       ),
     );
@@ -257,14 +261,49 @@ void main() {
     await tester.pumpAndSettle();
 
     await _openTab(tester, 'settings-tab-wisa');
-    // The seeded (unmanaged) school renders with its switch off.
-    final ourSwitch =
-        find.byKey(const ValueKey('settings-wisa-school-42-ours'));
-    expect(ourSwitch, findsOneWidget);
-    expect(tester.widget<SwitchListTile>(ourSwitch).value, isFalse);
+    expect(find.text('Sint-Jan'), findsOneWidget);
+    expect(find.text('Sint-Pieter'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-wisa-school-42-ours')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-wisa-school-43-ours')),
+        findsOneWidget);
+    // The managed one shows ticked, the other not.
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-42-ours')))
+            .value,
+        isTrue);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-43-ours')))
+            .value,
+        isFalse);
+  });
+
+  testWidgets('toggling a WISA school\'s "ours" flag round-trips to the store',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 42, name: 'Sint-Jan'),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    // The seeded (unmanaged) school renders with its checkbox off.
+    final ourBox = find.byKey(const ValueKey('settings-wisa-school-42-ours'));
+    expect(ourBox, findsOneWidget);
+    expect(tester.widget<CheckboxListTile>(ourBox).value, isFalse);
 
     // Flip it on and save.
-    await tester.tap(ourSwitch);
+    await tester.tap(ourBox);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
@@ -274,7 +313,26 @@ void main() {
     expect(saved.wisaSchools.single.ours, isTrue);
   });
 
-  testWidgets('adding a WISA school by id appends a managed entry',
+  testWidgets('a profile stored without a name falls back to "School <id>"',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // A profile predating the persisted name (#171): the row still renders.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [WisaSchoolProfile(schoolId: 9)],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    expect(find.text('School 9'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-wisa-school-9-ours')),
+        findsOneWidget);
+  });
+
+  testWidgets('no manual add-by-id UI remains (#171)',
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness();
@@ -286,24 +344,12 @@ void main() {
     // No schools yet — the empty note shows.
     expect(find.byKey(const ValueKey('settings-wisa-schools-empty')),
         findsOneWidget);
-
-    await tester.enterText(
-      find.byKey(const ValueKey('settings-wisa-school-add')),
-      '7',
-    );
-    await tester
-        .tap(find.byKey(const ValueKey('settings-wisa-school-add-btn')));
-    await tester.pumpAndSettle();
-
-    // The new row appears, defaults to managed, and saves.
-    expect(find.byKey(const ValueKey('settings-wisa-school-7-ours')),
-        findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('settings-save')));
-    await tester.pumpAndSettle();
-
-    final saved = await harness.store.load();
-    expect(saved.wisaSchools.single.schoolId, 7);
-    expect(saved.wisaSchools.single.ours, isTrue);
+    // The add-by-id field/button are gone.
+    expect(
+        find.byKey(const ValueKey('settings-wisa-school-add')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-wisa-school-add-btn')),
+        findsNothing);
+    expect(find.text('Toevoegen'), findsNothing);
   });
 
   testWidgets(
@@ -321,15 +367,15 @@ void main() {
     await _openTab(tester, 'settings-tab-wisa');
     final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
     expect(button, findsOneWidget);
-    expect(tester.widget<FilledButton>(button).onPressed, isNull,
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNull,
         reason: 'no valid config yet ⇒ fetch disabled');
     expect(
         find.byKey(const ValueKey('settings-wisa-fetch-hint')), findsOneWidget);
   });
 
   testWidgets(
-      'fetch → tick a returned school → save persists the selection, no id '
-      'typed by hand (#142)', (WidgetTester tester) async {
+      'fetch merges the school list by name, mark one → save persists name + '
+      'ours, new schools unmanaged (#171)', (WidgetTester tester) async {
     _useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
@@ -350,41 +396,53 @@ void main() {
     await _openTab(tester, 'settings-tab-wisa');
     // A valid config lights the fetch button up.
     final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
-    expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNotNull);
     expect(
         find.byKey(const ValueKey('settings-wisa-fetch-hint')), findsNothing);
 
     await tester.tap(button);
     await tester.pumpAndSettle();
 
-    // The fetcher ran (with the stored password resolved) and both schools
-    // render by name for selection.
+    // The fetcher ran (with the stored password resolved) and both schools now
+    // render by name in the grid, unmanaged by default.
     expect(fetcher.calls, 1);
     expect(fetcher.lastPassword, 'stored-pw');
     expect(fetcher.lastConnection?.server, 'db.school.example');
     expect(find.text('Sint-Jan'), findsOneWidget);
     expect(find.text('Sint-Pieter'), findsOneWidget);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-7-ours')))
+            .value,
+        isFalse,
+        reason: 'a freshly fetched school is unmanaged until marked');
 
-    // Tick one returned school; it becomes a managed selection and saves.
-    await tester
-        .tap(find.byKey(const ValueKey('settings-wisa-fetched-school-7')));
+    // Mark one managed; save persists both the name and the ours flag.
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-school-7-ours')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
 
     final saved = await harness.store.load();
-    expect(saved.wisaSchools.single.schoolId, 7);
-    expect(saved.wisaSchools.single.ours, isTrue);
+    expect(saved.wisaSchools.length, 2);
+    final managed = saved.wisaSchools.firstWhere((p) => p.schoolId == 7);
+    expect(managed.name, 'Sint-Pieter');
+    expect(managed.ours, isTrue);
+    final other = saved.wisaSchools.firstWhere((p) => p.schoolId == 3);
+    expect(other.name, 'Sint-Jan');
+    expect(other.ours, isFalse);
   });
 
-  testWidgets('unticking a fetched school removes it from the selection (#142)',
+  testWidgets(
+      'refetch preserves the existing ours mark and fills in the name (#171)',
       (WidgetTester tester) async {
     _useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
       WisaSchool(id: 7, name: 'Sint-Pieter', description: 'SP'),
     ]);
-    // Id 7 is already selected from a previous run.
+    // Id 7 is already managed from a previous run, but stored without a name.
     final harness = SettingsHarness(
       initial: const AppSettings(
         wisa: WisaConnection(server: 'db.school.example', port: '1433'),
@@ -398,19 +456,26 @@ void main() {
     await tester.pumpAndSettle();
 
     await _openTab(tester, 'settings-tab-wisa');
+    // Before the refetch it renders by id (no stored name) and stays ticked.
+    expect(find.text('School 7'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
     await tester.pumpAndSettle();
 
-    // The already-selected school shows ticked; untick and save clears it.
-    final tile = find.byKey(const ValueKey('settings-wisa-fetched-school-7'));
-    expect(tester.widget<CheckboxListTile>(tile).value, isTrue);
-    await tester.tap(tile);
-    await tester.pumpAndSettle();
+    // The refetch fills in the name and keeps the managed mark.
+    expect(find.text('Sint-Pieter'), findsOneWidget);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-7-ours')))
+            .value,
+        isTrue);
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
 
     final saved = await harness.store.load();
-    expect(saved.wisaSchools, isEmpty);
+    expect(saved.wisaSchools.single.schoolId, 7);
+    expect(saved.wisaSchools.single.name, 'Sint-Pieter');
+    expect(saved.wisaSchools.single.ours, isTrue);
   });
 
   testWidgets('accumulated import rules render read-only',

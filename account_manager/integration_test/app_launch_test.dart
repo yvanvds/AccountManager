@@ -1296,17 +1296,16 @@ void main() {
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
-    // The managed-school list lives under the Wisa tab now (#140); open it and
-    // bring the seeded school's switch into view before reading it.
+    // The known-school list lives under the Wisa tab now (#140); open it and
+    // bring the seeded school's checkbox into view before reading it.
     await openSettingsTab(tester, 'settings-tab-wisa');
-    final ourSwitch =
-        find.byKey(const ValueKey('settings-wisa-school-42-ours'));
-    await tester.ensureVisible(ourSwitch);
+    final ourBox = find.byKey(const ValueKey('settings-wisa-school-42-ours'));
+    await tester.ensureVisible(ourBox);
     await tester.pumpAndSettle();
-    expect(tester.widget<SwitchListTile>(ourSwitch).value, isFalse);
+    expect(tester.widget<CheckboxListTile>(ourBox).value, isFalse);
 
     // Mark it managed and save (the Save action sits in the shared header).
-    await tester.tap(ourSwitch);
+    await tester.tap(ourBox);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
@@ -1353,9 +1352,10 @@ void main() {
     final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
     await tester.ensureVisible(button);
     await tester.pumpAndSettle();
-    expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNotNull);
 
-    // Fetch: both schools render by name, the stored password was resolved.
+    // Fetch: both schools render by name in the grid, the stored password was
+    // resolved.
     await tester.tap(button);
     await tester.pumpAndSettle();
     expect(fetcher.calls, 1);
@@ -1363,9 +1363,9 @@ void main() {
     expect(find.text('Sint-Jan'), findsOneWidget);
     expect(find.text('Sint-Pieter'), findsOneWidget);
 
-    // Pick one returned school and save; the selection lands in the store with
-    // no id ever typed by hand.
-    final picked = find.byKey(const ValueKey('settings-wisa-fetched-school-7'));
+    // Mark one fetched school managed and save; it lands in the store with its
+    // name, no id ever typed by hand.
+    final picked = find.byKey(const ValueKey('settings-wisa-school-7-ours'));
     await tester.ensureVisible(picked);
     await tester.tap(picked);
     await tester.pumpAndSettle();
@@ -1374,8 +1374,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final saved = await settings.store.load();
-    expect(saved.wisaSchools.single.schoolId, 7);
-    expect(saved.wisaSchools.single.ours, isTrue);
+    final managed = saved.wisaSchools.firstWhere((p) => p.schoolId == 7);
+    expect(managed.name, 'Sint-Pieter');
+    expect(managed.ours, isTrue);
   });
 
   testWidgets(

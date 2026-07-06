@@ -9,18 +9,25 @@
 /// operator-editable ownership record keyed by school *id* that survives in the
 /// settings blob.
 ///
-/// The shape (`{ schoolId, ours, prefix }`) is the per-WISA-school ownership
+/// The shape (`{ schoolId, name, ours, prefix }`) is the per-WISA-school ownership
 /// link #112/#113 called for, so the settings document is not reshaped twice.
 /// This slice only carries the data — no action reads it yet (#134 is slice 2).
 class WisaSchoolProfile {
   const WisaSchoolProfile({
     required this.schoolId,
+    this.name = '',
     this.ours = false,
     this.prefix = '',
   });
 
   /// The WISA school id (`WisaSchool.id`) this ownership entry is keyed by.
   final int schoolId;
+
+  /// The WISA school name (`WisaSchool.name`), persisted so the settings editor
+  /// can render the full known-school list by name without re-fetching. Empty
+  /// for profiles stored before the name was persisted (#171) — the editor
+  /// falls back to `School <id>` and a later fetch fills the name in.
+  final String name;
 
   /// Whether we manage this school. A student found only in schools where this
   /// is `false` (group-visible siblings) has left *our* schools.
@@ -31,15 +38,22 @@ class WisaSchoolProfile {
   /// not yet consulted by the linker.
   final String prefix;
 
-  WisaSchoolProfile copyWith({int? schoolId, bool? ours, String? prefix}) =>
+  WisaSchoolProfile copyWith({
+    int? schoolId,
+    String? name,
+    bool? ours,
+    String? prefix,
+  }) =>
       WisaSchoolProfile(
         schoolId: schoolId ?? this.schoolId,
+        name: name ?? this.name,
         ours: ours ?? this.ours,
         prefix: prefix ?? this.prefix,
       );
 
   Map<String, dynamic> toJson() => {
         'schoolId': schoolId,
+        'name': name,
         'ours': ours,
         'prefix': prefix,
       };
@@ -47,6 +61,7 @@ class WisaSchoolProfile {
   factory WisaSchoolProfile.fromJson(Map<String, dynamic> json) =>
       WisaSchoolProfile(
         schoolId: json['schoolId'] as int,
+        name: (json['name'] as String?) ?? '',
         ours: (json['ours'] as bool?) ?? false,
         prefix: (json['prefix'] as String?) ?? '',
       );
@@ -56,13 +71,15 @@ class WisaSchoolProfile {
       identical(this, other) ||
       other is WisaSchoolProfile &&
           schoolId == other.schoolId &&
+          name == other.name &&
           ours == other.ours &&
           prefix == other.prefix;
 
   @override
-  int get hashCode => Object.hash(schoolId, ours, prefix);
+  int get hashCode => Object.hash(schoolId, name, ours, prefix);
 
   @override
   String toString() =>
-      'WisaSchoolProfile(schoolId: $schoolId, ours: $ours, prefix: $prefix)';
+      'WisaSchoolProfile(schoolId: $schoolId, name: $name, ours: $ours, '
+      'prefix: $prefix)';
 }
