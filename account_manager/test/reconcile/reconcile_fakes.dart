@@ -256,6 +256,27 @@ ReconcileHarness movedToSiblingHarness() => ReconcileHarness(
       azure: azSnap(users: [azUser()]),
     );
 
+/// A harness for the managed-schools-only Actions filter (#178). One student is
+/// enrolled in school 2 and fully present in *our* Smartschool + Azure. The WISA
+/// schools carry **no** `MarkAsOurs` flag, so the managed set comes solely from
+/// [ourSchoolIds] (the persisted Settings path). Managing only school 1 leaves
+/// the student `groupOnly` — kept out of the school tree (re-bucketed to "Niet
+/// toegewezen"); adding school 2 to the managed set surfaces it under School 2.
+ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
+    ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 2)],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: ourSchoolIds,
+    );
+
 az.AzureSnapshot azSnap({DateTime? fetchedAt, List<az.AzureUser>? users}) =>
     az.AzureSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
@@ -401,6 +422,7 @@ class ReconcileHarness {
     az.AzureSnapshot? azureInitial,
     this.azureGate,
     this.syncedBy = 'operator@school.example',
+    Set<int>? ourSchoolIds,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
@@ -505,6 +527,10 @@ class ReconcileHarness {
         azureDomain: 'school.example',
       ),
       passwordQueue: passwordQueue,
+      // The operator's managed-school set from Settings (#178). When unset, the
+      // linker falls back to the WISA snapshot's MarkAsOurs flags, as bootstrap
+      // does for a not-yet-configured group.
+      ourSchoolIds: ourSchoolIds,
     );
 
     final signalHub = hub;

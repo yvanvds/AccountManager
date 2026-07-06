@@ -59,6 +59,12 @@ class LinkedState {
   /// binding a [PlacementResolver] built from the WISA + Smartschool snapshots
   /// and the injected [classTree] to the student and group `placementFor`
   /// callbacks.
+  ///
+  /// [ourSchoolIds] is the set of WISA school ids the operator actually manages
+  /// (from the persisted `AppSettings.wisaSchools` ownership flags, #178). It is
+  /// threaded into `link()` so `wisaPresence` is authoritative from Settings
+  /// rather than only the snapshot's `MarkAsOurs` flags. When null, `link()`
+  /// falls back to those snapshot flags (see its doc-comment).
   factory LinkedState.recompute({
     required wapi.WisaSnapshot wisa,
     required ss.SmartschoolSnapshot smartschool,
@@ -67,6 +73,7 @@ class LinkedState {
     required actions.StudentActionConfig studentConfig,
     required actions.StaffActionConfig staffConfig,
     SmartschoolClassTree classTree = const SmartschoolClassTree(),
+    Set<int>? ourSchoolIds,
   }) {
     assert(
       studentConfig.schoolPrefix == staffConfig.schoolPrefix,
@@ -79,6 +86,7 @@ class LinkedState {
       azure,
       resolver,
       schoolPrefix: studentConfig.schoolPrefix,
+      ourSchoolIds: ourSchoolIds,
     );
 
     final placements = PlacementResolver(
@@ -120,6 +128,7 @@ class LinkedState {
     required actions.StudentActionConfig studentConfig,
     required actions.StaffActionConfig staffConfig,
     SmartschoolClassTree classTree = const SmartschoolClassTree(),
+    Set<int>? ourSchoolIds,
   }) async {
     if (resolver is PreparablePersonIdResolver) {
       final keys = naturalKeysFor(
@@ -138,6 +147,7 @@ class LinkedState {
       studentConfig: studentConfig,
       staffConfig: staffConfig,
       classTree: classTree,
+      ourSchoolIds: ourSchoolIds,
     );
   }
 
@@ -152,6 +162,7 @@ class LinkedState {
     required actions.StudentActionConfig studentConfig,
     required actions.StaffActionConfig staffConfig,
     SmartschoolClassTree classTree = const SmartschoolClassTree(),
+    Set<int>? ourSchoolIds,
   }) {
     final (wisa, smartschool, azure) = _syncedSnapshots(app);
     return LinkedState.recompute(
@@ -162,6 +173,7 @@ class LinkedState {
       studentConfig: studentConfig,
       staffConfig: staffConfig,
       classTree: classTree,
+      ourSchoolIds: ourSchoolIds,
     );
   }
 
@@ -176,6 +188,7 @@ class LinkedState {
     required actions.StudentActionConfig studentConfig,
     required actions.StaffActionConfig staffConfig,
     SmartschoolClassTree classTree = const SmartschoolClassTree(),
+    Set<int>? ourSchoolIds,
   }) async {
     final (wisa, smartschool, azure) = _syncedSnapshots(app);
     return recomputeAsync(
@@ -186,6 +199,7 @@ class LinkedState {
       studentConfig: studentConfig,
       staffConfig: staffConfig,
       classTree: classTree,
+      ourSchoolIds: ourSchoolIds,
     );
   }
 

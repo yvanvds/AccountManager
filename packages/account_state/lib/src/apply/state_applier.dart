@@ -66,6 +66,7 @@ class StateApplier {
     required StaffActionConfig staffConfig,
     this.classTree = const SmartschoolClassTree(),
     this.passwordQueue,
+    this.ourSchoolIds,
   })  : _studentConfig = _uniqueStudentConfig(studentConfig, _uidsFrom(app)),
         _staffConfig = _uniqueStaffConfig(staffConfig, _uidsFrom(app));
 
@@ -96,6 +97,13 @@ class StateApplier {
   /// still written to the target system but not queued.
   final PasswordQueueStore? passwordQueue;
 
+  /// The WISA school ids the operator actually manages (from the persisted
+  /// `AppSettings.wisaSchools` ownership flags, #178). Threaded into `link()` so
+  /// a student present only in a non-managed sibling school is classified
+  /// [core.WisaPresence.groupOnly] and kept out of the managed-school Actions
+  /// view. Null falls back to the snapshot's `MarkAsOurs` flags (see `link()`).
+  final Set<int>? ourSchoolIds;
+
   final StudentActionConfig _studentConfig;
   final StaffActionConfig _staffConfig;
 
@@ -119,6 +127,7 @@ class StateApplier {
         studentConfig: _studentConfig,
         staffConfig: _staffConfig,
         classTree: classTree,
+        ourSchoolIds: ourSchoolIds,
       );
 
   /// Applies a [StudentAction] and refreshes the snapshot on a real write.

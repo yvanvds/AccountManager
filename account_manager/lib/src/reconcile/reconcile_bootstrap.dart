@@ -383,6 +383,13 @@ Future<ReconcileServices> bootstrapReconcile({
     ),
     classTree: classTreeFrom(settings.smartschool),
     passwordQueue: passwordQueue,
+    // Wire the operator's managed-school choice into the linker (#178): the
+    // `ours`-flagged WISA schools from Settings drive `wisaPresence`, so the
+    // Actions view only surfaces schools we manage. Null when no school is
+    // flagged, so a not-yet-configured group falls back to the snapshot's
+    // `MarkAsOurs` flags rather than treating an empty managed set as "none".
+    ourSchoolIds:
+        settings.wisaSchools.isEmpty ? null : settings.managedWisaSchoolIds,
   );
 
   // The live SignalR subscriber (#124): on every (re)connect it re-reads the
