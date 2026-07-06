@@ -177,6 +177,44 @@ void main() {
     );
   });
 
+  testWidgets(
+      'the freshness line surfaces Smartschool and Azure as a drift check next '
+      'to the WISA sync time (#170)', (WidgetTester tester) async {
+    // Distinct fetch times per system so the line shows the WISA sync time and
+    // the (later) Smartschool/Azure drift-check times side by side.
+    final wisaAt = kFixtureDate.add(const Duration(hours: 1));
+    final ssAt = kFixtureDate.add(const Duration(hours: 1, minutes: 3));
+    final azAt = kFixtureDate.add(const Duration(hours: 1, minutes: 4));
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(fetchedAt: wisaAt),
+      smartschool: ssSnap(fetchedAt: ssAt),
+      azure: azSnap(fetchedAt: azAt),
+    );
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // One row, three systems, split into a "Last sync" clause (WISA) and a
+    // "drift check" clause (Smartschool · Azure).
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(find.textContaining('drift check — Smartschool'), findsOneWidget);
+    // Azure rides in the same (single) freshness Text.
+    final freshness = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const ValueKey('reconcile-freshness')),
+        matching: find.byType(Text),
+      ),
+    );
+    expect(freshness.data, contains('Azure'));
+    expect(freshness.data, contains('Smartschool'));
+    expect(freshness.data, contains('WISA'));
+  });
+
   testWidgets('the last-sync line survives a restart / passive session (#162)',
       (WidgetTester tester) async {
     // Session 1 syncs and persists freshness to the shared store.
