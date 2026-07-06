@@ -151,9 +151,37 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // No sync yet → no freshness row.
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsNothing);
+
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
+    // The freshness now sits in its own prominent row (#162), not trailing the
+    // buttons.
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
+    expect(find.textContaining('Last sync — WISA'), findsOneWidget);
+    expect(
+      find.textContaining('by operator@school.example'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('the last-sync line survives a restart / passive session (#162)',
+      (WidgetTester tester) async {
+    // Session 1 syncs and persists freshness to the shared store.
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+    // Session 2 opens fresh over the same store — no sync — and reads the
+    // overview back (loadOverview on bootstrap).
+    final passive = ReconcileHarness(linkedStore: linkedStore);
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: passive.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(passive.wisaSyncs, 0, reason: 'a passive session pulls nothing');
+    expect(find.byKey(const ValueKey('reconcile-freshness')), findsOneWidget);
     expect(find.textContaining('Last sync — WISA'), findsOneWidget);
     expect(
       find.textContaining('by operator@school.example'),

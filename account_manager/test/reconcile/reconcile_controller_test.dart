@@ -85,6 +85,43 @@ void main() {
     });
   });
 
+  group('sync-complete log line (#162)', () {
+    test('a completed sync logs a terminal ready line with the action count',
+        () async {
+      final h = ReconcileHarness();
+
+      await h.controller.sync();
+
+      // The count mirrors the relink summary's pendingActions.length (the
+      // fixture derives four pending actions across the families).
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains('Sync complete — 4 pending action(s). Ready.'),
+      );
+      // It is the *last* line — the operator sees it closing the pass.
+      expect(h.log.entries.last.message,
+          'Sync complete — 4 pending action(s). Ready.');
+    });
+
+    test('the "no changes needed" path also logs a ready line', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      // A later, identical WISA pull: the early-return no-change path.
+      h.wisaResult =
+          wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+
+      await h.controller.sync();
+
+      expect(h.controller.noChangesNeeded, isTrue);
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains('Sync complete — no account changes needed. Ready.'),
+      );
+      expect(h.log.entries.last.message,
+          'Sync complete — no account changes needed. Ready.');
+    });
+  });
+
   group('check for drift', () {
     test('re-reads Smartschool and Azure and re-links', () async {
       final h = ReconcileHarness();

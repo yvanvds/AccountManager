@@ -869,6 +869,7 @@ class ReconcileController extends ChangeNotifier {
           'no account changes needed.',
         );
         await _persistSystemMeta();
+        _logSyncComplete();
         _finish(ReconcilePhase.ready);
         return;
       }
@@ -887,12 +888,23 @@ class ReconcileController extends ChangeNotifier {
       }
 
       await _relink();
+      _logSyncComplete();
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       _fail(e);
     } finally {
       await _releaseLock();
     }
+  }
+
+  /// Terminal "the pass is done, the screen is current" log line closing a
+  /// successful [sync] (#162). The [noChangesNeeded] path says so explicitly;
+  /// otherwise it names how many pending actions await the operator.
+  void _logSyncComplete() {
+    final message = _noChangesNeeded
+        ? 'Sync complete — no account changes needed. Ready.'
+        : 'Sync complete — ${pendingActions.length} pending action(s). Ready.';
+    log.addMessage(core.Origin.all, message);
   }
 
   /// Explicitly re-reads Smartschool and Azure (drift introduced by edits made
