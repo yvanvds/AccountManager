@@ -221,10 +221,17 @@ ports the three existing seams, retiring the SQL/ODBC layer:
 - **Provisioning.** The database and containers are stood up by the checked-in
   idempotent script [`tool/provision-cosmos.ps1`](../tool/provision-cosmos.ps1) —
   the source of truth for the full nine-container set (partition keys, the
-  `identity` `/naturalKey` unique key, and the `syncState` TTL). It runs the
-  control-plane `az cosmosdb sql database/container create` commands, each guarded
-  by an `exists` check so it is safe to re-run against an already-provisioned
-  account, because data-plane RBAC cannot create databases or containers. So the
+  `identity` `/naturalKey` unique key, and the `syncState` TTL). The same script
+  also provisions the **Blob Storage** side the cold-snapshot overflow store
+  needs (#161): the `Microsoft.Storage` provider registration, the AAD-only
+  (`--allow-shared-key-access false`, mirroring Cosmos `disableLocalAuth`)
+  `accountmanagerarcadia` account, the `snapshots` overflow container, and —
+  optionally, via `-OperatorObjectId` — the operator's *Storage Blob Data
+  Contributor* data role. It runs the control-plane `az cosmosdb sql
+  database/container create` and `az storage account/container create` commands,
+  each guarded by an `exists`/presence check so it is safe to re-run against an
+  already-provisioned account, because data-plane RBAC cannot create databases,
+  containers, or storage accounts. So the
   launch-time `CREATE TABLE` DDL is gone. Bootstrap runs an idempotent
   `ensureContainers` preflight over the
   materialized-view containers: on the provisioned account it is a cheap metadata
@@ -237,7 +244,9 @@ ports the three existing seams, retiring the SQL/ODBC layer:
   in the read-only CI set. Run via `/live-tests cosmos`.
 
 The cold containers (`snapshots` + Blob, `linkedAccounts`, `decisions`,
-`rollups`, `syncState`) are stood up by their own epic-#112 children.
+`rollups`, `syncState`) are stood up by their own epic-#112 children — the Blob
+storage account and its `snapshots` overflow container now by the same
+`provision-cosmos.ps1` script (#161).
 
 ### Phase C — Flutter Windows desktop app *(not started, epic #75)*
 
