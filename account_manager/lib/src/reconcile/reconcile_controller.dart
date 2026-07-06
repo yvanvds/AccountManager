@@ -324,6 +324,7 @@ class ReconcileController extends ChangeNotifier {
   StreamSubscription<ChangeSignal>? _signalSub;
 
   ReconcilePhase _phase = ReconcilePhase.idle;
+  double _progress = 0.0;
   LinkedState? _linked;
   bool _noChangesNeeded = false;
   String? _error;
@@ -373,6 +374,24 @@ class ReconcileController extends ChangeNotifier {
       _phase == ReconcilePhase.syncing ||
       _phase == ReconcilePhase.linking ||
       _phase == ReconcilePhase.applying;
+
+  /// How far the running pass has advanced, `0.0`–`1.0` — the value the busy
+  /// bar renders (#176). It steps forward at every stage of a sync/drift pass
+  /// (each system pulled, linking, persisting) and once per action during an
+  /// apply/dry-run, so the bar visibly *advances* rather than sitting as a
+  /// motionless sweep that reads as a hung app. Reset to `0.0` when a pass
+  /// begins; meaningless (and unread) while not [busy].
+  double get progress => _progress;
+
+  /// Steps the pass indicator to [value] (clamped) and repaints. A pass only
+  /// ever moves forward, so a lower [value] than the current one is ignored —
+  /// the shared [_relink] can't drag a further-along drift pass backwards.
+  void _setProgress(double value) {
+    final next = value.clamp(0.0, 1.0);
+    if (next <= _progress) return;
+    _progress = next;
+    notifyListeners();
+  }
 
   /// The current derived view, or `null` before the first successful sync.
   LinkedState? get linked => _linked;
@@ -919,6 +938,7 @@ class ReconcileController extends ChangeNotifier {
       log.addMessage(core.Origin.wisa, 'Syncing WISA…');
       final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
       _recordPull(core.Origin.wisa, fresh);
+      _setProgress(0.25);
       log.addMessage(
         core.Origin.wisa,
         'WISA sync done: ${fresh.students.length} students, '
@@ -947,11 +967,13 @@ class ReconcileController extends ChangeNotifier {
         _recordPull(
             core.Origin.smartschool, await app.sync(core.Origin.smartschool));
       }
+      _setProgress(0.45);
       if (app.azure.snapshot == null) {
         await _renewLock();
         log.addMessage(core.Origin.azure, 'Syncing Azure AD…');
         _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
       }
+      _setProgress(0.65);
 
       await _relink();
       _logSyncComplete();
@@ -990,9 +1012,11 @@ class ReconcileController extends ChangeNotifier {
       );
       _recordPull(
           core.Origin.smartschool, await app.sync(core.Origin.smartschool));
+      _setProgress(0.35);
       await _renewLock();
       log.addMessage(core.Origin.azure, 'Checking Azure AD for drift…');
       _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
+      _setProgress(0.6);
 
       if (app.wisa.snapshot == null) {
         await _renewLock();
@@ -1200,12 +1224,15 @@ class ReconcileController extends ChangeNotifier {
     );
 
     try {
-      for (final option in selected) {
+      for (final (index, option) in selected.indexed) {
         results.add(await _applyOne(
           () => _applyAny(option.action, options),
           option.target,
           option.changes,
         ));
+        // Advance once per action so a long apply/dry-run pass reads as busy
+        // and visibly progressing rather than a motionless bar (#176).
+        _setProgress((index + 1) / selected.length);
       }
 
       final failed =
@@ -1283,6 +1310,7 @@ class ReconcileController extends ChangeNotifier {
 
   Future<void> _relink() async {
     _phase = ReconcilePhase.linking;
+    _setProgress(0.75);
     notifyListeners();
     _linked = await applier.link();
     final s = _linked!.snapshot;
@@ -1292,6 +1320,7 @@ class ReconcileController extends ChangeNotifier {
       '${s.groups.length} groups; ${pendingActions.length} pending '
       'action(s), ${s.warnings.length} warning(s).',
     );
+    _setProgress(0.9);
     await _persist(_linked!);
   }
 
@@ -1376,6 +1405,7 @@ class ReconcileController extends ChangeNotifier {
 
   void _begin(ReconcilePhase phase) {
     _phase = phase;
+    _progress = 0.0;
     _error = null;
     _noChangesNeeded = false;
     _dryRunResults = null;

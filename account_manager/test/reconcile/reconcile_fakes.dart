@@ -399,6 +399,7 @@ class ReconcileHarness {
     wapi.WisaSnapshot? wisaInitial,
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
+    this.azureGate,
     this.syncedBy = 'operator@school.example',
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
@@ -422,6 +423,11 @@ class ReconcileHarness {
     };
     Syncer<az.AzureSnapshot> azSync = (_) async {
       azSyncs++;
+      // When a test wires a gate, the Azure pull parks here until released, so
+      // a widget test can hold a sync mid-flight and observe the busy progress
+      // bar the earlier stages have already advanced (#176).
+      final gate = azureGate;
+      if (gate != null) await gate.future;
       return azResult;
     };
 
@@ -543,6 +549,11 @@ class ReconcileHarness {
   /// per-system sync-metadata author (#108). Vary it to model a second operator
   /// sharing the same [linkedStore].
   final String syncedBy;
+
+  /// When set, the Azure syncer parks on this completer until a test releases
+  /// it — a seam to freeze a sync mid-pass (WISA + Smartschool already pulled)
+  /// so a widget test can observe the busy progress bar (#176).
+  final Completer<void>? azureGate;
 
   /// Builds a "second session" seeded from [store] — a fresh controller over
   /// the state another harness already persisted, the way bootstrap seeds each
