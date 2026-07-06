@@ -9,6 +9,8 @@
 /// exactly one deterministic pending action (`MoveToSmartschoolClassGroup`).
 library;
 
+import 'dart:async';
+
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/log_buffer.dart';
@@ -302,6 +304,79 @@ class InMemorySnapshotStore implements SnapshotStore {
   }
 }
 
+/// A [LinkedStore] whose [writeMaterialized] never completes (a hung Cosmos
+/// write) or throws, while every read delegates to an inner [InMemoryLinkedStore]
+/// — the persist-stall the reconcile controller must survive (#168).
+class StallingLinkedStore implements LinkedStore {
+  StallingLinkedStore({InMemoryLinkedStore? inner, this.failWith})
+      : _in = inner ?? InMemoryLinkedStore();
+
+  final InMemoryLinkedStore _in;
+
+  /// When set, [writeMaterialized] throws this instead of hanging.
+  final Object? failWith;
+
+  /// True once a write was attempted — proves the controller reached persist.
+  bool writeAttempted = false;
+
+  @override
+  Future<void> writeMaterialized(
+    MaterializedView view, {
+    required String syncedBy,
+    required DateTime at,
+    List<AccountDecision> droppedDecisions = const [],
+    Map<core.Origin, SystemSyncMeta> systemSyncs = const {},
+    void Function(String message)? onProgress,
+  }) {
+    writeAttempted = true;
+    final fail = failWith;
+    if (fail != null) return Future<void>.error(fail);
+    // Never completes: models a wedged store write the controller must time out.
+    return Completer<void>().future;
+  }
+
+  @override
+  Future<SyncState> readSyncState() => _in.readSyncState();
+  @override
+  Future<List<Rollup>> readRollups() => _in.readRollups();
+  @override
+  Future<List<MaterializedAccount>> readClassroom({
+    required String school,
+    required String classroom,
+  }) =>
+      _in.readClassroom(school: school, classroom: classroom);
+  @override
+  Future<List<MaterializedGroup>> readGroups() => _in.readGroups();
+  @override
+  Future<List<AccountDecision>> readDecisions() => _in.readDecisions();
+  @override
+  Future<void> putDecision(AccountDecision decision) =>
+      _in.putDecision(decision);
+  @override
+  Future<void> deleteDecision(AccountDecision decision) =>
+      _in.deleteDecision(decision);
+  @override
+  Future<void> recordSystemSync(Map<core.Origin, SystemSyncMeta> systemSyncs) =>
+      _in.recordSystemSync(systemSyncs);
+  @override
+  Future<SyncLease?> readLease(DateTime now) => _in.readLease(now);
+  @override
+  Future<LeaseOutcome> acquireLease({
+    required String owner,
+    required DateTime now,
+  }) =>
+      _in.acquireLease(owner: owner, now: now);
+  @override
+  Future<LeaseOutcome> renewLease({
+    required String owner,
+    required DateTime now,
+  }) =>
+      _in.renewLease(owner: owner, now: now);
+  @override
+  Future<void> releaseLease({required String owner}) =>
+      _in.releaseLease(owner: owner);
+}
+
 // ---------------------------------------------------------------------------
 // The harness: the real State layer over scripted syncers.
 // ---------------------------------------------------------------------------
@@ -316,6 +391,8 @@ class ReconcileHarness {
     az.AzureSnapshot? azure,
     this.store,
     InMemoryLinkedStore? linkedStore,
+    this.controllerStore,
+    this.persistTimeout,
     this.hub,
     SignalPublisher? publisher,
     SignalSubscriber? subscriber,
@@ -429,13 +506,24 @@ class ReconcileHarness {
       app: app,
       applier: applier,
       log: log,
-      store: this.linkedStore,
+      store: controllerStore ?? this.linkedStore,
       syncedBy: syncedBy,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
+      persistTimeout: persistTimeout ?? const Duration(minutes: 10),
       clock: () => kFixtureDate,
     );
   }
+
+  /// An alternate [LinkedStore] handed to the controller instead of the plain
+  /// [linkedStore] — used to inject a stalling/failing `writeMaterialized` for
+  /// the persist-resilience tests (#168). Reads still resolve through it, so it
+  /// normally wraps an [InMemoryLinkedStore].
+  final LinkedStore? controllerStore;
+
+  /// The controller's persist-step timeout (#168); defaults to 10 minutes when
+  /// unset, and the stall tests inject a tiny value.
+  final Duration? persistTimeout;
 
   /// The shared materialized-view store (#115): a sync writes the derived
   /// per-account docs + rollups here, and a resumed session reads the overview

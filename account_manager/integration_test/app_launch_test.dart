@@ -260,6 +260,61 @@ void main() {
   });
 
   testWidgets(
+      'a sync whose shared-store persist stalls still finishes: Synchronise '
+      're-enables and the timeout is surfaced in the log (#168)',
+      (WidgetTester tester) async {
+    // The real app over the offline harness, but the LinkedStore write hangs
+    // (the ~9.6k-doc persist that wedged the pass). The controller must not stay
+    // stuck in `linking` with Synchronise disabled forever — it times out the
+    // persist, surfaces it, and returns to ready.
+    useTallWindow(tester);
+    final stalling = StallingLinkedStore();
+    final harness = ReconcileHarness(
+      controllerStore: stalling,
+      persistTimeout: const Duration(milliseconds: 300),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // Start the sync; while the persist hangs the pass is busy and Synchronise
+    // is disabled.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pump();
+    expect(harness.controller.busy, isTrue);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNull,
+    );
+
+    // Let the persist timeout elapse (real wall-clock in the live binding), then
+    // settle the resulting frame.
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+
+    // The persist was reached but hung; the pass recovered rather than wedging.
+    expect(stalling.writeAttempted, isTrue);
+    expect(harness.controller.busy, isFalse);
+    // Synchronise is live again.
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
+    // The operator sees the timeout in the log panel, not silence.
+    expect(find.textContaining('timed out'), findsOneWidget);
+  });
+
+  testWidgets(
       'the pending list groups one entry per account and applies the chosen '
       'alternative: choose delete → delete, not unregister (#110)',
       (WidgetTester tester) async {
