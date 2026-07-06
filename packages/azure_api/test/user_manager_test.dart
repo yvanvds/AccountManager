@@ -260,6 +260,39 @@ void main() {
     });
   });
 
+  group('setPassword (#180)', () {
+    test('PATCHes a passwordProfile onto the user', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final users = UserManager(clientWith(transport));
+      await users.setPassword('id-1', 'Bacoxy7!');
+      final body = jsonDecode(transport.last.body!) as Map<String, dynamic>;
+      final profile = body['passwordProfile'] as Map<String, dynamic>;
+      expect(transport.last.method, 'PATCH');
+      expect(transport.last.url.path, contains('users/id-1'));
+      expect(profile['password'], 'Bacoxy7!');
+      // Defaults to forcing a change on next sign-in, mirroring the legacy reset.
+      expect(profile['forceChangePasswordNextSignIn'], isTrue);
+    });
+
+    test('honours forceChangePasswordNextSignIn: false', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final users = UserManager(clientWith(transport));
+      await users.setPassword(
+        'jane.doe@student.school.example',
+        'Bacoxy7!',
+        forceChangePasswordNextSignIn: false,
+      );
+      final body = jsonDecode(transport.last.body!) as Map<String, dynamic>;
+      final profile = body['passwordProfile'] as Map<String, dynamic>;
+      expect(profile['forceChangePasswordNextSignIn'], isFalse);
+      // The UPN is percent-encoded into the path segment.
+      expect(
+        Uri.decodeComponent(transport.last.url.pathSegments.last),
+        'jane.doe@student.school.example',
+      );
+    });
+  });
+
   group('deleteUser', () {
     test('issues DELETE on the user resource', () async {
       final transport = FakeGraphTransport.constant(noContent());

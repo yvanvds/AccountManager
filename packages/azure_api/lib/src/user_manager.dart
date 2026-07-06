@@ -274,6 +274,31 @@ class UserManager {
     _log?.addMessage(core.Origin.azure, 'Azure: deleted user $idOrUpn.');
   }
 
+  /// Resets an existing user's password (PATCH `users/{id}` with a
+  /// `passwordProfile`). Mirrors legacy `Azure.UserManager.SetPassword`, used by
+  /// the on-demand Passwords screen (#180) — distinct from [createUser], which
+  /// is the only other place a password is written.
+  ///
+  /// [idOrUpn] is the object id or UPN. [forceChangePasswordNextSignIn] defaults
+  /// to `true`, matching the legacy reset (the holder must pick a new password on
+  /// next login).
+  Future<void> setPassword(
+    String idOrUpn,
+    String password, {
+    bool forceChangePasswordNextSignIn = true,
+  }) async {
+    await _graph.patchJson(
+      _graph.uri('users/${Uri.encodeComponent(idOrUpn)}'),
+      <String, dynamic>{
+        'passwordProfile': <String, dynamic>{
+          'forceChangePasswordNextSignIn': forceChangePasswordNextSignIn,
+          'password': password,
+        },
+      },
+    );
+    _log?.addMessage(core.Origin.azure, 'Azure: reset password for $idOrUpn.');
+  }
+
   /// Builds a unique UPN from a name, appending a numeric suffix on collision.
   /// Ports the legacy `CreatePrincipalName`: accents stripped, lower-cased,
   /// non-`[a-z0-9_.+-]` removed. Students live under `student.<domain>`, staff

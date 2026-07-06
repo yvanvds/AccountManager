@@ -1,30 +1,59 @@
+import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/screens/passwords_screen.dart';
-import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smartschool_api/smartschool_api.dart' as ss;
 
 import '../reconcile/reconcile_fakes.dart';
 
-Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
-
-PasswordEntry _entry({
-  required String pid,
-  String name = 'Jane Doe',
-  String uid = 'jane.doe',
-  String? smartschool = 'SS-pw',
-  String? azure = 'AZ-pw',
-}) =>
-    PasswordEntry(
-      personId: PersonId(pid),
-      kind: PasswordAccountKind.account,
-      accountName: uid,
-      displayName: name,
-      mail: '$uid@student.school.example',
-      classGroup: '3C',
-      smartschoolPassword: smartschool,
-      azurePassword: azure,
+/// A Smartschool snapshot shaped like the Passwords screen needs it: a
+/// "Leerlingen" root holding one class (3C) with one student, and a "Personeel"
+/// group with one staff member.
+ss.SmartschoolSnapshot _snap() => ss.SmartschoolSnapshot(
+      fetchedAt: kFixtureDate,
+      groups: <core.Group>[
+        core.Group(
+          id: const core.GroupId('leerlingen'),
+          name: 'Leerlingen',
+          description: '',
+          type: core.GroupType.group,
+          official: false,
+          origin: core.Origin.smartschool,
+        ),
+        ssGroup('3C', code: '3C', type: core.GroupType.classGroup)
+            .copyUnderLeerlingen(),
+        core.Group(
+          id: const core.GroupId('personeel'),
+          name: 'Personeel',
+          description: '',
+          type: core.GroupType.group,
+          official: false,
+          origin: core.Origin.smartschool,
+        ),
+      ],
+      accounts: <ss.SmartschoolAccount>[
+        ssAccount(uid: 'jane', accountId: '1', mail: 'jane@student.school'),
+        ssAccount(uid: 'anna.smit', accountId: '2', mail: 'anna@school'),
+      ],
+      memberships: <ss.SmartschoolMembership>[
+        member('jane', '3C'),
+        member('anna.smit', 'personeel'),
+      ],
     );
+
+extension on core.Group {
+  core.Group copyUnderLeerlingen() => core.Group(
+        id: id,
+        name: name,
+        description: description,
+        type: type,
+        official: official,
+        origin: origin,
+        parentId: const core.GroupId('leerlingen'),
+      );
+}
+
+Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
   testWidgets('shows the not-configured panel when AAD is absent',
@@ -33,88 +62,120 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Not configured'), findsOneWidget);
-    expect(find.byKey(const ValueKey('passwords-refresh')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('passwords-tab-leerlingen')), findsNothing);
   });
 
-  testWidgets('lists the pending entries the shared queue holds',
+  testWidgets('renders the Leerlingen and Personeel tabs',
       (WidgetTester tester) async {
-    final harness = ReconcileHarness();
-    await harness.passwordQueue.save([
-      _entry(pid: 'p1', name: 'Jane Doe', uid: 'jane.doe'),
-      _entry(pid: 'p2', name: 'Jan Peeters', uid: 'jan.peeters', azure: null),
-    ]);
-
+    final harness = ReconcileHarness(ssInitial: _snap());
     await tester
         .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Jane Doe'), findsOneWidget);
-    expect(find.text('Jan Peeters'), findsOneWidget);
-    // Jane has both backends; Jan only Smartschool.
-    expect(find.text('SS-pw'), findsWidgets);
-    expect(find.text('AZ-pw'), findsOneWidget);
-    expect(find.text('2 wachtwoorden wachten op verdeling.'), findsOneWidget);
-  });
-
-  testWidgets('copy puts the password on the clipboard',
-      (WidgetTester tester) async {
-    final copied = <String>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      SystemChannels.platform,
-      (MethodCall call) async {
-        if (call.method == 'Clipboard.setData') {
-          copied.add((call.arguments as Map)['text'] as String);
-        }
-        return null;
-      },
-    );
-    addTearDown(() => tester.binding.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null));
-
-    final harness = ReconcileHarness();
-    await harness.passwordQueue.save([_entry(pid: 'p1')]);
-    await tester
-        .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const ValueKey('password-copy-ss-p1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('password-copy-azure-p1')));
-    await tester.pumpAndSettle();
-
-    expect(copied, ['SS-pw', 'AZ-pw']);
+    expect(
+        find.byKey(const ValueKey('passwords-tab-leerlingen')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('passwords-tab-personeel')), findsOneWidget);
+    expect(find.text('Wachtwoorden'), findsOneWidget);
   });
 
   testWidgets(
-      'marking an entry distributed drains it from the shared queue and shows '
-      'the empty state', (WidgetTester tester) async {
-    final harness = ReconcileHarness();
-    await harness.passwordQueue.save([_entry(pid: 'p1', name: 'Jane Doe')]);
+      'Leerlingen: select a class, check a target, generate → confirm pushes '
+      'live and reports success (#180)', (WidgetTester tester) async {
+    final harness = ReconcileHarness(ssInitial: _snap());
     await tester
         .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Jane Doe'), findsOneWidget);
+    // Select the class from the tree; its student appears.
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    expect(find.text('jane'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('password-distribute-p1')));
+    // Generate is disabled with nothing checked.
+    expect(
+      tester
+          .widget<FilledButton>(
+              find.byKey(const ValueKey('passwords-generate')))
+          .onPressed,
+      isNull,
+    );
+
+    // Check Jane's Smartschool target, then generate → confirm.
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-cell-jane-smartschool')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
     await tester.pumpAndSettle();
 
-    // The row is gone from the view and, crucially, from the persisted queue —
-    // draining means saving the remainder so the other operators no longer see
-    // it.
-    expect(find.text('Jane Doe'), findsNothing);
-    expect(find.byKey(const ValueKey('passwords-empty')), findsOneWidget);
-    expect(await harness.passwordQueue.load(), isEmpty);
+    // A live Smartschool push happened and the screen reports success.
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(1));
+    expect(harness.passwordBackends.smartschoolPushes.single.$1, 'jane');
+    expect(find.byKey(const ValueKey('passwords-message')), findsOneWidget);
+    // The generated sheet can now be printed.
+    expect(
+      tester
+          .widget<OutlinedButton>(
+              find.byKey(const ValueKey('passwords-export-students')))
+          .onPressed,
+      isNotNull,
+    );
   });
 
-  testWidgets('an empty queue renders the all-distributed state',
-      (WidgetTester tester) async {
-    final harness = ReconcileHarness();
+  testWidgets(
+      'Personeel: filter, select a member, reset both pushes both backends '
+      '(#180)', (WidgetTester tester) async {
+    final harness = ReconcileHarness(ssInitial: _snap());
     await tester
         .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('passwords-empty')), findsOneWidget);
-    expect(find.text('Geen wachtwoorden in de wachtrij.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    // The staff member is listed; select them.
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-anna.smit')));
+    await tester.pumpAndSettle();
+
+    // Reset both → confirm. The Personeel tab carries a filter TextField whose
+    // blinking cursor keeps `pumpAndSettle` from ever settling, so drive the
+    // dialog with explicit frames instead.
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-reset-both')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-staff-reset-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // Both a Smartschool and an Azure push happened, sharing one password.
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(1));
+    expect(harness.passwordBackends.azurePushes, hasLength(1));
+    expect(harness.passwordBackends.smartschoolPushes.single.$3,
+        harness.passwordBackends.azurePushes.single.$2);
+  });
+
+  testWidgets('Personeel filter narrows the staff list',
+      (WidgetTester tester) async {
+    final harness = ReconcileHarness(ssInitial: _snap());
+    await tester
+        .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('passwords-staff-anna.smit')),
+        findsOneWidget);
+
+    // Focusing the field starts a blinking cursor, so drive with explicit
+    // frames rather than pumpAndSettle.
+    await tester.enterText(
+        find.byKey(const ValueKey('passwords-staff-filter')), 'zzz');
+    await tester.pump();
+    expect(
+        find.byKey(const ValueKey('passwords-staff-anna.smit')), findsNothing);
   });
 }
