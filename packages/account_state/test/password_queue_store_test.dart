@@ -20,6 +20,8 @@ PasswordEntry _coAccountEntry() => const PasswordEntry(
       kind: PasswordAccountKind.coAccount,
       accountName: 'els.peeters',
       displayName: 'Els Peeters',
+      classGroup: '1A',
+      coAccountPasswords: <int, String>{1: 'Sa2b!x', 3: 'Ku9d?y'},
     );
 
 void expectSameEntry(PasswordEntry a, PasswordEntry b) {
@@ -45,6 +47,18 @@ void main() {
       final json = _coAccountEntry().toJson();
       expect(json.containsKey('mail'), isFalse);
       expect(json.containsKey('azurePassword'), isFalse);
+    });
+
+    test('round-trips co-account passwords keyed by slot (#180)', () {
+      final restored = PasswordEntry.fromJson(_coAccountEntry().toJson());
+      expect(restored.coAccountPasswords, {1: 'Sa2b!x', 3: 'Ku9d?y'});
+      expectSameEntry(restored, _coAccountEntry());
+    });
+
+    test('an account entry serializes no coAccountPasswords key', () {
+      expect(
+          _accountEntry().toJson().containsKey('coAccountPasswords'), isFalse);
+      expect(_accountEntry().coAccountPasswords, isEmpty);
     });
 
     test('throws on an unknown kind tag', () {

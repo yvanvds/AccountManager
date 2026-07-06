@@ -7,6 +7,7 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import '../auth/aad_app_config.dart';
 import '../auth/sign_in_session.dart';
+import '../passwords/password_backends.dart';
 import 'log_buffer.dart';
 import 'reconcile_controller.dart';
 
@@ -88,6 +89,7 @@ class ReconcileServices {
     required this.controller,
     required this.log,
     required this.passwordQueue,
+    required this.passwordBackends,
   });
 
   final AppSettings settings;
@@ -101,6 +103,12 @@ class ReconcileServices {
   /// The same instance is wired into [applier], so an apply and the view see the
   /// one queue.
   final PasswordQueueStore passwordQueue;
+
+  /// The live write seam for the reworked Passwords view (#180): on-demand
+  /// student/staff password generation pushes fresh passwords straight through
+  /// the Smartschool and Azure connectors. Wired to [ConnectorPasswordBackends]
+  /// in production; the offline harness substitutes a recording fake.
+  final PasswordBackends passwordBackends;
 }
 
 /// A configuration problem the operator can act on (missing secret, malformed
@@ -427,6 +435,14 @@ Future<ReconcileServices> bootstrapReconcile({
     controller: controller,
     log: logBuffer,
     passwordQueue: passwordQueue,
+    // On-demand password generation (#180) writes through the same connectors
+    // the applier uses, behind the [PasswordBackends] seam so the screen can be
+    // driven headlessly.
+    passwordBackends: ConnectorPasswordBackends(
+      smartschool: ssConnector,
+      azure: azConnector,
+      log: logBuffer,
+    ),
   );
 }
 

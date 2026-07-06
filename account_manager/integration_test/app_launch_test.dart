@@ -740,6 +740,73 @@ void main() {
   });
 
   testWidgets(
+      'the Passwords view generates a class password on demand and resets a '
+      'staff password across its two tabs end-to-end (#180)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real window: the Smartschool snapshot carries a
+    // "Leerlingen" class tree and a "Personeel" group (seeded so the screen has
+    // its tree without a full sync). The reworked Passwords view must generate a
+    // fresh class password on demand (Leerlingen) and reset a staff password
+    // (Personeel) — pushing both live through the recording backends.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(ssInitial: passwordsSnap());
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Open the Passwords view: the two family tabs render.
+    await tester.tap(find.text('Passwords'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PasswordsScreen), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('passwords-tab-leerlingen')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('passwords-tab-personeel')), findsOneWidget);
+
+    // Leerlingen: pick the class, check a student's Smartschool target, then
+    // generate on demand → confirm. The password is pushed live and queued.
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    expect(find.text('jane'), findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-cell-jane-smartschool')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(1));
+    expect(harness.passwordBackends.smartschoolPushes.single.$1, 'jane');
+    expect(find.byKey(const ValueKey('passwords-message')), findsOneWidget);
+
+    // Personeel: select a staff member and reset both passwords. The filter
+    // TextField's blinking cursor keeps pumpAndSettle from settling, so drive
+    // the dialog with explicit frames.
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-anna.smit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-reset-both')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-staff-reset-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // Both backends were pushed with one shared staff password.
+    expect(
+        harness.passwordBackends.smartschoolPushes
+            .where((p) => p.$1 == 'anna.smit'),
+        hasLength(1));
+    expect(harness.passwordBackends.azurePushes, hasLength(1));
+  });
+
+  testWidgets(
       'the Smartschool address action only fires on a real field drift and its '
       'diff shows the differing field, not an identical row (#153)',
       (WidgetTester tester) async {
@@ -1322,9 +1389,9 @@ void main() {
   });
 
   testWidgets(
-      'creating an account captures its password into the Passwords view, which '
-      'distributes it out of the shared queue (#105)',
-      (WidgetTester tester) async {
+      'creating an account captures its password into the shared queue, which '
+      'the Passwords view surfaces as a printable sheet and drains on export '
+      '(#105/#180)', (WidgetTester tester) async {
     // A brand-new student: present in WISA and Azure but not yet in Smartschool,
     // so the dispatcher yields exactly one AddStudentToSmartschool — an
     // account-creating apply that mints (and must capture) a password.
@@ -1373,21 +1440,30 @@ void main() {
         reason: 'the created account\'s password landed in the queue');
     expect(queued.single.smartschoolPassword, isNotNull);
 
-    // Switch to the Passwords view: the freshly captured sheet is listed in the
-    // real, laid-out app.
+    // Switch to the Passwords view: the freshly captured account sheet is
+    // surfaced as a printable student sheet (the reworked view no longer shows
+    // a per-entry distribute card — the queue feeds the print/CSV exports).
     await tester.tap(find.text('Passwords'));
     await tester.pumpAndSettle();
     expect(find.byType(PasswordsScreen), findsOneWidget);
-    expect(find.text('Jane Doe'), findsOneWidget);
-    expect(find.text('Smartschool:'), findsOneWidget);
+    final exportBtn = find.byKey(const ValueKey('passwords-export-students'));
+    expect(
+      tester.widget<OutlinedButton>(exportBtn).onPressed,
+      isNotNull,
+      reason: 'the captured sheet enables the print export',
+    );
+    expect(find.text('Print leerling-wachtwoorden (1)'), findsOneWidget);
 
-    // Mark it distributed → it drains from the shared queue (saved remainder is
-    // empty) and the view falls back to the all-distributed state.
-    await tester.tap(find.byIcon(Icons.done_all));
+    // Exporting the sheet drains it from the shared queue (saved remainder is
+    // empty) and disables the export again.
+    await tester.tap(exportBtn);
     await tester.pumpAndSettle();
-    expect(find.text('Jane Doe'), findsNothing);
-    expect(find.byKey(const ValueKey('passwords-empty')), findsOneWidget);
     expect(await harness.passwordQueue.load(), isEmpty);
+    expect(
+      tester.widget<OutlinedButton>(exportBtn).onPressed,
+      isNull,
+      reason: 'the queue is drained, so nothing left to print',
+    );
   });
 
   testWidgets(

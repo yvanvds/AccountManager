@@ -14,9 +14,11 @@ enum PasswordAccountKind { account, coAccount }
 ///
 /// The fields mirror the legacy `AccountPassword` (the common new-student
 /// case): a login name, display name, mail, class group, and the two backend
-/// passwords. Co-account-specific fields (the `Co1..Co6` addresses) are not
-/// modelled in this scaffold slice — [kind] discriminates the two, and the
-/// extra co-account fields will be added when the Passwords page is ported.
+/// passwords. A [kind] of [PasswordAccountKind.coAccount] instead carries the
+/// freshly-generated co-account passwords in [coAccountPasswords], keyed by the
+/// 1-based Smartschool slot (1..6) — the port of the legacy `CoAccountPassword`
+/// with its `Co1..Co6` fields (#180). An `account`-kind entry leaves that map
+/// empty; a `coAccount`-kind entry leaves the two backend passwords null.
 ///
 /// [personId] anchors the entry to a stable [PersonId] so the queue survives a
 /// re-sync that changes a login or mail.
@@ -30,6 +32,7 @@ class PasswordEntry {
     this.classGroup,
     this.smartschoolPassword,
     this.azurePassword,
+    this.coAccountPasswords = const <int, String>{},
   });
 
   /// Stable identity of the person this sheet belongs to.
@@ -56,6 +59,13 @@ class PasswordEntry {
   /// The Azure / Office 365 password. Legacy `AzurePassword`.
   final String? azurePassword;
 
+  /// Freshly-generated co-account passwords, keyed by 1-based Smartschool slot
+  /// (1..6). Non-empty only for a [PasswordAccountKind.coAccount] entry; the
+  /// port of the legacy `CoAccountPassword.Co1..Co6` fields (#180). Only the
+  /// slots that were regenerated appear; the rest are absent (exported as blank
+  /// CSV cells).
+  final Map<int, String> coAccountPasswords;
+
   /// Serializes to a JSON-encodable map.
   Map<String, dynamic> toJson() {
     return {
@@ -68,6 +78,10 @@ class PasswordEntry {
       if (smartschoolPassword != null)
         'smartschoolPassword': smartschoolPassword,
       if (azurePassword != null) 'azurePassword': azurePassword,
+      if (coAccountPasswords.isNotEmpty)
+        'coAccountPasswords': <String, String>{
+          for (final e in coAccountPasswords.entries) '${e.key}': e.value,
+        },
     };
   }
 
@@ -90,6 +104,12 @@ class PasswordEntry {
       classGroup: json['classGroup'] as String?,
       smartschoolPassword: json['smartschoolPassword'] as String?,
       azurePassword: json['azurePassword'] as String?,
+      coAccountPasswords: <int, String>{
+        for (final e in (json['coAccountPasswords'] as Map<String, dynamic>? ??
+                const <String, dynamic>{})
+            .entries)
+          int.parse(e.key): e.value as String,
+      },
     );
   }
 }

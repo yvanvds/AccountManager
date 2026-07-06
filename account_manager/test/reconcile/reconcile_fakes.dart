@@ -13,6 +13,7 @@ import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
+import 'package:account_manager/src/passwords/password_backends.dart';
 import 'package:account_manager/src/reconcile/log_buffer.dart';
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_manager/src/reconcile/reconcile_controller.dart';
@@ -62,6 +63,49 @@ class RecordingGraph implements az.GraphTransport {
   Future<az.GraphResponse> send(az.GraphRequest request) async {
     requests.add(request);
     return const az.GraphResponse(statusCode: 204);
+  }
+}
+
+/// A recording [PasswordBackends] for the on-demand Passwords screen (#180):
+/// captures every live push a generation/reset would make and reports success,
+/// so the reworked Passwords screen can be driven end-to-end with zero network.
+/// A username in [failSmartschool] / mail in [failAzure] makes that push report
+/// failure, exercising the controller's per-target failure handling.
+class RecordingPasswordBackends implements PasswordBackends {
+  RecordingPasswordBackends({
+    this.failSmartschool = const <String>{},
+    this.failAzure = const <String>{},
+  });
+
+  /// Smartschool usernames whose push should fail.
+  final Set<String> failSmartschool;
+
+  /// Azure mails/UPNs whose push should fail (models "no Azure account").
+  final Set<String> failAzure;
+
+  /// Every Smartschool push: `(uid, slot, password)`.
+  final List<(String, core.AccountType, String)> smartschoolPushes =
+      <(String, core.AccountType, String)>[];
+
+  /// Every Azure push: `(mailOrUpn, password)`.
+  final List<(String, String)> azurePushes = <(String, String)>[];
+
+  @override
+  Future<bool> setSmartschoolPassword(
+    String uid,
+    core.AccountType slot,
+    String password,
+  ) async {
+    if (failSmartschool.contains(uid)) return false;
+    smartschoolPushes.add((uid, slot, password));
+    return true;
+  }
+
+  @override
+  Future<bool> setAzurePassword(String mailOrUpn, String password) async {
+    if (failAzure.contains(mailOrUpn)) return false;
+    azurePushes.add((mailOrUpn, password));
+    return true;
   }
 }
 
@@ -201,6 +245,51 @@ ss.SmartschoolSnapshot ssSnap({
           [ssGroup('2B', code: '2B_ss'), ssGroup('3C', code: '3C_ss')],
       accounts: accounts ?? [ssAccount()],
       memberships: memberships ?? [member('jane', '2B_ss')],
+    );
+
+/// A Smartschool snapshot shaped for the reworked Passwords screen (#180): a
+/// "Leerlingen" root holding one class (3C) with two students, and a
+/// "Personeel" group with one staff member. Drives the on-demand generation /
+/// reset flows end-to-end.
+ss.SmartschoolSnapshot passwordsSnap() => ss.SmartschoolSnapshot(
+      fetchedAt: kFixtureDate,
+      groups: <core.Group>[
+        const core.Group(
+          id: core.GroupId('leerlingen'),
+          name: 'Leerlingen',
+          description: '',
+          type: core.GroupType.group,
+          official: false,
+          origin: core.Origin.smartschool,
+        ),
+        const core.Group(
+          id: core.GroupId('3C'),
+          name: '3C',
+          description: '',
+          type: core.GroupType.classGroup,
+          official: true,
+          origin: core.Origin.smartschool,
+          parentId: core.GroupId('leerlingen'),
+        ),
+        const core.Group(
+          id: core.GroupId('personeel'),
+          name: 'Personeel',
+          description: '',
+          type: core.GroupType.group,
+          official: false,
+          origin: core.Origin.smartschool,
+        ),
+      ],
+      accounts: <ss.SmartschoolAccount>[
+        ssAccount(uid: 'jane', accountId: '1', mail: 'jane@student.school'),
+        ssAccount(uid: 'bob', accountId: '2', mail: 'bob@student.school'),
+        ssAccount(uid: 'anna.smit', accountId: '3', mail: 'anna@school'),
+      ],
+      memberships: <ss.SmartschoolMembership>[
+        member('jane', '3C'),
+        member('bob', '3C'),
+        member('anna.smit', 'personeel'),
+      ],
     );
 
 /// A Smartschool snapshot whose [uids] accounts all share one [mail] — the
@@ -663,6 +752,11 @@ class ReconcileHarness {
   /// every account-creating apply, and the Passwords view reads and drains it.
   final InMemoryPasswordQueueStore passwordQueue = InMemoryPasswordQueueStore();
 
+  /// The recording live-write seam for the on-demand Passwords screen (#180):
+  /// captures every Smartschool/Azure push a generation or reset performs.
+  final RecordingPasswordBackends passwordBackends =
+      RecordingPasswordBackends();
+
   /// The bundle the screen's bootstrap seam expects.
   ReconcileServices get services => ReconcileServices(
         settings: const AppSettings(),
@@ -671,6 +765,7 @@ class ReconcileHarness {
         controller: controller,
         log: log,
         passwordQueue: passwordQueue,
+        passwordBackends: passwordBackends,
       );
 
   /// A ready-made bootstrap closure for [ReconcileScreen]/[AccountManagerApp].
