@@ -337,6 +337,109 @@ void main() {
         findsOneWidget);
   });
 
+  // --- Classroom filters: toggle + name search (#187) ----------------------
+
+  testWidgets(
+      'the Leerlingen classroom toggle shows only accounts with actions, and '
+      'that tab carries no name search (#187)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // A passive-session class with a mix: one student with an applyable action,
+    // one without. The toggle must narrow to the former (its `hasPending`).
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+      matAccount(id: 's2', label: 'Kees Bakker', withAction: false),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, school: 'School 1', grade: '3', classroom: '3C');
+    // Both accounts show unfiltered; the Leerlingen tab has no search box.
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(find.text('Kees Bakker'), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-search')), findsNothing);
+
+    // Toggle "only with actions": the action-free account drops out.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(find.text('Kees Bakker'), findsNothing);
+  });
+
+  testWidgets(
+      'the Personeel classroom search matches on voornaam or naam and combines '
+      'with the only-with-actions toggle (#187)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // Three staff in the one synthetic Personeel class: two share the surname
+    // "Smit" (one with an action, one without) and one distinct voornaam.
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matStaff(id: 't1', label: 'Anna Smit', withAction: true),
+      matStaff(id: 't2', label: 'Bram Jansen', withAction: false),
+      matStaff(id: 't3', label: 'Clara Smit', withAction: false),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Switch to the Personeel tab and drill into its single staff class.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('rollup-school-school|staff')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+
+    // All three show; the Personeel tab carries the search box.
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Bram Jansen'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+
+    // Search on the naam "Smit": both Smits match, Jansen drops.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsOneWidget);
+    expect(find.text('Bram Jansen'), findsNothing);
+
+    // Search on the voornaam "Bram": only Jansen matches.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'bram');
+    await tester.pump();
+    expect(find.text('Bram Jansen'), findsOneWidget);
+    expect(find.text('Anna Smit'), findsNothing);
+    expect(find.text('Clara Smit'), findsNothing);
+
+    // Combine the toggle with the search: search "Smit" AND only-with-actions
+    // keeps just Anna (Clara matches the name but has no action).
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit');
+    await tester.pump();
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    expect(find.text('Bram Jansen'), findsNothing);
+
+    // A query matching nothing shows the filter-empty line, not the class-empty
+    // one.
+    await tester.enterText(find.byKey(const ValueKey('actions-search')), 'zzz');
+    await tester.pump();
+    expect(
+        find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
+  });
+
   // --- Address diff in the drill-down (#153) -------------------------------
   const wisaAddr = Address(
     street: 'Koophandelstraat',

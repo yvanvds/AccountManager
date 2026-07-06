@@ -147,6 +147,13 @@ class _ActionsBodyState extends State<_ActionsBody>
   late final TabController _tabs;
   int _shownIndex = 0;
 
+  /// The classroom drill-down filters (#187): show only accounts carrying an
+  /// applyable action (both tabs), and a name search (Personeel tab). They
+  /// combine — a filtered account list respects both. Reset when the family tab
+  /// changes so each tab opens at a clean, unfiltered list.
+  bool _onlyWithActions = false;
+  final TextEditingController _search = TextEditingController();
+
   ReconcileController get controller => widget.controller;
 
   @override
@@ -154,6 +161,7 @@ class _ActionsBodyState extends State<_ActionsBody>
     super.initState();
     _tabs = TabController(length: _ActionFamilyTab.values.length, vsync: this)
       ..addListener(_onTabChanged);
+    _search.addListener(_onSearchChanged);
   }
 
   @override
@@ -161,7 +169,60 @@ class _ActionsBodyState extends State<_ActionsBody>
     _tabs
       ..removeListener(_onTabChanged)
       ..dispose();
+    _search
+      ..removeListener(_onSearchChanged)
+      ..dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Whether the Personeel family tab is the selected one — the only tab that
+  /// carries a name search (#187).
+  bool get _staffTab => _tabs.index == _ActionFamilyTab.personeel.index;
+
+  /// The active, normalized search query (empty on any non-Personeel tab).
+  String get _query => _staffTab ? _search.text.trim().toLowerCase() : '';
+
+  /// Whether [label] passes the current name search. A single searchbox matches
+  /// the person's display name ("Voornaam Naam"), so a query on either the
+  /// voornaam or the naam is a substring hit (#187).
+  bool _matchesSearch(String label) {
+    final q = _query;
+    return q.isEmpty || label.toLowerCase().contains(q);
+  }
+
+  /// The passive-session classroom accounts narrowed by the active filters: the
+  /// "only with actions" toggle keeps just the accounts with an applyable
+  /// candidate (the same `hasPending` predicate the rollup pending counts and
+  /// the tile badge use), and the name search keeps matching display names.
+  List<MaterializedAccount> _filterAccounts(
+      List<MaterializedAccount> accounts) {
+    return [
+      for (final a in accounts)
+        if ((!_onlyWithActions || a.hasPending) && _matchesSearch(a.label)) a,
+    ];
+  }
+
+  /// The active-session pending situations narrowed by the name search. The
+  /// "only with actions" toggle is a no-op here — every pending entry already
+  /// carries an action — so only the search filters, dropping any subset left
+  /// empty so the same-situation headers stay in sync (#187).
+  List<List<PendingAccountEntry>> _filterSituations(
+    List<List<PendingAccountEntry>> situations,
+  ) {
+    if (_query.isEmpty) return situations;
+    final out = <List<PendingAccountEntry>>[];
+    for (final subset in situations) {
+      final kept = <PendingAccountEntry>[
+        for (final e in subset)
+          if (_matchesSearch(e.target)) e,
+      ];
+      if (kept.isNotEmpty) out.add(kept);
+    }
+    return out;
   }
 
   /// Rebuilds the sliver content for the newly-selected family, and — when the
@@ -171,6 +232,9 @@ class _ActionsBodyState extends State<_ActionsBody>
     final index = _tabs.index;
     if (index != _shownIndex) {
       _shownIndex = index;
+      // A fresh tab opens at a clean, unfiltered list (#187).
+      _onlyWithActions = false;
+      _search.clear();
       if (controller.selectedClassroom != null) controller.closeClassroom();
       if (controller.showingGroups) controller.closeGroups();
     }
@@ -260,31 +324,57 @@ class _ActionsBodyState extends State<_ActionsBody>
     if (controller.loadingClassroom) {
       return slivers..add(_section(const LinearProgressIndicator()));
     }
+
+    Widget filterBar() => _section(_ClassroomFilterBar(
+          onlyWithActions: _onlyWithActions,
+          onOnlyWithActionsChanged: (v) => setState(() => _onlyWithActions = v),
+          showSearch: _staffTab,
+          searchController: _search,
+        ));
+
     if (controller.linked != null) {
-      final rows = _pendingRows(controller.classroomPendingSituations);
-      if (rows.isEmpty) {
+      final situations = controller.classroomPendingSituations;
+      if (situations.isEmpty) {
         return slivers
           ..add(_section(const _EmptyLine('Geen openstaande acties in deze '
               'klas.')));
       }
-      slivers.add(_rowsSliver(rows));
+      final rows = _pendingRows(_filterSituations(situations));
+      slivers
+        ..add(filterBar())
+        ..add(_gap(PlinkSpacing.s3))
+        ..add(rows.isEmpty
+            ? _section(const _EmptyLine(_noMatchLabel))
+            : _rowsSliver(rows));
     } else {
       final accounts = controller.classroomAccounts;
       if (accounts == null || accounts.isEmpty) {
         return slivers
           ..add(_section(const _EmptyLine('Geen accounts in deze klas.')));
       }
-      slivers.add(SliverPadding(
-        padding: _hPad,
-        sliver: SliverList.builder(
-          itemCount: accounts.length,
-          itemBuilder: (context, index) =>
-              _AccountTile(account: accounts[index]),
-        ),
-      ));
+      final filtered = _filterAccounts(accounts);
+      slivers
+        ..add(filterBar())
+        ..add(_gap(PlinkSpacing.s3))
+        ..add(filtered.isEmpty
+            ? _section(const _EmptyLine(_noMatchLabel))
+            : SliverPadding(
+                padding: _hPad,
+                sliver: SliverList.builder(
+                  itemCount: filtered.length,
+                  itemBuilder: (context, index) =>
+                      _AccountTile(account: filtered[index]),
+                ),
+              ));
     }
     return slivers;
   }
+
+  /// The line shown when the active filters (toggle and/or search) hide every
+  /// account in the open classroom (#187) — distinct from the "no accounts at
+  /// all" empty state so the operator knows to relax the filter.
+  static const String _noMatchLabel =
+      'Geen accounts die aan de filter voldoen.';
 
   /// The drilled-into "Klasgroepen" node (#119): the live interactive group
   /// entries (active) or the read-only materialized group docs (passive),
@@ -750,6 +840,71 @@ class _DetailHeader extends StatelessWidget {
         ),
         const SizedBox(width: PlinkSpacing.s2),
         Text(title, style: text.titleMedium),
+      ],
+    );
+  }
+}
+
+/// The filter bar above a drilled-into classroom's account list (#187): a
+/// "toon enkel accounts met acties" toggle (both tabs) and — on the Personeel
+/// tab — a name search. Both narrow the list below and combine: the shown list
+/// respects the toggle and the search together.
+class _ClassroomFilterBar extends StatelessWidget {
+  const _ClassroomFilterBar({
+    required this.onlyWithActions,
+    required this.onOnlyWithActionsChanged,
+    required this.showSearch,
+    required this.searchController,
+  });
+
+  final bool onlyWithActions;
+  final ValueChanged<bool> onOnlyWithActionsChanged;
+
+  /// Whether to render the name search field (Personeel tab only).
+  final bool showSearch;
+  final TextEditingController searchController;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (showSearch) ...<Widget>[
+          TextField(
+            key: const ValueKey('actions-search'),
+            controller: searchController,
+            decoration: InputDecoration(
+              isDense: true,
+              prefixIcon: const Icon(Icons.search, size: 18),
+              hintText: 'Zoek op voornaam of naam',
+              border: const OutlineInputBorder(),
+              suffixIcon: searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      key: const ValueKey('actions-search-clear'),
+                      icon: const Icon(Icons.close, size: 18),
+                      tooltip: 'Wis zoekopdracht',
+                      onPressed: searchController.clear,
+                    ),
+            ),
+          ),
+          const SizedBox(height: PlinkSpacing.s3),
+        ],
+        Row(
+          children: <Widget>[
+            Switch(
+              key: const ValueKey('actions-only-with-actions'),
+              value: onlyWithActions,
+              onChanged: onOnlyWithActionsChanged,
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              child: Text('Toon enkel accounts met acties',
+                  style: text.bodyMedium),
+            ),
+          ],
+        ),
       ],
     );
   }

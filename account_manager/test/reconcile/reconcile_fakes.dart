@@ -414,6 +414,90 @@ ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
       ourSchoolIds: ourSchoolIds,
     );
 
+// ---------------------------------------------------------------------------
+// Passive-session materialized-view fixtures for the Actions filter tests
+// (#187): hand-built account docs so one classroom can hold a controlled mix of
+// accounts with and without applyable actions and with distinct names, then
+// seeded straight into an [InMemoryLinkedStore] a passive session reads back.
+// ---------------------------------------------------------------------------
+
+/// One [MaterializedAccount] for a passive-session classroom, placed in
+/// [school]/[gradeYear]/[classroom]. [withAction] decides whether it carries an
+/// applyable candidate — i.e. whether [MaterializedAccount.hasPending] is true,
+/// the "has actions" predicate the toggle filters on.
+MaterializedAccount matAccount({
+  required String id,
+  required String label,
+  String school = '1',
+  String schoolLabel = 'School 1',
+  String gradeYear = '3',
+  String classroom = '3C',
+  bool isStaff = false,
+  bool withAction = false,
+}) =>
+    MaterializedAccount(
+      id: core.LinkedAccountId(id),
+      school: school,
+      schoolLabel: schoolLabel,
+      gradeYear: gradeYear,
+      classroom: classroom,
+      role: isStaff ? core.PersonRole.teacher : core.PersonRole.student,
+      isStaff: isStaff,
+      confidence: core.LinkConfidence.high,
+      label: label,
+      inWisa: true,
+      inSmartschool: true,
+      inAzure: true,
+      candidates: withAction
+          ? <CandidateAction>[
+              CandidateAction(
+                family: isStaff ? 'staff' : 'student',
+                kind: 'MoveToSmartschoolClassGroup',
+                system: core.Origin.smartschool,
+                summary: 'Wijzig de klas in Smartschool',
+              ),
+            ]
+          : const <CandidateAction>[],
+    );
+
+/// A staff [MaterializedAccount] in the synthetic "Personeel" school/class the
+/// Personeel tab drills into (all staff share one bucket).
+MaterializedAccount matStaff({
+  required String id,
+  required String label,
+  bool withAction = false,
+}) =>
+    matAccount(
+      id: id,
+      label: label,
+      school: staffPartition,
+      schoolLabel: 'Personeel',
+      gradeYear: 'Personeel',
+      classroom: 'Personeel',
+      isStaff: true,
+      withAction: withAction,
+    );
+
+/// An [InMemoryLinkedStore] seeded with [accounts] and their derived rollups —
+/// the shared materialized view a passive Actions session reads with no pull and
+/// no `link()` (#187).
+Future<InMemoryLinkedStore> seededLinkedStore(
+  List<MaterializedAccount> accounts, {
+  String syncedBy = 'operator@school.example',
+}) async {
+  final store = InMemoryLinkedStore();
+  await store.writeMaterialized(
+    MaterializedView(
+      generation: 1,
+      accounts: accounts,
+      rollups: buildRollups(accounts),
+    ),
+    syncedBy: syncedBy,
+    at: kFixtureDate,
+  );
+  return store;
+}
+
 az.AzureSnapshot azSnap({DateTime? fetchedAt, List<az.AzureUser>? users}) =>
     az.AzureSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,

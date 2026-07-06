@@ -1813,6 +1813,71 @@ void main() {
     expect(loopback.interactiveCalls, ['graph']);
     expect(find.byType(AppShell), findsOneWidget);
   });
+
+  testWidgets(
+      'the Actions Personeel classroom filters by name and by the '
+      'only-with-actions toggle end-to-end, combining both (#187)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real window over a passive session: three staff
+    // seeded into the one synthetic Personeel class — two share the surname
+    // "Smit" (one carrying an action, one not) and one has a distinct voornaam.
+    // The operator narrows the list by name and by the has-actions toggle, and
+    // the two filters combine.
+    useTallWindow(tester);
+    final store = await seededLinkedStore([
+      matStaff(id: 't1', label: 'Anna Smit', withAction: true),
+      matStaff(id: 't2', label: 'Bram Jansen', withAction: false),
+      matStaff(id: 't3', label: 'Clara Smit', withAction: false),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Open the Actions tab (passive overview from the store), go to Personeel,
+    // and drill into the single staff class.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('rollup-school-school|staff')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+
+    // All three staff render, and the Personeel tab carries the name search.
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Bram Jansen'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+
+    // Search on the surname "Smit": both Smits match, Jansen drops out.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsOneWidget);
+    expect(find.text('Bram Jansen'), findsNothing);
+
+    // Combine with the only-with-actions toggle: only Anna keeps an action, so
+    // Clara (name-matched but action-free) drops too.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    expect(find.text('Bram Jansen'), findsNothing);
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.
