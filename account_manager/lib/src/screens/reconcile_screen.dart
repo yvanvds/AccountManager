@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:account_core/account_core.dart' as core;
-import 'package:account_state/account_state.dart' show LinkedState;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -153,22 +152,22 @@ class _ReconcileBody extends StatelessWidget {
       SliverToBoxAdapter(child: SizedBox(height: height));
 
   /// Reconcile is now short and responsive (#154): the sync/drift header, the
-  /// status banner, and — once a sync has linked this session — the linked
-  /// overview counts with the duplicate-mail warnings. The pending actions and
-  /// their per-year/per-class drill-down live on the Actions tab.
+  /// status banner, and — as soon as *any* operator has synced — the per-category
+  /// overview (students / staff / class groups with their pending indicators)
+  /// with the duplicate-mail warnings. The overview reads from the stored rollups
+  /// (#163), so it renders in a passive session that never linked; the pending
+  /// actions and their per-year/per-class drill-down live on the Actions tab.
   List<Widget> _slivers() {
-    final linked = controller.linked;
     final slivers = <Widget>[
       _gap(PlinkSpacing.s6),
       _section(_Header(controller: controller)),
       _gap(PlinkSpacing.s5),
       _section(_StatusBanner(controller: controller)),
     ];
-    if (linked != null) {
+    if (controller.hasOverview || controller.duplicateWarnings.isNotEmpty) {
       slivers
         ..add(_gap(PlinkSpacing.s5))
-        ..add(
-            _section(_OverviewSection(linked: linked, controller: controller)));
+        ..add(_section(_OverviewSection(controller: controller)));
     }
     slivers.add(_gap(PlinkSpacing.s6));
     return slivers;
@@ -364,32 +363,59 @@ class _StatusBanner extends StatelessWidget {
       );
 }
 
+/// The at-a-glance category overview restored to the Reconcile tab (#163): the
+/// students / staff / class-groups totals with a per-category pending indicator,
+/// summed from the stored rollups so it renders even in a passive session that
+/// never linked. The duplicate-mail warnings stay here beneath it; they come
+/// from the live linked view, so they only appear in an active session.
 class _OverviewSection extends StatelessWidget {
-  const _OverviewSection({required this.linked, required this.controller});
+  const _OverviewSection({required this.controller});
 
-  final LinkedState linked;
   final ReconcileController controller;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final snapshot = linked.snapshot;
+    final ColorScheme colors = Theme.of(context).colorScheme;
     final duplicates = controller.duplicateWarnings;
+    final students = controller.studentSummary;
+    final staff = controller.staffSummary;
+    final groups = controller.groupSummary;
+    final pending = students.pending + staff.pending + groups.pending;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Linked overview', style: text.titleMedium),
+        Text('Overview', style: text.titleMedium),
         const SizedBox(height: PlinkSpacing.s3),
         Wrap(
           spacing: PlinkSpacing.s4,
           runSpacing: PlinkSpacing.s4,
           children: <Widget>[
-            _CountTile(system: 'WISA', counts: snapshot.wisa),
-            _CountTile(system: 'Smartschool', counts: snapshot.smartschool),
-            _CountTile(system: 'Azure AD', counts: snapshot.azure),
+            _CategoryTile(
+              key: const ValueKey('reconcile-category-students'),
+              category: 'Leerlingen',
+              summary: students,
+            ),
+            _CategoryTile(
+              key: const ValueKey('reconcile-category-staff'),
+              category: 'Personeel',
+              summary: staff,
+            ),
+            _CategoryTile(
+              key: const ValueKey('reconcile-category-groups'),
+              category: 'Klasgroepen',
+              summary: groups,
+            ),
           ],
         ),
+        if (pending > 0) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Text(
+            'Bekijk en pas de openstaande acties toe op het tabblad Acties.',
+            style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+        ],
         if (duplicates.isNotEmpty) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s3),
           for (final w in duplicates)
@@ -400,16 +426,27 @@ class _OverviewSection extends StatelessWidget {
   }
 }
 
-class _CountTile extends StatelessWidget {
-  const _CountTile({required this.system, required this.counts});
+/// One category card in the Reconcile overview (#163): its name, the total count
+/// of accounts/groups it holds, and a pending indicator — a check when nothing
+/// is outstanding, otherwise the count of applyable actions (which the Actions
+/// tab drills into).
+class _CategoryTile extends StatelessWidget {
+  const _CategoryTile({
+    super.key,
+    required this.category,
+    required this.summary,
+  });
 
-  final String system;
-  final core.LinkCounts counts;
+  final String category;
+  final CategorySummary summary;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
     final Color hairline = Theme.of(context).dividerColor;
+    final int pending = summary.pending;
+    final bool clear = pending == 0;
 
     return Container(
       width: 200,
@@ -421,18 +458,29 @@ class _CountTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          PlinkBadge(system),
+          PlinkBadge(category),
           const SizedBox(height: PlinkSpacing.s3),
-          Text(
-            '${counts.linked} / ${counts.total}',
-            style: text.headlineSmall,
-          ),
-          const SizedBox(height: PlinkSpacing.s1),
-          Text(
-            counts.unlinked == 0
-                ? 'fully linked'
-                : '${counts.unlinked} not in every system',
-            style: text.bodySmall,
+          Text('${summary.total}', style: text.headlineSmall),
+          const SizedBox(height: PlinkSpacing.s2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                clear ? Icons.check_circle_outline : Icons.pending_actions,
+                size: 16,
+                color: clear ? colors.primary : colors.error,
+              ),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(
+                child: Text(
+                  clear
+                      ? 'geen openstaande acties'
+                      : '$pending openstaande '
+                          '${pending == 1 ? 'actie' : 'acties'}',
+                  style: text.bodySmall,
+                ),
+              ),
+            ],
           ),
         ],
       ),

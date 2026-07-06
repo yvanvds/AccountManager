@@ -237,6 +237,24 @@ class DuplicateMailWarning {
   List<String> get uids => sortedDuplicateUids(accounts.map((a) => a.uid));
 }
 
+/// A per-category summary for the Reconcile overview (#163): how many accounts
+/// (or class groups) the category holds, and how many of them carry an applyable
+/// pending action. Derived from the stored [Rollup]s, so it is readable in a
+/// passive session that never linked — the whole point of the materialized view.
+class CategorySummary {
+  const CategorySummary({required this.total, required this.pending});
+
+  /// The total accounts (students / staff) or class groups in this category.
+  final int total;
+
+  /// How many of them carry at least one applyable pending action (the
+  /// informational group notices, which never write, are excluded).
+  final int pending;
+
+  /// The zero state before any sync has materialized a rollup.
+  static const CategorySummary empty = CategorySummary(total: 0, pending: 0);
+}
+
 /// Drives the reconcile loop over the State layer (#99): **sync → linked
 /// overview → pending actions → dry-run → apply**, with progress and failures
 /// reported through the shared [LogBuffer].
@@ -804,6 +822,44 @@ class ReconcileController extends ChangeNotifier {
 
   /// Whether a classroom drill-down read is in flight.
   bool get loadingClassroom => _loadingClassroom;
+
+  /// The three category summaries the Reconcile overview renders (#163), summed
+  /// from the stored rollups so they read in a passive session too: students are
+  /// every school rollup *except* the synthetic staff bucket, staff is that
+  /// bucket, and class groups is the single "Klasgroepen" node. Each is zero
+  /// before any operator has synced.
+  CategorySummary get studentSummary {
+    var total = 0;
+    var pending = 0;
+    for (final r in _rollups) {
+      if (r.level == RollupLevel.school && r.school != staffPartition) {
+        total += r.accountCount;
+        pending += r.pendingCount;
+      }
+    }
+    return CategorySummary(total: total, pending: pending);
+  }
+
+  /// The staff category summary (#163): the single school rollup living in the
+  /// synthetic [staffPartition] bucket, or [CategorySummary.empty] when no staff
+  /// account has been materialized.
+  CategorySummary get staffSummary {
+    for (final r in _rollups) {
+      if (r.level == RollupLevel.school && r.school == staffPartition) {
+        return CategorySummary(total: r.accountCount, pending: r.pendingCount);
+      }
+    }
+    return CategorySummary.empty;
+  }
+
+  /// The class-groups category summary (#163): the single "Klasgroepen" rollup
+  /// node, or [CategorySummary.empty] when no group carries an action to surface.
+  CategorySummary get groupSummary {
+    final r = groupRollup;
+    return r == null
+        ? CategorySummary.empty
+        : CategorySummary(total: r.accountCount, pending: r.pendingCount);
+  }
 
   /// The single "Klasgroepen" rollup node (#119), or `null` when no group has a
   /// pending action to drill into.

@@ -204,7 +204,7 @@ List<Rollup> buildRollups(List<MaterializedAccount> accounts) {
 // Placement.
 // ---------------------------------------------------------------------------
 
-const String _staffSchool = 'staff';
+const String _staffSchool = staffPartition;
 const String _staffLabel = 'Personeel';
 const String _unassignedSchool = 'unassigned';
 const String _unassignedLabel = 'Niet toegewezen';

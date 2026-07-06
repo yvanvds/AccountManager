@@ -1,6 +1,7 @@
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/log_buffer.dart';
+import 'package:account_manager/src/reconcile/reconcile_controller.dart';
 import 'package:account_state/account_state.dart';
 import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter_test/flutter_test.dart';
@@ -376,6 +377,67 @@ void main() {
           await h.linkedStore.readClassroom(school: '1', classroom: '3D');
       expect(classroom.single.decisions, hasLength(1),
           reason: 'the surviving decision is re-attached to the account doc');
+    });
+  });
+
+  group('category overview summaries (#163)', () {
+    void expectSummary(CategorySummary s,
+        {required int total, required int pending}) {
+      expect(s.total, total);
+      expect(s.pending, pending);
+    }
+
+    test('are empty before any sync', () {
+      final h = ReconcileHarness();
+      expectSummary(h.controller.studentSummary, total: 0, pending: 0);
+      expectSummary(h.controller.staffSummary, total: 0, pending: 0);
+      expectSummary(h.controller.groupSummary, total: 0, pending: 0);
+    });
+
+    test('sum the rollups per category after a sync', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      // One fixture student (School 1); the rollup pendingCount sums her
+      // applyable candidate actions (as the Actions drill-down badges do).
+      expectSummary(h.controller.studentSummary, total: 1, pending: 2);
+      // No staff in the fixture ⇒ the staff bucket is absent.
+      expectSummary(h.controller.staffSummary, total: 0, pending: 0);
+      // Two Smartschool-only classes (2B, 3C) are informational group notices,
+      // so they count toward the total but carry no applyable pending action.
+      expectSummary(h.controller.groupSummary, total: 2, pending: 0);
+    });
+
+    test('departed students sum across the unassigned bucket, not staff',
+        () async {
+      // Three WISA-departed, Smartschool-only accounts, all in the synthetic
+      // "unassigned" school — never the staff bucket. Each carries two applyable
+      // candidates (the unregister + delete alternatives), so the rollup
+      // pendingCount is 3 × 2.
+      final h = manyDepartedHarness(count: 3);
+      await h.controller.sync();
+
+      expectSummary(h.controller.studentSummary, total: 3, pending: 6);
+      expectSummary(h.controller.staffSummary, total: 0, pending: 0);
+    });
+
+    test('a passive session derives the summaries from the stored rollups',
+        () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+          .controller
+          .sync();
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+
+      expect(s2.controller.linked, isNull);
+      expectSummary(s2.controller.studentSummary, total: 1, pending: 2);
+      expectSummary(s2.controller.groupSummary, total: 2, pending: 0);
     });
   });
 

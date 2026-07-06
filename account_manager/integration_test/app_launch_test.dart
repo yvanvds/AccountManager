@@ -151,7 +151,13 @@ void main() {
     expect(harness.wisaSyncs, 1);
     expect(harness.ssSyncs, 1);
     expect(harness.azSyncs, 1);
-    expect(find.text('Linked overview'), findsOneWidget);
+    // The per-category overview renders on Reconcile from the rollups (#163):
+    // students / staff / class-groups, the one fixture student summed with a
+    // pending indicator.
+    expect(find.text('Overview'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-category-students')),
+        findsOneWidget);
+    expect(find.text('2 openstaande acties'), findsOneWidget);
     expect(find.textContaining('Pending actions'), findsNothing);
     expect(
       find.byWidgetPredicate((w) =>
@@ -585,7 +591,7 @@ void main() {
     expect(resumed.wisaSyncs, 1);
     expect(resumed.ssSyncs, 0, reason: 'Smartschool seeded from the store');
     expect(resumed.azSyncs, 0, reason: 'Azure seeded from the store');
-    expect(find.text('Linked overview'), findsOneWidget);
+    expect(find.text('Overview'), findsOneWidget);
   });
 
   testWidgets(
@@ -636,6 +642,52 @@ void main() {
     expect(find.text('Jane Doe'), findsOneWidget);
     expect(
         find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    expect(resumed.wisaSyncs, 0);
+    expect(resumed.ssSyncs, 0);
+    expect(resumed.azSyncs, 0);
+  });
+
+  testWidgets(
+      'a passive session renders the category overview on Reconcile from the '
+      'stored rollups, with no pull and no link() (#163)',
+      (WidgetTester tester) async {
+    // Session 1 (offline harness) syncs and materializes the shared view — the
+    // rollups the passive overview reads — into stores both sessions share.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    // Session 2 is the real app over the same stores. It never syncs.
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // The per-category overview renders straight from the stored rollups — no
+    // Synchronise tapped, and link() is never called in a passive session.
+    expect(find.text('Overview'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-category-students')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('reconcile-category-staff')), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-category-groups')),
+        findsOneWidget);
+    // The one fixture student is summed from the rollup with a pending indicator.
+    expect(find.text('2 openstaande acties'), findsOneWidget);
+    expect(resumed.controller.linked, isNull,
+        reason: 'link() is never called in a passive session');
     expect(resumed.wisaSyncs, 0);
     expect(resumed.ssSyncs, 0);
     expect(resumed.azSyncs, 0);
