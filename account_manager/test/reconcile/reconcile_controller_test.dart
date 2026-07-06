@@ -377,6 +377,84 @@ void main() {
     });
   });
 
+  group('busy-pass progress (#176)', () {
+    /// Records [ReconcileController.progress] on every notification, so a test
+    /// can assert the pass stepped the bar forward through its stages even
+    /// though the whole pass resolves within a single microtask flush.
+    List<double> recordProgress(ReconcileController controller) {
+      final seen = <double>[];
+      controller.addListener(() => seen.add(controller.progress));
+      return seen;
+    }
+
+    void expectMonotonic(List<double> values) {
+      for (var i = 1; i < values.length; i++) {
+        expect(values[i], greaterThanOrEqualTo(values[i - 1]),
+            reason: 'progress must never move backwards: $values');
+      }
+    }
+
+    test('a sync steps the bar forward through every stage', () async {
+      final h = ReconcileHarness();
+      final seen = recordProgress(h.controller);
+
+      await h.controller.sync();
+
+      expect(seen, isNotEmpty);
+      expect(seen.first, 0.0, reason: 'a pass resets the bar to the start');
+      expectMonotonic(seen);
+      // The bar visited intermediate stages (systems pulled, linking,
+      // persisting) rather than jumping straight to done — the "advances"
+      // the issue asks for.
+      expect(seen.where((v) => v > 0.0 && v < 1.0).length,
+          greaterThanOrEqualTo(3));
+      expect(h.controller.progress, greaterThanOrEqualTo(0.9));
+    });
+
+    test('an unchanged re-sync still advances past the start', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      h.wisaResult =
+          wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+
+      final seen = recordProgress(h.controller);
+      await h.controller.sync();
+
+      expect(h.controller.noChangesNeeded, isTrue);
+      expect(seen.first, 0.0);
+      expectMonotonic(seen);
+      expect(seen.any((v) => v > 0.0), isTrue,
+          reason: 'even the short no-changes path moves the bar off zero');
+    });
+
+    test('a drift check steps the bar forward through its stages', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      final seen = recordProgress(h.controller);
+      await h.controller.checkDrift();
+
+      expect(seen.first, 0.0);
+      expectMonotonic(seen);
+      expect(seen.where((v) => v > 0.0 && v < 1.0), isNotEmpty);
+    });
+
+    test('an apply advances once per action, reaching 1.0', () async {
+      final h = manyDepartedHarness(count: 4);
+      await h.controller.sync();
+      expect(h.controller.applyableCount, 4);
+
+      final seen = recordProgress(h.controller);
+      await h.controller.applyAll();
+
+      expect(seen.first, 0.0);
+      expectMonotonic(seen);
+      // One step per applied action: 0.25, 0.5, 0.75, 1.0.
+      expect(seen, containsAllInOrder(<double>[0.25, 0.5, 0.75, 1.0]));
+      expect(h.controller.progress, 1.0);
+    });
+  });
+
   group('materialized view (#115)', () {
     test('a sync writes per-account docs + rollups + bumps the generation',
         () async {

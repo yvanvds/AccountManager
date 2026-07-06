@@ -215,6 +215,53 @@ void main() {
   });
 
   testWidgets(
+      'while a sync runs the reconcile header shows a determinate progress bar '
+      'that has advanced past the start end-to-end (#176)',
+      (WidgetTester tester) async {
+    // The real app over the offline harness, but the Azure pull parks on a gate
+    // so the pass is frozen mid-flight — the moment the operator stares at the
+    // busy bar during a long pull. It must read as a determinate bar that has
+    // already stepped forward through the earlier stages, not a motionless
+    // sweep that looks like a hung app.
+    useTallWindow(tester);
+    final gate = Completer<void>();
+    final harness = ReconcileHarness(azureGate: gate);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // Idle: no progress bar at all.
+    expect(find.byKey(const ValueKey('reconcile-progress')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    // WISA + Smartschool resolve on the microtask queue; the Azure pull parks
+    // on the gate, freezing the pass with the busy bar on screen.
+    await tester.pump();
+    await tester.pump();
+
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const ValueKey('reconcile-progress')),
+    );
+    expect(bar.value, isNotNull, reason: 'determinate, not a static sweep');
+    expect(bar.value, greaterThan(0.0),
+        reason: 'already advanced through the earlier stages');
+    expect(bar.value, lessThan(1.0));
+    expect(harness.controller.busy, isTrue);
+
+    // Releasing the pull lets the pass finish; the bar disappears with busy.
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-progress')), findsNothing);
+    expect(harness.controller.busy, isFalse);
+  });
+
+  testWidgets(
       'a completed sync logs a terminal "Sync complete … Ready." line and the '
       'prominent last-sync freshness row renders end-to-end (#162)',
       (WidgetTester tester) async {

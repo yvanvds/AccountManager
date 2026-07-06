@@ -294,7 +294,14 @@ class _Header extends StatelessWidget {
         ],
         if (controller.busy) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s4),
-          const LinearProgressIndicator(),
+          // A determinate bar that steps forward through the pass (#176): each
+          // system pulled, linking, persisting, and every applied action nudges
+          // [ReconcileController.progress], so the operator sees the reconcile
+          // advancing instead of a motionless sweep that reads as a hung app.
+          LinearProgressIndicator(
+            key: const ValueKey('reconcile-progress'),
+            value: controller.progress,
+          ),
         ],
       ],
     );

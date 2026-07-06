@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_state/account_state.dart';
@@ -126,6 +128,40 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('no account changes needed'), findsWidgets);
+  });
+
+  testWidgets(
+      'while a sync runs the header shows a determinate progress bar that has '
+      'advanced past the start (#176)', (WidgetTester tester) async {
+    final gate = Completer<void>();
+    final harness = ReconcileHarness(azureGate: gate);
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    // Idle: no progress bar.
+    expect(find.byKey(const ValueKey('reconcile-progress')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    // WISA + Smartschool resolve on the microtask queue; the Azure pull parks
+    // on the gate, freezing the pass mid-flight so the busy bar is observable.
+    await tester.pump();
+    await tester.pump();
+
+    final barFinder = find.byKey(const ValueKey('reconcile-progress'));
+    expect(barFinder, findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(barFinder);
+    // Determinate — not the old motionless indeterminate sweep — and already
+    // stepped forward through the earlier stages (#176).
+    expect(bar.value, isNotNull);
+    expect(bar.value, greaterThan(0.0));
+    expect(bar.value, lessThan(1.0));
+
+    // Releasing the pull lets the pass finish; the bar disappears with busy.
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-progress')), findsNothing);
   });
 
   testWidgets(
