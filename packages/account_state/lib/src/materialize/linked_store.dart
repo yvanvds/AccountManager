@@ -44,12 +44,18 @@ abstract interface class LinkedStore {
   /// last-sync metadata in [systemSyncs] (the systems this pass pulled), merged
   /// into the stored map so a system not pulled this pass keeps its earlier
   /// stamp (#108). Only the sync/drift process calls this.
+  ///
+  /// A full view is ~9.6k account docs, so a real write can take a while.
+  /// [onProgress], when given, is called with human-readable progress lines
+  /// (e.g. `Persisting accounts: 2000/9600…`) so a long write is visible in the
+  /// operator log rather than looking hung (#168).
   Future<void> writeMaterialized(
     MaterializedView view, {
     required String syncedBy,
     required DateTime at,
     List<AccountDecision> droppedDecisions = const [],
     Map<core.Origin, SystemSyncMeta> systemSyncs = const {},
+    void Function(String message)? onProgress,
   });
 
   /// Creates or replaces one operator decision. The write seam #109/#110 use;
@@ -154,6 +160,7 @@ class InMemoryLinkedStore implements LinkedStore {
     required DateTime at,
     List<AccountDecision> droppedDecisions = const [],
     Map<core.Origin, SystemSyncMeta> systemSyncs = const {},
+    void Function(String message)? onProgress,
   }) async {
     _accounts
       ..clear()

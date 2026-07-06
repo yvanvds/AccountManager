@@ -275,6 +275,7 @@ class ReconcileController extends ChangeNotifier {
     this.syncedBy = '',
     this.publisher,
     this.subscriber,
+    this.persistTimeout = const Duration(minutes: 10),
     DateTime Function()? clock,
   }) : _now = clock ?? DateTime.now {
     final sub = subscriber;
@@ -308,6 +309,15 @@ class ReconcileController extends ChangeNotifier {
   /// `viewChanged` refetches the changed shard, a `syncStarted` / `syncEnded`
   /// re-reads the lease to disable/enable Synchronise. Null when unwired (#116).
   final SignalSubscriber? subscriber;
+
+  /// How long [_persist] waits for the shared-store write before giving up and
+  /// returning the pass to `ready` (#168). A full materialized view is ~9.6k
+  /// account docs; if the write stalls (throttling loop, a wedged connection),
+  /// the operator must not be stuck with Synchronise disabled forever — the
+  /// in-memory linked view is still usable this session. The wait is generous
+  /// so a merely-slow (but progressing) write is never cut off in practice;
+  /// tests inject a tiny value.
+  final Duration persistTimeout;
 
   final DateTime Function() _now;
 
@@ -1311,13 +1321,21 @@ class ReconcileController extends ChangeNotifier {
         rollups: view.rollups,
       );
       final at = _now();
-      await store.writeMaterialized(
-        merged,
-        syncedBy: syncedBy,
-        at: at,
-        droppedDecisions: merge.dropped,
-        systemSyncs: _pulled,
-      );
+      // Guard the shared-store write with a timeout: a full view is ~9.6k
+      // account docs, and a stalled write must not leave the pass wedged in
+      // `linking` with Synchronise disabled forever — the in-memory view is
+      // usable this session regardless (#168). Progress lines from the store
+      // keep a long-but-healthy write visible in the log.
+      await store
+          .writeMaterialized(
+            merged,
+            syncedBy: syncedBy,
+            at: at,
+            droppedDecisions: merge.dropped,
+            systemSyncs: _pulled,
+            onProgress: (m) => log.addMessage(core.Origin.all, m),
+          )
+          .timeout(persistTimeout);
       _rollups = merged.rollups;
       _syncState = SyncState(
         generation: view.generation,
@@ -1334,6 +1352,13 @@ class ReconcileController extends ChangeNotifier {
       _classroomAccounts = null;
       _showingGroups = false;
       _groupDocs = null;
+    } on TimeoutException {
+      log.addError(
+        core.Origin.all,
+        'Persisting the linked view timed out after '
+        '${persistTimeout.inSeconds}s — the linked view is usable this session '
+        'but was not saved to the shared store.',
+      );
     } on Object catch (e) {
       log.addError(core.Origin.all, 'Could not persist the linked view: $e');
     }

@@ -123,6 +123,53 @@ void main() {
     });
   });
 
+  group('persist resilience (#168)', () {
+    test(
+        'a stalled writeMaterialized times out, logs it, and returns the pass '
+        'to ready so Synchronise re-enables', () async {
+      final stalling = StallingLinkedStore();
+      final h = ReconcileHarness(
+        controllerStore: stalling,
+        persistTimeout: const Duration(milliseconds: 50),
+      );
+
+      await h.controller.sync();
+
+      // The persist step was reached but hung — the controller did not wait
+      // forever: it timed out and finished the pass.
+      expect(stalling.writeAttempted, isTrue);
+      expect(h.controller.busy, isFalse,
+          reason: 'a stalled persist must not leave the pass wedged');
+      expect(h.controller.phase, ReconcilePhase.ready);
+      // The operator sees the timeout, not silence.
+      expect(
+        h.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains('timed out')),
+      );
+      // The in-memory linked view is still usable this session.
+      expect(h.controller.linked, isNotNull);
+    });
+
+    test(
+        'a failing writeMaterialized is caught, logged, and the pass still '
+        'reaches ready', () async {
+      final failing = StallingLinkedStore(
+        failWith: StateError('cosmos down'),
+      );
+      final h = ReconcileHarness(controllerStore: failing);
+
+      await h.controller.sync();
+
+      expect(h.controller.busy, isFalse);
+      expect(h.controller.phase, ReconcilePhase.ready);
+      expect(
+        h.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains('Could not persist the linked view')),
+      );
+      expect(h.controller.linked, isNotNull);
+    });
+  });
+
   group('check for drift', () {
     test('re-reads Smartschool and Azure and re-links', () async {
       final h = ReconcileHarness();

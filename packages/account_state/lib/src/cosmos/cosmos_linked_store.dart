@@ -26,6 +26,17 @@ class CosmosLinkedStore implements LinkedStore {
 
   final CosmosClient _client;
 
+  /// How many per-document upserts/deletes may be in flight at once during a
+  /// [writeMaterialized] container replace. A full account container is ~9.6k
+  /// docs; a bounded fan-out turns thousands of serial round-trips into a write
+  /// that finishes in a fraction of the wall-clock while staying well under the
+  /// throughput that would trip sustained throttling (#168).
+  static const int _writeConcurrency = 24;
+
+  /// Emit a progress line every this many upserts (plus one at the end), so a
+  /// long write ticks in the operator log rather than looking hung (#168).
+  static const int _progressEvery = 1000;
+
   @override
   Future<SyncState> readSyncState() async {
     final doc = await _client.readDocument(
@@ -89,6 +100,7 @@ class CosmosLinkedStore implements LinkedStore {
     required DateTime at,
     List<AccountDecision> droppedDecisions = const [],
     Map<core.Origin, SystemSyncMeta> systemSyncs = const {},
+    void Function(String message)? onProgress,
   }) async {
     // Merge the systems pulled this pass over whatever the last write recorded,
     // so a system this pass did not pull keeps its earlier stamp (#108).
@@ -97,7 +109,8 @@ class CosmosLinkedStore implements LinkedStore {
       ...systemSyncs,
     };
     // Per-account docs: upsert the fresh set, then delete the stragglers no
-    // longer present so a departed account's doc does not linger.
+    // longer present so a departed account's doc does not linger. This is the
+    // big one (~9.6k docs); its progress is what the operator sees ticking.
     await _replaceContainer(
       container: linkedAccountsContainer,
       freshIds: {for (final a in view.accounts) a.id.value},
@@ -105,6 +118,8 @@ class CosmosLinkedStore implements LinkedStore {
         for (final a in view.accounts)
           a.id.value: (pk: a.school, doc: a.toJson()),
       },
+      label: 'accounts',
+      onProgress: onProgress,
     );
     // Per-group docs: same wholesale replace, in the single groups partition
     // (#119).
@@ -115,6 +130,8 @@ class CosmosLinkedStore implements LinkedStore {
         for (final g in view.groups)
           g.id.value: (pk: g.school, doc: g.toJson()),
       },
+      label: 'groups',
+      onProgress: onProgress,
     );
     // Rollups: same replace, keyed by the rollup node key.
     await _replaceContainer(
@@ -123,16 +140,19 @@ class CosmosLinkedStore implements LinkedStore {
       docsById: {
         for (final r in view.rollups) r.key: (pk: r.school, doc: r.toJson()),
       },
+      label: 'rollups',
+      onProgress: onProgress,
     );
 
     // Drop the decisions the merge found no longer applicable.
-    for (final d in droppedDecisions) {
-      await _client.deleteDocument(
+    await _runBounded(
+      droppedDecisions,
+      (d) => _client.deleteDocument(
         container: decisionsContainer,
         id: decisionDocId(d),
         partitionKey: d.accountId.value,
-      );
-    }
+      ),
+    );
 
     // Bump the generation last, so a reader that sees the new generation also
     // sees the rewritten docs.
@@ -339,30 +359,84 @@ class CosmosLinkedStore implements LinkedStore {
   /// Upserts every document in [docsById], then deletes any document currently
   /// in [container] whose id is not in [freshIds] — the "replace the whole set"
   /// the derived containers need without a container-level truncate.
+  ///
+  /// The upserts and deletes run with bounded concurrency ([_writeConcurrency])
+  /// rather than strictly one at a time: a full account container is ~9.6k docs,
+  /// and issuing that many serial round-trips is what made a full sync look hung
+  /// (#168). A bounded fan-out keeps wall-clock low without stampeding the
+  /// account's provisioned throughput into a sustained 429 back-off. When
+  /// [onProgress] and [label] are given, a line is emitted every
+  /// [_progressEvery] upserts (and once at the end) so a long write is visible.
   Future<void> _replaceContainer({
     required String container,
     required Set<String> freshIds,
     required Map<String, ({String pk, Map<String, dynamic> doc})> docsById,
+    String? label,
+    void Function(String message)? onProgress,
   }) async {
-    for (final entry in docsById.entries) {
-      await _client.upsertDocument(
+    final total = docsById.length;
+    await _runBounded(
+      docsById.values,
+      (entry) => _client.upsertDocument(
         container: container,
-        partitionKey: entry.value.pk,
-        document: entry.value.doc,
-      );
-    }
+        partitionKey: entry.pk,
+        document: entry.doc,
+      ),
+      onDone: (label == null || onProgress == null)
+          ? null
+          : (done) {
+              if (done == total || done % _progressEvery == 0) {
+                onProgress('Persisting $label: $done/$total…');
+              }
+            },
+    );
     final existing = await _client.queryDocuments(
       container: container,
       query: 'SELECT c.id, c.pk FROM c',
     );
-    for (final doc in existing) {
-      final id = doc['id'] as String?;
-      if (id == null || freshIds.contains(id)) continue;
-      await _client.deleteDocument(
+    final stragglers = [
+      for (final doc in existing)
+        if (doc['id'] is String && !freshIds.contains(doc['id']))
+          (
+            id: doc['id'] as String,
+            pk: (doc['pk'] as String?) ?? doc['id'] as String,
+          ),
+    ];
+    await _runBounded(
+      stragglers,
+      (s) => _client.deleteDocument(
         container: container,
-        id: id,
-        partitionKey: (doc['pk'] as String?) ?? id,
-      );
+        id: s.id,
+        partitionKey: s.pk,
+      ),
+    );
+  }
+
+  /// Runs [action] over [items] with at most [_writeConcurrency] futures in
+  /// flight at once, calling [onDone] with the running completed count after
+  /// each. A worker-pool (not fixed chunks) keeps the pool full — the slowest
+  /// item in a chunk never idles the rest — and any failure surfaces from the
+  /// awaited [Future.wait] just as the old serial loop would have thrown.
+  Future<void> _runBounded<T>(
+    Iterable<T> items,
+    Future<void> Function(T) action, {
+    void Function(int done)? onDone,
+  }) async {
+    final list = items.toList(growable: false);
+    if (list.isEmpty) return;
+    var next = 0;
+    var done = 0;
+    Future<void> worker() async {
+      while (true) {
+        final i = next++;
+        if (i >= list.length) return;
+        await action(list[i]);
+        onDone?.call(++done);
+      }
     }
+
+    final pool =
+        list.length < _writeConcurrency ? list.length : _writeConcurrency;
+    await Future.wait([for (var w = 0; w < pool; w++) worker()]);
   }
 }

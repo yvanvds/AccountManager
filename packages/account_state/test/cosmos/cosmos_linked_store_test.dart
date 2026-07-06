@@ -186,6 +186,87 @@ class _EnforcingFakeClient implements CosmosClient {
       [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
 }
 
+/// A [CosmosClient] that yields on every upsert (so writes can overlap) and
+/// records the peak number of concurrent upserts — to prove [writeMaterialized]
+/// fans out with *bounded* concurrency rather than one-at-a-time or unbounded
+/// (#168).
+class _ConcurrencyClient implements CosmosClient {
+  final Map<String, Map<String, Map<String, dynamic>>> _store = {};
+  int inFlight = 0;
+  int peakInFlight = 0;
+  int upserts = 0;
+
+  Map<String, Map<String, dynamic>> _c(String name) =>
+      _store.putIfAbsent(name, () => {});
+
+  @override
+  Future<WriteOutcome> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+    String? ifMatch,
+  }) async {
+    inFlight++;
+    upserts++;
+    if (inFlight > peakInFlight) peakInFlight = inFlight;
+    // Yield twice so overlapping calls actually interleave before any completes.
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    _c(container)[document['id'] as String] = Map.of(document);
+    inFlight--;
+    return const WriteOutcome.applied('etag');
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async {
+    if (query.contains('SELECT c.id, c.pk')) {
+      return [
+        for (final d in _c(container).values) {'id': d['id'], 'pk': d['pk']},
+      ];
+    }
+    return [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
+  }
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async =>
+      _c(container)[id];
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async {
+    _c(container)[document['id'] as String] = Map.of(document);
+    return true;
+  }
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {
+    _c(container).remove(id);
+  }
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      true;
+}
+
 final DateTime _d = DateTime.utc(2026, 7, 1);
 
 MaterializedAccount _account(String id,
@@ -382,6 +463,46 @@ void main() {
 
       await store.deleteDecision(decision);
       expect(await store.readDecisions(), isEmpty);
+    });
+
+    test(
+        'a full-size view writes with bounded concurrency and reports progress '
+        '(#168)', () async {
+      final client = _ConcurrencyClient();
+      final store = CosmosLinkedStore(client);
+      final progress = <String>[];
+
+      // A large account set: enough to cross the progress-report interval and to
+      // exercise the bounded fan-out.
+      final accounts = [
+        for (var i = 0; i < 2500; i++) _account('p$i', classroom: 'c${i % 30}'),
+      ];
+
+      await store.writeMaterialized(
+        _view(accounts),
+        syncedBy: 'op@school.example',
+        at: _d,
+        onProgress: progress.add,
+      );
+
+      // Every account doc was upserted…
+      expect(client.upserts, greaterThanOrEqualTo(2500));
+      // …with overlap (not strictly serial), but bounded — never a stampede of
+      // thousands of simultaneous writes.
+      expect(client.peakInFlight, greaterThan(1),
+          reason: 'the write fans out rather than crawling one at a time');
+      expect(client.peakInFlight, lessThanOrEqualTo(24),
+          reason: 'concurrency is capped so it never stampedes throughput');
+      // The long write ticked visibly: interim lines plus a final full count for
+      // the big account container.
+      expect(progress, isNotEmpty);
+      expect(progress.where((m) => m.startsWith('Persisting accounts:')),
+          isNotEmpty);
+      expect(progress, contains('Persisting accounts: 1000/2500…'));
+      expect(progress, contains('Persisting accounts: 2500/2500…'));
+
+      // The whole set round-trips despite the batching.
+      expect((await store.readRollups()).isNotEmpty, isTrue);
     });
 
     test('reading before any sync yields the initial generation', () async {
