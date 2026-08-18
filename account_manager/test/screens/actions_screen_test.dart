@@ -600,4 +600,31 @@ void main() {
     expect(find.textContaining('Generatie 2'), findsOneWidget);
     expect(find.textContaining('Generatie 1'), findsNothing);
   });
+
+  testWidgets(
+      "the overview's freshness stamp carries the date once the shared state "
+      'is no longer from today (#192)', (WidgetTester tester) async {
+    // The shared view was materialized at kFixtureDate, a past day. Time-only
+    // rendered that as "Generatie 1 · 02:00 door …" —
+    // indistinguishable from a view materialized minutes ago, the same
+    // confusion #192 fixes on the Reconcile last-sync box.
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Derived here rather than through the production formatter, so this pins
+    // the rendered text instead of restating the implementation.
+    final DateTime t = kFixtureDate.toLocal();
+    final String dm = '${t.day.toString().padLeft(2, '0')}/'
+        '${t.month.toString().padLeft(2, '0')}';
+    final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+
+    expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
+    expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
+        reason: 'a stamp from a past day is never rendered as bare time');
+  });
 }

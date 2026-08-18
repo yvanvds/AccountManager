@@ -262,6 +262,52 @@ void main() {
     expect(rowText('azure'), contains('drift check'));
   });
 
+  testWidgets(
+      'the last-sync box dates a stamp that is not from today: today stays '
+      "time-only, yesterday reads 'gisteren', an older one carries the date "
+      '(#192)', (WidgetTester tester) async {
+    // Three systems stamped on three different calendar days, pinned against
+    // the clock the row renders with. Time-only made all three read identically
+    // (`sync · 09:14`), which is exactly how an operator ends up
+    // reconciling against a snapshot that is days old.
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day, 9, 14);
+    final DateTime yesterday = DateTime(now.year, now.month, now.day - 1, 8, 5);
+    final DateTime lastYear = DateTime(now.year - 1, 8, 15, 16, 40);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(fetchedAt: today),
+      smartschool: ssSnap(fetchedAt: yesterday),
+      azure: azSnap(fetchedAt: lastYear),
+    );
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    String rowText(String system) => tester
+        .widgetList<Text>(find.descendant(
+          of: find.byKey(ValueKey('reconcile-last-sync-$system')),
+          matching: find.byType(Text),
+        ))
+        .map((t) => t.data)
+        .whereType<String>()
+        .join(' ');
+
+    // Today: unchanged, still the short time-only form.
+    expect(rowText('wisa'), contains('sync · 09:14'));
+    expect(rowText('wisa'), isNot(contains('/')));
+    expect(rowText('wisa'), isNot(contains('gisteren')));
+
+    // Yesterday and older are now distinguishable at a glance.
+    expect(rowText('smartschool'), contains('gisteren 08:05'));
+    expect(rowText('azure'), contains('15/08/${now.year - 1} 16:40'));
+    // …and the operator is still named on every row.
+    expect(rowText('azure'), contains('by operator@school.example'));
+  });
+
   testWidgets('the last-sync box survives a restart / passive session (#162)',
       (WidgetTester tester) async {
     // Session 1 syncs and persists freshness to the shared store.

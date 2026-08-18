@@ -21,6 +21,7 @@ import 'package:account_state/account_state.dart'
         ChangeSignal,
         InMemoryLinkedStore,
         InMemorySignalHub,
+        MaterializedAccount,
         SecretRef,
         SignalRConfig,
         SignalRRequest,
@@ -372,6 +373,101 @@ void main() {
     expect(systems[Origin.wisa]?.at, kFixtureDate);
     expect(systems[Origin.smartschool]?.at, driftAt);
     expect(systems[Origin.azure]?.at, driftAt);
+  });
+
+  testWidgets(
+      'the last-sync box dates a row that is not from today end-to-end: today '
+      "stays time-only, yesterday reads 'gisteren', an older one carries the "
+      'date (#192)', (WidgetTester tester) async {
+    // The real app, real fonts, real window: the three systems are stamped on
+    // three different calendar days. Time-only rendered all three identically,
+    // so a WISA pull from last year was indistinguishable from this morning's
+    // — the freshness check the operator makes before pressing
+    // Synchronise. Composition matters here: the status shares its row with a
+    // fixed-width name column and an icon, and a dated stamp is the longest
+    // text that row has ever carried.
+    useTallWindow(tester);
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day, 9, 14);
+    final DateTime yesterday = DateTime(now.year, now.month, now.day - 1, 8, 5);
+    final DateTime lastYear = DateTime(now.year - 1, 8, 15, 16, 40);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(fetchedAt: today),
+      smartschool: ssSnap(fetchedAt: yesterday),
+      azure: azSnap(fetchedAt: lastYear),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    String rowText(String system) => tester
+        .widgetList<Text>(find.descendant(
+          of: find.byKey(ValueKey('reconcile-last-sync-$system')),
+          matching: find.byType(Text),
+        ))
+        .map((t) => t.data)
+        .whereType<String>()
+        .join(' ');
+
+    // Today: unchanged — the common case stays short.
+    expect(rowText('wisa'), contains('09:14'));
+    expect(rowText('wisa'), isNot(contains('/')));
+    expect(rowText('wisa'), isNot(contains('gisteren')));
+
+    // Yesterday and an older stamp are now readable as stale at a glance.
+    expect(rowText('smartschool'), contains('gisteren 08:05'));
+    expect(rowText('azure'), contains('15/08/${now.year - 1} 16:40'));
+
+    // The longer status still lays out on one line per row in the real font:
+    // the three rows stay stacked and none has collapsed into the next.
+    double rowTop(String system) => tester
+        .getTopLeft(find.byKey(ValueKey('reconcile-last-sync-$system')))
+        .dy;
+    expect(rowTop('wisa'), lessThan(rowTop('smartschool')));
+    expect(rowTop('smartschool'), lessThan(rowTop('azure')));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      "the Actions overview's freshness stamp carries the date once the shared "
+      'state is no longer from today end-to-end (#192)',
+      (WidgetTester tester) async {
+    // A passive session over a shared view that was materialized in the past.
+    // The header line used to read "Generatie 1 · 02:00 door …",
+    // which is exactly as reassuring as a stamp from five minutes ago.
+    useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    // Derived independently of the production formatter: the store was stamped
+    // at kFixtureDate, which the operator reads on their own clock.
+    final DateTime t = kFixtureDate.toLocal();
+    final String dm = '${t.day.toString().padLeft(2, '0')}/'
+        '${t.month.toString().padLeft(2, '0')}';
+    final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+    expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
+    expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
+        reason: 'a stamp from a past day is never rendered as bare time');
   });
 
   testWidgets(

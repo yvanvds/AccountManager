@@ -6,6 +6,7 @@ import 'package:account_state/account_state.dart'
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../format/timestamps.dart';
 import '../reconcile/reconcile_bootstrap.dart';
 import '../reconcile/reconcile_controller.dart';
 
@@ -695,10 +696,9 @@ class _DrillDownSection extends StatelessWidget {
     final state = controller.syncState;
     if (state.generation == 0) return null;
     final at = state.updatedAt;
-    final when = at == null
-        ? ''
-        : ' · ${at.toLocal().hour.toString().padLeft(2, '0')}:'
-            '${at.toLocal().minute.toString().padLeft(2, '0')}';
+    // Same dated stamp as the Reconcile last-sync box (#192): time-only made
+    // a generation from last week look like one from this morning.
+    final when = at == null ? '' : ' · ${formatFreshnessStamp(at)}';
     final who = state.updatedBy == null || state.updatedBy!.isEmpty
         ? ''
         : ' door ${state.updatedBy}';

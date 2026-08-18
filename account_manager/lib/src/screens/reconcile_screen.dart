@@ -5,6 +5,7 @@ import 'package:account_state/account_state.dart' show SystemSyncMeta;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../format/timestamps.dart';
 import '../reconcile/log_buffer.dart';
 import '../reconcile/reconcile_bootstrap.dart';
 import '../reconcile/reconcile_controller.dart';
@@ -320,9 +321,11 @@ class _LastSyncBox extends StatelessWidget {
 }
 
 /// One system's row inside the [_LastSyncBox]: a fixed-width name column so the
-/// three statuses line up, then the sync/drift icon and a "kind · time · by who"
-/// status. A system that has never been synced shows a muted placeholder rather
-/// than being dropped, so all three systems are always accounted for.
+/// three statuses line up, then the sync/drift icon and a
+/// "kind · when · by who" status, where the stamp is dated as soon as it
+/// leaves today (#192). A system that has never been synced shows a muted
+/// placeholder rather than being dropped, so all three systems are always
+/// accounted for.
 class _SystemRow extends StatelessWidget {
   const _SystemRow({
     required this.system,
@@ -346,12 +349,13 @@ class _SystemRow extends StatelessWidget {
     if (meta == null) {
       status = 'not synced yet';
     } else {
-      final DateTime t = meta.at.toLocal();
-      final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
-          '${t.minute.toString().padLeft(2, '0')}';
+      // Dated as soon as it leaves today (#192): a stamp from three days ago
+      // must not read like this morning's, since a stale row is exactly what
+      // this box exists to surface.
+      final String when = formatFreshnessStamp(meta.at);
       final String kind = isSync ? 'sync' : 'drift check';
       final String by = meta.syncedBy.isEmpty ? '' : ' · by ${meta.syncedBy}';
-      status = '$kind · $hhmm$by';
+      status = '$kind · $when$by';
     }
 
     return Padding(
