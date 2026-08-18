@@ -67,6 +67,44 @@ void main() {
       expect(a.preferredName, '');
       expect(a.birthDate, isNull);
       expect(a.coAccounts, isEmpty);
+      expect(a.referenceIdentifier, isNull);
+      expect(a.internalUserId, isNull);
+    });
+
+    test('keeps the referenceIdentifier and splits out the user id (#138)', () {
+      final a = parseSmartschoolAccount(const {
+        'Gebruikersnaam': 'gulinv',
+        'referenceIdentifier': '4069_12016_0',
+      });
+      expect(a.referenceIdentifier, '4069_12016_0');
+      expect(a.internalUserId, 12016);
+    });
+
+    test('reads the referenceIdentifier whatever its wire casing (#138)', () {
+      // The lookup is case-insensitive like every other field (see #37).
+      final a = parseSmartschoolAccount(const {
+        'gebruikersnaam': 'gulinv',
+        'referenceidentifier': '4069_12016_0',
+      });
+      expect(a.internalUserId, 12016);
+    });
+
+    test('a malformed referenceIdentifier is kept raw, id null (#138)', () {
+      // Older tenants can truncate the field; it must not fail the parse.
+      final a = parseSmartschoolAccount(const {
+        'gebruikersnaam': 'saral',
+        'referenceIdentifier': '4069',
+      });
+      expect(a.referenceIdentifier, '4069');
+      expect(a.internalUserId, isNull);
+    });
+
+    test('an empty referenceIdentifier reads as absent, not as "" (#138)', () {
+      final a = parseSmartschoolAccount(const {
+        'gebruikersnaam': 'saral',
+        'referenceIdentifier': '',
+      });
+      expect(a.referenceIdentifier, isNull);
     });
 
     test('reads the live lowercase wire keys (regression #37)', () {
@@ -132,6 +170,66 @@ void main() {
       expect(mother.email, 'anne@example.be');
       expect(mother.accountType, core.AccountType.coAccount1);
       expect(a.coAccounts.last.accountType, core.AccountType.coAccount3);
+    });
+  });
+
+  group('parseSmartschoolGroupIds', () {
+    test('reads the per-account groups array (#138)', () {
+      final ids = parseSmartschoolGroupIds(const {
+        'gebruikersnaam': 'gulinv',
+        'groups': [
+          {'id': '298', 'code': 'SSM1A', 'name': '1A'},
+          {'id': '4', 'code': 'LLN', 'name': 'Leerlingen'},
+        ],
+      });
+      expect(ids, {'SSM1A': 298, 'LLN': 4});
+    });
+
+    test('accepts an int id and trims the code', () {
+      final ids = parseSmartschoolGroupIds(const {
+        'GROUPS': [
+          {'ID': 298, 'CODE': '  SSM1A  '},
+        ],
+      });
+      expect(ids, {'SSM1A': 298});
+    });
+
+    test('skips rows without a usable code or numeric id', () {
+      final ids = parseSmartschoolGroupIds(const {
+        'groups': [
+          {'id': '298'},
+          {'code': 'NOID'},
+          {'id': 'abc', 'code': 'BAD'},
+          {'id': '', 'code': 'EMPTY'},
+          'not-a-map',
+          {'id': '7', 'code': 'OK'},
+        ],
+      });
+      expect(ids, {'OK': 7});
+    });
+
+    test('returns an empty map when the payload carries no groups', () {
+      expect(parseSmartschoolGroupIds(const {'gebruikersnaam': 'x'}), isEmpty);
+      expect(parseSmartschoolGroupIds(const {'groups': 'nonsense'}), isEmpty);
+    });
+  });
+
+  group('parseSmartschoolAccountPayload', () {
+    test('returns accounts and the union of their group ids (#138)', () {
+      final payload = parseSmartschoolAccountPayload(
+        '[{"gebruikersnaam":"a","groups":[{"id":"101","code":"C1A"}]},'
+        '{"gebruikersnaam":"b","groups":[{"id":"401","code":"GSPORT"},'
+        '{"id":"101","code":"C1A"}]}]',
+      );
+      expect(payload.accounts.map((a) => a.uid), ['a', 'b']);
+      expect(payload.groupIds, {'C1A': 101, 'GSPORT': 401});
+    });
+
+    test('throws on a non-array payload', () {
+      expect(
+        () => parseSmartschoolAccountPayload('{"gebruikersnaam":"a"}'),
+        throwsA(isA<FormatException>()),
+      );
     });
   });
 

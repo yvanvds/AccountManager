@@ -16,6 +16,16 @@ class SmartschoolGroup {
   /// [core.GroupId] value.
   String code;
 
+  /// Smartschool's own numeric group id (e.g. `298` for class code `SSM1A`) —
+  /// the id it uses to address a group outside this SOAP API.
+  ///
+  /// `getAllGroupsAndClasses`, the payload this node is parsed from, does
+  /// **not** carry it, so the connector backfills it during `sync` from the
+  /// per-account `groups` arrays of `getAllAccountsExtended` (#138). Stays
+  /// `null` when nothing in the sync resolved it — a group with no members
+  /// anywhere is named by no account payload.
+  int? id;
+
   core.GroupType type;
 
   /// `true` ⇒ official class (has students); requires an institute and
@@ -44,6 +54,7 @@ class SmartschoolGroup {
     this.name = '',
     this.description = '',
     this.code = '',
+    this.id,
     this.type = core.GroupType.invalid,
     this.official = false,
     this.visible = false,
@@ -59,7 +70,9 @@ class SmartschoolGroup {
 
   /// Projects this node to an immutable [core.Group]. `parentId` is set from
   /// [parentCode] when it is non-empty. [untis] is carried through so the
-  /// action engine can detect Untis-only drift (`ModifySmartschoolData`).
+  /// action engine can detect Untis-only drift (`ModifySmartschoolData`), and
+  /// [id] becomes `core.Group.sourceId` so consumers of the snapshot can
+  /// resolve the Smartschool-internal group id without extra API calls (#138).
   core.Group toCoreGroup() => core.Group(
         id: core.GroupId(code),
         name: name,
@@ -72,6 +85,7 @@ class SmartschoolGroup {
         instituteNumber: instituteNumber.isEmpty ? null : instituteNumber,
         adminNumber: adminNumber == 0 ? null : adminNumber,
         untis: untis,
+        sourceId: id,
         origin: core.Origin.smartschool,
       );
 }

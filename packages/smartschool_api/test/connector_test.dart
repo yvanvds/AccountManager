@@ -235,6 +235,51 @@ void main() {
       expect(jand.stemId, 123456);
     });
 
+    test('carries the referenceIdentifier and internal user id (#138)',
+        () async {
+      final t = _FakeTransport();
+      final snap = await _connector(t).sync();
+      final jand = snap.accounts.firstWhere((a) => a.uid == 'jand');
+      expect(jand.referenceIdentifier, '4069_1001_0');
+      expect(jand.internalUserId, 1001);
+
+      // A truncated value (older tenants) survives the sync as-is; only the
+      // derived id is null. The account is not dropped or degraded.
+      final saral = snap.accounts.firstWhere((a) => a.uid == 'saral');
+      expect(saral.referenceIdentifier, '4069');
+      expect(saral.internalUserId, isNull);
+    });
+
+    test('backfills Smartschool group ids onto the snapshot groups (#138)',
+        () async {
+      final t = _FakeTransport();
+      final snap = await _connector(t).sync();
+      final byCode = {for (final g in snap.groups) g.id.value: g.sourceId};
+      // C1A/C1B come from their own account payloads; GSPORT's id is also
+      // named by jand's C1A payload, so the join is a union over every
+      // response, not a per-group read.
+      expect(byCode['C1A'], 101);
+      expect(byCode['C1B'], 102);
+      expect(byCode['GSPORT'], 401);
+      // SCH has no direct accounts (code 19), so nothing names its id.
+      expect(byCode['SCH'], isNull);
+      // No extra API call was made to resolve them.
+      expect(t.sentTo('getClassListJson'), isFalse);
+    });
+
+    test('leaves group ids null when no payload names them (#138)', () async {
+      // Discarding Sport removes the only payload that names GSPORT *and*
+      // GSPORT itself; C1A is still resolved from its own payload.
+      final t = _FakeTransport();
+      final snap = await _connector(t).sync(
+        rules: const [DiscardSmartschoolGroup('Sport')],
+      );
+      final byCode = {for (final g in snap.groups) g.id.value: g.sourceId};
+      expect(byCode.keys, ['SCH', 'C1A', 'C1B']);
+      expect(byCode['C1A'], 101);
+      expect(byCode['SCH'], isNull);
+    });
+
     test('applies DiscardSmartschoolGroup before loading accounts', () async {
       final t = _FakeTransport();
       final snap = await _connector(t).sync(

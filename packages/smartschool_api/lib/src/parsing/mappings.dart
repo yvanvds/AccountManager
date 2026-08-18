@@ -138,3 +138,21 @@ String statusFromAccountState(core.AccountState state) {
       return 'invalid';
   }
 }
+
+/// Extracts Smartschool's internal user id from a raw `referenceIdentifier`.
+///
+/// The field is shaped `<platformId>_<userId>_<coAccountIndex>` — e.g.
+/// `4069_12016_0` yields `12016`. Only `getUserDetails*` and
+/// `getAllAccountsExtended` return it (#138).
+///
+/// Returns `null` for anything that is not exactly three underscore-separated
+/// segments with a numeric middle one: a missing field (older tenants), an
+/// empty string, or a malformed row. The value is informational, so a bad one
+/// must never fail a sync.
+int? smartschoolUserIdFrom(String? referenceIdentifier) {
+  final raw = referenceIdentifier?.trim();
+  if (raw == null || raw.isEmpty) return null;
+  final parts = raw.split('_');
+  if (parts.length != 3) return null;
+  return int.tryParse(parts[1]);
+}

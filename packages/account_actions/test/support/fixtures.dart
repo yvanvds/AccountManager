@@ -337,6 +337,7 @@ Group ssGroup({
   int? adminNumber = 7,
   String? parentId = 'jaar-3',
   String? untis,
+  int? sourceId,
 }) =>
     Group(
       id: GroupId(code),
@@ -348,6 +349,7 @@ Group ssGroup({
       instituteNumber: instituteNumber,
       adminNumber: adminNumber,
       untis: untis ?? name,
+      sourceId: sourceId,
       origin: Origin.smartschool,
     );
 

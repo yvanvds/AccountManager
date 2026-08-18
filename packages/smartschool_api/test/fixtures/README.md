@@ -29,3 +29,11 @@ Scenarios encoded in the fixtures:
   (Vader) partial; slot 2 is empty and must be dropped → two slots surfaced.
 - **Duplicate mail (INV-13/23):** `miek` and `saral` share
   `shared@school.be`; both survive.
+- **Smartschool-internal ids (#138):** accounts carry a `referenceIdentifier`
+  (`4069_1001_0` → internal user id `1001`), except `saral`, whose truncated
+  `4069` exercises the malformed case — raw value kept, `internalUserId` null.
+  Each account's `groups` array carries the numeric group id (`C1A: 101`,
+  `C1B: 102`, `GSPORT: 401`), which the sync backfills onto the group records
+  by joining on the code. `GSPORT`'s id reaches the snapshot through `jand`'s
+  `C1A` payload as well, and `SCH` — which has no account payload at all —
+  stays unresolved (`sourceId == null`).

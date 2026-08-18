@@ -5,6 +5,7 @@ import 'package:test/test.dart';
 SmartschoolAccount _account({
   String uid = 'jand',
   String mail = 'jan@school.be',
+  String? referenceIdentifier,
   List<CoAccountSlot> coAccounts = const [],
 }) {
   return SmartschoolAccount(
@@ -35,6 +36,7 @@ SmartschoolAccount _account({
     fax: '',
     untisId: '',
     status: 'actief',
+    referenceIdentifier: referenceIdentifier,
     coAccounts: coAccounts,
   );
 }
@@ -105,6 +107,78 @@ void main() {
 
     test('accountType is always student for the primary record', () {
       expect(_account().accountType, core.AccountType.student);
+    });
+
+    test('exposes the referenceIdentifier and its user id (#138)', () {
+      final a = _account(referenceIdentifier: '4069_12016_0');
+      expect(a.referenceIdentifier, '4069_12016_0');
+      expect(a.internalUserId, 12016);
+      expect(_account().referenceIdentifier, isNull);
+      expect(_account().internalUserId, isNull);
+    });
+
+    test('referenceIdentifier takes part in equality (#138)', () {
+      expect(
+        _account(referenceIdentifier: '4069_12016_0'),
+        _account(referenceIdentifier: '4069_12016_0'),
+      );
+      expect(
+        _account(referenceIdentifier: '4069_12016_0').hashCode,
+        _account(referenceIdentifier: '4069_12016_0').hashCode,
+      );
+      expect(
+        _account(referenceIdentifier: '4069_12016_0') ==
+            _account(referenceIdentifier: '4069_99999_0'),
+        isFalse,
+      );
+      expect(
+        _account(referenceIdentifier: '4069_12016_0') == _account(),
+        isFalse,
+      );
+    });
+
+    test('referenceIdentifier survives copyWith and JSON (#138)', () {
+      final a = _account(referenceIdentifier: '4069_12016_0');
+      expect(
+          a.copyWith(mail: 'x@school.be').referenceIdentifier, '4069_12016_0');
+      expect(
+        a.copyWith(referenceIdentifier: '4069_99999_0').internalUserId,
+        99999,
+      );
+      expect(SmartschoolAccount.fromJson(a.toJson()), a);
+      // Absent stays absent rather than round-tripping as an empty string.
+      expect(_account().toJson().containsKey('referenceIdentifier'), isFalse);
+      expect(
+        SmartschoolAccount.fromJson(_account().toJson()).referenceIdentifier,
+        isNull,
+      );
+    });
+  });
+
+  group('SmartschoolGroup', () {
+    SmartschoolGroup node({int? id}) => SmartschoolGroup(
+          name: '1A',
+          description: 'Klas 1A',
+          code: 'C1A',
+          id: id,
+          type: core.GroupType.classGroup,
+          official: true,
+          untis: '1A',
+          instituteNumber: '30024',
+          adminNumber: 12345,
+          parentCode: 'SCH',
+        );
+
+    test('toCoreGroup carries the Smartschool group id as sourceId (#138)', () {
+      final g = node(id: 298).toCoreGroup();
+      expect(g.sourceId, 298);
+      expect(g.id, const core.GroupId('C1A'));
+      expect(g.parentId, const core.GroupId('SCH'));
+    });
+
+    test('toCoreGroup leaves sourceId null while the id is unresolved', () {
+      expect(node().id, isNull);
+      expect(node().toCoreGroup().sourceId, isNull);
     });
   });
 

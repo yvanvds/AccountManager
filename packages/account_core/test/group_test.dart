@@ -9,6 +9,7 @@ Group _group({
   String? institute,
   int? admin,
   String untis = '',
+  int? sourceId,
   GroupType type = GroupType.classGroup,
   bool official = true,
 }) =>
@@ -22,6 +23,7 @@ Group _group({
       instituteNumber: institute,
       adminNumber: admin,
       untis: untis,
+      sourceId: sourceId,
       origin: Origin.wisa,
     );
 
@@ -32,10 +34,16 @@ void main() {
       expect(Group.fromJson(g.toJson()), equals(g));
     });
 
-    test('full (parent, institute, admin, untis)', () {
-      final g =
-          _group(parent: 'root', institute: '12345', admin: 7, untis: '5A');
+    test('full (parent, institute, admin, untis, sourceId)', () {
+      final g = _group(
+        parent: 'root',
+        institute: '12345',
+        admin: 7,
+        untis: '5A',
+        sourceId: 298,
+      );
       expect(Group.fromJson(g.toJson()), equals(g));
+      expect(Group.fromJson(g.toJson()).sourceId, 298);
     });
 
     test('survives encode/decode through dart:convert', () {
@@ -54,11 +62,17 @@ void main() {
       expect(json.containsKey('instituteNumber'), isFalse);
       expect(json.containsKey('adminNumber'), isFalse);
       expect(json.containsKey('untis'), isFalse);
+      expect(json.containsKey('sourceId'), isFalse);
     });
 
     test('legacy JSON without untis decodes to an empty untis', () {
       final json = _group(institute: '12345').toJson()..remove('untis');
       expect(Group.fromJson(json).untis, '');
+    });
+
+    test('JSON written before #138 decodes to a null sourceId', () {
+      final json = _group(sourceId: 298).toJson()..remove('sourceId');
+      expect(Group.fromJson(json).sourceId, isNull);
     });
   });
 
@@ -68,6 +82,8 @@ void main() {
       expect(_group().hashCode, equals(_group().hashCode));
       expect(_group(official: true), isNot(equals(_group(official: false))));
       expect(_group(untis: '5A'), isNot(equals(_group(untis: 'stale'))));
+      expect(_group(sourceId: 298), isNot(equals(_group(sourceId: 4))));
+      expect(_group(sourceId: 298), isNot(equals(_group())));
       expect(
         _group(type: GroupType.group),
         isNot(equals(_group(type: GroupType.classGroup))),

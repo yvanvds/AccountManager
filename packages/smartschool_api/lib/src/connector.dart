@@ -105,6 +105,13 @@ class SmartschoolConnector {
   /// emitted per (account, group) pair, so an account appearing in several
   /// subtrees produces several membership rows (PAIN-1); the account record
   /// itself is deduplicated by `uid`.
+  ///
+  /// Smartschool's internal group ids are backfilled onto the projected
+  /// groups from the `groups` arrays the account payloads carry (#138) — the
+  /// group tree itself does not return them, and this join costs no extra
+  /// API call. Projection is deferred until the whole walk is done so a group
+  /// still gets its id when only another group's payload named it. A group
+  /// with no members anywhere stays unresolved (`sourceId == null`).
   Future<SmartschoolSnapshot> sync({
     Iterable<SmartschoolImportRule> rules = const [],
   }) async {
@@ -115,11 +122,24 @@ class SmartschoolConnector {
     final payload = decodeReturn(treeXml).text;
     final forest = applyImportRules(parseGroupTree(payload), rules);
 
-    final groups = <core.Group>[];
+    final visited = <SmartschoolGroup>[];
     final accountsByUid = <String, SmartschoolAccount>{};
     final memberships = <SmartschoolMembership>[];
+    final groupIdsByCode = <String, int>{};
 
-    await _walkGroups(forest, groups, accountsByUid, memberships);
+    await _walkGroups(
+      forest,
+      visited,
+      accountsByUid,
+      memberships,
+      groupIdsByCode,
+    );
+
+    final groups = <core.Group>[];
+    for (final node in visited) {
+      node.id ??= groupIdsByCode[node.code];
+      groups.add(node.toCoreGroup());
+    }
 
     return SmartschoolSnapshot(
       fetchedAt: DateTime.now(),
@@ -129,18 +149,23 @@ class SmartschoolConnector {
     );
   }
 
+  /// Depth-first walk over [nodes], collecting the visited nodes in tree order
+  /// plus their accounts, membership rows, and the group ids their account
+  /// payloads carry.
   Future<void> _walkGroups(
     List<SmartschoolGroup> nodes,
-    List<core.Group> groups,
+    List<SmartschoolGroup> visited,
     Map<String, SmartschoolAccount> accountsByUid,
     List<SmartschoolMembership> memberships,
+    Map<String, int> groupIdsByCode,
   ) async {
     for (final node in nodes) {
-      groups.add(node.toCoreGroup());
+      visited.add(node);
 
       if (node.code.isNotEmpty) {
-        final accounts = await _loadAccounts(node.code, node.name);
-        for (final account in accounts) {
+        final payload = await _loadAccounts(node.code, node.name);
+        groupIdsByCode.addAll(payload.groupIds);
+        for (final account in payload.accounts) {
           accountsByUid.putIfAbsent(account.uid, () => account);
           memberships.add(
             SmartschoolMembership(
@@ -151,14 +176,21 @@ class SmartschoolConnector {
         }
       }
 
-      await _walkGroups(node.children, groups, accountsByUid, memberships);
+      await _walkGroups(
+        node.children,
+        visited,
+        accountsByUid,
+        memberships,
+        groupIdsByCode,
+      );
     }
   }
 
   /// Loads the direct accounts of one group (non-recursive), filtering out
-  /// disabled accounts. Returns an empty list when the group has no direct
-  /// accounts (Smartschool code 19) or the payload is empty.
-  Future<List<SmartschoolAccount>> _loadAccounts(
+  /// disabled accounts, together with the Smartschool group ids the payload
+  /// carries. Returns an empty payload when the group has no direct accounts
+  /// (Smartschool code 19) or the payload is empty.
+  Future<SmartschoolAccountPayload> _loadAccounts(
     String groupCode,
     String groupName,
   ) async {
@@ -182,19 +214,19 @@ class SmartschoolConnector {
       } else if (code != 0) {
         _log?.addError(core.Origin.smartschool, await _message(code));
       }
-      return const [];
+      return const SmartschoolAccountPayload(accounts: [], groupIds: {});
     }
 
-    final parsed = parseSmartschoolAccounts(ret.text);
+    final parsed = parseSmartschoolAccountPayload(ret.text);
     final kept = [
-      for (final a in parsed)
+      for (final a in parsed.accounts)
         if (a.status != disabledStatus) a,
     ];
     _log?.addMessage(
       core.Origin.smartschool,
       'Added ${kept.length} accounts to $groupName',
     );
-    return kept;
+    return SmartschoolAccountPayload(accounts: kept, groupIds: parsed.groupIds);
   }
 
   // ---------------------------------------------------------------------------

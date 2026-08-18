@@ -1,5 +1,6 @@
 import 'package:account_core/account_core.dart' as core;
 
+import '../parsing/mappings.dart';
 import 'co_account_slot.dart';
 
 /// A Smartschool account record — one entry from `getAllAccountsExtended`
@@ -70,6 +71,23 @@ class SmartschoolAccount implements core.SmartschoolAccount {
   /// `uitgeschakeld`.
   final String status;
 
+  /// Smartschool's raw `referenceIdentifier`, verbatim as returned —
+  /// `<platformId>_<userId>_<coAccountIndex>`, e.g. `4069_12016_0` (#138).
+  ///
+  /// `null` when the payload omits it (older tenants, some co-account rows);
+  /// the parser never fails on a missing or malformed value. Use
+  /// [internalUserId] for the middle segment on its own.
+  final String? referenceIdentifier;
+
+  /// Smartschool's internal user id — the middle segment of
+  /// [referenceIdentifier], e.g. `12016` for `4069_12016_0` (#138).
+  ///
+  /// This is the id Smartschool uses to address a user outside this SOAP API;
+  /// it is none of [accountId] ("Internnummer"), [stemId], or the scannable
+  /// code. `null` when [referenceIdentifier] is absent or does not have the
+  /// documented three-segment shape.
+  int? get internalUserId => smartschoolUserIdFrom(referenceIdentifier);
+
   /// Parent/guardian co-account slots, in ascending slot order. Only
   /// non-empty slots are present.
   final List<CoAccountSlot> coAccounts;
@@ -96,6 +114,7 @@ class SmartschoolAccount implements core.SmartschoolAccount {
     required this.fax,
     required this.untisId,
     required this.status,
+    this.referenceIdentifier,
     this.coAccounts = const [],
   });
 
@@ -124,6 +143,7 @@ class SmartschoolAccount implements core.SmartschoolAccount {
     String? fax,
     String? untisId,
     String? status,
+    String? referenceIdentifier,
     List<CoAccountSlot>? coAccounts,
   }) =>
       SmartschoolAccount(
@@ -148,6 +168,7 @@ class SmartschoolAccount implements core.SmartschoolAccount {
         fax: fax ?? this.fax,
         untisId: untisId ?? this.untisId,
         status: status ?? this.status,
+        referenceIdentifier: referenceIdentifier ?? this.referenceIdentifier,
         coAccounts: coAccounts ?? this.coAccounts,
       );
 
@@ -175,6 +196,8 @@ class SmartschoolAccount implements core.SmartschoolAccount {
         'fax': fax,
         'untisId': untisId,
         'status': status,
+        if (referenceIdentifier != null)
+          'referenceIdentifier': referenceIdentifier,
         'coAccounts': [for (final c in coAccounts) c.toJson()],
       };
 
@@ -205,6 +228,7 @@ class SmartschoolAccount implements core.SmartschoolAccount {
         fax: json['fax'] as String,
         untisId: json['untisId'] as String,
         status: json['status'] as String,
+        referenceIdentifier: json['referenceIdentifier'] as String?,
         coAccounts: [
           for (final e in (json['coAccounts'] as List<dynamic>? ?? const []))
             CoAccountSlot.fromJson(e as Map<String, dynamic>),
@@ -236,6 +260,7 @@ class SmartschoolAccount implements core.SmartschoolAccount {
           fax == other.fax &&
           untisId == other.untisId &&
           status == other.status &&
+          referenceIdentifier == other.referenceIdentifier &&
           _listEquals(coAccounts, other.coAccounts);
 
   @override
@@ -261,6 +286,7 @@ class SmartschoolAccount implements core.SmartschoolAccount {
         fax,
         untisId,
         status,
+        referenceIdentifier,
         ...coAccounts,
       ]);
 
