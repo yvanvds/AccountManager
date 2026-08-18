@@ -4,6 +4,7 @@
     "naam": "Janssens",
     "gebruikersnaam": "miek",
     "internnummer": "W002",
+    "referenceIdentifier": "4069_1002_0",
     "status": "actief",
     "basisrol": "1",
     "geslacht": "f",
@@ -15,6 +16,7 @@
     "woonplaats": "Leuven",
     "land": "België",
     "emailadres": "shared@school.be",
-    "stamboeknummer": "0"
+    "stamboeknummer": "0",
+    "groups": [{ "id": "102", "code": "C1B", "name": "1B" }]
   }
 ]

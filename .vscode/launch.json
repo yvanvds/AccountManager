@@ -1,0 +1,29 @@
+{
+  // The app reads its Azure AD app-registration values from --dart-define
+  // (see account_manager/lib/src/auth/aad_app_config.dart). Without them the
+  // sign-in gate renders "Not configured" and every screen that needs a token
+  // — Settings included — stays unreachable. The values live in the gitignored
+  // account_manager/aad.local.json (copy aad.local.json.example).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Account Manager (Windows)",
+      "request": "launch",
+      "type": "dart",
+      "cwd": "account_manager",
+      "program": "lib/main.dart",
+      "deviceId": "windows",
+      "toolArgs": ["--dart-define-from-file=aad.local.json"]
+    },
+    {
+      "name": "Account Manager (Windows, profile)",
+      "request": "launch",
+      "type": "dart",
+      "flutterMode": "profile",
+      "cwd": "account_manager",
+      "program": "lib/main.dart",
+      "deviceId": "windows",
+      "toolArgs": ["--dart-define-from-file=aad.local.json"]
+    }
+  ]
+}

@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart' show SystemSyncMeta;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../format/timestamps.dart';
 import '../reconcile/log_buffer.dart';
 import '../reconcile/reconcile_bootstrap.dart';
 import '../reconcile/reconcile_controller.dart';
@@ -320,9 +323,11 @@ class _LastSyncBox extends StatelessWidget {
 }
 
 /// One system's row inside the [_LastSyncBox]: a fixed-width name column so the
-/// three statuses line up, then the sync/drift icon and a "kind · time · by who"
-/// status. A system that has never been synced shows a muted placeholder rather
-/// than being dropped, so all three systems are always accounted for.
+/// three statuses line up, then the sync/drift icon and a
+/// "kind · when · by who" status, where the stamp is dated as soon as it
+/// leaves today (#192). A system that has never been synced shows a muted
+/// placeholder rather than being dropped, so all three systems are always
+/// accounted for.
 class _SystemRow extends StatelessWidget {
   const _SystemRow({
     required this.system,
@@ -346,12 +351,13 @@ class _SystemRow extends StatelessWidget {
     if (meta == null) {
       status = 'not synced yet';
     } else {
-      final DateTime t = meta.at.toLocal();
-      final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
-          '${t.minute.toString().padLeft(2, '0')}';
+      // Dated as soon as it leaves today (#192): a stamp from three days ago
+      // must not read like this morning's, since a stale row is exactly what
+      // this box exists to surface.
+      final String when = formatFreshnessStamp(meta.at);
       final String kind = isSync ? 'sync' : 'drift check';
       final String by = meta.syncedBy.isEmpty ? '' : ' · by ${meta.syncedBy}';
-      status = '$kind · $hhmm$by';
+      status = '$kind · $when$by';
     }
 
     return Padding(
@@ -769,20 +775,115 @@ class _LogResizeHandle extends StatelessWidget {
   }
 }
 
-class _LogPanel extends StatelessWidget {
+class _LogPanel extends StatefulWidget {
   const _LogPanel({required this.log, required this.height});
 
   final LogBuffer log;
   final double height;
 
   @override
+  State<_LogPanel> createState() => _LogPanelState();
+}
+
+class _LogPanelState extends State<_LogPanel> {
+  /// Anchors the rendered paragraph so a right-click can be resolved back to
+  /// the entry underneath it (#197).
+  ///
+  /// It sits on a [KeyedSubtree] around the paragraph rather than on the [Text]
+  /// itself, which keeps `reconcile-log-text` the plain [ValueKey] #193 left.
+  final GlobalKey _paragraphKey = GlobalKey();
+
+  static void _copy(String text) {
+    unawaited(Clipboard.setData(ClipboardData(text: text)));
+  }
+
+  /// Puts the whole buffer on the clipboard, oldest first (#193).
+  ///
+  /// Reads [LogBuffer.toPlainText] rather than the on-screen selection: only
+  /// what fits the panel is laid out, so a selection can never cover all 500
+  /// entries a long reconcile pass leaves behind.
+  void _copyAll() => _copy(widget.log.toPlainText());
+
+  /// The paragraph's render object, or `null` before it has been laid out.
+  ///
+  /// Descends instead of casting whatever the key points at: [Text] wraps its
+  /// [RichText] in semantics and selection plumbing, so the [RenderParagraph]
+  /// is not necessarily the topmost render object under the key.
+  static RenderParagraph? _firstParagraph(RenderObject? node) {
+    if (node is RenderParagraph) return node;
+    RenderParagraph? found;
+    node?.visitChildren((RenderObject child) {
+      found ??= _firstParagraph(child);
+    });
+    return found;
+  }
+
+  /// Which rendered entry sits under a global [position], or `null` when the
+  /// pointer is not over the paragraph at all — right-clicking the empty space
+  /// under a short log has no line to copy (#197).
+  int? _entryIndexAt(Offset position) {
+    final RenderParagraph? paragraph =
+        _firstParagraph(_paragraphKey.currentContext?.findRenderObject());
+    if (paragraph == null || !paragraph.hasSize) return null;
+    final Offset local = paragraph.globalToLocal(position);
+    if (!(Offset.zero & paragraph.size).contains(local)) return null;
+    return logEntryIndexAt(
+      paragraph.text.toPlainText(),
+      paragraph.getPositionForOffset(local).offset,
+    );
+  }
+
+  /// The panel's right-click menu: the framework's own items plus **Copy
+  /// line**, which takes the single entry under the pointer (#197).
+  ///
+  /// Grabbing one message was already possible — the entries render as one
+  /// paragraph (#193), so a triple-click selects exactly one line — but
+  /// nothing on screen said so, which is what this makes visible. The line
+  /// index has to come from the paragraph's own text, because that single
+  /// paragraph is precisely what leaves no per-row widget to hang a hover
+  /// button on: SelectionArea concatenates separate selectables with no
+  /// separator, so a widget per entry would copy a multi-line selection as one
+  /// unreadable blob.
+  Widget _contextMenu(
+    BuildContext context,
+    SelectableRegionState region,
+    List<LogEntry> entries,
+  ) {
+    // Read once and hold on to it: SelectableRegionState clears the
+    // right-click position the first time contextMenuAnchors is read.
+    final TextSelectionToolbarAnchors anchors = region.contextMenuAnchors;
+    final List<ContextMenuButtonItem> items = <ContextMenuButtonItem>[
+      ...region.contextMenuButtonItems,
+    ];
+    final int? index = _entryIndexAt(anchors.primaryAnchor);
+    if (index != null && index < entries.length) {
+      final LogEntry entry = entries[index];
+      items.insert(
+        0,
+        ContextMenuButtonItem(
+          label: 'Copy line',
+          onPressed: () {
+            region.hideToolbar();
+            _copy(entry.line);
+          },
+        ),
+      );
+    }
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: anchors,
+      buttonItems: items,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
+    final LogBuffer log = widget.log;
 
     return SizedBox(
       key: const ValueKey('reconcile-log-panel'),
-      height: height,
+      height: widget.height,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -799,10 +900,23 @@ class _LogPanel extends StatelessWidget {
                 const Spacer(),
                 ListenableBuilder(
                   listenable: log,
-                  builder: (context, _) => TextButton(
-                    onPressed: log.entries.isEmpty ? null : log.clear,
-                    child: const Text('Clear'),
-                  ),
+                  builder: (context, _) {
+                    final bool empty = log.entries.isEmpty;
+                    return Row(
+                      children: <Widget>[
+                        TextButton(
+                          key: const ValueKey('reconcile-log-copy-all'),
+                          onPressed: empty ? null : _copyAll,
+                          child: const Text('Copy all'),
+                        ),
+                        TextButton(
+                          key: const ValueKey('reconcile-log-clear'),
+                          onPressed: empty ? null : log.clear,
+                          child: const Text('Clear'),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -821,25 +935,50 @@ class _LogPanel extends StatelessWidget {
                   );
                 }
                 // Newest first, anchored to the top — reads like a tail.
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: PlinkSpacing.s4,
-                    vertical: PlinkSpacing.s2,
-                  ),
-                  itemCount: entries.length,
-                  itemBuilder: (context, i) {
-                    final e = entries[i];
-                    final time = '${e.time.hour.toString().padLeft(2, '0')}:'
-                        '${e.time.minute.toString().padLeft(2, '0')}:'
-                        '${e.time.second.toString().padLeft(2, '0')}';
-                    return Text(
-                      '$time  [${e.origin.name}]  ${e.message}',
-                      style: text.bodySmall?.copyWith(
-                        color: e.isError ? colors.error : null,
-                        fontFamily: 'monospace',
+                //
+                // One selectable paragraph rather than a widget per entry
+                // (#193): SelectionArea concatenates the text of separate
+                // selectables with no separator at all
+                // (MultiSelectableSelectionContainerDelegate.getSelectedContent),
+                // so dragging across a list of per-entry Texts would copy the
+                // lines run together into one unreadable blob — exactly the
+                // thing an operator is pasting into a support ticket. Keeping
+                // the newlines inside a single paragraph makes the copy line
+                // per entry, and makes triple-click select exactly one entry;
+                // per-entry spans keep the error colour. The per-line copy
+                // affordance (#197) therefore hangs off the context menu, with
+                // the line resolved from the paragraph's own text.
+                return SelectionArea(
+                  contextMenuBuilder:
+                      (BuildContext context, SelectableRegionState region) =>
+                          _contextMenu(context, region, entries),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: PlinkSpacing.s4,
+                      vertical: PlinkSpacing.s2,
+                    ),
+                    child: KeyedSubtree(
+                      key: _paragraphKey,
+                      child: Text.rich(
+                        TextSpan(
+                          children: <InlineSpan>[
+                            for (int i = 0; i < entries.length; i++)
+                              TextSpan(
+                                text: i == entries.length - 1
+                                    ? entries[i].line
+                                    : '${entries[i].line}\n',
+                                style: entries[i].isError
+                                    ? TextStyle(color: colors.error)
+                                    : null,
+                              ),
+                          ],
+                        ),
+                        key: const ValueKey('reconcile-log-text'),
+                        style:
+                            text.bodySmall?.copyWith(fontFamily: 'monospace'),
                       ),
-                    );
-                  },
+                    ),
+                  ),
                 );
               },
             ),

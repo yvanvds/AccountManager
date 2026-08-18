@@ -21,6 +21,7 @@ import 'package:account_state/account_state.dart'
         ChangeSignal,
         InMemoryLinkedStore,
         InMemorySignalHub,
+        MaterializedAccount,
         SecretRef,
         SignalRConfig,
         SignalRRequest,
@@ -36,7 +37,9 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:wisa_api/wisa_api.dart' show WisaSchool;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
@@ -372,6 +375,101 @@ void main() {
     expect(systems[Origin.wisa]?.at, kFixtureDate);
     expect(systems[Origin.smartschool]?.at, driftAt);
     expect(systems[Origin.azure]?.at, driftAt);
+  });
+
+  testWidgets(
+      'the last-sync box dates a row that is not from today end-to-end: today '
+      "stays time-only, yesterday reads 'gisteren', an older one carries the "
+      'date (#192)', (WidgetTester tester) async {
+    // The real app, real fonts, real window: the three systems are stamped on
+    // three different calendar days. Time-only rendered all three identically,
+    // so a WISA pull from last year was indistinguishable from this morning's
+    // — the freshness check the operator makes before pressing
+    // Synchronise. Composition matters here: the status shares its row with a
+    // fixed-width name column and an icon, and a dated stamp is the longest
+    // text that row has ever carried.
+    useTallWindow(tester);
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day, 9, 14);
+    final DateTime yesterday = DateTime(now.year, now.month, now.day - 1, 8, 5);
+    final DateTime lastYear = DateTime(now.year - 1, 8, 15, 16, 40);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(fetchedAt: today),
+      smartschool: ssSnap(fetchedAt: yesterday),
+      azure: azSnap(fetchedAt: lastYear),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    String rowText(String system) => tester
+        .widgetList<Text>(find.descendant(
+          of: find.byKey(ValueKey('reconcile-last-sync-$system')),
+          matching: find.byType(Text),
+        ))
+        .map((t) => t.data)
+        .whereType<String>()
+        .join(' ');
+
+    // Today: unchanged — the common case stays short.
+    expect(rowText('wisa'), contains('09:14'));
+    expect(rowText('wisa'), isNot(contains('/')));
+    expect(rowText('wisa'), isNot(contains('gisteren')));
+
+    // Yesterday and an older stamp are now readable as stale at a glance.
+    expect(rowText('smartschool'), contains('gisteren 08:05'));
+    expect(rowText('azure'), contains('15/08/${now.year - 1} 16:40'));
+
+    // The longer status still lays out on one line per row in the real font:
+    // the three rows stay stacked and none has collapsed into the next.
+    double rowTop(String system) => tester
+        .getTopLeft(find.byKey(ValueKey('reconcile-last-sync-$system')))
+        .dy;
+    expect(rowTop('wisa'), lessThan(rowTop('smartschool')));
+    expect(rowTop('smartschool'), lessThan(rowTop('azure')));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      "the Actions overview's freshness stamp carries the date once the shared "
+      'state is no longer from today end-to-end (#192)',
+      (WidgetTester tester) async {
+    // A passive session over a shared view that was materialized in the past.
+    // The header line used to read "Generatie 1 · 02:00 door …",
+    // which is exactly as reassuring as a stamp from five minutes ago.
+    useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    // Derived independently of the production formatter: the store was stamped
+    // at kFixtureDate, which the operator reads on their own clock.
+    final DateTime t = kFixtureDate.toLocal();
+    final String dm = '${t.day.toString().padLeft(2, '0')}/'
+        '${t.month.toString().padLeft(2, '0')}';
+    final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+    expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
+    expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
+        reason: 'a stamp from a past day is never rendered as bare time');
   });
 
   testWidgets(
@@ -848,6 +946,65 @@ void main() {
         tester.getTopLeft(find.byKey(ValueKey('passwords-staff-$uid'))).dy;
     expect(y('alice'), lessThan(y('bob')));
     expect(y('bob'), lessThan(y('charlie')));
+  });
+
+  testWidgets(
+      'the Passwords view prints the queued sheets as a real PDF and opens it '
+      'for printing end-to-end (#195)', (WidgetTester tester) async {
+    // The real app, real fonts, real window. Printing used to drop browser-
+    // printable HTML into %TEMP% and leave the operator to go find it and print
+    // from a browser. It is a real PDF now, written outside temp and handed
+    // straight to the platform viewer — so drive it the way the operator does:
+    // pick the class, tick the whole column, generate, then press Print.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(ssInitial: passwordsSnap());
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Passwords'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-bulk-smartschool')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both students of 3C were pushed, so both are queued for printing.
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(2));
+    final printButton = find.byKey(const ValueKey('passwords-export-students'));
+    await tester.ensureVisible(printButton);
+    expect(tester.widget<OutlinedButton>(printButton).onPressed, isNotNull);
+
+    await tester.tap(printButton);
+    await tester.pumpAndSettle();
+
+    // One real PDF document, one page per queued student, under a .pdf name.
+    expect(harness.passwordWrites, hasLength(1));
+    final String name = harness.passwordWrites.single.$1;
+    final List<int> bytes = harness.passwordWrites.single.$2;
+    expect(name, 'leerling-wachtwoorden.pdf');
+    expect(latin1.decode(bytes.sublist(0, 5)), '%PDF-');
+    expect(
+      RegExp(r'/Type\s*/Page(?!s)').allMatches(latin1.decode(bytes)),
+      hasLength(2),
+      reason: 'one page per student, as the sheets are handed out per person',
+    );
+
+    // It was opened for printing, and the operator is told where it went.
+    expect(harness.passwordOpens, hasLength(1));
+    expect(harness.passwordOpens.single, endsWith(name));
+    expect(find.byKey(const ValueKey('passwords-message')), findsOneWidget);
+    expect(find.textContaining('geopend'), findsOneWidget);
+
+    // The queue drained only after the export succeeded, so the button is spent.
+    expect(tester.widget<OutlinedButton>(printButton).onPressed, isNull);
   });
 
   testWidgets(
@@ -1682,6 +1839,72 @@ void main() {
   });
 
   testWidgets(
+      'the Settings view identifies WISA schools by their code end-to-end, '
+      'never showing the id twice (#194)', (WidgetTester tester) async {
+    // The real app composition, real navigation and real fonts over the
+    // in-memory settings seams. One school is stored from before #194 (name,
+    // no code); the fetch backfills the code and the grid must lead with it.
+    useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    // `SMAGetInst`'s CSV NAME column (the short code) lands on `description`.
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'ismab'),
+    ]);
+    final settings = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 7, name: 'Sint-Pieter', ours: true),
+        ],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+
+    // Before the fetch: the stored name leads, the id is the secondary line and
+    // appears exactly once.
+    final tile = find.byKey(const ValueKey('settings-wisa-school-7-ours'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: tile, matching: find.text('Sint-Pieter')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('id: 7')),
+        findsOneWidget);
+    expect(find.text('School 7'), findsNothing);
+
+    // Fetch: the code takes the lead and the long name drops to the subtitle,
+    // so the id no longer shows at all.
+    final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: tile, matching: find.text('ismab')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('Sint-Pieter')),
+        findsOneWidget);
+    expect(find.text('id: 7'), findsNothing);
+
+    // Saving persists the code, so a restart keeps identifying it by code.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.code, 'ismab');
+    expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
+  testWidgets(
       'the Settings/Algemeen werkdatum controls read clearly end-to-end: '
       'renamed virtual label + right-aligned switch instruction (#141)',
       (WidgetTester tester) async {
@@ -1892,6 +2115,167 @@ void main() {
     expect(find.text('Anna Smit'), findsOneWidget);
     expect(find.text('Clara Smit'), findsNothing);
     expect(find.text('Bram Jansen'), findsNothing);
+  });
+
+  testWidgets(
+      'the operator drag-selects two log lines and copies them one per line, '
+      'then Copy all takes the whole buffer end-to-end (#193)',
+      (WidgetTester tester) async {
+    // The real app composition — real fonts, real window, real text layout —
+    // is where a "selectable" log panel drifts: the line metrics a drag is
+    // resolved against come from the real font, and the copy path runs through
+    // the real SelectionArea/shortcut plumbing, not a widget-test stub.
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // A real pass fills the panel; then a known tail so the drag has stable
+    // line contents to land on (the harness clock is fixed at 00:00:00).
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.log.entries, isNotEmpty);
+    harness.log
+      ..addError(Origin.smartschool, 'Set-Password failed: rc=42')
+      ..addMessage(Origin.azure, 'Ready.');
+    await tester.pumpAndSettle();
+
+    // Newest first, so the two lines just added are the top two on screen.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    expect(block, findsOneWidget);
+    final List<String> onScreen =
+        tester.widget<Text>(block).textSpan!.toPlainText().split('\n');
+    expect(onScreen.first, '00:00:00  [azure]  Ready.');
+    expect(onScreen[1], '00:00:00  [smartschool]  Set-Password failed: rc=42');
+
+    // Drag across those two lines with the mouse and hit Ctrl+C.
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / onScreen.length;
+    final TestGesture drag = await tester.startGesture(
+      Offset(rect.left + 1, rect.top + lineHeight * 0.5),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await drag.moveTo(Offset(rect.right - 1, rect.top + lineHeight * 1.5));
+    await tester.pump();
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(copied.single, '${onScreen.first}\n${onScreen[1]}');
+
+    // Copy all reaches past what is laid out: the whole buffer, oldest first.
+    await tester.tap(find.byKey(const ValueKey('reconcile-log-copy-all')));
+    await tester.pumpAndSettle();
+    expect(copied.last, harness.log.toPlainText());
+    expect(copied.last.split('\n'), hasLength(harness.log.entries.length));
+    expect(copied.last.split('\n').length, greaterThan(2));
+    expect(copied.last, endsWith('00:00:00  [azure]  Ready.'));
+  });
+
+  testWidgets(
+      'the operator right-clicks one log line and Copy line puts just that '
+      'message on the clipboard end-to-end (#197)',
+      (WidgetTester tester) async {
+    // Grabbing a single message was already possible after #193 - a
+    // triple-click selects one paragraph, which is one entry - but nothing on
+    // screen said so. The affordance is a context-menu entry whose target is
+    // resolved from the paragraph line the pointer landed on, so it has to be
+    // driven through the real app: the real font decides where the second row
+    // starts, and the menu itself goes through the real overlay.
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // A real pass fills the panel, then a known short tail so the row the
+    // click lands on has stable contents and cannot soft-wrap (the harness
+    // clock is fixed at 00:00:00).
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.log.entries, isNotEmpty);
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'Sync done.')
+      ..addError(Origin.smartschool, 'Set-Password failed: rc=42')
+      ..addMessage(Origin.azure, 'Ready.');
+    await tester.pumpAndSettle();
+
+    // Newest first, so the error is the middle of the three rendered lines.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    expect(block, findsOneWidget);
+    final List<String> onScreen =
+        tester.widget<Text>(block).textSpan!.toPlainText().split('\n');
+    expect(onScreen, hasLength(3));
+    expect(onScreen[1], '00:00:00  [smartschool]  Set-Password failed: rc=42');
+
+    // Right-click that middle line with the mouse.
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / onScreen.length;
+    final TestGesture click = await tester.startGesture(
+      Offset(rect.left + 8, rect.top + lineHeight * 1.5),
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryButton,
+    );
+    await click.up();
+    await tester.pumpAndSettle();
+
+    // The affordance is on screen, and it takes exactly the entry under the
+    // pointer: one line, neither neighbour, no trailing newline.
+    expect(find.text('Copy line'), findsOneWidget);
+    await tester.tap(find.text('Copy line'));
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(copied.single, onScreen[1]);
+    expect(copied.single, isNot(contains('\n')));
   });
 }
 

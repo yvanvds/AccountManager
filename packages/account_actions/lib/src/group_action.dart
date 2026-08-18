@@ -375,8 +375,9 @@ class ModifySmartschoolData extends GroupAction {
   /// The Smartschool group as it will look once synced. Institute number and
   /// description are pulled from WISA; Untis is converged to the class name
   /// (legacy's fixed remediation target); everything else
-  /// (id/name/type/official/parent/admin number) is preserved. Idempotent for a
-  /// field that already agrees.
+  /// (id/name/type/official/parent/admin number, and the Smartschool-internal
+  /// [Group.sourceId] this write does not touch) is preserved. Idempotent for
+  /// a field that already agrees.
   Group _synced() => Group(
         id: _ss.id,
         name: _ss.name,
@@ -387,6 +388,7 @@ class ModifySmartschoolData extends GroupAction {
         instituteNumber: _wisa.instituteNumber,
         adminNumber: _ss.adminNumber,
         untis: _ss.name,
+        sourceId: _ss.sourceId,
         origin: _ss.origin,
       );
 

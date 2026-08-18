@@ -122,6 +122,38 @@ void main() {
       expect(restored.wisaSchools.last.ours, isFalse);
     });
 
+    test('the WISA school code round-trips through JSON (#194)', () {
+      const original = AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(
+              schoolId: 10, code: 'ismaa', name: 'Sint-Jan', ours: true),
+        ],
+      );
+      final restored = AppSettings.fromJson(original.toJson());
+      expect(restored.wisaSchools, original.wisaSchools);
+      expect(restored.wisaSchools.single.code, 'ismaa');
+      expect(restored.wisaSchools.single.name, 'Sint-Jan');
+    });
+
+    test(
+        'a school profile predating the persisted code loads with an empty '
+        'code (#194)', () {
+      final settings = AppSettings.fromJson({
+        'wisaSchools': [
+          {'schoolId': 42, 'name': 'Sint-Jan', 'ours': true, 'prefix': ''},
+        ],
+      });
+      expect(settings.wisaSchools.single.code, isEmpty);
+      expect(settings.wisaSchools.single.name, 'Sint-Jan');
+    });
+
+    test('copyWith preserves and can replace the school code (#194)', () {
+      const profile =
+          WisaSchoolProfile(schoolId: 10, code: 'ismaa', name: 'Sint-Jan');
+      expect(profile.copyWith(ours: true).code, 'ismaa');
+      expect(profile.copyWith(code: 'ismab').code, 'ismab');
+    });
+
     test('managedWisaSchoolIds is the set of ours-flagged school ids (#178)',
         () {
       const settings = AppSettings(

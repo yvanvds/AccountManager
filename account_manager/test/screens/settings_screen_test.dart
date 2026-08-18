@@ -332,6 +332,124 @@ void main() {
         findsOneWidget);
   });
 
+  testWidgets(
+      'a school cell is titled by its WISA code with the long name beneath '
+      '(#194)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // The code (`ismaa`) is how the schools are identified day to day, so it
+    // leads; the long name is the secondary line and the numeric id is gone.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 42, code: 'ismaa', name: 'Sint-Jan'),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    final tile = find.byKey(const ValueKey('settings-wisa-school-42-ours'));
+    expect(tile, findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('ismaa')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('Sint-Jan')),
+        findsOneWidget);
+    expect(find.text('id: 42'), findsNothing);
+    expect(find.text('School 42'), findsNothing);
+  });
+
+  testWidgets(
+      'a school known only by its id shows that id once, not twice (#194)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // Neither code nor name stored: the id is the only identifier left, so it
+    // must appear exactly once instead of as both title and subtitle.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [WisaSchoolProfile(schoolId: 9)],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    expect(find.text('School 9'), findsOneWidget);
+    expect(find.text('id: 9'), findsNothing);
+  });
+
+  testWidgets(
+      'a code-less profile falls back to the name, with the id as the '
+      'secondary line (#194)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // Written before #194: name but no code. The name leads and the id is the
+    // secondary line — still no duplication.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [WisaSchoolProfile(schoolId: 43, name: 'Sint-Pieter')],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    expect(find.text('Sint-Pieter'), findsOneWidget);
+    expect(find.text('id: 43'), findsOneWidget);
+    expect(find.text('School 43'), findsNothing);
+  });
+
+  testWidgets('fetch backfills the school code and save persists it (#194)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    // `SMAGetInst` puts the short code in the CSV NAME column, which the
+    // connector maps onto `WisaSchool.description` (the legacy swap).
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'ismab'),
+    ]);
+    // Stored before #194: managed, named, but with no code.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 7, name: 'Sint-Pieter', ours: true),
+        ],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    expect(find.text('ismab'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
+    await tester.pumpAndSettle();
+
+    // The code now leads the cell and the managed mark survived the merge.
+    expect(find.text('ismab'), findsOneWidget);
+    expect(find.text('Sint-Pieter'), findsOneWidget);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-7-ours')))
+            .value,
+        isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.code, 'ismab');
+    expect(saved.wisaSchools.single.name, 'Sint-Pieter');
+    expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
   testWidgets('no manual add-by-id UI remains (#171)',
       (WidgetTester tester) async {
     _useTallWindow(tester);

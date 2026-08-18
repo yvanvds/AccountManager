@@ -29,6 +29,18 @@ class Group {
   /// `IGroup.Untis`; `ModifySmartschoolData` converges a drifted value to [name].
   final String untis;
 
+  /// The [origin] system's own numeric identifier for this group, when it
+  /// exposes one distinct from [id].
+  ///
+  /// Smartschool returns it in the per-account `groups` arrays of
+  /// `getAllAccountsExtended` (e.g. `298` for class code `SSM1A`) but *not* in
+  /// the `getAllGroupsAndClasses` tree these records are built from, so the
+  /// connector backfills it by joining on the code (#138). It is the id
+  /// Smartschool uses to address a group outside its SOAP API. `null` when the
+  /// sync could not resolve one — a group with no members anywhere — or when
+  /// the system carries no such id (WISA class groups).
+  final int? sourceId;
+
   final Origin origin;
 
   const Group({
@@ -41,6 +53,7 @@ class Group {
     this.instituteNumber,
     this.adminNumber,
     this.untis = '',
+    this.sourceId,
     required this.origin,
   });
 
@@ -54,6 +67,7 @@ class Group {
         if (instituteNumber != null) 'instituteNumber': instituteNumber,
         if (adminNumber != null) 'adminNumber': adminNumber,
         if (untis.isNotEmpty) 'untis': untis,
+        if (sourceId != null) 'sourceId': sourceId,
         'origin': origin.toJson(),
       };
 
@@ -69,6 +83,7 @@ class Group {
         instituteNumber: json['instituteNumber'] as String?,
         adminNumber: json['adminNumber'] as int?,
         untis: json['untis'] as String? ?? '',
+        sourceId: json['sourceId'] as int?,
         origin: Origin.fromJson(json['origin'] as String),
       );
 
@@ -85,6 +100,7 @@ class Group {
           instituteNumber == other.instituteNumber &&
           adminNumber == other.adminNumber &&
           untis == other.untis &&
+          sourceId == other.sourceId &&
           origin == other.origin;
 
   @override
@@ -98,6 +114,7 @@ class Group {
         instituteNumber,
         adminNumber,
         untis,
+        sourceId,
         origin,
       );
 }

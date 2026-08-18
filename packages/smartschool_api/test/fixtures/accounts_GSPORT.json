@@ -4,6 +4,7 @@
     "naam": "Desmet",
     "gebruikersnaam": "jand",
     "internnummer": "W001",
+    "referenceIdentifier": "4069_1001_0",
     "status": "actief",
     "basisrol": "1",
     "geslacht": "m",
@@ -19,13 +20,18 @@
     "emailadres": "jan.desmet@school.be",
     "mobielnummer": "0470111222",
     "telefoonnummer": "016111222",
-    "stamboeknummer": "123456"
+    "stamboeknummer": "123456",
+    "groups": [
+      { "id": "101", "code": "C1A", "name": "1A" },
+      { "id": "401", "code": "GSPORT", "name": "Sport" }
+    ]
   },
   {
     "voornaam": "Sara",
     "naam": "Lemmens",
     "gebruikersnaam": "saral",
     "internnummer": "W003",
+    "referenceIdentifier": "4069",
     "status": "actief",
     "basisrol": "1",
     "geslacht": "f",
@@ -46,6 +52,7 @@
     "type_coaccount2": 0,
     "voornaam_coaccount3": "Peter",
     "naam_coaccount3": "Lemmens",
-    "type_coaccount3": "Vader"
+    "type_coaccount3": "Vader",
+    "groups": [{ "id": "401", "code": "GSPORT", "name": "Sport" }]
   }
 ]

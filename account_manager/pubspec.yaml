@@ -41,6 +41,14 @@ dependencies:
   # persisted token cache at rest (#103).
   ffi: ^2.1.0
 
+  # Password sheets render as real PDFs (#195). `pdf` is pure Dart: no platform
+  # plugin, so nothing to register in the Windows CMake build, and it runs
+  # headlessly under `flutter test` — which is why the sheet bytes are asserted
+  # directly in unit tests. The sibling `printing` plugin (native Windows code,
+  # its own print dialog) is deliberately NOT pulled in: the export opens in the
+  # platform's default PDF viewer through a plain `Process.start` instead.
+  pdf: ^3.11.0
+
   # Plink Labs design system — Flutter binding, external to this workspace
   # (not on pub.dev). Consumed as a git dependency so it resolves everywhere
   # (CI + fresh clones), pinned to a commit for reproducibility. To hack on the

@@ -113,4 +113,25 @@ void main() {
       expect(statusFromAccountState(core.AccountState.invalid), 'invalid');
     });
   });
+
+  group('smartschoolUserIdFrom', () {
+    test('takes the middle segment of a referenceIdentifier (#138)', () {
+      expect(smartschoolUserIdFrom('4069_12016_0'), 12016);
+      // Co-account rows carry the same user id with a non-zero slot index.
+      expect(smartschoolUserIdFrom('4069_12016_2'), 12016);
+      expect(smartschoolUserIdFrom('  4069_1001_0  '), 1001);
+    });
+
+    test('returns null for a missing or malformed value', () {
+      expect(smartschoolUserIdFrom(null), isNull);
+      expect(smartschoolUserIdFrom(''), isNull);
+      expect(smartschoolUserIdFrom('   '), isNull);
+      // Too few / too many segments, or a non-numeric user segment.
+      expect(smartschoolUserIdFrom('4069'), isNull);
+      expect(smartschoolUserIdFrom('4069_12016'), isNull);
+      expect(smartschoolUserIdFrom('4069_12016_0_1'), isNull);
+      expect(smartschoolUserIdFrom('4069__0'), isNull);
+      expect(smartschoolUserIdFrom('4069_abc_0'), isNull);
+    });
+  });
 }

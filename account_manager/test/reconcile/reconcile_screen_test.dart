@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:account_core/account_core.dart' show Origin;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_state/account_state.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'reconcile_fakes.dart';
@@ -262,6 +265,52 @@ void main() {
     expect(rowText('azure'), contains('drift check'));
   });
 
+  testWidgets(
+      'the last-sync box dates a stamp that is not from today: today stays '
+      "time-only, yesterday reads 'gisteren', an older one carries the date "
+      '(#192)', (WidgetTester tester) async {
+    // Three systems stamped on three different calendar days, pinned against
+    // the clock the row renders with. Time-only made all three read identically
+    // (`sync · 09:14`), which is exactly how an operator ends up
+    // reconciling against a snapshot that is days old.
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day, 9, 14);
+    final DateTime yesterday = DateTime(now.year, now.month, now.day - 1, 8, 5);
+    final DateTime lastYear = DateTime(now.year - 1, 8, 15, 16, 40);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(fetchedAt: today),
+      smartschool: ssSnap(fetchedAt: yesterday),
+      azure: azSnap(fetchedAt: lastYear),
+    );
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    String rowText(String system) => tester
+        .widgetList<Text>(find.descendant(
+          of: find.byKey(ValueKey('reconcile-last-sync-$system')),
+          matching: find.byType(Text),
+        ))
+        .map((t) => t.data)
+        .whereType<String>()
+        .join(' ');
+
+    // Today: unchanged, still the short time-only form.
+    expect(rowText('wisa'), contains('sync · 09:14'));
+    expect(rowText('wisa'), isNot(contains('/')));
+    expect(rowText('wisa'), isNot(contains('gisteren')));
+
+    // Yesterday and older are now distinguishable at a glance.
+    expect(rowText('smartschool'), contains('gisteren 08:05'));
+    expect(rowText('azure'), contains('15/08/${now.year - 1} 16:40'));
+    // …and the operator is still named on every row.
+    expect(rowText('azure'), contains('by operator@school.example'));
+  });
+
   testWidgets('the last-sync box survives a restart / passive session (#162)',
       (WidgetTester tester) async {
     // Session 1 syncs and persists freshness to the shared store.
@@ -457,4 +506,238 @@ void main() {
 
     expect(find.text('No messages yet.'), findsOneWidget);
   });
+
+  testWidgets(
+      'the log panel copies a multi-entry selection one line per entry, keeps '
+      'the error colour, and Copy all takes the whole buffer (#193)',
+      (WidgetTester tester) async {
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    // A known buffer: the harness clock is fixed, so every stamp is 00:00:00.
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'alpha')
+      ..addError(Origin.smartschool, 'beta')
+      ..addMessage(Origin.azure, 'gamma');
+    await tester.pumpAndSettle();
+
+    // Rendered newest first as one selectable paragraph.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    expect(block, findsOneWidget);
+    final Text rendered = tester.widget<Text>(block);
+    expect(
+      rendered.textSpan!.toPlainText(),
+      '00:00:00  [azure]  gamma\n'
+      '00:00:00  [smartschool]  beta\n'
+      '00:00:00  [wisa]  alpha',
+    );
+
+    // The error entry keeps its error colour while selectable; the others are
+    // left on the panel's base style.
+    final ColorScheme colors = Theme.of(tester.element(block)).colorScheme;
+    final List<TextSpan> spans =
+        ((rendered.textSpan! as TextSpan).children ?? const <InlineSpan>[])
+            .cast<TextSpan>();
+    expect(
+      spans.firstWhere((TextSpan s) => s.text!.contains('beta')).style?.color,
+      colors.error,
+    );
+    expect(
+      spans.firstWhere((TextSpan s) => s.text!.contains('gamma')).style,
+      isNull,
+    );
+
+    // Drag the mouse across the first two rendered lines, then Ctrl+C: the two
+    // entries land on the clipboard one per line, not run together.
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / 3;
+    final TestGesture drag = await tester.startGesture(
+      Offset(rect.left + 1, rect.top + lineHeight * 0.5),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await drag.moveTo(Offset(rect.right - 1, rect.top + lineHeight * 1.5));
+    await tester.pump();
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(
+      copied.single,
+      '00:00:00  [azure]  gamma\n00:00:00  [smartschool]  beta',
+    );
+
+    // Copy all ignores the selection and takes the buffer, oldest first.
+    await tester.tap(find.byKey(const ValueKey('reconcile-log-copy-all')));
+    await tester.pumpAndSettle();
+    expect(copied, hasLength(2));
+    expect(
+      copied.last,
+      '00:00:00  [wisa]  alpha\n'
+      '00:00:00  [smartschool]  beta\n'
+      '00:00:00  [azure]  gamma',
+    );
+
+    // Both actions are dead while there is nothing to copy.
+    harness.log.clear();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextButton>(
+              find.byKey(const ValueKey('reconcile-log-copy-all')))
+          .onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets(
+      'right-clicking a log line offers Copy line and copies exactly that '
+      'entry (#197)', (WidgetTester tester) async {
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    // A known buffer: the harness clock is fixed, so every stamp is 00:00:00.
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'alpha')
+      ..addError(Origin.smartschool, 'beta')
+      ..addMessage(Origin.azure, 'gamma');
+    await tester.pumpAndSettle();
+
+    // Rendered newest first, so "beta" is the middle of three lines.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / 3;
+
+    await _rightClickAt(
+      tester,
+      Offset(rect.left + 8, rect.top + lineHeight * 1.5),
+    );
+
+    expect(find.text('Copy line'), findsOneWidget);
+    await tester.tap(find.text('Copy line'));
+    await tester.pumpAndSettle();
+
+    // Exactly the one entry under the pointer — no timestamp of its
+    // neighbours, and no trailing newline.
+    expect(copied, hasLength(1));
+    expect(copied.single, '00:00:00  [smartschool]  beta');
+
+    // The empty space under the last line has no entry to copy, so the menu
+    // there offers only what the framework itself contributes.
+    await _rightClickAt(tester, Offset(rect.left + 8, rect.bottom + 24));
+    expect(find.text('Copy line'), findsNothing);
+  });
+
+  testWidgets(
+      'Copy line takes the whole entry when the message soft-wraps over '
+      'several rows (#197)', (WidgetTester tester) async {
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+
+    // One short entry first: its height is one rendered row.
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'short');
+    await tester.pumpAndSettle();
+    final double oneRow = tester.getRect(block).height;
+
+    // Now a long entry that cannot fit the panel's width. It is added last, so
+    // it renders first (newest first) and the short one sits underneath it.
+    final String long = 'Set-Password failed for ${'a' * 400}';
+    harness.log.addError(Origin.smartschool, long);
+    await tester.pumpAndSettle();
+
+    final Rect rect = tester.getRect(block);
+    // It really did wrap: the paragraph is taller than the two entries would
+    // be if each took a single row.
+    expect(rect.height, greaterThan(oneRow * 2));
+
+    // Right-click the *second* rendered row. That row is a continuation of
+    // the first (wrapped) entry, so a per-line action that divided the hit by
+    // a row height would hand back the second entry, "short". Counting
+    // newlines gives back the entry the row actually belongs to.
+    await _rightClickAt(
+      tester,
+      Offset(rect.left + 8, rect.top + oneRow * 1.5),
+    );
+
+    expect(find.text('Copy line'), findsOneWidget);
+    await tester.tap(find.text('Copy line'));
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(copied.single, '00:00:00  [smartschool]  $long');
+  });
+}
+
+/// A right-click (secondary mouse button) at a global [at], which is what puts
+/// the panel's selection context menu on screen (#197).
+Future<void> _rightClickAt(WidgetTester tester, Offset at) async {
+  final TestGesture gesture = await tester.startGesture(
+    at,
+    kind: PointerDeviceKind.mouse,
+    buttons: kSecondaryButton,
+  );
+  await gesture.up();
+  await tester.pumpAndSettle();
 }

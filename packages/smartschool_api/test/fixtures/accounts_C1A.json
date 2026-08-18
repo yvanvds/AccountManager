@@ -4,6 +4,7 @@
     "naam": "Desmet",
     "gebruikersnaam": "jand",
     "internnummer": "W001",
+    "referenceIdentifier": "4069_1001_0",
     "status": "actief",
     "basisrol": "1",
     "geslacht": "m",
@@ -24,16 +25,22 @@
     "mobielnummer": "0470111222",
     "telefoonnummer": "016111222",
     "fax": "",
-    "stamboeknummer": "123456"
+    "stamboeknummer": "123456",
+    "groups": [
+      { "id": "101", "code": "C1A", "name": "1A" },
+      { "id": "401", "code": "GSPORT", "name": "Sport" }
+    ]
   },
   {
     "voornaam": "Old",
     "naam": "Gebruiker",
     "gebruikersnaam": "olduser",
     "internnummer": "W099",
+    "referenceIdentifier": "4069_1099_0",
     "status": "uitgeschakeld",
     "basisrol": "1",
     "geslacht": "f",
-    "emailadres": "old@school.be"
+    "emailadres": "old@school.be",
+    "groups": [{ "id": "101", "code": "C1A", "name": "1A" }]
   }
 ]

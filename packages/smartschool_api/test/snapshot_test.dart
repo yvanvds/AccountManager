@@ -52,6 +52,7 @@ void main() {
           type: core.GroupType.classGroup,
           official: true,
           untis: '1A',
+          sourceId: 298,
           origin: core.Origin.smartschool,
         ),
       ],
@@ -84,6 +85,7 @@ void main() {
           fax: '',
           untisId: '',
           status: 'actief',
+          referenceIdentifier: '4069_12016_0',
           coAccounts: [
             CoAccountSlot(
               slot: 1,
@@ -109,5 +111,9 @@ void main() {
     expect(restored.memberships, full.memberships);
     // Co-account slots survive the round-trip (they were the point of #21).
     expect(restored.accounts.single.coAccounts, hasLength(1));
+    // The Smartschool-internal ids reach the persisted snapshot too (#138).
+    expect(restored.groups.single.sourceId, 298);
+    expect(restored.accounts.single.referenceIdentifier, '4069_12016_0');
+    expect(restored.accounts.single.internalUserId, 12016);
   });
 }

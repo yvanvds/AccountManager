@@ -19,7 +19,12 @@ export 'src/models/smartschool_account.dart' show SmartschoolAccount;
 export 'src/models/smartschool_group.dart' show SmartschoolGroup;
 export 'src/models/smartschool_membership.dart' show SmartschoolMembership;
 export 'src/parsing/account_json.dart'
-    show parseSmartschoolAccount, parseSmartschoolAccounts;
+    show
+        SmartschoolAccountPayload,
+        parseSmartschoolAccount,
+        parseSmartschoolAccountPayload,
+        parseSmartschoolAccounts,
+        parseSmartschoolGroupIds;
 export 'src/parsing/date_format.dart'
     show formatSmartschoolDate, parseSmartschoolDate;
 export 'src/parsing/group_tree.dart' show parseGroupTree;
@@ -34,6 +39,7 @@ export 'src/parsing/mappings.dart'
         personRoleFromBasisrol,
         smartschoolGender,
         smartschoolRole,
+        smartschoolUserIdFrom,
         statusFromAccountState;
 export 'src/rules/import_rules.dart'
     show

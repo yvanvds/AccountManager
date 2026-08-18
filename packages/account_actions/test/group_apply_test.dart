@@ -42,6 +42,7 @@ void main() {
             instituteNumber: '123456',
             description: 'Oud',
             adminNumber: 7,
+            sourceId: 298,
           ),
         ),
       );
@@ -52,9 +53,11 @@ void main() {
       expect(result.system, Origin.smartschool);
       expect(result.group?.instituteNumber, '999999');
       expect(result.group?.description, 'Nieuw');
-      // Untouched fields are preserved on the mutated record.
+      // Untouched fields are preserved on the mutated record, including the
+      // Smartschool-internal group id this write never touches (#138).
       expect(result.group?.adminNumber, 7);
       expect(result.group?.name, '3A');
+      expect(result.group?.sourceId, 298);
     });
 
     test('a failed saveClass leaves the bound record untouched (INV-41)',

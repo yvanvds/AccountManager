@@ -269,10 +269,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  /// Merges the [fetched] WISA schools (id + name) into the current known list:
-  /// keeps every already-known school (preserving its `ours`/`prefix`, refreshing
-  /// its name when the fetch supplies one) and appends any fetched school not yet
-  /// known as unmanaged. Order is stable by school id so the grid does not jump.
+  /// Merges the [fetched] WISA schools (id + code + name) into the current known
+  /// list: keeps every already-known school (preserving its `ours`/`prefix`,
+  /// refreshing its code and name when the fetch supplies them) and appends any
+  /// fetched school not yet known as unmanaged. Order is stable by school id so
+  /// the grid does not jump.
+  ///
+  /// The short code (`ismaa`, `ismab`, …) rides on `WisaSchool.description`, not
+  /// `.name` — `SMAGetInst`'s CSV is `ID,NAME,DESCRIPTION` and the connector
+  /// preserves the legacy swap of the last two columns (#194).
   List<WisaSchoolProfile> _mergeFetchedSchools(List<WisaSchool> fetched) {
     final byId = <int, WisaSchoolProfile>{
       for (final p in _wisaSchools) p.schoolId: p,
@@ -280,8 +285,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     for (final s in fetched) {
       final existing = byId[s.id];
       byId[s.id] = existing == null
-          ? WisaSchoolProfile(schoolId: s.id, name: s.name)
-          : existing.copyWith(name: s.name.isEmpty ? existing.name : s.name);
+          ? WisaSchoolProfile(schoolId: s.id, code: s.description, name: s.name)
+          : existing.copyWith(
+              code: s.description.isEmpty ? existing.code : s.description,
+              name: s.name.isEmpty ? existing.name : s.name,
+            );
     }
     final merged = byId.values.toList()
       ..sort((a, b) => a.schoolId.compareTo(b.schoolId));
@@ -1057,10 +1065,15 @@ class _WisaSchoolsEditor extends StatelessWidget {
   }
 }
 
-/// A single cell in the known-WISA-school grid (#171): the school name (falling
-/// back to `School <id>` for a profile stored before the name was persisted),
-/// its id, and an inline checkbox marking whether we manage it. Keyed by school
-/// id so a test can flip a specific school's managed flag.
+/// A single cell in the known-WISA-school grid (#171): the school's WISA code
+/// (`ismaa`, `ismab`, …) — the identifier operators actually use — with the long
+/// name beneath it, plus an inline checkbox marking whether we manage it. Keyed
+/// by school id so a test can flip a specific school's managed flag.
+///
+/// The numeric id is strictly a fallback and never appears twice (#194): the
+/// title degrades code → name → `School <id>`, and the subtitle shows whichever
+/// of name / `id: <id>` the title has not already used — nothing at all when the
+/// title is already the id.
 class _SchoolCell extends StatelessWidget {
   const _SchoolCell({
     required this.state,
@@ -1074,17 +1087,28 @@ class _SchoolCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final String code = profile.code;
+    final String name = profile.name;
+    final String title = code.isNotEmpty
+        ? code
+        : (name.isNotEmpty ? name : 'School ${profile.schoolId}');
+    final String? subtitle = code.isNotEmpty && name.isNotEmpty
+        ? name
+        : (code.isEmpty && name.isEmpty ? null : 'id: ${profile.schoolId}');
+
     return CheckboxListTile(
       key: ValueKey('settings-wisa-school-${profile.schoolId}-ours'),
       contentPadding: EdgeInsets.zero,
       controlAffinity: ListTileControlAffinity.leading,
       dense: true,
       title: Text(
-        profile.name.isEmpty ? 'School ${profile.schoolId}' : profile.name,
+        title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Text('id: ${profile.schoolId}'),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
       value: profile.ours,
       onChanged: (v) => state._toggleSchoolOurs(index, v ?? false),
     );
