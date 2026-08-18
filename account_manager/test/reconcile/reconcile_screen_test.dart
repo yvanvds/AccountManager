@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:account_core/account_core.dart' show Origin;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_state/account_state.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'reconcile_fakes.dart';
@@ -502,5 +505,111 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No messages yet.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the log panel copies a multi-entry selection one line per entry, keeps '
+      'the error colour, and Copy all takes the whole buffer (#193)',
+      (WidgetTester tester) async {
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    // A known buffer: the harness clock is fixed, so every stamp is 00:00:00.
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'alpha')
+      ..addError(Origin.smartschool, 'beta')
+      ..addMessage(Origin.azure, 'gamma');
+    await tester.pumpAndSettle();
+
+    // Rendered newest first as one selectable paragraph.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    expect(block, findsOneWidget);
+    final Text rendered = tester.widget<Text>(block);
+    expect(
+      rendered.textSpan!.toPlainText(),
+      '00:00:00  [azure]  gamma\n'
+      '00:00:00  [smartschool]  beta\n'
+      '00:00:00  [wisa]  alpha',
+    );
+
+    // The error entry keeps its error colour while selectable; the others are
+    // left on the panel's base style.
+    final ColorScheme colors = Theme.of(tester.element(block)).colorScheme;
+    final List<TextSpan> spans =
+        ((rendered.textSpan! as TextSpan).children ?? const <InlineSpan>[])
+            .cast<TextSpan>();
+    expect(
+      spans.firstWhere((TextSpan s) => s.text!.contains('beta')).style?.color,
+      colors.error,
+    );
+    expect(
+      spans.firstWhere((TextSpan s) => s.text!.contains('gamma')).style,
+      isNull,
+    );
+
+    // Drag the mouse across the first two rendered lines, then Ctrl+C: the two
+    // entries land on the clipboard one per line, not run together.
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / 3;
+    final TestGesture drag = await tester.startGesture(
+      Offset(rect.left + 1, rect.top + lineHeight * 0.5),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await drag.moveTo(Offset(rect.right - 1, rect.top + lineHeight * 1.5));
+    await tester.pump();
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(
+      copied.single,
+      '00:00:00  [azure]  gamma\n00:00:00  [smartschool]  beta',
+    );
+
+    // Copy all ignores the selection and takes the buffer, oldest first.
+    await tester.tap(find.byKey(const ValueKey('reconcile-log-copy-all')));
+    await tester.pumpAndSettle();
+    expect(copied, hasLength(2));
+    expect(
+      copied.last,
+      '00:00:00  [wisa]  alpha\n'
+      '00:00:00  [smartschool]  beta\n'
+      '00:00:00  [azure]  gamma',
+    );
+
+    // Both actions are dead while there is nothing to copy.
+    harness.log.clear();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextButton>(
+              find.byKey(const ValueKey('reconcile-log-copy-all')))
+          .onPressed,
+      isNull,
+    );
   });
 }

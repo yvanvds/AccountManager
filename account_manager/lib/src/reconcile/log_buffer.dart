@@ -14,6 +14,18 @@ class LogEntry {
   final Origin origin;
   final String message;
   final bool isError;
+
+  /// The entry as one plain-text line — `HH:mm:ss  [origin]  message`.
+  ///
+  /// This is both what the panel renders and what a copy puts on the clipboard
+  /// (#193), deliberately in one place: an operator pasting a log excerpt into
+  /// a support ticket must be quoting exactly what they read on screen.
+  String get line {
+    final String hhmmss = '${time.hour.toString().padLeft(2, '0')}:'
+        '${time.minute.toString().padLeft(2, '0')}:'
+        '${time.second.toString().padLeft(2, '0')}';
+    return '$hhmmss  [${origin.name}]  $message';
+  }
 }
 
 /// The app's [ILog] sink: an in-memory, notifying buffer the inline log panel
@@ -36,6 +48,14 @@ class LogBuffer extends ChangeNotifier implements ILog {
   List<LogEntry> get entries => List.unmodifiable(_entries);
 
   bool get hasErrors => _entries.any((e) => e.isError);
+
+  /// The whole buffer as plain text, oldest first, one [LogEntry.line] per
+  /// line — what the panel's **Copy all** writes to the clipboard (#193).
+  ///
+  /// Reads the entries rather than the rendered selection on purpose: the
+  /// panel only lays out what fits, so a selection can never reach the older
+  /// end of a [capacity]-entry buffer.
+  String toPlainText() => _entries.map((LogEntry e) => e.line).join('\n');
 
   @override
   void addMessage(Origin origin, String message) =>

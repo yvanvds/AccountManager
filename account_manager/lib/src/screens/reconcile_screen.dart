@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart' show SystemSyncMeta;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../format/timestamps.dart';
@@ -779,6 +780,15 @@ class _LogPanel extends StatelessWidget {
   final LogBuffer log;
   final double height;
 
+  /// Puts the whole buffer on the clipboard, oldest first (#193).
+  ///
+  /// Reads [LogBuffer.toPlainText] rather than the on-screen selection: only
+  /// what fits the panel is laid out, so a selection can never cover all 500
+  /// entries a long reconcile pass leaves behind.
+  static void _copyAll(LogBuffer log) {
+    unawaited(Clipboard.setData(ClipboardData(text: log.toPlainText())));
+  }
+
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
@@ -803,10 +813,23 @@ class _LogPanel extends StatelessWidget {
                 const Spacer(),
                 ListenableBuilder(
                   listenable: log,
-                  builder: (context, _) => TextButton(
-                    onPressed: log.entries.isEmpty ? null : log.clear,
-                    child: const Text('Clear'),
-                  ),
+                  builder: (context, _) {
+                    final bool empty = log.entries.isEmpty;
+                    return Row(
+                      children: <Widget>[
+                        TextButton(
+                          key: const ValueKey('reconcile-log-copy-all'),
+                          onPressed: empty ? null : () => _copyAll(log),
+                          child: const Text('Copy all'),
+                        ),
+                        TextButton(
+                          key: const ValueKey('reconcile-log-clear'),
+                          onPressed: empty ? null : log.clear,
+                          child: const Text('Clear'),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -825,25 +848,41 @@ class _LogPanel extends StatelessWidget {
                   );
                 }
                 // Newest first, anchored to the top — reads like a tail.
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: PlinkSpacing.s4,
-                    vertical: PlinkSpacing.s2,
-                  ),
-                  itemCount: entries.length,
-                  itemBuilder: (context, i) {
-                    final e = entries[i];
-                    final time = '${e.time.hour.toString().padLeft(2, '0')}:'
-                        '${e.time.minute.toString().padLeft(2, '0')}:'
-                        '${e.time.second.toString().padLeft(2, '0')}';
-                    return Text(
-                      '$time  [${e.origin.name}]  ${e.message}',
-                      style: text.bodySmall?.copyWith(
-                        color: e.isError ? colors.error : null,
-                        fontFamily: 'monospace',
+                //
+                // One selectable paragraph rather than a widget per entry
+                // (#193): SelectionArea concatenates the text of separate
+                // selectables with no separator at all
+                // (MultiSelectableSelectionContainerDelegate.getSelectedContent),
+                // so dragging across a list of per-entry Texts would copy the
+                // lines run together into one unreadable blob — exactly the
+                // thing an operator is pasting into a support ticket. Keeping
+                // the newlines inside a single paragraph makes the copy line
+                // per entry, and makes triple-click select exactly one entry;
+                // per-entry spans keep the error colour.
+                return SelectionArea(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: PlinkSpacing.s4,
+                      vertical: PlinkSpacing.s2,
+                    ),
+                    child: Text.rich(
+                      TextSpan(
+                        children: <InlineSpan>[
+                          for (int i = 0; i < entries.length; i++)
+                            TextSpan(
+                              text: i == entries.length - 1
+                                  ? entries[i].line
+                                  : '${entries[i].line}\n',
+                              style: entries[i].isError
+                                  ? TextStyle(color: colors.error)
+                                  : null,
+                            ),
+                        ],
                       ),
-                    );
-                  },
+                      key: const ValueKey('reconcile-log-text'),
+                      style: text.bodySmall?.copyWith(fontFamily: 'monospace'),
+                    ),
+                  ),
                 );
               },
             ),

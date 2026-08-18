@@ -37,7 +37,9 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:wisa_api/wisa_api.dart' show WisaSchool;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
@@ -1988,6 +1990,88 @@ void main() {
     expect(find.text('Anna Smit'), findsOneWidget);
     expect(find.text('Clara Smit'), findsNothing);
     expect(find.text('Bram Jansen'), findsNothing);
+  });
+
+  testWidgets(
+      'the operator drag-selects two log lines and copies them one per line, '
+      'then Copy all takes the whole buffer end-to-end (#193)',
+      (WidgetTester tester) async {
+    // The real app composition — real fonts, real window, real text layout —
+    // is where a "selectable" log panel drifts: the line metrics a drag is
+    // resolved against come from the real font, and the copy path runs through
+    // the real SelectionArea/shortcut plumbing, not a widget-test stub.
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // A real pass fills the panel; then a known tail so the drag has stable
+    // line contents to land on (the harness clock is fixed at 00:00:00).
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.log.entries, isNotEmpty);
+    harness.log
+      ..addError(Origin.smartschool, 'Set-Password failed: rc=42')
+      ..addMessage(Origin.azure, 'Ready.');
+    await tester.pumpAndSettle();
+
+    // Newest first, so the two lines just added are the top two on screen.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    expect(block, findsOneWidget);
+    final List<String> onScreen =
+        tester.widget<Text>(block).textSpan!.toPlainText().split('\n');
+    expect(onScreen.first, '00:00:00  [azure]  Ready.');
+    expect(onScreen[1], '00:00:00  [smartschool]  Set-Password failed: rc=42');
+
+    // Drag across those two lines with the mouse and hit Ctrl+C.
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / onScreen.length;
+    final TestGesture drag = await tester.startGesture(
+      Offset(rect.left + 1, rect.top + lineHeight * 0.5),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await drag.moveTo(Offset(rect.right - 1, rect.top + lineHeight * 1.5));
+    await tester.pump();
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(copied.single, '${onScreen.first}\n${onScreen[1]}');
+
+    // Copy all reaches past what is laid out: the whole buffer, oldest first.
+    await tester.tap(find.byKey(const ValueKey('reconcile-log-copy-all')));
+    await tester.pumpAndSettle();
+    expect(copied.last, harness.log.toPlainText());
+    expect(copied.last.split('\n'), hasLength(harness.log.entries.length));
+    expect(copied.last.split('\n').length, greaterThan(2));
+    expect(copied.last, endsWith('00:00:00  [azure]  Ready.'));
   });
 }
 
