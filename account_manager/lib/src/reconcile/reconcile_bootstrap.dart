@@ -8,6 +8,7 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 import '../auth/aad_app_config.dart';
 import '../auth/sign_in_session.dart';
 import '../passwords/password_backends.dart';
+import '../passwords/password_export.dart';
 import 'log_buffer.dart';
 import 'reconcile_controller.dart';
 
@@ -90,6 +91,8 @@ class ReconcileServices {
     required this.log,
     required this.passwordQueue,
     required this.passwordBackends,
+    this.passwordFileWriter = writePasswordExport,
+    this.passwordFileOpener = openPasswordExport,
   });
 
   final AppSettings settings;
@@ -109,6 +112,15 @@ class ReconcileServices {
   /// the Smartschool and Azure connectors. Wired to [ConnectorPasswordBackends]
   /// in production; the offline harness substitutes a recording fake.
   final PasswordBackends passwordBackends;
+
+  /// Where an exported password sheet is written (#195). Defaults to the real
+  /// file writer; a headless test substitutes a recorder so driving the export
+  /// button never puts cleartext passwords on the test machine's disk.
+  final PasswordFileWriter passwordFileWriter;
+
+  /// How a written sheet is opened for printing (#195). Defaults to the
+  /// platform PDF viewer; a headless test records the call instead.
+  final PasswordFileOpener passwordFileOpener;
 }
 
 /// A configuration problem the operator can act on (missing secret, malformed

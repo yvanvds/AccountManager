@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/passwords/password_controller.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
@@ -124,6 +126,42 @@ void main() {
           .onPressed,
       isNotNull,
     );
+  });
+
+  testWidgets(
+      'Leerlingen: printing the queued sheets writes a PDF and opens it for '
+      'printing (#195)', (WidgetTester tester) async {
+    final harness = ReconcileHarness(ssInitial: _snap());
+    await tester
+        .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Generate a password for Jane so the print queue holds a sheet.
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-cell-jane-smartschool')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+
+    final print = find.byKey(const ValueKey('passwords-export-students'));
+    await tester.tap(print);
+    await tester.pumpAndSettle();
+
+    // A real PDF was written — not the old browser-printable HTML — and handed
+    // to the platform viewer so the operator can print straight away.
+    expect(harness.passwordWrites, hasLength(1));
+    expect(harness.passwordWrites.single.$1, 'leerling-wachtwoorden.pdf');
+    expect(
+      latin1.decode(harness.passwordWrites.single.$2.sublist(0, 5)),
+      '%PDF-',
+    );
+    expect(harness.passwordOpens, hasLength(1));
+    // The queue drained on a successful export, so the button goes quiet again.
+    expect(tester.widget<OutlinedButton>(print).onPressed, isNull);
   });
 
   testWidgets(

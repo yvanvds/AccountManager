@@ -871,6 +871,18 @@ class ReconcileHarness {
   final RecordingPasswordBackends passwordBackends =
       RecordingPasswordBackends();
 
+  /// Every password export the screen wrote (#195), as
+  /// `(suggestedName, bytes)`. Recorded instead of written so driving the
+  /// export button never drops cleartext password sheets on the test machine.
+  final List<(String, List<int>)> passwordWrites = <(String, List<int>)>[];
+
+  /// Every path the screen asked the platform to open after an export (#195).
+  final List<String> passwordOpens = <String>[];
+
+  /// When set, the recording opener throws it — the "the viewer would not
+  /// launch" case, which must not cost the operator the written file.
+  Object? passwordOpenError;
+
   /// The bundle the screen's bootstrap seam expects.
   ReconcileServices get services => ReconcileServices(
         settings: const AppSettings(),
@@ -880,6 +892,15 @@ class ReconcileHarness {
         log: log,
         passwordQueue: passwordQueue,
         passwordBackends: passwordBackends,
+        passwordFileWriter: (name, bytes) async {
+          passwordWrites.add((name, List<int>.of(bytes)));
+          return 'C:/exports/$name';
+        },
+        passwordFileOpener: (path) async {
+          final error = passwordOpenError;
+          if (error != null) throw error;
+          passwordOpens.add(path);
+        },
       );
 
   /// A ready-made bootstrap closure for [ReconcileScreen]/[AccountManagerApp].

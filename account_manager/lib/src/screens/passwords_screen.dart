@@ -18,10 +18,10 @@ import '../reconcile/reconcile_bootstrap.dart';
 ///   class loads its accounts into a grid of per-target checkboxes (Smartschool,
 ///   Office 365, CoAccount 1–6). A guarded "Genereer wachtwoorden" pushes a
 ///   fresh password live for each checked target and queues the result for the
-///   printable student sheet (PDF-style HTML) and the co-account CSV.
+///   printable student sheet (a real PDF, #195) and the co-account CSV.
 /// - **Personeel**: the "Personeel" group, filterable by name/username; a
 ///   per-member reset mints a fresh Smartschool and/or Office 365 password,
-///   pushes it live, and exports a per-staff sheet.
+///   pushes it live, and exports a per-staff PDF sheet.
 ///
 /// Shares the one memoized [ReconcileServices] with the Reconcile and Actions
 /// screens, so the class/staff tree comes from the same synced Smartschool
@@ -74,6 +74,8 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
         snapshot: services.app.smartschool.snapshot,
         queue: services.passwordQueue,
         backends: services.passwordBackends,
+        writer: services.passwordFileWriter,
+        opener: services.passwordFileOpener,
         log: services.log,
       );
       await controller.loadQueue();

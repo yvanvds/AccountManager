@@ -949,6 +949,65 @@ void main() {
   });
 
   testWidgets(
+      'the Passwords view prints the queued sheets as a real PDF and opens it '
+      'for printing end-to-end (#195)', (WidgetTester tester) async {
+    // The real app, real fonts, real window. Printing used to drop browser-
+    // printable HTML into %TEMP% and leave the operator to go find it and print
+    // from a browser. It is a real PDF now, written outside temp and handed
+    // straight to the platform viewer — so drive it the way the operator does:
+    // pick the class, tick the whole column, generate, then press Print.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(ssInitial: passwordsSnap());
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Passwords'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-bulk-smartschool')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both students of 3C were pushed, so both are queued for printing.
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(2));
+    final printButton = find.byKey(const ValueKey('passwords-export-students'));
+    await tester.ensureVisible(printButton);
+    expect(tester.widget<OutlinedButton>(printButton).onPressed, isNotNull);
+
+    await tester.tap(printButton);
+    await tester.pumpAndSettle();
+
+    // One real PDF document, one page per queued student, under a .pdf name.
+    expect(harness.passwordWrites, hasLength(1));
+    final String name = harness.passwordWrites.single.$1;
+    final List<int> bytes = harness.passwordWrites.single.$2;
+    expect(name, 'leerling-wachtwoorden.pdf');
+    expect(latin1.decode(bytes.sublist(0, 5)), '%PDF-');
+    expect(
+      RegExp(r'/Type\s*/Page(?!s)').allMatches(latin1.decode(bytes)),
+      hasLength(2),
+      reason: 'one page per student, as the sheets are handed out per person',
+    );
+
+    // It was opened for printing, and the operator is told where it went.
+    expect(harness.passwordOpens, hasLength(1));
+    expect(harness.passwordOpens.single, endsWith(name));
+    expect(find.byKey(const ValueKey('passwords-message')), findsOneWidget);
+    expect(find.textContaining('geopend'), findsOneWidget);
+
+    // The queue drained only after the export succeeded, so the button is spent.
+    expect(tester.widget<OutlinedButton>(printButton).onPressed, isNull);
+  });
+
+  testWidgets(
       'the Smartschool address action only fires on a real field drift and its '
       'diff shows the differing field, not an identical row (#153)',
       (WidgetTester tester) async {

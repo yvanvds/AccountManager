@@ -1,35 +1,435 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:account_state/account_state.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 /// Writes an export payload under [suggestedName] and returns the path it was
 /// written to. Injected so the Passwords screen can be driven headlessly (a
 /// test records the calls) while production writes real files to disk.
+///
+/// Takes bytes rather than a string because the printable sheets are PDFs
+/// (#195); the co-account CSV is UTF-8 encoded by the caller.
 typedef PasswordFileWriter = Future<String> Function(
   String suggestedName,
-  String content,
+  List<int> bytes,
 );
 
-/// The default [PasswordFileWriter]: writes into a per-run `AccountManager`
-/// folder under the system temp directory and returns the absolute path. A
-/// timestamp prefix keeps successive exports from overwriting each other.
-Future<String> writePasswordExport(String suggestedName, String content) async {
-  final dir = Directory('${Directory.systemTemp.path}/AccountManager');
-  dir.createSync(recursive: true);
+/// Opens an already-written export with whatever the platform associates with
+/// its file type — for a password sheet, the PDF viewer, one keystroke away
+/// from the printer. Injected alongside [PasswordFileWriter] so a headless test
+/// records the call instead of launching a viewer.
+typedef PasswordFileOpener = Future<void> Function(String path);
+
+/// The directory password exports are written to.
+///
+/// Deliberately **not** the system temp directory (#195): cleartext password
+/// sheets are the most sensitive artefact this app produces, and `%TEMP%` is a
+/// place nothing owns and nothing cleans up. They land in a known, operator-
+/// owned folder instead — `Documents\AccountManager\Wachtwoorden` — which the
+/// operator can find, print from, and delete.
+String passwordExportDirectory() {
+  final String home = Platform.environment['USERPROFILE'] ??
+      Platform.environment['HOME'] ??
+      Directory.current.path;
+  final String sep = Platform.pathSeparator;
+  final Directory documents = Directory('$home${sep}Documents');
+  final String base = documents.existsSync() ? documents.path : home;
+  return '$base${sep}AccountManager${sep}Wachtwoorden';
+}
+
+/// The default [PasswordFileWriter]: writes into [passwordExportDirectory] and
+/// returns the absolute path. A timestamp prefix keeps successive exports from
+/// overwriting each other.
+Future<String> writePasswordExport(
+  String suggestedName,
+  List<int> bytes,
+) async {
+  final dir = Directory(passwordExportDirectory())..createSync(recursive: true);
   final stamp = DateTime.now()
       .toIso8601String()
       .replaceAll(':', '')
       .replaceAll('.', '')
       .replaceAll('-', '');
-  final file = File('${dir.path}/${stamp}_$suggestedName');
-  await file.writeAsString(content);
+  final file =
+      File('${dir.path}${Platform.pathSeparator}${stamp}_$suggestedName');
+  await file.writeAsBytes(bytes, flush: true);
   return file.path;
 }
+
+/// The default [PasswordFileOpener]: hands [path] to the platform default
+/// handler, so an exported sheet lands in the PDF viewer ready to print.
+///
+/// A plain process launch on purpose — the `printing` plugin would add native
+/// Windows code to the build for the same result.
+Future<void> openPasswordExport(String path) async {
+  final (String executable, List<String> arguments) =
+      switch (Platform.operatingSystem) {
+    // `start` needs an (empty) window-title argument before the file, else a
+    // quoted path is swallowed as the title.
+    'windows' => ('cmd', <String>['/c', 'start', '', path]),
+    'macos' => ('open', <String>[path]),
+    _ => ('xdg-open', <String>[path]),
+  };
+  final result = await Process.run(executable, arguments);
+  if (result.exitCode != 0) {
+    throw ProcessException(
+      executable,
+      arguments,
+      '${result.stderr}'.trim(),
+      result.exitCode,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sheet model
+// ---------------------------------------------------------------------------
+
+/// One `label: value` line of a [PasswordSheetBlock], rendered monospaced so
+/// the login and the password line up on the printed sheet.
+class PasswordSheetField {
+  const PasswordSheetField(this.label, this.value);
+
+  final String label;
+  final String value;
+}
+
+/// One section of a [PasswordSheet] — the Office 365, Smartschool, WiFi, or
+/// privacy block. A section that has no password to show is simply not built,
+/// which is how the sheets omit blocks.
+class PasswordSheetBlock {
+  const PasswordSheetBlock({
+    this.heading = '',
+    this.intro = const <String>[],
+    this.fields = const <PasswordSheetField>[],
+    this.notes = const <String>[],
+  });
+
+  /// The section heading. Empty for the leading login line, which sits directly
+  /// under the sheet title.
+  final String heading;
+
+  /// Prose shown above the fields ("Aanmelden via office.com.").
+  final List<String> intro;
+
+  /// The monospaced `label: value` lines.
+  final List<PasswordSheetField> fields;
+
+  /// Prose shown below the fields (the one-time-password note).
+  final List<String> notes;
+}
+
+/// One printed page: everything one person is handed on paper.
+class PasswordSheet {
+  const PasswordSheet({required this.title, required this.blocks});
+
+  final String title;
+  final List<PasswordSheetBlock> blocks;
+}
+
+const String _oneTimeNote = 'Dit is een eenmalig wachtwoord; kies zelf een '
+    'nieuw wachtwoord bij de eerste aanmelding.';
+
+/// The student sheets, one per queued entry, ported from the legacy
+/// `PasswordManager.exportToPDF` layout (#180) and kept identical in content
+/// and section order when the format became a real PDF (#195): the login, the
+/// Office 365 and Smartschool blocks (only for the passwords that were actually
+/// generated), a WiFi block, and a privacy note.
+List<PasswordSheet> studentPasswordSheets(Iterable<PasswordEntry> entries) {
+  final sheets = <PasswordSheet>[];
+  for (final e in entries) {
+    final klas = e.classGroup;
+    final title = klas != null && klas.isNotEmpty
+        ? 'Account voor ${e.displayName} - $klas'
+        : 'Account voor ${e.displayName}';
+    final blocks = <PasswordSheetBlock>[
+      PasswordSheetBlock(
+        fields: <PasswordSheetField>[
+          PasswordSheetField('Login', e.accountName),
+        ],
+      ),
+    ];
+    final azure = e.azurePassword;
+    if (azure != null && azure.isNotEmpty) {
+      blocks.add(PasswordSheetBlock(
+        heading: 'Office 365',
+        intro: const <String>['Aanmelden via office.com.'],
+        fields: <PasswordSheetField>[
+          PasswordSheetField('Login', e.mail ?? e.accountName),
+          PasswordSheetField('Wachtwoord', azure),
+        ],
+        notes: const <String>[_oneTimeNote],
+      ));
+    }
+    final ss = e.smartschoolPassword;
+    if (ss != null && ss.isNotEmpty) {
+      blocks.add(PasswordSheetBlock(
+        heading: 'Smartschool',
+        intro: const <String>['Aanmelden via de Smartschool-website of -app.'],
+        fields: <PasswordSheetField>[
+          PasswordSheetField('Login', e.accountName),
+          PasswordSheetField('Wachtwoord', ss),
+        ],
+        notes: const <String>[_oneTimeNote],
+      ));
+    }
+    blocks.add(const PasswordSheetBlock(
+      heading: 'WiFi',
+      fields: <PasswordSheetField>[
+        PasswordSheetField('Netwerk', 'Smifi-L'),
+        PasswordSheetField('Wachtwoord', 'SmifiDeWifi:)'),
+      ],
+    ));
+    blocks.add(const PasswordSheetBlock(
+      heading: 'Privacy',
+      notes: <String>[
+        'Hou je wachtwoord geheim en deel het met niemand — ook niet met '
+            'leerkrachten.',
+      ],
+    ));
+    sheets.add(PasswordSheet(title: title, blocks: blocks));
+  }
+  return sheets;
+}
+
+/// The single-staff sheet, ported from legacy `ExportStaffPasswordToPDF`
+/// (#180). A `null` password omits that whole block, which is how the three
+/// staff reset buttons choose which sections appear.
+PasswordSheet staffPasswordSheet({
+  required String name,
+  required String username,
+  required String mail,
+  String? smartschoolPassword,
+  String? office365Password,
+}) {
+  final blocks = <PasswordSheetBlock>[];
+  if (office365Password != null && office365Password.isNotEmpty) {
+    blocks.add(PasswordSheetBlock(
+      heading: 'Office 365',
+      fields: <PasswordSheetField>[
+        PasswordSheetField('Login', mail),
+        PasswordSheetField('Wachtwoord', office365Password),
+      ],
+      notes: const <String>[_oneTimeNote],
+    ));
+  }
+  blocks.add(const PasswordSheetBlock(
+    heading: 'WiFi',
+    fields: <PasswordSheetField>[
+      PasswordSheetField('Netwerk', 'Smifi-P'),
+      PasswordSheetField('Code', '!TEAM!SMA!'),
+    ],
+  ));
+  if (smartschoolPassword != null && smartschoolPassword.isNotEmpty) {
+    blocks.add(PasswordSheetBlock(
+      heading: 'Smartschool',
+      fields: <PasswordSheetField>[
+        PasswordSheetField('Login', username),
+        PasswordSheetField('Wachtwoord', smartschoolPassword),
+      ],
+      notes: const <String>[_oneTimeNote],
+    ));
+  }
+  blocks.add(const PasswordSheetBlock(
+    heading: 'Privacy',
+    notes: <String>[
+      'Hou je wachtwoord geheim en deel het met niemand — ook niet aan '
+          "collega's.",
+    ],
+  ));
+  return PasswordSheet(title: 'Account voor $name', blocks: blocks);
+}
+
+// ---------------------------------------------------------------------------
+// PDF rendering
+// ---------------------------------------------------------------------------
+
+/// The three typefaces a sheet is set in.
+///
+/// The PDF base-14 faces (Helvetica / Courier) only carry Latin-1, so every
+/// Turkish, Polish, or Croatian name — the names this school hands sheets to
+/// every September — would print as a row of empty boxes. The design system
+/// already ships Latin-Extended faces with the app, so the sheets are typeset
+/// in the product's own fonts and no extra binary joins the repo.
+class PasswordSheetFonts {
+  const PasswordSheetFonts({
+    required this.body,
+    required this.heading,
+    required this.mono,
+  });
+
+  /// Prose: the intro lines and the one-time-password / privacy notes.
+  final pw.Font body;
+
+  /// The sheet title and the section headings.
+  final pw.Font heading;
+
+  /// The `label : value` credential lines, so login and password line up.
+  final pw.Font mono;
+
+  static const String _bodyAsset =
+      'packages/plink_design_system/fonts/hanken-grotesk/'
+      'HankenGrotesk-Variable.ttf';
+  static const String _headingAsset =
+      'packages/plink_design_system/fonts/space-mono/SpaceMono-Bold.ttf';
+  static const String _monoAsset =
+      'packages/plink_design_system/fonts/space-mono/SpaceMono-Regular.ttf';
+
+  static PasswordSheetFonts? _cached;
+
+  /// The PDF base-14 faces. Latin-1 only — used solely as the last-resort
+  /// stand-in when the bundled fonts cannot be read, because a sheet with a
+  /// mangled name still beats no sheet at all.
+  static PasswordSheetFonts fallback() => PasswordSheetFonts(
+        body: pw.Font.helvetica(),
+        heading: pw.Font.helveticaBold(),
+        mono: pw.Font.courier(),
+      );
+
+  /// Reads the bundled faces once and caches them: parsing a TrueType file per
+  /// export would be paid on every print.
+  static Future<PasswordSheetFonts> load() async {
+    final cached = _cached;
+    if (cached != null) return cached;
+    try {
+      return _cached = PasswordSheetFonts(
+        body: pw.Font.ttf(await rootBundle.load(_bodyAsset)),
+        heading: pw.Font.ttf(await rootBundle.load(_headingAsset)),
+        mono: pw.Font.ttf(await rootBundle.load(_monoAsset)),
+      );
+    } on Object {
+      return fallback();
+    }
+  }
+}
+
+/// Renders [sheets] as an A4 PDF, one page per sheet.
+///
+/// Typeset in [PasswordSheetFonts.load]'s bundled faces unless [fonts] says
+/// otherwise. [compress] is a test seam: with it off the page content streams
+/// stay plain text, so a unit test can read what was actually drawn —
+/// production always ships the compressed document.
+Future<Uint8List> passwordSheetsPdf(
+  List<PasswordSheet> sheets, {
+  required String title,
+  bool compress = true,
+  PasswordSheetFonts? fonts,
+}) async {
+  final faces = fonts ?? await PasswordSheetFonts.load();
+  final doc = pw.Document(title: title, compress: compress);
+  if (sheets.isEmpty) {
+    // Never emit a page-less PDF: viewers refuse to open one, and the operator
+    // would be left staring at an error instead of an empty sheet.
+    doc.addPage(pw.Page(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(40),
+      build: (context) => pw.Text(
+        'Geen wachtwoorden om af te drukken.',
+        style: pw.TextStyle(font: faces.body, fontSize: 11),
+      ),
+    ));
+  }
+  for (final sheet in sheets) {
+    doc.addPage(pw.Page(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(40),
+      build: (context) => _sheetColumn(sheet, faces),
+    ));
+  }
+  return doc.save();
+}
+
+/// The student sheets as a PDF — one page per student.
+Future<Uint8List> studentPasswordsPdf(Iterable<PasswordEntry> entries) =>
+    passwordSheetsPdf(
+      studentPasswordSheets(entries),
+      title: 'Leerling-wachtwoorden',
+    );
+
+/// A single staff member sheet as a one-page PDF.
+Future<Uint8List> staffPasswordPdf({
+  required String name,
+  required String username,
+  required String mail,
+  String? smartschoolPassword,
+  String? office365Password,
+}) =>
+    passwordSheetsPdf(
+      <PasswordSheet>[
+        staffPasswordSheet(
+          name: name,
+          username: username,
+          mail: mail,
+          smartschoolPassword: smartschoolPassword,
+          office365Password: office365Password,
+        ),
+      ],
+      title: 'Personeelswachtwoord — $name',
+    );
+
+pw.Widget _sheetColumn(PasswordSheet sheet, PasswordSheetFonts fonts) {
+  final children = <pw.Widget>[
+    pw.Text(sheet.title,
+        style: pw.TextStyle(font: fonts.heading, fontSize: 16)),
+    pw.Divider(thickness: 1),
+  ];
+  for (final block in sheet.blocks) {
+    if (block.heading.isNotEmpty) {
+      children.add(pw.SizedBox(height: 14));
+      children.add(pw.Text(
+        block.heading,
+        style: pw.TextStyle(font: fonts.heading, fontSize: 12),
+      ));
+      children.add(pw.SizedBox(height: 4));
+    }
+    for (final line in block.intro) {
+      children.add(pw.Text(
+        line,
+        style: pw.TextStyle(font: fonts.body, fontSize: 11),
+      ));
+      children.add(pw.SizedBox(height: 4));
+    }
+    // Pad the labels so `Login` and `Wachtwoord` line up under each other, the
+    // way the legacy <pre> block did.
+    final width = block.fields.fold<int>(
+      0,
+      (widest, f) => f.label.length > widest ? f.label.length : widest,
+    );
+    for (final field in block.fields) {
+      children.add(pw.Text(
+        '${field.label.padRight(width)} : ${field.value}',
+        style: pw.TextStyle(font: fonts.mono, fontSize: 11),
+      ));
+    }
+    if (block.notes.isNotEmpty) {
+      children.add(pw.SizedBox(height: 4));
+    }
+    for (final note in block.notes) {
+      children.add(pw.Text(
+        note,
+        style: pw.TextStyle(font: fonts.body, fontSize: 11),
+      ));
+    }
+  }
+  return pw.Column(
+    crossAxisAlignment: pw.CrossAxisAlignment.start,
+    children: children,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Co-account CSV
+// ---------------------------------------------------------------------------
 
 /// The co-account CSV, ported from legacy `PasswordManager.exportToCSV`
 /// (#180): a `;`-separated file with a header row and one row per co-account
 /// entry, columns `Gebruikersnaam;Naam;Klas;CoAccount1..CoAccount6`. Slots that
 /// were not regenerated are left blank.
+///
+/// Stays a CSV on purpose (#195) — it is fed to other tooling, not printed.
 String coAccountsCsv(Iterable<PasswordEntry> entries) {
   final lines = <String>[
     'Gebruikersnaam;Naam;Klas;CoAccount1;CoAccount2;CoAccount3;'
@@ -47,109 +447,6 @@ String coAccountsCsv(Iterable<PasswordEntry> entries) {
   }
   return '${lines.join('\n')}\n';
 }
-
-/// A printable HTML sheet with one section per student, ported from the legacy
-/// `PasswordManager.exportToPDF` layout (#180) but rendered as browser-printable
-/// HTML — the operator opens it and prints, avoiding a native PDF dependency.
-/// Each section shows the login, the Office 365 and Smartschool blocks (only
-/// for the passwords that were generated), a WiFi block, and a privacy note.
-String studentPasswordsHtml(Iterable<PasswordEntry> entries) {
-  final sections = <String>[];
-  for (final e in entries) {
-    final buf = StringBuffer()
-      ..writeln('<section>')
-      ..writeln(
-          '<h1>Account voor ${_html(e.displayName)}${e.classGroup != null && e.classGroup!.isNotEmpty ? ' - ${_html(e.classGroup!)}' : ''}</h1>')
-      ..writeln('<pre>Login     : ${_html(e.accountName)}</pre>');
-    final azure = e.azurePassword;
-    if (azure != null && azure.isNotEmpty) {
-      buf
-        ..writeln('<h2>Office 365</h2>')
-        ..writeln('<p>Aanmelden via office.com.</p>')
-        ..writeln(
-            '<pre>Login     : ${_html(e.mail ?? e.accountName)}\nWachtwoord: ${_html(azure)}</pre>')
-        ..writeln('<p>Dit is een eenmalig wachtwoord; kies zelf een nieuw '
-            'wachtwoord bij de eerste aanmelding.</p>');
-    }
-    final ss = e.smartschoolPassword;
-    if (ss != null && ss.isNotEmpty) {
-      buf
-        ..writeln('<h2>Smartschool</h2>')
-        ..writeln('<p>Aanmelden via de Smartschool-website of -app.</p>')
-        ..writeln(
-            '<pre>Login     : ${_html(e.accountName)}\nWachtwoord: ${_html(ss)}</pre>')
-        ..writeln('<p>Dit is een eenmalig wachtwoord; kies zelf een nieuw '
-            'wachtwoord bij de eerste aanmelding.</p>');
-    }
-    buf
-      ..writeln('<h2>WiFi</h2>')
-      ..writeln('<pre>Netwerk   : Smifi-L\nWachtwoord: SmifiDeWifi:)</pre>')
-      ..writeln('<h2>Privacy</h2>')
-      ..writeln('<p>Hou je wachtwoord geheim en deel het met niemand — ook '
-          'niet met leerkrachten.</p>')
-      ..writeln('</section>');
-    sections.add(buf.toString());
-  }
-  return _htmlDocument('Leerling-wachtwoorden', sections.join('\n'));
-}
-
-/// A single-staff printable HTML sheet, ported from legacy
-/// `ExportStaffPasswordToPDF` (#180). A `null` password omits that whole block,
-/// which is how the three staff reset buttons choose which sections appear.
-String staffPasswordHtml({
-  required String name,
-  required String username,
-  required String mail,
-  String? smartschoolPassword,
-  String? office365Password,
-}) {
-  final buf = StringBuffer()
-    ..writeln('<section>')
-    ..writeln('<h1>Account voor ${_html(name)}</h1>');
-  if (office365Password != null && office365Password.isNotEmpty) {
-    buf
-      ..writeln('<h2>Office 365</h2>')
-      ..writeln(
-          '<pre>Login     : ${_html(mail)}\nWachtwoord: ${_html(office365Password)}</pre>')
-      ..writeln('<p>Dit is een eenmalig wachtwoord; kies zelf een nieuw '
-          'wachtwoord bij de eerste aanmelding.</p>');
-  }
-  buf
-    ..writeln('<h2>WiFi</h2>')
-    ..writeln('<pre>Netwerk   : Smifi-P\nCode      : !TEAM!SMA!</pre>');
-  if (smartschoolPassword != null && smartschoolPassword.isNotEmpty) {
-    buf
-      ..writeln('<h2>Smartschool</h2>')
-      ..writeln(
-          '<pre>Login     : ${_html(username)}\nWachtwoord: ${_html(smartschoolPassword)}</pre>')
-      ..writeln('<p>Dit is een eenmalig wachtwoord; kies zelf een nieuw '
-          'wachtwoord bij de eerste aanmelding.</p>');
-  }
-  buf
-    ..writeln('<h2>Privacy</h2>')
-    ..writeln('<p>Hou je wachtwoord geheim en deel het met niemand — ook '
-        'niet aan collega\'s.</p>')
-    ..writeln('</section>');
-  return _htmlDocument('Personeelswachtwoord — $name', buf.toString());
-}
-
-String _htmlDocument(String title, String body) => '<!doctype html>\n'
-    '<html lang="nl"><head><meta charset="utf-8">'
-    '<title>${_html(title)}</title>'
-    '<style>body{font-family:sans-serif;margin:2rem;}'
-    'section{page-break-after:always;margin-bottom:2rem;}'
-    'h1{font-size:1.4rem;border-bottom:1px solid #333;}'
-    'pre{font-family:monospace;font-size:1rem;}</style>'
-    '</head><body>\n$body\n</body></html>\n';
-
-/// Escapes the five XML/HTML special characters. Passwords only ever contain
-/// `!?*`, letters, and digits, but names may carry `&`/`<`/`>`.
-String _html(String s) => s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 
 /// Escapes a CSV cell for the `;`-separated legacy format: a cell containing a
 /// separator, quote, or newline is quoted with doubled inner quotes.

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
 import 'package:flutter/foundation.dart';
@@ -67,6 +69,7 @@ class PasswordController extends ChangeNotifier {
     required PasswordQueueStore queue,
     required PasswordBackends backends,
     PasswordFileWriter writer = writePasswordExport,
+    PasswordFileOpener opener = openPasswordExport,
     String Function() generatePassword = core.Password.create,
     String studentGroupName = 'Leerlingen',
     String staffGroupName = 'Personeel',
@@ -75,6 +78,7 @@ class PasswordController extends ChangeNotifier {
         _queue = queue,
         _backends = backends,
         _writer = writer,
+        _opener = opener,
         _generate = generatePassword,
         _log = log {
     _indexTree();
@@ -87,6 +91,7 @@ class PasswordController extends ChangeNotifier {
   final PasswordQueueStore _queue;
   final PasswordBackends _backends;
   final PasswordFileWriter _writer;
+  final PasswordFileOpener _opener;
   final String Function() _generate;
   final core.ILog? _log;
 
@@ -373,23 +378,32 @@ class PasswordController extends ChangeNotifier {
     ];
   }
 
-  /// Exports the queued student sheets to a printable HTML file, then drains
-  /// them from the shared queue (as legacy clears its list after an export).
-  /// Returns the written path.
+  /// Exports the queued student sheets as a printable PDF — one page per
+  /// student (#195) — drains them from the shared queue (as legacy clears its
+  /// list after an export), and opens the file so the operator can print
+  /// straight away. Returns the written path.
   Future<String> exportStudentSheets() async {
     final sheets = List<PasswordEntry>.of(_studentSheets);
     final path = await _writer(
-        'leerling-wachtwoorden.html', studentPasswordsHtml(sheets));
+      'leerling-wachtwoorden.pdf',
+      await studentPasswordsPdf(sheets),
+    );
     await _drain(sheets);
-    _message = 'Leerling-wachtwoorden bewaard: $path';
+    _message =
+        _exportMessage('Leerling-wachtwoorden', path, await _tryOpen(path));
     notifyListeners();
     return path;
   }
 
   /// Exports the queued co-account passwords to a CSV file, then drains them.
+  /// Not opened afterwards: unlike the sheets this file is fed to other tooling
+  /// rather than printed — it only moved out of the temp folder (#195).
   Future<String> exportCoAccounts() async {
     final sheets = List<PasswordEntry>.of(_coAccountSheets);
-    final path = await _writer('co-accounts.csv', coAccountsCsv(sheets));
+    final path = await _writer(
+      'co-accounts.csv',
+      utf8.encode(coAccountsCsv(sheets)),
+    );
     await _drain(sheets);
     _message = 'Co-account wachtwoorden bewaard: $path';
     notifyListeners();
@@ -407,6 +421,25 @@ class PasswordController extends ChangeNotifier {
     await _queue.save(remainder);
     await _reloadQueue();
   }
+
+  /// Opens [path] with the platform PDF viewer. Returns `null` on success, or
+  /// the failure text. By the time this runs the file is already written and
+  /// the queue already drained, so a viewer that will not launch costs the
+  /// operator one double-click — never the export itself (#195).
+  Future<String?> _tryOpen(String path) async {
+    try {
+      await _opener(path);
+      return null;
+    } on Object catch (e) {
+      _log?.addError(core.Origin.other, 'Kon "$path" niet openen: $e');
+      return '$e';
+    }
+  }
+
+  static String _exportMessage(String what, String path, String? openError) =>
+      openError == null
+          ? '$what bewaard en geopend: $path'
+          : '$what bewaard: $path — openen mislukt ($openError).';
 
   // --- Personeel tab ---------------------------------------------------------
 
@@ -489,8 +522,9 @@ class PasswordController extends ChangeNotifier {
 
   /// Resets the selected staff member's password(s): a fresh Smartschool and/or
   /// Office 365 password (when both are requested they share one password, as
-  /// legacy `NewPasswords` does), pushes them live, and exports a per-staff HTML
-  /// sheet. Returns the written path, or `null` when nothing was pushed.
+  /// legacy `NewPasswords` does), pushes them live, exports a one-page per-staff
+  /// PDF sheet and opens it for printing (#195). Returns the written path, or
+  /// `null` when nothing was pushed.
   Future<String?> resetStaff({
     required bool smartschool,
     required bool office365,
@@ -528,8 +562,8 @@ class PasswordController extends ChangeNotifier {
         return null;
       }
       final path = await _writer(
-        '${account.uid}.html',
-        staffPasswordHtml(
+        '${account.uid}.pdf',
+        await staffPasswordPdf(
           name: '${account.givenName} ${account.surname}'.trim(),
           username: account.uid,
           mail: account.mail,
@@ -537,9 +571,11 @@ class PasswordController extends ChangeNotifier {
           office365Password: azPw,
         ),
       );
-      _message = failed
-          ? 'Deels gezet — sheet bewaard: $path'
-          : 'Wachtwoord gezet en sheet bewaard: $path';
+      _message = _exportMessage(
+        failed ? 'Deels gezet — sheet' : 'Wachtwoord gezet en sheet',
+        path,
+        await _tryOpen(path),
+      );
       return path;
     } on Object catch (e) {
       _message = 'Reset mislukt: $e';
