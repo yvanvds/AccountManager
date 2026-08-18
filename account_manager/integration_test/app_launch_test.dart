@@ -1780,6 +1780,72 @@ void main() {
   });
 
   testWidgets(
+      'the Settings view identifies WISA schools by their code end-to-end, '
+      'never showing the id twice (#194)', (WidgetTester tester) async {
+    // The real app composition, real navigation and real fonts over the
+    // in-memory settings seams. One school is stored from before #194 (name,
+    // no code); the fetch backfills the code and the grid must lead with it.
+    useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    // `SMAGetInst`'s CSV NAME column (the short code) lands on `description`.
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'ismab'),
+    ]);
+    final settings = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 7, name: 'Sint-Pieter', ours: true),
+        ],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+
+    // Before the fetch: the stored name leads, the id is the secondary line and
+    // appears exactly once.
+    final tile = find.byKey(const ValueKey('settings-wisa-school-7-ours'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: tile, matching: find.text('Sint-Pieter')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('id: 7')),
+        findsOneWidget);
+    expect(find.text('School 7'), findsNothing);
+
+    // Fetch: the code takes the lead and the long name drops to the subtitle,
+    // so the id no longer shows at all.
+    final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: tile, matching: find.text('ismab')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('Sint-Pieter')),
+        findsOneWidget);
+    expect(find.text('id: 7'), findsNothing);
+
+    // Saving persists the code, so a restart keeps identifying it by code.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.code, 'ismab');
+    expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
+  testWidgets(
       'the Settings/Algemeen werkdatum controls read clearly end-to-end: '
       'renamed virtual label + right-aligned switch instruction (#141)',
       (WidgetTester tester) async {
