@@ -37,7 +37,7 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:wisa_api/wisa_api.dart' show WisaSchool;
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -2197,6 +2197,85 @@ void main() {
     expect(copied.last.split('\n'), hasLength(harness.log.entries.length));
     expect(copied.last.split('\n').length, greaterThan(2));
     expect(copied.last, endsWith('00:00:00  [azure]  Ready.'));
+  });
+
+  testWidgets(
+      'the operator right-clicks one log line and Copy line puts just that '
+      'message on the clipboard end-to-end (#197)',
+      (WidgetTester tester) async {
+    // Grabbing a single message was already possible after #193 - a
+    // triple-click selects one paragraph, which is one entry - but nothing on
+    // screen said so. The affordance is a context-menu entry whose target is
+    // resolved from the paragraph line the pointer landed on, so it has to be
+    // driven through the real app: the real font decides where the second row
+    // starts, and the menu itself goes through the real overlay.
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // A real pass fills the panel, then a known short tail so the row the
+    // click lands on has stable contents and cannot soft-wrap (the harness
+    // clock is fixed at 00:00:00).
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.log.entries, isNotEmpty);
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'Sync done.')
+      ..addError(Origin.smartschool, 'Set-Password failed: rc=42')
+      ..addMessage(Origin.azure, 'Ready.');
+    await tester.pumpAndSettle();
+
+    // Newest first, so the error is the middle of the three rendered lines.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    expect(block, findsOneWidget);
+    final List<String> onScreen =
+        tester.widget<Text>(block).textSpan!.toPlainText().split('\n');
+    expect(onScreen, hasLength(3));
+    expect(onScreen[1], '00:00:00  [smartschool]  Set-Password failed: rc=42');
+
+    // Right-click that middle line with the mouse.
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / onScreen.length;
+    final TestGesture click = await tester.startGesture(
+      Offset(rect.left + 8, rect.top + lineHeight * 1.5),
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryButton,
+    );
+    await click.up();
+    await tester.pumpAndSettle();
+
+    // The affordance is on screen, and it takes exactly the entry under the
+    // pointer: one line, neither neighbour, no trailing newline.
+    expect(find.text('Copy line'), findsOneWidget);
+    await tester.tap(find.text('Copy line'));
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(copied.single, onScreen[1]);
+    expect(copied.single, isNot(contains('\n')));
   });
 }
 

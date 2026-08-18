@@ -4,7 +4,7 @@ import 'package:account_core/account_core.dart' show Origin;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_state/account_state.dart';
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -612,4 +612,132 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets(
+      'right-clicking a log line offers Copy line and copies exactly that '
+      'entry (#197)', (WidgetTester tester) async {
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    // A known buffer: the harness clock is fixed, so every stamp is 00:00:00.
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'alpha')
+      ..addError(Origin.smartschool, 'beta')
+      ..addMessage(Origin.azure, 'gamma');
+    await tester.pumpAndSettle();
+
+    // Rendered newest first, so "beta" is the middle of three lines.
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+    final Rect rect = tester.getRect(block);
+    final double lineHeight = rect.height / 3;
+
+    await _rightClickAt(
+      tester,
+      Offset(rect.left + 8, rect.top + lineHeight * 1.5),
+    );
+
+    expect(find.text('Copy line'), findsOneWidget);
+    await tester.tap(find.text('Copy line'));
+    await tester.pumpAndSettle();
+
+    // Exactly the one entry under the pointer — no timestamp of its
+    // neighbours, and no trailing newline.
+    expect(copied, hasLength(1));
+    expect(copied.single, '00:00:00  [smartschool]  beta');
+
+    // The empty space under the last line has no entry to copy, so the menu
+    // there offers only what the framework itself contributes.
+    await _rightClickAt(tester, Offset(rect.left + 8, rect.bottom + 24));
+    expect(find.text('Copy line'), findsNothing);
+  });
+
+  testWidgets(
+      'Copy line takes the whole entry when the message soft-wraps over '
+      'several rows (#197)', (WidgetTester tester) async {
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder block = find.byKey(const ValueKey('reconcile-log-text'));
+
+    // One short entry first: its height is one rendered row.
+    harness.log
+      ..clear()
+      ..addMessage(Origin.wisa, 'short');
+    await tester.pumpAndSettle();
+    final double oneRow = tester.getRect(block).height;
+
+    // Now a long entry that cannot fit the panel's width. It is added last, so
+    // it renders first (newest first) and the short one sits underneath it.
+    final String long = 'Set-Password failed for ${'a' * 400}';
+    harness.log.addError(Origin.smartschool, long);
+    await tester.pumpAndSettle();
+
+    final Rect rect = tester.getRect(block);
+    // It really did wrap: the paragraph is taller than the two entries would
+    // be if each took a single row.
+    expect(rect.height, greaterThan(oneRow * 2));
+
+    // Right-click the *second* rendered row. That row is a continuation of
+    // the first (wrapped) entry, so a per-line action that divided the hit by
+    // a row height would hand back the second entry, "short". Counting
+    // newlines gives back the entry the row actually belongs to.
+    await _rightClickAt(
+      tester,
+      Offset(rect.left + 8, rect.top + oneRow * 1.5),
+    );
+
+    expect(find.text('Copy line'), findsOneWidget);
+    await tester.tap(find.text('Copy line'));
+    await tester.pumpAndSettle();
+
+    expect(copied, hasLength(1));
+    expect(copied.single, '00:00:00  [smartschool]  $long');
+  });
+}
+
+/// A right-click (secondary mouse button) at a global [at], which is what puts
+/// the panel's selection context menu on screen (#197).
+Future<void> _rightClickAt(WidgetTester tester, Offset at) async {
+  final TestGesture gesture = await tester.startGesture(
+    at,
+    kind: PointerDeviceKind.mouse,
+    buttons: kSecondaryButton,
+  );
+  await gesture.up();
+  await tester.pumpAndSettle();
 }

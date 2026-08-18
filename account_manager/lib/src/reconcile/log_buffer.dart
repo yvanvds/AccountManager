@@ -28,6 +28,29 @@ class LogEntry {
   }
 }
 
+/// Which entry a [characterOffset] into the panel's rendered paragraph falls
+/// in (#197).
+///
+/// The panel renders its entries as a *single* selectable paragraph — one
+/// [LogEntry.line] per line, joined by newlines (#193) — because a
+/// `SelectionArea` over per-row widgets concatenates them with no separator
+/// and would copy a multi-line selection as one blob. That leaves no widget
+/// per row to hang a per-line action on, so the line under the pointer is
+/// resolved from the paragraph itself: the entry index is how many newlines
+/// precede the character the pointer landed on.
+///
+/// Counting newlines rather than dividing a hit by a line height is what makes
+/// this survive soft wrapping: a message wider than the panel occupies several
+/// visual rows but is still one entry.
+int logEntryIndexAt(String paragraph, int characterOffset) {
+  final int end = characterOffset.clamp(0, paragraph.length);
+  var index = 0;
+  for (var i = 0; i < end; i++) {
+    if (paragraph.codeUnitAt(i) == 0x0a) index++;
+  }
+  return index;
+}
+
 /// The app's [ILog] sink: an in-memory, notifying buffer the inline log panel
 /// renders (#99). Wired into the connectors at bootstrap and used by the
 /// reconcile controller for its own progress messages, so every diagnostic in

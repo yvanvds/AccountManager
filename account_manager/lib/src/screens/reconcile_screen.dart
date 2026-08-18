@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart' show SystemSyncMeta;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -774,29 +775,115 @@ class _LogResizeHandle extends StatelessWidget {
   }
 }
 
-class _LogPanel extends StatelessWidget {
+class _LogPanel extends StatefulWidget {
   const _LogPanel({required this.log, required this.height});
 
   final LogBuffer log;
   final double height;
+
+  @override
+  State<_LogPanel> createState() => _LogPanelState();
+}
+
+class _LogPanelState extends State<_LogPanel> {
+  /// Anchors the rendered paragraph so a right-click can be resolved back to
+  /// the entry underneath it (#197).
+  ///
+  /// It sits on a [KeyedSubtree] around the paragraph rather than on the [Text]
+  /// itself, which keeps `reconcile-log-text` the plain [ValueKey] #193 left.
+  final GlobalKey _paragraphKey = GlobalKey();
+
+  static void _copy(String text) {
+    unawaited(Clipboard.setData(ClipboardData(text: text)));
+  }
 
   /// Puts the whole buffer on the clipboard, oldest first (#193).
   ///
   /// Reads [LogBuffer.toPlainText] rather than the on-screen selection: only
   /// what fits the panel is laid out, so a selection can never cover all 500
   /// entries a long reconcile pass leaves behind.
-  static void _copyAll(LogBuffer log) {
-    unawaited(Clipboard.setData(ClipboardData(text: log.toPlainText())));
+  void _copyAll() => _copy(widget.log.toPlainText());
+
+  /// The paragraph's render object, or `null` before it has been laid out.
+  ///
+  /// Descends instead of casting whatever the key points at: [Text] wraps its
+  /// [RichText] in semantics and selection plumbing, so the [RenderParagraph]
+  /// is not necessarily the topmost render object under the key.
+  static RenderParagraph? _firstParagraph(RenderObject? node) {
+    if (node is RenderParagraph) return node;
+    RenderParagraph? found;
+    node?.visitChildren((RenderObject child) {
+      found ??= _firstParagraph(child);
+    });
+    return found;
+  }
+
+  /// Which rendered entry sits under a global [position], or `null` when the
+  /// pointer is not over the paragraph at all — right-clicking the empty space
+  /// under a short log has no line to copy (#197).
+  int? _entryIndexAt(Offset position) {
+    final RenderParagraph? paragraph =
+        _firstParagraph(_paragraphKey.currentContext?.findRenderObject());
+    if (paragraph == null || !paragraph.hasSize) return null;
+    final Offset local = paragraph.globalToLocal(position);
+    if (!(Offset.zero & paragraph.size).contains(local)) return null;
+    return logEntryIndexAt(
+      paragraph.text.toPlainText(),
+      paragraph.getPositionForOffset(local).offset,
+    );
+  }
+
+  /// The panel's right-click menu: the framework's own items plus **Copy
+  /// line**, which takes the single entry under the pointer (#197).
+  ///
+  /// Grabbing one message was already possible — the entries render as one
+  /// paragraph (#193), so a triple-click selects exactly one line — but
+  /// nothing on screen said so, which is what this makes visible. The line
+  /// index has to come from the paragraph's own text, because that single
+  /// paragraph is precisely what leaves no per-row widget to hang a hover
+  /// button on: SelectionArea concatenates separate selectables with no
+  /// separator, so a widget per entry would copy a multi-line selection as one
+  /// unreadable blob.
+  Widget _contextMenu(
+    BuildContext context,
+    SelectableRegionState region,
+    List<LogEntry> entries,
+  ) {
+    // Read once and hold on to it: SelectableRegionState clears the
+    // right-click position the first time contextMenuAnchors is read.
+    final TextSelectionToolbarAnchors anchors = region.contextMenuAnchors;
+    final List<ContextMenuButtonItem> items = <ContextMenuButtonItem>[
+      ...region.contextMenuButtonItems,
+    ];
+    final int? index = _entryIndexAt(anchors.primaryAnchor);
+    if (index != null && index < entries.length) {
+      final LogEntry entry = entries[index];
+      items.insert(
+        0,
+        ContextMenuButtonItem(
+          label: 'Copy line',
+          onPressed: () {
+            region.hideToolbar();
+            _copy(entry.line);
+          },
+        ),
+      );
+    }
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: anchors,
+      buttonItems: items,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
+    final LogBuffer log = widget.log;
 
     return SizedBox(
       key: const ValueKey('reconcile-log-panel'),
-      height: height,
+      height: widget.height,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -819,7 +906,7 @@ class _LogPanel extends StatelessWidget {
                       children: <Widget>[
                         TextButton(
                           key: const ValueKey('reconcile-log-copy-all'),
-                          onPressed: empty ? null : () => _copyAll(log),
+                          onPressed: empty ? null : _copyAll,
                           child: const Text('Copy all'),
                         ),
                         TextButton(
@@ -858,29 +945,38 @@ class _LogPanel extends StatelessWidget {
                 // thing an operator is pasting into a support ticket. Keeping
                 // the newlines inside a single paragraph makes the copy line
                 // per entry, and makes triple-click select exactly one entry;
-                // per-entry spans keep the error colour.
+                // per-entry spans keep the error colour. The per-line copy
+                // affordance (#197) therefore hangs off the context menu, with
+                // the line resolved from the paragraph's own text.
                 return SelectionArea(
+                  contextMenuBuilder:
+                      (BuildContext context, SelectableRegionState region) =>
+                          _contextMenu(context, region, entries),
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.symmetric(
                       horizontal: PlinkSpacing.s4,
                       vertical: PlinkSpacing.s2,
                     ),
-                    child: Text.rich(
-                      TextSpan(
-                        children: <InlineSpan>[
-                          for (int i = 0; i < entries.length; i++)
-                            TextSpan(
-                              text: i == entries.length - 1
-                                  ? entries[i].line
-                                  : '${entries[i].line}\n',
-                              style: entries[i].isError
-                                  ? TextStyle(color: colors.error)
-                                  : null,
-                            ),
-                        ],
+                    child: KeyedSubtree(
+                      key: _paragraphKey,
+                      child: Text.rich(
+                        TextSpan(
+                          children: <InlineSpan>[
+                            for (int i = 0; i < entries.length; i++)
+                              TextSpan(
+                                text: i == entries.length - 1
+                                    ? entries[i].line
+                                    : '${entries[i].line}\n',
+                                style: entries[i].isError
+                                    ? TextStyle(color: colors.error)
+                                    : null,
+                              ),
+                          ],
+                        ),
+                        key: const ValueKey('reconcile-log-text'),
+                        style:
+                            text.bodySmall?.copyWith(fontFamily: 'monospace'),
                       ),
-                      key: const ValueKey('reconcile-log-text'),
-                      style: text.bodySmall?.copyWith(fontFamily: 'monospace'),
                     ),
                   ),
                 );
