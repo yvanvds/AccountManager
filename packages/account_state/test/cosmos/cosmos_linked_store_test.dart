@@ -2,13 +2,31 @@ import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
 import 'package:test/test.dart';
 
+/// What a `SELECT c.id, c.pk[, c.contentHash] FROM c` projection returns: the
+/// named fields only, and — as Cosmos does — with a field the stored document
+/// does not carry simply absent rather than null. Shared by the fakes below so
+/// none of them silently hands the store back a whole document.
+Map<String, dynamic> _projection(Map<String, dynamic> doc, String query) => {
+      'id': doc['id'],
+      'pk': doc['pk'],
+      if (query.contains('c.$contentHashField') &&
+          doc.containsKey(contentHashField))
+        contentHashField: doc[contentHashField],
+    };
+
 /// A small in-memory [CosmosClient] covering the query shapes
 /// [CosmosLinkedStore] issues: `SELECT * FROM c`, the classroom filter, and the
-/// `SELECT c.id, c.pk FROM c` id/pk projection — honouring [partitionKey]
-/// scoping via each document's `pk` field.
+/// `SELECT c.id, c.pk, c.contentHash FROM c` projection — honouring
+/// [partitionKey] scoping via each document's `pk` field.
 class _FakeClient implements CosmosClient {
   final Map<String, Map<String, Map<String, dynamic>>> _store = {};
   int deletes = 0;
+
+  /// Upserts per container, so a test can assert what a re-sync actually wrote
+  /// (#200) rather than only what the container ended up holding.
+  final Map<String, int> upserts = {};
+
+  int upsertsTo(String container) => upserts[container] ?? 0;
 
   /// Conditioned upserts rejected as stale (412) — for the concurrency test.
   int staleWrites = 0;
@@ -61,6 +79,7 @@ class _FakeClient implements CosmosClient {
       staleWrites++;
       return const WriteOutcome.stale();
     }
+    upserts[container] = upsertsTo(container) + 1;
     final etag = _nextEtag();
     _c(container)[id] = Map.of(document)..['_etag'] = etag;
     return WriteOutcome.applied(etag);
@@ -91,9 +110,7 @@ class _FakeClient implements CosmosClient {
       ];
     }
     if (query.contains('SELECT c.id, c.pk')) {
-      return [
-        for (final d in rows) {'id': d['id'], 'pk': d['pk']},
-      ];
+      return [for (final d in rows) _projection(d, query)];
     }
     return rows;
   }
@@ -225,9 +242,7 @@ class _ConcurrencyClient implements CosmosClient {
     String? partitionKey,
   }) async {
     if (query.contains('SELECT c.id, c.pk')) {
-      return [
-        for (final d in _c(container).values) {'id': d['id'], 'pk': d['pk']},
-      ];
+      return [for (final d in _c(container).values) _projection(d, query)];
     }
     return [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
   }
@@ -335,9 +350,7 @@ class _AdaptiveClient implements CosmosClient {
     String? partitionKey,
   }) async {
     if (query.contains('SELECT c.id, c.pk')) {
-      return [
-        for (final d in _c(container).values) {'id': d['id'], 'pk': d['pk']},
-      ];
+      return [for (final d in _c(container).values) _projection(d, query)];
     }
     return [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
   }
@@ -769,6 +782,161 @@ void main() {
       await _settle();
       expect(client.upserts, atFailure,
           reason: 'not one more write after the operator was told it failed');
+    });
+
+    test('an unchanged re-sync writes no documents at all (#200)', () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final accounts = [
+        for (var i = 0; i < 50; i++) _account('p$i', classroom: 'c${i % 5}'),
+      ];
+      final groups = [_group('9Z'), _group('8A')];
+
+      await store.writeMaterialized(
+        _view(accounts, groups: groups),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      final accountWrites = client.upsertsTo(linkedAccountsContainer);
+      final rollupWrites = client.upsertsTo(rollupsContainer);
+      expect(accountWrites, 50, reason: 'the first sync writes the whole set');
+      expect(rollupWrites, greaterThan(0));
+
+      // The identical view again — the everyday case, where nothing about the
+      // three systems moved since the last pass.
+      final progress = <String>[];
+      await store.writeMaterialized(
+        _view(accounts, generation: 2, groups: groups),
+        syncedBy: 'op@school.example',
+        at: _d,
+        onProgress: progress.add,
+      );
+
+      // Not one per-document write: the whole ~4k-doc burst that trips the
+      // serverless account's 429s simply does not happen.
+      expect(client.upsertsTo(linkedAccountsContainer), accountWrites);
+      expect(client.upsertsTo(linkedGroupsContainer), groups.length);
+      expect(client.upsertsTo(rollupsContainer), rollupWrites);
+      expect(client.deletes, 0, reason: 'nothing departed, nothing deleted');
+      // The operator is told the pass was a no-op rather than seeing silence.
+      expect(
+          progress, contains('Persisting accounts: 50 unchanged, 0 to write…'));
+      // …and the view is still whole and still readable.
+      expect(await store.readClassroom(school: '1', classroom: 'c0'),
+          hasLength(10));
+      expect(await store.readGroups(), hasLength(2));
+      // The generation bump is unconditional, so every passive session still
+      // learns there is a new view (#116).
+      expect((await store.readSyncState()).generation, 2);
+    });
+
+    test('a changed document is still written on a re-sync (#200)', () async {
+      // The correctness risk of skipping: a hash computed over too little would
+      // silently drop a real change on the floor.
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final accounts = [
+        for (var i = 0; i < 20; i++) _account('p$i', classroom: '3C'),
+      ];
+
+      await store.writeMaterialized(
+        _view(accounts),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      final afterFirst = client.upsertsTo(linkedAccountsContainer);
+
+      // One account moved class; everything else is identical.
+      final moved = [
+        _account('p0', classroom: '4A'),
+        for (var i = 1; i < 20; i++) _account('p$i', classroom: '3C'),
+      ];
+      await store.writeMaterialized(
+        _view(moved, generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      expect(client.upsertsTo(linkedAccountsContainer), afterFirst + 1,
+          reason: 'exactly the one changed account was rewritten');
+      final threeC = await store.readClassroom(school: '1', classroom: '3C');
+      expect(threeC.map((a) => a.id.value), isNot(contains('p0')));
+      final fourA = await store.readClassroom(school: '1', classroom: '4A');
+      expect(fourA.map((a) => a.id.value), ['p0']);
+    });
+
+    test('a change buried in a nested candidate action is not skipped (#200)',
+        () async {
+      // The hash covers the whole serialized document, so a change anywhere in
+      // it — not just in the top-level fields — still reaches the store.
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      MaterializedAccount withSummary(String summary) => MaterializedAccount(
+            id: const core.LinkedAccountId('p0'),
+            school: '1',
+            schoolLabel: 'School 1',
+            gradeYear: '3',
+            classroom: '3C',
+            role: core.PersonRole.student,
+            isStaff: false,
+            confidence: core.LinkConfidence.high,
+            label: 'Jane p0',
+            inWisa: true,
+            inSmartschool: true,
+            inAzure: true,
+            candidates: [
+              CandidateAction(
+                family: 'student',
+                kind: 'MoveToSmartschoolClassGroup',
+                system: core.Origin.smartschool,
+                summary: summary,
+              ),
+            ],
+          );
+
+      await store.writeMaterialized(
+        _view([withSummary('Move to 3C')]),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      await store.writeMaterialized(
+        _view([withSummary('Move to 4A')], generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      expect(client.upsertsTo(linkedAccountsContainer), 2);
+      final stored = await store.readClassroom(school: '1', classroom: '3C');
+      expect(stored.single.candidates.single.summary, 'Move to 4A');
+    });
+
+    test('a document stored before #200 carries no hash and is rewritten once',
+        () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final account = _account('p0');
+      // A pre-#200 document: the same content, stored without a content hash.
+      await client.upsertDocument(
+        container: linkedAccountsContainer,
+        partitionKey: account.school,
+        document: account.toJson(),
+      );
+
+      await store.writeMaterialized(
+        _view([account]),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      expect(client.upsertsTo(linkedAccountsContainer), 2,
+          reason: 'an unhashed stored doc is rewritten so it gains its hash');
+
+      // …and from then on it is skipped like any other unchanged document.
+      await store.writeMaterialized(
+        _view([account], generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      expect(client.upsertsTo(linkedAccountsContainer), 2);
     });
 
     test('reading before any sync yields the initial generation', () async {

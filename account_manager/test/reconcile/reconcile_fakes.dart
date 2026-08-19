@@ -656,6 +656,13 @@ class ThrottlingCosmosWire implements CosmosTransport {
   /// Every document write the client attempted, retries included.
   int writeAttempts = 0;
 
+  /// Accepted document writes per container (retries and 429s excluded) — what
+  /// the account was actually asked to store, so a test can tell a pass that
+  /// rewrote the world from one that wrote only what changed (#200).
+  final Map<String, int> writesByContainer = {};
+
+  int writesTo(String container) => writesByContainer[container] ?? 0;
+
   /// How many of those were answered with a 429.
   int throttledResponses = 0;
 
@@ -722,6 +729,7 @@ class ThrottlingCosmosWire implements CosmosTransport {
       );
     }
     final etag = 'etag-${++_etag}';
+    writesByContainer[container] = writesTo(container) + 1;
     store[id] = {...doc, '_etag': etag};
     return CosmosResponse(
       statusCode: isUpsert ? 200 : 201,
@@ -755,8 +763,17 @@ class ThrottlingCosmosWire implements CosmosTransport {
       ];
     }
     if (query.contains('SELECT c.id, c.pk')) {
+      // A projection returns the named fields only — including the content hash
+      // the store compares against (#200), absent where the document has none.
       rows = [
-        for (final d in rows) {'id': d['id'], 'pk': d['pk']},
+        for (final d in rows)
+          {
+            'id': d['id'],
+            'pk': d['pk'],
+            if (query.contains('c.$contentHashField') &&
+                d.containsKey(contentHashField))
+              contentHashField: d[contentHashField],
+          },
       ];
     }
     return CosmosResponse(

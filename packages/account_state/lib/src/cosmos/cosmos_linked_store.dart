@@ -1,12 +1,69 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:account_core/account_core.dart' as core;
+import 'package:crypto/crypto.dart';
 
 import '../materialize/linked_store.dart';
 import '../materialize/materialized_state.dart';
 import 'cosmos_client.dart';
 import 'cosmos_config.dart';
 import 'cosmos_retry.dart';
+
+/// The field every materialized document (account, group, rollup) carries its
+/// own content hash in, so the next write can tell "identical" from "changed"
+/// without reading the document back (#200).
+///
+/// Written by [CosmosLinkedStore] alongside the document's own fields and read
+/// back by the straggler projection; nothing else interprets it, and the
+/// `fromJson` factories ignore it.
+const String contentHashField = 'contentHash';
+
+/// A stable content hash of one materialized document.
+///
+/// Computed over the **whole** serialized document — every field, nested
+/// candidates and decisions included — rather than a chosen subset, because a
+/// hash that misses a field is worse than no hash at all: the change would be
+/// skipped and an operator's edit would silently never reach the shared store.
+/// The encoding is canonical (map keys sorted at every level), so the hash
+/// depends on the document's *content* and not on the order `toJson` happened
+/// to build its maps in.
+///
+/// [document] must be the freshly serialized document, i.e. *without* a
+/// [contentHashField] of its own — the hash is stamped on afterwards.
+String materializedContentHash(Map<String, dynamic> document) =>
+    sha256.convert(utf8.encode(_canonicalJson(document))).toString();
+
+String _canonicalJson(Object? value) {
+  final out = StringBuffer();
+  _writeCanonical(out, value);
+  return out.toString();
+}
+
+void _writeCanonical(StringBuffer out, Object? value) {
+  if (value is Map) {
+    final entries = value.entries.toList()
+      ..sort((a, b) => a.key.toString().compareTo(b.key.toString()));
+    out.write('{');
+    for (var i = 0; i < entries.length; i++) {
+      if (i > 0) out.write(',');
+      out
+        ..write(jsonEncode(entries[i].key.toString()))
+        ..write(':');
+      _writeCanonical(out, entries[i].value);
+    }
+    out.write('}');
+  } else if (value is List) {
+    out.write('[');
+    for (var i = 0; i < value.length; i++) {
+      if (i > 0) out.write(',');
+      _writeCanonical(out, value[i]);
+    }
+    out.write(']');
+  } else {
+    out.write(jsonEncode(value));
+  }
+}
 
 /// The [LinkedStore] backed by the Cosmos `linkedAccounts`, `rollups`,
 /// `decisions`, and `syncState` containers (#115, keystone of #112).
@@ -19,9 +76,10 @@ import 'cosmos_retry.dart';
 /// never rewritten by the derived-doc replace.
 ///
 /// A rewrite is not a single transaction — Cosmos has no cross-document atomic
-/// write — so [writeMaterialized] upserts the fresh set and then deletes the
-/// documents that are no longer present. A reader that races a rewrite sees a
-/// consistent-enough mix (the generation bump is what #116 uses to detect a
+/// write — so [writeMaterialized] upserts the documents whose content actually
+/// changed (#200) and then deletes the ones that are no longer present. A
+/// reader that races a rewrite sees a consistent-enough mix (the generation
+/// bump — which stays unconditional — is what #116 uses to detect a
 /// mid-flight change); the sync/drift lease (#108) serializes writers so two
 /// rewrites never interleave.
 class CosmosLinkedStore implements LinkedStore {
@@ -119,9 +177,10 @@ class CosmosLinkedStore implements LinkedStore {
       ...(await readSyncState()).systems,
       ...systemSyncs,
     };
-    // Per-account docs: upsert the fresh set, then delete the stragglers no
-    // longer present so a departed account's doc does not linger. This is the
-    // big one (~9.6k docs); its progress is what the operator sees ticking.
+    // Per-account docs: upsert the ones that changed, then delete the
+    // stragglers no longer present so a departed account's doc does not linger.
+    // This is the big one (~9.6k docs); its progress is what the operator sees
+    // ticking.
     await _replaceContainer(
       container: linkedAccountsContainer,
       freshIds: {for (final a in view.accounts) a.id.value},
@@ -132,8 +191,7 @@ class CosmosLinkedStore implements LinkedStore {
       label: 'accounts',
       onProgress: onProgress,
     );
-    // Per-group docs: same wholesale replace, in the single groups partition
-    // (#119).
+    // Per-group docs: same replace, in the single groups partition (#119).
     await _replaceContainer(
       container: linkedGroupsContainer,
       freshIds: {for (final g in view.groups) g.id.value},
@@ -367,15 +425,28 @@ class CosmosLinkedStore implements LinkedStore {
     );
   }
 
-  /// Upserts every document in [docsById], then deletes any document currently
-  /// in [container] whose id is not in [freshIds] — the "replace the whole set"
-  /// the derived containers need without a container-level truncate.
+  /// Brings [container] to exactly [docsById]: upserts the documents whose
+  /// content actually changed and deletes any document currently in [container]
+  /// whose id is not in [freshIds] — the "replace the whole set" the derived
+  /// containers need without a container-level truncate.
+  ///
+  /// **Only what changed is written (#200).** Nearly every document of a
+  /// re-sync is byte-identical to the stored one, and rewriting all ~9.6k of
+  /// them wholesale is what generated the write burst that tripped #196 —
+  /// which the retry/backoff there absorbs but cannot remove. So each fresh
+  /// document carries a [materializedContentHash] in [contentHashField], and
+  /// the upsert is skipped when the stored document already hashes the same.
+  /// The single id/pk/hash projection below answers both questions at once: an
+  /// id the fresh set no longer has is a straggler to delete, and an id whose
+  /// stored hash still matches is a write to skip. The generation bump in
+  /// [writeMaterialized] stays unconditional, so readers still detect the new
+  /// view even when not one document moved.
   ///
   /// The upserts and deletes run with bounded concurrency (the [_governor]'s
-  /// ceiling) rather than strictly one at a time: a full account container is
-  /// ~9.6k docs, and issuing that many serial round-trips is what made a full
-  /// sync look hung (#168). The ceiling is not a fixed guess: it narrows on
-  /// every 429 the client reports and widens back as the account keeps up, so a
+  /// ceiling) rather than strictly one at a time: a first, full write is ~9.6k
+  /// docs, and issuing that many serial round-trips is what made a full sync
+  /// look hung (#168). The ceiling is not a fixed guess: it narrows on every 429
+  /// the client reports and widens back as the account keeps up, so a
   /// real-volume write adapts to the provisioned throughput instead of assuming
   /// a safe width (#196). When [onProgress] and [label] are given, a line is
   /// emitted every [_progressEvery] upserts (and once at the end) so a long
@@ -387,9 +458,49 @@ class CosmosLinkedStore implements LinkedStore {
     String? label,
     void Function(String message)? onProgress,
   }) async {
-    final total = docsById.length;
+    // One projection read, both answers: what to delete and what to skip. Read
+    // *before* the writes — every id this pass writes is in [freshIds], so the
+    // straggler set is the same either way, and doing it first is what makes
+    // the stored hashes available to compare against.
+    final existing = await _client.queryDocuments(
+      container: container,
+      query: 'SELECT c.id, c.pk, c.$contentHashField FROM c',
+    );
+    final storedHashes = <String, String>{};
+    final stragglers = <({String id, String pk})>[];
+    for (final doc in existing) {
+      final id = doc['id'];
+      if (id is! String) continue;
+      if (!freshIds.contains(id)) {
+        stragglers.add((id: id, pk: (doc['pk'] as String?) ?? id));
+        continue;
+      }
+      final hash = doc[contentHashField];
+      // A document stored before #200 carries no hash; it is rewritten once and
+      // hashed from then on.
+      if (hash is String) storedHashes[id] = hash;
+    }
+
+    final writes = <({String pk, Map<String, dynamic> doc})>[];
+    var unchanged = 0;
+    for (final entry in docsById.entries) {
+      final hash = materializedContentHash(entry.value.doc);
+      if (storedHashes[entry.key] == hash) {
+        unchanged++;
+        continue;
+      }
+      writes.add((
+        pk: entry.value.pk,
+        doc: {...entry.value.doc, contentHashField: hash},
+      ));
+    }
+
+    final total = writes.length;
+    if (label != null && onProgress != null && unchanged > 0) {
+      onProgress('Persisting $label: $unchanged unchanged, $total to write…');
+    }
     await _runBounded(
-      docsById.values,
+      writes,
       (entry) => _client.upsertDocument(
         container: container,
         partitionKey: entry.pk,
@@ -403,18 +514,6 @@ class CosmosLinkedStore implements LinkedStore {
               }
             },
     );
-    final existing = await _client.queryDocuments(
-      container: container,
-      query: 'SELECT c.id, c.pk FROM c',
-    );
-    final stragglers = [
-      for (final doc in existing)
-        if (doc['id'] is String && !freshIds.contains(doc['id']))
-          (
-            id: doc['id'] as String,
-            pk: (doc['pk'] as String?) ?? doc['id'] as String,
-          ),
-    ];
     await _runBounded(
       stragglers,
       (s) => _client.deleteDocument(

@@ -18,6 +18,10 @@ resolution: workspace
 dependencies:
   account_core:
   account_store:
+  # SHA-256 for the per-document content hash the Cosmos materialized-view
+  # write compares against the stored one, so an unchanged document is not
+  # rewritten (#200). Pure Dart (Dart team package), no platform crypto.
+  crypto: ^3.0.0
   http: ^1.2.0
   wisa_api:
   smartschool_api:
