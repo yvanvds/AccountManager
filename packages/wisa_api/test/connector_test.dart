@@ -107,10 +107,15 @@ void main() {
       expect(schools, isNotEmpty);
       expect(schools.every((s) => !s.isVirtual), isTrue);
       // The redacted fixture preserves the legacy edge case of a "?"
-      // placeholder school at id 0.
-      expect(schools.any((s) => s.id == 0 && s.name == '?'), isTrue);
-      // ISMAA (id 25) is the primary active school in the fixture.
-      expect(schools.any((s) => s.id == 25), isTrue);
+      // placeholder school at id 0 — a row with no long name, only a code.
+      expect(schools.any((s) => s.id == 0 && s.name == '' && s.code == '?'),
+          isTrue);
+      // ISMAA (id 25) is the primary active school in the fixture. Its two
+      // halves land on the fields that claim them: the long name on `name`,
+      // the short code on `code` (#208).
+      final ismaa = schools.firstWhere((s) => s.id == 25);
+      expect(ismaa.name, 'Instituut Sancta Maria-A');
+      expect(ismaa.code, 'ISMAA');
     });
   });
 

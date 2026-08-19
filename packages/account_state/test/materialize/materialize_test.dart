@@ -509,7 +509,7 @@ void main() {
           staff: const [],
           classGroups: const [],
           schools: const [
-            wapi.WisaSchool(id: 1, name: 'One', description: '', isOurs: true),
+            wapi.WisaSchool(id: 1, name: 'One', code: '', isOurs: true),
           ],
         ),
         smartschool: ss.SmartschoolSnapshot(

@@ -226,13 +226,15 @@ void main() {
   });
 
   group('parseSchoolRow', () {
-    test('parses a typical row, swapping NAME and DESCRIPTION', () {
-      // CSV columns: ID,NAME,DESCRIPTION
-      // Legacy maps column 1 -> description, column 2 -> name.
-      final s = parseSchoolRow('25,SMA,Sint-Maria-Aalst');
+    test('untangles WISA\'s inverted NAME / DESCRIPTION columns (#208)', () {
+      // CSV columns are ID,NAME,DESCRIPTION, but WISA fills them the other way
+      // round: NAME carries the long name, DESCRIPTION the short code. This is
+      // the exact shape of row 11 of the redacted live fixture
+      // (test/fixtures/sma_get_inst.csv).
+      final s = parseSchoolRow('25,Instituut Sancta Maria-A,ISMAA');
       expect(s.id, 25);
-      expect(s.description, 'SMA');
-      expect(s.name, 'Sint-Maria-Aalst');
+      expect(s.name, 'Instituut Sancta Maria-A');
+      expect(s.code, 'ISMAA');
       expect(s.isVirtual, isFalse);
     });
 

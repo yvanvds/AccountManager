@@ -52,27 +52,30 @@ class ReplaceInstitute extends WisaImportRule {
       matches(g) ? g.copyWith(schoolCode: replacement) : g;
 }
 
-/// Flags schools whose [WisaSchool.name] equals [schoolCode] as virtual.
+/// Flags schools whose [WisaSchool.code] equals [schoolCode] as virtual.
 /// The connector then syncs those schools with the virtual workdate
 /// instead of the real one. Mirrors legacy `MarkAsVirtual`
 /// (`RuleAction.WorkDate`).
+///
+/// Matches on the **short code** (`ISMV`), as it always did — before #208 that
+/// half was misfiled on `WisaSchool.name`, so this read `s.name`.
 class MarkAsVirtual extends WisaImportRule {
   final String schoolCode;
   const MarkAsVirtual(this.schoolCode);
 
-  bool matches(WisaSchool s) => s.name == schoolCode;
+  bool matches(WisaSchool s) => s.code == schoolCode;
 }
 
-/// Flags schools whose [WisaSchool.name] equals [schoolCode] as *ours*
+/// Flags schools whose [WisaSchool.code] equals [schoolCode] as *ours*
 /// (managed). Group-wide leave detection (#113) uses the flag to tell a
 /// student gone from *our* school but still in the group from one gone from
 /// the whole group. Mirrors [MarkAsVirtual] — a snapshot-time school marker
-/// keyed by the WISA school name.
+/// keyed by the short WISA school code.
 class MarkAsOurs extends WisaImportRule {
   final String schoolCode;
   const MarkAsOurs(this.schoolCode);
 
-  bool matches(WisaSchool s) => s.name == schoolCode;
+  bool matches(WisaSchool s) => s.code == schoolCode;
 }
 
 /// Applies all rules in [rules] to [groups], in order. Returns a new list;

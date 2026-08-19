@@ -417,7 +417,7 @@ void main() {
     _useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ismav'),
+      WisaSchool(id: 99, name: 'Virtuele school SMA', code: 'ismav'),
     ]);
     // Marked virtual on a previous run, stored without a code.
     final harness = SettingsHarness(
@@ -458,7 +458,7 @@ void main() {
     _useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 3, name: 'Sint-Jan', description: 'SJ'),
+      WisaSchool(id: 3, name: 'Sint-Jan', code: 'SJ'),
     ]);
     final harness = SettingsHarness(
       initial: const AppSettings(
@@ -576,10 +576,10 @@ void main() {
       (WidgetTester tester) async {
     _useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
-    // `SMAGetInst` puts the short code in the CSV NAME column, which the
-    // connector maps onto `WisaSchool.description` (the legacy swap).
+    // `SMAGetInst` puts the short code in the CSV DESCRIPTION column, which the
+    // connector untangles onto `WisaSchool.code` (#208).
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'ismab'),
+      WisaSchool(id: 7, name: 'Sint-Pieter', code: 'ismab'),
     ]);
     // Stored before #194: managed, named, but with no code.
     final harness = SettingsHarness(
@@ -602,7 +602,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
     await tester.pumpAndSettle();
 
-    // The code now leads the cell and the managed mark survived the merge.
+    // The code now sits under the name and the managed mark survived the merge.
     expect(find.text('ismab'), findsOneWidget);
     expect(find.text('Sint-Pieter'), findsOneWidget);
     expect(
@@ -668,8 +668,8 @@ void main() {
     _useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 3, name: 'Sint-Jan', description: 'SJ'),
-      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'SP'),
+      WisaSchool(id: 3, name: 'Sint-Jan', code: 'SJ'),
+      WisaSchool(id: 7, name: 'Sint-Pieter', code: 'SP'),
     ]);
     final harness = SettingsHarness(
       initial: const AppSettings(
@@ -729,7 +729,7 @@ void main() {
     _useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'SP'),
+      WisaSchool(id: 7, name: 'Sint-Pieter', code: 'SP'),
     ]);
     // Id 7 is already managed from a previous run, but stored without a name.
     final harness = SettingsHarness(

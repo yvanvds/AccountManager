@@ -512,7 +512,7 @@ void main() {
             wapi.WisaSchool(
               id: 25,
               name: 'Instituut Sancta Maria-A',
-              description: 'ISMAA',
+              code: 'ISMAA',
               isOurs: true,
             ),
           ],

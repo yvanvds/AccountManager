@@ -201,7 +201,9 @@ class WisaConnector {
     }
     _log?.addMessage(
       core.Origin.wisa,
-      'Loading classgroups from ${school.name} succeeded.',
+      // The short code, as the sync log has always named a school — before
+      // #208 that half simply sat on `school.name`.
+      'Loading classgroups from ${school.code} succeeded.',
     );
     return groups;
   }
@@ -228,7 +230,7 @@ class WisaConnector {
     }
     _log?.addMessage(
       core.Origin.wisa,
-      'Loading ${students.length} students from ${school.name} succeeded.',
+      'Loading ${students.length} students from ${school.code} succeeded.',
     );
     return students;
   }
@@ -255,7 +257,7 @@ class WisaConnector {
     }
     _log?.addMessage(
       core.Origin.wisa,
-      'Loading ${staff.length} staff members from ${school.name} succeeded.',
+      'Loading ${staff.length} staff members from ${school.code} succeeded.',
     );
     return staff;
   }

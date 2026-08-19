@@ -43,7 +43,7 @@ wapi.WisaStudent wisaStudent(String wisaId, {int schoolId = 1}) =>
 /// A WISA school, optionally flagged [ours] (the `MarkAsOurs` import-rule
 /// outcome the linker derives the managed-school set from, #133/#134).
 wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
-    wapi.WisaSchool(id: id, name: 'S$id', description: '', isOurs: ours);
+    wapi.WisaSchool(id: id, name: 'S$id', code: '', isOurs: ours);
 
 /// A Smartschool **student** account. [accountId] holds the WISA id by
 /// convention; [mail] is the Azure-UPN bridge.

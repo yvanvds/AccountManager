@@ -36,7 +36,7 @@ dart run packages/wisa_api/tool/redact_fixtures.dart
 
 | File                  | Query        | Header                                                                                                          |
 | --------------------- | ------------ | --------------------------------------------------------------------------------------------------------------- |
-| `sma_get_inst.csv`    | `SMAGetInst` | `ID,NAME,DESCRIPTION` (note: legacy swaps NAME and DESCRIPTION on the model)                                    |
+| `sma_get_inst.csv`    | `SMAGetInst` | `ID,NAME,DESCRIPTION` (WISA inverts these: `NAME` is the long name, `DESCRIPTION` the short code — `parseSchoolRow` untangles it onto `WisaSchool.name` / `.code`, #208) |
 | `sma_sync_lln.csv`    | `SmaSyncLln` | `KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,NATIONALITEIT,STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,KLASWIJZIGING` |
 | `sma_sync_per.csv`    | `SmaSyncPer` | `CODE,WISAID,FAMILIENAAM,VOORNAAM`                                                                              |
 | `sync_klas.csv`       | `SyncKlas`   | `KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER`                                                      |

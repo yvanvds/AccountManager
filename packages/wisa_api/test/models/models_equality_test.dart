@@ -102,12 +102,12 @@ void main() {
 
   group('WisaSchool', () {
     test('equality based on all fields including isVirtual', () {
-      const a = WisaSchool(id: 1, name: 'SMA', description: 'X');
-      const b = WisaSchool(id: 1, name: 'SMA', description: 'X');
+      const a = WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA');
+      const b = WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA');
       const c = WisaSchool(
         id: 1,
-        name: 'SMA',
-        description: 'X',
+        name: 'Sint-Maria',
+        code: 'SMA',
         isVirtual: true,
       );
       expect(a, b);
@@ -116,17 +116,17 @@ void main() {
     });
 
     test('copyWith flips isVirtual', () {
-      const a = WisaSchool(id: 1, name: 'SMA', description: 'X');
+      const a = WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA');
       expect(a.copyWith(isVirtual: true).isVirtual, isTrue);
       expect(a.copyWith().isVirtual, isFalse);
     });
 
     test('isOurs participates in equality and copyWith and round-trips', () {
-      const a = WisaSchool(id: 1, name: 'SMA', description: 'X');
+      const a = WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA');
       const managed = WisaSchool(
         id: 1,
-        name: 'SMA',
-        description: 'X',
+        name: 'Sint-Maria',
+        code: 'SMA',
         isOurs: true,
       );
       expect(a, isNot(managed));
@@ -135,17 +135,35 @@ void main() {
       expect(WisaSchool.fromJson(managed.toJson()), managed);
       // Old snapshots without the key default to not-ours.
       expect(
-        WisaSchool.fromJson(const {'id': 1, 'name': 'SMA', 'description': 'X'})
-            .isOurs,
+        WisaSchool.fromJson(
+            const {'id': 1, 'name': 'Sint-Maria', 'code': 'SMA'}).isOurs,
         isFalse,
       );
     });
 
-    test('toString includes id, name, and virtual flag', () {
-      const a = WisaSchool(id: 1, name: 'SMA', description: 'X');
+    test('a pre-#208 snapshot document reads back with its halves unswapped',
+        () {
+      // Documents written before #208 carry the long name under `description`
+      // and the short code under `name`. The absent `code` key is the marker.
+      const legacy = <String, dynamic>{
+        'id': 25,
+        'name': 'ISMAA',
+        'description': 'Instituut Sancta Maria-A',
+        'isVirtual': false,
+        'isOurs': true,
+      };
+      final migrated = WisaSchool.fromJson(legacy);
+      expect(migrated.name, 'Instituut Sancta Maria-A');
+      expect(migrated.code, 'ISMAA');
+      expect(migrated.isOurs, isTrue);
+    });
+
+    test('toString includes id, name, code, and virtual flag', () {
+      const a = WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA');
       final s = a.toString();
       expect(s, contains('id: 1'));
-      expect(s, contains('SMA'));
+      expect(s, contains('name: Sint-Maria'));
+      expect(s, contains('code: SMA'));
       expect(s, contains('isVirtual'));
     });
   });

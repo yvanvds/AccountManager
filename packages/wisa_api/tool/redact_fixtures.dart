@@ -73,9 +73,9 @@ void _writeSchools(Directory inDir, Directory outDir) {
   final buf = StringBuffer('ID,NAME,DESCRIPTION\n');
   for (final s in schools) {
     final id = s['ID'] as int;
-    // Legacy quirk: WISA's CSV column "NAME" holds the long description,
-    // and "DESCRIPTION" holds the short code (see SchoolManager.cs and
-    // parseSchoolRow). Emit accordingly. School names/descriptions are
+    // WISA quirk: its CSV column "NAME" holds the long name, and
+    // "DESCRIPTION" holds the short code (see SchoolManager.cs and
+    // parseSchoolRow, which untangles it). Emit accordingly. School names are
     // public info (institutional names), not PII — keep verbatim, but
     // strip non-ASCII for encoding-safe fixtures.
     final long = _csvField(_toAscii((s['Description'] as String?) ?? ''));

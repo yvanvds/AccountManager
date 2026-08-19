@@ -347,9 +347,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// neither managed nor virtual. Order is stable by school id so the grid does
   /// not jump.
   ///
-  /// The short code (`ismaa`, `ismab`, …) rides on `WisaSchool.description`, not
-  /// `.name` — `SMAGetInst`'s CSV is `ID,NAME,DESCRIPTION` and the connector
-  /// preserves the legacy swap of the last two columns (#194).
+  /// Both halves come straight across: the connector already untangled WISA's
+  /// inverted `NAME`/`DESCRIPTION` columns, so `WisaSchool.name` is the long
+  /// name and `WisaSchool.code` the short code (#208).
   List<WisaSchoolProfile> _mergeFetchedSchools(List<WisaSchool> fetched) {
     final byId = <int, WisaSchoolProfile>{
       for (final p in _wisaSchools) p.schoolId: p,
@@ -357,9 +357,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     for (final s in fetched) {
       final existing = byId[s.id];
       byId[s.id] = existing == null
-          ? WisaSchoolProfile(schoolId: s.id, code: s.description, name: s.name)
+          ? WisaSchoolProfile(schoolId: s.id, code: s.code, name: s.name)
           : existing.copyWith(
-              code: s.description.isEmpty ? existing.code : s.description,
+              code: s.code.isEmpty ? existing.code : s.code,
               name: s.name.isEmpty ? existing.name : s.name,
             );
     }
@@ -1346,11 +1346,11 @@ class _WisaSchoolsEditor extends StatelessWidget {
   }
 }
 
-/// A single cell in the known-WISA-school grid (#171): the school's WISA code
-/// (`ismaa`, `ismab`, …) — the identifier operators actually use — with the long
-/// name beneath it, plus an inline checkbox marking whether we manage it and a
-/// second, quieter one marking it *virtual* (#203). Both are keyed by school id
-/// so a test can flip a specific school's flag.
+/// A single cell in the known-WISA-school grid (#171): the school's long name
+/// with its short WISA code (`ISMAA`, `ISMAB`, …) beneath it, plus an inline
+/// checkbox marking whether we manage it and a second, quieter one marking it
+/// *virtual* (#203). Both are keyed by school id so a test can flip a specific
+/// school's flag.
 ///
 /// The two marks are deliberately unequal in weight. `ours` scopes the linker;
 /// `virtual` changes **which work date the school is pulled with**, so a school
@@ -1359,8 +1359,8 @@ class _WisaSchoolsEditor extends StatelessWidget {
 /// than as a second equal-looking checkbox.
 ///
 /// The numeric id is strictly a fallback and never appears twice (#194): the
-/// title degrades code → name → `School <id>`, and the subtitle shows whichever
-/// of name / `id: <id>` the title has not already used — nothing at all when the
+/// title degrades name → code → `School <id>`, and the subtitle shows whichever
+/// of code / `id: <id>` the title has not already used — nothing at all when the
 /// title is already the id.
 class _SchoolCell extends StatelessWidget {
   const _SchoolCell({
@@ -1381,10 +1381,13 @@ class _SchoolCell extends StatelessWidget {
     final String name = profile.name;
     // The lead label comes from the shared school-label helper the Actions
     // drill-down also names schools with, so the two views can never disagree
-    // about which half of the pair is the code (#204).
-    final String title = profile.codeLabel;
+    // about which half of the pair is the code (#204). The grid leads with the
+    // long name and puts the code beneath, which is what it always rendered —
+    // before #208 it got there by leading with a `code` field that in fact held
+    // the long name.
+    final String title = profile.nameLabel;
     final String? subtitle = code.isNotEmpty && name.isNotEmpty
-        ? name
+        ? code
         : (code.isEmpty && name.isEmpty ? null : 'id: ${profile.schoolId}');
 
     return Column(

@@ -402,9 +402,8 @@ void main() {
 
   group('markVirtualSchools', () {
     const schools = <WisaSchool>[
-      WisaSchool(
-          id: 25, name: 'Instituut Sancta Maria-A', description: 'ISMAA'),
-      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ISMAV'),
+      WisaSchool(id: 25, name: 'Instituut Sancta Maria-A', code: 'ISMAA'),
+      WisaSchool(id: 99, name: 'Virtuele school SMA', code: 'ISMAV'),
     ];
 
     test('flags exactly the schools the operator marked virtual (#203)', () {
@@ -426,14 +425,14 @@ void main() {
     });
 
     test('never un-flags a school an import rule already marked (#203)', () {
-      // MarkAsVirtual runs first and matches by name; settings marks by id.
+      // MarkAsVirtual runs first and matches by code; settings marks by id.
       // The settings pass is additive, so a legacy rule keeps working even
       // when the school is not in the settings list.
       const ruled = <WisaSchool>[
         WisaSchool(
             id: 25,
             name: 'Instituut Sancta Maria-A',
-            description: 'ISMAA',
+            code: 'ISMAA',
             isVirtual: true),
       ];
       expect(markVirtualSchools(ruled, const <int>{}).single.isVirtual, isTrue);

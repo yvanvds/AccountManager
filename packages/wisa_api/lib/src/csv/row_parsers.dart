@@ -165,9 +165,13 @@ WisaClassGroup parseClassGroupRow(String line, {required int schoolId}) {
   }
 }
 
-/// Parses a `SMAGetInst` row into a [WisaSchool]. Preserves the legacy
-/// quirk: column 1 (`NAME`) becomes the school's `description` and column
-/// 2 (`DESCRIPTION`) becomes its `name`.
+/// Parses a `SMAGetInst` row into a [WisaSchool].
+///
+/// WISA fills the two text columns the other way round from what it calls
+/// them: column 1 (`NAME`) holds the **long** name and column 2
+/// (`DESCRIPTION`) the **short** code. This is the one place that untangles
+/// that, so [WisaSchool.name] and [WisaSchool.code] each hold the half their
+/// name says they do (#208).
 WisaSchool parseSchoolRow(String line) {
   try {
     final f = splitCsvLine(line);
@@ -183,8 +187,8 @@ WisaSchool parseSchoolRow(String line) {
     }
     return WisaSchool(
       id: id,
-      description: f[1].trim(),
-      name: f[2].trim(),
+      name: f[1].trim(),
+      code: f[2].trim(),
     );
   } on CsvRowParseException {
     rethrow;

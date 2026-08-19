@@ -5,12 +5,10 @@ import 'wisa_school_profile.dart';
 // How a WISA school is named for a human — the one place that knows it (#204).
 //
 // A school has two halves: the long descriptive name ("Instituut Sancta
-// Maria-A") and the short code operators use day to day (`ISMAA`). Which half
-// sits on which field is the trap: `SMAGetInst`'s CSV columns are
-// `ID,NAME,DESCRIPTION` and the connector preserves the legacy swap of the last
-// two, so the **code** rides on `WisaSchool.description` and the **long name**
-// on `WisaSchool.name` (see `wisa_school.dart`). `WisaSchoolProfile` has already
-// untangled that: its `code` is the short one, its `name` the long one.
+// Maria-A") and the short code operators use day to day (`ISMAA`). Both
+// `WisaSchool` and `WisaSchoolProfile` now name those halves honestly — `name`
+// is the long one, `code` the short one — because `parseSchoolRow` untangles
+// WISA's inverted `NAME`/`DESCRIPTION` columns at the connector edge (#208).
 //
 // Every view that names a school routes through here — the Settings grid, the
 // Actions drill-down, and the label baked into the materialized documents — so
@@ -35,20 +33,22 @@ String wisaSchoolLabel({
   return 'School $schoolId';
 }
 
-/// The short lead label for one school: the [code] when known, else the long
-/// [name], else `School <id>`.
+/// The lead label for one school: the long [name] when known, else the short
+/// [code], else `School <id>`.
 ///
-/// What the Settings grid leads each cell with (#194), where the long name is
-/// the second line rather than a parenthetical.
-String wisaSchoolCodeLabel({
+/// What the Settings grid leads each cell with, with the short code as the
+/// second line rather than a parenthetical (#194, corrected in #208 — the grid
+/// always *showed* the long name first; before the fix it got there by leading
+/// with a `code` field that actually held the long name).
+String wisaSchoolNameLabel({
   required int schoolId,
   String code = '',
   String name = '',
 }) {
-  final String c = code.trim();
-  if (c.isNotEmpty) return c;
   final String n = name.trim();
   if (n.isNotEmpty) return n;
+  final String c = code.trim();
+  if (c.isNotEmpty) return c;
   return 'School $schoolId';
 }
 
@@ -77,7 +77,7 @@ Map<int, String> wisaSchoolLabels({
   // The live pull wins where it has something to say — a WISA-side rename must
   // show this session, not only after the operator re-fetches in Settings.
   for (final s in schools) {
-    put(s.id, s.description, s.name);
+    put(s.id, s.code, s.name);
   }
 
   return <int, String>{
@@ -97,8 +97,8 @@ extension WisaSchoolProfileLabel on WisaSchoolProfile {
   String get label =>
       wisaSchoolLabel(schoolId: schoolId, code: code, name: name);
 
-  /// The short lead label the Settings grid puts at the top of this school's
-  /// cell, with the long name beneath it.
-  String get codeLabel =>
-      wisaSchoolCodeLabel(schoolId: schoolId, code: code, name: name);
+  /// The lead label the Settings grid puts at the top of this school's cell,
+  /// with the short code beneath it.
+  String get nameLabel =>
+      wisaSchoolNameLabel(schoolId: schoolId, code: code, name: name);
 }
