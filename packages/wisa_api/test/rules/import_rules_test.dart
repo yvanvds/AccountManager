@@ -77,22 +77,30 @@ void main() {
   });
 
   group('MarkAsVirtual', () {
-    test('flips isVirtual on matching school name', () {
+    test('flips isVirtual on the matching short school code', () {
+      // The rule keys off the short code, never the long name (#208).
       const schools = [
-        WisaSchool(id: 1, name: 'SMA', description: 'Sint Maria'),
-        WisaSchool(id: 2, name: 'SDK', description: 'Sint Dimphna'),
+        WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA'),
+        WisaSchool(id: 2, name: 'Sint Dimphna', code: 'SDK'),
       ];
       final out = applyRulesToSchools(schools, const [MarkAsVirtual('SMA')]);
       expect(out[0].isVirtual, isTrue);
       expect(out[1].isVirtual, isFalse);
     });
+
+    test('does not match on the long school name', () {
+      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
+      final out =
+          applyRulesToSchools(schools, const [MarkAsVirtual('Sint Maria')]);
+      expect(out.single.isVirtual, isFalse);
+    });
   });
 
   group('MarkAsOurs', () {
-    test('flips isOurs on matching school name only', () {
+    test('flips isOurs on the matching short school code only', () {
       const schools = [
-        WisaSchool(id: 1, name: 'SMA', description: 'Sint Maria'),
-        WisaSchool(id: 2, name: 'SDK', description: 'Sint Dimphna'),
+        WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA'),
+        WisaSchool(id: 2, name: 'Sint Dimphna', code: 'SDK'),
       ];
       final out = applyRulesToSchools(schools, const [MarkAsOurs('SMA')]);
       expect(out[0].isOurs, isTrue);
@@ -101,8 +109,15 @@ void main() {
       expect(out[0].isVirtual, isFalse);
     });
 
+    test('does not match on the long school name', () {
+      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
+      final out =
+          applyRulesToSchools(schools, const [MarkAsOurs('Sint Maria')]);
+      expect(out.single.isOurs, isFalse);
+    });
+
     test('MarkAsVirtual and MarkAsOurs flag independently on one school', () {
-      const schools = [WisaSchool(id: 1, name: 'SMA', description: 'X')];
+      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
       final out = applyRulesToSchools(
         schools,
         const [MarkAsVirtual('SMA'), MarkAsOurs('SMA')],

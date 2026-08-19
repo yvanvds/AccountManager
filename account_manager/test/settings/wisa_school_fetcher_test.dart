@@ -36,13 +36,16 @@ class _FakeTransport implements WisaSoapTransport {
 
 void main() {
   group('fetchWisaSchoolsLive', () {
-    test('issues SMAGetInst and returns the parsed id + name list', () async {
-      // ID,NAME,DESCRIPTION — the connector maps DESCRIPTION → name (legacy
-      // quirk preserved), so column 3 is the display name.
+    test('issues SMAGetInst and returns the parsed id + name + code list',
+        () async {
+      // ID,NAME,DESCRIPTION, filled the way WISA really fills it (see the
+      // redacted fixture packages/wisa_api/test/fixtures/sma_get_inst.csv):
+      // column 2 is the long name, column 3 the short code. The connector
+      // untangles them onto `name` / `code` (#208).
       final transport = _FakeTransport(
         'ID,NAME,DESCRIPTION\n'
-        '3,SJ,Sint-Jan\n'
-        '7,SP,Sint-Pieter\n',
+        '3,Sint-Jan,SJ\n'
+        '7,Sint-Pieter,SP\n',
       );
       final schools = await fetchWisaSchoolsLive(
         const WisaConnection(server: 'db.school.example', port: '1433'),
@@ -54,6 +57,7 @@ void main() {
       expect(transport.envelopes.single, contains(WisaQuery.getSchools));
       expect(schools.map((s) => s.id), [3, 7]);
       expect(schools.map((s) => s.name), ['Sint-Jan', 'Sint-Pieter']);
+      expect(schools.map((s) => s.code), ['SJ', 'SP']);
     });
 
     test('throws WisaSchoolFetchException when the server is missing',

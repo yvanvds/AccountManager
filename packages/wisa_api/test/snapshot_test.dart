@@ -10,7 +10,7 @@ void main() {
       students: const [],
       staff: const [],
       classGroups: const [],
-      schools: const [WisaSchool(id: 1, name: 'SMA', description: 'X')],
+      schools: const [WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA')],
     );
 
     test('origin is Origin.wisa', () {
@@ -37,7 +37,7 @@ void main() {
 
     test('input list is copied (later mutation does not leak in)', () {
       final mutableSchools = [
-        const WisaSchool(id: 1, name: 'SMA', description: 'X'),
+        const WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA'),
       ];
       final snap = WisaSnapshot(
         fetchedAt: fetchedAt,
@@ -76,7 +76,7 @@ void main() {
           ),
         ],
         schools: const [
-          WisaSchool(id: 1, name: 'SMA', description: 'X', isVirtual: true),
+          WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA', isVirtual: true),
         ],
       );
 

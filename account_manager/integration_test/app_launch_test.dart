@@ -34,12 +34,13 @@ import 'package:account_state/account_state.dart'
         StaticSignalRTokenProvider,
         WisaConnection,
         WisaSchoolProfile,
+        WisaSchoolProfileLabel,
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
     show SmartschoolConnector, SmartschoolMethod, SmartschoolSoapTransport;
-import 'package:wisa_api/wisa_api.dart' show WisaSchool;
+import 'package:wisa_api/wisa_api.dart' show WisaSchool, parseSchoolRow;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -991,6 +992,53 @@ void main() {
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     expect(find.text('3C'), findsWidgets);
+  });
+
+  testWidgets(
+      'a settings document written before #208 drills down as '
+      '"Instituut Sancta Maria-A (ISMAA)", not inside out',
+      (WidgetTester tester) async {
+    // The stored document has the long name under `code` and the short code
+    // under `name` — the layout every profile persisted before the fix carries.
+    // Read back through the real `AppSettings.fromJson`, the migration must put
+    // each half right so the drill-down reads the way #204 specified instead of
+    // "ISMAA (Instituut Sancta Maria-A)".
+    useTallWindow(tester);
+    final migrated = AppSettings.fromJson(<String, dynamic>{
+      'wisaSchools': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'schoolId': 25,
+          'code': 'Instituut Sancta Maria-A',
+          'name': 'ISMAA',
+          'ours': true,
+        },
+      ],
+    });
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [wisaStudent(schoolId: 25)], schools: const []),
+      smartschool: ssSnap(
+          groups: const [], accounts: [ssAccount()], memberships: const []),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: const {25},
+      schoolProfiles: migrated.wisaSchools,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('ISMAA (Instituut Sancta Maria-A)'), findsNothing,
+        reason: 'the inverted rendering #208 fixed must not come back');
+    expect(find.text('School 25'), findsNothing);
+    expect(find.text('Instituut Sancta Maria-A (ISMAA)'), findsOneWidget);
   });
 
   testWidgets(
@@ -2037,7 +2085,7 @@ void main() {
     useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ismav'),
+      WisaSchool(id: 99, name: 'Virtuele school SMA', code: 'ismav'),
     ]);
     final settings = SettingsHarness(
       initial: const AppSettings(
@@ -2103,8 +2151,8 @@ void main() {
     useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 3, name: 'Sint-Jan', description: 'SJ'),
-      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'SP'),
+      WisaSchool(id: 3, name: 'Sint-Jan', code: 'SJ'),
+      WisaSchool(id: 7, name: 'Sint-Pieter', code: 'SP'),
     ]);
     final settings = SettingsHarness(
       initial: const AppSettings(
@@ -2163,9 +2211,9 @@ void main() {
     // no code); the fetch backfills the code and the grid must lead with it.
     useTallWindow(tester);
     const passwordRef = SecretRef('wisa.password');
-    // `SMAGetInst`'s CSV NAME column (the short code) lands on `description`.
+    // `SMAGetInst`'s CSV DESCRIPTION column (the short code) lands on `code`.
     final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
-      WisaSchool(id: 7, name: 'Sint-Pieter', description: 'ismab'),
+      WisaSchool(id: 7, name: 'Sint-Pieter', code: 'ismab'),
     ]);
     final settings = SettingsHarness(
       initial: const AppSettings(
@@ -2200,8 +2248,8 @@ void main() {
         findsOneWidget);
     expect(find.text('School 7'), findsNothing);
 
-    // Fetch: the code takes the lead and the long name drops to the subtitle,
-    // so the id no longer shows at all.
+    // Fetch: the code fills the second line in place of the id, so the id no
+    // longer shows at all.
     final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
     await tester.ensureVisible(button);
     await tester.tap(button);
@@ -2219,6 +2267,93 @@ void main() {
     final saved = await settings.store.load();
     expect(saved.wisaSchools.single.code, 'ismab');
     expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
+  testWidgets(
+      'the Settings grid names a school parsed from the real SMAGetInst CSV '
+      'end-to-end — long name on top, short code beneath (#208)',
+      (WidgetTester tester) async {
+    // The whole path, with no hand-built `WisaSchool` anywhere: real CSV rows →
+    // the real `parseSchoolRow` → the real fetch/merge → the real grid, in the
+    // real app with real fonts and layout. A fixture that agrees with the bug
+    // cannot hide here, because the halves come from the CSV itself.
+    useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    // Verbatim rows 11-12 of packages/wisa_api/test/fixtures/sma_get_inst.csv,
+    // itself redacted from a live WISA pull. Columns: ID,NAME,DESCRIPTION.
+    final fetcher = FakeWisaSchoolFetcher(<WisaSchool>[
+      parseSchoolRow('25,Instituut Sancta Maria-A,ISMAA'),
+      parseSchoolRow('27,Instituut Sancta Maria-B,ISMAB'),
+    ]);
+    // A settings document persisted before #208, read back through the real
+    // load path: it stored the long name under `code` and the code under
+    // `name`, and must render the right way up all the same.
+    final legacy = AppSettings.fromJson(<String, dynamic>{
+      'wisa': const WisaConnection(server: 'db.school.example', port: '1433')
+          .toJson(),
+      'wisaSchools': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'schoolId': 25,
+          'code': 'Instituut Sancta Maria-A',
+          'name': 'ISMAA',
+          'ours': true,
+        },
+      ],
+    });
+    final settings = SettingsHarness(
+      initial: legacy,
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+
+    // Which line is which, not merely which strings are present: the title is
+    // the long name and the subtitle the short code.
+    final tile = find.byKey(const ValueKey('settings-wisa-school-25-ours'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    String titleOf(Finder f) =>
+        (tester.widget<CheckboxListTile>(f).title! as Text).data!;
+    String subtitleOf(Finder f) =>
+        (tester.widget<CheckboxListTile>(f).subtitle! as Text).data!;
+    expect(titleOf(tile), 'Instituut Sancta Maria-A');
+    expect(subtitleOf(tile), 'ISMAA');
+    expect(find.text('School 25'), findsNothing);
+
+    // A fetch off the real CSV rows reaches the same rendering, and adds the
+    // sibling school the same way up.
+    final button = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(titleOf(tile), 'Instituut Sancta Maria-A');
+    expect(subtitleOf(tile), 'ISMAA');
+    final sibling = find.byKey(const ValueKey('settings-wisa-school-27-ours'));
+    await tester.ensureVisible(sibling);
+    await tester.pumpAndSettle();
+    expect(titleOf(sibling), 'Instituut Sancta Maria-B');
+    expect(subtitleOf(sibling), 'ISMAB');
+
+    // Saving writes the halves onto the fields that claim them, so the next
+    // load needs no migration.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await settings.store.load();
+    final ismaa = saved.wisaSchools.firstWhere((p) => p.schoolId == 25);
+    expect(ismaa.code, 'ISMAA');
+    expect(ismaa.name, 'Instituut Sancta Maria-A');
+    expect(ismaa.ours, isTrue, reason: 'the managed mark survived the merge');
+    expect(ismaa.label, 'Instituut Sancta Maria-A (ISMAA)');
   });
 
   testWidgets(

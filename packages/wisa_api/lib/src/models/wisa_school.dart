@@ -1,9 +1,13 @@
 /// A WISA school ("instelling") record.
 ///
 /// Source: legacy `legacy-wpf/AccountApi/Wisa/School.cs`. The CSV columns
-/// from the `SMAGetInst` query are `ID,NAME,DESCRIPTION` — note that the
-/// legacy code maps column 1 (the WISA "NAME" column) to `Description` and
-/// column 2 (the WISA "DESCRIPTION" column) to `Name`, which we preserve.
+/// from the `SMAGetInst` query are `ID,NAME,DESCRIPTION`, and WISA fills them
+/// the other way round from what they are called: column `NAME` carries the
+/// **long** name ("Instituut Sancta Maria-A") and column `DESCRIPTION` the
+/// **short** code (`ISMAA`). The legacy C# preserved that inversion in its
+/// field names; we do not (#208). Here [name] is always the long name and
+/// [code] always the short code, so no reader has to remember a swap —
+/// `parseSchoolRow` is the single place that untangles the CSV.
 ///
 /// [isVirtual] is set at snapshot construction time by the
 /// `MarkAsVirtual` import rule; it tells the connector that this school
@@ -17,15 +21,22 @@
 /// entirely; this slice only carries the flag — it changes no action yet.
 class WisaSchool {
   final int id;
+
+  /// The long, human-readable school name ("Instituut Sancta Maria-A").
+  /// Parsed from the `SMAGetInst` CSV's `NAME` column.
   final String name;
-  final String description;
+
+  /// The short code operators use day to day (`ISMAA`). Parsed from the
+  /// `SMAGetInst` CSV's `DESCRIPTION` column, and what the school-marking
+  /// import rules (`MarkAsOurs`, `MarkAsVirtual`) match on.
+  final String code;
   final bool isVirtual;
   final bool isOurs;
 
   const WisaSchool({
     required this.id,
     required this.name,
-    required this.description,
+    required this.code,
     this.isVirtual = false,
     this.isOurs = false,
   });
@@ -35,23 +46,33 @@ class WisaSchool {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
-        'description': description,
+        'code': code,
         'isVirtual': isVirtual,
         'isOurs': isOurs,
       };
 
-  factory WisaSchool.fromJson(Map<String, dynamic> json) => WisaSchool(
-        id: json['id'] as int,
-        name: json['name'] as String,
-        description: json['description'] as String,
-        isVirtual: (json['isVirtual'] as bool?) ?? false,
-        isOurs: (json['isOurs'] as bool?) ?? false,
-      );
+  /// Reads a snapshot school, migrating documents written before #208.
+  ///
+  /// Those carry the halves under the inverted legacy keys — `name` held the
+  /// short code and `description` the long name — so a document with no `code`
+  /// key is read back swapped. Nothing else distinguishes the two shapes, and
+  /// the `code` key is written unconditionally, so the test is exact rather
+  /// than a guess about the values.
+  factory WisaSchool.fromJson(Map<String, dynamic> json) {
+    final legacy = !json.containsKey('code') && json.containsKey('description');
+    return WisaSchool(
+      id: json['id'] as int,
+      name: (legacy ? json['description'] : json['name']) as String,
+      code: (legacy ? json['name'] : json['code']) as String,
+      isVirtual: (json['isVirtual'] as bool?) ?? false,
+      isOurs: (json['isOurs'] as bool?) ?? false,
+    );
+  }
 
   WisaSchool copyWith({bool? isVirtual, bool? isOurs}) => WisaSchool(
         id: id,
         name: name,
-        description: description,
+        code: code,
         isVirtual: isVirtual ?? this.isVirtual,
         isOurs: isOurs ?? this.isOurs,
       );
@@ -62,14 +83,14 @@ class WisaSchool {
       other is WisaSchool &&
           id == other.id &&
           name == other.name &&
-          description == other.description &&
+          code == other.code &&
           isVirtual == other.isVirtual &&
           isOurs == other.isOurs;
 
   @override
-  int get hashCode => Object.hash(id, name, description, isVirtual, isOurs);
+  int get hashCode => Object.hash(id, name, code, isVirtual, isOurs);
 
   @override
-  String toString() =>
-      'WisaSchool(id: $id, name: $name, isVirtual: $isVirtual, isOurs: $isOurs)';
+  String toString() => 'WisaSchool(id: $id, name: $name, code: $code, '
+      'isVirtual: $isVirtual, isOurs: $isOurs)';
 }

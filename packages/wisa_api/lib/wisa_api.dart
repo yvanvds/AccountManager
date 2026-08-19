@@ -12,6 +12,10 @@ library;
 export 'src/config/live_config.dart' show WisaLiveConfig;
 export 'src/connector.dart' show WisaConnector, WisaQuery;
 export 'src/csv/csv_parser.dart' show CsvHeaderMismatch, CsvRowParseException;
+// The canonical `SMAGetInst` row decoder — the one place that untangles WISA's
+// inverted NAME/DESCRIPTION columns. Exported so the convention can be pinned
+// against the real CSV from outside this package (#208).
+export 'src/csv/row_parsers.dart' show parseSchoolRow;
 export 'src/models/wisa_class_group.dart';
 export 'src/models/wisa_school.dart';
 export 'src/models/wisa_staff.dart';

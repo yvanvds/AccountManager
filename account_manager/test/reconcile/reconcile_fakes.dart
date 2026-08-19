@@ -141,7 +141,7 @@ wapi.WisaStudent wisaStudent({
 /// A WISA school, optionally flagged [ours] (the managed-school signal the
 /// linker joins student `schoolId` against, #133/#134).
 wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
-    wapi.WisaSchool(id: id, name: 'School $id', description: '', isOurs: ours);
+    wapi.WisaSchool(id: id, name: 'School $id', code: '', isOurs: ours);
 
 /// A WISA class group. [name] is the `fullName` the linker matches on;
 /// [schoolId] decides whether the class belongs to a school we manage — a

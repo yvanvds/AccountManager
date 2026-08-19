@@ -137,14 +137,63 @@ void main() {
 
     test(
         'a school profile predating the persisted code loads with an empty '
-        'code (#194)', () {
+        'name (#194)', () {
+      // A pre-#194 document has only the one half, and it was filled from the
+      // swapped `WisaSchool` of the day — so what sits under `name` is really
+      // the short code, and the #208 migration moves it to `code`.
       final settings = AppSettings.fromJson({
         'wisaSchools': [
-          {'schoolId': 42, 'name': 'Sint-Jan', 'ours': true, 'prefix': ''},
+          {'schoolId': 42, 'name': 'ISMAA', 'ours': true, 'prefix': ''},
         ],
       });
-      expect(settings.wisaSchools.single.code, isEmpty);
-      expect(settings.wisaSchools.single.name, 'Sint-Jan');
+      expect(settings.wisaSchools.single.code, 'ISMAA');
+      expect(settings.wisaSchools.single.name, isEmpty);
+    });
+
+    test(
+        'a settings document written before #208 loads with its code and name '
+        'unswapped', () {
+      // The pre-#208 layout: `code` held the long name and `name` the short
+      // code. The absent `schemaVersion` is the marker that says so.
+      final settings = AppSettings.fromJson({
+        'wisaSchools': [
+          {
+            'schoolId': 25,
+            'code': 'Instituut Sancta Maria-A',
+            'name': 'ISMAA',
+            'ours': true,
+            'virtual': false,
+            'prefix': '',
+          },
+        ],
+      });
+      final migrated = settings.wisaSchools.single;
+      expect(migrated.code, 'ISMAA');
+      expect(migrated.name, 'Instituut Sancta Maria-A');
+      expect(migrated.ours, isTrue);
+      // And it renders the way #204 specified, not inside out.
+      expect(migrated.label, 'Instituut Sancta Maria-A (ISMAA)');
+      expect(migrated.nameLabel, 'Instituut Sancta Maria-A');
+    });
+
+    test('a migrated profile is rewritten in the current layout, once', () {
+      // Saving after a migration must not swap the halves a second time.
+      final once = AppSettings.fromJson({
+        'wisaSchools': [
+          {
+            'schoolId': 25,
+            'code': 'Instituut Sancta Maria-A',
+            'name': 'ISMAA',
+          },
+        ],
+      });
+      final twice = AppSettings.fromJson(once.toJson());
+      expect(twice.wisaSchools, once.wisaSchools);
+      expect(twice.wisaSchools.single.code, 'ISMAA');
+      expect(
+        (once.toJson()['wisaSchools'] as List).single,
+        containsPair('schemaVersion', 2),
+      );
     });
 
     test('copyWith preserves and can replace the school code (#194)', () {
@@ -203,12 +252,14 @@ void main() {
     test(
         'a settings document written before the virtual flag loads with every '
         'school non-virtual (#203)', () {
+      // Pre-#203 is also pre-#208, so this document carries the swapped halves
+      // and comes back through the migration.
       final settings = AppSettings.fromJson({
         'wisaSchools': [
           {
             'schoolId': 42,
-            'code': 'ismaa',
-            'name': 'Sint-Jan',
+            'code': 'Sint-Jan',
+            'name': 'ISMAA',
             'ours': true,
             'prefix': '',
           },
@@ -216,6 +267,8 @@ void main() {
       });
       expect(settings.wisaSchools.single.virtual, isFalse);
       expect(settings.virtualWisaSchoolIds, isEmpty);
+      expect(settings.wisaSchools.single.code, 'ISMAA');
+      expect(settings.wisaSchools.single.name, 'Sint-Jan');
     });
 
     test('copyWith preserves and can replace the virtual flag (#203)', () {

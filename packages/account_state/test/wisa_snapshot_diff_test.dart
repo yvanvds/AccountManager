@@ -55,8 +55,8 @@ WisaClassGroup _classGroup({String name = '3A'}) => WisaClassGroup(
 
 WisaSchool _school({int id = 1, bool isVirtual = false}) => WisaSchool(
       id: id,
-      name: 'SMA',
-      description: 'Sint-Michiel',
+      name: 'Sint-Michiel',
+      code: 'SMA',
       isVirtual: isVirtual,
     );
 
