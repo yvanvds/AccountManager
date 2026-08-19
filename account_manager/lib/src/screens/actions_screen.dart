@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_state/account_state.dart'
-    show MaterializedAccount, MaterializedGroup, Rollup;
+    show MaterializedAccount, MaterializedGroup, Rollup, RollupLevel;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -14,10 +14,12 @@ import '../reconcile/reconcile_controller.dart';
 /// Reconcile screen so a September changeover's hundreds/thousands of tiles no
 /// longer render inline on one very long page.
 ///
-/// Instead of one flat list, actions are browsed through the school →
-/// grade-year → classroom rollup drill-down (#119): the tree loads only the
-/// aggregate counts, and one classroom's actions are lazily loaded (via
-/// `LinkedStore.readClassroom`) and built only when the operator drills into it.
+/// Instead of one flat list, actions are browsed through the rollup drill-down
+/// (#119) — grade-year → classroom for students since #210 dropped the
+/// administrative school level, school → grade-year → classroom for staff: the
+/// tree loads only the aggregate counts, and one classroom's actions are lazily
+/// loaded (via `LinkedStore.readClassroom`) and built only when the operator
+/// drills into it.
 /// The per-class list itself renders through a lazy [SliverList] so only the
 /// on-screen tiles build. The global "Dry-run all" / "Apply all" act on every
 /// pending entry across all classes.
@@ -283,21 +285,34 @@ class _ActionsBodyState extends State<_ActionsBody>
       slivers.addAll(_groupSlivers(context));
     } else if (controller.hasOverview) {
       // Partition the drill-down by family: the Personeel tab shows only the
-      // synthetic staff school node; the Leerlingen tab shows the student
-      // schools plus the class-groups node (class groups are student-oriented).
+      // synthetic staff school node (school → grade → classroom, unchanged); the
+      // Leerlingen tab opens straight on the merged grade-years plus the
+      // class-groups node (class groups are student-oriented).
       final staffRollup = controller.staffSchoolRollup;
       slivers.add(_section(staffTab
           ? _DrillDownSection(
               controller: controller,
-              schools: <Rollup>[if (staffRollup != null) staffRollup],
+              roots: <Rollup>[if (staffRollup != null) staffRollup],
               groups: null,
               emptyLabel: 'Geen openstaande personeelsacties.',
+              childrenOf: (root) => <Widget>[
+                for (final grade in controller.childrenOf(root.key))
+                  _GradeNode(controller: controller, grade: grade),
+              ],
             )
           : _DrillDownSection(
               controller: controller,
-              schools: controller.studentSchoolRollups,
+              roots: controller.studentRollups,
               groups: controller.groupRollup,
               emptyLabel: 'Nog geen gematerialiseerd overzicht.',
+              childrenOf: (root) => <Widget>[
+                for (final classroom in controller.studentChildrenOf(root))
+                  _ClassroomTile(
+                    controller: controller,
+                    classroom: classroom,
+                    indent: PlinkSpacing.s5,
+                  ),
+              ],
             )));
     } else {
       slivers.add(_section(_EmptyState(controller: controller)));
@@ -667,25 +682,46 @@ Future<void> _confirmAndApply(
   if (confirmed ?? false) await apply();
 }
 
-/// The materialized overview (#115/#119): the school → grade-year → classroom
-/// drill-down driven by the stored rollups, so it renders from the shared state
-/// even in a passive session that never pulled or re-linked. Tapping a classroom
-/// (or the Klasgroepen node) lazily loads just that node's actions (#154).
+/// The stable widget key of one rollup node, by level — so a test (and the
+/// element tree) names a node the same way wherever it is rendered.
+String _rollupNodeKey(Rollup r) => switch (r.level) {
+      RollupLevel.school => 'rollup-school-${r.key}',
+      RollupLevel.gradeYear => 'rollup-grade-${r.key}',
+      RollupLevel.classroom => 'rollup-class-${r.key}',
+      RollupLevel.groups => 'rollup-groups',
+    };
+
+/// The materialized overview (#115/#119): the drill-down driven by the stored
+/// rollups, so it renders from the shared state even in a passive session that
+/// never pulled or re-linked. Tapping a classroom (or the Klasgroepen node)
+/// lazily loads just that node's actions (#154).
+///
+/// The tree is two levels deep on the Leerlingen tab (#210): merged grade-year →
+/// classroom, with no school node — the WISA school split is administrative, so
+/// drilling through it never presented a choice. The Personeel tab keeps its
+/// stored school → grade-year → classroom shape; both are driven from the very
+/// same rollups, only projected differently by [childrenOf].
 class _DrillDownSection extends StatelessWidget {
   const _DrillDownSection({
     required this.controller,
-    required this.schools,
+    required this.roots,
     required this.groups,
     required this.emptyLabel,
+    required this.childrenOf,
   });
 
   final ReconcileController controller;
 
-  /// The school-level rollup roots to render — student schools for the
-  /// Leerlingen tab, the single staff node for the Personeel tab (#179).
-  final List<Rollup> schools;
+  /// The top-level accordion nodes: the merged grade-years plus
+  /// "Niet toegewezen" on the Leerlingen tab, the single staff school node on
+  /// the Personeel tab (#179/#210).
+  final List<Rollup> roots;
 
-  /// The "Klasgroepen" rollup node to append below [schools], or `null` when
+  /// Builds the expanded children of one root — classroom tiles under a merged
+  /// grade-year, the nested grade nodes under the staff school.
+  final List<Widget> Function(Rollup root) childrenOf;
+
+  /// The "Klasgroepen" rollup node to append below [roots], or `null` when
   /// this tab carries no group family (the Personeel tab).
   final Rollup? groups;
 
@@ -721,10 +757,10 @@ class _DrillDownSection extends StatelessWidget {
           Text(freshness, style: text.bodySmall),
         ],
         const SizedBox(height: PlinkSpacing.s3),
-        if (schools.isEmpty && groupsNode == null)
+        if (roots.isEmpty && groupsNode == null)
           Text(emptyLabel, style: text.bodyMedium)
         else ...<Widget>[
-          for (final school in schools)
+          for (final root in roots)
             Container(
               margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
               decoration: BoxDecoration(
@@ -733,15 +769,12 @@ class _DrillDownSection extends StatelessWidget {
                     const BorderRadius.all(Radius.circular(PlinkRadius.base)),
               ),
               child: ExpansionTile(
-                key: ValueKey('rollup-school-${school.key}'),
+                key: ValueKey(_rollupNodeKey(root)),
                 shape: const Border(),
                 collapsedShape: const Border(),
-                title: Text(school.label, style: text.bodyLarge),
-                trailing: _PendingBadge(count: school.pendingCount),
-                children: <Widget>[
-                  for (final grade in controller.childrenOf(school.key))
-                    _GradeNode(controller: controller, grade: grade),
-                ],
+                title: Text(root.label, style: text.bodyLarge),
+                trailing: _PendingBadge(count: root.pendingCount),
+                children: childrenOf(root),
               ),
             ),
           if (groupsNode != null)
@@ -767,6 +800,10 @@ class _DrillDownSection extends StatelessWidget {
   }
 }
 
+/// A nested grade-year node inside a school node — the middle level of the
+/// Personeel tab's stored tree, which #210 left as it was. The student tree has
+/// no school to nest under, so its grade-years are [_DrillDownSection] roots and
+/// carry their "Jaar N" label from [ReconcileController.gradeNodeLabel] instead.
 class _GradeNode extends StatelessWidget {
   const _GradeNode({required this.controller, required this.grade});
 
@@ -777,7 +814,7 @@ class _GradeNode extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     return ExpansionTile(
-      key: ValueKey('rollup-grade-${grade.key}'),
+      key: ValueKey(_rollupNodeKey(grade)),
       shape: const Border(),
       collapsedShape: const Border(),
       tilePadding: const EdgeInsets.only(left: PlinkSpacing.s5, right: 16),
@@ -785,17 +822,42 @@ class _GradeNode extends StatelessWidget {
       trailing: _PendingBadge(count: grade.pendingCount),
       children: <Widget>[
         for (final classroom in controller.childrenOf(grade.key))
-          ListTile(
-            key: ValueKey('rollup-class-${classroom.key}'),
-            contentPadding:
-                const EdgeInsets.only(left: PlinkSpacing.s6, right: 16),
-            title: Text(classroom.label, style: text.bodyMedium),
-            subtitle: Text('${classroom.accountCount} account(s)',
-                style: text.bodySmall),
-            trailing: _PendingBadge(count: classroom.pendingCount),
-            onTap: () => controller.openClassroom(classroom),
+          _ClassroomTile(
+            controller: controller,
+            classroom: classroom,
+            indent: PlinkSpacing.s6,
           ),
       ],
+    );
+  }
+}
+
+/// A leaf classroom node: tapping it opens that class's accounts, which reads
+/// exactly one Cosmos partition ([Rollup.school]). Indented to whatever depth the
+/// enclosing tree puts it at — one level under a merged grade-year on the
+/// Leerlingen tab, two under school → grade-year on the Personeel tab.
+class _ClassroomTile extends StatelessWidget {
+  const _ClassroomTile({
+    required this.controller,
+    required this.classroom,
+    required this.indent,
+  });
+
+  final ReconcileController controller;
+  final Rollup classroom;
+  final double indent;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return ListTile(
+      key: ValueKey(_rollupNodeKey(classroom)),
+      contentPadding: EdgeInsets.only(left: indent, right: 16),
+      title: Text(classroom.label, style: text.bodyMedium),
+      subtitle:
+          Text('${classroom.accountCount} account(s)', style: text.bodySmall),
+      trailing: _PendingBadge(count: classroom.pendingCount),
+      onTap: () => controller.openClassroom(classroom),
     );
   }
 }

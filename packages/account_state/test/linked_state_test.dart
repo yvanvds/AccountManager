@@ -119,13 +119,14 @@ wapi.WisaClassGroup _wClass(
 wapi.WisaSnapshot _wSnap({
   List<wapi.WisaStudent> students = const [],
   List<wapi.WisaClassGroup> classGroups = const [],
+  List<wapi.WisaSchool> schools = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: _d,
       students: students,
       staff: const [],
       classGroups: classGroups,
-      schools: const [],
+      schools: schools,
     );
 
 ss.SmartschoolSnapshot _sSnap({
@@ -516,6 +517,113 @@ void main() {
 
       final action = state.groupActions.whereType<AddToSmartschool>().single;
       expect(action.target.wisa!.instituteNumber, '111');
+    });
+  });
+
+  group('group actions skip the classes of a virtual school (#209)', () {
+    /// Recomputes over [classGroups] + [students] with the snapshot carrying
+    /// [schools] — where the virtual flag lives — and the managed set pinned to
+    /// [ourSchoolIds], the Settings-derived path the app wires.
+    LinkedState recompute({
+      required List<wapi.WisaClassGroup> classGroups,
+      required List<wapi.WisaStudent> students,
+      List<wapi.WisaSchool> schools = const [],
+      Set<int>? ourSchoolIds,
+    }) =>
+        LinkedState.recompute(
+          wisa: _wSnap(
+            students: students,
+            classGroups: classGroups,
+            schools: schools,
+          ),
+          smartschool: _sSnap(),
+          azure: _aSnap(),
+          resolver: _SeqResolver(),
+          studentConfig: _studentConfig,
+          staffConfig: _staffConfig,
+          classTree: const SmartschoolClassTree(grades: ['G1', 'G2', 'G3']),
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test('an empty class of a virtual school raises no group action at all',
+        () {
+      // The virtual school is marked managed as well — the operator's real
+      // config — so before #209 this surfaced as a CreateInSmartschool notice
+      // in the Klasgroepen list.
+      final state = recompute(
+        classGroups: [_wClass('1V', adminCode: 'v1', schoolId: 99)],
+        students: const [],
+        schools: [
+          const wapi.WisaSchool(
+            id: 99,
+            name: 'Virtuele school',
+            code: 'ISMV',
+            isOurs: true,
+            isVirtual: true,
+          ),
+        ],
+        ourSchoolIds: const {1, 99},
+      );
+
+      expect(state.snapshot.groups, isEmpty);
+      expect(state.groupActions, isEmpty,
+          reason: 'a virtual class is never ours to create downstream');
+    });
+
+    test('a student of the virtual school is still placed by their classGroup',
+        () {
+      // Placement reads WisaStudent.classGroup, not the class-group records, so
+      // dropping those records must move nobody.
+      final state = recompute(
+        classGroups: [_wClass('1V', adminCode: 'v1', schoolId: 99)],
+        students: [_wStudent(wisaId: '9', classGroup: '1V', schoolId: 99)],
+        schools: [
+          const wapi.WisaSchool(
+            id: 99,
+            name: 'Virtuele school',
+            code: 'ISMV',
+            isOurs: true,
+            isVirtual: true,
+          ),
+        ],
+        ourSchoolIds: const {1, 99},
+      );
+
+      expect(state.snapshot.groups, isEmpty);
+      final account = state.snapshot.accounts.single;
+      expect(account.wisa, isNotNull);
+      expect(account.wisaPresence, core.WisaPresence.ours);
+
+      // The drill-down still buckets them under their own class.
+      final view = materialize(state, generation: 1);
+      final placed = view.accounts.single;
+      expect(placed.school, '99');
+      expect(placed.classroom, '1V',
+          reason: 'the student keeps the class their own WISA record names');
+    });
+
+    test('a class of a managed, non-virtual school still raises its action',
+        () {
+      final state = recompute(
+        classGroups: [
+          _wClass('1A', adminCode: 'a1', schoolId: 1),
+          _wClass('1V', adminCode: 'v1', schoolId: 99),
+        ],
+        students: [_wStudent(wisaId: '1', classGroup: '1A')],
+        schools: [
+          const wapi.WisaSchool(id: 1, name: 'Onze school', code: 'ISM'),
+          const wapi.WisaSchool(
+            id: 99,
+            name: 'Virtuele school',
+            code: 'ISMV',
+            isVirtual: true,
+          ),
+        ],
+        ourSchoolIds: const {1, 99},
+      );
+
+      final action = state.groupActions.whereType<AddToSmartschool>().single;
+      expect(action.target.wisa!.name, '1A');
     });
   });
 

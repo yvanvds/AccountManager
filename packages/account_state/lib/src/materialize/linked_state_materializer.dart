@@ -220,7 +220,7 @@ List<Rollup> buildRollups(List<MaterializedAccount> accounts) {
 
 const String _staffSchool = staffPartition;
 const String _staffLabel = 'Personeel';
-const String _unassignedSchool = 'unassigned';
+const String _unassignedSchool = unassignedPartition;
 const String _unassignedLabel = 'Niet toegewezen';
 const String _noGrade = 'Overig';
 const String _noClassroom = 'Zonder klas';

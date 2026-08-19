@@ -205,8 +205,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
     expect(find.text('Overzicht'), findsOneWidget);
-    await tester.tap(find.text('School 1'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('3C'));
@@ -783,12 +781,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // The departed account is browsed on the Actions tab, under the
-    // "Niet toegewezen" → "Overig" → "Zonder klas" bucket.
+    // "Niet toegewezen" → "Zonder klas" bucket (#210 dropped the always-empty
+    // grade level between them).
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Niet toegewezen'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar Overig'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Zonder klas'));
     await tester.tap(find.text('Zonder klas'));
@@ -868,8 +865,6 @@ void main() {
         reason: 'a school we do not manage never appears in Actions (#178)');
     await tester.tap(find.text('Niet toegewezen'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar Overig'));
-    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Zonder klas'));
     await tester.tap(find.text('Zonder klas'));
     await tester.pumpAndSettle();
@@ -927,12 +922,13 @@ void main() {
   });
 
   testWidgets(
-      'marking that same school as managed in Settings surfaces it in the '
-      'Actions drill-down end-to-end (#178)', (WidgetTester tester) async {
-    // The very same school-2 student, but now school 2 is one of ours: it must
-    // appear as a school node and the student sits under it. Proves the managed
-    // set from Settings — not the snapshot MarkAsOurs flags — drives which
-    // schools show.
+      'marking that same school as managed in Settings surfaces its students in '
+      'the Actions drill-down end-to-end (#178)', (WidgetTester tester) async {
+    // The very same school-2 student, but now school 2 is one of ours: their
+    // class must be browsable instead of sitting in the leaver bucket. Proves
+    // the managed set from Settings — not the snapshot MarkAsOurs flags —
+    // drives which students show. The school itself is no longer a node (#210),
+    // so the proof is that the student's own class is reachable.
     useTallWindow(tester);
     final harness = managedSchoolsHarness(ourSchoolIds: const {1, 2});
     await tester.pumpWidget(AccountManagerApp(
@@ -948,23 +944,33 @@ void main() {
 
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
-    expect(find.text('School 2'), findsOneWidget,
-        reason: 'managing school 2 surfaces it in Actions (#178)');
-    await tester.tap(find.text('School 2'));
-    await tester.pumpAndSettle();
+    expect(find.text('Niet toegewezen'), findsNothing,
+        reason: 'managing school 2 takes its student out of the leaver bucket');
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     expect(find.text('3C'), findsWidgets);
+    // The class the student reached still carries school 2's partition, which
+    // is what the per-class read targets.
+    expect(
+      harness.controller
+          .studentChildrenOf(harness.controller.studentRollups.single)
+          .single
+          .school,
+      '2',
+    );
   });
 
   testWidgets(
-      'the Actions drill-down names a school by name and code end-to-end, '
-      'never "School <id>" (#204)', (WidgetTester tester) async {
+      'the materialized view names a school by name and code end-to-end, never '
+      '"School <id>", while the drill-down shows no school at all (#204/#210)',
+      (WidgetTester tester) async {
     // The real app, real fonts, real navigation. This session's WISA snapshot
     // carries no schools at all, so the school's identity can only come from
     // the operator's persisted Settings profile — exactly the case that used to
-    // bake `School 25` into every materialized node. The drill-down must name
-    // the school the way Instellingen → WISA does.
+    // bake `School 25` into every materialized node. #210 took the school level
+    // out of the drill-down, so that label now lives only in the shared
+    // documents (which Cosmos partitions by school and Settings names) — it must
+    // still be the "Instellingen → WISA" identity there, and nowhere on screen.
     useTallWindow(tester);
     final harness = namedSchoolHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -982,27 +988,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('School 25'), findsNothing,
         reason: 'the numeric id is the last resort, not the rendering (#204)');
-    final node = find.text('Instituut Sancta Maria-A (ISMAA)');
-    expect(node, findsOneWidget);
+    expect(find.text('Instituut Sancta Maria-A (ISMAA)'), findsNothing,
+        reason: 'no school node survives in the student tree (#210)');
 
-    // It is the real school node, not a stray label: it drills down to the
-    // student's class.
-    await tester.tap(node);
-    await tester.pumpAndSettle();
+    // The stored school rollup — what the counters and the Cosmos documents are
+    // keyed and labelled by — still carries the full identity.
+    expect(harness.controller.schoolRollups.single.label,
+        'Instituut Sancta Maria-A (ISMAA)');
+
+    // And the year drills straight to the student's class.
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     expect(find.text('3C'), findsWidgets);
   });
 
   testWidgets(
-      'a settings document written before #208 drills down as '
+      'a settings document written before #208 materializes as '
       '"Instituut Sancta Maria-A (ISMAA)", not inside out',
       (WidgetTester tester) async {
     // The stored document has the long name under `code` and the short code
     // under `name` — the layout every profile persisted before the fix carries.
     // Read back through the real `AppSettings.fromJson`, the migration must put
-    // each half right so the drill-down reads the way #204 specified instead of
-    // "ISMAA (Instituut Sancta Maria-A)".
+    // each half right so the materialized school reads the way #204 specified
+    // instead of "ISMAA (Instituut Sancta Maria-A)".
     useTallWindow(tester);
     final migrated = AppSettings.fromJson(<String, dynamic>{
       'wisaSchools': <Map<String, dynamic>>[
@@ -1035,10 +1043,16 @@ void main() {
 
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
+    // The label lives in the shared documents now that #210 took the school
+    // level out of the tree — it must be neither inverted nor the bare id, and
+    // it must not resurface as a node on screen.
+    expect(harness.controller.schoolRollups.single.label,
+        'Instituut Sancta Maria-A (ISMAA)');
     expect(find.text('ISMAA (Instituut Sancta Maria-A)'), findsNothing,
         reason: 'the inverted rendering #208 fixed must not come back');
     expect(find.text('School 25'), findsNothing);
-    expect(find.text('Instituut Sancta Maria-A (ISMAA)'), findsOneWidget);
+    expect(find.text('Instituut Sancta Maria-A (ISMAA)'), findsNothing,
+        reason: 'no school node survives in the student tree (#210)');
   });
 
   testWidgets(
@@ -1086,6 +1100,115 @@ void main() {
   });
 
   testWidgets(
+      'the Klasgroepen drill-down carries no class of a virtual school '
+      'end-to-end, while its students keep their place (#209)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. School 99 is the operator's
+    // "Virtuele school", ticked *both* beheerd and virtueel — which is why the
+    // managed-school filter of #205 never kept it out. Its classes used to
+    // reach the Klasgroepen list as an applyable "create this class in
+    // Smartschool" proposal (1V) and an empty-class notice (9V): rows nobody
+    // will ever act on, each one an invitation to create a defunct class.
+    useTallWindow(tester);
+    final harness = virtualClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Only our own class is on the list; neither virtual class is anywhere.
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-1V')), findsNothing,
+        reason: 'creating a virtual school\'s class is never worth proposing');
+    expect(find.byKey(const ValueKey('entry-group-9V')), findsNothing,
+        reason: 'the empty-class notice for a virtual class is pure clutter');
+    expect(find.textContaining('Virtuele klas'), findsNothing);
+    expect(find.textContaining('Lege virtuele klas'), findsNothing);
+
+    // Back out of Klasgroepen: the virtual school's student is still imported
+    // and still sits in the class their own WISA record names — dropping the
+    // class-group records moved nobody.
+    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    await tester.pumpAndSettle();
+    // The merged first year spans both managed schools (#210), so the virtual
+    // school's 1V sits beside our own 1A under it.
+    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    await tester.ensureVisible(yearNode);
+    await tester.tap(yearNode);
+    await tester.pumpAndSettle();
+    final classNode = find.byKey(const ValueKey('rollup-class-class|99|1|1V'));
+    await tester.ensureVisible(classNode);
+    await tester.tap(classNode);
+    await tester.pumpAndSettle();
+    expect(find.text('Jane Doe'), findsWidgets);
+  });
+
+  testWidgets(
+      'the Acties drill-down opens on grade-years merged across the managed '
+      'schools end-to-end, with no school level to guess at (#210)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Two managed schools whose
+    // years overlap: school 1 holds 1A and 3C, school 2 holds 1B and the
+    // non-numeric OKAN. The WISA school split is administrative — operators
+    // treat both as one school — so the overview must open on the years, and a
+    // class must be findable by name without first guessing its school.
+    useTallWindow(tester);
+    final harness = twoSchoolHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Jaar 1'), findsOneWidget);
+    expect(find.text('Jaar 3'), findsOneWidget);
+    expect(find.text('School 1'), findsNothing);
+    expect(find.text('School 2'), findsNothing);
+    // The synthetic non-numeric bucket is renamed rather than read as the
+    // nonsensical "Jaar Overig" next to the real years.
+    expect(find.text('Overige klassen'), findsOneWidget);
+    expect(find.text('Jaar Overig'), findsNothing);
+
+    // The merged first year carries both schools' first-year classes and their
+    // combined account count.
+    expect(harness.controller.studentRollups.first.accountCount, 2);
+    await tester.tap(find.text('Jaar 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('1A'), findsOneWidget);
+    expect(find.text('1B'), findsOneWidget);
+
+    // Opening the school-2 class still targets school 2's own partition — the
+    // flattening is presentation only, the documents stay partitioned by school.
+    await tester.ensureVisible(find.text('1B'));
+    await tester.tap(find.text('1B'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom?.school, '2');
+    expect(harness.controller.classroomAccounts, hasLength(1));
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+  });
+
+  testWidgets(
       'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
       'staff drill in one tab, students in the other (#179)',
       (WidgetTester tester) async {
@@ -1116,10 +1239,9 @@ void main() {
         find.byKey(const ValueKey('actions-tab-leerlingen')), findsOneWidget);
     expect(find.byKey(const ValueKey('actions-tab-personeel')), findsOneWidget);
 
-    // Default Leerlingen tab: the student school node drills; the staff node
-    // does not appear here.
-    expect(
-        find.byKey(const ValueKey('rollup-school-school|1')), findsOneWidget);
+    // Default Leerlingen tab: the merged grade-year node drills (#210); the
+    // staff node does not appear here.
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
     expect(
         find.byKey(const ValueKey('rollup-school-school|staff')), findsNothing);
 
@@ -1127,7 +1249,7 @@ void main() {
     // is preserved within the tab, showing only staff.
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('rollup-school-school|1')), findsNothing);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsNothing);
     final staffSchool =
         find.byKey(const ValueKey('rollup-school-school|staff'));
     expect(staffSchool, findsOneWidget);
@@ -1353,8 +1475,6 @@ void main() {
     // Browse the student on the Actions tab, drilling into her class (3C).
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('School 1'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('3C'));
@@ -1403,8 +1523,6 @@ void main() {
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Niet toegewezen'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar Overig'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Zonder klas'));
     await tester.tap(find.text('Zonder klas'));
@@ -1529,16 +1647,17 @@ void main() {
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
     expect(find.text('Overzicht'), findsOneWidget);
-    expect(find.text('School 1'), findsOneWidget);
+    // The stored view projects to the same school-less tree a syncing session
+    // renders (#210).
+    expect(find.text('Jaar 3'), findsOneWidget);
+    expect(find.text('School 1'), findsNothing);
     expect(resumed.wisaSyncs, 0);
     expect(resumed.ssSyncs, 0);
     expect(resumed.azSyncs, 0);
     expect(resumed.controller.linked, isNull,
         reason: 'link() is never called in a passive session');
 
-    // Drill down: school → grade-year → classroom.
-    await tester.tap(find.text('School 1'));
-    await tester.pumpAndSettle();
+    // Drill down: grade-year → classroom.
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('3C'));
@@ -1839,8 +1958,6 @@ void main() {
     expect(resumed.controller.syncState.generation, 2,
         reason: 'the app caught up from the decoded wire signal alone');
     // Drill down to prove the refreshed rollups reached the UI: 3D now exists.
-    await tester.tap(find.text('School 1'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     expect(find.text('3D'), findsOneWidget);
@@ -1920,8 +2037,6 @@ void main() {
 
     // Browse the create on the Actions tab, in the student's class.
     await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('School 1'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
@@ -2354,6 +2469,103 @@ void main() {
     expect(ismaa.name, 'Instituut Sancta Maria-A');
     expect(ismaa.ours, isTrue, reason: 'the managed mark survived the merge');
     expect(ismaa.label, 'Instituut Sancta Maria-A (ISMAA)');
+  });
+
+  testWidgets(
+      'a sync names the WISA-scholen grid end-to-end — no Scholen ophalen, no '
+      'Opslaan (#207)', (WidgetTester tester) async {
+    // The reported journey in the real app: the operator opens Instellingen →
+    // WISA and sees "School 25", because the stored document predates the
+    // profile's `code`/`name` fields and the grid consults no snapshot. One
+    // ordinary sync must be enough to fix that — the pull already loads every
+    // school. Both bootstraps share the one settings document, exactly as the
+    // real app's two Cosmos-backed stores do.
+    useTallWindow(tester);
+    final settings = SettingsHarness(
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisa': const WisaConnection(server: 'db.school.example', port: '1433')
+            .toJson(),
+        // The legacy shape: a school id and a managed flag, nothing else.
+        'wisaSchools': <Map<String, dynamic>>[
+          <String, dynamic>{'schoolId': 25, 'ours': true},
+        ],
+      }),
+      // No fetcher is wired, so "Scholen ophalen" cannot run at all — whatever
+      // names the grid must have arrived without it.
+    );
+    final reconcile = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 25)],
+        // Verbatim rows 11-12 of the redacted-from-live SMAGetInst fixture,
+        // through the real parser, so the halves are whatever WISA really says.
+        schools: <WisaSchool>[
+          parseSchoolRow('25,Instituut Sancta Maria-A,ISMAA'),
+          parseSchoolRow('27,Instituut Sancta Maria-B,ISMAB'),
+        ],
+      ),
+      smartschool: ssSnap(
+          groups: const [], accounts: [ssAccount()], memberships: const []),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: const {25},
+      settingsStore: settings.store,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: reconcile.bootstrap,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Before any sync: the bug, in the real grid.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final tile = find.byKey(const ValueKey('settings-wisa-school-25-ours'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    String titleOf(Finder f) =>
+        (tester.widget<CheckboxListTile>(f).title! as Text).data!;
+    expect(titleOf(tile), 'School 25');
+    expect(tester.widget<CheckboxListTile>(tile).subtitle, isNull);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+              find.byKey(const ValueKey('settings-wisa-fetch-schools')))
+          .onPressed,
+      isNull,
+      reason: 'no fetcher is wired: the names cannot come from this button',
+    );
+
+    // One ordinary sync on the Reconcile view.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Back to Settings and re-read the document — no Opslaan was ever pressed.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect(titleOf(tile), 'Instituut Sancta Maria-A');
+    expect((tester.widget<CheckboxListTile>(tile).subtitle! as Text).data,
+        'ISMAA');
+    expect(find.text('School 25'), findsNothing);
+
+    // The repair landed in the document itself — and touched only the two
+    // derived halves: the managed mark is still the operator's, and the sync
+    // did not add the sibling school the pull also carried.
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.schoolId, 25);
+    expect(saved.wisaSchools.single.name, 'Instituut Sancta Maria-A');
+    expect(saved.wisaSchools.single.code, 'ISMAA');
+    expect(saved.wisaSchools.single.ours, isTrue);
+    expect(saved.wisaSchools.single.virtual, isFalse);
   });
 
   testWidgets(

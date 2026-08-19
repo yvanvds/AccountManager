@@ -99,6 +99,7 @@ export 'src/settings/import_rule_codec.dart';
 export 'src/settings/secret_provider.dart';
 export 'src/settings/settings_store.dart';
 export 'src/settings/wisa_school_label.dart';
+export 'src/settings/wisa_school_merge.dart';
 export 'src/settings/wisa_school_profile.dart';
 export 'src/settings/work_date.dart';
 export 'src/cosmos/cosmos_client.dart';

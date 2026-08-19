@@ -17,6 +17,34 @@ class _ThrowingPublisher implements SignalPublisher {
       throw StateError('signalr down');
 }
 
+/// An [InMemorySettingsStore] that counts its writes — so a test can prove the
+/// sync-time school backfill (#207) writes only when it has something to fix.
+class _RecordingSettingsStore extends InMemorySettingsStore {
+  _RecordingSettingsStore(super.initial);
+
+  int saves = 0;
+
+  @override
+  Future<void> save(AppSettings settings) {
+    saves++;
+    return super.save(settings);
+  }
+}
+
+/// A settings store whose every read throws — models the store being down while
+/// a sync tries to repair the school profiles (#207).
+class _ThrowingSettingsStore implements SettingsStore {
+  const _ThrowingSettingsStore(this.error);
+
+  final String error;
+
+  @override
+  Future<AppSettings> load() async => throw StateError(error);
+
+  @override
+  Future<void> save(AppSettings settings) async {}
+}
+
 void main() {
   group('first sync', () {
     test('pulls all three systems and derives the linked view + actions',
@@ -199,6 +227,104 @@ void main() {
       expect(h.azSyncs, 2);
       expect(h.wisaSyncs, 1, reason: 'drift check does not re-pull WISA');
       expect(h.controller.linked, isNotNull);
+    });
+  });
+
+  group('settings school-profile backfill (#207)', () {
+    // The reported settings document: entries written before a profile had a
+    // `code`/`name` at all (#171/#194), so the Settings grid — the one view
+    // that consults no snapshot — rendered "School 25" until the operator
+    // pressed Scholen ophalen *and* Opslaan. Every sync already pulls the whole
+    // school list, so it repairs them.
+    const legacy = AppSettings(
+      wisaSchools: <WisaSchoolProfile>[
+        WisaSchoolProfile(schoolId: 25, ours: true),
+        WisaSchoolProfile(schoolId: 27, virtual: true),
+      ],
+    );
+    const pulled = <wapi.WisaSchool>[
+      wapi.WisaSchool(id: 25, name: 'Instituut Sancta Maria-A', code: 'ISMAA'),
+      wapi.WisaSchool(id: 27, name: 'Instituut Sancta Maria-B', code: 'ISMAB'),
+    ];
+
+    test('a sync fills the pulled names and codes into the stored profiles',
+        () async {
+      final settings = InMemorySettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+      );
+
+      await h.controller.sync();
+
+      final saved = await settings.load();
+      expect(
+        saved.wisaSchools.map((p) => p.name),
+        ['Instituut Sancta Maria-A', 'Instituut Sancta Maria-B'],
+      );
+      expect(saved.wisaSchools.map((p) => p.code), ['ISMAA', 'ISMAB']);
+      expect(saved.wisaSchools.first.ours, isTrue,
+          reason: 'the managed mark is the operator\'s, never rewritten');
+      expect(saved.wisaSchools.last.virtual, isTrue);
+      expect(h.log.entries.where((e) => e.isError), isEmpty);
+    });
+
+    test('the unchanged-WISA shortcut still repairs the document', () async {
+      // The repair runs before the smart-diff early return, so an operator
+      // whose group has nothing to reconcile still gets named schools.
+      final settings = InMemorySettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+      );
+      await h.controller.sync();
+      // Model the pre-fix document coming back (another operator saved over it)
+      // and re-sync with identical WISA content.
+      await settings.save(legacy);
+
+      await h.controller.sync();
+
+      expect(h.controller.noChangesNeeded, isTrue);
+      final saved = await settings.load();
+      expect(saved.wisaSchools.first.name, 'Instituut Sancta Maria-A');
+    });
+
+    test('nothing is written when every profile is already named', () async {
+      final settings = _RecordingSettingsStore(const AppSettings(
+        wisaSchools: <WisaSchoolProfile>[
+          WisaSchoolProfile(
+            schoolId: 25,
+            code: 'ISMAA',
+            name: 'Instituut Sancta Maria-A',
+            ours: true,
+          ),
+        ],
+      ));
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+      );
+
+      await h.controller.sync();
+
+      expect(settings.saves, 0,
+          reason: 'a sync must not rewrite the settings document for nothing');
+    });
+
+    test('a failing settings store is logged, never fails the sync', () async {
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: const _ThrowingSettingsStore('cosmos 503'),
+      );
+
+      await h.controller.sync();
+
+      expect(h.controller.error, isNull);
+      expect(h.controller.linked, isNotNull);
+      expect(
+        h.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains('cosmos 503')),
+      );
     });
   });
 
@@ -629,6 +755,133 @@ void main() {
       expect(s2.controller.linked, isNull);
       expectSummary(s2.controller.studentSummary, total: 1, pending: 2);
       expectSummary(s2.controller.groupSummary, total: 2, pending: 0);
+    });
+  });
+
+  group('school-less student drill-down (#210)', () {
+    test(
+        'the top level is the grade-years merged across every managed school, '
+        'with combined counts and no school node', () async {
+      final h = twoSchoolHarness();
+      await h.controller.sync();
+
+      // School 1 holds 1A + 3C, school 2 holds 1B + OKAN. The overview merges
+      // the years: one "Jaar 1" spanning both schools' first years.
+      expect(
+        h.controller.studentRollups.map((r) => r.label),
+        <String>['Jaar 1', 'Jaar 3', 'Overige klassen'],
+        reason: 'ordering is pinned: years ascending, then the non-numeric one',
+      );
+      final jaar1 = h.controller.studentRollups.first;
+      expect(jaar1.accountCount, 2, reason: "school 1's 1A plus school 2's 1B");
+      expect(jaar1.pendingCount, greaterThan(0));
+
+      // The school level is gone from the view — and never had a node label of
+      // its own to fall back on.
+      expect(
+        h.controller.studentRollups.map((r) => r.level),
+        everyElement(isNot(RollupLevel.school)),
+      );
+      expect(h.controller.studentRollups.map((r) => r.label),
+          isNot(contains('School 1')));
+
+      // …but the stored rollups keep it, so the aggregates that count by
+      // RollupLevel.school (the badges, the category summaries) still have data.
+      expect(h.controller.schoolRollups.map((r) => r.label),
+          containsAll(<String>['School 1', 'School 2']));
+      expect(h.controller.studentSummary.total, 4);
+    });
+
+    test(
+        'a merged year lists both schools\' classrooms, each keeping its own '
+        'partition so the drill-down still reads one partition', () async {
+      final h = twoSchoolHarness();
+      await h.controller.sync();
+
+      final jaar1 =
+          h.controller.studentRollups.firstWhere((r) => r.label == 'Jaar 1');
+      final classes = h.controller.studentChildrenOf(jaar1);
+      expect(classes.map((r) => r.label), <String>['1A', '1B']);
+      // The partition key of each class is its real school — what
+      // `readClassroom(partitionKey: school)` targets.
+      expect(classes.map((r) => r.school), <String>['1', '2']);
+
+      // Opening one reads exactly that school's partition.
+      await h.controller.openClassroom(classes.last);
+      expect(h.controller.classroomAccounts, hasLength(1));
+      expect(h.controller.classroomAccounts!.single.school, '2');
+    });
+
+    test('a non-numeric class group is never labelled "Jaar Overig"', () async {
+      final h = twoSchoolHarness();
+      await h.controller.sync();
+
+      final other = h.controller.studentRollups.last;
+      expect(other.label, 'Overige klassen');
+      expect(other.gradeYear, 'Overig');
+      expect(
+        h.controller.studentChildrenOf(other).map((r) => r.label),
+        <String>['OKAN'],
+      );
+    });
+
+    test('"Niet toegewezen" expands straight to its classrooms', () async {
+      // Three WISA-departed accounts: all land in the unassigned bucket, whose
+      // grade level is always the synthetic "Overig" and carries no decision.
+      final h = manyDepartedHarness(count: 3);
+      await h.controller.sync();
+
+      final roots = h.controller.studentRollups;
+      expect(roots.map((r) => r.label), <String>['Niet toegewezen'],
+          reason: 'no year node for a bucket that has no real year');
+      final children = h.controller.studentChildrenOf(roots.single);
+      expect(children.map((r) => r.label), <String>['Zonder klas']);
+      expect(children.single.level, RollupLevel.classroom,
+          reason: 'the always-empty grade level is skipped');
+      expect(children.single.accountCount, 3);
+    });
+
+    test(
+        'a passive session projects the same tree from the stored view, with '
+        'its badges and header count untouched', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final s1 = twoSchoolHarness();
+      // Materialize through a first session, then read it back passively.
+      final active = ReconcileHarness(
+        store: snapshots,
+        linkedStore: linkedStore,
+        wisa: s1.wisaResult,
+        smartschool: s1.ssResult,
+        azure: s1.azResult,
+        ourSchoolIds: const {1, 2},
+      );
+      await active.controller.sync();
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+
+      expect(s2.controller.linked, isNull, reason: 'passive: never linked');
+      expect(
+        s2.controller.studentRollups.map((r) => r.label),
+        active.controller.studentRollups.map((r) => r.label),
+      );
+      expect(
+        s2.controller.studentRollups.map((r) => r.accountCount),
+        active.controller.studentRollups.map((r) => r.accountCount),
+      );
+      // The counters read from RollupLevel.school rollups, which the view
+      // projection deliberately left in the store.
+      expect(
+          s2.controller.totalPendingCount, active.controller.totalPendingCount);
+      expect(s2.controller.studentPendingCount,
+          active.controller.studentPendingCount);
+      expect(
+          s2.controller.staffPendingCount, active.controller.staffPendingCount);
+      expect(s2.controller.totalPendingCount, greaterThan(0));
     });
   });
 

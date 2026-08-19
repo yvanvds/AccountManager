@@ -139,9 +139,17 @@ wapi.WisaStudent wisaStudent({
     );
 
 /// A WISA school, optionally flagged [ours] (the managed-school signal the
-/// linker joins student `schoolId` against, #133/#134).
-wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
-    wapi.WisaSchool(id: id, name: 'School $id', code: '', isOurs: ours);
+/// linker joins student `schoolId` against, #133/#134) and/or [virtual] (the
+/// flag `markVirtualSchools` stamps before the pull, whose class groups the
+/// linker refuses to seed, #209).
+wapi.WisaSchool wisaSchool(int id, {bool ours = false, bool virtual = false}) =>
+    wapi.WisaSchool(
+      id: id,
+      name: 'School $id',
+      code: '',
+      isOurs: ours,
+      isVirtual: virtual,
+    );
 
 /// A WISA class group. [name] is the `fullName` the linker matches on;
 /// [schoolId] decides whether the class belongs to a school we manage — a
@@ -441,6 +449,32 @@ ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
       ourSchoolIds: ourSchoolIds,
     );
 
+/// A harness for the school-less Actions drill-down (#210). Two managed schools
+/// (1 and 2) each hold students, and their years overlap: school 1 has `1A` and
+/// `3C`, school 2 has `1B` and the non-numeric `OKAN`. So a correct overview
+/// shows one **merged** "Jaar 1" holding both schools' first years with combined
+/// counts, a "Jaar 3", and a single non-numeric bucket — and no school node
+/// anywhere, while each classroom keeps the school partition its accounts are
+/// stored under.
+ReconcileHarness twoSchoolHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '3C'),
+          wisaStudent(wisaId: '3', classGroup: '1B', schoolId: 2),
+          wisaStudent(wisaId: '4', classGroup: 'OKAN', schoolId: 2),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1, 2},
+    );
+
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
 /// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),
@@ -484,6 +518,57 @@ ReconcileHarness foreignClassGroupHarness() => ReconcileHarness(
       ),
       azure: azSnap(users: const []),
       ourSchoolIds: const {1},
+    );
+
+/// A harness for the virtual-school class-group exclusion (#209). Two managed
+/// schools: our own school 1, and school 99 — the "Virtuele school" — which the
+/// operator marks **both** beheerd and virtueel, exactly as the real config
+/// does. That is why the #205 ownership filter alone never kept its classes out.
+///
+/// The virtual school contributes a populated class (`1V`, holding its own
+/// student) and an empty one (`9V`), so before the fix the Klasgroepen list
+/// carried an applyable "create this class in Smartschool" proposal *and* the
+/// empty-class notice for classes nobody will ever use. Our own `1A` is
+/// populated and must survive untouched, and the virtual school's student must
+/// keep flowing and stay placed by their own `classGroup` string.
+ReconcileHarness virtualClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '1V', schoolId: 99),
+        ],
+        schools: [
+          wisaSchool(1, ours: true),
+          wisaSchool(99, ours: true, virtual: true),
+        ],
+        classGroups: [
+          wisaClassGroup(
+            '1V',
+            description: 'Virtuele klas',
+            schoolCode: '999',
+            schoolId: 99,
+          ),
+          wisaClassGroup(
+            '9V',
+            description: 'Lege virtuele klas',
+            schoolCode: '999',
+            schoolId: 99,
+          ),
+          wisaClassGroup(
+            '1A',
+            description: 'Onze eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1, 99},
     );
 
 /// A harness for the school-label drill-down (#204). One student enrolled in
@@ -926,6 +1011,7 @@ class ReconcileHarness {
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
     List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
+    this.settingsStore,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
@@ -1044,8 +1130,10 @@ class ReconcileHarness {
       store: controllerStore ?? this.linkedStore,
       syncedBy: syncedBy,
       // The operator's curated WISA schools from Settings, which name every
-      // school in the Actions drill-down (#204).
+      // school in the Actions drill-down (#204), and the document they live in
+      // so a pull can fill their names back in (#207).
       schoolProfiles: schoolProfiles,
+      settingsStore: settingsStore,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),
@@ -1071,6 +1159,13 @@ class ReconcileHarness {
   /// The shared cold-snapshot store, when this harness models the persistence
   /// wiring (#107). `null` for the plain in-memory scenarios.
   final SnapshotStore? store;
+
+  /// The settings document this session's pulls repair the WISA school profiles
+  /// in (#207). Share the one [InMemorySettingsStore] with a `SettingsHarness`
+  /// to model what the real app does — both bootstraps read and write the same
+  /// Cosmos document — so a test can sync and then open Settings on the result.
+  /// `null` for the scenarios that do not care about settings persistence.
+  final SettingsStore? settingsStore;
 
   /// The shared realtime fan-out (#116): when set, this session's controller
   /// publishes change signals to it and subscribes for others'. Share one hub
