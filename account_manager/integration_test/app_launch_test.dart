@@ -37,6 +37,8 @@ import 'package:account_state/account_state.dart'
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
+import 'package:smartschool_api/smartschool_api.dart'
+    show SmartschoolConnector, SmartschoolMethod, SmartschoolSoapTransport;
 import 'package:wisa_api/wisa_api.dart' show WisaSchool;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
@@ -82,6 +84,29 @@ void main() {
   /// across Algemeen / Wisa / Smartschool / Azure tabs).
   Future<void> openSettingsTab(WidgetTester tester, String tabKey) async {
     await tester.tap(find.byKey(ValueKey(tabKey)));
+    await tester.pumpAndSettle();
+  }
+
+  /// Authors one Smartschool import rule the way the operator does (#202): the
+  /// **Toevoegen** menu, the rule type keyed [kind], then the group-name prompt.
+  Future<void> addSmartschoolRule(
+    WidgetTester tester,
+    String kind,
+    String groupName,
+  ) async {
+    final add = find.byKey(const ValueKey('settings-ss-rule-add'));
+    await tester.ensureVisible(add);
+    await tester.pumpAndSettle();
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('settings-ss-rule-add-$kind')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-ss-rule-name')),
+      groupName,
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-confirm')));
     await tester.pumpAndSettle();
   }
 
@@ -2423,6 +2448,73 @@ void main() {
     expect(copied.single, onScreen[1]);
     expect(copied.single, isNot(contains('\n')));
   });
+
+  testWidgets(
+      'the Settings view authors the two Smartschool import rules end-to-end, '
+      "and the saved rules prune the next pull's group tree (#202)",
+      (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams — real fonts,
+    // real navigation, real layout. Until now the Smartschool tab rendered its
+    // rules under a section literally headed "Importregels (alleen-lezen)" with
+    // no way to create one, so in practice there were no rules at all and the
+    // whole group tree — organisational subtrees included — came in on every
+    // pull. Drive the editor the way the operator does, then hand the *saved*
+    // rules to the production connector exactly as bootstrapReconcile does
+    // (`ssConnector.sync(rules: settings.smartschoolRules)`).
+    useTallWindow(tester);
+    final settings = SettingsHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+
+    // The section is an editor now, not a read-only list.
+    expect(find.text('Importregels'), findsOneWidget);
+    expect(find.textContaining('alleen-lezen'), findsNothing);
+    expect(
+        find.byKey(const ValueKey('settings-ss-rules-empty')), findsOneWidget);
+
+    // Author one rule of each type, then save the document.
+    await addSmartschoolRule(tester, 'discardGroup', 'Organisatie');
+    await addSmartschoolRule(tester, 'noSubgroups', 'Klassen');
+    expect(find.textContaining('Smartschool-groep negeren: Organisatie'),
+        findsOneWidget);
+    expect(find.textContaining('Geen subgroepen: Klassen'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // They landed in the settings document on the codec's existing wire shape.
+    final saved = await settings.store.load();
+    expect(saved.toJson()['smartschoolRules'], <Map<String, dynamic>>[
+      {'type': 'discardSmartschoolGroup', 'groupName': 'Organisatie'},
+      {'type': 'noSmartschoolSubgroups', 'groupName': 'Klassen'},
+    ]);
+
+    // …and the next pull really is pruned by them: the production connector,
+    // over a scripted SOAP wire, handed nothing but what Settings persisted.
+    final wire = _GroupTreeSoap();
+    final snapshot = await SmartschoolConnector.fromParts(
+      site: 'school',
+      accessCode: 'ac',
+      transport: wire,
+    ).sync(rules: saved.smartschoolRules);
+
+    // "Organisatie" and its subtree are gone; "Klassen" survives without its
+    // children. Only the root and Klassen remain.
+    expect(snapshot.groups.map((g) => g.id.value).toList(),
+        <String>['SCH', 'KLA']);
+    // And the pruning happened before the account reads, so the connector never
+    // even asked Smartschool about the removed groups.
+    expect(wire.accountCodes, <String>['SCH', 'KLA']);
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.
@@ -2507,4 +2599,62 @@ class _FakeSignalRSocket implements SignalRSocket {
   void serverSend(String frame) {
     if (!_incoming.isClosed) _incoming.add(frame);
   }
+}
+
+/// A scripted Smartschool SOAP wire for the import-rule end-to-end (#202):
+/// answers `getAllGroupsAndClasses` with a small base64 group tree and reports
+/// "no direct accounts" (code 19) for every group, recording the group codes the
+/// connector asked about so the test can see the pruned ones were never read.
+class _GroupTreeSoap implements SmartschoolSoapTransport {
+  /// The group codes `getAllAccountsExtended` was called for, in walk order.
+  final List<String> accountCodes = <String>[];
+
+  static const String _tree = '<groups>'
+      '<group><name>School</name><type>G</type><code>SCH</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Organisatie</name><type>G</type><code>ORG</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Verborgen</name><type>G</type><code>HID</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '<group><name>Klassen</name><type>G</type><code>KLA</code>'
+      '<visible>1</visible><children>'
+      '<group><name>1A</name><type>K</type><code>C1A</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '</children></group></groups>';
+
+  @override
+  Future<String> send({
+    required Uri endpoint,
+    required String soapAction,
+    required String envelope,
+  }) async {
+    // The SOAPAction is `<namespace>#<method>`.
+    final String method = soapAction.split('#').last;
+    if (method == SmartschoolMethod.getAllGroupsAndClasses) {
+      return _wrap(
+        method,
+        base64.encode(utf8.encode(_tree)),
+        'xsd:base64Binary',
+      );
+    }
+    if (method == SmartschoolMethod.getAllAccountsExtended) {
+      accountCodes.add(
+        RegExp(r'<code[^>]*>([^<]*)</code>').firstMatch(envelope)?.group(1) ??
+            '',
+      );
+      return _wrap(method, '19', 'xsd:int'); // Smartschool: no direct accounts.
+    }
+    return _wrap(method, '0', 'xsd:int');
+  }
+
+  String _wrap(String method, String value, String type) =>
+      '<?xml version="1.0" encoding="utf-8"?>'
+      '<soap:Envelope '
+      'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" '
+      'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+      '<soap:Body><${method}Response>'
+      '<return xsi:type="$type">$value</return>'
+      '</${method}Response></soap:Body></soap:Envelope>';
 }
