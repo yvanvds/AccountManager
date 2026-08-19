@@ -19,6 +19,7 @@ import 'package:account_state/account_state.dart'
     show
         AppSettings,
         ChangeSignal,
+        CosmosThrottleGovernor,
         InMemoryLinkedStore,
         InMemorySignalHub,
         MaterializedAccount,
@@ -573,6 +574,151 @@ void main() {
     );
     // The operator sees the timeout in the log panel, not silence.
     expect(find.textContaining('timed out'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a persist that Cosmos throttles with 429s still lands the whole shared '
+      'view, and the operator sees it slow down rather than fail (#196)',
+      (WidgetTester tester) async {
+    // The real app, driven the way the operator drives it, over the *production*
+    // Cosmos write path — a real HttpCosmosClient and CosmosLinkedStore — with
+    // the account answering the middle of the write burst with 429s. Before the
+    // fix this ended the pass with "Could not persist the linked view:
+    // CosmosException(429 …)" and left the shared containers holding this sync's
+    // accounts next to the previous sync's groups and rollups.
+    useTallWindow(tester);
+    final wire = ThrottlingCosmosWire(throttleFrom: 30, throttleUntil: 120);
+    late final ReconcileHarness harness;
+    // Production wires one governor into both the client (which reports every
+    // 429) and the store (whose fan-out narrows), reporting into the operator
+    // log — bootstrapReconcile does exactly this.
+    final governor = CosmosThrottleGovernor(
+      onReport: (m) => harness.log.addMessage(Origin.all, m),
+    );
+    harness = manyDepartedHarness(
+      count: 300,
+      controllerStore: cosmosLinkedStoreOver(wire, governor: governor),
+    );
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The persist is a few hundred real round trips; let the pass finish.
+    final DateTime deadline = DateTime.now().add(const Duration(seconds: 60));
+    while (harness.controller.busy && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+
+    // The account really did throttle this burst.
+    expect(wire.throttledResponses, greaterThan(0));
+
+    // The pass finished normally: nothing failed, and the operator's log panel
+    // carries the terminal ready line rather than a Cosmos error.
+    expect(harness.controller.busy, isFalse);
+    expect(find.textContaining('Could not persist'), findsNothing);
+    expect(
+      harness.log.entries.where((e) => e.isError).map((e) => e.message),
+      isEmpty,
+    );
+    expect(find.textContaining('Sync complete'), findsOneWidget);
+
+    // Throttling was reported as progress, not silence (#196.5).
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains(contains('throttling')),
+    );
+
+    // …and the shared state is *whole*: every account document landed, plus the
+    // rollups and the generation bump that tell other operators to read them.
+    expect(wire.docCount('linkedAccounts'), 300);
+    expect(wire.docCount('rollups'), greaterThan(0));
+    expect(wire.docCount('syncState'), greaterThan(0));
+    expect(harness.controller.syncState.generation, greaterThan(0));
+  });
+
+  testWidgets(
+      'a second pass that changed nothing offers the shared store no document '
+      'writes at all (#200)', (WidgetTester tester) async {
+    // The everyday pass, driven the way the operator drives it, over the
+    // *production* Cosmos write path. Before the fix every pass rewrote the
+    // whole view wholesale — ~4k account docs plus groups and rollups, nearly
+    // all byte-identical to what was already stored — and that is the write
+    // burst the serverless account answers with the 429s of #196. This account
+    // never throttles, so what is measured here is purely how much the persist
+    // offers it.
+    useTallWindow(tester);
+    // Throttling switched off: far beyond the writes this test makes.
+    final wire = ThrottlingCosmosWire(throttleFrom: 1000000);
+    final governor = CosmosThrottleGovernor();
+    final harness = manyDepartedHarness(
+      count: 120,
+      controllerStore: cosmosLinkedStoreOver(wire, governor: governor),
+    );
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+
+    // The persist is a few hundred real round trips; let each pass finish.
+    Future<void> runToIdle() async {
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 60));
+      while (harness.controller.busy && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        await tester.pump();
+      }
+      await tester.pumpAndSettle();
+    }
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    await runToIdle();
+
+    // The first pass writes the whole view — there is nothing stored yet.
+    expect(wire.writesTo('linkedAccounts'), 120);
+    final int rollupWrites = wire.writesTo('rollups');
+    expect(rollupWrites, greaterThan(0));
+    final int generation = harness.controller.syncState.generation;
+
+    // Now "Check for drift": the same three systems, the same linked view, so
+    // every document materializes byte-identical to the one already stored.
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    await runToIdle();
+
+    // Not one document rewritten…
+    expect(wire.writesTo('linkedAccounts'), 120,
+        reason: 'an unchanged pass must not re-offer the whole account set');
+    expect(wire.writesTo('rollups'), rollupWrites);
+    // …while the shared state is still whole, and the unconditional generation
+    // bump still tells every passive session to re-read it (#116).
+    expect(wire.docCount('linkedAccounts'), 120);
+    expect(harness.controller.syncState.generation, greaterThan(generation));
+    expect(
+      harness.log.entries.where((e) => e.isError).map((e) => e.message),
+      isEmpty,
+    );
+    // The operator is told the pass was a no-op rather than seeing silence.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains(contains('120 unchanged')),
+    );
   });
 
   testWidgets(

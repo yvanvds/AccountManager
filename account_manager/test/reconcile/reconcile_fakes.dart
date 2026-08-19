@@ -10,6 +10,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
@@ -358,7 +359,12 @@ ReconcileHarness dupMailHarness({
 /// unregister/delete choice (#110), so the pending list holds [count] entries in
 /// one "same situation" subset — a large set to exercise list virtualization
 /// (#111).
-ReconcileHarness manyDepartedHarness({int count = 2000}) => ReconcileHarness(
+ReconcileHarness manyDepartedHarness({
+  int count = 2000,
+  LinkedStore? controllerStore,
+}) =>
+    ReconcileHarness(
+      controllerStore: controllerStore,
       wisa: wisaSnap(students: const []),
       smartschool: ssSnap(
         groups: const [],
@@ -618,6 +624,186 @@ class StallingLinkedStore implements LinkedStore {
   Future<void> releaseLease({required String owner}) =>
       _in.releaseLease(owner: owner);
 }
+
+/// A [CosmosTransport] serving a tiny in-memory Cosmos data plane that answers
+/// a stretch of the write burst with **429 TooManyRequests** — the shared-store
+/// persist of #196 without an account.
+///
+/// Enough of the wire is modelled for the real [HttpCosmosClient] and
+/// [CosmosLinkedStore] to run against it unchanged (point reads, upserts,
+/// atomic creates, deletes, and the `SELECT`s the store issues), so a test can
+/// drive the *production* persist path end-to-end and watch a throttled write
+/// burst either survive or leave the containers half-written.
+class ThrottlingCosmosWire implements CosmosTransport {
+  ThrottlingCosmosWire({
+    this.throttleFrom = 30,
+    this.throttleUntil = 120,
+    this.retryAfterMs = 5,
+  });
+
+  /// Write attempt (1-based) from which the account starts throttling, and the
+  /// one after which it stops. Every attempt — retries included — advances the
+  /// counter, so the burst drains the window the way a real recovery does.
+  final int throttleFrom;
+  final int throttleUntil;
+
+  /// What the 429 puts in `x-ms-retry-after-ms`. Tiny, because the client's
+  /// sleep is collapsed to nothing in tests anyway.
+  final int retryAfterMs;
+
+  final Map<String, Map<String, Map<String, dynamic>>> _docs = {};
+
+  /// Every document write the client attempted, retries included.
+  int writeAttempts = 0;
+
+  /// Accepted document writes per container (retries and 429s excluded) — what
+  /// the account was actually asked to store, so a test can tell a pass that
+  /// rewrote the world from one that wrote only what changed (#200).
+  final Map<String, int> writesByContainer = {};
+
+  int writesTo(String container) => writesByContainer[container] ?? 0;
+
+  /// How many of those were answered with a 429.
+  int throttledResponses = 0;
+
+  int _etag = 0;
+
+  /// How many documents the container holds — what the shared state actually
+  /// ended up with.
+  int docCount(String container) => _docs[container]?.length ?? 0;
+
+  Map<String, Map<String, dynamic>> _c(String name) =>
+      _docs.putIfAbsent(name, () => {});
+
+  @override
+  Future<CosmosResponse> send(CosmosRequest request) async {
+    // A real round trip is async, so writes genuinely overlap and the bounded
+    // fan-out is exercised rather than collapsing to a serial loop.
+    await Future<void>.delayed(Duration.zero);
+    final segments = request.url.pathSegments;
+    final container = segments.length > 3 ? segments[3] : '';
+    final isQuery = request.headers['x-ms-documentdb-isquery'] == 'true';
+    switch (request.method) {
+      case 'POST' when isQuery:
+        return _query(container, request);
+      case 'POST' when segments.length >= 5:
+        return _write(container, request);
+      case 'POST':
+        return const CosmosResponse(statusCode: 201, body: '{}');
+      case 'GET' when segments.length >= 6:
+        final doc = _c(container)[segments[5]];
+        return doc == null
+            ? const CosmosResponse(statusCode: 404)
+            : CosmosResponse(statusCode: 200, body: jsonEncode(doc));
+      case 'GET':
+        return const CosmosResponse(statusCode: 200, body: '{}');
+      case 'DELETE' when segments.length >= 6:
+        final gone = _c(container).remove(segments[5]);
+        return CosmosResponse(statusCode: gone == null ? 404 : 204);
+    }
+    return const CosmosResponse(statusCode: 400);
+  }
+
+  CosmosResponse _write(String container, CosmosRequest request) {
+    writeAttempts++;
+    if (writeAttempts >= throttleFrom && writeAttempts <= throttleUntil) {
+      throttledResponses++;
+      return CosmosResponse(
+        statusCode: 429,
+        headers: {'x-ms-retry-after-ms': '$retryAfterMs'},
+        body: '{"code":"TooManyRequests","message":"The request rate is too '
+            'large. Please retry after sometime."}',
+      );
+    }
+    final decoded = jsonDecode(request.body ?? '{}');
+    final doc = Map<String, dynamic>.from(decoded as Map);
+    final id = doc['id'] as String;
+    final store = _c(container);
+    final isUpsert = request.headers['x-ms-documentdb-is-upsert'] == 'true';
+    // An atomic create loses to whoever got there first — what the sync lease
+    // relies on.
+    if (!isUpsert && store.containsKey(id)) {
+      return const CosmosResponse(
+        statusCode: 409,
+        body: '{"code":"Conflict","message":"id already exists"}',
+      );
+    }
+    final etag = 'etag-${++_etag}';
+    writesByContainer[container] = writesTo(container) + 1;
+    store[id] = {...doc, '_etag': etag};
+    return CosmosResponse(
+      statusCode: isUpsert ? 200 : 201,
+      headers: {'etag': etag},
+      body: jsonEncode(store[id]),
+    );
+  }
+
+  CosmosResponse _query(String container, CosmosRequest request) {
+    final body = Map<String, dynamic>.from(
+      jsonDecode(request.body ?? '{}') as Map,
+    );
+    final query = body['query'] as String? ?? '';
+    final parameters = <String, Object?>{
+      for (final p in (body['parameters'] as List? ?? const []))
+        (p as Map)['name'] as String: p['value'],
+    };
+    final pkHeader = request.headers['x-ms-documentdb-partitionkey'];
+    final pk = pkHeader == null
+        ? null
+        : (jsonDecode(pkHeader) as List).first as String;
+    var rows = <Map<String, dynamic>>[
+      for (final d in _c(container).values)
+        if (pk == null || d['pk'] == pk) Map<String, dynamic>.from(d),
+    ];
+    if (query.contains('c.classroom = @classroom')) {
+      final want = parameters['@classroom'];
+      rows = [
+        for (final d in rows)
+          if (d['classroom'] == want) d
+      ];
+    }
+    if (query.contains('SELECT c.id, c.pk')) {
+      // A projection returns the named fields only — including the content hash
+      // the store compares against (#200), absent where the document has none.
+      rows = [
+        for (final d in rows)
+          {
+            'id': d['id'],
+            'pk': d['pk'],
+            if (query.contains('c.$contentHashField') &&
+                d.containsKey(contentHashField))
+              contentHashField: d[contentHashField],
+          },
+      ];
+    }
+    return CosmosResponse(
+      statusCode: 200,
+      body: jsonEncode({'Documents': rows}),
+    );
+  }
+}
+
+/// The *production* shared-store write path over [wire]: a real
+/// [CosmosLinkedStore] on a real [HttpCosmosClient], sharing [governor] exactly
+/// as `bootstrapReconcile` wires them (#196). The retry sleep is collapsed to
+/// nothing so a throttled persist is exercised with no wall-clock waiting.
+CosmosLinkedStore cosmosLinkedStoreOver(
+  ThrottlingCosmosWire wire, {
+  required CosmosThrottleGovernor governor,
+}) =>
+    CosmosLinkedStore(
+      HttpCosmosClient(
+        config: const CosmosConfig(
+          endpoint: 'https://fake.documents.azure.com:443/',
+          database: 'accountmanager',
+        ),
+        transport: wire,
+        tokens: const StaticCosmosTokenProvider('fake-token'),
+        governor: governor,
+        sleep: (_) async {},
+      ),
+      governor: governor,
+    );
 
 // ---------------------------------------------------------------------------
 // The harness: the real State layer over scripted syncers.

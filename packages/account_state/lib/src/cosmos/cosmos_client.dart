@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'cosmos_config.dart';
+import 'cosmos_retry.dart';
 import 'cosmos_token_provider.dart';
 import 'cosmos_transport.dart';
 
@@ -140,21 +141,48 @@ abstract interface class CosmosClient {
 /// The wire details (URL layout, partition-key header, upsert/query headers,
 /// continuation paging, status→outcome mapping) live here and are exercised by
 /// the fake-transport unit tests; the adapters above see only [CosmosClient].
+///
+/// **Throttling.** A **429 TooManyRequests** is not surfaced to the caller on
+/// sight: it is Cosmos asking the client to slow down, so the request is retried
+/// up to [CosmosRetryPolicy.maxAttempts] times, waiting at least the server's
+/// `x-ms-retry-after-ms` plus jittered exponential backoff, and every 429 is
+/// reported to the [CosmosThrottleGovernor] so the write fan-out narrows while
+/// the account is under pressure (#196). Only once the attempts are exhausted
+/// does the 429 become a [CosmosException]. The wait is slept through an
+/// injectable seam, so the whole retry path is testable with no wall-clock.
 class HttpCosmosClient implements CosmosClient {
   HttpCosmosClient({
     required CosmosConfig config,
     required CosmosTransport transport,
     required CosmosTokenProvider tokens,
     DateTime Function()? now,
+    CosmosRetryPolicy retry = const CosmosRetryPolicy(),
+    CosmosThrottleGovernor? governor,
+    Future<void> Function(Duration)? sleep,
+    double Function()? jitterRoll,
   })  : _config = config,
         _transport = transport,
         _tokens = tokens,
-        _now = now ?? DateTime.now;
+        _now = now ?? DateTime.now,
+        _retry = retry,
+        _governor = governor ?? CosmosThrottleGovernor(),
+        _sleep = sleep ?? _wallClockSleep,
+        _roll = jitterRoll ?? defaultJitterRoll;
 
   final CosmosConfig _config;
   final CosmosTransport _transport;
   final CosmosTokenProvider _tokens;
   final DateTime Function() _now;
+  final CosmosRetryPolicy _retry;
+  final CosmosThrottleGovernor _governor;
+  final Future<void> Function(Duration) _sleep;
+  final double Function() _roll;
+
+  static Future<void> _wallClockSleep(Duration d) => Future<void>.delayed(d);
+
+  /// The throttling state this client reports 429s to. Shared with the write
+  /// fan-out so it can narrow while the account is throttling (#196).
+  CosmosThrottleGovernor get governor => _governor;
 
   /// The data-plane REST API version. Any recent value works for the operations
   /// used here; pinned so behaviour does not drift under the account.
@@ -317,6 +345,14 @@ class HttpCosmosClient implements CosmosClient {
     return true;
   }
 
+  /// Issues one data-plane request, retrying while Cosmos throttles it (#196).
+  ///
+  /// Every attempt rebuilds the headers, so a retry never replays a stale
+  /// `x-ms-date` or an expired bearer token. A non-429 response (success or any
+  /// other status the callers classify themselves) returns immediately; a 429
+  /// backs off and retries until [CosmosRetryPolicy.maxAttempts] is spent, at
+  /// which point the 429 itself is returned and the caller's `_ensureSuccess`
+  /// turns it into a [CosmosException].
   Future<CosmosResponse> _send(
     String method,
     String path, {
@@ -325,22 +361,39 @@ class HttpCosmosClient implements CosmosClient {
     Map<String, String> extraHeaders = const {},
     String contentType = 'application/json',
   }) async {
-    final token = await _tokens.cosmosAccessToken();
-    final headers = <String, String>{
-      'authorization': _authHeader(token),
-      'x-ms-date': _rfc1123(_now().toUtc()),
-      'x-ms-version': apiVersion,
-      if (body != null) 'Content-Type': contentType,
-      if (partitionKey != null)
-        'x-ms-documentdb-partitionkey': jsonEncode([partitionKey]),
-      ...extraHeaders,
-    };
-    return _transport.send(CosmosRequest(
-      method: method,
-      url: Uri.parse('${_base()}$path'),
-      headers: headers,
-      body: body,
-    ));
+    for (var attempt = 1;; attempt++) {
+      final token = await _tokens.cosmosAccessToken();
+      final headers = <String, String>{
+        'authorization': _authHeader(token),
+        'x-ms-date': _rfc1123(_now().toUtc()),
+        'x-ms-version': apiVersion,
+        if (body != null) 'Content-Type': contentType,
+        if (partitionKey != null)
+          'x-ms-documentdb-partitionkey': jsonEncode([partitionKey]),
+        ...extraHeaders,
+      };
+      final resp = await _transport.send(CosmosRequest(
+        method: method,
+        url: Uri.parse('${_base()}$path'),
+        headers: headers,
+        body: body,
+      ));
+      if (!resp.isThrottled) {
+        _governor.recordSuccess();
+        return resp;
+      }
+      if (attempt >= _retry.maxAttempts) {
+        _governor.recordThrottle(attempt: attempt);
+        return resp;
+      }
+      final wait = _retry.delayFor(
+        attempt: attempt,
+        roll: _roll(),
+        retryAfter: resp.retryAfter,
+      );
+      _governor.recordThrottle(attempt: attempt, wait: wait);
+      await _sleep(wait);
+    }
   }
 
   /// The account endpoint without a trailing slash, so `$base$path` joins

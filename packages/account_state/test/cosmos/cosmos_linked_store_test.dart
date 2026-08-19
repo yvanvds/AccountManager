@@ -2,13 +2,31 @@ import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
 import 'package:test/test.dart';
 
+/// What a `SELECT c.id, c.pk[, c.contentHash] FROM c` projection returns: the
+/// named fields only, and — as Cosmos does — with a field the stored document
+/// does not carry simply absent rather than null. Shared by the fakes below so
+/// none of them silently hands the store back a whole document.
+Map<String, dynamic> _projection(Map<String, dynamic> doc, String query) => {
+      'id': doc['id'],
+      'pk': doc['pk'],
+      if (query.contains('c.$contentHashField') &&
+          doc.containsKey(contentHashField))
+        contentHashField: doc[contentHashField],
+    };
+
 /// A small in-memory [CosmosClient] covering the query shapes
 /// [CosmosLinkedStore] issues: `SELECT * FROM c`, the classroom filter, and the
-/// `SELECT c.id, c.pk FROM c` id/pk projection — honouring [partitionKey]
-/// scoping via each document's `pk` field.
+/// `SELECT c.id, c.pk, c.contentHash FROM c` projection — honouring
+/// [partitionKey] scoping via each document's `pk` field.
 class _FakeClient implements CosmosClient {
   final Map<String, Map<String, Map<String, dynamic>>> _store = {};
   int deletes = 0;
+
+  /// Upserts per container, so a test can assert what a re-sync actually wrote
+  /// (#200) rather than only what the container ended up holding.
+  final Map<String, int> upserts = {};
+
+  int upsertsTo(String container) => upserts[container] ?? 0;
 
   /// Conditioned upserts rejected as stale (412) — for the concurrency test.
   int staleWrites = 0;
@@ -61,6 +79,7 @@ class _FakeClient implements CosmosClient {
       staleWrites++;
       return const WriteOutcome.stale();
     }
+    upserts[container] = upsertsTo(container) + 1;
     final etag = _nextEtag();
     _c(container)[id] = Map.of(document)..['_etag'] = etag;
     return WriteOutcome.applied(etag);
@@ -91,9 +110,7 @@ class _FakeClient implements CosmosClient {
       ];
     }
     if (query.contains('SELECT c.id, c.pk')) {
-      return [
-        for (final d in rows) {'id': d['id'], 'pk': d['pk']},
-      ];
+      return [for (final d in rows) _projection(d, query)];
     }
     return rows;
   }
@@ -225,9 +242,7 @@ class _ConcurrencyClient implements CosmosClient {
     String? partitionKey,
   }) async {
     if (query.contains('SELECT c.id, c.pk')) {
-      return [
-        for (final d in _c(container).values) {'id': d['id'], 'pk': d['pk']},
-      ];
+      return [for (final d in _c(container).values) _projection(d, query)];
     }
     return [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
   }
@@ -265,6 +280,191 @@ class _ConcurrencyClient implements CosmosClient {
     required String partitionKeyPath,
   }) async =>
       true;
+}
+
+/// A [CosmosClient] that stands in for the real client's throttle reporting: it
+/// drives the shared [CosmosThrottleGovernor] on a script (throttle early,
+/// recover later) and records how many upserts were in flight at the moment each
+/// one started — so the write fan-out's *reaction* to throttling is observable
+/// without a Cosmos account (#196).
+class _AdaptiveClient implements CosmosClient {
+  _AdaptiveClient(
+    this.governor, {
+    required this.throttleAt,
+    required this.recoverFrom,
+  });
+
+  final CosmosThrottleGovernor governor;
+
+  /// The 1-based upsert number that reports a 429 (as the client's retry loop
+  /// would after absorbing one).
+  final int throttleAt;
+
+  /// From this upsert on, every write lands cleanly, so the governor's slow
+  /// recovery widens the fan-out again.
+  final int recoverFrom;
+
+  final Map<String, Map<String, Map<String, dynamic>>> _store = {};
+
+  /// In-flight upserts at the start of each upsert, in issue order.
+  final List<int> inFlightAt = [];
+  int _inFlight = 0;
+  int upserts = 0;
+
+  Map<String, Map<String, dynamic>> _c(String name) =>
+      _store.putIfAbsent(name, () => {});
+
+  /// The widest fan-out seen over upserts `[from, to)`.
+  int peakOver(int from, int to) => inFlightAt
+      .sublist(from.clamp(0, inFlightAt.length), to.clamp(0, inFlightAt.length))
+      .fold(0, (a, b) => a > b ? a : b);
+
+  @override
+  Future<WriteOutcome> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+    String? ifMatch,
+  }) async {
+    _inFlight++;
+    upserts++;
+    inFlightAt.add(_inFlight);
+    if (upserts == throttleAt) {
+      governor.recordThrottle(attempt: 1, wait: Duration.zero);
+    } else if (upserts >= recoverFrom) {
+      governor.recordSuccess();
+    }
+    // Yield twice so overlapping calls actually interleave before any completes.
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    _c(container)[document['id'] as String] = Map.of(document);
+    _inFlight--;
+    return const WriteOutcome.applied('etag');
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async {
+    if (query.contains('SELECT c.id, c.pk')) {
+      return [for (final d in _c(container).values) _projection(d, query)];
+    }
+    return [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
+  }
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async =>
+      _c(container)[id];
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async {
+    _c(container)[document['id'] as String] = Map.of(document);
+    return true;
+  }
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {
+    _c(container).remove(id);
+  }
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      true;
+}
+
+/// A [CosmosClient] whose upsert throws once — the terminal failure a persist
+/// hits when Cosmos has run out of retry attempts. Counts every upsert so a test
+/// can prove the sibling workers stopped instead of running on unawaited (#196).
+class _FailingClient implements CosmosClient {
+  _FailingClient({required this.failAfter});
+
+  final int failAfter;
+  int upserts = 0;
+  bool thrown = false;
+
+  @override
+  Future<WriteOutcome> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+    String? ifMatch,
+  }) async {
+    upserts++;
+    await Future<void>.delayed(Duration.zero);
+    if (!thrown && upserts >= failAfter) {
+      thrown = true;
+      throw const CosmosException(
+        429,
+        '{"code":"TooManyRequests","message":"The request rate is too large."}',
+      );
+    }
+    return const WriteOutcome.applied('etag');
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async =>
+      const [];
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async =>
+      null;
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async =>
+      true;
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {}
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      true;
+}
+
+/// Lets every pending microtask/timer-zero callback run, so a test can prove
+/// nothing *further* happens after an awaited call returned.
+Future<void> _settle() async {
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 final DateTime _d = DateTime.utc(2026, 7, 1);
@@ -503,6 +703,240 @@ void main() {
 
       // The whole set round-trips despite the batching.
       expect((await store.readRollups()).isNotEmpty, isTrue);
+    });
+
+    test(
+        'the write fan-out narrows while Cosmos throttles and widens again as '
+        'it eases (#196)', () async {
+      // #168 fixed the fan-out at 24 on the assumption that stayed "well under
+      // the throughput that would trip sustained throttling". At real volume it
+      // does not, so the width has to follow the account instead of guessing it.
+      final governor = CosmosThrottleGovernor(
+        maxConcurrency: 16,
+        minConcurrency: 2,
+        recoverAfter: 5,
+      );
+      // The account absorbs the opening writes, then throttles — the shape of
+      // the real run, where the burst only exceeds the RU/s budget once it is
+      // properly under way.
+      final client = _AdaptiveClient(
+        governor,
+        throttleAt: 30,
+        recoverFrom: 150,
+      );
+      final store = CosmosLinkedStore(client, governor: governor);
+      final accounts = [
+        for (var i = 0; i < 600; i++) _account('p$i', classroom: 'c${i % 30}'),
+      ];
+
+      await store.writeMaterialized(
+        _view(accounts),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      // It started wide…
+      expect(client.peakOver(0, 20), greaterThan(8),
+          reason: 'an unthrottled account gets the full fan-out');
+      // …then the 429 halved the ceiling and the extra workers retired, so the
+      // throttled stretch never runs wider than the narrowed ceiling.
+      expect(client.peakOver(60, 140), lessThanOrEqualTo(8),
+          reason: 'the writer stops pushing the load the account rejected');
+      // …and once the writes land cleanly again the pool refills.
+      expect(client.peakOver(300, 600), greaterThan(8),
+          reason: 'one transient 429 must not cost the rest of the persist its '
+              'speed');
+      expect(governor.concurrency, 16);
+      // The whole set still round-trips despite the narrowing.
+      expect(client.upserts, greaterThanOrEqualTo(600));
+      expect((await store.readClassroom(school: '1', classroom: 'c0')),
+          isNotEmpty);
+    });
+
+    test(
+        'a terminal write failure stops the sibling workers instead of letting '
+        'them run on (#196)', () async {
+      // The second consequence in the bug report: Future.wait rejected on the
+      // first error while 23 other workers kept firing upserts into the very
+      // account that had just been reported as failed.
+      final client = _FailingClient(failAfter: 40);
+      final store = CosmosLinkedStore(client);
+      final accounts = [
+        for (var i = 0; i < 4000; i++) _account('p$i', classroom: 'c${i % 30}'),
+      ];
+
+      await expectLater(
+        store.writeMaterialized(
+          _view(accounts),
+          syncedBy: 'op@school.example',
+          at: _d,
+        ),
+        throwsA(isA<CosmosException>()
+            .having((e) => e.statusCode, 'statusCode', 429)),
+      );
+
+      // The error surfaced only once every worker had wound down…
+      final atFailure = client.upserts;
+      expect(atFailure, lessThan(4000),
+          reason: 'the pass aborts rather than writing the whole set anyway');
+      await _settle();
+      expect(client.upserts, atFailure,
+          reason: 'not one more write after the operator was told it failed');
+    });
+
+    test('an unchanged re-sync writes no documents at all (#200)', () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final accounts = [
+        for (var i = 0; i < 50; i++) _account('p$i', classroom: 'c${i % 5}'),
+      ];
+      final groups = [_group('9Z'), _group('8A')];
+
+      await store.writeMaterialized(
+        _view(accounts, groups: groups),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      final accountWrites = client.upsertsTo(linkedAccountsContainer);
+      final rollupWrites = client.upsertsTo(rollupsContainer);
+      expect(accountWrites, 50, reason: 'the first sync writes the whole set');
+      expect(rollupWrites, greaterThan(0));
+
+      // The identical view again — the everyday case, where nothing about the
+      // three systems moved since the last pass.
+      final progress = <String>[];
+      await store.writeMaterialized(
+        _view(accounts, generation: 2, groups: groups),
+        syncedBy: 'op@school.example',
+        at: _d,
+        onProgress: progress.add,
+      );
+
+      // Not one per-document write: the whole ~4k-doc burst that trips the
+      // serverless account's 429s simply does not happen.
+      expect(client.upsertsTo(linkedAccountsContainer), accountWrites);
+      expect(client.upsertsTo(linkedGroupsContainer), groups.length);
+      expect(client.upsertsTo(rollupsContainer), rollupWrites);
+      expect(client.deletes, 0, reason: 'nothing departed, nothing deleted');
+      // The operator is told the pass was a no-op rather than seeing silence.
+      expect(
+          progress, contains('Persisting accounts: 50 unchanged, 0 to write…'));
+      // …and the view is still whole and still readable.
+      expect(await store.readClassroom(school: '1', classroom: 'c0'),
+          hasLength(10));
+      expect(await store.readGroups(), hasLength(2));
+      // The generation bump is unconditional, so every passive session still
+      // learns there is a new view (#116).
+      expect((await store.readSyncState()).generation, 2);
+    });
+
+    test('a changed document is still written on a re-sync (#200)', () async {
+      // The correctness risk of skipping: a hash computed over too little would
+      // silently drop a real change on the floor.
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final accounts = [
+        for (var i = 0; i < 20; i++) _account('p$i', classroom: '3C'),
+      ];
+
+      await store.writeMaterialized(
+        _view(accounts),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      final afterFirst = client.upsertsTo(linkedAccountsContainer);
+
+      // One account moved class; everything else is identical.
+      final moved = [
+        _account('p0', classroom: '4A'),
+        for (var i = 1; i < 20; i++) _account('p$i', classroom: '3C'),
+      ];
+      await store.writeMaterialized(
+        _view(moved, generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      expect(client.upsertsTo(linkedAccountsContainer), afterFirst + 1,
+          reason: 'exactly the one changed account was rewritten');
+      final threeC = await store.readClassroom(school: '1', classroom: '3C');
+      expect(threeC.map((a) => a.id.value), isNot(contains('p0')));
+      final fourA = await store.readClassroom(school: '1', classroom: '4A');
+      expect(fourA.map((a) => a.id.value), ['p0']);
+    });
+
+    test('a change buried in a nested candidate action is not skipped (#200)',
+        () async {
+      // The hash covers the whole serialized document, so a change anywhere in
+      // it — not just in the top-level fields — still reaches the store.
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      MaterializedAccount withSummary(String summary) => MaterializedAccount(
+            id: const core.LinkedAccountId('p0'),
+            school: '1',
+            schoolLabel: 'School 1',
+            gradeYear: '3',
+            classroom: '3C',
+            role: core.PersonRole.student,
+            isStaff: false,
+            confidence: core.LinkConfidence.high,
+            label: 'Jane p0',
+            inWisa: true,
+            inSmartschool: true,
+            inAzure: true,
+            candidates: [
+              CandidateAction(
+                family: 'student',
+                kind: 'MoveToSmartschoolClassGroup',
+                system: core.Origin.smartschool,
+                summary: summary,
+              ),
+            ],
+          );
+
+      await store.writeMaterialized(
+        _view([withSummary('Move to 3C')]),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      await store.writeMaterialized(
+        _view([withSummary('Move to 4A')], generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      expect(client.upsertsTo(linkedAccountsContainer), 2);
+      final stored = await store.readClassroom(school: '1', classroom: '3C');
+      expect(stored.single.candidates.single.summary, 'Move to 4A');
+    });
+
+    test('a document stored before #200 carries no hash and is rewritten once',
+        () async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      final account = _account('p0');
+      // A pre-#200 document: the same content, stored without a content hash.
+      await client.upsertDocument(
+        container: linkedAccountsContainer,
+        partitionKey: account.school,
+        document: account.toJson(),
+      );
+
+      await store.writeMaterialized(
+        _view([account]),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      expect(client.upsertsTo(linkedAccountsContainer), 2,
+          reason: 'an unhashed stored doc is rewritten so it gains its hash');
+
+      // …and from then on it is skipped like any other unchanged document.
+      await store.writeMaterialized(
+        _view([account], generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      expect(client.upsertsTo(linkedAccountsContainer), 2);
     });
 
     test('reading before any sync yields the initial generation', () async {

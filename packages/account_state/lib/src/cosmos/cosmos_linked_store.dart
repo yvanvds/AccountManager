@@ -1,9 +1,69 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:account_core/account_core.dart' as core;
+import 'package:crypto/crypto.dart';
 
 import '../materialize/linked_store.dart';
 import '../materialize/materialized_state.dart';
 import 'cosmos_client.dart';
 import 'cosmos_config.dart';
+import 'cosmos_retry.dart';
+
+/// The field every materialized document (account, group, rollup) carries its
+/// own content hash in, so the next write can tell "identical" from "changed"
+/// without reading the document back (#200).
+///
+/// Written by [CosmosLinkedStore] alongside the document's own fields and read
+/// back by the straggler projection; nothing else interprets it, and the
+/// `fromJson` factories ignore it.
+const String contentHashField = 'contentHash';
+
+/// A stable content hash of one materialized document.
+///
+/// Computed over the **whole** serialized document — every field, nested
+/// candidates and decisions included — rather than a chosen subset, because a
+/// hash that misses a field is worse than no hash at all: the change would be
+/// skipped and an operator's edit would silently never reach the shared store.
+/// The encoding is canonical (map keys sorted at every level), so the hash
+/// depends on the document's *content* and not on the order `toJson` happened
+/// to build its maps in.
+///
+/// [document] must be the freshly serialized document, i.e. *without* a
+/// [contentHashField] of its own — the hash is stamped on afterwards.
+String materializedContentHash(Map<String, dynamic> document) =>
+    sha256.convert(utf8.encode(_canonicalJson(document))).toString();
+
+String _canonicalJson(Object? value) {
+  final out = StringBuffer();
+  _writeCanonical(out, value);
+  return out.toString();
+}
+
+void _writeCanonical(StringBuffer out, Object? value) {
+  if (value is Map) {
+    final entries = value.entries.toList()
+      ..sort((a, b) => a.key.toString().compareTo(b.key.toString()));
+    out.write('{');
+    for (var i = 0; i < entries.length; i++) {
+      if (i > 0) out.write(',');
+      out
+        ..write(jsonEncode(entries[i].key.toString()))
+        ..write(':');
+      _writeCanonical(out, entries[i].value);
+    }
+    out.write('}');
+  } else if (value is List) {
+    out.write('[');
+    for (var i = 0; i < value.length; i++) {
+      if (i > 0) out.write(',');
+      _writeCanonical(out, value[i]);
+    }
+    out.write(']');
+  } else {
+    out.write(jsonEncode(value));
+  }
+}
 
 /// The [LinkedStore] backed by the Cosmos `linkedAccounts`, `rollups`,
 /// `decisions`, and `syncState` containers (#115, keystone of #112).
@@ -16,22 +76,31 @@ import 'cosmos_config.dart';
 /// never rewritten by the derived-doc replace.
 ///
 /// A rewrite is not a single transaction — Cosmos has no cross-document atomic
-/// write — so [writeMaterialized] upserts the fresh set and then deletes the
-/// documents that are no longer present. A reader that races a rewrite sees a
-/// consistent-enough mix (the generation bump is what #116 uses to detect a
+/// write — so [writeMaterialized] upserts the documents whose content actually
+/// changed (#200) and then deletes the ones that are no longer present. A
+/// reader that races a rewrite sees a consistent-enough mix (the generation
+/// bump — which stays unconditional — is what #116 uses to detect a
 /// mid-flight change); the sync/drift lease (#108) serializes writers so two
 /// rewrites never interleave.
 class CosmosLinkedStore implements LinkedStore {
-  CosmosLinkedStore(this._client);
+  /// [governor] is the shared throttling state (#196): pass the *same* instance
+  /// that was wired into the [CosmosClient], so the fan-out narrows in response
+  /// to the 429s these very writes provoke. Left unset (tests, and any caller
+  /// whose client does not report) the fan-out simply stays at
+  /// [CosmosThrottleGovernor.maxConcurrency].
+  CosmosLinkedStore(this._client, {CosmosThrottleGovernor? governor})
+      : _governor = governor ?? CosmosThrottleGovernor();
 
   final CosmosClient _client;
 
   /// How many per-document upserts/deletes may be in flight at once during a
-  /// [writeMaterialized] container replace. A full account container is ~9.6k
-  /// docs; a bounded fan-out turns thousands of serial round-trips into a write
-  /// that finishes in a fraction of the wall-clock while staying well under the
-  /// throughput that would trip sustained throttling (#168).
-  static const int _writeConcurrency = 24;
+  /// [writeMaterialized] container replace, and how that ceiling reacts to
+  /// throttling. A full account container is ~9.6k docs; a bounded fan-out turns
+  /// thousands of serial round-trips into a write that finishes in a fraction of
+  /// the wall-clock (#168), and narrowing it while the account is throttling
+  /// keeps the write progressing instead of hammering a limit it has already hit
+  /// (#196).
+  final CosmosThrottleGovernor _governor;
 
   /// Emit a progress line every this many upserts (plus one at the end), so a
   /// long write ticks in the operator log rather than looking hung (#168).
@@ -108,9 +177,10 @@ class CosmosLinkedStore implements LinkedStore {
       ...(await readSyncState()).systems,
       ...systemSyncs,
     };
-    // Per-account docs: upsert the fresh set, then delete the stragglers no
-    // longer present so a departed account's doc does not linger. This is the
-    // big one (~9.6k docs); its progress is what the operator sees ticking.
+    // Per-account docs: upsert the ones that changed, then delete the
+    // stragglers no longer present so a departed account's doc does not linger.
+    // This is the big one (~9.6k docs); its progress is what the operator sees
+    // ticking.
     await _replaceContainer(
       container: linkedAccountsContainer,
       freshIds: {for (final a in view.accounts) a.id.value},
@@ -121,8 +191,7 @@ class CosmosLinkedStore implements LinkedStore {
       label: 'accounts',
       onProgress: onProgress,
     );
-    // Per-group docs: same wholesale replace, in the single groups partition
-    // (#119).
+    // Per-group docs: same replace, in the single groups partition (#119).
     await _replaceContainer(
       container: linkedGroupsContainer,
       freshIds: {for (final g in view.groups) g.id.value},
@@ -356,17 +425,32 @@ class CosmosLinkedStore implements LinkedStore {
     );
   }
 
-  /// Upserts every document in [docsById], then deletes any document currently
-  /// in [container] whose id is not in [freshIds] — the "replace the whole set"
-  /// the derived containers need without a container-level truncate.
+  /// Brings [container] to exactly [docsById]: upserts the documents whose
+  /// content actually changed and deletes any document currently in [container]
+  /// whose id is not in [freshIds] — the "replace the whole set" the derived
+  /// containers need without a container-level truncate.
   ///
-  /// The upserts and deletes run with bounded concurrency ([_writeConcurrency])
-  /// rather than strictly one at a time: a full account container is ~9.6k docs,
-  /// and issuing that many serial round-trips is what made a full sync look hung
-  /// (#168). A bounded fan-out keeps wall-clock low without stampeding the
-  /// account's provisioned throughput into a sustained 429 back-off. When
-  /// [onProgress] and [label] are given, a line is emitted every
-  /// [_progressEvery] upserts (and once at the end) so a long write is visible.
+  /// **Only what changed is written (#200).** Nearly every document of a
+  /// re-sync is byte-identical to the stored one, and rewriting all ~9.6k of
+  /// them wholesale is what generated the write burst that tripped #196 —
+  /// which the retry/backoff there absorbs but cannot remove. So each fresh
+  /// document carries a [materializedContentHash] in [contentHashField], and
+  /// the upsert is skipped when the stored document already hashes the same.
+  /// The single id/pk/hash projection below answers both questions at once: an
+  /// id the fresh set no longer has is a straggler to delete, and an id whose
+  /// stored hash still matches is a write to skip. The generation bump in
+  /// [writeMaterialized] stays unconditional, so readers still detect the new
+  /// view even when not one document moved.
+  ///
+  /// The upserts and deletes run with bounded concurrency (the [_governor]'s
+  /// ceiling) rather than strictly one at a time: a first, full write is ~9.6k
+  /// docs, and issuing that many serial round-trips is what made a full sync
+  /// look hung (#168). The ceiling is not a fixed guess: it narrows on every 429
+  /// the client reports and widens back as the account keeps up, so a
+  /// real-volume write adapts to the provisioned throughput instead of assuming
+  /// a safe width (#196). When [onProgress] and [label] are given, a line is
+  /// emitted every [_progressEvery] upserts (and once at the end) so a long
+  /// write is visible.
   Future<void> _replaceContainer({
     required String container,
     required Set<String> freshIds,
@@ -374,9 +458,49 @@ class CosmosLinkedStore implements LinkedStore {
     String? label,
     void Function(String message)? onProgress,
   }) async {
-    final total = docsById.length;
+    // One projection read, both answers: what to delete and what to skip. Read
+    // *before* the writes — every id this pass writes is in [freshIds], so the
+    // straggler set is the same either way, and doing it first is what makes
+    // the stored hashes available to compare against.
+    final existing = await _client.queryDocuments(
+      container: container,
+      query: 'SELECT c.id, c.pk, c.$contentHashField FROM c',
+    );
+    final storedHashes = <String, String>{};
+    final stragglers = <({String id, String pk})>[];
+    for (final doc in existing) {
+      final id = doc['id'];
+      if (id is! String) continue;
+      if (!freshIds.contains(id)) {
+        stragglers.add((id: id, pk: (doc['pk'] as String?) ?? id));
+        continue;
+      }
+      final hash = doc[contentHashField];
+      // A document stored before #200 carries no hash; it is rewritten once and
+      // hashed from then on.
+      if (hash is String) storedHashes[id] = hash;
+    }
+
+    final writes = <({String pk, Map<String, dynamic> doc})>[];
+    var unchanged = 0;
+    for (final entry in docsById.entries) {
+      final hash = materializedContentHash(entry.value.doc);
+      if (storedHashes[entry.key] == hash) {
+        unchanged++;
+        continue;
+      }
+      writes.add((
+        pk: entry.value.pk,
+        doc: {...entry.value.doc, contentHashField: hash},
+      ));
+    }
+
+    final total = writes.length;
+    if (label != null && onProgress != null && unchanged > 0) {
+      onProgress('Persisting $label: $unchanged unchanged, $total to write…');
+    }
     await _runBounded(
-      docsById.values,
+      writes,
       (entry) => _client.upsertDocument(
         container: container,
         partitionKey: entry.pk,
@@ -390,18 +514,6 @@ class CosmosLinkedStore implements LinkedStore {
               }
             },
     );
-    final existing = await _client.queryDocuments(
-      container: container,
-      query: 'SELECT c.id, c.pk FROM c',
-    );
-    final stragglers = [
-      for (final doc in existing)
-        if (doc['id'] is String && !freshIds.contains(doc['id']))
-          (
-            id: doc['id'] as String,
-            pk: (doc['pk'] as String?) ?? doc['id'] as String,
-          ),
-    ];
     await _runBounded(
       stragglers,
       (s) => _client.deleteDocument(
@@ -412,11 +524,22 @@ class CosmosLinkedStore implements LinkedStore {
     );
   }
 
-  /// Runs [action] over [items] with at most [_writeConcurrency] futures in
-  /// flight at once, calling [onDone] with the running completed count after
-  /// each. A worker-pool (not fixed chunks) keeps the pool full — the slowest
-  /// item in a chunk never idles the rest — and any failure surfaces from the
-  /// awaited [Future.wait] just as the old serial loop would have thrown.
+  /// Runs [action] over [items] with at most [CosmosThrottleGovernor.concurrency]
+  /// futures in flight at once, calling [onDone] with the running completed
+  /// count after each. A worker-pool (not fixed chunks) keeps the pool full —
+  /// the slowest item in a chunk never idles the rest.
+  ///
+  /// The pool is *elastic* (#196): the governor narrows `concurrency` on every
+  /// 429 the client sees, and a worker that finds the pool wider than the
+  /// current ceiling retires (never the last one, so progress is always made);
+  /// as throttling eases and the ceiling widens again, a finishing worker tops
+  /// the pool back up.
+  ///
+  /// A failure is *terminal for the whole pass*: the first error is captured,
+  /// every other worker stops claiming items at its next turn, and only once all
+  /// of them have wound down is the error rethrown. This is what keeps a failed
+  /// persist from leaving unawaited workers firing writes into an account that
+  /// has already been reported as failed — the second consequence in #196.
   Future<void> _runBounded<T>(
     Iterable<T> items,
     Future<void> Function(T) action, {
@@ -426,17 +549,56 @@ class CosmosLinkedStore implements LinkedStore {
     if (list.isEmpty) return;
     var next = 0;
     var done = 0;
+    var active = 0;
+    Object? failure;
+    StackTrace? failureStack;
+    final drained = Completer<void>();
+    late final void Function() spawn;
+
     Future<void> worker() async {
-      while (true) {
-        final i = next++;
-        if (i >= list.length) return;
-        await action(list[i]);
-        onDone?.call(++done);
+      try {
+        while (true) {
+          if (failure != null) return; // a sibling failed: stop claiming work
+          // The governor narrowed the fan-out under throttling; shed a worker,
+          // but never the last one.
+          if (active > _governor.concurrency && active > 1) return;
+          final i = next++;
+          if (i >= list.length) return;
+          await action(list[i]);
+          onDone?.call(++done);
+          // Throttling eased and there is work left: widen back out. The number
+          // of new workers is decided *once* — a spawned worker that finds
+          // nothing to do returns (and decrements `active`) synchronously, so
+          // re-reading `active` in the loop condition would never terminate.
+          final room = _governor.concurrency - active;
+          for (var w = 0; w < room && next < list.length; w++) {
+            spawn();
+          }
+        }
+      } catch (e, st) {
+        failure ??= e;
+        failureStack ??= st;
+      } finally {
+        active--;
+        if (active == 0 && !drained.isCompleted) drained.complete();
       }
     }
 
-    final pool =
-        list.length < _writeConcurrency ? list.length : _writeConcurrency;
-    await Future.wait([for (var w = 0; w < pool; w++) worker()]);
+    spawn = () {
+      active++;
+      unawaited(worker());
+    };
+
+    final pool = list.length < _governor.concurrency
+        ? list.length
+        : _governor.concurrency;
+    for (var w = 0; w < pool; w++) {
+      spawn();
+    }
+    await drained.future;
+    final error = failure;
+    if (error != null) {
+      Error.throwWithStackTrace(error, failureStack ?? StackTrace.current);
+    }
   }
 }
