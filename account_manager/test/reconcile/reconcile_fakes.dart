@@ -449,6 +449,32 @@ ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
       ourSchoolIds: ourSchoolIds,
     );
 
+/// A harness for the school-less Actions drill-down (#210). Two managed schools
+/// (1 and 2) each hold students, and their years overlap: school 1 has `1A` and
+/// `3C`, school 2 has `1B` and the non-numeric `OKAN`. So a correct overview
+/// shows one **merged** "Jaar 1" holding both schools' first years with combined
+/// counts, a "Jaar 3", and a single non-numeric bucket — and no school node
+/// anywhere, while each classroom keeps the school partition its accounts are
+/// stored under.
+ReconcileHarness twoSchoolHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '3C'),
+          wisaStudent(wisaId: '3', classGroup: '1B', schoolId: 2),
+          wisaStudent(wisaId: '4', classGroup: 'OKAN', schoolId: 2),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1, 2},
+    );
+
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
 /// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),

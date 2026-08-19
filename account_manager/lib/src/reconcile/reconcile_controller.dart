@@ -876,7 +876,10 @@ class ReconcileController extends ChangeNotifier {
   /// true after any session has synced, even without a pull this session.
   bool get hasOverview => _rollups.isNotEmpty;
 
-  /// The school-level rollups, alphabetical — the top of the drill-down.
+  /// The school-level rollups, alphabetical — the stored per-school aggregates.
+  /// They no longer render as nodes in the student drill-down (#210 flattened
+  /// that to grade-years), but they are what the per-category summaries and the
+  /// passive-session badge counts are summed from, so they stay materialized.
   List<Rollup> get schoolRollups {
     final schools = [
       for (final r in _rollups)
@@ -884,14 +887,6 @@ class ReconcileController extends ChangeNotifier {
     ]..sort((a, b) => a.label.compareTo(b.label));
     return schools;
   }
-
-  /// The student-school rollups — every school-level rollup **except** the
-  /// synthetic staff bucket — sorted alphabetically. The drill-down roots of the
-  /// Leerlingen tab (#179), which shows only the student action family.
-  List<Rollup> get studentSchoolRollups => [
-        for (final r in schoolRollups)
-          if (r.school != staffPartition) r,
-      ];
 
   /// The single synthetic staff ("Personeel") school rollup, or `null` when no
   /// staff account has been materialized — the drill-down root of the Personeel
@@ -903,8 +898,118 @@ class ReconcileController extends ChangeNotifier {
     return null;
   }
 
+  /// The synthetic "Niet toegewezen" school rollup — accounts with no class of
+  /// ours (a leaver, or a student of a school we do not manage who still owns
+  /// one of our accounts, #178) — or `null` when the bucket is empty.
+  Rollup? get unassignedRollup {
+    for (final r in _rollups) {
+      if (r.level == RollupLevel.school && r.school == unassignedPartition) {
+        return r;
+      }
+    }
+    return null;
+  }
+
+  /// The top-level nodes of the **student** drill-down (#210): one merged
+  /// grade-year node per year across *every* managed school, then the
+  /// "Niet toegewezen" bucket.
+  ///
+  /// The WISA school split is administrative, not operational — everyone running
+  /// this software treats the managed schools as one school — so the school level
+  /// carries no decision and is flattened away here. This is a **view**
+  /// projection: the stored rollups keep their school → grade-year → classroom
+  /// shape, which matters twice over. `school` is the Cosmos partition key of the
+  /// per-account documents, so a classroom node must keep its real school for
+  /// [openClassroom] to read exactly one partition; and [totalPendingCount],
+  /// [staffPendingCount], [studentPendingCount], [schoolRollups] and the
+  /// per-category summaries all aggregate over [RollupLevel.school], so a passive
+  /// session's badges keep reading from data that is still there.
+  ///
+  /// Ordering is pinned: Jaar 1 … Jaar 7 numerically, then the non-numeric years
+  /// ([gradeNodeLabel] renders those as "Overige klassen" — `OKAN` and friends
+  /// bucket into the materializer's synthetic `Overig`), then
+  /// "Niet toegewezen". The Klasgroepen node is appended by the screen, below
+  /// these.
+  List<Rollup> get studentRollups {
+    final tallies = <String, _GradeTally>{};
+    for (final r in _rollups) {
+      if (r.level != RollupLevel.gradeYear) continue;
+      if (r.school == staffPartition || r.school == unassignedPartition) {
+        continue;
+      }
+      (tallies[r.gradeYear] ??= _GradeTally())
+          .add(accounts: r.accountCount, pending: r.pendingCount);
+    }
+    final grades = <Rollup>[
+      for (final entry in tallies.entries)
+        Rollup(
+          level: RollupLevel.gradeYear,
+          key: _mergedGradeKey(entry.key),
+          parentKey: null,
+          // Merged across schools, so this node belongs to no single partition;
+          // only the classroom nodes beneath it carry a real one.
+          school: '',
+          label: gradeNodeLabel(entry.key),
+          gradeYear: entry.key,
+          classroom: '',
+          accountCount: entry.value.accounts,
+          pendingCount: entry.value.pending,
+        ),
+    ]..sort(_byGradeYear);
+    final unassigned = unassignedRollup;
+    return <Rollup>[...grades, if (unassigned != null) unassigned];
+  }
+
+  /// The classroom nodes under one [studentRollups] node (#210).
+  ///
+  /// A merged grade-year node collects that year's classrooms from **every**
+  /// managed school; "Niet toegewezen" skips its always-synthetic grade level and
+  /// lists its classrooms ("Zonder klas") directly. Every node returned is a real
+  /// stored classroom rollup, so it still carries the [Rollup.school] partition
+  /// [openClassroom] reads.
+  List<Rollup> studentChildrenOf(Rollup node) {
+    final bool unassigned = node.school == unassignedPartition;
+    final children = <Rollup>[
+      for (final r in _rollups)
+        if (r.level == RollupLevel.classroom &&
+            r.school != staffPartition &&
+            (unassigned
+                ? r.school == unassignedPartition
+                : r.school != unassignedPartition &&
+                    r.gradeYear == node.gradeYear))
+          r,
+    ]..sort((a, b) => a.label.compareTo(b.label));
+    return children;
+  }
+
+  /// The synthetic node key of the merged grade-year [gradeYear] — distinct from
+  /// any stored rollup key, which is always school-scoped (#210).
+  static String _mergedGradeKey(String gradeYear) => 'grades|$gradeYear';
+
+  /// How a grade-year node is named: `Jaar 3` for a real year, and
+  /// "Overige klassen" for the materializer's synthetic non-numeric bucket
+  /// (`OKAN` and friends), which as a top-level node would otherwise read as the
+  /// nonsensical "Jaar Overig" (#210).
+  static String gradeNodeLabel(String gradeYear) =>
+      int.tryParse(gradeYear) == null ? _otherGradesLabel : 'Jaar $gradeYear';
+
+  static const String _otherGradesLabel = 'Overige klassen';
+
+  /// Pins the top-level order: numeric years ascending, then the non-numeric
+  /// ones by label, so the accordion never reshuffles between syncs.
+  static int _byGradeYear(Rollup a, Rollup b) {
+    final na = int.tryParse(a.gradeYear);
+    final nb = int.tryParse(b.gradeYear);
+    if (na != null && nb != null) return na.compareTo(nb);
+    if (na != null) return -1;
+    if (nb != null) return 1;
+    return a.label.compareTo(b.label);
+  }
+
   /// The rollup nodes directly under [parentKey] (grade-years of a school, or
-  /// classrooms of a grade-year), alphabetical.
+  /// classrooms of a grade-year), alphabetical. The stored parent/child shape —
+  /// what the Personeel tab drills; the student tree flattens it away through
+  /// [studentRollups] / [studentChildrenOf] (#210).
   List<Rollup> childrenOf(String parentKey) {
     final children = [
       for (final r in _rollups)
@@ -1736,5 +1841,18 @@ class ReconcileController extends ChangeNotifier {
   static String? _nonEmpty(String s) {
     final trimmed = s.trim();
     return trimmed.isEmpty ? null : trimmed;
+  }
+}
+
+/// Accumulator for one merged grade-year node of
+/// [ReconcileController.studentRollups] (#210): the summed account and pending
+/// counts of that year across every managed school.
+class _GradeTally {
+  int accounts = 0;
+  int pending = 0;
+
+  void add({required int accounts, required int pending}) {
+    this.accounts += accounts;
+    this.pending += pending;
   }
 }

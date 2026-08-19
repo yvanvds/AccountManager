@@ -16,16 +16,15 @@ void _useTallWindow(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
-/// Drills school → grade → classroom in the rollup tree.
+/// Drills a Leerlingen top-level node — a merged "Jaar N" or the
+/// "Niet toegewezen" bucket — straight into one of its classrooms. #210 dropped
+/// the school level, so exactly one accordion sits above the class.
 Future<void> _drill(
   WidgetTester tester, {
-  required String school,
-  required String grade,
+  required String node,
   required String classroom,
 }) async {
-  await tester.tap(find.text(school));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Jaar $grade'));
+  await tester.tap(find.text(node));
   await tester.pumpAndSettle();
   await tester.ensureVisible(find.text(classroom));
   await tester.tap(find.text(classroom));
@@ -54,17 +53,19 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    // The rollup tree is the browser; the flat list is gone. No classroom is
-    // loaded until the operator drills into one.
+    // The rollup tree is the browser; the flat list is gone. The top of it is
+    // the grade-year, never the school (#210). No classroom is loaded until the
+    // operator drills into one.
     expect(find.text('Overzicht'), findsOneWidget);
-    expect(find.text('School 1'), findsOneWidget);
+    expect(find.text('Jaar 3'), findsOneWidget);
+    expect(find.text('School 1'), findsNothing);
     expect(harness.controller.selectedClassroom, isNull);
     expect(harness.controller.classroomAccounts, isNull);
     expect(find.byKey(const ValueKey('actions-classroom-back')), findsNothing);
 
     // Drill in: only the 3C classroom's accounts load (via readClassroom), and
     // that class's pending action tile builds.
-    await _drill(tester, school: 'School 1', grade: '3', classroom: '3C');
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
     expect(harness.controller.selectedClassroom?.classroom, '3C');
     expect(harness.controller.classroomAccounts, hasLength(1));
     expect(
@@ -74,7 +75,7 @@ void main() {
     // Back to the overview tree.
     await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
     await tester.pumpAndSettle();
-    expect(find.text('School 1'), findsOneWidget);
+    expect(find.text('Jaar 3'), findsOneWidget);
   });
 
   testWidgets(
@@ -123,8 +124,8 @@ void main() {
 
   /// A WISA-departed scenario: [count] Smartschool-only active accounts (no
   /// WISA, no Azure), each raising the mutually-exclusive unregister/delete
-  /// choice (#110). They land in the "Niet toegewezen" → "Overig" → "Zonder
-  /// klas" bucket.
+  /// choice (#110). They land in the "Niet toegewezen" → "Zonder klas" bucket
+  /// (#210 collapsed its always-synthetic grade level away).
   ReconcileHarness departedHarness({int count = 1}) => ReconcileHarness(
         wisa: wisaSnap(students: const []),
         smartschool: ssSnap(
@@ -152,8 +153,7 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    await _drill(tester,
-        school: 'Niet toegewezen', grade: 'Overig', classroom: 'Zonder klas');
+    await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
 
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student');
@@ -198,8 +198,7 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    await _drill(tester,
-        school: 'Niet toegewezen', grade: 'Overig', classroom: 'Zonder klas');
+    await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
 
     expect(
         find.textContaining('accounts in the same situation'), findsOneWidget);
@@ -229,8 +228,7 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    await _drill(tester,
-        school: 'Niet toegewezen', grade: 'Overig', classroom: 'Zonder klas');
+    await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
 
     // All 2000 sit in this one class, each one pending entry.
     expect(harness.controller.classroomPendingEntries, hasLength(2000));
@@ -259,6 +257,42 @@ void main() {
     expect(find.byKey(lastKey), findsOneWidget);
     expect(find.byKey(firstKey), findsNothing,
         reason: 'the first tile unloaded once scrolled far off-screen');
+  });
+
+  // --- School-less student drill-down (#210) -------------------------------
+
+  testWidgets(
+      'the Leerlingen overview opens on grade-years merged across the managed '
+      'schools, with no school level anywhere (#210)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = twoSchoolHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The years are the accordion, in a pinned order; neither school is a node.
+    expect(find.text('Jaar 1'), findsOneWidget);
+    expect(find.text('Jaar 3'), findsOneWidget);
+    expect(find.text('School 1'), findsNothing);
+    expect(find.text('School 2'), findsNothing);
+    // The synthetic non-numeric bucket never renders as "Jaar Overig".
+    expect(find.text('Overige klassen'), findsOneWidget);
+    expect(find.text('Jaar Overig'), findsNothing);
+
+    // "Jaar 1" holds both schools' first years side by side…
+    await tester.tap(find.text('Jaar 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('1A'), findsOneWidget);
+    expect(find.text('1B'), findsOneWidget);
+
+    // …and opening one still targets that class's own school partition.
+    await tester.ensureVisible(find.text('1B'));
+    await tester.tap(find.text('1B'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom?.classroom, '1B');
+    expect(harness.controller.selectedClassroom?.school, '2');
+    expect(harness.controller.classroomAccounts, hasLength(1));
   });
 
   // --- Personeel / Leerlingen family tabs (#179) ---------------------------
@@ -292,21 +326,20 @@ void main() {
       harness.controller.totalPendingCount,
     );
 
-    // Default tab = Leerlingen: the student school node is a drill root and the
-    // class-groups node shows; the staff ("Personeel") school node does not.
-    expect(
-        find.byKey(const ValueKey('rollup-school-school|1')), findsOneWidget);
+    // Default tab = Leerlingen: the merged grade-year is the drill root (#210)
+    // and the class-groups node shows; the staff ("Personeel") node does not.
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
     expect(find.byKey(const ValueKey('rollup-groups')), findsWidgets);
     expect(
         find.byKey(const ValueKey('rollup-school-school|staff')), findsNothing);
 
-    // Switch to Personeel: the staff node appears and the student school /
+    // Switch to Personeel: the staff node appears and the student grade /
     // class-groups nodes are gone — each tab shows only its own family.
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('rollup-school-school|staff')),
         findsOneWidget);
-    expect(find.byKey(const ValueKey('rollup-school-school|1')), findsNothing);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsNothing);
     expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
   });
 
@@ -322,7 +355,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Drill into a student class on the Leerlingen tab.
-    await _drill(tester, school: 'School 1', grade: '3', classroom: '3C');
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
     expect(harness.controller.selectedClassroom?.classroom, '3C');
     expect(
         find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
@@ -353,7 +386,7 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    await _drill(tester, school: 'School 1', grade: '3', classroom: '3C');
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
     // Both accounts show unfiltered; the Leerlingen tab has no search box.
     expect(find.text('Jane Doe'), findsOneWidget);
     expect(find.text('Kees Bakker'), findsOneWidget);
@@ -488,7 +521,7 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    await _drill(tester, school: 'School 1', grade: '3', classroom: '3C');
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
     expect(find.text('Wijzig het adres in Smartschool'), findsWidgets);
 
     final entry = harness.controller.pendingEntries
@@ -522,13 +555,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Overzicht'), findsOneWidget);
-    expect(find.text('School 1'), findsOneWidget);
+    // The stored view projects to the same school-less tree the syncing
+    // session rendered (#210).
+    expect(find.text('Jaar 3'), findsOneWidget);
+    expect(find.text('School 1'), findsNothing);
     expect(s2.controller.linked, isNull,
         reason: 'link() is never called in a passive session');
     // Nothing loaded until the operator drills in.
     expect(s2.controller.classroomAccounts, isNull);
 
-    await _drill(tester, school: 'School 1', grade: '3', classroom: '3C');
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
 
     // Only the 3C class was read; the read-only account tile renders.
     expect(s2.controller.classroomAccounts, hasLength(1));

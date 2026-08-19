@@ -321,6 +321,14 @@ const String groupsPartition = 'groups';
 /// student-school rollups when it sums the per-category totals (#163).
 const String staffPartition = 'staff';
 
+/// The synthetic partition (and rollup school) every account with no class *of
+/// ours* lands in — a student who left, or one who only exists in a school we do
+/// not manage but still owns one of our accounts (#178). Exposed so the Actions
+/// drill-down can tell this bucket apart from a real school when it flattens the
+/// student tree to grade-years (#210): "Niet toegewezen" stays a top-level node
+/// of its own instead of merging into a year.
+const String unassignedPartition = 'unassigned';
+
 /// One linked **class group** as a stored document (#119).
 ///
 /// The group-family counterpart of [MaterializedAccount]: where a per-account
