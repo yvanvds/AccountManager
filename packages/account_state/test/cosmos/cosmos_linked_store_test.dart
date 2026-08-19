@@ -267,6 +267,193 @@ class _ConcurrencyClient implements CosmosClient {
       true;
 }
 
+/// A [CosmosClient] that stands in for the real client's throttle reporting: it
+/// drives the shared [CosmosThrottleGovernor] on a script (throttle early,
+/// recover later) and records how many upserts were in flight at the moment each
+/// one started — so the write fan-out's *reaction* to throttling is observable
+/// without a Cosmos account (#196).
+class _AdaptiveClient implements CosmosClient {
+  _AdaptiveClient(
+    this.governor, {
+    required this.throttleAt,
+    required this.recoverFrom,
+  });
+
+  final CosmosThrottleGovernor governor;
+
+  /// The 1-based upsert number that reports a 429 (as the client's retry loop
+  /// would after absorbing one).
+  final int throttleAt;
+
+  /// From this upsert on, every write lands cleanly, so the governor's slow
+  /// recovery widens the fan-out again.
+  final int recoverFrom;
+
+  final Map<String, Map<String, Map<String, dynamic>>> _store = {};
+
+  /// In-flight upserts at the start of each upsert, in issue order.
+  final List<int> inFlightAt = [];
+  int _inFlight = 0;
+  int upserts = 0;
+
+  Map<String, Map<String, dynamic>> _c(String name) =>
+      _store.putIfAbsent(name, () => {});
+
+  /// The widest fan-out seen over upserts `[from, to)`.
+  int peakOver(int from, int to) => inFlightAt
+      .sublist(from.clamp(0, inFlightAt.length), to.clamp(0, inFlightAt.length))
+      .fold(0, (a, b) => a > b ? a : b);
+
+  @override
+  Future<WriteOutcome> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+    String? ifMatch,
+  }) async {
+    _inFlight++;
+    upserts++;
+    inFlightAt.add(_inFlight);
+    if (upserts == throttleAt) {
+      governor.recordThrottle(attempt: 1, wait: Duration.zero);
+    } else if (upserts >= recoverFrom) {
+      governor.recordSuccess();
+    }
+    // Yield twice so overlapping calls actually interleave before any completes.
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    _c(container)[document['id'] as String] = Map.of(document);
+    _inFlight--;
+    return const WriteOutcome.applied('etag');
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async {
+    if (query.contains('SELECT c.id, c.pk')) {
+      return [
+        for (final d in _c(container).values) {'id': d['id'], 'pk': d['pk']},
+      ];
+    }
+    return [for (final d in _c(container).values) Map<String, dynamic>.from(d)];
+  }
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async =>
+      _c(container)[id];
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async {
+    _c(container)[document['id'] as String] = Map.of(document);
+    return true;
+  }
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {
+    _c(container).remove(id);
+  }
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      true;
+}
+
+/// A [CosmosClient] whose upsert throws once — the terminal failure a persist
+/// hits when Cosmos has run out of retry attempts. Counts every upsert so a test
+/// can prove the sibling workers stopped instead of running on unawaited (#196).
+class _FailingClient implements CosmosClient {
+  _FailingClient({required this.failAfter});
+
+  final int failAfter;
+  int upserts = 0;
+  bool thrown = false;
+
+  @override
+  Future<WriteOutcome> upsertDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+    String? ifMatch,
+  }) async {
+    upserts++;
+    await Future<void>.delayed(Duration.zero);
+    if (!thrown && upserts >= failAfter) {
+      thrown = true;
+      throw const CosmosException(
+        429,
+        '{"code":"TooManyRequests","message":"The request rate is too large."}',
+      );
+    }
+    return const WriteOutcome.applied('etag');
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> queryDocuments({
+    required String container,
+    required String query,
+    Map<String, Object?> parameters = const {},
+    String? partitionKey,
+  }) async =>
+      const [];
+
+  @override
+  Future<Map<String, dynamic>?> readDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async =>
+      null;
+
+  @override
+  Future<bool> createDocument({
+    required String container,
+    required Map<String, dynamic> document,
+    required String partitionKey,
+  }) async =>
+      true;
+
+  @override
+  Future<void> deleteDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+  }) async {}
+
+  @override
+  Future<bool> ensureContainer({
+    required String container,
+    required String partitionKeyPath,
+  }) async =>
+      true;
+}
+
+/// Lets every pending microtask/timer-zero callback run, so a test can prove
+/// nothing *further* happens after an awaited call returned.
+Future<void> _settle() async {
+  for (var i = 0; i < 20; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
+
 final DateTime _d = DateTime.utc(2026, 7, 1);
 
 MaterializedAccount _account(String id,
@@ -503,6 +690,85 @@ void main() {
 
       // The whole set round-trips despite the batching.
       expect((await store.readRollups()).isNotEmpty, isTrue);
+    });
+
+    test(
+        'the write fan-out narrows while Cosmos throttles and widens again as '
+        'it eases (#196)', () async {
+      // #168 fixed the fan-out at 24 on the assumption that stayed "well under
+      // the throughput that would trip sustained throttling". At real volume it
+      // does not, so the width has to follow the account instead of guessing it.
+      final governor = CosmosThrottleGovernor(
+        maxConcurrency: 16,
+        minConcurrency: 2,
+        recoverAfter: 5,
+      );
+      // The account absorbs the opening writes, then throttles — the shape of
+      // the real run, where the burst only exceeds the RU/s budget once it is
+      // properly under way.
+      final client = _AdaptiveClient(
+        governor,
+        throttleAt: 30,
+        recoverFrom: 150,
+      );
+      final store = CosmosLinkedStore(client, governor: governor);
+      final accounts = [
+        for (var i = 0; i < 600; i++) _account('p$i', classroom: 'c${i % 30}'),
+      ];
+
+      await store.writeMaterialized(
+        _view(accounts),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      // It started wide…
+      expect(client.peakOver(0, 20), greaterThan(8),
+          reason: 'an unthrottled account gets the full fan-out');
+      // …then the 429 halved the ceiling and the extra workers retired, so the
+      // throttled stretch never runs wider than the narrowed ceiling.
+      expect(client.peakOver(60, 140), lessThanOrEqualTo(8),
+          reason: 'the writer stops pushing the load the account rejected');
+      // …and once the writes land cleanly again the pool refills.
+      expect(client.peakOver(300, 600), greaterThan(8),
+          reason: 'one transient 429 must not cost the rest of the persist its '
+              'speed');
+      expect(governor.concurrency, 16);
+      // The whole set still round-trips despite the narrowing.
+      expect(client.upserts, greaterThanOrEqualTo(600));
+      expect((await store.readClassroom(school: '1', classroom: 'c0')),
+          isNotEmpty);
+    });
+
+    test(
+        'a terminal write failure stops the sibling workers instead of letting '
+        'them run on (#196)', () async {
+      // The second consequence in the bug report: Future.wait rejected on the
+      // first error while 23 other workers kept firing upserts into the very
+      // account that had just been reported as failed.
+      final client = _FailingClient(failAfter: 40);
+      final store = CosmosLinkedStore(client);
+      final accounts = [
+        for (var i = 0; i < 4000; i++) _account('p$i', classroom: 'c${i % 30}'),
+      ];
+
+      await expectLater(
+        store.writeMaterialized(
+          _view(accounts),
+          syncedBy: 'op@school.example',
+          at: _d,
+        ),
+        throwsA(isA<CosmosException>()
+            .having((e) => e.statusCode, 'statusCode', 429)),
+      );
+
+      // The error surfaced only once every worker had wound down…
+      final atFailure = client.upserts;
+      expect(atFailure, lessThan(4000),
+          reason: 'the pass aborts rather than writing the whole set anyway');
+      await _settle();
+      expect(client.upserts, atFailure,
+          reason: 'not one more write after the operator was told it failed');
     });
 
     test('reading before any sync yields the initial generation', () async {

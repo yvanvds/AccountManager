@@ -107,6 +107,7 @@ export 'src/cosmos/cosmos_live_config.dart';
 export 'src/cosmos/cosmos_password_queue_store.dart';
 export 'src/cosmos/cosmos_person_id_resolver.dart';
 export 'src/cosmos/cosmos_linked_store.dart';
+export 'src/cosmos/cosmos_retry.dart';
 export 'src/cosmos/cosmos_settings_store.dart';
 export 'src/cosmos/cosmos_snapshot_store.dart';
 export 'src/cosmos/cosmos_token_provider.dart';

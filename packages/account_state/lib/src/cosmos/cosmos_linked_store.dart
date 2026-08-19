@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:account_core/account_core.dart' as core;
 
 import '../materialize/linked_store.dart';
 import '../materialize/materialized_state.dart';
 import 'cosmos_client.dart';
 import 'cosmos_config.dart';
+import 'cosmos_retry.dart';
 
 /// The [LinkedStore] backed by the Cosmos `linkedAccounts`, `rollups`,
 /// `decisions`, and `syncState` containers (#115, keystone of #112).
@@ -22,16 +25,24 @@ import 'cosmos_config.dart';
 /// mid-flight change); the sync/drift lease (#108) serializes writers so two
 /// rewrites never interleave.
 class CosmosLinkedStore implements LinkedStore {
-  CosmosLinkedStore(this._client);
+  /// [governor] is the shared throttling state (#196): pass the *same* instance
+  /// that was wired into the [CosmosClient], so the fan-out narrows in response
+  /// to the 429s these very writes provoke. Left unset (tests, and any caller
+  /// whose client does not report) the fan-out simply stays at
+  /// [CosmosThrottleGovernor.maxConcurrency].
+  CosmosLinkedStore(this._client, {CosmosThrottleGovernor? governor})
+      : _governor = governor ?? CosmosThrottleGovernor();
 
   final CosmosClient _client;
 
   /// How many per-document upserts/deletes may be in flight at once during a
-  /// [writeMaterialized] container replace. A full account container is ~9.6k
-  /// docs; a bounded fan-out turns thousands of serial round-trips into a write
-  /// that finishes in a fraction of the wall-clock while staying well under the
-  /// throughput that would trip sustained throttling (#168).
-  static const int _writeConcurrency = 24;
+  /// [writeMaterialized] container replace, and how that ceiling reacts to
+  /// throttling. A full account container is ~9.6k docs; a bounded fan-out turns
+  /// thousands of serial round-trips into a write that finishes in a fraction of
+  /// the wall-clock (#168), and narrowing it while the account is throttling
+  /// keeps the write progressing instead of hammering a limit it has already hit
+  /// (#196).
+  final CosmosThrottleGovernor _governor;
 
   /// Emit a progress line every this many upserts (plus one at the end), so a
   /// long write ticks in the operator log rather than looking hung (#168).
@@ -360,13 +371,15 @@ class CosmosLinkedStore implements LinkedStore {
   /// in [container] whose id is not in [freshIds] — the "replace the whole set"
   /// the derived containers need without a container-level truncate.
   ///
-  /// The upserts and deletes run with bounded concurrency ([_writeConcurrency])
-  /// rather than strictly one at a time: a full account container is ~9.6k docs,
-  /// and issuing that many serial round-trips is what made a full sync look hung
-  /// (#168). A bounded fan-out keeps wall-clock low without stampeding the
-  /// account's provisioned throughput into a sustained 429 back-off. When
-  /// [onProgress] and [label] are given, a line is emitted every
-  /// [_progressEvery] upserts (and once at the end) so a long write is visible.
+  /// The upserts and deletes run with bounded concurrency (the [_governor]'s
+  /// ceiling) rather than strictly one at a time: a full account container is
+  /// ~9.6k docs, and issuing that many serial round-trips is what made a full
+  /// sync look hung (#168). The ceiling is not a fixed guess: it narrows on
+  /// every 429 the client reports and widens back as the account keeps up, so a
+  /// real-volume write adapts to the provisioned throughput instead of assuming
+  /// a safe width (#196). When [onProgress] and [label] are given, a line is
+  /// emitted every [_progressEvery] upserts (and once at the end) so a long
+  /// write is visible.
   Future<void> _replaceContainer({
     required String container,
     required Set<String> freshIds,
@@ -412,11 +425,22 @@ class CosmosLinkedStore implements LinkedStore {
     );
   }
 
-  /// Runs [action] over [items] with at most [_writeConcurrency] futures in
-  /// flight at once, calling [onDone] with the running completed count after
-  /// each. A worker-pool (not fixed chunks) keeps the pool full — the slowest
-  /// item in a chunk never idles the rest — and any failure surfaces from the
-  /// awaited [Future.wait] just as the old serial loop would have thrown.
+  /// Runs [action] over [items] with at most [CosmosThrottleGovernor.concurrency]
+  /// futures in flight at once, calling [onDone] with the running completed
+  /// count after each. A worker-pool (not fixed chunks) keeps the pool full —
+  /// the slowest item in a chunk never idles the rest.
+  ///
+  /// The pool is *elastic* (#196): the governor narrows `concurrency` on every
+  /// 429 the client sees, and a worker that finds the pool wider than the
+  /// current ceiling retires (never the last one, so progress is always made);
+  /// as throttling eases and the ceiling widens again, a finishing worker tops
+  /// the pool back up.
+  ///
+  /// A failure is *terminal for the whole pass*: the first error is captured,
+  /// every other worker stops claiming items at its next turn, and only once all
+  /// of them have wound down is the error rethrown. This is what keeps a failed
+  /// persist from leaving unawaited workers firing writes into an account that
+  /// has already been reported as failed — the second consequence in #196.
   Future<void> _runBounded<T>(
     Iterable<T> items,
     Future<void> Function(T) action, {
@@ -426,17 +450,56 @@ class CosmosLinkedStore implements LinkedStore {
     if (list.isEmpty) return;
     var next = 0;
     var done = 0;
+    var active = 0;
+    Object? failure;
+    StackTrace? failureStack;
+    final drained = Completer<void>();
+    late final void Function() spawn;
+
     Future<void> worker() async {
-      while (true) {
-        final i = next++;
-        if (i >= list.length) return;
-        await action(list[i]);
-        onDone?.call(++done);
+      try {
+        while (true) {
+          if (failure != null) return; // a sibling failed: stop claiming work
+          // The governor narrowed the fan-out under throttling; shed a worker,
+          // but never the last one.
+          if (active > _governor.concurrency && active > 1) return;
+          final i = next++;
+          if (i >= list.length) return;
+          await action(list[i]);
+          onDone?.call(++done);
+          // Throttling eased and there is work left: widen back out. The number
+          // of new workers is decided *once* — a spawned worker that finds
+          // nothing to do returns (and decrements `active`) synchronously, so
+          // re-reading `active` in the loop condition would never terminate.
+          final room = _governor.concurrency - active;
+          for (var w = 0; w < room && next < list.length; w++) {
+            spawn();
+          }
+        }
+      } catch (e, st) {
+        failure ??= e;
+        failureStack ??= st;
+      } finally {
+        active--;
+        if (active == 0 && !drained.isCompleted) drained.complete();
       }
     }
 
-    final pool =
-        list.length < _writeConcurrency ? list.length : _writeConcurrency;
-    await Future.wait([for (var w = 0; w < pool; w++) worker()]);
+    spawn = () {
+      active++;
+      unawaited(worker());
+    };
+
+    final pool = list.length < _governor.concurrency
+        ? list.length
+        : _governor.concurrency;
+    for (var w = 0; w < pool; w++) {
+      spawn();
+    }
+    await drained.future;
+    final error = failure;
+    if (error != null) {
+      Error.throwWithStackTrace(error, failureStack ?? StackTrace.current);
+    }
   }
 }

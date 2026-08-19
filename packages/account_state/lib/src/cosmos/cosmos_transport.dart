@@ -52,6 +52,26 @@ class CosmosResponse {
   /// a create races on (#121).
   bool get isPreconditionFailed => statusCode == 412;
 
+  /// `true` when Cosmos rejected the request because the request rate exceeded
+  /// the account's provisioned throughput (**429 TooManyRequests**). This is a
+  /// "slow down", not a "no": the request is retryable after [retryAfter]
+  /// (#196).
+  bool get isThrottled => statusCode == 429;
+
+  /// How long Cosmos asks the client to wait before retrying a [isThrottled]
+  /// request, from `x-ms-retry-after-ms` (milliseconds). Falls back to the
+  /// standard `retry-after` header (seconds) when the Cosmos-specific one is
+  /// absent, and is `null` when neither is present or parseable — the caller
+  /// then uses its own backoff. Header names are case-insensitive on the wire
+  /// (`package:http` lower-cases them), so callers read this rather than the raw
+  /// header.
+  Duration? get retryAfter {
+    final ms = int.tryParse(headers['x-ms-retry-after-ms']?.trim() ?? '');
+    if (ms != null) return Duration(milliseconds: ms);
+    final seconds = int.tryParse(headers['retry-after']?.trim() ?? '');
+    return seconds == null ? null : Duration(seconds: seconds);
+  }
+
   /// The document's current `_etag`, from the `etag` response header Cosmos
   /// returns on a point read or a write. `null` when absent. Header names are
   /// case-insensitive on the wire (`package:http` lower-cases them), so callers

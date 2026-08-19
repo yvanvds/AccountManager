@@ -167,6 +167,15 @@ Future<ReconcileServices> bootstrapReconcile({
   final logBuffer = log ?? LogBuffer();
   final now = clock ?? DateTime.now;
 
+  // Shared throttling state for this session's Cosmos account (#196): the
+  // client reports every 429 here (retrying it rather than failing the persist)
+  // and the linked store's write fan-out reads it, so a full-volume write
+  // narrows while the account is under pressure and widens again as it eases.
+  // Throttling is reported into the operator log, so a slow persist reads as
+  // slow rather than hung.
+  final throttle = CosmosThrottleGovernor(
+    onReport: (m) => logBuffer.addMessage(core.Origin.all, m),
+  );
   final client = cosmosClient ??
       HttpCosmosClient(
         config: CosmosConfig(
@@ -175,6 +184,7 @@ Future<ReconcileServices> bootstrapReconcile({
         ),
         transport: HttpCosmosTransport(),
         tokens: CosmosSessionTokenProvider(session),
+        governor: throttle,
       );
 
   // Ensure the Cosmos containers a sync reads or writes exist before anything
@@ -207,7 +217,7 @@ Future<ReconcileServices> bootstrapReconcile({
   // The materialized-view store (#115): a sync writes the derived per-account
   // docs + rollups here, and every passive session reads the overview back with
   // no pull and no link().
-  final linked = linkedStore ?? CosmosLinkedStore(client);
+  final linked = linkedStore ?? CosmosLinkedStore(client, governor: throttle);
 
   // The shared password-distribution queue (#105): the whole team's pending
   // password sheets in one Cosmos document, so one operator can generate and
