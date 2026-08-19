@@ -17,6 +17,34 @@ class _ThrowingPublisher implements SignalPublisher {
       throw StateError('signalr down');
 }
 
+/// An [InMemorySettingsStore] that counts its writes — so a test can prove the
+/// sync-time school backfill (#207) writes only when it has something to fix.
+class _RecordingSettingsStore extends InMemorySettingsStore {
+  _RecordingSettingsStore(super.initial);
+
+  int saves = 0;
+
+  @override
+  Future<void> save(AppSettings settings) {
+    saves++;
+    return super.save(settings);
+  }
+}
+
+/// A settings store whose every read throws — models the store being down while
+/// a sync tries to repair the school profiles (#207).
+class _ThrowingSettingsStore implements SettingsStore {
+  const _ThrowingSettingsStore(this.error);
+
+  final String error;
+
+  @override
+  Future<AppSettings> load() async => throw StateError(error);
+
+  @override
+  Future<void> save(AppSettings settings) async {}
+}
+
 void main() {
   group('first sync', () {
     test('pulls all three systems and derives the linked view + actions',
@@ -199,6 +227,104 @@ void main() {
       expect(h.azSyncs, 2);
       expect(h.wisaSyncs, 1, reason: 'drift check does not re-pull WISA');
       expect(h.controller.linked, isNotNull);
+    });
+  });
+
+  group('settings school-profile backfill (#207)', () {
+    // The reported settings document: entries written before a profile had a
+    // `code`/`name` at all (#171/#194), so the Settings grid — the one view
+    // that consults no snapshot — rendered "School 25" until the operator
+    // pressed Scholen ophalen *and* Opslaan. Every sync already pulls the whole
+    // school list, so it repairs them.
+    const legacy = AppSettings(
+      wisaSchools: <WisaSchoolProfile>[
+        WisaSchoolProfile(schoolId: 25, ours: true),
+        WisaSchoolProfile(schoolId: 27, virtual: true),
+      ],
+    );
+    const pulled = <wapi.WisaSchool>[
+      wapi.WisaSchool(id: 25, name: 'Instituut Sancta Maria-A', code: 'ISMAA'),
+      wapi.WisaSchool(id: 27, name: 'Instituut Sancta Maria-B', code: 'ISMAB'),
+    ];
+
+    test('a sync fills the pulled names and codes into the stored profiles',
+        () async {
+      final settings = InMemorySettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+      );
+
+      await h.controller.sync();
+
+      final saved = await settings.load();
+      expect(
+        saved.wisaSchools.map((p) => p.name),
+        ['Instituut Sancta Maria-A', 'Instituut Sancta Maria-B'],
+      );
+      expect(saved.wisaSchools.map((p) => p.code), ['ISMAA', 'ISMAB']);
+      expect(saved.wisaSchools.first.ours, isTrue,
+          reason: 'the managed mark is the operator\'s, never rewritten');
+      expect(saved.wisaSchools.last.virtual, isTrue);
+      expect(h.log.entries.where((e) => e.isError), isEmpty);
+    });
+
+    test('the unchanged-WISA shortcut still repairs the document', () async {
+      // The repair runs before the smart-diff early return, so an operator
+      // whose group has nothing to reconcile still gets named schools.
+      final settings = InMemorySettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+      );
+      await h.controller.sync();
+      // Model the pre-fix document coming back (another operator saved over it)
+      // and re-sync with identical WISA content.
+      await settings.save(legacy);
+
+      await h.controller.sync();
+
+      expect(h.controller.noChangesNeeded, isTrue);
+      final saved = await settings.load();
+      expect(saved.wisaSchools.first.name, 'Instituut Sancta Maria-A');
+    });
+
+    test('nothing is written when every profile is already named', () async {
+      final settings = _RecordingSettingsStore(const AppSettings(
+        wisaSchools: <WisaSchoolProfile>[
+          WisaSchoolProfile(
+            schoolId: 25,
+            code: 'ISMAA',
+            name: 'Instituut Sancta Maria-A',
+            ours: true,
+          ),
+        ],
+      ));
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+      );
+
+      await h.controller.sync();
+
+      expect(settings.saves, 0,
+          reason: 'a sync must not rewrite the settings document for nothing');
+    });
+
+    test('a failing settings store is logged, never fails the sync', () async {
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: const _ThrowingSettingsStore('cosmos 503'),
+      );
+
+      await h.controller.sync();
+
+      expect(h.controller.error, isNull);
+      expect(h.controller.linked, isNotNull);
+      expect(
+        h.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains('cosmos 503')),
+      );
     });
   });
 

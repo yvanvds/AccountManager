@@ -274,6 +274,7 @@ class ReconcileController extends ChangeNotifier {
     required this.store,
     this.syncedBy = '',
     this.schoolProfiles = const <WisaSchoolProfile>[],
+    this.settingsStore,
     this.publisher,
     this.subscriber,
     this.persistTimeout = const Duration(minutes: 10),
@@ -308,6 +309,20 @@ class ReconcileController extends ChangeNotifier {
   /// filled the WISA-scholen grid in, which is when the label falls back to the
   /// snapshot and finally to `School <id>`.
   final List<WisaSchoolProfile> schoolProfiles;
+
+  /// Where [schoolProfiles] is persisted, so a WISA pull can repair the stored
+  /// profiles from the school list it just loaded (#207).
+  ///
+  /// Documents written before `code`/`name` existed on a profile (#171/#194)
+  /// carry a school id and an `ours` flag and nothing else, and the Settings
+  /// grid — which consults no snapshot — then renders them as `School 25`
+  /// forever, because the only writer of the two halves used to be the
+  /// **Scholen ophalen** button followed by **Opslaan**. Every sync already
+  /// pulls the full school list, so it can fill them in silently instead;
+  /// [_backfillSchoolProfiles] does, touching only those two fields. Null when
+  /// no store is wired (the in-memory harnesses), which simply skips the
+  /// repair.
+  final SettingsStore? settingsStore;
 
   /// Publishes a [ChangeSignal] when this session takes/releases the sync lease
   /// or writes a new view generation, so other operators are nudged in real time
@@ -1001,6 +1016,11 @@ class ReconcileController extends ChangeNotifier {
         'WISA sync done: ${fresh.students.length} students, '
         '${fresh.staff.length} staff, ${fresh.classGroups.length} classes.',
       );
+      // Repair the operator's stored school profiles from this pull (#207).
+      // Runs before the unchanged-since-last-sync shortcut below, so a session
+      // that has nothing to reconcile still heals a settings document whose
+      // schools have no names.
+      await _backfillSchoolProfiles(fresh.schools);
 
       if (previous != null &&
           _linked != null &&
@@ -1464,6 +1484,49 @@ class ReconcileController extends ChangeNotifier {
         profiles: schoolProfiles,
         schools: app.wisa.snapshot?.schools ?? const <wapi.WisaSchool>[],
       );
+
+  /// Writes the school names and codes this WISA pull carries back into the
+  /// stored profiles (#207), so the Settings grid names every school it lists
+  /// without the operator having to press **Scholen ophalen** and **Opslaan**.
+  ///
+  /// Strictly a repair of the two derived halves: no profile is added, removed
+  /// or reordered, and `ours` / `virtual` / `prefix` are never rewritten — the
+  /// operator's curation of *which* schools are listed and managed stays a
+  /// Settings-only decision. The document is re-read immediately before the
+  /// write so a change another operator saved during this pass is not clobbered
+  /// by this session's startup copy, and nothing is written when the pull adds
+  /// nothing new.
+  ///
+  /// A failing settings store must never fail the sync: the pull itself
+  /// succeeded and the labels are correct in memory (the drill-down merges the
+  /// snapshot), so the problem is logged and the pass continues.
+  Future<void> _backfillSchoolProfiles(List<wapi.WisaSchool> schools) async {
+    final store = settingsStore;
+    if (store == null || schools.isEmpty) return;
+    try {
+      final stored = await store.load();
+      final repaired = mergeWisaSchoolProfiles(
+        profiles: stored.wisaSchools,
+        schools: schools,
+      );
+      final healed = <int>[
+        for (var i = 0; i < repaired.length; i++)
+          if (repaired[i] != stored.wisaSchools[i]) repaired[i].schoolId,
+      ];
+      if (healed.isEmpty) return;
+      await store.save(stored.copyWith(wisaSchools: repaired));
+      log.addMessage(
+        core.Origin.wisa,
+        'Updated the name and code of ${healed.length} WISA school(s) in the '
+        'settings (id ${healed.join(', ')}).',
+      );
+    } on Object catch (e) {
+      log.addError(
+        core.Origin.wisa,
+        'Could not update the WISA school names in the settings: $e',
+      );
+    }
+  }
 
   void _begin(ReconcilePhase phase) {
     _phase = phase;

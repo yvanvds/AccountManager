@@ -308,9 +308,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// fetched id+name records into [_wisaSchools], updating each name, adding any
   /// genuinely new school (unmanaged by default), and preserving the `ours` and
   /// `virtual` marks on schools already known. Prefers a freshly typed password;
-  /// otherwise resolves the stored secret. Failures surface as a toast. The
-  /// merged list is dirty until saved, so the enriched names persist and no
-  /// re-fetch is needed.
+  /// otherwise resolves the stored secret. Failures surface as a toast.
+  ///
+  /// The merged list stays **dirty until Opslaan**, deliberately (#207): a fetch
+  /// adds schools to the operator's curated list, and the working copy it merges
+  /// into may already hold unsaved `ours`/`virtual` edits — persisting behind
+  /// their back would commit those too and take away the reload escape hatch.
+  /// What used to make that a trap was that the names arrived here and nowhere
+  /// else; every sync now writes the two derived halves back into the document
+  /// on its own, so the grid names its schools whether or not this button was
+  /// ever pressed.
   Future<void> _fetchWisaSchools() async {
     final services = _services;
     final fetcher = services?.fetchWisaSchools;
@@ -347,26 +354,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// neither managed nor virtual. Order is stable by school id so the grid does
   /// not jump.
   ///
-  /// Both halves come straight across: the connector already untangled WISA's
-  /// inverted `NAME`/`DESCRIPTION` columns, so `WisaSchool.name` is the long
-  /// name and `WisaSchool.code` the short code (#208).
-  List<WisaSchoolProfile> _mergeFetchedSchools(List<WisaSchool> fetched) {
-    final byId = <int, WisaSchoolProfile>{
-      for (final p in _wisaSchools) p.schoolId: p,
-    };
-    for (final s in fetched) {
-      final existing = byId[s.id];
-      byId[s.id] = existing == null
-          ? WisaSchoolProfile(schoolId: s.id, code: s.code, name: s.name)
-          : existing.copyWith(
-              code: s.code.isEmpty ? existing.code : s.code,
-              name: s.name.isEmpty ? existing.name : s.name,
-            );
-    }
-    final merged = byId.values.toList()
-      ..sort((a, b) => a.schoolId.compareTo(b.schoolId));
-    return merged;
-  }
+  /// The merge rule itself lives in [mergeWisaSchoolProfiles], shared with the
+  /// repair every sync runs against the stored profiles (#207), so the button
+  /// and the silent backfill can never disagree about what a pull may overwrite.
+  List<WisaSchoolProfile> _mergeFetchedSchools(List<WisaSchool> fetched) =>
+      mergeWisaSchoolProfiles(
+        profiles: _wisaSchools,
+        schools: fetched,
+        addUnknown: true,
+      )..sort((a, b) => a.schoolId.compareTo(b.schoolId));
 
   /// Assembles an [AppSettings] from the form, preserving the loaded document's
   /// secret refs and its (read-only) WISA import rules.

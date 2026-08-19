@@ -926,6 +926,7 @@ class ReconcileHarness {
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
     List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
+    this.settingsStore,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
@@ -1044,8 +1045,10 @@ class ReconcileHarness {
       store: controllerStore ?? this.linkedStore,
       syncedBy: syncedBy,
       // The operator's curated WISA schools from Settings, which name every
-      // school in the Actions drill-down (#204).
+      // school in the Actions drill-down (#204), and the document they live in
+      // so a pull can fill their names back in (#207).
       schoolProfiles: schoolProfiles,
+      settingsStore: settingsStore,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),
@@ -1071,6 +1074,13 @@ class ReconcileHarness {
   /// The shared cold-snapshot store, when this harness models the persistence
   /// wiring (#107). `null` for the plain in-memory scenarios.
   final SnapshotStore? store;
+
+  /// The settings document this session's pulls repair the WISA school profiles
+  /// in (#207). Share the one [InMemorySettingsStore] with a `SettingsHarness`
+  /// to model what the real app does — both bootstraps read and write the same
+  /// Cosmos document — so a test can sync and then open Settings on the result.
+  /// `null` for the scenarios that do not care about settings persistence.
+  final SettingsStore? settingsStore;
 
   /// The shared realtime fan-out (#116): when set, this session's controller
   /// publishes change signals to it and subscribes for others'. Share one hub

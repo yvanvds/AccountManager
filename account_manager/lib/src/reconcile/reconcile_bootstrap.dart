@@ -453,6 +453,10 @@ Future<ReconcileServices> bootstrapReconcile({
     // drill-down, so it reads "Instituut Sancta Maria-A (ISMAA)" exactly as the
     // Settings grid does rather than "School 25" (#204).
     schoolProfiles: settings.wisaSchools,
+    // …and every sync writes the names it pulled back into that same document
+    // (#207), so a profile stored before the two halves existed stops rendering
+    // as "School 25" in the Settings grid, which consults no snapshot.
+    settingsStore: store,
     publisher: signalPublisher,
     subscriber: signalSubscriber,
     clock: now,

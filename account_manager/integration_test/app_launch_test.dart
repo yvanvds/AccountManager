@@ -2357,6 +2357,103 @@ void main() {
   });
 
   testWidgets(
+      'a sync names the WISA-scholen grid end-to-end — no Scholen ophalen, no '
+      'Opslaan (#207)', (WidgetTester tester) async {
+    // The reported journey in the real app: the operator opens Instellingen →
+    // WISA and sees "School 25", because the stored document predates the
+    // profile's `code`/`name` fields and the grid consults no snapshot. One
+    // ordinary sync must be enough to fix that — the pull already loads every
+    // school. Both bootstraps share the one settings document, exactly as the
+    // real app's two Cosmos-backed stores do.
+    useTallWindow(tester);
+    final settings = SettingsHarness(
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisa': const WisaConnection(server: 'db.school.example', port: '1433')
+            .toJson(),
+        // The legacy shape: a school id and a managed flag, nothing else.
+        'wisaSchools': <Map<String, dynamic>>[
+          <String, dynamic>{'schoolId': 25, 'ours': true},
+        ],
+      }),
+      // No fetcher is wired, so "Scholen ophalen" cannot run at all — whatever
+      // names the grid must have arrived without it.
+    );
+    final reconcile = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 25)],
+        // Verbatim rows 11-12 of the redacted-from-live SMAGetInst fixture,
+        // through the real parser, so the halves are whatever WISA really says.
+        schools: <WisaSchool>[
+          parseSchoolRow('25,Instituut Sancta Maria-A,ISMAA'),
+          parseSchoolRow('27,Instituut Sancta Maria-B,ISMAB'),
+        ],
+      ),
+      smartschool: ssSnap(
+          groups: const [], accounts: [ssAccount()], memberships: const []),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: const {25},
+      settingsStore: settings.store,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: reconcile.bootstrap,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Before any sync: the bug, in the real grid.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final tile = find.byKey(const ValueKey('settings-wisa-school-25-ours'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    String titleOf(Finder f) =>
+        (tester.widget<CheckboxListTile>(f).title! as Text).data!;
+    expect(titleOf(tile), 'School 25');
+    expect(tester.widget<CheckboxListTile>(tile).subtitle, isNull);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+              find.byKey(const ValueKey('settings-wisa-fetch-schools')))
+          .onPressed,
+      isNull,
+      reason: 'no fetcher is wired: the names cannot come from this button',
+    );
+
+    // One ordinary sync on the Reconcile view.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Back to Settings and re-read the document — no Opslaan was ever pressed.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect(titleOf(tile), 'Instituut Sancta Maria-A');
+    expect((tester.widget<CheckboxListTile>(tile).subtitle! as Text).data,
+        'ISMAA');
+    expect(find.text('School 25'), findsNothing);
+
+    // The repair landed in the document itself — and touched only the two
+    // derived halves: the managed mark is still the operator's, and the sync
+    // did not add the sibling school the pull also carried.
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.schoolId, 25);
+    expect(saved.wisaSchools.single.name, 'Instituut Sancta Maria-A');
+    expect(saved.wisaSchools.single.code, 'ISMAA');
+    expect(saved.wisaSchools.single.ours, isTrue);
+    expect(saved.wisaSchools.single.virtual, isFalse);
+  });
+
+  testWidgets(
       'the Settings/Algemeen werkdatum controls read clearly end-to-end: '
       'renamed virtual label + right-aligned switch instruction (#141)',
       (WidgetTester tester) async {
