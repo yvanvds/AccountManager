@@ -57,6 +57,14 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// keys, only how each is classified ([WisaPresence]); for **groups** it is a
 /// filter (#205), because a class of a school we do not manage has no business
 /// reaching the action engine at all (see [_linkGroups]).
+///
+/// A second group-only filter composes with it: the class groups of a school
+/// flagged [wapi.WisaSchool.isVirtual] are skipped too (#209). A virtual school
+/// is typically *also* marked managed, so ownership alone never excluded it. The
+/// virtual set is always derived from the snapshot's own schools —
+/// `markVirtualSchools` stamps the flag before the pull, so the snapshot is
+/// authoritative here — and it never touches students or staff, who keep flowing
+/// from virtual schools exactly as before.
 LinkedSnapshot link(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
@@ -70,6 +78,14 @@ LinkedSnapshot link(
         for (final school in wisaSnapshot.schools)
           if (school.isOurs) school.id,
       };
+
+  // The virtual schools (#209). Unlike ownership there is no caller override:
+  // the flag is stamped onto the school list before the pull, and `sync()`
+  // stores that list on the snapshot, so the snapshot is the single source.
+  final virtualSchoolIds = <int>{
+    for (final school in wisaSnapshot.schools)
+      if (school.isVirtual) school.id,
+  };
 
   // Build the student and staff records first, in that order, so the two
   // populations' duplicate-mail warnings accumulate student-then-staff exactly
@@ -123,6 +139,7 @@ LinkedSnapshot link(
     smartschoolSnapshot,
     azureSnapshot,
     effectiveOurSchoolIds,
+    virtualSchoolIds,
   );
 
   return LinkedSnapshot.fromRecords(
@@ -394,11 +411,23 @@ List<_StaffRecord> _buildStaffRecords(
 /// an empty [ourSchoolIds] means ownership is unconfigured and every school is
 /// treated as ours (see [_isOurWisaSchool]).
 ///
+/// The class groups of a **virtual** school ([virtualSchoolIds], #209) are
+/// skipped on top of that: a class group seeds a record only when its school is
+/// *ours **and** not virtual* (see [_seedsClassGroups]). Ownership alone never
+/// excluded them — the operator's virtual school is normally marked managed as
+/// well — so their (always empty) classes reached the engine as
+/// [CreateInSmartschool] notices, cluttering the Klasgroepen list and inviting
+/// the creation of defunct classes in Smartschool. The exclusion is deliberately
+/// *only* about class groups: the students and staff of a virtual school are
+/// untouched here and keep linking exactly as before.
+///
 /// A consequence, decided deliberately: an official Smartschool class whose
-/// only WISA counterpart is a class of a school we do not manage now becomes a
-/// Smartschool orphan record (#52) rather than linking to a class we have no
-/// business managing. The action engine then treats it as the orphan it is
-/// instead of silently considering it in sync.
+/// only WISA counterpart is a class of a school we do not manage — or of a
+/// virtual school — now becomes a Smartschool orphan record (#52) rather than
+/// linking to a class we have no business managing. The action engine then
+/// treats it as the orphan it is instead of silently considering it in sync;
+/// the orphan action is the informational `DoNotImportFromSmartschool`, which
+/// cannot be applied, so nothing is ever deleted automatically.
 ///
 /// Only `official` Smartschool groups are considered (legacy
 /// `AddSmartschoolChildGroups` walked the "Leerlingen" subtree and linked only
@@ -421,6 +450,7 @@ List<LinkedGroup> _linkGroups(
   ss.SmartschoolSnapshot smartschoolSnapshot,
   az.AzureSnapshot azureSnapshot,
   Set<int> ourSchoolIds,
+  Set<int> virtualSchoolIds,
 ) {
   final records = <_GroupRecord>[];
   // Normalized fullName/name/displayName -> the record indexed under it.
@@ -429,13 +459,16 @@ List<LinkedGroup> _linkGroups(
   // 1. Seed one record per distinct WISA class group, in snapshot order, keyed
   //    by its `fullName`. Class groups of schools we do not manage are skipped
   //    outright (#205) — the shared WISA credentials pull every group school,
-  //    and a sibling school's class must never reach the action engine. The
-  //    filter runs *before* the dedupe so a foreign class can no longer occupy
-  //    the name key of one of ours. Duplicate fullNames among our own classes
-  //    still collapse to the first record so the output is a deterministic
-  //    function of the input order (INV-20).
+  //    and a sibling school's class must never reach the action engine — and so
+  //    are those of a virtual school (#209), whose classes are a dead concept.
+  //    The filter runs *before* the dedupe so an excluded class can no longer
+  //    occupy the name key of one of ours. Duplicate fullNames among our own
+  //    classes still collapse to the first record so the output is a
+  //    deterministic function of the input order (INV-20).
   for (final group in wisaSnapshot.classGroups) {
-    if (!_isOurWisaSchool(group.schoolId, ourSchoolIds)) continue;
+    if (!_seedsClassGroups(group.schoolId, ourSchoolIds, virtualSchoolIds)) {
+      continue;
+    }
     final key = _norm(group.fullName);
     if (key == null || byName.containsKey(key)) continue;
     final rec = _GroupRecord(wisa: group);
@@ -615,6 +648,22 @@ WisaPresence _presence(Set<int> wisaSchoolIds, Set<int> ourSchoolIds) {
 /// school counts as ours and group linking keeps its pre-#205 behaviour.
 bool _isOurWisaSchool(int schoolId, Set<int> ourSchoolIds) =>
     ourSchoolIds.isEmpty || ourSchoolIds.contains(schoolId);
+
+/// Whether a WISA class group of [schoolId] may seed a linked group record:
+/// the school must be one we manage (#205) **and** not one marked virtual
+/// (#209). The two exclusions compose rather than replace each other — a
+/// virtual school is normally marked managed too, so ownership alone let its
+/// classes through, and the "ownership unconfigured ⇒ everything is ours"
+/// fallback in [_isOurWisaSchool] still holds with the virtual exclusion
+/// layered on top. Applies to class groups only; students and staff of a
+/// virtual school are unaffected.
+bool _seedsClassGroups(
+  int schoolId,
+  Set<int> ourSchoolIds,
+  Set<int> virtualSchoolIds,
+) =>
+    _isOurWisaSchool(schoolId, ourSchoolIds) &&
+    !virtualSchoolIds.contains(schoolId);
 
 /// Whether an Azure user's [companyName] marks it as one of the school's own
 /// (a current or former student). Trimmed + case-insensitive.

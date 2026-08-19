@@ -139,9 +139,17 @@ wapi.WisaStudent wisaStudent({
     );
 
 /// A WISA school, optionally flagged [ours] (the managed-school signal the
-/// linker joins student `schoolId` against, #133/#134).
-wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
-    wapi.WisaSchool(id: id, name: 'School $id', code: '', isOurs: ours);
+/// linker joins student `schoolId` against, #133/#134) and/or [virtual] (the
+/// flag `markVirtualSchools` stamps before the pull, whose class groups the
+/// linker refuses to seed, #209).
+wapi.WisaSchool wisaSchool(int id, {bool ours = false, bool virtual = false}) =>
+    wapi.WisaSchool(
+      id: id,
+      name: 'School $id',
+      code: '',
+      isOurs: ours,
+      isVirtual: virtual,
+    );
 
 /// A WISA class group. [name] is the `fullName` the linker matches on;
 /// [schoolId] decides whether the class belongs to a school we manage — a
@@ -484,6 +492,57 @@ ReconcileHarness foreignClassGroupHarness() => ReconcileHarness(
       ),
       azure: azSnap(users: const []),
       ourSchoolIds: const {1},
+    );
+
+/// A harness for the virtual-school class-group exclusion (#209). Two managed
+/// schools: our own school 1, and school 99 — the "Virtuele school" — which the
+/// operator marks **both** beheerd and virtueel, exactly as the real config
+/// does. That is why the #205 ownership filter alone never kept its classes out.
+///
+/// The virtual school contributes a populated class (`1V`, holding its own
+/// student) and an empty one (`9V`), so before the fix the Klasgroepen list
+/// carried an applyable "create this class in Smartschool" proposal *and* the
+/// empty-class notice for classes nobody will ever use. Our own `1A` is
+/// populated and must survive untouched, and the virtual school's student must
+/// keep flowing and stay placed by their own `classGroup` string.
+ReconcileHarness virtualClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '1V', schoolId: 99),
+        ],
+        schools: [
+          wisaSchool(1, ours: true),
+          wisaSchool(99, ours: true, virtual: true),
+        ],
+        classGroups: [
+          wisaClassGroup(
+            '1V',
+            description: 'Virtuele klas',
+            schoolCode: '999',
+            schoolId: 99,
+          ),
+          wisaClassGroup(
+            '9V',
+            description: 'Lege virtuele klas',
+            schoolCode: '999',
+            schoolId: 99,
+          ),
+          wisaClassGroup(
+            '1A',
+            description: 'Onze eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1, 99},
     );
 
 /// A harness for the school-label drill-down (#204). One student enrolled in

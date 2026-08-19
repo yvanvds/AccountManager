@@ -498,6 +498,125 @@ void main() {
     });
   });
 
+  group('link — class groups of a virtual school are never imported (#209)',
+      () {
+    /// Links [classGroups] (and optionally [students]) with the schools list
+    /// carrying the virtual/ours flags the linker derives its two group filters
+    /// from. [ourSchoolIds] pins the managed set the Settings path supplies.
+    LinkedSnapshot linkVirtual(
+      List<wapi.WisaClassGroup> classGroups, {
+      List<wapi.WisaSchool> schools = const [],
+      Set<int>? ourSchoolIds,
+      List<wapi.WisaStudent> students = const [],
+      List<Group> ssGroups = const [],
+    }) =>
+        link(
+          wisaSnap(students, classGroups: classGroups, schools: schools),
+          ssSnap(const [], groups: ssGroups),
+          azSnap(const []),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test('a class of a virtual school raises no record, even when managed', () {
+      // The real config: the virtual school is ticked "beheerd" too, so the
+      // #205 ownership filter passes it straight through. Only the virtual
+      // exclusion keeps its classes out.
+      final snapshot = linkVirtual(
+        [wisaClassGroup('1V', schoolId: 99)],
+        schools: [wisaSchool(99, ours: true, virtual: true)],
+        ourSchoolIds: const {1, 99},
+      );
+
+      expect(snapshot.groups, isEmpty);
+    });
+
+    test('a class of a managed, non-virtual school is unaffected', () {
+      final snapshot = linkVirtual(
+        [
+          wisaClassGroup('3B', schoolCode: '111', schoolId: 1),
+          wisaClassGroup('1V', schoolId: 99),
+        ],
+        schools: [wisaSchool(1, ours: true), wisaSchool(99, virtual: true)],
+        ourSchoolIds: const {1, 99},
+      );
+
+      expect([for (final g in snapshot.groups) g.wisa!.name], ['3B']);
+      expect(snapshot.groups.single.wisa!.instituteNumber, '111');
+    });
+
+    test('the virtual exclusion applies on top of the #205 ours fallback', () {
+      // Ownership unconfigured ⇒ every school is ours (the pre-#205 fallback),
+      // but a virtual school's classes are still dropped.
+      final snapshot = linkVirtual(
+        [
+          wisaClassGroup('5A', schoolId: 1),
+          wisaClassGroup('1V', schoolId: 99),
+        ],
+        schools: [wisaSchool(1), wisaSchool(99, virtual: true)],
+      );
+
+      expect([for (final g in snapshot.groups) g.wisa!.name], ['5A']);
+    });
+
+    test('a virtual class arriving first no longer shadows ours', () {
+      // The name key is claimed at the seed, so a same-named virtual class used
+      // to occupy it and the surviving proposal described the virtual school.
+      final snapshot = linkVirtual(
+        [
+          wisaClassGroup('1A', schoolCode: '999', schoolId: 99),
+          wisaClassGroup('1A', schoolCode: '111', schoolId: 1),
+        ],
+        schools: [
+          wisaSchool(1, ours: true),
+          wisaSchool(99, ours: true, virtual: true)
+        ],
+        ourSchoolIds: const {1, 99},
+      );
+
+      expect(snapshot.groups, hasLength(1));
+      expect(snapshot.groups.single.wisa!.instituteNumber, '111');
+    });
+
+    test('students of a virtual school still link, and stay ours', () {
+      // The virtual work date exists precisely so these people come back; only
+      // the class-group records are in scope. Placement reads the student's own
+      // `classGroup` string, so dropping the records moves nobody.
+      final snapshot = linkVirtual(
+        [wisaClassGroup('1V', schoolId: 99)],
+        schools: [
+          wisaSchool(1, ours: true),
+          wisaSchool(99, ours: true, virtual: true)
+        ],
+        ourSchoolIds: const {1, 99},
+        students: [wisaStudent('W9', schoolId: 99)],
+      );
+
+      expect(snapshot.groups, isEmpty);
+      final a = snapshot.accounts.single;
+      expect(a.wisa, isNotNull);
+      expect(a.wisaSchoolIds, {99});
+      expect(a.wisaPresence, WisaPresence.ours);
+    });
+
+    test(
+        'a Smartschool class whose only WISA counterpart is virtual becomes an '
+        'orphan', () {
+      final snapshot = linkVirtual(
+        [wisaClassGroup('1V', schoolId: 99)],
+        schools: [wisaSchool(99, ours: true, virtual: true)],
+        ourSchoolIds: const {99},
+        ssGroups: [ssGroup('1V')],
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.wisa, isNull);
+      expect(g.smartschool, isNotNull);
+      expect(g.confidence, LinkConfidence.medium);
+    });
+  });
+
   group('link — staff scenarios', () {
     test('fully linked across three systems → high confidence', () {
       // Staff bridge Smartschool by `code` (≡ accountId) and Azure by `wisaId`

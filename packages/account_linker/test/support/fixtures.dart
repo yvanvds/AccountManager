@@ -41,9 +41,17 @@ wapi.WisaStudent wisaStudent(String wisaId, {int schoolId = 1}) =>
     );
 
 /// A WISA school, optionally flagged [ours] (the `MarkAsOurs` import-rule
-/// outcome the linker derives the managed-school set from, #133/#134).
-wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
-    wapi.WisaSchool(id: id, name: 'S$id', code: '', isOurs: ours);
+/// outcome the linker derives the managed-school set from, #133/#134) and/or
+/// [virtual] (the `MarkAsVirtual` / settings flag whose class groups the linker
+/// refuses to seed, #209).
+wapi.WisaSchool wisaSchool(int id, {bool ours = false, bool virtual = false}) =>
+    wapi.WisaSchool(
+      id: id,
+      name: 'S$id',
+      code: '',
+      isOurs: ours,
+      isVirtual: virtual,
+    );
 
 /// A Smartschool **student** account. [accountId] holds the WISA id by
 /// convention; [mail] is the Azure-UPN bridge.

@@ -1086,6 +1086,63 @@ void main() {
   });
 
   testWidgets(
+      'the Klasgroepen drill-down carries no class of a virtual school '
+      'end-to-end, while its students keep their place (#209)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. School 99 is the operator's
+    // "Virtuele school", ticked *both* beheerd and virtueel — which is why the
+    // managed-school filter of #205 never kept it out. Its classes used to
+    // reach the Klasgroepen list as an applyable "create this class in
+    // Smartschool" proposal (1V) and an empty-class notice (9V): rows nobody
+    // will ever act on, each one an invitation to create a defunct class.
+    useTallWindow(tester);
+    final harness = virtualClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Only our own class is on the list; neither virtual class is anywhere.
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-1V')), findsNothing,
+        reason: 'creating a virtual school\'s class is never worth proposing');
+    expect(find.byKey(const ValueKey('entry-group-9V')), findsNothing,
+        reason: 'the empty-class notice for a virtual class is pure clutter');
+    expect(find.textContaining('Virtuele klas'), findsNothing);
+    expect(find.textContaining('Lege virtuele klas'), findsNothing);
+
+    // Back out of Klasgroepen: the virtual school's student is still imported
+    // and still sits in the class their own WISA record names — dropping the
+    // class-group records moved nobody.
+    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    await tester.pumpAndSettle();
+    final schoolNode = find.byKey(const ValueKey('rollup-school-school|99'));
+    await tester.ensureVisible(schoolNode);
+    await tester.tap(schoolNode);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('rollup-grade-grade|99|1')));
+    await tester.pumpAndSettle();
+    final classNode = find.byKey(const ValueKey('rollup-class-class|99|1|1V'));
+    await tester.ensureVisible(classNode);
+    await tester.tap(classNode);
+    await tester.pumpAndSettle();
+    expect(find.text('Jane Doe'), findsWidgets);
+  });
+
+  testWidgets(
       'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
       'staff drill in one tab, students in the other (#179)',
       (WidgetTester tester) async {
