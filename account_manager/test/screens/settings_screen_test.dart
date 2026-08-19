@@ -2,6 +2,7 @@ import 'package:account_manager/src/screens/settings_screen.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
 import 'settings_fakes.dart';
@@ -20,6 +21,29 @@ void _useTallWindow(WidgetTester tester) {
 /// split across Algemeen / Wisa / Smartschool / Azure tabs).
 Future<void> _openTab(WidgetTester tester, String tabKey) async {
   await tester.tap(find.byKey(ValueKey(tabKey)));
+  await tester.pumpAndSettle();
+}
+
+/// Authors one Smartschool import rule through the editor (#202): opens the
+/// **Toevoegen** menu, picks the rule type keyed [kind], types [groupName] into
+/// the prompt and confirms — exactly what the operator does.
+Future<void> _addSmartschoolRule(
+  WidgetTester tester,
+  String kind,
+  String groupName,
+) async {
+  final add = find.byKey(const ValueKey('settings-ss-rule-add'));
+  await tester.ensureVisible(add);
+  await tester.tap(add);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(ValueKey('settings-ss-rule-add-$kind')));
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.byKey(const ValueKey('settings-ss-rule-name')),
+    groupName,
+  );
+  await tester.pump();
+  await tester.tap(find.byKey(const ValueKey('settings-ss-rule-confirm')));
   await tester.pumpAndSettle();
 }
 
@@ -311,6 +335,153 @@ void main() {
     final saved = await harness.store.load();
     expect(saved.wisaSchools.single.schoolId, 42);
     expect(saved.wisaSchools.single.ours, isTrue);
+  });
+
+  testWidgets(
+      'each school cell carries a virtual toggle, independent of the managed '
+      'one, and marking it round-trips to the store (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // One school is managed but not virtual, the other virtual but unmanaged —
+    // the two marks are separate facts about the same school.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 42, name: 'Sint-Jan', ours: true),
+          WisaSchoolProfile(
+              schoolId: 99, name: 'Virtuele school SMA', virtual: true),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    final virtual42 =
+        find.byKey(const ValueKey('settings-wisa-school-42-virtual'));
+    final virtual99 =
+        find.byKey(const ValueKey('settings-wisa-school-99-virtual'));
+    expect(virtual42, findsOneWidget);
+    expect(virtual99, findsOneWidget);
+    // Managed ≠ virtual, in both directions.
+    expect(tester.widget<CheckboxListTile>(virtual42).value, isFalse);
+    expect(tester.widget<CheckboxListTile>(virtual99).value, isTrue);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-99-ours')))
+            .value,
+        isFalse);
+
+    // Mark the managed school virtual too and save.
+    await tester.tap(virtual42);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.virtualWisaSchoolIds, {42, 99});
+    // Flipping "virtueel" left the managed marks exactly as they were.
+    expect(saved.managedWisaSchoolIds, {42});
+  });
+
+  testWidgets('clearing the virtual mark round-trips to the store (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 42, name: 'Sint-Jan', virtual: true),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    await tester
+        .tap(find.byKey(const ValueKey('settings-wisa-school-42-virtual')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.virtual, isFalse);
+    expect(saved.virtualWisaSchoolIds, isEmpty);
+  });
+
+  testWidgets('a refetch preserves the virtual mark (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ismav'),
+    ]);
+    // Marked virtual on a previous run, stored without a code.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [WisaSchoolProfile(schoolId: 99, virtual: true)],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
+    await tester.pumpAndSettle();
+
+    // "Scholen ophalen" backfilled the code and kept the virtual mark ticked.
+    expect(find.text('ismav'), findsOneWidget);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-99-virtual')))
+            .value,
+        isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.code, 'ismav');
+    expect(saved.wisaSchools.single.virtual, isTrue);
+  });
+
+  testWidgets('a freshly fetched school is not virtual until marked (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 3, name: 'Sint-Jan', description: 'SJ'),
+    ]);
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-3-virtual')))
+            .value,
+        isFalse,
+        reason: 'a new school pulls with the ordinary work date until marked');
   });
 
   testWidgets('a profile stored without a name falls back to "School <id>"',
@@ -690,5 +861,211 @@ void main() {
     final instrRight = tester.getTopRight(instruction).dx;
     expect(switchLeft - instrRight, lessThan(instrCenter - tileLeft),
         reason: 'the instruction hugs the switch, away from the field label');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Smartschool import-rule editor (#202)
+  // ---------------------------------------------------------------------------
+
+  testWidgets(
+      'the Smartschool import rules are an editor now, not an "alleen-lezen" '
+      'list (#202)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    expect(find.text('Importregels'), findsOneWidget);
+    expect(find.textContaining('alleen-lezen'), findsNothing);
+    // Nothing configured yet, and the add affordance is there to change that.
+    expect(
+        find.byKey(const ValueKey('settings-ss-rules-empty')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-ss-rule-add')), findsOneWidget);
+  });
+
+  testWidgets('Toevoegen offers exactly the two legacy rule types (#202)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-add')));
+    await tester.pumpAndSettle();
+
+    // The Dutch labels the legacy ImportRuleSelectDialog offered.
+    expect(find.text('Negeer groep'), findsOneWidget);
+    expect(find.text('Negeer subgroepen'), findsOneWidget);
+  });
+
+  testWidgets(
+      'authoring both rule types round-trips through the existing codec (#202)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    await _addSmartschoolRule(tester, 'discardGroup', 'Organisatie');
+    await _addSmartschoolRule(tester, 'noSubgroups', 'Klassen');
+
+    // Both render in the list before the save.
+    expect(find.textContaining('Smartschool-groep negeren: Organisatie'),
+        findsOneWidget);
+    expect(find.textContaining('Geen subgroepen: Klassen'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-ss-rules-empty')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.smartschoolRules, hasLength(2));
+    expect(
+      (saved.smartschoolRules[0] as DiscardSmartschoolGroup).groupName,
+      'Organisatie',
+    );
+    expect(
+      (saved.smartschoolRules[1] as NoSmartschoolSubgroups).groupName,
+      'Klassen',
+    );
+    // …on the wire shape the codec already defined — no new tags (#202).
+    expect(saved.toJson()['smartschoolRules'], <Map<String, dynamic>>[
+      {'type': 'discardSmartschoolGroup', 'groupName': 'Organisatie'},
+      {'type': 'noSmartschoolSubgroups', 'groupName': 'Klassen'},
+    ]);
+  });
+
+  testWidgets('editing a rule rewrites its group name, keeping its type (#202)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness(
+      initial: AppSettings(
+        smartschoolRules: <SmartschoolImportRule>[
+          const DiscardSmartschoolGroup('Oude naam'),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    expect(find.textContaining('Smartschool-groep negeren: Oude naam'),
+        findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-0-edit')));
+    await tester.pumpAndSettle();
+    // The prompt opens on the current name, so fixing a typo is a correction
+    // rather than a re-entry.
+    expect(find.text('Oude naam'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-ss-rule-name')),
+      'Nieuwe naam',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-confirm')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    final rule = saved.smartschoolRules.single;
+    expect(rule, isA<DiscardSmartschoolGroup>());
+    expect((rule as DiscardSmartschoolGroup).groupName, 'Nieuwe naam');
+  });
+
+  testWidgets('removing a rule drops it from the saved document (#202)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness(
+      initial: AppSettings(
+        smartschoolRules: <SmartschoolImportRule>[
+          const DiscardSmartschoolGroup('Organisatie'),
+          const NoSmartschoolSubgroups('Klassen'),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-1-remove')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Geen subgroepen: Klassen'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.smartschoolRules, hasLength(1));
+    expect(
+      (saved.smartschoolRules.single as DiscardSmartschoolGroup).groupName,
+      'Organisatie',
+    );
+  });
+
+  testWidgets('a rule cannot be saved without a group name (#202)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-add')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('settings-ss-rule-add-discardGroup')));
+    await tester.pumpAndSettle();
+
+    FilledButton confirm() => tester.widget<FilledButton>(
+          find.byKey(const ValueKey('settings-ss-rule-confirm')),
+        );
+    // Empty, then blank-only: a rule with no group name matches nothing, so it
+    // is refused rather than silently doing no work.
+    expect(confirm().onPressed, isNull);
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-ss-rule-name')),
+      '   ',
+    );
+    await tester.pump();
+    expect(confirm().onPressed, isNull);
+
+    // A real name arms it; cancelling still leaves the list untouched.
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-ss-rule-name')),
+      'Organisatie',
+    );
+    await tester.pump();
+    expect(confirm().onPressed, isNotNull);
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-cancel')));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('settings-ss-rules-empty')), findsOneWidget);
+  });
+
+  testWidgets('the WISA rule list stays read-only (#202)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness(
+      initial: AppSettings(
+        wisaRules: <WisaImportRule>[const DontImportClass('OKAN')],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    expect(find.text('Importregels (alleen-lezen)'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-ss-rule-add')), findsNothing);
   });
 }

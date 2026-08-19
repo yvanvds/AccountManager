@@ -26,8 +26,12 @@ import '../settings/settings_bootstrap.dart';
 ///   store into the form, so a settings change another operator made (or the
 ///   operator's own save) can be pulled back without relaunching.
 ///
-/// Import rules are shown read-only for now (accumulated by `DontImportFromWisa`
-/// applies during reconcile); editing them is a later slice.
+/// The **Smartschool** import rules are authored here (#202): add / edit /
+/// remove the two rules the legacy app offers (`DiscardSmartschoolGroup`,
+/// `NoSmartschoolSubgroups`), persisted through the existing rule codec and
+/// applied by the connector on the next Smartschool pull. The **WISA** rules
+/// stay read-only (they are accumulated by `DontImportFromWisa` applies during
+/// reconcile); editing those is a later slice.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.bootstrap});
 
@@ -78,6 +82,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     SmartschoolConnection.yearCount,
     (_) => TextEditingController(),
   );
+
+  // The Smartschool import rules (#202): a mutable working copy the rule editor
+  // edits in place and `_collect` commits on save, mirroring how the WISA school
+  // list below is handled. Empty means the whole Smartschool group tree is
+  // imported — which is what every install did while nothing could author one.
+  List<SmartschoolImportRule> _ssRules = const <SmartschoolImportRule>[];
 
   // Azure profile.
   final _azClientId = TextEditingController();
@@ -201,6 +211,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _years[i].text =
           i < s.smartschool.years.length ? s.smartschool.years[i] : '';
     }
+    _ssRules = List<SmartschoolImportRule>.of(s.smartschoolRules);
 
     _azClientId.text = s.azure.clientId;
     _azTenantId.text = s.azure.tenantId;
@@ -214,6 +225,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _toggleSchoolOurs(int index, bool ours) {
     toggle(
         () => _wisaSchools[index] = _wisaSchools[index].copyWith(ours: ours));
+  }
+
+  /// Flips the `virtual` flag on the profile at [index] (#203). Independent of
+  /// `ours`: a virtual school is pulled with the separate virtual work date,
+  /// whether or not we manage it.
+  void _toggleSchoolVirtual(int index, bool virtual) {
+    toggle(() =>
+        _wisaSchools[index] = _wisaSchools[index].copyWith(virtual: virtual));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Smartschool import rules (#202)
+  // ---------------------------------------------------------------------------
+
+  /// Prompts for a group name and appends a new rule of [kind]. Cancelling the
+  /// prompt leaves the list untouched.
+  Future<void> _addSmartschoolRule(_SmartschoolRuleKind kind) async {
+    final name = await _promptRuleGroupName(kind: kind);
+    if (name == null || !mounted) return;
+    toggle(() => _ssRules = <SmartschoolImportRule>[..._ssRules, kind(name)]);
+  }
+
+  /// Re-prompts for the group name of the rule at [index], keeping its kind.
+  Future<void> _editSmartschoolRule(int index) async {
+    final rule = _ssRules[index];
+    final kind = _SmartschoolRuleKind.of(rule);
+    final name = await _promptRuleGroupName(
+      kind: kind,
+      initial: _smartschoolRuleGroupName(rule),
+    );
+    if (name == null || !mounted) return;
+    toggle(() {
+      _ssRules = List<SmartschoolImportRule>.of(_ssRules)..[index] = kind(name);
+    });
+  }
+
+  /// Drops the rule at [index] from the working list.
+  void _removeSmartschoolRule(int index) {
+    toggle(() {
+      _ssRules = List<SmartschoolImportRule>.of(_ssRules)..removeAt(index);
+    });
+  }
+
+  /// Asks for the Smartschool group name a rule applies to. Returns the trimmed
+  /// name, or `null` when the operator cancels.
+  ///
+  /// Free text rather than a picker on purpose: this view's seams are the
+  /// settings store, the vault and the WISA school fetcher — there is no
+  /// Smartschool snapshot here to pick from — and a rule has to be authorable
+  /// *before* the first pull, which is exactly the state a fresh install is in.
+  /// It also matches the legacy dialog.
+  Future<String?> _promptRuleGroupName({
+    required _SmartschoolRuleKind kind,
+    String initial = '',
+  }) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _RuleGroupNameDialog(kind: kind, initial: initial),
+    );
   }
 
   /// Whether the persisted WISA connection is complete enough to fetch the
@@ -236,10 +306,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Refreshes the known-WISA-school list from the API (#171). "Scholen ophalen"
   /// is a *refresh* now, not the primary way to build the list: it merges the
   /// fetched id+name records into [_wisaSchools], updating each name, adding any
-  /// genuinely new school (unmanaged by default), and preserving the `ours` mark
-  /// on schools already known. Prefers a freshly typed password; otherwise
-  /// resolves the stored secret. Failures surface as a toast. The merged list is
-  /// dirty until saved, so the enriched names persist and no re-fetch is needed.
+  /// genuinely new school (unmanaged by default), and preserving the `ours` and
+  /// `virtual` marks on schools already known. Prefers a freshly typed password;
+  /// otherwise resolves the stored secret. Failures surface as a toast. The
+  /// merged list is dirty until saved, so the enriched names persist and no
+  /// re-fetch is needed.
   Future<void> _fetchWisaSchools() async {
     final services = _services;
     final fetcher = services?.fetchWisaSchools;
@@ -270,10 +341,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// Merges the [fetched] WISA schools (id + code + name) into the current known
-  /// list: keeps every already-known school (preserving its `ours`/`prefix`,
-  /// refreshing its code and name when the fetch supplies them) and appends any
-  /// fetched school not yet known as unmanaged. Order is stable by school id so
-  /// the grid does not jump.
+  /// list: keeps every already-known school (preserving its
+  /// `ours`/`virtual`/`prefix` marks, refreshing its code and name when the
+  /// fetch supplies them) and appends any fetched school not yet known as
+  /// neither managed nor virtual. Order is stable by school id so the grid does
+  /// not jump.
   ///
   /// The short code (`ismaa`, `ismab`, …) rides on `WisaSchool.description`, not
   /// `.name` — `SMAGetInst`'s CSV is `ID,NAME,DESCRIPTION` and the connector
@@ -297,7 +369,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// Assembles an [AppSettings] from the form, preserving the loaded document's
-  /// secret refs and (read-only) import rules.
+  /// secret refs and its (read-only) WISA import rules.
   AppSettings _collect(AppSettings base) {
     return base.copyWith(
       schoolPrefix: _schoolPrefix.text.trim(),
@@ -328,6 +400,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         tenantId: _azTenantId.text.trim(),
         domain: _azDomain.text.trim(),
       ),
+      smartschoolRules: List<SmartschoolImportRule>.of(_ssRules),
       wisaSchools: List<WisaSchoolProfile>.of(_wisaSchools),
     );
   }
@@ -648,7 +721,7 @@ class _SettingsForm extends StatelessWidget {
   }
 
   /// Smartschool connector config: connection, credentials, grade/year
-  /// vocabulary, and the Smartschool import rules (read-only).
+  /// vocabulary, and the Smartschool import-rule editor (#202).
   Widget _smartschoolTab() {
     return _tab('settings-tab-smartschool-body', <Widget>[
       _Section(
@@ -708,12 +781,9 @@ class _SettingsForm extends StatelessWidget {
         ],
       ),
       _Section(
-        title: 'Importregels (alleen-lezen)',
+        title: 'Importregels',
         children: <Widget>[
-          _RulesList(
-            emptyKey: const ValueKey('settings-ss-rules-empty'),
-            smartschoolRules: settings.smartschoolRules,
-          ),
+          _SmartschoolRulesEditor(state: state),
         ],
       ),
     ]);
@@ -907,14 +977,12 @@ class _RulesList extends StatelessWidget {
   const _RulesList({
     required this.emptyKey,
     this.wisaRules = const <WisaImportRule>[],
-    this.smartschoolRules = const <SmartschoolImportRule>[],
   });
 
   /// Key stamped on the "no rules yet" placeholder, so each connector tab's
   /// empty state is addressable on its own.
   final Key emptyKey;
   final List<WisaImportRule> wisaRules;
-  final List<SmartschoolImportRule> smartschoolRules;
 
   static String _describeWisa(WisaImportRule rule) => switch (rule) {
         DontImportClass(:final className) =>
@@ -927,19 +995,11 @@ class _RulesList extends StatelessWidget {
         MarkAsOurs(:final schoolCode) => 'Markeer als beheerd: $schoolCode',
       };
 
-  static String _describeSmartschool(SmartschoolImportRule rule) =>
-      switch (rule) {
-        DiscardSmartschoolGroup(:final groupName) =>
-          'Smartschool-groep negeren: $groupName',
-        NoSmartschoolSubgroups(:final groupName) =>
-          'Geen subgroepen: $groupName',
-      };
-
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
-    if (wisaRules.isEmpty && smartschoolRules.isEmpty) {
+    if (wisaRules.isEmpty) {
       return Text(
         'Nog geen importregels verzameld.',
         key: emptyKey,
@@ -954,11 +1014,230 @@ class _RulesList extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
             child: Text('• ${_describeWisa(r)}', style: text.bodyMedium),
           ),
-        for (final r in smartschoolRules)
-          Padding(
-            padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
-            child: Text('• ${_describeSmartschool(r)}', style: text.bodyMedium),
+      ],
+    );
+  }
+}
+
+/// How one Smartschool import rule reads in the settings list.
+String _describeSmartschoolRule(SmartschoolImportRule rule) => switch (rule) {
+      DiscardSmartschoolGroup(:final groupName) =>
+        'Smartschool-groep negeren: $groupName',
+      NoSmartschoolSubgroups(:final groupName) => 'Geen subgroepen: $groupName',
+    };
+
+/// The Smartschool group name a rule applies to. The sealed base type carries
+/// no shared field, so a switch over the two cases is where they meet.
+String _smartschoolRuleGroupName(SmartschoolImportRule rule) => switch (rule) {
+      DiscardSmartschoolGroup(:final groupName) => groupName,
+      NoSmartschoolSubgroups(:final groupName) => groupName,
+    };
+
+/// The two Smartschool import rules an operator can author (#202), carrying the
+/// Dutch labels the legacy `ImportRuleSelectDialog` offered. Calling a kind
+/// builds its rule for a group name — which is all that separates them.
+enum _SmartschoolRuleKind {
+  discardGroup(
+    'Negeer groep',
+    'De groep en alles eronder wordt niet ingelezen.',
+  ),
+  noSubgroups(
+    'Negeer subgroepen',
+    'De groep wordt ingelezen, maar zonder haar subgroepen.',
+  );
+
+  const _SmartschoolRuleKind(this.label, this.explanation);
+
+  /// The menu / dialog label, matching legacy.
+  final String label;
+
+  /// One line telling the operator what the rule does to the import.
+  final String explanation;
+
+  SmartschoolImportRule call(String groupName) => switch (this) {
+        _SmartschoolRuleKind.discardGroup => DiscardSmartschoolGroup(groupName),
+        _SmartschoolRuleKind.noSubgroups => NoSmartschoolSubgroups(groupName),
+      };
+
+  static _SmartschoolRuleKind of(SmartschoolImportRule rule) => switch (rule) {
+        DiscardSmartschoolGroup() => _SmartschoolRuleKind.discardGroup,
+        NoSmartschoolSubgroups() => _SmartschoolRuleKind.noSubgroups,
+      };
+}
+
+/// Editor for the Smartschool import rules (#202).
+///
+/// The app could already *carry* the two rules, but nothing could *create*
+/// them — so in practice there were none, and the whole Smartschool group tree
+/// (organisational subtrees included) was imported on every pull. This is the
+/// authoring surface: the configured rules, each editable and removable inline,
+/// plus a **Toevoegen** menu offering the two rule types. Edits live in the
+/// screen's working copy and persist with the rest of the document on
+/// **Opslaan**, through the existing `encodeSmartschoolRule` codec.
+class _SmartschoolRulesEditor extends StatelessWidget {
+  const _SmartschoolRulesEditor({required this.state});
+
+  final _SettingsScreenState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final rules = state._ssRules;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Regels snoeien de Smartschool-groepenboom bij het inlezen. Ze '
+          'gelden vanaf de volgende synchronisatie.',
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        if (rules.isEmpty)
+          Text(
+            'Nog geen importregels ingesteld.',
+            key: const ValueKey('settings-ss-rules-empty'),
+            style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+          )
+        else
+          for (var i = 0; i < rules.length; i++)
+            _RuleRow(state: state, index: i, rule: rules[i]),
+        const SizedBox(height: PlinkSpacing.s4),
+        MenuAnchor(
+          menuChildren: <Widget>[
+            for (final kind in _SmartschoolRuleKind.values)
+              MenuItemButton(
+                key: ValueKey('settings-ss-rule-add-${kind.name}'),
+                onPressed: () => state._addSmartschoolRule(kind),
+                child: Text(kind.label),
+              ),
+          ],
+          builder: (_, MenuController menu, __) => OutlinedButton.icon(
+            key: const ValueKey('settings-ss-rule-add'),
+            onPressed: () => menu.isOpen ? menu.close() : menu.open(),
+            icon: const Icon(Icons.add),
+            label: const Text('Toevoegen'),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One configured Smartschool rule: its description plus the edit and remove
+/// affordances. Keyed by position so a widget/integration test can drive a
+/// specific row.
+class _RuleRow extends StatelessWidget {
+  const _RuleRow({
+    required this.state,
+    required this.index,
+    required this.rule,
+  });
+
+  final _SettingsScreenState state;
+  final int index;
+  final SmartschoolImportRule rule;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              _describeSmartschoolRule(rule),
+              key: ValueKey('settings-ss-rule-$index'),
+              style: text.bodyMedium,
+            ),
+          ),
+          IconButton(
+            key: ValueKey('settings-ss-rule-$index-edit'),
+            tooltip: 'Bewerken',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () => state._editSmartschoolRule(index),
+          ),
+          IconButton(
+            key: ValueKey('settings-ss-rule-$index-remove'),
+            tooltip: 'Verwijderen',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => state._removeSmartschoolRule(index),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Prompts for the Smartschool group name a rule applies to, popping the
+/// trimmed name (or nothing when cancelled). A blank name is refused: a rule
+/// without a group matches nothing and would silently do no work.
+class _RuleGroupNameDialog extends StatefulWidget {
+  const _RuleGroupNameDialog({required this.kind, required this.initial});
+
+  final _SmartschoolRuleKind kind;
+  final String initial;
+
+  @override
+  State<_RuleGroupNameDialog> createState() => _RuleGroupNameDialogState();
+}
+
+class _RuleGroupNameDialogState extends State<_RuleGroupNameDialog> {
+  late final TextEditingController _name =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = _name.text.trim();
+    if (value.isEmpty) return;
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return AlertDialog(
+      key: const ValueKey('settings-ss-rule-dialog'),
+      title: Text(widget.kind.label),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(widget.kind.explanation, style: text.bodyMedium),
+          const SizedBox(height: PlinkSpacing.s3),
+          TextField(
+            key: const ValueKey('settings-ss-rule-name'),
+            controller: _name,
+            autofocus: true,
+            onSubmitted: (_) => _submit(),
+            decoration: const InputDecoration(
+              labelText: 'Groepsnaam',
+              hintText: 'Naam zoals ze in Smartschool staat',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          key: const ValueKey('settings-ss-rule-cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuleren'),
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _name,
+          builder: (_, TextEditingValue value, __) => FilledButton(
+            key: const ValueKey('settings-ss-rule-confirm'),
+            onPressed: value.text.trim().isEmpty ? null : _submit,
+            child: const Text('Bewaren'),
+          ),
+        ),
       ],
     );
   }
@@ -989,11 +1268,13 @@ class _WisaSchoolsEditor extends StatelessWidget {
       children: <Widget>[
         // The known-school list is the primary surface; the fetch is a refresh
         // (#171): mark which schools we manage inline, and only re-fetch when a
-        // genuinely new school appears.
+        // genuinely new school appears. The virtual mark (#203) rides along in
+        // the same cell — it decides which work date the school is pulled with.
         Text(
-          'De bekende WISA-scholen. Markeer welke we beheren. Gebruik '
-          '"Scholen ophalen" om de lijst te vernieuwen als er een nieuwe '
-          'school bijkomt.',
+          'De bekende WISA-scholen. Markeer welke we beheren. Vink '
+          '"virtueel" aan voor scholen die met de virtuele werkdatum '
+          'opgehaald moeten worden. Gebruik "Scholen ophalen" om de lijst te '
+          'vernieuwen als er een nieuwe school bijkomt.',
           style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
         ),
         const SizedBox(height: PlinkSpacing.s3),
@@ -1043,7 +1324,7 @@ class _WisaSchoolsEditor extends StatelessWidget {
 
   /// Lays the known schools out as rows of [_columns] cells, padding the final
   /// row with empty slots so the grid columns stay aligned. Each cell toggles
-  /// its school's managed (`ours`) flag inline.
+  /// its school's managed (`ours`) and virtual flags inline.
   List<Widget> _schoolRows(List<WisaSchoolProfile> schools) {
     final rows = <Widget>[];
     for (var start = 0; start < schools.length; start += _columns) {
@@ -1067,8 +1348,15 @@ class _WisaSchoolsEditor extends StatelessWidget {
 
 /// A single cell in the known-WISA-school grid (#171): the school's WISA code
 /// (`ismaa`, `ismab`, …) — the identifier operators actually use — with the long
-/// name beneath it, plus an inline checkbox marking whether we manage it. Keyed
-/// by school id so a test can flip a specific school's managed flag.
+/// name beneath it, plus an inline checkbox marking whether we manage it and a
+/// second, quieter one marking it *virtual* (#203). Both are keyed by school id
+/// so a test can flip a specific school's flag.
+///
+/// The two marks are deliberately unequal in weight. `ours` scopes the linker;
+/// `virtual` changes **which work date the school is pulled with**, so a school
+/// wrongly marked virtual comes back against the wrong date and can read as a
+/// mass leave. It therefore sits on its own indented, small-type line rather
+/// than as a second equal-looking checkbox.
 ///
 /// The numeric id is strictly a fallback and never appears twice (#194): the
 /// title degrades code → name → `School <id>`, and the subtitle shows whichever
@@ -1087,30 +1375,57 @@ class _SchoolCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
     final String code = profile.code;
     final String name = profile.name;
-    final String title = code.isNotEmpty
-        ? code
-        : (name.isNotEmpty ? name : 'School ${profile.schoolId}');
+    // The lead label comes from the shared school-label helper the Actions
+    // drill-down also names schools with, so the two views can never disagree
+    // about which half of the pair is the code (#204).
+    final String title = profile.codeLabel;
     final String? subtitle = code.isNotEmpty && name.isNotEmpty
         ? name
         : (code.isEmpty && name.isEmpty ? null : 'id: ${profile.schoolId}');
 
-    return CheckboxListTile(
-      key: ValueKey('settings-wisa-school-${profile.schoolId}-ours'),
-      contentPadding: EdgeInsets.zero,
-      controlAffinity: ListTileControlAffinity.leading,
-      dense: true,
-      title: Text(
-        title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: subtitle == null
-          ? null
-          : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      value: profile.ours,
-      onChanged: (v) => state._toggleSchoolOurs(index, v ?? false),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        CheckboxListTile(
+          key: ValueKey('settings-wisa-school-${profile.schoolId}-ours'),
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          dense: true,
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: subtitle == null
+              ? null
+              : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+          value: profile.ours,
+          onChanged: (v) => state._toggleSchoolOurs(index, v ?? false),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: PlinkSpacing.s3),
+          child: CheckboxListTile(
+            key: ValueKey('settings-wisa-school-${profile.schoolId}-virtual'),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            title: Text(
+              'virtueel',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+            ),
+            value: profile.virtual,
+            onChanged: (v) => state._toggleSchoolVirtual(index, v ?? false),
+          ),
+        ),
+      ],
     );
   }
 }

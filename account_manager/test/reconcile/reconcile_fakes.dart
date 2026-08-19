@@ -143,6 +143,26 @@ wapi.WisaStudent wisaStudent({
 wapi.WisaSchool wisaSchool(int id, {bool ours = false}) =>
     wapi.WisaSchool(id: id, name: 'School $id', description: '', isOurs: ours);
 
+/// A WISA class group. [name] is the `fullName` the linker matches on;
+/// [schoolId] decides whether the class belongs to a school we manage — a
+/// sibling school's class must never reach the action engine (#205).
+wapi.WisaClassGroup wisaClassGroup(
+  String name, {
+  String groupName = '00',
+  String description = '',
+  String adminCode = '',
+  String schoolCode = '123',
+  int schoolId = 1,
+}) =>
+    wapi.WisaClassGroup(
+      name: name,
+      groupName: groupName,
+      description: description,
+      adminCode: adminCode,
+      schoolCode: schoolCode,
+      schoolId: schoolId,
+    );
+
 /// A WISA staff record — the personeel counterpart of [wisaStudent]. A staff
 /// member present only in WISA (no Smartschool / Azure counterpart) links as a
 /// [core.LinkedStaff] and materializes into the synthetic "Personeel" school
@@ -227,12 +247,13 @@ wapi.WisaSnapshot wisaSnap({
   List<wapi.WisaStudent>? students,
   List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaSchool> schools = const [],
+  List<wapi.WisaClassGroup> classGroups = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
       students: students ?? [wisaStudent()],
       staff: staff,
-      classGroups: const [],
+      classGroups: classGroups,
       schools: schools,
     );
 
@@ -418,6 +439,80 @@ ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
       ),
       azure: azSnap(users: [azUser()]),
       ourSchoolIds: ourSchoolIds,
+    );
+
+/// A harness for the managed-school class-group scope (#205). WISA hands the
+/// session class groups from two schools, and the sibling school's arrive
+/// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),
+/// then our own `1A` of school 1. Each class holds a student, so before the fix
+/// every one of them raised `AddToSmartschool` — a proposal to create another
+/// school's class in *our* Smartschool — and the sibling `1A` even shadowed
+/// ours, so the proposal described the wrong school's class. Only school 1 is
+/// managed, from the persisted Settings set.
+ReconcileHarness foreignClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '9Z', schoolId: 2),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+        classGroups: [
+          wisaClassGroup(
+            '1A',
+            description: 'Klas van een andere school',
+            schoolCode: '222',
+            schoolId: 2,
+          ),
+          wisaClassGroup(
+            '9Z',
+            description: 'Ook van een andere school',
+            schoolCode: '222',
+            schoolId: 2,
+          ),
+          wisaClassGroup(
+            '1A',
+            description: 'Onze eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the school-label drill-down (#204). One student enrolled in
+/// school 25 and fully present in *our* Smartschool + Azure, in a session whose
+/// WISA snapshot carries **no** schools at all — the cold-snapshot case that
+/// made every school node degrade to `School 25`. The school's identity comes
+/// solely from the operator's persisted Settings profile (short code + long
+/// name), so the Actions drill-down must still name it exactly as the Settings
+/// grid does.
+ReconcileHarness namedSchoolHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 25)],
+        schools: const [],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: const {25},
+      schoolProfiles: const [
+        WisaSchoolProfile(
+          schoolId: 25,
+          code: 'ISMAA',
+          name: 'Instituut Sancta Maria-A',
+          ours: true,
+        ),
+      ],
     );
 
 // ---------------------------------------------------------------------------
@@ -830,6 +925,7 @@ class ReconcileHarness {
     this.azureGate,
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
+    List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
@@ -947,6 +1043,9 @@ class ReconcileHarness {
       log: log,
       store: controllerStore ?? this.linkedStore,
       syncedBy: syncedBy,
+      // The operator's curated WISA schools from Settings, which name every
+      // school in the Actions drill-down (#204).
+      schoolProfiles: schoolProfiles,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),

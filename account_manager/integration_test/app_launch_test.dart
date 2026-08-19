@@ -37,6 +37,8 @@ import 'package:account_state/account_state.dart'
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
+import 'package:smartschool_api/smartschool_api.dart'
+    show SmartschoolConnector, SmartschoolMethod, SmartschoolSoapTransport;
 import 'package:wisa_api/wisa_api.dart' show WisaSchool;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
@@ -82,6 +84,29 @@ void main() {
   /// across Algemeen / Wisa / Smartschool / Azure tabs).
   Future<void> openSettingsTab(WidgetTester tester, String tabKey) async {
     await tester.tap(find.byKey(ValueKey(tabKey)));
+    await tester.pumpAndSettle();
+  }
+
+  /// Authors one Smartschool import rule the way the operator does (#202): the
+  /// **Toevoegen** menu, the rule type keyed [kind], then the group-name prompt.
+  Future<void> addSmartschoolRule(
+    WidgetTester tester,
+    String kind,
+    String groupName,
+  ) async {
+    final add = find.byKey(const ValueKey('settings-ss-rule-add'));
+    await tester.ensureVisible(add);
+    await tester.pumpAndSettle();
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('settings-ss-rule-add-$kind')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-ss-rule-name')),
+      groupName,
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('settings-ss-rule-confirm')));
     await tester.pumpAndSettle();
   }
 
@@ -929,6 +954,87 @@ void main() {
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     expect(find.text('3C'), findsWidgets);
+  });
+
+  testWidgets(
+      'the Actions drill-down names a school by name and code end-to-end, '
+      'never "School <id>" (#204)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. This session's WISA snapshot
+    // carries no schools at all, so the school's identity can only come from
+    // the operator's persisted Settings profile — exactly the case that used to
+    // bake `School 25` into every materialized node. The drill-down must name
+    // the school the way Instellingen → WISA does.
+    useTallWindow(tester);
+    final harness = namedSchoolHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('School 25'), findsNothing,
+        reason: 'the numeric id is the last resort, not the rendering (#204)');
+    final node = find.text('Instituut Sancta Maria-A (ISMAA)');
+    expect(node, findsOneWidget);
+
+    // It is the real school node, not a stray label: it drills down to the
+    // student's class.
+    await tester.tap(node);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(find.text('3C'), findsWidgets);
+  });
+
+  testWidgets(
+      'the Klasgroepen drill-down proposes only classes of the schools we '
+      'manage end-to-end, never a sibling school\'s (#205)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. WISA hands this session class
+    // groups from two schools — the sibling school's `1A` and `9Z` first, our
+    // own `1A` last — and only school 1 is managed. Every one of them used to
+    // be offered as "Voeg deze klas toe aan Smartschool", and the sibling `1A`
+    // even shadowed ours, so the proposal described the wrong school's class.
+    useTallWindow(tester);
+    final harness = foreignClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Our own populated class is the only proposal on the list…
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.text('1A'), findsOneWidget);
+    expect(find.text('Voeg deze klas toe aan Smartschool'), findsOneWidget);
+    // …and no class of the school we do not manage is anywhere near it.
+    expect(find.text('9Z'), findsNothing,
+        reason: 'creating another school\'s class is never ours to propose');
+
+    // The surviving proposal describes *our* 1A, not the sibling class that
+    // shares its name.
+    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Onze eerste klas'), findsOneWidget);
+    expect(find.textContaining('Klas van een andere school'), findsNothing);
   });
 
   testWidgets(
@@ -1922,6 +2028,71 @@ void main() {
   });
 
   testWidgets(
+      'the Settings view marks a WISA school virtual end-to-end, and the mark '
+      'survives a "Scholen ophalen" refresh (#203)',
+      (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams. One school is
+    // known (managed, code-less) and a refresh is wired, so the whole operator
+    // flow runs: mark virtual → refresh the list → save.
+    useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ismav'),
+    ]);
+    final settings = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [WisaSchoolProfile(schoolId: 99, ours: true)],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+
+    // The school renders with its own virtual toggle, off, next to the managed
+    // one — in the real, laid-out three-column grid with the real fonts.
+    final virtualBox =
+        find.byKey(const ValueKey('settings-wisa-school-99-virtual'));
+    await tester.ensureVisible(virtualBox);
+    await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(virtualBox).value, isFalse);
+
+    // Mark it virtual, then refresh the school list: the mark must survive the
+    // merge that backfills the code.
+    await tester.tap(virtualBox);
+    await tester.pumpAndSettle();
+    final refresh = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    await tester.ensureVisible(refresh);
+    await tester.tap(refresh);
+    await tester.pumpAndSettle();
+    expect(find.text('ismav'), findsOneWidget);
+    expect(tester.widget<CheckboxListTile>(virtualBox).value, isTrue);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // The virtual mark landed in the settings document, alongside (not instead
+    // of) the managed mark — this is what the sync reads to pick the virtual
+    // work date for this school.
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.schoolId, 99);
+    expect(saved.wisaSchools.single.virtual, isTrue);
+    expect(saved.wisaSchools.single.ours, isTrue);
+    expect(saved.virtualWisaSchoolIds, {99});
+  });
+
+  testWidgets(
       'the Settings view fetches the WISA school list and persists the picked '
       'selection end-to-end, no id typed by hand (#142)',
       (WidgetTester tester) async {
@@ -2423,6 +2594,73 @@ void main() {
     expect(copied.single, onScreen[1]);
     expect(copied.single, isNot(contains('\n')));
   });
+
+  testWidgets(
+      'the Settings view authors the two Smartschool import rules end-to-end, '
+      "and the saved rules prune the next pull's group tree (#202)",
+      (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams — real fonts,
+    // real navigation, real layout. Until now the Smartschool tab rendered its
+    // rules under a section literally headed "Importregels (alleen-lezen)" with
+    // no way to create one, so in practice there were no rules at all and the
+    // whole group tree — organisational subtrees included — came in on every
+    // pull. Drive the editor the way the operator does, then hand the *saved*
+    // rules to the production connector exactly as bootstrapReconcile does
+    // (`ssConnector.sync(rules: settings.smartschoolRules)`).
+    useTallWindow(tester);
+    final settings = SettingsHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+
+    // The section is an editor now, not a read-only list.
+    expect(find.text('Importregels'), findsOneWidget);
+    expect(find.textContaining('alleen-lezen'), findsNothing);
+    expect(
+        find.byKey(const ValueKey('settings-ss-rules-empty')), findsOneWidget);
+
+    // Author one rule of each type, then save the document.
+    await addSmartschoolRule(tester, 'discardGroup', 'Organisatie');
+    await addSmartschoolRule(tester, 'noSubgroups', 'Klassen');
+    expect(find.textContaining('Smartschool-groep negeren: Organisatie'),
+        findsOneWidget);
+    expect(find.textContaining('Geen subgroepen: Klassen'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // They landed in the settings document on the codec's existing wire shape.
+    final saved = await settings.store.load();
+    expect(saved.toJson()['smartschoolRules'], <Map<String, dynamic>>[
+      {'type': 'discardSmartschoolGroup', 'groupName': 'Organisatie'},
+      {'type': 'noSmartschoolSubgroups', 'groupName': 'Klassen'},
+    ]);
+
+    // …and the next pull really is pruned by them: the production connector,
+    // over a scripted SOAP wire, handed nothing but what Settings persisted.
+    final wire = _GroupTreeSoap();
+    final snapshot = await SmartschoolConnector.fromParts(
+      site: 'school',
+      accessCode: 'ac',
+      transport: wire,
+    ).sync(rules: saved.smartschoolRules);
+
+    // "Organisatie" and its subtree are gone; "Klassen" survives without its
+    // children. Only the root and Klassen remain.
+    expect(snapshot.groups.map((g) => g.id.value).toList(),
+        <String>['SCH', 'KLA']);
+    // And the pruning happened before the account reads, so the connector never
+    // even asked Smartschool about the removed groups.
+    expect(wire.accountCodes, <String>['SCH', 'KLA']);
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.
@@ -2507,4 +2745,62 @@ class _FakeSignalRSocket implements SignalRSocket {
   void serverSend(String frame) {
     if (!_incoming.isClosed) _incoming.add(frame);
   }
+}
+
+/// A scripted Smartschool SOAP wire for the import-rule end-to-end (#202):
+/// answers `getAllGroupsAndClasses` with a small base64 group tree and reports
+/// "no direct accounts" (code 19) for every group, recording the group codes the
+/// connector asked about so the test can see the pruned ones were never read.
+class _GroupTreeSoap implements SmartschoolSoapTransport {
+  /// The group codes `getAllAccountsExtended` was called for, in walk order.
+  final List<String> accountCodes = <String>[];
+
+  static const String _tree = '<groups>'
+      '<group><name>School</name><type>G</type><code>SCH</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Organisatie</name><type>G</type><code>ORG</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Verborgen</name><type>G</type><code>HID</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '<group><name>Klassen</name><type>G</type><code>KLA</code>'
+      '<visible>1</visible><children>'
+      '<group><name>1A</name><type>K</type><code>C1A</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '</children></group></groups>';
+
+  @override
+  Future<String> send({
+    required Uri endpoint,
+    required String soapAction,
+    required String envelope,
+  }) async {
+    // The SOAPAction is `<namespace>#<method>`.
+    final String method = soapAction.split('#').last;
+    if (method == SmartschoolMethod.getAllGroupsAndClasses) {
+      return _wrap(
+        method,
+        base64.encode(utf8.encode(_tree)),
+        'xsd:base64Binary',
+      );
+    }
+    if (method == SmartschoolMethod.getAllAccountsExtended) {
+      accountCodes.add(
+        RegExp(r'<code[^>]*>([^<]*)</code>').firstMatch(envelope)?.group(1) ??
+            '',
+      );
+      return _wrap(method, '19', 'xsd:int'); // Smartschool: no direct accounts.
+    }
+    return _wrap(method, '0', 'xsd:int');
+  }
+
+  String _wrap(String method, String value, String type) =>
+      '<?xml version="1.0" encoding="utf-8"?>'
+      '<soap:Envelope '
+      'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" '
+      'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+      '<soap:Body><${method}Response>'
+      '<return xsi:type="$type">$value</return>'
+      '</${method}Response></soap:Body></soap:Envelope>';
 }

@@ -9,16 +9,17 @@
 /// operator-editable ownership record keyed by school *id* that survives in the
 /// settings blob.
 ///
-/// The shape (`{ schoolId, code, name, ours, prefix }`) is the per-WISA-school
-/// ownership link #112/#113 called for, so the settings document is not reshaped
-/// twice. This slice only carries the data — no action reads it yet (#134 is
-/// slice 2).
+/// The shape (`{ schoolId, code, name, ours, virtual, prefix }`) is the
+/// per-WISA-school ownership link #112/#113 called for, so the settings document
+/// is not reshaped twice. This slice only carries the data — no action reads it
+/// yet (#134 is slice 2).
 class WisaSchoolProfile {
   const WisaSchoolProfile({
     required this.schoolId,
     this.code = '',
     this.name = '',
     this.ours = false,
+    this.virtual = false,
     this.prefix = '',
   });
 
@@ -44,6 +45,14 @@ class WisaSchoolProfile {
   /// is `false` (group-visible siblings) has left *our* schools.
   final bool ours;
 
+  /// Whether this school is a *virtual* school, i.e. one WISA must be queried
+  /// with [AppSettings.wisa]'s separate virtual workdate instead of the ordinary
+  /// one (#203). The persistent, id-keyed counterpart of the snapshot-time
+  /// `MarkAsVirtual` import rule, exactly as [ours] is for `MarkAsOurs`.
+  /// Defaults to `false`, so a settings document written before this field
+  /// existed loads with every school non-virtual.
+  final bool virtual;
+
   /// Per-school Azure-orphan scoping prefix. Empty means "inherit the global
   /// [AppSettings.schoolPrefix]" — a per-school override to grow into (#113),
   /// not yet consulted by the linker.
@@ -54,6 +63,7 @@ class WisaSchoolProfile {
     String? code,
     String? name,
     bool? ours,
+    bool? virtual,
     String? prefix,
   }) =>
       WisaSchoolProfile(
@@ -61,6 +71,7 @@ class WisaSchoolProfile {
         code: code ?? this.code,
         name: name ?? this.name,
         ours: ours ?? this.ours,
+        virtual: virtual ?? this.virtual,
         prefix: prefix ?? this.prefix,
       );
 
@@ -69,6 +80,7 @@ class WisaSchoolProfile {
         'code': code,
         'name': name,
         'ours': ours,
+        'virtual': virtual,
         'prefix': prefix,
       };
 
@@ -78,6 +90,7 @@ class WisaSchoolProfile {
         code: (json['code'] as String?) ?? '',
         name: (json['name'] as String?) ?? '',
         ours: (json['ours'] as bool?) ?? false,
+        virtual: (json['virtual'] as bool?) ?? false,
         prefix: (json['prefix'] as String?) ?? '',
       );
 
@@ -89,13 +102,14 @@ class WisaSchoolProfile {
           code == other.code &&
           name == other.name &&
           ours == other.ours &&
+          virtual == other.virtual &&
           prefix == other.prefix;
 
   @override
-  int get hashCode => Object.hash(schoolId, code, name, ours, prefix);
+  int get hashCode => Object.hash(schoolId, code, name, ours, virtual, prefix);
 
   @override
   String toString() =>
       'WisaSchoolProfile(schoolId: $schoolId, code: $code, name: $name, '
-      'ours: $ours, prefix: $prefix)';
+      'ours: $ours, virtual: $virtual, prefix: $prefix)';
 }

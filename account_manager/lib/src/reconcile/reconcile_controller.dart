@@ -273,6 +273,7 @@ class ReconcileController extends ChangeNotifier {
     required this.log,
     required this.store,
     this.syncedBy = '',
+    this.schoolProfiles = const <WisaSchoolProfile>[],
     this.publisher,
     this.subscriber,
     this.persistTimeout = const Duration(minutes: 10),
@@ -298,6 +299,15 @@ class ReconcileController extends ChangeNotifier {
 
   /// The operator (UPN) whose session writes the materialized view.
   final String syncedBy;
+
+  /// The operator-curated WISA schools from the settings document
+  /// (AppSettings.wisaSchools), each carrying the school's short code and long
+  /// name. They are what [_schoolLabels] names a school with, so the Actions
+  /// drill-down identifies schools exactly as the Settings grid does even in a
+  /// session that has not pulled WISA yet (#204). Empty until an operator has
+  /// filled the WISA-scholen grid in, which is when the label falls back to the
+  /// snapshot and finally to `School <id>`.
+  final List<WisaSchoolProfile> schoolProfiles;
 
   /// Publishes a [ChangeSignal] when this session takes/releases the sync lease
   /// or writes a new view generation, so other operators are nudged in real time
@@ -1443,12 +1453,17 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
-  /// The WISA school-id → name map for the materializer's school labels, from
-  /// the current WISA snapshot's schools list (empty before the first pull).
-  Map<int, String> _schoolLabels() => {
-        for (final s in app.wisa.snapshot?.schools ?? const <wapi.WisaSchool>[])
-          s.id: s.name,
-      };
+  /// The WISA school-id → label map the materializer bakes into its documents.
+  ///
+  /// Built from the persisted [schoolProfiles] merged with the current WISA
+  /// snapshot's schools (empty before the first pull), so a school reads as
+  /// `Instituut Sancta Maria-A (ISMAA)` — the same identity the Settings grid
+  /// shows — instead of degrading to `School <id>` whenever the session's
+  /// snapshot happens to carry no schools (#204).
+  Map<int, String> _schoolLabels() => wisaSchoolLabels(
+        profiles: schoolProfiles,
+        schools: app.wisa.snapshot?.schools ?? const <wapi.WisaSchool>[],
+      );
 
   void _begin(ReconcilePhase phase) {
     _phase = phase;

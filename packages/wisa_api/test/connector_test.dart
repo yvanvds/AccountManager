@@ -200,6 +200,46 @@ void main() {
       expect(werkdates, {'01/09/2025'});
     });
 
+    test(
+        'sends each school its own Werkdatum: the virtual date for virtual '
+        'schools, the ordinary one for the rest (#203)', () async {
+      final t = _FakeTransport(fixtures);
+      final c = buildConnector(t);
+      final schools = await c.loadSchools();
+      // ISMAA is pulled as a virtual school, ISMAB as an ordinary one, in the
+      // same sync — the mixed case the per-school work date exists for.
+      final virtual = schools.firstWhere((s) => s.id == 25);
+      final ordinary = schools.firstWhere((s) => s.id == 27);
+      await c.sync(
+        schools: [virtual.copyWith(isVirtual: true), ordinary],
+        workDate: DateTime(2024, 9, 1),
+        virtualWorkDate: DateTime(2025, 9, 1),
+      );
+
+      String? paramOf(
+        List<({String name, String value})> params,
+        String name,
+      ) {
+        for (final p in params) {
+          if (p.name == name) return p.value;
+        }
+        return null;
+      }
+
+      final bySchool = <String, Set<String>>{};
+      for (final call in t.calls) {
+        final id = paramOf(call.params, 'IS_ID');
+        final wd = paramOf(call.params, 'Werkdatum');
+        if (id == null || wd == null) continue;
+        bySchool.putIfAbsent(id, () => <String>{}).add(wd);
+      }
+      // Every query for the virtual school (classes, students, staff) carried
+      // the virtual date; every query for the ordinary school carried the
+      // ordinary one.
+      expect(bySchool['25'], {'01/09/2025'});
+      expect(bySchool['27'], {'01/09/2024'});
+    });
+
     test('applies ReplaceInstitute to matching class group schoolCodes',
         () async {
       final t = _FakeTransport(fixtures);

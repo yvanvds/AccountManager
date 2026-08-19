@@ -4,6 +4,7 @@ import 'package:account_manager/src/auth/sign_in_session.dart';
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wisa_api/wisa_api.dart' show WisaSchool;
 
 import '../auth/fake_broker.dart';
 
@@ -396,6 +397,53 @@ void main() {
       ));
       expect(tree.grades, isNotEmpty);
       expect(tree.years, isEmpty);
+    });
+  });
+
+  group('markVirtualSchools', () {
+    const schools = <WisaSchool>[
+      WisaSchool(
+          id: 25, name: 'Instituut Sancta Maria-A', description: 'ISMAA'),
+      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ISMAV'),
+    ];
+
+    test('flags exactly the schools the operator marked virtual (#203)', () {
+      final marked = markVirtualSchools(schools, {99});
+      expect(marked.firstWhere((s) => s.id == 99).isVirtual, isTrue);
+      expect(marked.firstWhere((s) => s.id == 25).isVirtual, isFalse);
+      // Nothing else about the school is touched.
+      expect(marked.firstWhere((s) => s.id == 99).name, 'Virtuele school SMA');
+      expect(marked.length, schools.length);
+    });
+
+    test('an empty virtual set leaves every school alone (#203)', () {
+      expect(markVirtualSchools(schools, const <int>{}), schools);
+    });
+
+    test('an id we do not know is simply ignored (#203)', () {
+      final marked = markVirtualSchools(schools, {12345});
+      expect(marked.every((s) => !s.isVirtual), isTrue);
+    });
+
+    test('never un-flags a school an import rule already marked (#203)', () {
+      // MarkAsVirtual runs first and matches by name; settings marks by id.
+      // The settings pass is additive, so a legacy rule keeps working even
+      // when the school is not in the settings list.
+      const ruled = <WisaSchool>[
+        WisaSchool(
+            id: 25,
+            name: 'Instituut Sancta Maria-A',
+            description: 'ISMAA',
+            isVirtual: true),
+      ];
+      expect(markVirtualSchools(ruled, const <int>{}).single.isVirtual, isTrue);
+      expect(markVirtualSchools(ruled, {25}).single.isVirtual, isTrue);
+    });
+
+    test('does not mutate the input list (#203)', () {
+      final input = List<WisaSchool>.of(schools);
+      markVirtualSchools(input, {25, 99});
+      expect(input.every((s) => !s.isVirtual), isTrue);
     });
   });
 }

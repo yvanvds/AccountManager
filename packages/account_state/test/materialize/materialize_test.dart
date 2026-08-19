@@ -265,6 +265,34 @@ void main() {
       expect(view.accounts.single.schoolLabel, 'GBS Centrum');
     });
 
+    test('a school-id label reaches the school rollup too (#204)', () {
+      // What the Actions drill-down actually renders is the rollup's label, so
+      // the pair has to survive the aggregation, not just the account doc.
+      final view = materialize(
+        _movePendingLinked(),
+        generation: 1,
+        schoolLabels: wisaSchoolLabels(profiles: const [
+          WisaSchoolProfile(
+            schoolId: 1,
+            code: 'ISMAA',
+            name: 'Instituut Sancta Maria-A',
+          ),
+        ]),
+      );
+      final school =
+          view.rollups.firstWhere((r) => r.level == RollupLevel.school);
+      expect(school.label, 'Instituut Sancta Maria-A (ISMAA)');
+    });
+
+    test('School <id> is the last resort for an unlabelled school', () {
+      final view = materialize(
+        _movePendingLinked(),
+        generation: 1,
+        schoolLabels: const {99: 'Ergens anders'},
+      );
+      expect(view.accounts.single.schoolLabel, 'School 1');
+    });
+
     test('an Azure-only leaver lands in the unassigned bucket', () {
       final linked = LinkedState.recompute(
         wisa: wapi.WisaSnapshot(

@@ -52,9 +52,11 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// one who is genuinely present here. When null, it is derived from the
 /// snapshot's own `WisaSchool.isOurs` flags (the `MarkAsOurs` import rule). When
 /// that derived set is also empty — ownership unconfigured — every WISA-present
-/// student is treated as ours, preserving the pre-#134 behaviour. Membership
-/// never changes which records exist or their identity keys, only how each is
-/// classified ([WisaPresence]).
+/// student is treated as ours, preserving the pre-#134 behaviour. For students
+/// and staff, membership never changes which records exist or their identity
+/// keys, only how each is classified ([WisaPresence]); for **groups** it is a
+/// filter (#205), because a class of a school we do not manage has no business
+/// reaching the action engine at all (see [_linkGroups]).
 LinkedSnapshot link(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
@@ -116,7 +118,12 @@ LinkedSnapshot link(
       ),
   ];
 
-  final groups = _linkGroups(wisaSnapshot, smartschoolSnapshot, azureSnapshot);
+  final groups = _linkGroups(
+    wisaSnapshot,
+    smartschoolSnapshot,
+    azureSnapshot,
+    effectiveOurSchoolIds,
+  );
 
   return LinkedSnapshot.fromRecords(
     accounts: accounts,
@@ -377,6 +384,22 @@ List<_StaffRecord> _buildStaffRecords(
 /// is kept for a former student. This lets the action engine raise a delete
 /// action for a class that vanished from WISA but still exists downstream.
 ///
+/// Only class groups of the schools we manage ([ourSchoolIds]) seed records
+/// (#205). The shared WISA credentials pull every group-visible school, so
+/// without this every sibling school's class was linked and offered as
+/// `AddToSmartschool` — a proposal to create another school's class in *our*
+/// Smartschool. Skipping them at the seed also fixes the quieter half of the
+/// bug: records are keyed by normalized name and collapse to the first seen, so
+/// a foreign `1A` arriving first used to shadow our own `1A`. As with students,
+/// an empty [ourSchoolIds] means ownership is unconfigured and every school is
+/// treated as ours (see [_isOurWisaSchool]).
+///
+/// A consequence, decided deliberately: an official Smartschool class whose
+/// only WISA counterpart is a class of a school we do not manage now becomes a
+/// Smartschool orphan record (#52) rather than linking to a class we have no
+/// business managing. The action engine then treats it as the orphan it is
+/// instead of silently considering it in sync.
+///
 /// Only `official` Smartschool groups are considered (legacy
 /// `AddSmartschoolChildGroups` walked the "Leerlingen" subtree and linked only
 /// official classes); organisational sub-groups never match or seed orphans.
@@ -397,15 +420,22 @@ List<LinkedGroup> _linkGroups(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
   az.AzureSnapshot azureSnapshot,
+  Set<int> ourSchoolIds,
 ) {
   final records = <_GroupRecord>[];
   // Normalized fullName/name/displayName -> the record indexed under it.
   final byName = <String, _GroupRecord>{};
 
   // 1. Seed one record per distinct WISA class group, in snapshot order, keyed
-  //    by its `fullName`. Duplicate fullNames collapse to the first record so
-  //    the output is a deterministic function of the input order (INV-20).
+  //    by its `fullName`. Class groups of schools we do not manage are skipped
+  //    outright (#205) — the shared WISA credentials pull every group school,
+  //    and a sibling school's class must never reach the action engine. The
+  //    filter runs *before* the dedupe so a foreign class can no longer occupy
+  //    the name key of one of ours. Duplicate fullNames among our own classes
+  //    still collapse to the first record so the output is a deterministic
+  //    function of the input order (INV-20).
   for (final group in wisaSnapshot.classGroups) {
+    if (!_isOurWisaSchool(group.schoolId, ourSchoolIds)) continue;
     final key = _norm(group.fullName);
     if (key == null || byName.containsKey(key)) continue;
     final rec = _GroupRecord(wisa: group);
@@ -578,6 +608,13 @@ WisaPresence _presence(Set<int> wisaSchoolIds, Set<int> ourSchoolIds) {
       ? WisaPresence.ours
       : WisaPresence.groupOnly;
 }
+
+/// Whether a WISA class group's [schoolId] belongs to a school we manage
+/// ([ourSchoolIds], #205). Mirrors the fallback [_presence] applies to
+/// students: an empty [ourSchoolIds] means ownership is unconfigured, so every
+/// school counts as ours and group linking keeps its pre-#205 behaviour.
+bool _isOurWisaSchool(int schoolId, Set<int> ourSchoolIds) =>
+    ourSchoolIds.isEmpty || ourSchoolIds.contains(schoolId);
 
 /// Whether an Azure user's [companyName] marks it as one of the school's own
 /// (a current or former student). Trimmed + case-insensitive.
