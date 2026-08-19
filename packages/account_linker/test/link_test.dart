@@ -401,6 +401,103 @@ void main() {
     });
   });
 
+  group('link — class groups are scoped to the schools we manage (#205)', () {
+    /// Links [classGroups] alone (no people), with the managed-school set
+    /// pinned by [ourSchoolIds] (the Settings path) or derived from [schools].
+    LinkedSnapshot linkClasses(
+      List<wapi.WisaClassGroup> classGroups, {
+      Set<int>? ourSchoolIds,
+      List<wapi.WisaSchool> schools = const [],
+      List<Group> ssGroups = const [],
+    }) =>
+        link(
+          wisaSnap(const [], classGroups: classGroups, schools: schools),
+          ssSnap(const [], groups: ssGroups),
+          azSnap(const []),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test('a class of a school we do not manage is not linked at all', () {
+      final snapshot = linkClasses(
+        [wisaClassGroup('9Z', schoolId: 2)],
+        ourSchoolIds: const {1},
+      );
+
+      // No record ⇒ no group candidate for the action engine to raise.
+      expect(snapshot.groups, isEmpty);
+    });
+
+    test('a class of a school we manage still links', () {
+      final snapshot = linkClasses(
+        [wisaClassGroup('3B', schoolCode: '111', schoolId: 1)],
+        ourSchoolIds: const {1},
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.wisa!.name, '3B');
+      expect(g.wisa!.instituteNumber, '111');
+      expect(g.smartschool, isNull);
+      expect(g.confidence, LinkConfidence.medium);
+    });
+
+    test('a foreign class sharing a name does not shadow ours', () {
+      // The sibling school's 5A arrives first: before #205 it seeded the name
+      // key and *our* 5A was dropped as a duplicate, so the class proposed to
+      // Smartschool carried the wrong school's institute number.
+      final snapshot = linkClasses(
+        [
+          wisaClassGroup('5A', schoolCode: '222', schoolId: 2),
+          wisaClassGroup('5A', schoolCode: '111', schoolId: 1),
+        ],
+        ourSchoolIds: const {1},
+      );
+
+      expect(snapshot.groups, hasLength(1));
+      expect(snapshot.groups.single.wisa!.instituteNumber, '111');
+    });
+
+    test('the managed set falls back to WisaSchool.isOurs when unset', () {
+      final snapshot = linkClasses(
+        [
+          wisaClassGroup('5A', schoolId: 1),
+          wisaClassGroup('9Z', schoolId: 2),
+        ],
+        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
+      );
+
+      expect([for (final g in snapshot.groups) g.wisa!.name], ['5A']);
+    });
+
+    test('ownership unconfigured → every class still links', () {
+      // No explicit set and no isOurs flags anywhere: the pre-#205 behaviour is
+      // preserved for a group that has not marked its schools yet.
+      final snapshot = linkClasses([
+        wisaClassGroup('5A', schoolId: 1),
+        wisaClassGroup('9Z', schoolId: 2),
+      ]);
+
+      expect([for (final g in snapshot.groups) g.wisa!.name], ['5A', '9Z']);
+    });
+
+    test(
+        'a Smartschool class matching only a foreign WISA class becomes an '
+        'orphan rather than a link', () {
+      final snapshot = linkClasses(
+        [wisaClassGroup('9Z', schoolId: 2)],
+        ourSchoolIds: const {1},
+        ssGroups: [ssGroup('9Z')],
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.wisa, isNull,
+          reason: 'linking it would treat a class we do not manage as in sync');
+      expect(g.smartschool, isNotNull);
+      expect(g.confidence, LinkConfidence.medium);
+    });
+  });
+
   group('link — staff scenarios', () {
     test('fully linked across three systems → high confidence', () {
       // Staff bridge Smartschool by `code` (≡ accountId) and Azure by `wisaId`

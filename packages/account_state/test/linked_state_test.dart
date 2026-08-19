@@ -20,6 +20,7 @@ wapi.WisaStudent _wStudent({
   required String wisaId,
   String classGroup = '',
   String classSubGroup = '',
+  int schoolId = 1,
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
@@ -36,7 +37,7 @@ wapi.WisaStudent _wStudent({
       nationality: '',
       address: _addr,
       classChange: _d,
-      schoolId: 1,
+      schoolId: schoolId,
     );
 
 ss.SmartschoolAccount _ssAccount({
@@ -104,6 +105,7 @@ wapi.WisaClassGroup _wClass(
   String groupName = '00',
   String adminCode = '',
   String schoolCode = '123',
+  int schoolId = 1,
 }) =>
     wapi.WisaClassGroup(
       name: name,
@@ -111,7 +113,7 @@ wapi.WisaClassGroup _wClass(
       description: '',
       adminCode: adminCode,
       schoolCode: schoolCode,
-      schoolId: 1,
+      schoolId: schoolId,
     );
 
 wapi.WisaSnapshot _wSnap({
@@ -453,6 +455,67 @@ void main() {
         unwired.whereType<MoveToSmartschoolClassGroup>(),
         isEmpty,
       );
+    });
+  });
+
+  group('group actions are scoped to the schools we manage (#205)', () {
+    /// Recomputes over [classGroups] + [students] with the managed-school set
+    /// pinned to [ourSchoolIds] — the Settings-derived path the app wires.
+    LinkedState recompute({
+      required List<wapi.WisaClassGroup> classGroups,
+      required List<wapi.WisaStudent> students,
+      Set<int>? ourSchoolIds,
+    }) =>
+        LinkedState.recompute(
+          wisa: _wSnap(students: students, classGroups: classGroups),
+          smartschool: _sSnap(),
+          azure: _aSnap(),
+          resolver: _SeqResolver(),
+          studentConfig: _studentConfig,
+          staffConfig: _staffConfig,
+          classTree: const SmartschoolClassTree(grades: ['G1', 'G2', 'G3']),
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test(
+        'a populated class of a school we manage still raises AddToSmartschool',
+        () {
+      final state = recompute(
+        classGroups: [_wClass('1A', adminCode: 'a1', schoolId: 1)],
+        students: [_wStudent(wisaId: '1', classGroup: '1A')],
+        ourSchoolIds: const {1},
+      );
+
+      expect(state.groupActions.whereType<AddToSmartschool>(), hasLength(1));
+    });
+
+    test('a populated class of a school we do not manage raises nothing', () {
+      final state = recompute(
+        classGroups: [_wClass('9Z', adminCode: 'z1', schoolId: 2)],
+        students: [_wStudent(wisaId: '2', classGroup: '9Z', schoolId: 2)],
+        ourSchoolIds: const {1},
+      );
+
+      expect(state.snapshot.groups, isEmpty);
+      expect(state.groupActions, isEmpty,
+          reason: 'we have no business creating another school\'s class');
+    });
+
+    test('a foreign class sharing a name does not shadow ours in the action',
+        () {
+      // The sibling school's 1A arrives first; the action must still describe
+      // *our* 1A (institute number 111), not the one we do not manage.
+      final state = recompute(
+        classGroups: [
+          _wClass('1A', adminCode: 'a2', schoolCode: '222', schoolId: 2),
+          _wClass('1A', adminCode: 'a1', schoolCode: '111', schoolId: 1),
+        ],
+        students: [_wStudent(wisaId: '1', classGroup: '1A')],
+        ourSchoolIds: const {1},
+      );
+
+      final action = state.groupActions.whereType<AddToSmartschool>().single;
+      expect(action.target.wisa!.instituteNumber, '111');
     });
   });
 

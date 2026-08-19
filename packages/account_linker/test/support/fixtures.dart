@@ -140,12 +140,14 @@ az.AzureUser azureUser({
 /// A WISA class group. [name] + [groupName] form the `fullName` the linker
 /// matches on; `groupName == '00'` (the default) means "no subgroup", so
 /// `fullName == name`. [schoolCode] becomes the linked group's institute
-/// number.
+/// number. [schoolId] selects which group school the class belongs to — the
+/// managed-school join that decides whether the class is linked at all (#205).
 wapi.WisaClassGroup wisaClassGroup(
   String name, {
   String groupName = '00',
   String schoolCode = '123',
   String adminCode = '',
+  int schoolId = 1,
 }) =>
     wapi.WisaClassGroup(
       name: name,
@@ -153,7 +155,7 @@ wapi.WisaClassGroup wisaClassGroup(
       description: '',
       adminCode: adminCode,
       schoolCode: schoolCode,
-      schoolId: 1,
+      schoolId: schoolId,
     );
 
 /// A Smartschool class group as a [core.Group]. Matched to WISA by [name];

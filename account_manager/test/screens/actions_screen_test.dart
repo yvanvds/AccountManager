@@ -539,6 +539,35 @@ void main() {
   });
 
   testWidgets(
+      'the Klasgroepen drill-down proposes only classes of the schools we '
+      'manage, and describes ours rather than the sibling class that shares '
+      'its name (#205)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = foreignClassGroupHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Our own populated class is the one and only proposal…
+    expect(find.text('1A'), findsOneWidget);
+    expect(find.text('Voeg deze klas toe aan Smartschool'), findsOneWidget);
+    // …and the sibling school's class is never offered: applying it would
+    // create another school's class in our Smartschool.
+    expect(find.text('9Z'), findsNothing);
+
+    // Expanding it shows *our* class's data — the sibling `1A` used to arrive
+    // first and shadow ours, so the proposal described the wrong class.
+    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Onze eerste klas'), findsOneWidget);
+    expect(find.textContaining('Klas van een andere school'), findsNothing);
+  });
+
+  testWidgets(
       'a passive session surfaces the Klasgroepen node and opens the group '
       'detail (#119/#154)', (WidgetTester tester) async {
     final snapshots = InMemorySnapshotStore();

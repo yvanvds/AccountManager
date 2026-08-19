@@ -994,6 +994,50 @@ void main() {
   });
 
   testWidgets(
+      'the Klasgroepen drill-down proposes only classes of the schools we '
+      'manage end-to-end, never a sibling school\'s (#205)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. WISA hands this session class
+    // groups from two schools — the sibling school's `1A` and `9Z` first, our
+    // own `1A` last — and only school 1 is managed. Every one of them used to
+    // be offered as "Voeg deze klas toe aan Smartschool", and the sibling `1A`
+    // even shadowed ours, so the proposal described the wrong school's class.
+    useTallWindow(tester);
+    final harness = foreignClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Our own populated class is the only proposal on the list…
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.text('1A'), findsOneWidget);
+    expect(find.text('Voeg deze klas toe aan Smartschool'), findsOneWidget);
+    // …and no class of the school we do not manage is anywhere near it.
+    expect(find.text('9Z'), findsNothing,
+        reason: 'creating another school\'s class is never ours to propose');
+
+    // The surviving proposal describes *our* 1A, not the sibling class that
+    // shares its name.
+    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Onze eerste klas'), findsOneWidget);
+    expect(find.textContaining('Klas van een andere school'), findsNothing);
+  });
+
+  testWidgets(
       'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
       'staff drill in one tab, students in the other (#179)',
       (WidgetTester tester) async {
