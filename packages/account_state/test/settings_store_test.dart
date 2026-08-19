@@ -167,6 +167,64 @@ void main() {
       expect(const AppSettings().managedWisaSchoolIds, isEmpty);
     });
 
+    test('the per-school virtual mark round-trips through JSON (#203)', () {
+      const original = AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(
+              schoolId: 10,
+              code: 'ismav',
+              name: 'Virtuele school SMA',
+              virtual: true),
+          WisaSchoolProfile(schoolId: 20, name: 'Sint-Pieter', ours: true),
+        ],
+      );
+      final restored = AppSettings.fromJson(original.toJson());
+      expect(restored.wisaSchools, original.wisaSchools);
+      expect(restored.wisaSchools.first.virtual, isTrue);
+      expect(restored.wisaSchools.last.virtual, isFalse);
+    });
+
+    test('virtualWisaSchoolIds is the set of virtual-flagged school ids (#203)',
+        () {
+      const settings = AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 10, name: 'A', virtual: true),
+          WisaSchoolProfile(schoolId: 20, name: 'B', ours: true),
+          WisaSchoolProfile(schoolId: 30, name: 'C', ours: true, virtual: true),
+        ],
+      );
+      expect(settings.virtualWisaSchoolIds, {10, 30});
+      // The two marks are independent: managing a school says nothing about
+      // which work date it is pulled with.
+      expect(settings.managedWisaSchoolIds, {20, 30});
+      expect(const AppSettings().virtualWisaSchoolIds, isEmpty);
+    });
+
+    test(
+        'a settings document written before the virtual flag loads with every '
+        'school non-virtual (#203)', () {
+      final settings = AppSettings.fromJson({
+        'wisaSchools': [
+          {
+            'schoolId': 42,
+            'code': 'ismaa',
+            'name': 'Sint-Jan',
+            'ours': true,
+            'prefix': '',
+          },
+        ],
+      });
+      expect(settings.wisaSchools.single.virtual, isFalse);
+      expect(settings.virtualWisaSchoolIds, isEmpty);
+    });
+
+    test('copyWith preserves and can replace the virtual flag (#203)', () {
+      const profile =
+          WisaSchoolProfile(schoolId: 10, code: 'ismaa', virtual: true);
+      expect(profile.copyWith(ours: true).virtual, isTrue);
+      expect(profile.copyWith(virtual: false).virtual, isFalse);
+    });
+
     test(
         'a school profile predating the persisted name loads with an empty '
         'name (#171)', () {

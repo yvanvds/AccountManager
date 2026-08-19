@@ -82,6 +82,16 @@ class AppSettings {
           if (p.ours) p.schoolId,
       };
 
+  /// The set of WISA school ids the operator marked *virtual* — the
+  /// `virtual`-flagged entries of [wisaSchools] (#203). A sync flags exactly
+  /// these schools, so the connector pulls them with the
+  /// [WisaConnection.virtualWorkDate] instead of the ordinary work date; empty
+  /// means no school is virtual and every school pulls with the ordinary one.
+  Set<int> get virtualWisaSchoolIds => <int>{
+        for (final p in wisaSchools)
+          if (p.virtual) p.schoolId,
+      };
+
   /// Returns a copy with the given fields replaced.
   AppSettings copyWith({
     String? schoolPrefix,

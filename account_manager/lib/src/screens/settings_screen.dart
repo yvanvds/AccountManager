@@ -227,6 +227,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         () => _wisaSchools[index] = _wisaSchools[index].copyWith(ours: ours));
   }
 
+  /// Flips the `virtual` flag on the profile at [index] (#203). Independent of
+  /// `ours`: a virtual school is pulled with the separate virtual work date,
+  /// whether or not we manage it.
+  void _toggleSchoolVirtual(int index, bool virtual) {
+    toggle(() =>
+        _wisaSchools[index] = _wisaSchools[index].copyWith(virtual: virtual));
+  }
+
   // ---------------------------------------------------------------------------
   // Smartschool import rules (#202)
   // ---------------------------------------------------------------------------
@@ -298,10 +306,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Refreshes the known-WISA-school list from the API (#171). "Scholen ophalen"
   /// is a *refresh* now, not the primary way to build the list: it merges the
   /// fetched id+name records into [_wisaSchools], updating each name, adding any
-  /// genuinely new school (unmanaged by default), and preserving the `ours` mark
-  /// on schools already known. Prefers a freshly typed password; otherwise
-  /// resolves the stored secret. Failures surface as a toast. The merged list is
-  /// dirty until saved, so the enriched names persist and no re-fetch is needed.
+  /// genuinely new school (unmanaged by default), and preserving the `ours` and
+  /// `virtual` marks on schools already known. Prefers a freshly typed password;
+  /// otherwise resolves the stored secret. Failures surface as a toast. The
+  /// merged list is dirty until saved, so the enriched names persist and no
+  /// re-fetch is needed.
   Future<void> _fetchWisaSchools() async {
     final services = _services;
     final fetcher = services?.fetchWisaSchools;
@@ -332,10 +341,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// Merges the [fetched] WISA schools (id + code + name) into the current known
-  /// list: keeps every already-known school (preserving its `ours`/`prefix`,
-  /// refreshing its code and name when the fetch supplies them) and appends any
-  /// fetched school not yet known as unmanaged. Order is stable by school id so
-  /// the grid does not jump.
+  /// list: keeps every already-known school (preserving its
+  /// `ours`/`virtual`/`prefix` marks, refreshing its code and name when the
+  /// fetch supplies them) and appends any fetched school not yet known as
+  /// neither managed nor virtual. Order is stable by school id so the grid does
+  /// not jump.
   ///
   /// The short code (`ismaa`, `ismab`, …) rides on `WisaSchool.description`, not
   /// `.name` — `SMAGetInst`'s CSV is `ID,NAME,DESCRIPTION` and the connector
@@ -1258,11 +1268,13 @@ class _WisaSchoolsEditor extends StatelessWidget {
       children: <Widget>[
         // The known-school list is the primary surface; the fetch is a refresh
         // (#171): mark which schools we manage inline, and only re-fetch when a
-        // genuinely new school appears.
+        // genuinely new school appears. The virtual mark (#203) rides along in
+        // the same cell — it decides which work date the school is pulled with.
         Text(
-          'De bekende WISA-scholen. Markeer welke we beheren. Gebruik '
-          '"Scholen ophalen" om de lijst te vernieuwen als er een nieuwe '
-          'school bijkomt.',
+          'De bekende WISA-scholen. Markeer welke we beheren. Vink '
+          '"virtueel" aan voor scholen die met de virtuele werkdatum '
+          'opgehaald moeten worden. Gebruik "Scholen ophalen" om de lijst te '
+          'vernieuwen als er een nieuwe school bijkomt.',
           style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
         ),
         const SizedBox(height: PlinkSpacing.s3),
@@ -1312,7 +1324,7 @@ class _WisaSchoolsEditor extends StatelessWidget {
 
   /// Lays the known schools out as rows of [_columns] cells, padding the final
   /// row with empty slots so the grid columns stay aligned. Each cell toggles
-  /// its school's managed (`ours`) flag inline.
+  /// its school's managed (`ours`) and virtual flags inline.
   List<Widget> _schoolRows(List<WisaSchoolProfile> schools) {
     final rows = <Widget>[];
     for (var start = 0; start < schools.length; start += _columns) {
@@ -1336,8 +1348,15 @@ class _WisaSchoolsEditor extends StatelessWidget {
 
 /// A single cell in the known-WISA-school grid (#171): the school's WISA code
 /// (`ismaa`, `ismab`, …) — the identifier operators actually use — with the long
-/// name beneath it, plus an inline checkbox marking whether we manage it. Keyed
-/// by school id so a test can flip a specific school's managed flag.
+/// name beneath it, plus an inline checkbox marking whether we manage it and a
+/// second, quieter one marking it *virtual* (#203). Both are keyed by school id
+/// so a test can flip a specific school's flag.
+///
+/// The two marks are deliberately unequal in weight. `ours` scopes the linker;
+/// `virtual` changes **which work date the school is pulled with**, so a school
+/// wrongly marked virtual comes back against the wrong date and can read as a
+/// mass leave. It therefore sits on its own indented, small-type line rather
+/// than as a second equal-looking checkbox.
 ///
 /// The numeric id is strictly a fallback and never appears twice (#194): the
 /// title degrades code → name → `School <id>`, and the subtitle shows whichever
@@ -1356,6 +1375,8 @@ class _SchoolCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
     final String code = profile.code;
     final String name = profile.name;
     final String title = code.isNotEmpty
@@ -1365,21 +1386,45 @@ class _SchoolCell extends StatelessWidget {
         ? name
         : (code.isEmpty && name.isEmpty ? null : 'id: ${profile.schoolId}');
 
-    return CheckboxListTile(
-      key: ValueKey('settings-wisa-school-${profile.schoolId}-ours'),
-      contentPadding: EdgeInsets.zero,
-      controlAffinity: ListTileControlAffinity.leading,
-      dense: true,
-      title: Text(
-        title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: subtitle == null
-          ? null
-          : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      value: profile.ours,
-      onChanged: (v) => state._toggleSchoolOurs(index, v ?? false),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        CheckboxListTile(
+          key: ValueKey('settings-wisa-school-${profile.schoolId}-ours'),
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          dense: true,
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: subtitle == null
+              ? null
+              : Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+          value: profile.ours,
+          onChanged: (v) => state._toggleSchoolOurs(index, v ?? false),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: PlinkSpacing.s3),
+          child: CheckboxListTile(
+            key: ValueKey('settings-wisa-school-${profile.schoolId}-virtual'),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            title: Text(
+              'virtueel',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+            ),
+            value: profile.virtual,
+            onChanged: (v) => state._toggleSchoolVirtual(index, v ?? false),
+          ),
+        ),
+      ],
     );
   }
 }

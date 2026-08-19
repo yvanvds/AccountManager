@@ -337,6 +337,153 @@ void main() {
     expect(saved.wisaSchools.single.ours, isTrue);
   });
 
+  testWidgets(
+      'each school cell carries a virtual toggle, independent of the managed '
+      'one, and marking it round-trips to the store (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // One school is managed but not virtual, the other virtual but unmanaged —
+    // the two marks are separate facts about the same school.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 42, name: 'Sint-Jan', ours: true),
+          WisaSchoolProfile(
+              schoolId: 99, name: 'Virtuele school SMA', virtual: true),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    final virtual42 =
+        find.byKey(const ValueKey('settings-wisa-school-42-virtual'));
+    final virtual99 =
+        find.byKey(const ValueKey('settings-wisa-school-99-virtual'));
+    expect(virtual42, findsOneWidget);
+    expect(virtual99, findsOneWidget);
+    // Managed ≠ virtual, in both directions.
+    expect(tester.widget<CheckboxListTile>(virtual42).value, isFalse);
+    expect(tester.widget<CheckboxListTile>(virtual99).value, isTrue);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-99-ours')))
+            .value,
+        isFalse);
+
+    // Mark the managed school virtual too and save.
+    await tester.tap(virtual42);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.virtualWisaSchoolIds, {42, 99});
+    // Flipping "virtueel" left the managed marks exactly as they were.
+    expect(saved.managedWisaSchoolIds, {42});
+  });
+
+  testWidgets('clearing the virtual mark round-trips to the store (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisaSchools: [
+          WisaSchoolProfile(schoolId: 42, name: 'Sint-Jan', virtual: true),
+        ],
+      ),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    await tester
+        .tap(find.byKey(const ValueKey('settings-wisa-school-42-virtual')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.virtual, isFalse);
+    expect(saved.virtualWisaSchoolIds, isEmpty);
+  });
+
+  testWidgets('a refetch preserves the virtual mark (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ismav'),
+    ]);
+    // Marked virtual on a previous run, stored without a code.
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [WisaSchoolProfile(schoolId: 99, virtual: true)],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
+    await tester.pumpAndSettle();
+
+    // "Scholen ophalen" backfilled the code and kept the virtual mark ticked.
+    expect(find.text('ismav'), findsOneWidget);
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-99-virtual')))
+            .value,
+        isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.wisaSchools.single.code, 'ismav');
+    expect(saved.wisaSchools.single.virtual, isTrue);
+  });
+
+  testWidgets('a freshly fetched school is not virtual until marked (#203)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 3, name: 'Sint-Jan', description: 'SJ'),
+    ]);
+    final harness = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-fetch-schools')));
+    await tester.pumpAndSettle();
+
+    expect(
+        tester
+            .widget<CheckboxListTile>(
+                find.byKey(const ValueKey('settings-wisa-school-3-virtual')))
+            .value,
+        isFalse,
+        reason: 'a new school pulls with the ordinary work date until marked');
+  });
+
   testWidgets('a profile stored without a name falls back to "School <id>"',
       (WidgetTester tester) async {
     _useTallWindow(tester);

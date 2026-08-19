@@ -343,9 +343,10 @@ Future<ReconcileServices> bootstrapReconcile({
       system: core.Origin.wisa,
       initial: wisaSeed,
       // Schools are re-read per sync so a WISA-side school change is picked
-      // up; MarkAsVirtual rules are applied to them before the row pulls, the
-      // other rules at snapshot construction. Rules are read live from the
-      // shared holder so a DontImportFromWisa apply affects the re-sync (#72).
+      // up; MarkAsVirtual rules and the operator's per-school virtual marks
+      // (#203) are applied to them before the row pulls, the other rules at
+      // snapshot construction. Rules are read live from the shared holder so a
+      // DontImportFromWisa apply affects the re-sync (#72).
       // The pull is wrapped so each fresh snapshot is persisted (#107).
       syncer: persistingSyncer<wapi.WisaSnapshot>(
         system: core.Origin.wisa,
@@ -354,9 +355,12 @@ Future<ReconcileServices> bootstrapReconcile({
         payloadOf: (s) => s.toJson(),
         onError: (e) => logSnapshotIssue(core.Origin.wisa, e),
         inner: (_) async {
-          final schools = wapi.WisaConnector.applySchoolRules(
-            await wisaConnector.loadSchools(),
-            wisaRules.rules,
+          final schools = markVirtualSchools(
+            wapi.WisaConnector.applySchoolRules(
+              await wisaConnector.loadSchools(),
+              wisaRules.rules,
+            ),
+            settings.virtualWisaSchoolIds,
           );
           final at = now();
           return wisaConnector.sync(
@@ -494,6 +498,28 @@ String smartschoolSiteFrom(String uri) {
   if (host.isNotEmpty) return host.split('.').first;
   return trimmed;
 }
+
+/// Flags the operator's virtual WISA schools on a freshly loaded school list.
+///
+/// The virtual marks live in the settings document keyed by school **id**
+/// ([AppSettings.virtualWisaSchoolIds], #203), while the snapshot-time
+/// `MarkAsVirtual` import rule matches by school **name**. Setting
+/// `WisaSchool.isVirtual` straight from settings mirrors how `ourSchoolIds`
+/// bypasses `MarkAsOurs`: the operator-editable record is authoritative and no
+/// rule has to be synthesised for it.
+///
+/// The pass is additive — a school the rules already flagged stays flagged even
+/// when it is not in [virtualIds] — so wiring settings in can never silently
+/// un-virtualise a school an existing `MarkAsVirtual` rule covers. Returns a new
+/// list; the input is not mutated.
+List<wapi.WisaSchool> markVirtualSchools(
+  Iterable<wapi.WisaSchool> schools,
+  Set<int> virtualIds,
+) =>
+    <wapi.WisaSchool>[
+      for (final s in schools)
+        virtualIds.contains(s.id) ? s.copyWith(isVirtual: true) : s,
+    ];
 
 String _firstNonEmpty(String preferred, String fallback) =>
     preferred.trim().isNotEmpty ? preferred.trim() : fallback;

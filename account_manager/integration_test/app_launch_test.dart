@@ -1947,6 +1947,71 @@ void main() {
   });
 
   testWidgets(
+      'the Settings view marks a WISA school virtual end-to-end, and the mark '
+      'survives a "Scholen ophalen" refresh (#203)',
+      (WidgetTester tester) async {
+    // The real app composition over the in-memory settings seams. One school is
+    // known (managed, code-less) and a refresh is wired, so the whole operator
+    // flow runs: mark virtual → refresh the list → save.
+    useTallWindow(tester);
+    const passwordRef = SecretRef('wisa.password');
+    final fetcher = FakeWisaSchoolFetcher(const <WisaSchool>[
+      WisaSchool(id: 99, name: 'Virtuele school SMA', description: 'ismav'),
+    ]);
+    final settings = SettingsHarness(
+      initial: const AppSettings(
+        wisa: WisaConnection(server: 'db.school.example', port: '1433'),
+        wisaSchools: [WisaSchoolProfile(schoolId: 99, ours: true)],
+      ),
+      secrets: {passwordRef: 'stored-pw'},
+      fetchWisaSchools: fetcher.call,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+
+    // The school renders with its own virtual toggle, off, next to the managed
+    // one — in the real, laid-out three-column grid with the real fonts.
+    final virtualBox =
+        find.byKey(const ValueKey('settings-wisa-school-99-virtual'));
+    await tester.ensureVisible(virtualBox);
+    await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(virtualBox).value, isFalse);
+
+    // Mark it virtual, then refresh the school list: the mark must survive the
+    // merge that backfills the code.
+    await tester.tap(virtualBox);
+    await tester.pumpAndSettle();
+    final refresh = find.byKey(const ValueKey('settings-wisa-fetch-schools'));
+    await tester.ensureVisible(refresh);
+    await tester.tap(refresh);
+    await tester.pumpAndSettle();
+    expect(find.text('ismav'), findsOneWidget);
+    expect(tester.widget<CheckboxListTile>(virtualBox).value, isTrue);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // The virtual mark landed in the settings document, alongside (not instead
+    // of) the managed mark — this is what the sync reads to pick the virtual
+    // work date for this school.
+    final saved = await settings.store.load();
+    expect(saved.wisaSchools.single.schoolId, 99);
+    expect(saved.wisaSchools.single.virtual, isTrue);
+    expect(saved.wisaSchools.single.ours, isTrue);
+    expect(saved.virtualWisaSchoolIds, {99});
+  });
+
+  testWidgets(
       'the Settings view fetches the WISA school list and persists the picked '
       'selection end-to-end, no id typed by hand (#142)',
       (WidgetTester tester) async {
