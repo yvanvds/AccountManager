@@ -449,6 +449,10 @@ Future<ReconcileServices> bootstrapReconcile({
     log: logBuffer,
     store: linked,
     syncedBy: syncedBy,
+    // The operator's curated school list names every school in the Actions
+    // drill-down, so it reads "Instituut Sancta Maria-A (ISMAA)" exactly as the
+    // Settings grid does rather than "School 25" (#204).
+    schoolProfiles: settings.wisaSchools,
     publisher: signalPublisher,
     subscriber: signalSubscriber,
     clock: now,

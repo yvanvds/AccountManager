@@ -5,6 +5,7 @@ import 'package:account_manager/src/reconcile/reconcile_controller.dart';
 import 'package:account_state/account_state.dart';
 import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'reconcile_fakes.dart';
 
@@ -475,6 +476,54 @@ void main() {
 
       expect(h.controller.hasOverview, isTrue);
       expect(h.controller.syncState.generation, 1);
+    });
+
+    test(
+        'school rollups are labelled from the persisted Settings profiles, '
+        'not the school id (#204)', () async {
+      // The regression: the label map was built solely from the WISA snapshot's
+      // schools, so a session whose snapshot carries none (a cold seed written
+      // before schools were serialized) baked `School 25` into every document.
+      final h = namedSchoolHarness();
+
+      await h.controller.sync();
+
+      final rollups = await h.linkedStore.readRollups();
+      final school = rollups.singleWhere((r) => r.level == RollupLevel.school);
+      expect(school.label, 'Instituut Sancta Maria-A (ISMAA)');
+      expect(school.label, isNot('School 25'));
+
+      // The same label is baked into the per-account documents the drill-down
+      // reads back, so a passive session sees it too.
+      final accounts = await h.linkedStore.readClassroom(
+        school: school.school,
+        classroom: '3C',
+      );
+      expect(accounts.single.schoolLabel, 'Instituut Sancta Maria-A (ISMAA)');
+    });
+
+    test('a live WISA pull labels schools it carries itself (#204)', () async {
+      // No Settings profile at all: the pulled school list still names the
+      // school by its own two halves rather than by its id.
+      final h = ReconcileHarness(
+        wisa: wisaSnap(
+          students: [wisaStudent(schoolId: 25)],
+          schools: const [
+            wapi.WisaSchool(
+              id: 25,
+              name: 'Instituut Sancta Maria-A',
+              description: 'ISMAA',
+              isOurs: true,
+            ),
+          ],
+        ),
+      );
+
+      await h.controller.sync();
+
+      final rollups = await h.linkedStore.readRollups();
+      final school = rollups.singleWhere((r) => r.level == RollupLevel.school);
+      expect(school.label, 'Instituut Sancta Maria-A (ISMAA)');
     });
 
     test('re-sync bumps the generation again', () async {

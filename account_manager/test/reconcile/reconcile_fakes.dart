@@ -420,6 +420,35 @@ ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
       ourSchoolIds: ourSchoolIds,
     );
 
+/// A harness for the school-label drill-down (#204). One student enrolled in
+/// school 25 and fully present in *our* Smartschool + Azure, in a session whose
+/// WISA snapshot carries **no** schools at all — the cold-snapshot case that
+/// made every school node degrade to `School 25`. The school's identity comes
+/// solely from the operator's persisted Settings profile (short code + long
+/// name), so the Actions drill-down must still name it exactly as the Settings
+/// grid does.
+ReconcileHarness namedSchoolHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 25)],
+        schools: const [],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: const {25},
+      schoolProfiles: const [
+        WisaSchoolProfile(
+          schoolId: 25,
+          code: 'ISMAA',
+          name: 'Instituut Sancta Maria-A',
+          ours: true,
+        ),
+      ],
+    );
+
 // ---------------------------------------------------------------------------
 // Passive-session materialized-view fixtures for the Actions filter tests
 // (#187): hand-built account docs so one classroom can hold a controlled mix of
@@ -830,6 +859,7 @@ class ReconcileHarness {
     this.azureGate,
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
+    List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
@@ -947,6 +977,9 @@ class ReconcileHarness {
       log: log,
       store: controllerStore ?? this.linkedStore,
       syncedBy: syncedBy,
+      // The operator's curated WISA schools from Settings, which name every
+      // school in the Actions drill-down (#204).
+      schoolProfiles: schoolProfiles,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),

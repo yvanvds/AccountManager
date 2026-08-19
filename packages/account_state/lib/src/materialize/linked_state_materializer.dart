@@ -4,6 +4,7 @@ import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import '../link/linked_state.dart';
+import '../settings/wisa_school_label.dart';
 import 'materialized_state.dart';
 
 /// Turns a transient [LinkedState] into the persistable [MaterializedView]
@@ -19,10 +20,12 @@ import 'materialized_state.dart';
 /// in the drill-down beside the school tree (#119). The account, staff, and
 /// group families — everything the drill-down renders — are covered.
 ///
-/// [schoolLabels] maps a WISA school id to its human name (from the WISA
-/// snapshot's schools list); a student's school partition falls back to the id
-/// when no label is known. [generation] is stamped onto the view for the store
-/// to write.
+/// [schoolLabels] maps a WISA school id to its human label — the long name
+/// with its short code, built by [wisaSchoolLabels] from the operator's
+/// persisted school profiles merged with the WISA snapshot's schools list. A
+/// student's school partition falls back to `School <id>` only for an id that
+/// matches no known school (#204). [generation] is stamped onto the view for
+/// the store to write.
 MaterializedView materialize(
   LinkedState linked, {
   required int generation,
@@ -252,7 +255,8 @@ _Placement _placeAccount(
     final school = wisa.schoolId.toString();
     return _Placement(
       school: school,
-      schoolLabel: schoolLabels[wisa.schoolId] ?? 'School ${wisa.schoolId}',
+      schoolLabel: schoolLabels[wisa.schoolId] ??
+          wisaSchoolLabel(schoolId: wisa.schoolId),
       gradeYear: gradeYearOf(wisa.classGroup),
       classroom: wisa.classGroup.trim().isEmpty
           ? _noClassroom

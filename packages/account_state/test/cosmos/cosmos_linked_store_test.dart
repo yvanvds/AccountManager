@@ -470,11 +470,11 @@ Future<void> _settle() async {
 final DateTime _d = DateTime.utc(2026, 7, 1);
 
 MaterializedAccount _account(String id,
-        {String school = '1', String classroom = '3C'}) =>
+        {String school = '1', String classroom = '3C', String? schoolLabel}) =>
     MaterializedAccount(
       id: core.LinkedAccountId(id),
       school: school,
-      schoolLabel: 'School $school',
+      schoolLabel: schoolLabel ?? 'School $school',
       gradeYear: '3',
       classroom: classroom,
       role: core.PersonRole.student,
@@ -863,6 +863,43 @@ void main() {
       expect(threeC.map((a) => a.id.value), isNot(contains('p0')));
       final fourA = await store.readClassroom(school: '1', classroom: '4A');
       expect(fourA.map((a) => a.id.value), ['p0']);
+    });
+
+    test('a renamed school label reaches the store on a re-sync (#204/#200)',
+        () async {
+      // The school label is baked into every account document and into the
+      // school rollup, so a better label only becomes visible if the
+      // changed-document-only write (#200) actually rewrites them. The hash
+      // covers the whole document, so it does — this pins that down.
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      List<MaterializedAccount> withLabel(String label) => [
+            for (var i = 0; i < 5; i++) _account('p$i', schoolLabel: label),
+          ];
+
+      await store.writeMaterialized(
+        _view(withLabel('School 1')),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+      final afterFirst = client.upsertsTo(linkedAccountsContainer);
+      final rollupsAfterFirst = client.upsertsTo(rollupsContainer);
+
+      await store.writeMaterialized(
+        _view(withLabel('Instituut Sancta Maria-A (ISMAA)'), generation: 2),
+        syncedBy: 'op@school.example',
+        at: _d,
+      );
+
+      expect(client.upsertsTo(linkedAccountsContainer), afterFirst + 5,
+          reason: 'every account carries the changed label');
+      expect(client.upsertsTo(rollupsContainer), greaterThan(rollupsAfterFirst),
+          reason: 'the school rollup the drill-down renders is rewritten too');
+      final stored = await store.readClassroom(school: '1', classroom: '3C');
+      expect(stored.first.schoolLabel, 'Instituut Sancta Maria-A (ISMAA)');
+      final school = (await store.readRollups())
+          .firstWhere((r) => r.level == RollupLevel.school);
+      expect(school.label, 'Instituut Sancta Maria-A (ISMAA)');
     });
 
     test('a change buried in a nested candidate action is not skipped (#200)',

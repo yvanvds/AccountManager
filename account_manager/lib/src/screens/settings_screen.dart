@@ -1379,9 +1379,10 @@ class _SchoolCell extends StatelessWidget {
     final ColorScheme colors = Theme.of(context).colorScheme;
     final String code = profile.code;
     final String name = profile.name;
-    final String title = code.isNotEmpty
-        ? code
-        : (name.isNotEmpty ? name : 'School ${profile.schoolId}');
+    // The lead label comes from the shared school-label helper the Actions
+    // drill-down also names schools with, so the two views can never disagree
+    // about which half of the pair is the code (#204).
+    final String title = profile.codeLabel;
     final String? subtitle = code.isNotEmpty && name.isNotEmpty
         ? name
         : (code.isEmpty && name.isEmpty ? null : 'id: ${profile.schoolId}');

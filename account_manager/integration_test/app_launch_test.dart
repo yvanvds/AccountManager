@@ -957,6 +957,43 @@ void main() {
   });
 
   testWidgets(
+      'the Actions drill-down names a school by name and code end-to-end, '
+      'never "School <id>" (#204)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. This session's WISA snapshot
+    // carries no schools at all, so the school's identity can only come from
+    // the operator's persisted Settings profile — exactly the case that used to
+    // bake `School 25` into every materialized node. The drill-down must name
+    // the school the way Instellingen → WISA does.
+    useTallWindow(tester);
+    final harness = namedSchoolHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('School 25'), findsNothing,
+        reason: 'the numeric id is the last resort, not the rendering (#204)');
+    final node = find.text('Instituut Sancta Maria-A (ISMAA)');
+    expect(node, findsOneWidget);
+
+    // It is the real school node, not a stray label: it drills down to the
+    // student's class.
+    await tester.tap(node);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(find.text('3C'), findsWidgets);
+  });
+
+  testWidgets(
       'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
       'staff drill in one tab, students in the other (#179)',
       (WidgetTester tester) async {
