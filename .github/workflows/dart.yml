@@ -37,6 +37,14 @@
 # Overlap note: an older workflow (`ci.yml`) also runs `dart analyze` +
 # `dart test` on pull_request, plus coverage / SonarCloud. The two
 # workflows are kept side-by-side for now; consolidation is a follow-up.
+#
+# Action pinning: every JavaScript action here must run on Node 24 — Node 20
+# is deprecated and only shimmed for now (#219). When bumping a pin, check the
+# action's own `runs.using`, not just its major: `actions/checkout` reached
+# node24 at v5, `azure/login` at v3. These need runner >= 2.327.1; the
+# GitHub-hosted ubuntu-latest / windows-latest runners are well past that.
+# `subosito/flutter-action@v2` is a *composite* action (bash steps only), so
+# it has no Node runtime and is unaffected by the deprecation.
 
 name: Dart
 
@@ -65,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # The workspace now includes the Flutter app (account_manager), so the
       # root resolves with the Flutter SDK, not bare Dart. Flutter bundles
@@ -142,7 +150,7 @@ jobs:
       # by the steps below (OIDC), never stored as a secret.
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Flutter SDK (bundles Dart) — the workspace root now includes the
       # Flutter app, so it resolves with `flutter pub get`.
@@ -167,7 +175,7 @@ jobs:
       # layer, per the live-testing policy.
       - name: Azure login (OIDC — no stored secret)
         if: env.AZURE_CLIENT_ID != '' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/develop')
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -199,7 +207,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2

@@ -21,6 +21,14 @@
 # Until issue #19 (account_core) lands a root `pubspec.yaml`, the Dart steps
 # are no-ops and the workflow reports green based on the workspace-detection
 # notice alone. That is intentional: we want CI scaffolding committed early.
+#
+# Action pinning: every JavaScript action here must run on Node 24 — Node 20
+# is deprecated and only shimmed for now (#219). Check each action's own
+# `runs.using` rather than assuming the newest major is node24: the artifact
+# actions shipped a node20 major *after* the one pinned here, so the first
+# node24 releases are `upload-artifact@v6` and `download-artifact@v7` (a
+# matched pair), and `sonarqube-scan-action@v7`. `subosito/flutter-action@v2`
+# is a composite action with no Node runtime and stays as-is.
 
 name: CI
 
@@ -42,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # SonarCloud needs full history for blame-based new-code detection.
           fetch-depth: 0
@@ -94,7 +102,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: steps.workspace.outputs.exists == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-lcov
           path: coverage/lcov.info
@@ -110,12 +118,12 @@ jobs:
     if: ${{ vars.SONARCLOUD_ENABLED == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Download coverage artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: coverage-lcov
           path: coverage
@@ -123,7 +131,7 @@ jobs:
         continue-on-error: true
 
       - name: SonarQube Cloud scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
