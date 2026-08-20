@@ -297,10 +297,6 @@ void main() {
       expect(c.staff.map((a) => a.uid), ['anna.smit']);
     });
 
-    test('defaults the staff filter field to voornaam (#186)', () {
-      expect(build().filterField, StaffFilterField.voornaam);
-    });
-
     test('orders the staff list alphabetically by name (#186)', () {
       // Three staff seeded out of alphabetical order across mixed casing; the
       // controller must expose them sorted by display name (alice, Bob, Charlie).
@@ -315,13 +311,57 @@ void main() {
       expect(c.staff.map((a) => a.uid), ['alice', 'bob', 'charlie']);
     });
 
-    test('filters staff by username', () {
-      final c = build()
-        ..setStaffFilterField(StaffFilterField.gebruikersnaam)
-        ..setStaffFilterText('anna');
-      expect(c.staff, hasLength(1));
+    /// The Personeel search over three staff whose names differ in case and in
+    /// which half is distinctive: Charlie Zulu, alice Bravo, Bob Alpha.
+    PasswordController buildStaffSearch() => PasswordController(
+          snapshot: staffOrderSnap(),
+          queue: queue,
+          backends: backends,
+          generatePassword: _seqGenerator(),
+          writer: (name, bytes) async => 'C:/exports/$name',
+        );
+
+    test('searches any part of the full name, case-insensitively (#215)', () {
+      final c = buildStaffSearch()..setStaffFilterText('ZUL');
+      expect(c.staff.map((a) => a.uid), ['charlie']);
+      // The given name matches just as well as the surname — no field to pick.
+      c.setStaffFilterText('Bob');
+      expect(c.staff.map((a) => a.uid), ['bob']);
+      // …and a fragment from the middle of a name matches too (*namepart*).
+      c.setStaffFilterText('rav');
+      expect(c.staff.map((a) => a.uid), ['alice']);
       c.setStaffFilterText('zzz');
       expect(c.staff, isEmpty);
+    });
+
+    test('a multi-word needle matches in either name order (#215)', () {
+      final c = buildStaffSearch()..setStaffFilterText('alice bravo');
+      expect(c.staff.map((a) => a.uid), ['alice']);
+      // Reversed — the operator never has to guess which way round the name is
+      // stored.
+      c.setStaffFilterText('bravo alice');
+      expect(c.staff.map((a) => a.uid), ['alice']);
+      // Every part must match: one part from each of two people finds neither.
+      c.setStaffFilterText('alice zulu');
+      expect(c.staff, isEmpty);
+    });
+
+    test('a whitespace-only needle shows every staff member (#215)', () {
+      final c = buildStaffSearch()..setStaffFilterText('zzz');
+      expect(c.staff, isEmpty);
+      c.setStaffFilterText('   ');
+      expect(c.staff, hasLength(3));
+      c.setStaffFilterText('');
+      expect(c.staff, hasLength(3));
+    });
+
+    test('searches the name, not the username (#215)', () {
+      // This staff account is named "Jane Doe" under the username anna.smit:
+      // with the Gebruiker option gone the name is what the box matches.
+      final c = build()..setStaffFilterText('anna.smit');
+      expect(c.staff, isEmpty);
+      c.setStaffFilterText('doe jane');
+      expect(c.staff.map((a) => a.uid), ['anna.smit']);
     });
 
     test('reset both mints one shared password, pushes both, exports a sheet',

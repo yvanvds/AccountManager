@@ -39,9 +39,6 @@ enum PasswordTarget {
       };
 }
 
-/// The fields a staff list can be filtered on (#180, legacy `FilterTypes`).
-enum StaffFilterField { naam, voornaam, gebruikersnaam }
-
 /// One student in the currently-selected class, with its per-target selection.
 class StudentRow {
   StudentRow(this.account);
@@ -452,9 +449,6 @@ class PasswordController extends ChangeNotifier {
 
   String _filterText = '';
   String get filterText => _filterText;
-  // Voornaam (first name) is the more natural default to filter staff by (#186).
-  StaffFilterField _filterField = StaffFilterField.voornaam;
-  StaffFilterField get filterField => _filterField;
 
   ss.SmartschoolAccount? _selectedStaff;
   ss.SmartschoolAccount? get selectedStaff => _selectedStaff;
@@ -490,35 +484,45 @@ class PasswordController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setStaffFilterField(StaffFilterField field) {
-    _filterField = field;
-    _applyStaffFilter();
-    notifyListeners();
-  }
-
   void selectStaff(ss.SmartschoolAccount account) {
     _selectedStaff = account;
     notifyListeners();
   }
 
+  /// Narrows the staff list to the accounts matching the current filter text.
+  /// The needle is split on whitespace and every part must match (#215), so an
+  /// empty or whitespace-only needle shows everyone.
   void _applyStaffFilter() {
-    final needle = _filterText.toLowerCase();
-    if (needle.isEmpty) {
+    final parts = _words(_filterText);
+    if (parts.isEmpty) {
       _filteredStaff = List<ss.SmartschoolAccount>.of(_allStaff);
       return;
     }
     _filteredStaff = <ss.SmartschoolAccount>[
       for (final a in _allStaff)
-        if (_staffMatches(a, needle)) a,
+        if (_staffMatches(a, parts)) a,
     ];
   }
 
-  bool _staffMatches(ss.SmartschoolAccount a, String needle) =>
-      switch (_filterField) {
-        StaffFilterField.voornaam => a.givenName.toLowerCase().contains(needle),
-        StaffFilterField.naam => a.surname.toLowerCase().contains(needle),
-        StaffFilterField.gebruikersnaam => a.uid.toLowerCase().contains(needle),
-      };
+  /// The lower-cased, whitespace-separated words of [text], empties dropped —
+  /// used to normalise both the needle and the name it is matched against.
+  static List<String> _words(String text) => <String>[
+        for (final part in text.toLowerCase().split(RegExp(r'\s+')))
+          if (part.isNotEmpty) part,
+      ];
+
+  /// Whether every part of the needle occurs somewhere in [a]'s full name,
+  /// case-insensitively — the `*namepart*` search that replaced the Naam /
+  /// Voornaam / Gebruiker field picker (#215).
+  ///
+  /// Matching per part rather than on the whole needle is what makes either
+  /// name order work: "jan peeters" finds "Peeters Jan" just as it finds
+  /// "Jan Peeters", so the operator never has to guess which way round the
+  /// name is stored.
+  static bool _staffMatches(ss.SmartschoolAccount a, List<String> parts) {
+    final fullName = _words('${a.givenName} ${a.surname}').join(' ');
+    return parts.every(fullName.contains);
+  }
 
   /// Resets the selected staff member's password(s): a fresh Smartschool and/or
   /// Office 365 password (when both are requested they share one password, as

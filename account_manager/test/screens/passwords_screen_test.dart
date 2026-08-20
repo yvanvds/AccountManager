@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:account_core/account_core.dart' as core;
-import 'package:account_manager/src/passwords/password_controller.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -198,11 +197,12 @@ void main() {
   });
 
   testWidgets(
-      'Personeel: filter defaults to Voornaam and the list is alphabetical '
-      '(#186)', (WidgetTester tester) async {
+      'Personeel: the list is alphabetical and the field picker is gone '
+      '(#186/#215)', (WidgetTester tester) async {
     // Three staff seeded out of alphabetical order across mixed casing; the
-    // Personeel tab must default its filter selector to voornaam and render the
-    // list sorted by the displayed "Voornaam Naam" name.
+    // Personeel tab must render the list sorted by the displayed "Voornaam
+    // Naam" name, with a single search box and no Naam/Voornaam/Gebruiker
+    // selector beside it.
     final harness = ReconcileHarness(ssInitial: staffOrderSnap());
     await tester
         .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
@@ -211,10 +211,15 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
     await tester.pumpAndSettle();
 
-    // The filter selector defaults to voornaam.
-    final dropdown = tester.widget<DropdownButton<StaffFilterField>>(
-        find.byKey(const ValueKey('passwords-staff-filter-field')));
-    expect(dropdown.value, StaffFilterField.voornaam);
+    // One search box, no field picker (#215).
+    expect(
+        find.byKey(const ValueKey('passwords-staff-filter')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-filter-field')),
+        findsNothing);
+    for (final label in const <String>['Naam', 'Voornaam', 'Gebruiker']) {
+      expect(find.text(label), findsNothing,
+          reason: 'the $label option belonged to the dropped field picker');
+    }
 
     // The tiles render top-to-bottom in alphabetical order: alice, Bob, Charlie.
     double y(String uid) =>
@@ -242,5 +247,51 @@ void main() {
     await tester.pump();
     expect(
         find.byKey(const ValueKey('passwords-staff-anna.smit')), findsNothing);
+  });
+
+  testWidgets(
+      'Personeel: one box finds a staff member by any part of the name, in '
+      'either order (#215)', (WidgetTester tester) async {
+    // alice Bravo / Bob Alpha / Charlie Zulu. With the field picker gone the
+    // operator types a fragment and gets the person — a surname fragment, a
+    // given-name fragment and both halves typed the "wrong" way round all land
+    // on the same tile, where picking the wrong field used to return nothing.
+    final harness = ReconcileHarness(ssInitial: staffOrderSnap());
+    await tester
+        .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    final filter = find.byKey(const ValueKey('passwords-staff-filter'));
+    // The focused field's blinking cursor never settles, so pump frames.
+    Future<void> search(String needle) async {
+      await tester.enterText(filter, needle);
+      await tester.pump();
+    }
+
+    // A surname fragment, cased the other way round.
+    await search('BRAV');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-bob')), findsNothing);
+    expect(find.byKey(const ValueKey('passwords-staff-charlie')), findsNothing);
+
+    // Both halves, surname first — the order the tile does *not* display in.
+    await search('bravo alice');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-bob')), findsNothing);
+
+    // Parts from two different people match neither.
+    await search('alice zulu');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsNothing);
+    expect(find.byKey(const ValueKey('passwords-staff-charlie')), findsNothing);
+
+    // Clearing the box brings everyone back.
+    await search('');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-bob')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('passwords-staff-charlie')), findsOneWidget);
   });
 }

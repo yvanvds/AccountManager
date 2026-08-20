@@ -1340,12 +1340,15 @@ void main() {
   });
 
   testWidgets(
-      'the Passwords personeel tab defaults its filter to Voornaam and lists '
-      'staff alphabetically end-to-end (#186)', (WidgetTester tester) async {
+      'the Passwords personeel tab searches staff by any part of the name, in '
+      'either order, with no field picker end-to-end (#186/#215)',
+      (WidgetTester tester) async {
     // The real app, real fonts, real window: a "Personeel" group holding three
-    // staff seeded out of alphabetical order across mixed casing. On opening the
-    // personeel tab the filter selector must default to Voornaam and the list
-    // must render sorted by the displayed "Voornaam Naam" name.
+    // staff seeded out of alphabetical order across mixed casing (alice Bravo /
+    // Bob Alpha / Charlie Zulu). The tab used to pair its filter box with a
+    // Naam / Voornaam / Gebruiker dropdown, so a fragment of the wrong half of
+    // the name returned an empty list with no hint why. One box now matches any
+    // part of the full name, and the list still renders alphabetically.
     useTallWindow(tester);
     final harness = ReconcileHarness(ssInitial: staffOrderSnap());
     await tester.pumpWidget(AccountManagerApp(
@@ -1360,14 +1363,48 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
     await tester.pumpAndSettle();
 
-    // The filter selector renders its default selection: Voornaam.
-    expect(find.text('Voornaam'), findsOneWidget);
+    // One full-width search box; the field picker and its options are gone.
+    final filter = find.byKey(const ValueKey('passwords-staff-filter'));
+    expect(filter, findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-filter-field')),
+        findsNothing);
+    expect(find.text('Voornaam'), findsNothing);
+    expect(find.text('Gebruiker'), findsNothing);
 
     // The tiles render top-to-bottom in alphabetical order: alice, Bob, Charlie.
     double y(String uid) =>
         tester.getTopLeft(find.byKey(ValueKey('passwords-staff-$uid'))).dy;
     expect(y('alice'), lessThan(y('bob')));
     expect(y('bob'), lessThan(y('charlie')));
+
+    // The focused field's blinking cursor never settles, so pump frames.
+    Future<void> search(String needle) async {
+      await tester.enterText(filter, needle);
+      await tester.pump();
+    }
+
+    // A surname fragment in the other casing — the search the old default
+    // (Voornaam) answered with an empty list.
+    await search('BRAV');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-bob')), findsNothing);
+    expect(find.byKey(const ValueKey('passwords-staff-charlie')), findsNothing);
+
+    // Both halves typed surname-first, the order the tile does not display in.
+    await search('bravo alice');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-bob')), findsNothing);
+
+    // Parts from two different people match neither.
+    await search('alice zulu');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsNothing);
+    expect(find.byKey(const ValueKey('passwords-staff-charlie')), findsNothing);
+
+    // Clearing the box brings the whole list back, still in order.
+    await search('');
+    expect(y('alice'), lessThan(y('bob')));
+    expect(y('bob'), lessThan(y('charlie')));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
