@@ -6,6 +6,7 @@ import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter/foundation.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 
+import '../search/name_query.dart';
 import 'password_backends.dart';
 import 'password_export.dart';
 
@@ -542,36 +543,19 @@ class PasswordController extends ChangeNotifier {
   /// Narrows the staff list to the accounts matching the current filter text.
   /// The needle is split on whitespace and every part must match (#215), so an
   /// empty or whitespace-only needle shows everyone.
+  ///
+  /// The matching itself lives in [NameQuery], shared with the Acties Personeel
+  /// search so the two boxes cannot drift apart (#217).
   void _applyStaffFilter() {
-    final parts = _words(_filterText);
-    if (parts.isEmpty) {
+    final query = NameQuery(_filterText);
+    if (query.isEmpty) {
       _filteredStaff = List<ss.SmartschoolAccount>.of(_allStaff);
       return;
     }
     _filteredStaff = <ss.SmartschoolAccount>[
       for (final a in _allStaff)
-        if (_staffMatches(a, parts)) a,
+        if (query.matches('${a.givenName} ${a.surname}')) a,
     ];
-  }
-
-  /// The lower-cased, whitespace-separated words of [text], empties dropped —
-  /// used to normalise both the needle and the name it is matched against.
-  static List<String> _words(String text) => <String>[
-        for (final part in text.toLowerCase().split(RegExp(r'\s+')))
-          if (part.isNotEmpty) part,
-      ];
-
-  /// Whether every part of the needle occurs somewhere in [a]'s full name,
-  /// case-insensitively — the `*namepart*` search that replaced the Naam /
-  /// Voornaam / Gebruiker field picker (#215).
-  ///
-  /// Matching per part rather than on the whole needle is what makes either
-  /// name order work: "jan peeters" finds "Peeters Jan" just as it finds
-  /// "Jan Peeters", so the operator never has to guess which way round the
-  /// name is stored.
-  static bool _staffMatches(ss.SmartschoolAccount a, List<String> parts) {
-    final fullName = _words('${a.givenName} ${a.surname}').join(' ');
-    return parts.every(fullName.contains);
   }
 
   /// Resets the selected staff member's password(s): a fresh Smartschool and/or

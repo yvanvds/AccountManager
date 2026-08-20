@@ -2897,9 +2897,9 @@ void main() {
   });
 
   testWidgets(
-      'the Actions Personeel classroom filters by name and by the '
-      'only-with-actions toggle end-to-end, combining both (#187)',
-      (WidgetTester tester) async {
+      'the Actions Personeel classroom filters by any part of the name in any '
+      'order and by the only-with-actions toggle end-to-end, combining both '
+      '(#187/#217)', (WidgetTester tester) async {
     // The real app, real fonts, real window over a passive session: three staff
     // seeded into the one synthetic Personeel class — two share the surname
     // "Smit" (one carrying an action, one not) and one has a distinct voornaam.
@@ -2950,8 +2950,35 @@ void main() {
     expect(find.text('Clara Smit'), findsOneWidget);
     expect(find.text('Bram Jansen'), findsNothing);
 
-    // Combine with the only-with-actions toggle: only Anna keeps an action, so
-    // Clara (name-matched but action-free) drops too.
+    // Both halves of one name, typed in the stored order and reversed (#217).
+    // Reversed is the half of the time the operator misremembers which way
+    // round the name is stored; it used to return an empty list, because the
+    // needle was matched as one contiguous substring of "Voornaam Naam".
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna smit');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit anna');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    expect(find.text('Bram Jansen'), findsNothing);
+
+    // Every part must occur, so parts taken from two different people match
+    // neither — the operator sees the filter-empty line, not both of them.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna jansen');
+    await tester.pump();
+    expect(
+        find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
+
+    // Back to "Smit", then combine with the only-with-actions toggle: only Anna
+    // keeps an action, so Clara (name-matched but action-free) drops too.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit');
+    await tester.pump();
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);

@@ -9,6 +9,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 import '../format/timestamps.dart';
 import '../reconcile/reconcile_bootstrap.dart';
 import '../reconcile/reconcile_controller.dart';
+import '../search/name_query.dart';
 
 /// The Actions view (#154): the pending-actions browser, split off the
 /// Reconcile screen so a September changeover's hundreds/thousands of tiles no
@@ -190,16 +191,16 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// carries a name search (#187).
   bool get _staffTab => _tabs.index == _ActionFamilyTab.personeel.index;
 
-  /// The active, normalized search query (empty on any non-Personeel tab).
-  String get _query => _staffTab ? _search.text.trim().toLowerCase() : '';
-
-  /// Whether [label] passes the current name search. A single searchbox matches
-  /// the person's display name ("Voornaam Naam"), so a query on either the
-  /// voornaam or the naam is a substring hit (#187).
-  bool _matchesSearch(String label) {
-    final q = _query;
-    return q.isEmpty || label.toLowerCase().contains(q);
-  }
+  /// The active name search, parsed (empty on any non-Personeel tab, which
+  /// carries no search box).
+  ///
+  /// A single searchbox matches the person's display name ("Voornaam Naam"),
+  /// and since #217 the needle is split on whitespace with every part required
+  /// — the same [NameQuery] the Wachtwoorden → Personeel box uses (#215), so
+  /// the two Personeel searches one tab apart behave identically. Per-part
+  /// matching is what makes either name order work: "peeters jan" finds
+  /// "Jan Peeters", which as one contiguous substring found nobody.
+  NameQuery get _query => NameQuery(_staffTab ? _search.text : '');
 
   /// The passive-session classroom accounts narrowed by the active filters: the
   /// "only with actions" toggle keeps just the accounts with an applyable
@@ -207,9 +208,10 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// the tile badge use), and the name search keeps matching display names.
   List<MaterializedAccount> _filterAccounts(
       List<MaterializedAccount> accounts) {
+    final query = _query;
     return [
       for (final a in accounts)
-        if ((!_onlyWithActions || a.hasPending) && _matchesSearch(a.label)) a,
+        if ((!_onlyWithActions || a.hasPending) && query.matches(a.label)) a,
     ];
   }
 
@@ -220,12 +222,13 @@ class _ActionsBodyState extends State<_ActionsBody>
   List<List<PendingAccountEntry>> _filterSituations(
     List<List<PendingAccountEntry>> situations,
   ) {
-    if (_query.isEmpty) return situations;
+    final query = _query;
+    if (query.isEmpty) return situations;
     final out = <List<PendingAccountEntry>>[];
     for (final subset in situations) {
       final kept = <PendingAccountEntry>[
         for (final e in subset)
-          if (_matchesSearch(e.target)) e,
+          if (query.matches(e.target)) e,
       ];
       if (kept.isNotEmpty) out.add(kept);
     }
@@ -1052,7 +1055,9 @@ class _ClassroomFilterBar extends StatelessWidget {
             decoration: InputDecoration(
               isDense: true,
               prefixIcon: const Icon(Icons.search, size: 18),
-              hintText: 'Zoek op voornaam of naam',
+              // Same wording as the Wachtwoorden → Personeel box, which matches
+              // the same way (#217): any part of the name, in any order.
+              hintText: 'Zoek op naam…',
               border: const OutlineInputBorder(),
               suffixIcon: searchController.text.isEmpty
                   ? null

@@ -402,8 +402,9 @@ void main() {
   });
 
   testWidgets(
-      'the Personeel classroom search matches on voornaam or naam and combines '
-      'with the only-with-actions toggle (#187)', (WidgetTester tester) async {
+      'the Personeel classroom search matches any part of the name in any '
+      'order and combines with the only-with-actions toggle (#187/#217)',
+      (WidgetTester tester) async {
     _useTallWindow(tester);
     // Three staff in the one synthetic Personeel class: two share the surname
     // "Smit" (one with an action, one without) and one distinct voornaam.
@@ -451,6 +452,29 @@ void main() {
     expect(find.text('Bram Jansen'), findsOneWidget);
     expect(find.text('Anna Smit'), findsNothing);
     expect(find.text('Clara Smit'), findsNothing);
+
+    // Both halves, in the stored order and reversed (#217): either way round
+    // finds the one person. Reversed used to return nothing, because the needle
+    // was matched as one contiguous substring of "Voornaam Naam".
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna smit');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit anna');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    expect(find.text('Bram Jansen'), findsNothing);
+
+    // Every part must occur: parts taken from two different people match
+    // neither, rather than matching both.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna jansen');
+    await tester.pump();
+    expect(
+        find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
 
     // Combine the toggle with the search: search "Smit" AND only-with-actions
     // keeps just Anna (Clara matches the name but has no action).
