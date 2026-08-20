@@ -1765,6 +1765,90 @@ void main() {
   });
 
   testWidgets(
+      'a passive Acties drill-down says it is read-only in both trees, and its '
+      'Synchroniseer turns the very same class interactive end-to-end (#214)',
+      (WidgetTester tester) async {
+    // Session 1 syncs and materializes the shared view; session 2 is the real
+    // app over the same stores and never syncs — the everyday passive session
+    // that opened Acties to look at the pending work. Both drill-downs used to
+    // swap their interactive tiles for static bullet text with no gesture
+    // handler and say nothing about it, which reads as an interactive screen
+    // whose taps stopped working rather than as a view of the shared state.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(resumed.controller.linked, isNull);
+
+    final readOnly = find.byKey(const ValueKey('actions-read-only'));
+    final pendingTiles = find.byWidgetPredicate((w) =>
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('entry-'));
+    expect(readOnly, findsNothing,
+        reason: 'the browsable overview is not the read-only surface');
+
+    // The Klasgroepen tree: static tiles, and now they say so.
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+    expect(readOnly, findsOneWidget);
+    expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
+    expect(pendingTiles, findsNothing);
+    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    await tester.pumpAndSettle();
+
+    // The classroom tree: the same announcement, and the cards themselves carry
+    // the muted lock rather than passing for tappable rows.
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(readOnly, findsOneWidget);
+    expect(find.textContaining('nog niet gesynchroniseerd'), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsWidgets);
+    expect(pendingTiles, findsNothing,
+        reason: 'nothing in this class is actionable — that is the point');
+
+    // Take the offered way out, from the banner itself: WISA is pulled, the
+    // session links, and the freshly persisted view closes the drill-down.
+    final sync = find.byKey(const ValueKey('actions-read-only-sync'));
+    await tester.ensureVisible(sync);
+    await tester.tap(sync);
+    await tester.pumpAndSettle();
+    expect(resumed.wisaSyncs, 1);
+    expect(resumed.controller.linked, isNotNull);
+    expect(readOnly, findsNothing);
+
+    // The very same class is interactive now: real entry tiles, no notice, no
+    // locks — which is what the operator expected the first time round.
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(readOnly, findsNothing);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+    expect(pendingTiles, findsWidgets);
+  });
+
+  testWidgets(
       'a passive session shows the shared freshness and, while another '
       'operator holds the sync lease, disables Synchronise (#108)',
       (WidgetTester tester) async {

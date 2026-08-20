@@ -24,6 +24,10 @@ import '../reconcile/reconcile_controller.dart';
 /// on-screen tiles build. The global "Dry-run all" / "Apply all" act on every
 /// pending entry across all classes.
 ///
+/// A session with no linked view — passive, or one whose pass failed before it
+/// linked — can only show the stored documents, so both drill-downs say so out
+/// loud rather than quietly swapping in static cards (#214).
+///
 /// Shares the one memoized [ReconcileServices] (and so the one
 /// [ReconcileController]) with the Reconcile and Passwords screens, so a sync
 /// run on Reconcile populates the actions shown here.
@@ -327,6 +331,11 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// interactive entry tiles for that class (active session) or the read-only
   /// materialized account docs (passive session) — both through a lazy
   /// [SliverList] so only the on-screen tiles build (#154).
+  ///
+  /// The read-only half announces itself (#214): without a linked view there is
+  /// nothing to choose, dry-run or apply, and the static account cards are
+  /// otherwise indistinguishable from an interactive list whose taps stopped
+  /// working.
   List<Widget> _classroomSlivers(BuildContext context) {
     final classroom = controller.selectedClassroom;
     final slivers = <Widget>[
@@ -340,6 +349,7 @@ class _ActionsBodyState extends State<_ActionsBody>
     if (controller.loadingClassroom) {
       return slivers..add(_section(const LinearProgressIndicator()));
     }
+    slivers.addAll(_readOnlySlivers());
 
     Widget filterBar() => _section(_ClassroomFilterBar(
           onlyWithActions: _onlyWithActions,
@@ -392,9 +402,22 @@ class _ActionsBodyState extends State<_ActionsBody>
   static const String _noMatchLabel =
       'Geen accounts die aan de filter voldoen.';
 
+  /// The read-only announcement shown above either drill-down when this session
+  /// has no linked view to act on (#214) — a passive session that only read the
+  /// shared overview, or one whose sync/drift pass failed before it could link.
+  /// Empty in an active session, where the tiles below are the interactive ones.
+  List<Widget> _readOnlySlivers() {
+    if (controller.linked != null) return const <Widget>[];
+    return <Widget>[
+      _section(_ReadOnlyNotice(controller: controller)),
+      _gap(PlinkSpacing.s3),
+    ];
+  }
+
   /// The drilled-into "Klasgroepen" node (#119): the live interactive group
   /// entries (active) or the read-only materialized group docs (passive),
-  /// through a lazy [SliverList] (#154).
+  /// through a lazy [SliverList] (#154). The read-only half carries the same
+  /// announcement as the classroom drill-down (#214).
   List<Widget> _groupSlivers(BuildContext context) {
     final slivers = <Widget>[
       _section(_DetailHeader(
@@ -407,6 +430,7 @@ class _ActionsBodyState extends State<_ActionsBody>
     if (controller.loadingGroups) {
       return slivers..add(_section(const LinearProgressIndicator()));
     }
+    slivers.addAll(_readOnlySlivers());
     if (controller.linked != null) {
       final rows = _pendingRows(controller.groupPendingSituations);
       if (rows.isEmpty) {
@@ -635,6 +659,95 @@ class _EmptyState extends StatelessWidget {
       'Nog geen gematerialiseerd overzicht. Synchroniseer op het Reconcile-'
       'scherm om openstaande acties per klas te zien.',
       style: text.bodyMedium,
+    );
+  }
+}
+
+/// The read-only announcement above a drill-down whose session has no linked
+/// view (#214).
+///
+/// `ReconcileController.linked` is what the interactive
+/// [_PendingEntryTile] path is built from: the choices, the per-entry dry-run
+/// and apply. Without it the drill-down can only render the stored account /
+/// group documents as static cards — correct, but silently so, which reads as
+/// an interactive list that stopped responding. This says which of the two the
+/// operator is looking at, why, and offers the sync that turns one into the
+/// other.
+///
+/// Two ways to get here, and the operator is told which: a **passive** session
+/// that only read the shared overview (`loadOverview()`, never synced), or one
+/// whose sync/drift pass **failed** before it could link. A failed pass never
+/// discards an existing linked view — `_fail` records the error and returns to
+/// `ready`, leaving `linked` untouched — so the failure wording only ever
+/// appears when this session had nothing linked to begin with.
+class _ReadOnlyNotice extends StatelessWidget {
+  const _ReadOnlyNotice({required this.controller});
+
+  final ReconcileController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool failed = controller.error != null;
+    final bool lockedByOther = controller.syncLockedByOther;
+
+    return Container(
+      key: const ValueKey('actions-read-only'),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.primary),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(Icons.visibility_outlined, size: 18, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text('Alleen-lezen overzicht', style: text.titleSmall),
+                    const SizedBox(height: PlinkSpacing.s1),
+                    Text(
+                      failed
+                          ? 'De laatste sync is mislukt, dus deze sessie heeft '
+                              'geen actuele acties om toe te passen. Hieronder '
+                              'staat het gedeelde overzicht van de vorige sync.'
+                          : 'Deze sessie heeft nog niet gesynchroniseerd, dus '
+                              'deze acties kunnen niet worden toegepast. '
+                              'Hieronder staat het gedeelde overzicht van de '
+                              'laatste sync.',
+                      style: text.bodyMedium,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: PlinkSpacing.s3),
+          FilledButton.icon(
+            key: const ValueKey('actions-read-only-sync'),
+            onPressed:
+                controller.busy || lockedByOther ? null : controller.sync,
+            icon: const Icon(Icons.sync, size: 18),
+            label: const Text('Synchroniseer'),
+          ),
+          // A dead Synchronise needs its reason on screen too — the same
+          // named-holder line the Reconcile screen shows (#108).
+          if (lockedByOther) ...<Widget>[
+            const SizedBox(height: PlinkSpacing.s2),
+            Text(
+              '${controller.syncLockOwner} is aan het synchroniseren…',
+              style: text.bodySmall,
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -975,6 +1088,12 @@ class _ClassroomFilterBar extends StatelessWidget {
 /// One account's read-only summary in a passive-session classroom drill-down:
 /// the systems it lives in and its candidate action summaries (no live actions
 /// to apply without a sync this session).
+///
+/// Styled as the inert card it is (#214): a muted lock beside the pending
+/// badge, and the candidate lines in the disabled colour, so a card that offers
+/// no choice, dry-run or apply does not sit next to the interactive
+/// [_PendingEntryTile] looking identical to it. [_ReadOnlyNotice] above the
+/// list carries the explanation.
 class _AccountTile extends StatelessWidget {
   const _AccountTile({required this.account});
 
@@ -984,6 +1103,7 @@ class _AccountTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final Color hairline = Theme.of(context).dividerColor;
+    final Color muted = Theme.of(context).disabledColor;
     final systems = <String>[
       if (account.inWisa) 'WISA',
       if (account.inSmartschool) 'Smartschool',
@@ -1003,6 +1123,8 @@ class _AccountTile extends StatelessWidget {
           Row(
             children: <Widget>[
               Expanded(child: Text(account.label, style: text.bodyLarge)),
+              const _ReadOnlyLock(),
+              const SizedBox(width: PlinkSpacing.s2),
               _PendingBadge(
                   count: account.candidates.where((c) => c.canApply).length),
             ],
@@ -1020,7 +1142,10 @@ class _AccountTile extends StatelessWidget {
           for (final c in account.candidates)
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
-              child: Text('• ${c.summary}', style: text.bodySmall),
+              child: Text(
+                '• ${c.summary}',
+                style: text.bodySmall?.copyWith(color: muted),
+              ),
             ),
         ],
       ),
@@ -1028,7 +1153,25 @@ class _AccountTile extends StatelessWidget {
   }
 }
 
-/// One class group's read-only summary in a passive-session group drill-down.
+/// The muted lock a read-only card carries where an interactive tile carries
+/// its expand affordance (#214) — the per-row half of the read-only state,
+/// explained once by [_ReadOnlyNotice] at the top of the list.
+class _ReadOnlyLock extends StatelessWidget {
+  const _ReadOnlyLock();
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+        message: 'Alleen-lezen — synchroniseer om acties toe te passen',
+        child: Icon(
+          Icons.lock_outline,
+          size: 16,
+          color: Theme.of(context).disabledColor,
+        ),
+      );
+}
+
+/// One class group's read-only summary in a passive-session group drill-down,
+/// styled inert exactly as [_AccountTile] is (#214).
 class _GroupTile extends StatelessWidget {
   const _GroupTile({required this.group});
 
@@ -1038,6 +1181,7 @@ class _GroupTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final Color hairline = Theme.of(context).dividerColor;
+    final Color muted = Theme.of(context).disabledColor;
     final systems = <String>[
       if (group.inWisa) 'WISA',
       if (group.inSmartschool) 'Smartschool',
@@ -1057,6 +1201,8 @@ class _GroupTile extends StatelessWidget {
           Row(
             children: <Widget>[
               Expanded(child: Text(group.label, style: text.bodyLarge)),
+              const _ReadOnlyLock(),
+              const SizedBox(width: PlinkSpacing.s2),
               _PendingBadge(
                   count: group.candidates.where((c) => c.canApply).length),
             ],
@@ -1071,7 +1217,7 @@ class _GroupTile extends StatelessWidget {
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(
                 c.canApply ? '• ${c.summary}' : '• ${c.summary} (manueel)',
-                style: text.bodySmall,
+                style: text.bodySmall?.copyWith(color: muted),
               ),
             ),
         ],
