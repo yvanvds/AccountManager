@@ -196,6 +196,39 @@ void main() {
       expect(c.message, contains('mislukt'));
     });
 
+    test(
+        'a refused Azure write is reported as a rights problem naming the '
+        'student, and the rest of the batch still runs (#216)', () async {
+      // Graph denies the passwordProfile write. The operator used to read
+      // "Genereren mislukt: GraphException(403 (Authorization_RequestDenied))".
+      backends = RecordingPasswordBackends(denyAzure: {'jane@student.school'});
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c.selectClass(klas);
+      final jane = c.rows.firstWhere((r) => r.username == 'jane');
+      final bob = c.rows.firstWhere((r) => r.username == 'bob');
+      c
+        ..toggleRow(jane, PasswordTarget.office365, true)
+        ..toggleRow(jane, PasswordTarget.smartschool, true)
+        ..toggleRow(bob, PasswordTarget.smartschool, true);
+
+      await c.generate();
+
+      expect(c.message, isNot(contains('GraphException')));
+      expect(c.message, contains('Geen rechten'));
+      expect(c.message, contains('Jane Doe'));
+      expect(c.message, contains('User-PasswordProfile.ReadWrite.All'));
+      // The refusal ended one push, not the run: both Smartschool passwords
+      // were still pushed and queued.
+      expect(backends.smartschoolPushes.map((p) => p.$1), ['jane', 'bob']);
+      final entries = await queue.load();
+      expect(entries, hasLength(2));
+      expect(
+        entries.firstWhere((e) => e.accountName == 'jane').azurePassword,
+        isNull,
+      );
+    });
+
     test('generate is a no-op when nothing is selected', () async {
       final c = build();
       c.selectClass(c.childrenOf(c.studentRoot!).single);
@@ -297,10 +330,6 @@ void main() {
       expect(c.staff.map((a) => a.uid), ['anna.smit']);
     });
 
-    test('defaults the staff filter field to voornaam (#186)', () {
-      expect(build().filterField, StaffFilterField.voornaam);
-    });
-
     test('orders the staff list alphabetically by name (#186)', () {
       // Three staff seeded out of alphabetical order across mixed casing; the
       // controller must expose them sorted by display name (alice, Bob, Charlie).
@@ -315,13 +344,57 @@ void main() {
       expect(c.staff.map((a) => a.uid), ['alice', 'bob', 'charlie']);
     });
 
-    test('filters staff by username', () {
-      final c = build()
-        ..setStaffFilterField(StaffFilterField.gebruikersnaam)
-        ..setStaffFilterText('anna');
-      expect(c.staff, hasLength(1));
+    /// The Personeel search over three staff whose names differ in case and in
+    /// which half is distinctive: Charlie Zulu, alice Bravo, Bob Alpha.
+    PasswordController buildStaffSearch() => PasswordController(
+          snapshot: staffOrderSnap(),
+          queue: queue,
+          backends: backends,
+          generatePassword: _seqGenerator(),
+          writer: (name, bytes) async => 'C:/exports/$name',
+        );
+
+    test('searches any part of the full name, case-insensitively (#215)', () {
+      final c = buildStaffSearch()..setStaffFilterText('ZUL');
+      expect(c.staff.map((a) => a.uid), ['charlie']);
+      // The given name matches just as well as the surname — no field to pick.
+      c.setStaffFilterText('Bob');
+      expect(c.staff.map((a) => a.uid), ['bob']);
+      // …and a fragment from the middle of a name matches too (*namepart*).
+      c.setStaffFilterText('rav');
+      expect(c.staff.map((a) => a.uid), ['alice']);
       c.setStaffFilterText('zzz');
       expect(c.staff, isEmpty);
+    });
+
+    test('a multi-word needle matches in either name order (#215)', () {
+      final c = buildStaffSearch()..setStaffFilterText('alice bravo');
+      expect(c.staff.map((a) => a.uid), ['alice']);
+      // Reversed — the operator never has to guess which way round the name is
+      // stored.
+      c.setStaffFilterText('bravo alice');
+      expect(c.staff.map((a) => a.uid), ['alice']);
+      // Every part must match: one part from each of two people finds neither.
+      c.setStaffFilterText('alice zulu');
+      expect(c.staff, isEmpty);
+    });
+
+    test('a whitespace-only needle shows every staff member (#215)', () {
+      final c = buildStaffSearch()..setStaffFilterText('zzz');
+      expect(c.staff, isEmpty);
+      c.setStaffFilterText('   ');
+      expect(c.staff, hasLength(3));
+      c.setStaffFilterText('');
+      expect(c.staff, hasLength(3));
+    });
+
+    test('searches the name, not the username (#215)', () {
+      // This staff account is named "Jane Doe" under the username anna.smit:
+      // with the Gebruiker option gone the name is what the box matches.
+      final c = build()..setStaffFilterText('anna.smit');
+      expect(c.staff, isEmpty);
+      c.setStaffFilterText('doe jane');
+      expect(c.staff.map((a) => a.uid), ['anna.smit']);
     });
 
     test('reset both mints one shared password, pushes both, exports a sheet',
@@ -350,6 +423,38 @@ void main() {
       await c.resetStaff(smartschool: true, office365: false);
       expect(backends.smartschoolPushes, hasLength(1));
       expect(backends.azurePushes, isEmpty);
+    });
+
+    test(
+        'a refused Office 365 reset names the staff member and the cause, not '
+        'a raw GraphException (#216)', () async {
+      backends = RecordingPasswordBackends(denyAzure: {'anna@school'});
+      final c = build();
+      c.selectStaff(c.staff.single);
+
+      final path = await c.resetStaff(smartschool: false, office365: true);
+
+      expect(path, isNull, reason: 'nothing was set, so no sheet is written');
+      expect(c.message, isNot(contains('GraphException')));
+      expect(c.message, contains('Geen rechten'));
+      expect(c.message, contains('Jane Doe'));
+      expect(c.message, contains('User-PasswordProfile.ReadWrite.All'));
+      expect(writes, isEmpty);
+    });
+
+    test('a half-refused reset still hands over the sheet and says why (#216)',
+        () async {
+      backends = RecordingPasswordBackends(denyAzure: {'anna@school'});
+      final c = build();
+      c.selectStaff(c.staff.single);
+
+      final path = await c.resetStaff(smartschool: true, office365: true);
+
+      expect(path, isNotNull);
+      expect(backends.smartschoolPushes, hasLength(1));
+      expect(c.message, contains('Geen rechten'));
+      expect(c.message, contains('sheet'));
+      expect(c.message, isNot(contains('GraphException')));
     });
 
     test('reset with no target selected is a no-op', () async {

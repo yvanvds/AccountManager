@@ -187,5 +187,171 @@ void main() {
       );
       expect(deltaCall.url.queryParameters[r'$deltatoken'], 'OLDTOKEN');
     });
+
+    test(
+        'a delta walk that returns no deltaLink leaves no token rather than '
+        'carrying the old one forward (#213)', () async {
+      // Graph normally closes a delta walk with an `@odata.deltaLink`. When it
+      // does not, the pre-fix connector re-shipped the token it was handed, so
+      // the stored token stopped advancing while every sync still reported
+      // success — and kept ageing until Graph refused it for being >30 days
+      // old. No token at all is the honest answer: the next sync re-reads.
+      GraphResponse noLinkRoute(GraphRequest req) {
+        // Everything empty, and — the point of the test — the delta walk ends
+        // with no `@odata.deltaLink`.
+        return jsonOk({'value': const <Object>[]});
+      }
+
+      final connector = connectorWith(FakeGraphTransport(noLinkRoute));
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: AzureSnapshot(
+          fetchedAt: DateTime.utc(2026, 6, 1),
+          deltaToken: 'OLDTOKEN',
+          users: const [],
+          groups: const [],
+        ),
+      );
+
+      expect(snapshot.deltaToken, isNull,
+          reason: 'a token that did not advance is dropped, never re-shipped');
+    });
+  });
+
+  group('rejected delta token (#213)', () {
+    /// Routes a delta *resume* to [rejection] while the full-read path
+    /// (`$deltatoken=latest` + the `$filter` bulk read) succeeds.
+    GraphResponse Function(GraphRequest) rejectingRoute(
+      GraphResponse rejection, {
+      List<String>? resumeTokens,
+    }) =>
+        (req) {
+          final path = req.url.path;
+          if (path.contains('/members')) {
+            return jsonOk(readFixture('group_members_3a.json'));
+          }
+          if (path.contains('groups')) {
+            return jsonOk(readFixture('groups.json'));
+          }
+          if (path.contains('users/delta')) {
+            final token = req.url.queryParameters[r'$deltatoken'];
+            if (token == 'latest') {
+              return jsonOk(readFixture('delta_latest.json'));
+            }
+            resumeTokens?.add(token ?? '');
+            return rejection;
+          }
+          if (req.url.queryParameters[r'$skiptoken'] == 'PAGE2') {
+            return jsonOk(readFixture('users_page2.json'));
+          }
+          return jsonOk(readFixture('users_page1.json'));
+        };
+
+    AzureSnapshot previousAt(DateTime at) => AzureSnapshot(
+          fetchedAt: at,
+          deltaToken: 'DEADTOKEN',
+          users: const [
+            AzureUser(id: '00000000-0000-0000-0000-000000000042', upn: 'old@x'),
+          ],
+          groups: const [],
+        );
+
+    test(
+        'a 400 Request_UnsupportedQuery about an expired deltaLink falls back '
+        'to a full read and primes a fresh token', () async {
+      final resumeTokens = <String>[];
+      final transport = FakeGraphTransport(rejectingRoute(
+        graphError(
+          400,
+          'Request_UnsupportedQuery',
+          'DeltaLink older than 30 days is not supported.',
+        ),
+        resumeTokens: resumeTokens,
+      ));
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: transport,
+        log: log,
+      );
+
+      final snapshot = await connector.sync(
+        deltaToken: 'DEADTOKEN',
+        previous:
+            previousAt(DateTime.now().subtract(const Duration(hours: 14))),
+      );
+
+      // The pass completed with a *complete* snapshot, not the previous user
+      // list and not an exception.
+      expect(resumeTokens, ['DEADTOKEN'], reason: 'tried once, then given up');
+      expect(snapshot.users.map((u) => u.upn), [
+        'ann.peeters@student.school.example',
+        'bram.janssens@student.school.example',
+        'carla.maes@school.example',
+      ]);
+      expect(snapshot.groups, hasLength(2));
+      // …and with a fresh token, so the next sync resumes instead of hitting
+      // the same dead token forever.
+      expect(snapshot.deltaToken, 'PRIMEDTOKEN123');
+
+      // The bulk read really was the $filter-scoped one (PAIN-2 holds on the
+      // recovery path too).
+      final bulk = transport.requests.firstWhere(
+        (r) => r.url.path.endsWith('/users'),
+      );
+      expect(bulk.url.queryParameters[r'$filter'], isNotNull);
+
+      // The operator is told what happened, with the rejected token's age —
+      // the diagnostic that separates "genuinely old" from "stopped advancing".
+      final recovery = log.messages.firstWhere(
+        (m) => m.contains('rejected the stored delta token'),
+      );
+      expect(recovery, contains('14h'));
+      expect(recovery, contains('DeltaLink older than 30 days'));
+    });
+
+    test('Graph\'s documented 410 resyncRequired recovers the same way',
+        () async {
+      final transport = FakeGraphTransport(rejectingRoute(
+        graphError(410, 'resyncRequired', 'Resync required.'),
+      ));
+      final connector = connectorWith(transport);
+
+      final snapshot = await connector.sync(
+        deltaToken: 'DEADTOKEN',
+        previous: previousAt(DateTime.utc(2026, 6, 1)),
+      );
+
+      expect(snapshot.users, hasLength(3));
+      expect(snapshot.deltaToken, 'PRIMEDTOKEN123');
+    });
+
+    test(
+        'a 400 that is not about the delta token still fails the sync — a '
+        'malformed query must stay loud', () async {
+      final transport = FakeGraphTransport(rejectingRoute(
+        graphError(
+          400,
+          'Request_UnsupportedQuery',
+          "Unsupported or invalid query filter clause specified for property "
+              "'jobTitle'.",
+        ),
+      ));
+      final connector = connectorWith(transport);
+
+      await expectLater(
+        connector.sync(
+          deltaToken: 'DEADTOKEN',
+          previous: previousAt(DateTime.utc(2026, 6, 1)),
+        ),
+        throwsA(isA<GraphException>()),
+      );
+      expect(
+        transport.requests.where((r) => r.url.path.endsWith('/users')),
+        isEmpty,
+        reason: 'no silent, expensive full read behind a real query bug',
+      );
+    });
   });
 }

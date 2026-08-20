@@ -1340,12 +1340,15 @@ void main() {
   });
 
   testWidgets(
-      'the Passwords personeel tab defaults its filter to Voornaam and lists '
-      'staff alphabetically end-to-end (#186)', (WidgetTester tester) async {
+      'the Passwords personeel tab searches staff by any part of the name, in '
+      'either order, with no field picker end-to-end (#186/#215)',
+      (WidgetTester tester) async {
     // The real app, real fonts, real window: a "Personeel" group holding three
-    // staff seeded out of alphabetical order across mixed casing. On opening the
-    // personeel tab the filter selector must default to Voornaam and the list
-    // must render sorted by the displayed "Voornaam Naam" name.
+    // staff seeded out of alphabetical order across mixed casing (alice Bravo /
+    // Bob Alpha / Charlie Zulu). The tab used to pair its filter box with a
+    // Naam / Voornaam / Gebruiker dropdown, so a fragment of the wrong half of
+    // the name returned an empty list with no hint why. One box now matches any
+    // part of the full name, and the list still renders alphabetically.
     useTallWindow(tester);
     final harness = ReconcileHarness(ssInitial: staffOrderSnap());
     await tester.pumpWidget(AccountManagerApp(
@@ -1360,14 +1363,107 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
     await tester.pumpAndSettle();
 
-    // The filter selector renders its default selection: Voornaam.
-    expect(find.text('Voornaam'), findsOneWidget);
+    // One full-width search box; the field picker and its options are gone.
+    final filter = find.byKey(const ValueKey('passwords-staff-filter'));
+    expect(filter, findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-filter-field')),
+        findsNothing);
+    expect(find.text('Voornaam'), findsNothing);
+    expect(find.text('Gebruiker'), findsNothing);
 
     // The tiles render top-to-bottom in alphabetical order: alice, Bob, Charlie.
     double y(String uid) =>
         tester.getTopLeft(find.byKey(ValueKey('passwords-staff-$uid'))).dy;
     expect(y('alice'), lessThan(y('bob')));
     expect(y('bob'), lessThan(y('charlie')));
+
+    // The focused field's blinking cursor never settles, so pump frames.
+    Future<void> search(String needle) async {
+      await tester.enterText(filter, needle);
+      await tester.pump();
+    }
+
+    // A surname fragment in the other casing — the search the old default
+    // (Voornaam) answered with an empty list.
+    await search('BRAV');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-bob')), findsNothing);
+    expect(find.byKey(const ValueKey('passwords-staff-charlie')), findsNothing);
+
+    // Both halves typed surname-first, the order the tile does not display in.
+    await search('bravo alice');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-staff-bob')), findsNothing);
+
+    // Parts from two different people match neither.
+    await search('alice zulu');
+    expect(find.byKey(const ValueKey('passwords-staff-alice')), findsNothing);
+    expect(find.byKey(const ValueKey('passwords-staff-charlie')), findsNothing);
+
+    // Clearing the box brings the whole list back, still in order.
+    await search('');
+    expect(y('alice'), lessThan(y('bob')));
+    expect(y('bob'), lessThan(y('charlie')));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a refused Office 365 password reset tells the operator which permission '
+      'is missing instead of showing a raw GraphException end-to-end (#216)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real window — and the *production* password
+    // write path (real ConnectorPasswordBackends → real AzureConnector) over a
+    // Graph that answers the way the tenant did: the user lookup succeeds, the
+    // passwordProfile PATCH comes back 403 Authorization_RequestDenied because
+    // the app registration only ever had User.ReadWrite.All. The operator used
+    // to read "Reset mislukt: GraphException(403 (Authorization_RequestDenied))"
+    // and had to go dig in the log panel to learn it was a rights problem.
+    useTallWindow(tester);
+    final denied = PasswordWriteDeniedGraph();
+    final harness =
+        ReconcileHarness(ssInitial: passwordsSnap(), passwordGraph: denied);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Passwords'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    // The fixture's staff account (uid anna.smit) is named Jane Doe. Reset the
+    // Office 365 password only, so the whole reset rides on the refused write.
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-anna.smit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-reset-o365')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-staff-reset-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // Graph really was asked, and really refused.
+    expect(denied.refusedWrites, hasLength(1));
+
+    // What the operator reads on the screen: who it was for, and the two
+    // directory-side causes — no exception class, no status code.
+    final message = tester.widget<Text>(
+      find.byKey(const ValueKey('passwords-message')),
+    );
+    final String shown = message.data!;
+    expect(shown, contains('Geen rechten'));
+    expect(shown, contains('Jane Doe'));
+    expect(shown, contains('User-PasswordProfile.ReadWrite.All'));
+    expect(shown, isNot(contains('GraphException')));
+    expect(shown, isNot(contains('403')));
+
+    // No sheet is handed over for a password that was never set.
+    expect(harness.passwordWrites, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -1762,6 +1858,90 @@ void main() {
     expect(resumed.ssSyncs, 0);
     expect(resumed.azSyncs, 0);
     expect(resumed.controller.linked, isNull);
+  });
+
+  testWidgets(
+      'a passive Acties drill-down says it is read-only in both trees, and its '
+      'Synchroniseer turns the very same class interactive end-to-end (#214)',
+      (WidgetTester tester) async {
+    // Session 1 syncs and materializes the shared view; session 2 is the real
+    // app over the same stores and never syncs — the everyday passive session
+    // that opened Acties to look at the pending work. Both drill-downs used to
+    // swap their interactive tiles for static bullet text with no gesture
+    // handler and say nothing about it, which reads as an interactive screen
+    // whose taps stopped working rather than as a view of the shared state.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(resumed.controller.linked, isNull);
+
+    final readOnly = find.byKey(const ValueKey('actions-read-only'));
+    final pendingTiles = find.byWidgetPredicate((w) =>
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('entry-'));
+    expect(readOnly, findsNothing,
+        reason: 'the browsable overview is not the read-only surface');
+
+    // The Klasgroepen tree: static tiles, and now they say so.
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+    expect(readOnly, findsOneWidget);
+    expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
+    expect(pendingTiles, findsNothing);
+    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    await tester.pumpAndSettle();
+
+    // The classroom tree: the same announcement, and the cards themselves carry
+    // the muted lock rather than passing for tappable rows.
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(readOnly, findsOneWidget);
+    expect(find.textContaining('nog niet gesynchroniseerd'), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsWidgets);
+    expect(pendingTiles, findsNothing,
+        reason: 'nothing in this class is actionable — that is the point');
+
+    // Take the offered way out, from the banner itself: WISA is pulled, the
+    // session links, and the freshly persisted view closes the drill-down.
+    final sync = find.byKey(const ValueKey('actions-read-only-sync'));
+    await tester.ensureVisible(sync);
+    await tester.tap(sync);
+    await tester.pumpAndSettle();
+    expect(resumed.wisaSyncs, 1);
+    expect(resumed.controller.linked, isNotNull);
+    expect(readOnly, findsNothing);
+
+    // The very same class is interactive now: real entry tiles, no notice, no
+    // locks — which is what the operator expected the first time round.
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(readOnly, findsNothing);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+    expect(pendingTiles, findsWidgets);
   });
 
   testWidgets(
@@ -2717,9 +2897,9 @@ void main() {
   });
 
   testWidgets(
-      'the Actions Personeel classroom filters by name and by the '
-      'only-with-actions toggle end-to-end, combining both (#187)',
-      (WidgetTester tester) async {
+      'the Actions Personeel classroom filters by any part of the name in any '
+      'order and by the only-with-actions toggle end-to-end, combining both '
+      '(#187/#217)', (WidgetTester tester) async {
     // The real app, real fonts, real window over a passive session: three staff
     // seeded into the one synthetic Personeel class — two share the surname
     // "Smit" (one carrying an action, one not) and one has a distinct voornaam.
@@ -2770,8 +2950,35 @@ void main() {
     expect(find.text('Clara Smit'), findsOneWidget);
     expect(find.text('Bram Jansen'), findsNothing);
 
-    // Combine with the only-with-actions toggle: only Anna keeps an action, so
-    // Clara (name-matched but action-free) drops too.
+    // Both halves of one name, typed in the stored order and reversed (#217).
+    // Reversed is the half of the time the operator misremembers which way
+    // round the name is stored; it used to return an empty list, because the
+    // needle was matched as one contiguous substring of "Voornaam Naam".
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna smit');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit anna');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    expect(find.text('Bram Jansen'), findsNothing);
+
+    // Every part must occur, so parts taken from two different people match
+    // neither — the operator sees the filter-empty line, not both of them.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna jansen');
+    await tester.pump();
+    expect(
+        find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
+
+    // Back to "Smit", then combine with the only-with-actions toggle: only Anna
+    // keeps an action, so Clara (name-matched but action-free) drops too.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit');
+    await tester.pump();
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
@@ -3007,6 +3214,90 @@ void main() {
     // And the pruning happened before the account reads, so the connector never
     // even asked Smartschool about the removed groups.
     expect(wire.accountCodes, <String>['SCH', 'KLA']);
+  });
+
+  testWidgets(
+      'a Check for drift whose stored Azure delta token Graph refuses still '
+      'finishes, on a full re-read that leaves a usable token behind (#213)',
+      (WidgetTester tester) async {
+    // The real app over the *production* Azure pull — a real AzureConnector
+    // behind the real azureSyncer — with Graph answering a resume from the
+    // stored token the way it answered the operator:
+    // `400 Request_UnsupportedQuery — DeltaLink older than 30 days is not
+    // supported.` The exception used to propagate out of the connector into
+    // ReconcileController._fail, so the whole pass produced no linked state at
+    // all; and because a failed pass deliberately leaves the stored snapshot
+    // alone, every later pass re-sent the same dead token. Nothing short of
+    // wiping the stored Azure document got the operator out of it.
+    useTallWindow(tester);
+    final azureWire = StaleDeltaTokenGraph();
+    final harness = ReconcileHarness(
+      azureTransport: azureWire,
+      // Last night's snapshot, with the token that has since gone stale.
+      azureInitial: azSnap(
+        fetchedAt: DateTime.now().subtract(const Duration(hours: 15)),
+        deltaToken: 'DEADTOKEN',
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: WISA + Smartschool pull, the seeded Azure snapshot
+    // is reused untouched (its token is not spent yet).
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+
+    // Today: Check for drift, which is what re-reads Azure.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    // The pass finished instead of dying: no inline failure, not busy, and the
+    // overview the operator came for is on screen.
+    expect(harness.controller.error, isNull);
+    expect(harness.controller.busy, isFalse);
+    expect(find.text('Overview'), findsOneWidget);
+
+    // The dead token was tried exactly once and then given up on, and the
+    // fallback was the $filter-scoped bulk read (PAIN-2 holds while recovering).
+    expect(azureWire.resumeTokens, <String>['DEADTOKEN']);
+    expect(azureWire.bulkReads, 1);
+    expect(
+      azureWire.requests
+          .lastWhere((r) => r.url.path.endsWith('/users'))
+          .url
+          .queryParameters[r'$filter'],
+      isNotNull,
+    );
+
+    // The snapshot is complete (not the stale one held over) and carries a
+    // fresh token…
+    expect(harness.app.azure.snapshot?.users.map((u) => u.upn),
+        <String>['jane.doe@student.school.example']);
+    expect(harness.app.azure.snapshot?.deltaToken, 'FRESH-DELTA-TOKEN');
+
+    // …and the operator is told why the full read happened, with the rejected
+    // token's age — the diagnostic that says whether Graph expired a genuinely
+    // old token or the app had stopped advancing it.
+    expect(find.textContaining('Graph rejected the stored delta token'),
+        findsOneWidget);
+    expect(find.textContaining('stored 15h'), findsOneWidget);
+
+    // A second drift check resumes from that fresh token: the recovery restored
+    // incremental syncing rather than condemning the app to full reads.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, <String>['DEADTOKEN', 'FRESH-DELTA-TOKEN']);
+    expect(azureWire.bulkReads, 1, reason: 'no second full read');
+    expect(harness.controller.error, isNull);
   });
 }
 

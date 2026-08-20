@@ -24,11 +24,14 @@ class _RecordingSoap implements ss.SmartschoolSoapTransport {
 }
 
 /// A Graph transport that answers GETs (user lookup) from [userExists] and
-/// records PATCHes (the password reset).
+/// records PATCHes (the password reset). With [denyPatch] the PATCH comes back
+/// the way the tenant answered it in #216: the user is found, the
+/// `passwordProfile` write is refused.
 class _FakeGraph implements az.GraphTransport {
-  _FakeGraph({required this.userExists});
+  _FakeGraph({required this.userExists, this.denyPatch = false});
 
   final bool userExists;
+  final bool denyPatch;
   final List<az.GraphRequest> patches = <az.GraphRequest>[];
 
   @override
@@ -42,6 +45,13 @@ class _FakeGraph implements az.GraphTransport {
           : const az.GraphResponse(statusCode: 404);
     }
     patches.add(request);
+    if (denyPatch) {
+      return const az.GraphResponse(
+        statusCode: 403,
+        body: '{"error":{"code":"Authorization_RequestDenied",'
+            '"message":"Insufficient privileges to complete the operation."}}',
+      );
+    }
     return const az.GraphResponse(statusCode: 204);
   }
 }
@@ -96,6 +106,23 @@ void main() {
       expect(ok, isFalse);
       expect(graph.patches, isEmpty);
       expect(log.errors, isNotEmpty);
+    });
+
+    test(
+        'a refused passwordProfile write surfaces as a permission problem, not '
+        'a bare GraphException (#216)', () async {
+      final graph = _FakeGraph(userExists: true, denyPatch: true);
+      final backends = ConnectorPasswordBackends(azure: _az(graph));
+
+      final error = await backends
+          .setAzurePassword('jane@student.school', 'Sw0rd!')
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      // Not folded into `false`: the account exists, the rights do not — the
+      // caller must be able to tell the operator which.
+      expect(error, isA<az.AzurePasswordPermissionException>());
+      expect('$error', contains('User-PasswordProfile.ReadWrite.All'));
+      expect(graph.patches, hasLength(1));
     });
 
     test('a null connector makes the push a no-op that returns false',

@@ -67,6 +67,132 @@ class RecordingGraph implements az.GraphTransport {
   }
 }
 
+/// A [az.GraphTransport] that answers the way Graph does for a school whose
+/// stored delta token is no longer usable (#213): resuming `/users/delta` from
+/// it comes back
+/// `400 Request_UnsupportedQuery — DeltaLink older than 30 days is not
+/// supported.`, while the full-read path (`$deltatoken=latest` + the
+/// `$filter`-scoped `/users` pull) succeeds and hands back [freshToken].
+///
+/// The users it serves are the harness's own Azure fixture, so a pass that
+/// recovered lands the same linked view as a healthy one.
+class StaleDeltaTokenGraph implements az.GraphTransport {
+  StaleDeltaTokenGraph({
+    this.freshToken = 'FRESH-DELTA-TOKEN',
+    List<az.AzureUser>? users,
+  }) : users = users ?? <az.AzureUser>[azUser()];
+
+  /// The token the recovered full read primes for the next sync.
+  final String freshToken;
+
+  /// What the `$filter`-scoped bulk read returns.
+  final List<az.AzureUser> users;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order — so a test can
+  /// prove the dead one is not re-sent after the recovery.
+  final List<String> resumeTokens = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String? token = request.url.queryParameters[r'$deltatoken'];
+      if (token == 'latest') return _deltaLink();
+      resumeTokens.add(token ?? '');
+      // A token this transport itself handed out is honoured, so a test can
+      // prove the recovery really restored incremental syncing.
+      if (token == freshToken) return _deltaLink();
+      return az.GraphResponse(
+        statusCode: 400,
+        body: jsonEncode(<String, dynamic>{
+          'error': <String, dynamic>{
+            'code': 'Request_UnsupportedQuery',
+            'message': 'DeltaLink older than 30 days is not supported.',
+          },
+        }),
+      );
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{
+      'value': <Map<String, dynamic>>[
+        for (final az.AzureUser u in users)
+          <String, dynamic>{
+            'id': u.id,
+            'userPrincipalName': u.upn,
+            if (u.employeeId != null) 'employeeId': u.employeeId,
+            'displayName': u.displayName,
+            'givenName': u.givenName,
+            'surname': u.surname,
+            if (u.companyName != null) 'companyName': u.companyName,
+            if (u.department != null) 'department': u.department,
+            'accountEnabled': u.accountEnabled,
+          },
+      ],
+    });
+  }
+
+  /// An empty delta page closed by a deltaLink carrying [freshToken].
+  az.GraphResponse _deltaLink() => _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value': const <Object>[],
+      });
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
+/// A [az.GraphTransport] answering the way the tenant answered in #216: the
+/// user lookup succeeds, and the `passwordProfile` PATCH that follows is
+/// refused with `403 Authorization_RequestDenied`, because the app
+/// registration was never granted `User-PasswordProfile.ReadWrite.All` (and
+/// `User.ReadWrite.All` does not authorise that property).
+///
+/// Wire it into [ReconcileHarness.passwordGraph] to drive the **production**
+/// password write path — real `ConnectorPasswordBackends` over a real
+/// [az.AzureConnector] — so a refusal travels from Graph all the way to what
+/// the Passwords screen puts on screen.
+class PasswordWriteDeniedGraph implements az.GraphTransport {
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// The PATCHes Graph refused.
+  List<az.GraphRequest> get refusedWrites => <az.GraphRequest>[
+        for (final r in requests)
+          if (r.method == 'PATCH') r
+      ];
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    if (request.method == 'GET') {
+      return const az.GraphResponse(
+        statusCode: 200,
+        headers: <String, String>{'content-type': 'application/json'},
+        body: '{"id":"az-anna","userPrincipalName":"anna@school"}',
+      );
+    }
+    return const az.GraphResponse(
+      statusCode: 403,
+      headers: <String, String>{'content-type': 'application/json'},
+      body: '{"error":{"code":"Authorization_RequestDenied",'
+          '"message":"Insufficient privileges to complete the operation."}}',
+    );
+  }
+}
+
 /// A recording [PasswordBackends] for the on-demand Passwords screen (#180):
 /// captures every live push a generation/reset would make and reports success,
 /// so the reworked Passwords screen can be driven end-to-end with zero network.
@@ -76,6 +202,7 @@ class RecordingPasswordBackends implements PasswordBackends {
   RecordingPasswordBackends({
     this.failSmartschool = const <String>{},
     this.failAzure = const <String>{},
+    this.denyAzure = const <String>{},
   });
 
   /// Smartschool usernames whose push should fail.
@@ -83,6 +210,13 @@ class RecordingPasswordBackends implements PasswordBackends {
 
   /// Azure mails/UPNs whose push should fail (models "no Azure account").
   final Set<String> failAzure;
+
+  /// Azure mails/UPNs the directory *refuses* to write (#216): Graph answers
+  /// `403 Authorization_RequestDenied` because the sign-in lacks
+  /// `User-PasswordProfile.ReadWrite.All` or the operator holds no
+  /// password-reset role. Distinct from [failAzure]: the account exists, the
+  /// rights do not, and the operator must be told which.
+  final Set<String> denyAzure;
 
   /// Every Smartschool push: `(uid, slot, password)`.
   final List<(String, core.AccountType, String)> smartschoolPushes =
@@ -104,6 +238,16 @@ class RecordingPasswordBackends implements PasswordBackends {
 
   @override
   Future<bool> setAzurePassword(String mailOrUpn, String password) async {
+    if (denyAzure.contains(mailOrUpn)) {
+      throw az.AzurePasswordPermissionException(
+        mailOrUpn,
+        const az.GraphException(
+          403,
+          '{"error":{"code":"Authorization_RequestDenied",'
+          '"message":"Insufficient privileges to complete the operation."}}',
+        ),
+      );
+    }
     if (failAzure.contains(mailOrUpn)) return false;
     azurePushes.add((mailOrUpn, password));
     return true;
@@ -684,9 +828,14 @@ Future<InMemoryLinkedStore> seededLinkedStore(
   return store;
 }
 
-az.AzureSnapshot azSnap({DateTime? fetchedAt, List<az.AzureUser>? users}) =>
+az.AzureSnapshot azSnap({
+  DateTime? fetchedAt,
+  List<az.AzureUser>? users,
+  String? deltaToken,
+}) =>
     az.AzureSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
+      deltaToken: deltaToken,
       users: users ?? [azUser()],
       groups: const [],
     );
@@ -1008,6 +1157,8 @@ class ReconcileHarness {
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
     this.azureGate,
+    this.azureTransport,
+    this.passwordGraph,
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
     List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
@@ -1032,15 +1183,41 @@ class ReconcileHarness {
       ssSyncs++;
       return ssResult;
     };
-    Syncer<az.AzureSnapshot> azSync = (_) async {
-      azSyncs++;
-      // When a test wires a gate, the Azure pull parks here until released, so
-      // a widget test can hold a sync mid-flight and observe the busy progress
-      // bar the earlier stages have already advanced (#176).
-      final gate = azureGate;
-      if (gate != null) await gate.future;
-      return azResult;
-    };
+    // The Azure pull. By default it is scripted like the other two; wiring an
+    // [azureTransport] swaps in the *production* pull instead — a real
+    // [az.AzureConnector] behind the real [azureSyncer], logging into this
+    // harness's LogBuffer exactly as `bootstrapReconcile` composes them. That
+    // is the only way a test can drive Graph's own answers (a rejected delta
+    // token, #213) through the pass the operator triggers.
+    final azureTransport = this.azureTransport;
+    Syncer<az.AzureSnapshot> azSync;
+    if (azureTransport != null) {
+      final inner = azureSyncer(az.AzureConnector(
+        credentials: az.AzureCredentials(
+          clientId: 'c',
+          tenantId: 't',
+          azureDomain: 'school.example',
+          schoolPrefix: 'GBS',
+        ),
+        authProvider: const az.StaticAuthProvider('token'),
+        transport: azureTransport,
+        log: log,
+      ));
+      azSync = (previous) async {
+        azSyncs++;
+        return inner(previous);
+      };
+    } else {
+      azSync = (_) async {
+        azSyncs++;
+        // When a test wires a gate, the Azure pull parks here until released,
+        // so a widget test can hold a sync mid-flight and observe the busy
+        // progress bar the earlier stages have already advanced (#176).
+        final gate = azureGate;
+        if (gate != null) await gate.future;
+        return azResult;
+      };
+    }
 
     final s = store;
     if (s != null) {
@@ -1182,6 +1359,43 @@ class ReconcileHarness {
   /// so a widget test can observe the busy progress bar (#176).
   final Completer<void>? azureGate;
 
+  /// When set, the Azure pull is the **production** one — a real
+  /// [az.AzureConnector] + [azureSyncer] over this transport — instead of the
+  /// scripted [azResult]. Lets a test answer as Graph does (e.g. rejecting a
+  /// stored delta token, #213) and drive the result through the real pass.
+  final az.GraphTransport? azureTransport;
+
+  /// When set, the Passwords screen writes through the **production**
+  /// [ConnectorPasswordBackends] over this transport instead of the recording
+  /// [passwordBackends] — the only way a test can answer as Graph does when it
+  /// refuses a password write (#216) and see what the screen then tells the
+  /// operator.
+  final az.GraphTransport? passwordGraph;
+
+  /// The production write seam built over [passwordGraph], or `null` when no
+  /// test wired one. Built lazily so the harness's log is already assigned.
+  late final PasswordBackends? _livePasswordBackends = passwordGraph == null
+      ? null
+      : ConnectorPasswordBackends(
+          smartschool: ss.SmartschoolConnector.fromParts(
+            site: 'demo',
+            accessCode: 'secret',
+            transport: soap,
+          ),
+          azure: az.AzureConnector(
+            credentials: az.AzureCredentials(
+              clientId: 'c',
+              tenantId: 't',
+              azureDomain: 'school.example',
+              schoolPrefix: 'GBS',
+            ),
+            authProvider: const az.StaticAuthProvider('token'),
+            transport: passwordGraph!,
+            log: log,
+          ),
+          log: log,
+        );
+
   /// Builds a "second session" seeded from [store] — a fresh controller over
   /// the state another harness already persisted, the way bootstrap seeds each
   /// [SystemState] from the store on app open (#107).
@@ -1271,7 +1485,7 @@ class ReconcileHarness {
         controller: controller,
         log: log,
         passwordQueue: passwordQueue,
-        passwordBackends: passwordBackends,
+        passwordBackends: _livePasswordBackends ?? passwordBackends,
         passwordFileWriter: (name, bytes) async {
           passwordWrites.add((name, List<int>.of(bytes)));
           return 'C:/exports/$name';

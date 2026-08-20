@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
+import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter/foundation.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 
+import '../search/name_query.dart';
 import 'password_backends.dart';
 import 'password_export.dart';
 
@@ -38,9 +40,6 @@ enum PasswordTarget {
         _ => '${coSlot!}',
       };
 }
-
-/// The fields a staff list can be filtered on (#180, legacy `FilterTypes`).
-enum StaffFilterField { naam, voornaam, gebruikersnaam }
 
 /// One student in the currently-selected class, with its per-target selection.
 class StudentRow {
@@ -222,6 +221,7 @@ class PasswordController extends ChangeNotifier {
   Future<void> generate() async {
     if (_busy || selectedCount == 0) return;
     _setBusy(true);
+    _rightsProblem = null;
     try {
       final entries = await _queue.load();
       final byKey = <String, PasswordEntry>{
@@ -250,15 +250,13 @@ class PasswordController extends ChangeNotifier {
                   'Smartschool-wachtwoord niet gezet voor ${row.username}.');
             }
           } else if (target == PasswordTarget.office365) {
-            final mail = row.account.mail;
-            if (mail.isNotEmpty &&
-                await _backends.setAzurePassword(mail, password)) {
-              azPw = password;
+            final set =
+                await _pushAzurePassword(row.account.mail, row.name, password);
+            if (set != null) {
+              azPw = set;
               pushed++;
             } else {
               failed++;
-              _log?.addError(core.Origin.azure,
-                  'Office 365-wachtwoord niet gezet voor ${row.name}.');
             }
           } else {
             final slot = target.coSlot!;
@@ -285,15 +283,65 @@ class PasswordController extends ChangeNotifier {
 
       await _queue.save(byKey.values.toList());
       await _reloadQueue();
-      _message = failed == 0
-          ? '$pushed wachtwoord(en) gegenereerd en verstuurd.'
-          : '$pushed verstuurd, $failed mislukt — zie het logboek.';
+      final rights = _rightsProblem;
+      _message = rights != null
+          ? '$pushed verstuurd, $failed mislukt — $rights'
+          : failed == 0
+              ? '$pushed wachtwoord(en) gegenereerd en verstuurd.'
+              : '$pushed verstuurd, $failed mislukt — zie het logboek.';
     } on Object catch (e) {
       _message = 'Genereren mislukt: $e';
     } finally {
       _setBusy(false);
     }
   }
+
+  // --- The Office 365 write (shared by both tabs) ----------------------------
+
+  /// The operator-readable diagnosis of a refused Office 365 write, set while a
+  /// generate/reset runs and folded into [message] when it finishes (#216).
+  /// Cleared at the start of each run so a fixed tenant stops reporting it.
+  String? _rightsProblem;
+
+  /// Pushes [password] to Azure for [mail], returning it when the write landed
+  /// and `null` when it did not.
+  ///
+  /// A refused write — Graph `403`, because the sign-in lacks the
+  /// `User-PasswordProfile.ReadWrite.All` permission or the operator holds no
+  /// password-reset role — used to surface as a raw `GraphException` string, or
+  /// as an unexplained "niet gezet". It is recorded as a rights problem naming
+  /// [who] instead (#216). Both tabs push through here, so the class-wide
+  /// generate and the per-staff reset report the same diagnosis, and a refusal
+  /// ends only this one push: the rest of a class batch still runs.
+  Future<String?> _pushAzurePassword(
+    String mail,
+    String who,
+    String password,
+  ) async {
+    try {
+      if (mail.isNotEmpty && await _backends.setAzurePassword(mail, password)) {
+        return password;
+      }
+      _log?.addError(
+        core.Origin.azure,
+        'Office 365-wachtwoord niet gezet voor $who.',
+      );
+    } on az.AzurePasswordPermissionException catch (e) {
+      final problem = _rightsMessage(who);
+      _rightsProblem = problem;
+      _log?.addError(core.Origin.azure, '$problem ($e)');
+    }
+    return null;
+  }
+
+  /// What the operator reads when Azure refuses the write: who it was for, and
+  /// the two directory-side causes worth checking, in the order they bite.
+  static String _rightsMessage(String who) =>
+      'Geen rechten om het Office 365-wachtwoord van $who te resetten — de '
+      'aanmelding mist de Graph-toestemming '
+      '"User-PasswordProfile.ReadWrite.All" (beheerderstoestemming geven en '
+      'opnieuw aanmelden), of je account heeft geen rol die wachtwoorden mag '
+      'resetten (Gebruikersbeheerder).';
 
   void _mergeAccount(
     Map<String, PasswordEntry> byKey,
@@ -452,9 +500,6 @@ class PasswordController extends ChangeNotifier {
 
   String _filterText = '';
   String get filterText => _filterText;
-  // Voornaam (first name) is the more natural default to filter staff by (#186).
-  StaffFilterField _filterField = StaffFilterField.voornaam;
-  StaffFilterField get filterField => _filterField;
 
   ss.SmartschoolAccount? _selectedStaff;
   ss.SmartschoolAccount? get selectedStaff => _selectedStaff;
@@ -490,35 +535,28 @@ class PasswordController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setStaffFilterField(StaffFilterField field) {
-    _filterField = field;
-    _applyStaffFilter();
-    notifyListeners();
-  }
-
   void selectStaff(ss.SmartschoolAccount account) {
     _selectedStaff = account;
     notifyListeners();
   }
 
+  /// Narrows the staff list to the accounts matching the current filter text.
+  /// The needle is split on whitespace and every part must match (#215), so an
+  /// empty or whitespace-only needle shows everyone.
+  ///
+  /// The matching itself lives in [NameQuery], shared with the Acties Personeel
+  /// search so the two boxes cannot drift apart (#217).
   void _applyStaffFilter() {
-    final needle = _filterText.toLowerCase();
-    if (needle.isEmpty) {
+    final query = NameQuery(_filterText);
+    if (query.isEmpty) {
       _filteredStaff = List<ss.SmartschoolAccount>.of(_allStaff);
       return;
     }
     _filteredStaff = <ss.SmartschoolAccount>[
       for (final a in _allStaff)
-        if (_staffMatches(a, needle)) a,
+        if (query.matches('${a.givenName} ${a.surname}')) a,
     ];
   }
-
-  bool _staffMatches(ss.SmartschoolAccount a, String needle) =>
-      switch (_filterField) {
-        StaffFilterField.voornaam => a.givenName.toLowerCase().contains(needle),
-        StaffFilterField.naam => a.surname.toLowerCase().contains(needle),
-        StaffFilterField.gebruikersnaam => a.uid.toLowerCase().contains(needle),
-      };
 
   /// Resets the selected staff member's password(s): a fresh Smartschool and/or
   /// Office 365 password (when both are requested they share one password, as
@@ -532,8 +570,10 @@ class PasswordController extends ChangeNotifier {
     final account = _selectedStaff;
     if (account == null || _busy || (!smartschool && !office365)) return null;
     _setBusy(true);
+    _rightsProblem = null;
     try {
       final shared = _generate();
+      final who = '${account.givenName} ${account.surname}'.trim();
       String? ssPw;
       String? azPw;
       var failed = false;
@@ -549,33 +589,33 @@ class PasswordController extends ChangeNotifier {
       }
       if (office365) {
         final pw = smartschool ? shared : _generate();
-        if (account.mail.isNotEmpty &&
-            await _backends.setAzurePassword(account.mail, pw)) {
-          azPw = pw;
-        } else {
-          failed = true;
-        }
+        azPw = await _pushAzurePassword(account.mail, who, pw);
+        if (azPw == null) failed = true;
       }
 
+      final rights = _rightsProblem;
       if (ssPw == null && azPw == null) {
-        _message = 'Geen wachtwoord gezet — zie het logboek.';
+        _message = rights ?? 'Geen wachtwoord gezet — zie het logboek.';
         return null;
       }
       final path = await _writer(
         '${account.uid}.pdf',
         await staffPasswordPdf(
-          name: '${account.givenName} ${account.surname}'.trim(),
+          name: who,
           username: account.uid,
           mail: account.mail,
           smartschoolPassword: ssPw,
           office365Password: azPw,
         ),
       );
-      _message = _exportMessage(
+      final exported = _exportMessage(
         failed ? 'Deels gezet — sheet' : 'Wachtwoord gezet en sheet',
         path,
         await _tryOpen(path),
       );
+      // A half-successful reset still hands over a sheet, so say both: what was
+      // written, and why the Office 365 half was refused (#216).
+      _message = rights == null ? exported : '$rights $exported';
       return path;
     } on Object catch (e) {
       _message = 'Reset mislukt: $e';

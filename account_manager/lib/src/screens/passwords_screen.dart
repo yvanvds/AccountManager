@@ -19,9 +19,10 @@ import '../reconcile/reconcile_bootstrap.dart';
 ///   Office 365, CoAccount 1–6). A guarded "Genereer wachtwoorden" pushes a
 ///   fresh password live for each checked target and queues the result for the
 ///   printable student sheet (a real PDF, #195) and the co-account CSV.
-/// - **Personeel**: the "Personeel" group, filterable by name/username; a
-///   per-member reset mints a fresh Smartschool and/or Office 365 password,
-///   pushes it live, and exports a per-staff PDF sheet.
+/// - **Personeel**: the "Personeel" group, searchable by any part of the full
+///   name (#215 — one box, no field picker); a per-member reset mints a fresh
+///   Smartschool and/or Office 365 password, pushes it live, and exports a
+///   per-staff PDF sheet.
 ///
 /// Shares the one memoized [ReconcileServices] with the Reconcile and Actions
 /// screens, so the class/staff tree comes from the same synced Smartschool
@@ -541,44 +542,20 @@ class _PersoneelTab extends StatelessWidget {
           width: 320,
           child: Column(
             children: <Widget>[
+              // One search box over the whole name (#215): the operator types a
+              // fragment and gets the person, rather than first picking which
+              // field to match on and getting an unexplained empty list when
+              // they pick the wrong one.
               Padding(
                 padding: const EdgeInsets.all(PlinkSpacing.s3),
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: TextField(
-                        key: const ValueKey('passwords-staff-filter'),
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          prefixIcon: Icon(Icons.search, size: 18),
-                          hintText: 'Filter…',
-                        ),
-                        onChanged: controller.setStaffFilterText,
-                      ),
-                    ),
-                    const SizedBox(width: PlinkSpacing.s2),
-                    DropdownButton<StaffFilterField>(
-                      key: const ValueKey('passwords-staff-filter-field'),
-                      value: controller.filterField,
-                      onChanged: (f) {
-                        if (f != null) controller.setStaffFilterField(f);
-                      },
-                      items: const <DropdownMenuItem<StaffFilterField>>[
-                        DropdownMenuItem(
-                          value: StaffFilterField.naam,
-                          child: Text('Naam'),
-                        ),
-                        DropdownMenuItem(
-                          value: StaffFilterField.voornaam,
-                          child: Text('Voornaam'),
-                        ),
-                        DropdownMenuItem(
-                          value: StaffFilterField.gebruikersnaam,
-                          child: Text('Gebruiker'),
-                        ),
-                      ],
-                    ),
-                  ],
+                child: TextField(
+                  key: const ValueKey('passwords-staff-filter'),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    prefixIcon: Icon(Icons.search, size: 18),
+                    hintText: 'Zoek op naam…',
+                  ),
+                  onChanged: controller.setStaffFilterText,
                 ),
               ),
               const Divider(height: 1),

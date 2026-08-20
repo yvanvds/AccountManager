@@ -402,8 +402,9 @@ void main() {
   });
 
   testWidgets(
-      'the Personeel classroom search matches on voornaam or naam and combines '
-      'with the only-with-actions toggle (#187)', (WidgetTester tester) async {
+      'the Personeel classroom search matches any part of the name in any '
+      'order and combines with the only-with-actions toggle (#187/#217)',
+      (WidgetTester tester) async {
     _useTallWindow(tester);
     // Three staff in the one synthetic Personeel class: two share the surname
     // "Smit" (one with an action, one without) and one distinct voornaam.
@@ -451,6 +452,29 @@ void main() {
     expect(find.text('Bram Jansen'), findsOneWidget);
     expect(find.text('Anna Smit'), findsNothing);
     expect(find.text('Clara Smit'), findsNothing);
+
+    // Both halves, in the stored order and reversed (#217): either way round
+    // finds the one person. Reversed used to return nothing, because the needle
+    // was matched as one contiguous substring of "Voornaam Naam".
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna smit');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'smit anna');
+    await tester.pump();
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Clara Smit'), findsNothing);
+    expect(find.text('Bram Jansen'), findsNothing);
+
+    // Every part must occur: parts taken from two different people match
+    // neither, rather than matching both.
+    await tester.enterText(
+        find.byKey(const ValueKey('actions-search')), 'anna jansen');
+    await tester.pump();
+    expect(
+        find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
 
     // Combine the toggle with the search: search "Smit" AND only-with-actions
     // keeps just Anna (Clara matches the name but has no action).
@@ -541,6 +565,10 @@ void main() {
   testWidgets(
       'a passive session drills into a classroom read-only via readClassroom, '
       'loading only that class (#115/#154)', (WidgetTester tester) async {
+    // Tall, like its siblings: the read-only notice #214 added above the list
+    // costs the first card its place on an 800×600 fold, and this test is about
+    // which class was read, not about where the fold falls.
+    _useTallWindow(tester);
     final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
     await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
@@ -691,5 +719,150 @@ void main() {
     expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
     expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
         reason: 'a stamp from a past day is never rendered as bare time');
+  });
+
+  // --- The read-only drill-down state (#214) -------------------------------
+
+  final readOnly = find.byKey(const ValueKey('actions-read-only'));
+  final readOnlySync = find.byKey(const ValueKey('actions-read-only-sync'));
+
+  testWidgets(
+      'a passive classroom drill-down announces itself as read-only, styles '
+      'its cards inert and offers the sync (#214)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // A passive session: the shared documents are there to read, but nothing is
+    // linked, so no choice, dry-run or apply exists for the accounts below.
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The overview itself is browsable as ever — only a drill-down, where the
+    // actions are supposed to be actionable, carries the notice.
+    expect(readOnly, findsNothing);
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    expect(harness.controller.linked, isNull);
+
+    // The state is named instead of silently swapping in static cards.
+    expect(readOnly, findsOneWidget);
+    expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
+    expect(find.textContaining('nog niet gesynchroniseerd'), findsOneWidget);
+
+    // …with the sync affordance right there, and live.
+    expect(tester.widget<FilledButton>(readOnlySync).onPressed, isNotNull);
+
+    // The account card is styled as the inert thing it is, rather than passing
+    // for one of the interactive entry tiles.
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsWidgets);
+    final candidate = tester.widget<Text>(
+      find.text('• Wijzig de klas in Smartschool'),
+    );
+    expect(
+      candidate.style?.color,
+      Theme.of(tester.element(readOnly)).disabledColor,
+      reason: 'a summary nobody can act on is not rendered as live body text',
+    );
+  });
+
+  testWidgets(
+      'the passive Klasgroepen drill-down carries the same read-only '
+      'announcement (#214)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    expect(s2.controller.linked, isNull);
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(readOnly, findsOneWidget,
+        reason: 'the group drill-down falls back to the same static tiles');
+    expect(find.byIcon(Icons.lock_outline), findsWidgets);
+  });
+
+  testWidgets(
+      'an active session drills into the same class with no read-only notice — '
+      'those tiles really are interactive (#214)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    expect(harness.controller.linked, isNotNull);
+    expect(readOnly, findsNothing);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+    expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
+  });
+
+  testWidgets(
+      'a session whose sync failed is told the sync failed, not that it never '
+      'ran (#214)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // The second reproduction path of #214: the pass died before it could link
+    // (the Azure delta-token failure of #213 was one such), so this session has
+    // an error *and* no linked view. `_fail` leaves any previously linked view
+    // untouched, so this wording is only ever reached when there was none.
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store)
+      ..wisaError = StateError('WISA host unreachable');
+    await harness.controller.sync();
+    expect(harness.controller.error, contains('WISA host unreachable'));
+    expect(harness.controller.linked, isNull);
+
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    expect(readOnly, findsOneWidget);
+    expect(find.textContaining('De laatste sync is mislukt'), findsOneWidget);
+    expect(find.textContaining('nog niet gesynchroniseerd'), findsNothing);
+  });
+
+  testWidgets(
+      "the read-only banner's sync is disabled and named when another operator "
+      'holds the lease (#214/#108)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+    await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
+
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    expect(readOnly, findsOneWidget);
+    expect(tester.widget<FilledButton>(readOnlySync).onPressed, isNull);
+    expect(find.textContaining('mieke@school'), findsOneWidget,
+        reason: 'a dead button needs its reason on screen too');
   });
 }

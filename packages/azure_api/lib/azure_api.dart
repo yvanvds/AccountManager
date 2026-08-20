@@ -36,4 +36,5 @@ export 'src/group_manager.dart' show GroupManager;
 export 'src/models/azure_group.dart' show AzureGroup;
 export 'src/models/azure_user.dart' show AzureUser;
 export 'src/snapshot.dart' show AzureSnapshot;
-export 'src/user_manager.dart' show UserDelta, UserManager;
+export 'src/user_manager.dart'
+    show AzurePasswordPermissionException, UserDelta, UserManager;

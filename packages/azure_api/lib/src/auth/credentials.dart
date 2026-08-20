@@ -28,6 +28,20 @@ class AzureCredentials {
 
   /// Delegated scopes requested. Defaults to the legacy `User.ReadWrite.All`
   /// plus `offline_access` (needed for refresh tokens) and the OIDC scopes.
+  ///
+  /// `User-PasswordProfile.ReadWrite.All` is requested on top of those because
+  /// `User.ReadWrite.All` does **not** authorise a write to a user's
+  /// `passwordProfile`: the on-demand password reset (`UserManager.setPassword`)
+  /// came back `403 Authorization_RequestDenied` without it (#216). It is the
+  /// least-privileged permission Graph documents for that property — the older
+  /// `Directory.AccessAsUser.All` also works but hands the app everything the
+  /// signed-in operator can do directory-wide, so it is deliberately not used.
+  ///
+  /// The permission requires **admin consent** on the app registration, and a
+  /// scope only reaches a token after re-consent (a cached refresh token keeps
+  /// the scope set it was issued for). Until consent is granted the token
+  /// request for this scope set is refused, so the tenant-side grant belongs
+  /// with — not after — a rollout of this default.
   final List<String> scopes;
 
   AzureCredentials({
@@ -43,6 +57,7 @@ class AzureCredentials {
             const [
               'https://graph.microsoft.com/User.ReadWrite.All',
               'https://graph.microsoft.com/Group.ReadWrite.All',
+              'https://graph.microsoft.com/User-PasswordProfile.ReadWrite.All',
               'offline_access',
             ];
 

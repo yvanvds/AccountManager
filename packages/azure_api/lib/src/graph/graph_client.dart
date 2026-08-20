@@ -178,8 +178,22 @@ class GraphClient {
 
   /// Extracts the value of a query parameter (e.g. `$deltatoken`) from a full
   /// Graph link URL.
-  static String? _tokenFrom(String link, String param) =>
-      Uri.parse(link).queryParameters[param];
+  ///
+  /// Percent-decodes only — deliberately **not** [Uri.queryParameters], which
+  /// form-decodes and so turns a literal `+` inside an opaque Graph token into
+  /// a space. A token corrupted that way comes back from Graph as the same
+  /// misleading *"DeltaLink older than 30 days is not supported"* 400 as a
+  /// genuinely expired one (#213).
+  static String? _tokenFrom(String link, String param) {
+    for (final pair in Uri.parse(link).query.split('&')) {
+      if (pair.isEmpty) continue;
+      final eq = pair.indexOf('=');
+      final name = eq < 0 ? pair : pair.substring(0, eq);
+      if (Uri.decodeComponent(name) != param) continue;
+      return eq < 0 ? '' : Uri.decodeComponent(pair.substring(eq + 1));
+    }
+    return null;
+  }
 
   static String _trimLeadingSlash(String path) =>
       path.startsWith('/') ? path.substring(1) : path;

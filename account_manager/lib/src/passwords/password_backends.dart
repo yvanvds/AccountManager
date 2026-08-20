@@ -23,6 +23,12 @@ abstract interface class PasswordBackends {
   /// Resets the Azure / Office 365 password of the user identified by
   /// [mailOrUpn]. Returns `true` when the user was found and updated, `false`
   /// when no such user exists (mirroring the legacy "No account for …" skip).
+  ///
+  /// Throws [az.AzurePasswordPermissionException] when the directory refuses
+  /// the write (#216). That is a permission/role gap the operator can act on,
+  /// not a missing account, so it is signalled rather than folded into `false`:
+  /// the caller names the cause on screen instead of reporting a bare "niet
+  /// gezet".
   Future<bool> setAzurePassword(String mailOrUpn, String password);
 }
 

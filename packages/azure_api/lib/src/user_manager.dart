@@ -25,6 +25,42 @@ class UserDelta {
   });
 }
 
+/// Thrown when Graph refuses a password write (`403`), instead of letting the
+/// bare [GraphException] reach the operator (#216).
+///
+/// Writing `passwordProfile` is privileged well beyond an ordinary user write,
+/// and a refusal is nearly always one of two fixable directory-side causes
+/// rather than a bug: the sign-in lacks the
+/// `User-PasswordProfile.ReadWrite.All` delegated permission (admin-consented
+/// on the app registration, and only present on tokens issued *after* that
+/// consent), or the signed-in operator holds no role allowed to reset this
+/// target's password — User Administrator for ordinary users, Privileged
+/// Authentication Administrator when the target is itself an administrator.
+///
+/// [toString] names both, so the reason survives into the log; the UI layer
+/// phrases it for the operator.
+class AzurePasswordPermissionException implements Exception {
+  const AzurePasswordPermissionException(this.target, this.cause);
+
+  /// The object id or UPN whose password write was refused.
+  final String target;
+
+  /// The refusal Graph sent back (`403`, usually `Authorization_RequestDenied`).
+  final GraphException cause;
+
+  /// Graph's own error code, when it sent one.
+  String? get code => cause.code;
+
+  @override
+  String toString() =>
+      'Not allowed to set the password of $target. The sign-in needs the '
+      'User-PasswordProfile.ReadWrite.All Graph permission (admin-consented, '
+      'and re-consented since the last token), and the signed-in operator '
+      'needs a role that may reset this account (User Administrator, or '
+      'Privileged Authentication Administrator for an administrator). '
+      'Graph said: $cause';
+}
+
 /// Reads and writes Azure AD users via Microsoft Graph.
 ///
 /// Mirrors the legacy `UserManager.cs` surface, but never downloads the whole
@@ -282,20 +318,29 @@ class UserManager {
   /// [idOrUpn] is the object id or UPN. [forceChangePasswordNextSignIn] defaults
   /// to `true`, matching the legacy reset (the holder must pick a new password on
   /// next login).
+  ///
+  /// A `403` — the permission/role gap of #216 — is rethrown as an
+  /// [AzurePasswordPermissionException] naming what the directory is missing;
+  /// every other Graph failure propagates unchanged as a [GraphException].
   Future<void> setPassword(
     String idOrUpn,
     String password, {
     bool forceChangePasswordNextSignIn = true,
   }) async {
-    await _graph.patchJson(
-      _graph.uri('users/${Uri.encodeComponent(idOrUpn)}'),
-      <String, dynamic>{
-        'passwordProfile': <String, dynamic>{
-          'forceChangePasswordNextSignIn': forceChangePasswordNextSignIn,
-          'password': password,
+    try {
+      await _graph.patchJson(
+        _graph.uri('users/${Uri.encodeComponent(idOrUpn)}'),
+        <String, dynamic>{
+          'passwordProfile': <String, dynamic>{
+            'forceChangePasswordNextSignIn': forceChangePasswordNextSignIn,
+            'password': password,
+          },
         },
-      },
-    );
+      );
+    } on GraphException catch (e) {
+      if (e.statusCode != 403) rethrow;
+      throw AzurePasswordPermissionException(idOrUpn, e);
+    }
     _log?.addMessage(core.Origin.azure, 'Azure: reset password for $idOrUpn.');
   }
 

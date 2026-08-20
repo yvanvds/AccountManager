@@ -114,5 +114,33 @@ void main() {
       expect(result.values, hasLength(4)); // 1 + (2 changed + 1 removed)
       expect(result.deltaToken, 'NEWDELTA456');
     });
+
+    test(
+        'a token carrying a literal "+" survives the deltaLink round trip '
+        '(#213)', () async {
+      // Graph tokens are opaque and are not form-encoded: a `+` in a deltaLink
+      // is a `+`. Reading it back with Uri.queryParameters form-decodes it to a
+      // space, and re-sending the mangled token earns the same misleading
+      // "DeltaLink older than 30 days is not supported" 400 as a genuinely
+      // expired one.
+      const token = 'aB+cd/ef+gh';
+      final transport = FakeGraphTransport((req) => jsonOk({
+            '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/users/delta'
+                '?\$deltatoken=$token',
+            'value': const <Object>[],
+          }));
+      final client = clientWith(transport);
+
+      final result = await client.getDelta(client.uri('users/delta'));
+
+      expect(result.deltaToken, token);
+      expect(result.deltaToken, isNot(contains(' ')));
+
+      // …and the token that comes back is the one the next resume sends.
+      await client.getDelta(
+        client.uri('users/delta', query: {r'$deltatoken': result.deltaToken!}),
+      );
+      expect(transport.last.url.queryParameters[r'$deltatoken'], token);
+    });
   });
 }

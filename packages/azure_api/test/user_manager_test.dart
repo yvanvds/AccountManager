@@ -291,6 +291,70 @@ void main() {
         'jane.doe@student.school.example',
       );
     });
+
+    test('a refused write (403) names the permission and role gap (#216)',
+        () async {
+      // What the tenant actually answered: `User.ReadWrite.All` does not
+      // authorise a passwordProfile write, so Graph denies the PATCH. The bare
+      // GraphException told the operator nothing actionable.
+      final transport = FakeGraphTransport.constant(
+        graphError(403, 'Authorization_RequestDenied',
+            'Insufficient privileges to complete the operation.'),
+      );
+      final users = UserManager(clientWith(transport));
+
+      final error = await users
+          .setPassword('anna.smit@school.example', 'Bacoxy7!')
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      expect(error, isA<AzurePasswordPermissionException>());
+      final refusal = error! as AzurePasswordPermissionException;
+      expect(refusal.target, 'anna.smit@school.example');
+      expect(refusal.code, 'Authorization_RequestDenied');
+      expect(refusal.cause.statusCode, 403);
+      expect(refusal.toString(), contains('anna.smit@school.example'));
+      expect(
+          refusal.toString(), contains('User-PasswordProfile.ReadWrite.All'));
+      expect(refusal.toString(), contains('User Administrator'));
+    });
+
+    test('any other Graph failure still propagates as a GraphException',
+        () async {
+      final transport = FakeGraphTransport.constant(
+        graphError(400, 'Request_BadRequest', 'password too weak'),
+      );
+      final users = UserManager(clientWith(transport));
+      await expectLater(
+        users.setPassword('id-1', 'x'),
+        throwsA(isA<GraphException>()),
+      );
+    });
+  });
+
+  group('AzureCredentials scopes (#216)', () {
+    test('requests the least-privileged passwordProfile write permission', () {
+      final credentials = AzureCredentials(
+        clientId: 'c',
+        tenantId: 't',
+        azureDomain: 'school.example',
+        schoolPrefix: 'GBS',
+      );
+      expect(
+        credentials.scopes,
+        containsAll(<String>[
+          'https://graph.microsoft.com/User.ReadWrite.All',
+          'https://graph.microsoft.com/Group.ReadWrite.All',
+          'https://graph.microsoft.com/User-PasswordProfile.ReadWrite.All',
+        ]),
+      );
+      // The broad older alternative is deliberately not requested: it grants
+      // everything the signed-in operator can do directory-wide.
+      expect(
+        credentials.scopes,
+        isNot(contains('https://graph.microsoft.com/'
+            'Directory.AccessAsUser.All')),
+      );
+    });
   });
 
   group('deleteUser', () {
