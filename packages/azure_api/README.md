@@ -86,6 +86,26 @@ package does not open browsers or bind sockets itself. `LoopbackAuthorizer` is
 the desktop default (RFC 8252 loopback redirect); the Flutter app injects the
 `BrowserLauncher` (`url_launcher` / `Process.start`).
 
+### Delegated permissions
+
+`AzureCredentials.scopes` defaults to the delegated set the connector needs:
+
+- `User.ReadWrite.All`, `Group.ReadWrite.All` — the reads and the account /
+  membership writes;
+- `User-PasswordProfile.ReadWrite.All` — the password writes (`createUser`'s
+  `passwordProfile` and `setPassword`). `User.ReadWrite.All` does **not**
+  authorise that property, so without this one a reset comes back
+  `403 Authorization_RequestDenied` (#216). It is the least-privileged
+  permission for it; the older `Directory.AccessAsUser.All` covers it too but
+  hands the app everything the operator can do directory-wide.
+
+All three require **admin consent** on the app registration, and a newly added
+permission only reaches a token after re-consent — a cached refresh token keeps
+the scope set it was issued for. On top of the permission, a *delegated*
+password write also needs the signed-in operator to hold a role allowed to
+reset that account: User Administrator for ordinary users, Privileged
+Authentication Administrator when the target is itself an administrator.
+
 ### Token cache (encrypted at rest)
 
 The serialized credentials hold a **refresh token** and must be encrypted at

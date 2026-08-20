@@ -196,6 +196,39 @@ void main() {
       expect(c.message, contains('mislukt'));
     });
 
+    test(
+        'a refused Azure write is reported as a rights problem naming the '
+        'student, and the rest of the batch still runs (#216)', () async {
+      // Graph denies the passwordProfile write. The operator used to read
+      // "Genereren mislukt: GraphException(403 (Authorization_RequestDenied))".
+      backends = RecordingPasswordBackends(denyAzure: {'jane@student.school'});
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c.selectClass(klas);
+      final jane = c.rows.firstWhere((r) => r.username == 'jane');
+      final bob = c.rows.firstWhere((r) => r.username == 'bob');
+      c
+        ..toggleRow(jane, PasswordTarget.office365, true)
+        ..toggleRow(jane, PasswordTarget.smartschool, true)
+        ..toggleRow(bob, PasswordTarget.smartschool, true);
+
+      await c.generate();
+
+      expect(c.message, isNot(contains('GraphException')));
+      expect(c.message, contains('Geen rechten'));
+      expect(c.message, contains('Jane Doe'));
+      expect(c.message, contains('User-PasswordProfile.ReadWrite.All'));
+      // The refusal ended one push, not the run: both Smartschool passwords
+      // were still pushed and queued.
+      expect(backends.smartschoolPushes.map((p) => p.$1), ['jane', 'bob']);
+      final entries = await queue.load();
+      expect(entries, hasLength(2));
+      expect(
+        entries.firstWhere((e) => e.accountName == 'jane').azurePassword,
+        isNull,
+      );
+    });
+
     test('generate is a no-op when nothing is selected', () async {
       final c = build();
       c.selectClass(c.childrenOf(c.studentRoot!).single);
@@ -390,6 +423,38 @@ void main() {
       await c.resetStaff(smartschool: true, office365: false);
       expect(backends.smartschoolPushes, hasLength(1));
       expect(backends.azurePushes, isEmpty);
+    });
+
+    test(
+        'a refused Office 365 reset names the staff member and the cause, not '
+        'a raw GraphException (#216)', () async {
+      backends = RecordingPasswordBackends(denyAzure: {'anna@school'});
+      final c = build();
+      c.selectStaff(c.staff.single);
+
+      final path = await c.resetStaff(smartschool: false, office365: true);
+
+      expect(path, isNull, reason: 'nothing was set, so no sheet is written');
+      expect(c.message, isNot(contains('GraphException')));
+      expect(c.message, contains('Geen rechten'));
+      expect(c.message, contains('Jane Doe'));
+      expect(c.message, contains('User-PasswordProfile.ReadWrite.All'));
+      expect(writes, isEmpty);
+    });
+
+    test('a half-refused reset still hands over the sheet and says why (#216)',
+        () async {
+      backends = RecordingPasswordBackends(denyAzure: {'anna@school'});
+      final c = build();
+      c.selectStaff(c.staff.single);
+
+      final path = await c.resetStaff(smartschool: true, office365: true);
+
+      expect(path, isNotNull);
+      expect(backends.smartschoolPushes, hasLength(1));
+      expect(c.message, contains('Geen rechten'));
+      expect(c.message, contains('sheet'));
+      expect(c.message, isNot(contains('GraphException')));
     });
 
     test('reset with no target selected is a no-op', () async {

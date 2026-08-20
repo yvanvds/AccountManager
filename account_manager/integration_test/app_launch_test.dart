@@ -1408,6 +1408,65 @@ void main() {
   });
 
   testWidgets(
+      'a refused Office 365 password reset tells the operator which permission '
+      'is missing instead of showing a raw GraphException end-to-end (#216)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real window — and the *production* password
+    // write path (real ConnectorPasswordBackends → real AzureConnector) over a
+    // Graph that answers the way the tenant did: the user lookup succeeds, the
+    // passwordProfile PATCH comes back 403 Authorization_RequestDenied because
+    // the app registration only ever had User.ReadWrite.All. The operator used
+    // to read "Reset mislukt: GraphException(403 (Authorization_RequestDenied))"
+    // and had to go dig in the log panel to learn it was a rights problem.
+    useTallWindow(tester);
+    final denied = PasswordWriteDeniedGraph();
+    final harness =
+        ReconcileHarness(ssInitial: passwordsSnap(), passwordGraph: denied);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Passwords'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    // The fixture's staff account (uid anna.smit) is named Jane Doe. Reset the
+    // Office 365 password only, so the whole reset rides on the refused write.
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-anna.smit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-reset-o365')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-staff-reset-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // Graph really was asked, and really refused.
+    expect(denied.refusedWrites, hasLength(1));
+
+    // What the operator reads on the screen: who it was for, and the two
+    // directory-side causes — no exception class, no status code.
+    final message = tester.widget<Text>(
+      find.byKey(const ValueKey('passwords-message')),
+    );
+    final String shown = message.data!;
+    expect(shown, contains('Geen rechten'));
+    expect(shown, contains('Jane Doe'));
+    expect(shown, contains('User-PasswordProfile.ReadWrite.All'));
+    expect(shown, isNot(contains('GraphException')));
+    expect(shown, isNot(contains('403')));
+
+    // No sheet is handed over for a password that was never set.
+    expect(harness.passwordWrites, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Passwords view prints the queued sheets as a real PDF and opens it '
       'for printing end-to-end (#195)', (WidgetTester tester) async {
     // The real app, real fonts, real window. Printing used to drop browser-

@@ -179,6 +179,17 @@ void main() {
       expect(graph.scopes, isNot(contains('offline_access')));
     });
 
+    test('graph carries the passwordProfile write permission (#216)', () {
+      // The broker asks for exactly these scopes, so the permission that
+      // authorises an Office 365 password reset has to travel with them —
+      // `User.ReadWrite.All` alone gets a 403 on the passwordProfile write.
+      expect(
+        graph.scopes,
+        contains(
+            'https://graph.microsoft.com/User-PasswordProfile.ReadWrite.All'),
+      );
+    });
+
     test('cosmos requests the cosmos.azure.com default scope', () {
       expect(AadResource.cosmos.scopes, ['https://cosmos.azure.com/.default']);
     });
