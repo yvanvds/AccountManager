@@ -3008,6 +3008,90 @@ void main() {
     // even asked Smartschool about the removed groups.
     expect(wire.accountCodes, <String>['SCH', 'KLA']);
   });
+
+  testWidgets(
+      'a Check for drift whose stored Azure delta token Graph refuses still '
+      'finishes, on a full re-read that leaves a usable token behind (#213)',
+      (WidgetTester tester) async {
+    // The real app over the *production* Azure pull — a real AzureConnector
+    // behind the real azureSyncer — with Graph answering a resume from the
+    // stored token the way it answered the operator:
+    // `400 Request_UnsupportedQuery — DeltaLink older than 30 days is not
+    // supported.` The exception used to propagate out of the connector into
+    // ReconcileController._fail, so the whole pass produced no linked state at
+    // all; and because a failed pass deliberately leaves the stored snapshot
+    // alone, every later pass re-sent the same dead token. Nothing short of
+    // wiping the stored Azure document got the operator out of it.
+    useTallWindow(tester);
+    final azureWire = StaleDeltaTokenGraph();
+    final harness = ReconcileHarness(
+      azureTransport: azureWire,
+      // Last night's snapshot, with the token that has since gone stale.
+      azureInitial: azSnap(
+        fetchedAt: DateTime.now().subtract(const Duration(hours: 15)),
+        deltaToken: 'DEADTOKEN',
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: WISA + Smartschool pull, the seeded Azure snapshot
+    // is reused untouched (its token is not spent yet).
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+
+    // Today: Check for drift, which is what re-reads Azure.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    // The pass finished instead of dying: no inline failure, not busy, and the
+    // overview the operator came for is on screen.
+    expect(harness.controller.error, isNull);
+    expect(harness.controller.busy, isFalse);
+    expect(find.text('Overview'), findsOneWidget);
+
+    // The dead token was tried exactly once and then given up on, and the
+    // fallback was the $filter-scoped bulk read (PAIN-2 holds while recovering).
+    expect(azureWire.resumeTokens, <String>['DEADTOKEN']);
+    expect(azureWire.bulkReads, 1);
+    expect(
+      azureWire.requests
+          .lastWhere((r) => r.url.path.endsWith('/users'))
+          .url
+          .queryParameters[r'$filter'],
+      isNotNull,
+    );
+
+    // The snapshot is complete (not the stale one held over) and carries a
+    // fresh token…
+    expect(harness.app.azure.snapshot?.users.map((u) => u.upn),
+        <String>['jane.doe@student.school.example']);
+    expect(harness.app.azure.snapshot?.deltaToken, 'FRESH-DELTA-TOKEN');
+
+    // …and the operator is told why the full read happened, with the rejected
+    // token's age — the diagnostic that says whether Graph expired a genuinely
+    // old token or the app had stopped advancing it.
+    expect(find.textContaining('Graph rejected the stored delta token'),
+        findsOneWidget);
+    expect(find.textContaining('stored 15h'), findsOneWidget);
+
+    // A second drift check resumes from that fresh token: the recovery restored
+    // incremental syncing rather than condemning the app to full reads.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, <String>['DEADTOKEN', 'FRESH-DELTA-TOKEN']);
+    expect(azureWire.bulkReads, 1, reason: 'no second full read');
+    expect(harness.controller.error, isNull);
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.

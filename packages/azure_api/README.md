@@ -26,6 +26,26 @@ The legacy connector downloads roughly **6000** tenant users to keep the
 `userPrincipalName`, `employeeId`, `displayName`, `givenName`, `surname`,
 `companyName`, `department`, `accountEnabled`.
 
+### Delta-token lifetime (#213)
+
+Graph refuses a delta link older than 30 days. Two rules keep that from ever
+becoming a dead end:
+
+- **The token on a snapshot is always minted during that snapshot's own sync** —
+  from that pass's delta walk, or from `latestDeltaToken()` on a full read. A
+  delta walk that ends without an `@odata.deltaLink` yields *no* token rather
+  than re-shipping the one it was handed, so a token can never silently stop
+  advancing and age out while every sync still reports success. The cost is one
+  full read on the next pass; the benefit is that `AzureSnapshot.fetchedAt`
+  truthfully dates the token it ships with.
+- **A token Graph rejects is not fatal.** `sync` catches the rejection —
+  `400 Request_UnsupportedQuery` naming the delta link, and the documented
+  `410 Gone` / `resyncRequired` — logs it with the token's age, discards it, and
+  falls back to a full read that primes a fresh token. A `400
+  Request_UnsupportedQuery` that is *not* about the delta token (a malformed
+  query) still throws, so a real bug stays loud instead of degrading into an
+  expensive full read on every pass.
+
 ### Server-side filter, and where it falls back
 
 The bulk `$filter` is:
