@@ -1,4 +1,6 @@
-import 'package:account_core/account_core.dart' show Address;
+import 'package:account_core/account_core.dart' show Address, Origin;
+import 'package:account_manager/src/reconcile/reconcile_controller.dart'
+    show ApplyScope;
 import 'package:account_manager/src/screens/actions_screen.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
@@ -97,7 +99,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
     await tester.tap(find.byKey(const ValueKey('actions-apply')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply pending actions?'), findsOneWidget);
+    expect(find.text('Openstaande acties toepassen?'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(find.text('Apply result'), findsOneWidget);
@@ -115,11 +117,143 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
     await tester.tap(find.byKey(const ValueKey('actions-apply')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.text('Annuleer'));
     await tester.pumpAndSettle();
 
     expect(harness.soap.soapActions, isEmpty);
     expect(find.text('Apply result'), findsNothing);
+  });
+
+  group('the apply-confirmation dialog says what the pass really writes (#234)',
+      () {
+    // The sentence used to be hard-coded — "This writes N change(s) to
+    // Smartschool and Azure AD" — for every action, so a single Graph PATCH on
+    // one display name announced a write to a system it never touches. These
+    // pin the sentence itself; the widget/e2e cases below prove the screen
+    // feeds it the right scope.
+    ApplyScope scope(List<Origin> systems, {Set<Origin> chained = const {}}) =>
+        ApplyScope(systems: systems, chained: chained);
+
+    test('one Azure change names Office 365 only', () {
+      expect(
+        applyConfirmationMessage(scope(<Origin>[Origin.azure])),
+        'Dit schrijft 1 wijziging naar Office 365. Doe eerst een dry-run om '
+        'de exacte wijzigingen te bekijken.',
+      );
+    });
+
+    test('a mixed selection names each system it really targets', () {
+      expect(
+        applyConfirmationMessage(
+          scope(<Origin>[Origin.azure, Origin.smartschool, Origin.azure]),
+        ),
+        startsWith('Dit schrijft 3 wijzigingen naar Smartschool en '
+            'Office 365.'),
+      );
+    });
+
+    test('the WISA opt-out family claims no write at all', () {
+      // DontImportStaffFromWisa & co carry Origin.wisa on their ChangeSet, but
+      // WISA is read-only here: what they produce is a local import rule.
+      final message = applyConfirmationMessage(scope(<Origin>[Origin.wisa]));
+      expect(
+        message,
+        startsWith('Dit legt 1 importregel vast (er wordt niets naar WISA '
+            'geschreven).'),
+      );
+      expect(message, isNot(contains('schrijft 1 wijziging')));
+    });
+
+    test('a rule beside a real write is counted apart from it', () {
+      expect(
+        applyConfirmationMessage(scope(<Origin>[Origin.azure, Origin.wisa])),
+        startsWith('Dit schrijft 1 wijziging naar Office 365 en legt 1 '
+            'importregel vast (er wordt niets naar WISA geschreven).'),
+      );
+    });
+
+    test('a chained follow-up names its system, without inflating the count',
+        () {
+      // A new student's Office 365 create writes Smartschool too (#230/#240).
+      // Whether it runs is decided by the follow-up's own evaluate after the
+      // first write, so it is named, never counted.
+      expect(
+        applyConfirmationMessage(
+          scope(<Origin>[Origin.azure], chained: <Origin>{Origin.smartschool}),
+        ),
+        startsWith('Dit schrijft 1 wijziging naar Office 365. Een vervolgactie '
+            'kan ook naar Smartschool schrijven.'),
+      );
+    });
+
+    test('nothing selected claims nothing', () {
+      expect(
+        applyConfirmationMessage(ApplyScope.empty),
+        startsWith('Dit schrijft niets.'),
+      );
+    });
+  });
+
+  /// A student who is in all three systems and in sync except for their Azure
+  /// `displayName` — the exact report in #234: one `ModifyAzureName`, a single
+  /// Graph `PATCH`, and nothing whatsoever for Smartschool.
+  ReconcileHarness nameDriftHarness() => ReconcileHarness(
+        wisa: wisaSnap(
+          students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+          schools: [wisaSchool(1)],
+          classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+        ),
+        smartschool: ssSnap(
+          groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+          accounts: [ssAccount()],
+          memberships: [member('jane', '3C_ss')],
+        ),
+        // displayName left empty — the one thing that differs from WISA.
+        azure: azSnap(users: [azUser()]),
+      );
+
+  testWidgets(
+      'applying one Azure-only action announces Office 365, not "Smartschool '
+      'and Azure AD" (#234)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = nameDriftHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de naam in Azure'],
+      reason: 'the fixture raises exactly the action the bug report names',
+    );
+
+    final id = entry.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+
+    final dialog = find.byType(AlertDialog);
+    expect(find.text('Toepassen voor ${entry.target}?'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: dialog,
+        matching:
+            find.textContaining('Dit schrijft 1 wijziging naar Office 365.'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: dialog, matching: find.textContaining('Smartschool')),
+      findsNothing,
+      reason: 'the pass never touches Smartschool',
+    );
   });
 
   /// A WISA-departed scenario: [count] Smartschool-only active accounts (no

@@ -4592,6 +4592,98 @@ void main() {
   });
 
   testWidgets(
+      'the apply-confirmation dialog names the system the pass really writes, '
+      'in Dutch (#234)', (WidgetTester tester) async {
+    // The report, reproduced through the real app: a student whose WISA name
+    // differs from their Azure displayName raises exactly one action —
+    // ModifyAzureName, a single Graph PATCH — and the confirmation used to
+    // announce it as "This writes 1 change(s) to Smartschool and Azure AD".
+    // Both halves of that were wrong: the wrong systems, and English on a Dutch
+    // screen.
+    //
+    // This is the layer that sees it. The sentence is assembled from the
+    // *selected* option of every choice the operator's drill-down left standing
+    // (#110/#244/#248), so what it claims depends on the dispatch, the entry
+    // grouping and the per-row selection all agreeing — a widget test of the
+    // dialog in isolation would only ever prove the formatter.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      // displayName left empty — the single thing out of step with WISA.
+      azure: azSnap(users: [azUser()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de naam in Azure'],
+      reason: 'the class holds exactly the action the report names',
+    );
+    final id = entry.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+
+    // One system, the one the action targets, under a Dutch title with Dutch
+    // buttons.
+    final dialog = find.byType(AlertDialog);
+    Finder inDialog(Finder matching) =>
+        find.descendant(of: dialog, matching: matching);
+    expect(find.text('Toepassen voor ${entry.target}?'), findsOneWidget);
+    expect(
+      inDialog(find.textContaining('Dit schrijft 1 wijziging naar '
+          'Office 365.')),
+      findsOneWidget,
+    );
+    expect(inDialog(find.textContaining('Smartschool')), findsNothing,
+        reason: 'nothing in this pass goes near Smartschool');
+    expect(inDialog(find.text('Annuleer')), findsOneWidget);
+    expect(inDialog(find.text('Toepassen')), findsOneWidget);
+
+    // And confirming really does write only there: one Graph PATCH, no SOAP.
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(
+      harness.graph.requests.where((r) => r.method == 'PATCH'),
+      hasLength(1),
+    );
+    expect(harness.soap.soapActions, isEmpty);
+  });
+
+  testWidgets(
       'a WISA-only student reaches Acties under their own class, and one '
       'apply provisions both of their accounts (#230)',
       (WidgetTester tester) async {
@@ -4664,6 +4756,22 @@ void main() {
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
+
+    // The confirmation names the chained system before the write (#234). The
+    // visible action targets Office 365, but this apply goes on to create the
+    // Smartschool account its chain unlocks, and the operator is told so — as a
+    // follow-up that *may* run (its own evaluate decides), never as a second
+    // counted change.
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('Dit schrijft 1 wijziging naar '
+            'Office 365. Een vervolgactie kan ook naar Smartschool '
+            'schrijven.'),
+      ),
+      findsOneWidget,
+    );
+
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(find.text('Apply result'), findsOneWidget);

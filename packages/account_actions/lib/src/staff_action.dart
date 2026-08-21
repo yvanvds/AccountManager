@@ -94,6 +94,12 @@ sealed class StaffAction {
   /// would on the next sync.
   Set<Type> get unlocks => const {};
 
+  /// The systems the [unlocks] chain would write to, beyond the one
+  /// [describeChanges] already names (#234) — the staff half of
+  /// [StudentAction.unlockedSystems], which documents why the UI cannot derive
+  /// this from a pending action.
+  Set<Origin> get unlockedSystems => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3).
@@ -178,6 +184,11 @@ class AddStaffToAzure extends StaffAction {
   /// the full provisioning intent.
   @override
   Set<Type> get unlocks => const {AddStaffToSmartschool};
+
+  /// That follow-up writes Smartschool, so one confirmed apply of this action
+  /// reaches both systems and the confirmation dialog says both (#234).
+  @override
+  Set<Origin> get unlockedSystems => const {Origin.smartschool};
 
   /// Provisioning the staff member is the leading half of the
   /// [staffImportAlternative] choice (#248), and its **default**: hiring is the

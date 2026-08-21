@@ -255,6 +255,24 @@ void main() {
       expect(create.unlocks, <Type>{AddStaffToSmartschool});
     });
 
+    test('the WISA-only create names the system its follow-up writes (#234)',
+        () {
+      // The apply-confirmation dialog has to name Smartschool for this one
+      // action, and it cannot read it off the follow-up: the follow-up does not
+      // exist until the create has run and relinked. Pinned against the
+      // follow-up's own ChangeSet so the two cannot drift apart.
+      final create = staffActionsFor(linkedStaff(wisa: wisaStaff()), cfg)
+          .whereType<AddStaffToAzure>()
+          .single;
+      final followUp = staffActionsFor(
+        linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
+        cfg,
+      ).whereType<AddStaffToSmartschool>().single;
+      expect(create.unlockedSystems, <Origin>{Origin.smartschool});
+      expect(
+          create.unlockedSystems, <Origin>{followUp.describeChanges().system});
+    });
+
     test('the Smartschool create ends the chain', () {
       // Nothing follows it: the record is complete afterwards, so the next pass
       // is the ordinary modify branch, not another link of this chain.
@@ -262,8 +280,9 @@ void main() {
         linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
         cfg,
       );
-      expect(
-          actions.whereType<AddStaffToSmartschool>().single.unlocks, isEmpty);
+      final create = actions.whereType<AddStaffToSmartschool>().single;
+      expect(create.unlocks, isEmpty);
+      expect(create.unlockedSystems, isEmpty);
     });
 
     test('every other staff action unlocks nothing', () {
@@ -283,6 +302,9 @@ void main() {
         for (final action in staffActionsFor(staff, cfg)) {
           if (action is AddStaffToAzure) continue;
           expect(action.unlocks, isEmpty, reason: '${action.runtimeType}');
+          // …and so claims no second system on the confirmation dialog (#234).
+          expect(action.unlockedSystems, isEmpty,
+              reason: '${action.runtimeType}');
         }
       }
     });

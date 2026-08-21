@@ -102,6 +102,12 @@ sealed class GroupAction {
   /// is never run.
   Set<Type> get unlocks => const {};
 
+  /// The systems the [unlocks] chain would write to, beyond the one
+  /// [describeChanges] already names (#234) — the group half of
+  /// [StudentAction.unlockedSystems], which documents why the UI cannot derive
+  /// this from a pending action.
+  Set<Origin> get unlockedSystems => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3). Throws [UnsupportedError] when
@@ -677,6 +683,12 @@ class CreateAzureClassGroup extends GroupAction {
   /// `SSM-2F` with nobody in it and the enrolment waited for a second click.
   @override
   Set<Type> get unlocks => const {SyncAzureClassGroupMembers};
+
+  /// The roster write lands in Office 365 too, so the chain reaches no system
+  /// this action does not already name — the confirmation dialog has nothing
+  /// extra to announce for it (#234).
+  @override
+  Set<Origin> get unlockedSystems => const {Origin.azure};
 
   @override
   ChangeSet describeChanges() => ChangeSet(

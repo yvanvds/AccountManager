@@ -89,6 +89,7 @@ class PendingActionOption {
     required this.target,
     required this.changes,
     required this.canApply,
+    this.unlockedSystems = const {},
   });
 
   /// The live `StudentAction` / `StaffAction` / `GroupAction` this option runs.
@@ -115,6 +116,44 @@ class PendingActionOption {
 
   /// Whether an apply pass would actually write this option.
   final bool canApply;
+
+  /// The systems only a **chained follow-up** of this option would write to
+  /// (`StudentAction.unlockedSystems` et al., #234) — never the option's own
+  /// [changes] system.
+  ///
+  /// Read off the action rather than derived from the pending list, because the
+  /// follow-up is not in it: the dispatcher is a pure function of the record as
+  /// it stands, so `AddStudentToSmartschool` only appears once the Azure create
+  /// has run and relinked. The confirmation dialog has to name that second
+  /// system *before* the write.
+  final Set<core.Origin> unlockedSystems;
+}
+
+/// What a confirmed apply of a selection would write, for the confirmation
+/// dialog (#234).
+///
+/// Built by [ReconcileController.applyScope] from the **selected**, applyable
+/// option of each choice — exactly the actions `applyAll` / `applySituation` /
+/// `applyEntry` would run — so the dialog names the systems the pass genuinely
+/// reaches instead of the hard-coded "Smartschool and Azure AD" it used to
+/// claim for every action.
+class ApplyScope {
+  const ApplyScope({required this.systems, required this.chained});
+
+  /// One entry per action the pass would run: the system that action writes to.
+  /// A list, not a set — its length is the change count the dialog quotes, and
+  /// two Azure patches are two changes to one system.
+  final List<core.Origin> systems;
+
+  /// Systems only a chained follow-up would reach, with everything already in
+  /// [systems] removed. Non-empty only for the provisioning chains whose second
+  /// write lands in another system (a new student's / staff member's Office 365
+  /// create pulls the Smartschool create in behind it).
+  final Set<core.Origin> chained;
+
+  /// Nothing selected — a dialog built from this claims no write at all.
+  static const ApplyScope empty =
+      ApplyScope(systems: <core.Origin>[], chained: <core.Origin>{});
 }
 
 /// One decision point within a [PendingAccountEntry]: either a lone action or a
@@ -525,6 +564,7 @@ class ReconcileController extends ChangeNotifier {
       // (`AzureClassGroupMembership`), so the apply affordance is gated on the
       // action rather than assumed, exactly as the group family's is.
       canApply: (a) => a.canApply,
+      unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
       family: 'staff',
@@ -537,6 +577,7 @@ class ReconcileController extends ChangeNotifier {
       // Read off the action like the other two families since #240: every staff
       // action is applyable today, but nothing here should assume it.
       canApply: (a) => a.canApply,
+      unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
       family: 'group',
@@ -547,6 +588,7 @@ class ReconcileController extends ChangeNotifier {
       isDefault: (a) => a.isDefaultAlternative,
       changes: (a) => a.describeChanges(),
       canApply: (a) => a.canApply,
+      unlockedSystems: (a) => a.unlockedSystems,
     ));
     _pendingCacheKey = l;
     _pendingCacheChoicesVersion = _choicesVersion;
@@ -665,6 +707,7 @@ class ReconcileController extends ChangeNotifier {
     required bool Function(T) isDefault,
     required actions.ChangeSet Function(T) changes,
     required bool Function(T) canApply,
+    required Set<core.Origin> Function(T) unlockedSystems,
   }) {
     final order = <String>[];
     final byTarget = <String, List<T>>{};
@@ -695,6 +738,7 @@ class ReconcileController extends ChangeNotifier {
                   target: labels[id]!,
                   changes: changes(a),
                   canApply: canApply(a),
+                  unlockedSystems: unlockedSystems(a),
                 ),
             ],
           ),
@@ -1161,6 +1205,28 @@ class ReconcileController extends ChangeNotifier {
   /// counts once (the chosen resolution), not twice, and the informational group
   /// actions are excluded.
   int get applyableCount => _selectedActions(pendingEntries).length;
+
+  /// What a confirmed apply of [entries] would actually write (#234) — the
+  /// systems the apply-confirmation dialog names, derived from the very options
+  /// [applyAll] / [applySituation] / [applyEntry] would run.
+  ///
+  /// Two halves, because they are not the same claim. [ApplyScope.systems] is
+  /// what the selected actions write themselves, one entry per action.
+  /// [ApplyScope.chained] is what only a follow-up would reach — an
+  /// `AddStudentToAzure` writes Office 365 and then, off the same click, writes
+  /// the Smartschool account its chain unlocks (#230/#240), which is a system
+  /// the visible action never names. The follow-up cannot be counted, because
+  /// its own `evaluate` decides at apply time whether it runs at all; it can
+  /// only be named.
+  ApplyScope applyScope(Iterable<PendingAccountEntry> entries) {
+    final selected = _selectedActions(entries);
+    if (selected.isEmpty) return ApplyScope.empty;
+    final systems = <core.Origin>[for (final o in selected) o.changes.system];
+    final chained = <core.Origin>{
+      for (final o in selected) ...o.unlockedSystems,
+    }..removeAll(systems);
+    return ApplyScope(systems: systems, chained: chained);
+  }
 
   /// The live actions to run for [entries]: the selected, applyable option of
   /// every choice, in order.

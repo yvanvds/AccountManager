@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
+import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart'
     show MaterializedAccount, MaterializedGroup, Rollup, RollupLevel;
 import 'package:flutter/material.dart';
@@ -722,7 +723,7 @@ class _ActionsHeader extends StatelessWidget {
                   ? null
                   : controller.dryRun,
               icon: const Icon(Icons.visibility_outlined),
-              label: const Text('Dry-run all'),
+              label: const Text('Dry-run alles'),
             ),
             TextButton.icon(
               key: const ValueKey('actions-apply'),
@@ -730,12 +731,12 @@ class _ActionsHeader extends StatelessWidget {
                   ? null
                   : () => _confirmAndApply(
                         context,
-                        title: 'Apply pending actions?',
-                        count: controller.applyableCount,
+                        title: 'Openstaande acties toepassen?',
+                        scope: controller.applyScope(controller.pendingEntries),
                         apply: controller.applyAll,
                       ),
               icon: const Icon(Icons.play_arrow_outlined),
-              label: const Text('Apply all'),
+              label: const Text('Alles toepassen'),
             ),
           ],
         ),
@@ -951,32 +952,99 @@ class _EmptyLine extends StatelessWidget {
       Text(message, style: Theme.of(context).textTheme.bodyMedium);
 }
 
+/// The Dutch name the operator knows a system by — the same names the action
+/// summaries and the rest of the screen use (#234). Azure AD is "Office 365"
+/// throughout this app, so the dialog says that and not the tenant's technical
+/// name.
+String systemLabel(core.Origin system) => switch (system) {
+      core.Origin.azure => 'Office 365',
+      core.Origin.smartschool => 'Smartschool',
+      core.Origin.wisa => 'WISA',
+      core.Origin.all => 'alle systemen',
+      core.Origin.other => 'een ander systeem',
+    };
+
+/// Joins system names the way Dutch reads them: "a", "a en b", "a, b en c".
+String _joinSystems(Iterable<core.Origin> systems) {
+  final names = <String>[
+    // Pinned order (WISA → Smartschool → Office 365) so the same selection
+    // always reads the same way, whatever order the actions were dispatched in.
+    for (final s in systems.toSet().toList()..sort((a, b) => a.index - b.index))
+      systemLabel(s),
+  ];
+  if (names.length <= 1) return names.join();
+  return '${names.take(names.length - 1).join(', ')} en ${names.last}';
+}
+
+String _changeCount(int n) => n == 1 ? '1 wijziging' : '$n wijzigingen';
+
+String _ruleCount(int n) => n == 1 ? '1 importregel' : '$n importregels';
+
+/// The body of the apply-confirmation dialog: what this particular pass will
+/// write, and where (#234).
+///
+/// It used to be one hard-coded sentence claiming "Smartschool and Azure AD"
+/// for every action, so a single Graph `PATCH` on one display name announced a
+/// write to a system it never touched. Everything needed to say it correctly is
+/// on the actions themselves; [ApplyScope] carries it here.
+///
+/// Three things it is careful about:
+/// - **WISA is never written.** The `DontImportFromWisa` family's `ChangeSet`
+///   carries `Origin.wisa`, but what it produces is a local import rule — the
+///   connector is read-only. So those are counted as import rules and the
+///   sentence says outright that nothing is written to WISA.
+/// - **Chained follow-ups are named, not counted.** A new student's Office 365
+///   create writes Smartschool too (#230/#240). Whether the follow-up runs is
+///   decided by its own `evaluate` after the first write, so it gets its own
+///   "kan ook" sentence rather than being folded into the count.
+/// - **A chain that stays inside a system it already named adds nothing** — a
+///   class group's create and its roster write are both Office 365 (#245), so
+///   there is no second system to announce.
+String applyConfirmationMessage(ApplyScope scope) {
+  final writes = scope.systems.where((s) => s != core.Origin.wisa).toList();
+  final rules = scope.systems.length - writes.length;
+  final clauses = <String>[
+    if (writes.isNotEmpty)
+      'schrijft ${_changeCount(writes.length)} naar ${_joinSystems(writes)}',
+    if (rules > 0)
+      'legt ${_ruleCount(rules)} vast (er wordt niets naar WISA geschreven)',
+  ];
+  final what =
+      clauses.isEmpty ? 'Dit schrijft niets.' : 'Dit ${clauses.join(' en ')}.';
+  final follow = scope.chained.isEmpty
+      ? ''
+      : ' Een vervolgactie kan ook naar ${_joinSystems(scope.chained)} '
+          'schrijven.';
+  return '$what$follow Doe eerst een dry-run om de exacte wijzigingen te '
+      'bekijken.';
+}
+
 /// Shows the apply-confirmation dialog and, on confirm, runs [apply] (#110).
 /// Shared by the global, per-situation, and per-entry apply affordances so a
 /// write is always one deliberate confirmation.
+///
+/// [scope] is what that particular confirmation covers (#234) — the systems the
+/// pass will really reach, not a fixed pair.
 Future<void> _confirmAndApply(
   BuildContext context, {
   required String title,
-  required int count,
+  required ApplyScope scope,
   required Future<void> Function() apply,
 }) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: Text(
-        'This writes $count change(s) to Smartschool and Azure AD. '
-        'Run a dry-run first to preview the exact changes.',
-      ),
+      content: Text(applyConfirmationMessage(scope)),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: const Text('Annuleer'),
         ),
         FilledButton(
           key: const ValueKey('actions-apply-confirm'),
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('Apply'),
+          child: const Text('Toepassen'),
         ),
       ],
     ),
@@ -1476,7 +1544,7 @@ class _SituationHeader extends StatelessWidget {
             onPressed: controller.busy || applyable == 0
                 ? null
                 : () => controller.dryRunSituation(key),
-            child: const Text('Dry-run all'),
+            child: const Text('Dry-run alles'),
           ),
           const SizedBox(width: PlinkSpacing.s2),
           FilledButton(
@@ -1485,11 +1553,18 @@ class _SituationHeader extends StatelessWidget {
                 ? null
                 : () => _confirmAndApply(
                       context,
-                      title: 'Apply to ${entries.length} accounts?',
-                      count: applyable,
+                      title: 'Toepassen op ${entries.length} accounts?',
+                      // Scoped exactly as [ReconcileController.applySituation]
+                      // scopes the pass — every entry in this situation, not
+                      // only the ones this classroom happens to render — so the
+                      // dialog names what will actually be written (#234).
+                      scope: controller.applyScope(
+                        controller.pendingEntries
+                            .where((e) => e.situationKey == key),
+                      ),
                       apply: () => controller.applySituation(key),
                     ),
-            child: Text('Apply to all ($applyable)'),
+            child: Text('Alles toepassen ($applyable)'),
           ),
         ],
       ),
@@ -1571,13 +1646,13 @@ class _PendingEntryTile extends StatelessWidget {
                     ? null
                     : () => _confirmAndApply(
                           context,
-                          title: 'Apply for ${entry.target}?',
-                          count: entry.choices
-                              .where((c) => c.selected.canApply)
-                              .length,
+                          title: 'Toepassen voor ${entry.target}?',
+                          scope: controller.applyScope(<PendingAccountEntry>[
+                            entry,
+                          ]),
                           apply: () => controller.applyEntry(entry),
                         ),
-                child: const Text('Apply'),
+                child: const Text('Toepassen'),
               ),
             ],
           ),
