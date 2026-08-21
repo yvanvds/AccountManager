@@ -67,6 +67,37 @@ void main() {
       );
       expect(bulk.url.queryParameters[r'$filter'], isNotNull);
     });
+
+    test(
+        'a per-pull schoolPrefix overrides the credentials\' frozen one (#246)',
+        () async {
+      // The prefix is operator-editable in Instellingen while the app runs, but
+      // the credentials are baked in when bootstrap constructs the connector.
+      // The caller therefore passes the prefix as it stands now; the
+      // credentials' copy is only the default.
+      final transport = FakeGraphTransport(route);
+      await connectorWith(transport).sync(schoolPrefix: 'SSM');
+
+      final bulk =
+          transport.requests.firstWhere((r) => r.url.path.endsWith('/users'));
+      expect(bulk.url.queryParameters[r'$filter'], contains('SSM'));
+      expect(bulk.url.queryParameters[r'$filter'], isNot(contains('GBS')));
+
+      final groups =
+          transport.requests.firstWhere((r) => r.url.path.endsWith('/groups'));
+      expect(groups.url.queryParameters[r'$filter'], contains('SSM'),
+          reason: 'the group listing is scoped by the same prefix');
+    });
+
+    test('omitting it keeps the credentials\' prefix, as before #246',
+        () async {
+      final transport = FakeGraphTransport(route);
+      await connectorWith(transport).sync();
+
+      final bulk =
+          transport.requests.firstWhere((r) => r.url.path.endsWith('/users'));
+      expect(bulk.url.queryParameters[r'$filter'], contains('GBS'));
+    });
   });
 
   group('drift-check progress logging (#177)', () {

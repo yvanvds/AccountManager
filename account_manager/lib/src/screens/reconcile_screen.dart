@@ -193,6 +193,9 @@ class _Header extends StatelessWidget {
     // Why Check for drift is unavailable, when it is the WISA settings rather
     // than another operator's lease that blocks it (#238).
     final String? driftBlocked = controller.driftBlockedReason;
+    // The one class of saved setting this running session cannot adopt — the
+    // connection profiles the connectors were constructed from (#246).
+    final String? relaunch = controller.relaunchRequiredReason;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -234,6 +237,18 @@ class _Header extends StatelessWidget {
               Icon(Icons.info_outline, size: 16, color: colors.primary),
               const SizedBox(width: PlinkSpacing.s2),
               Flexible(child: Text(driftBlocked, style: text.bodySmall)),
+            ],
+          ),
+        ],
+        if (relaunch != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            key: const ValueKey('reconcile-relaunch-required'),
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.warning_amber_outlined, size: 16, color: colors.error),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(child: Text(relaunch, style: text.bodySmall)),
             ],
           ),
         ],

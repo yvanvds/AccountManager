@@ -2197,11 +2197,8 @@ class GatedApplier extends StateApplier {
     required super.connectors,
     required super.resolver,
     required super.wisaRules,
-    required super.studentConfig,
-    required super.staffConfig,
-    super.classTree,
+    required super.settings,
     super.passwordQueue,
-    super.ourSchoolIds,
   });
 
   /// Awaited before each action; `null` for the ordinary harness.
@@ -2238,6 +2235,81 @@ class GatedApplier extends StateApplier {
     await _park();
     return super.applyGroup(action, options: options);
   }
+}
+
+/// A scripted Smartschool SOAP wire for the import-rule end-to-end (#202/#241):
+/// answers `getAllGroupsAndClasses` with a small base64 group tree and reports
+/// "no direct accounts" (code 19) for every group, recording the group codes the
+/// connector asked about so a test can see the pruned ones were never read.
+///
+/// Wire it as [ReconcileHarness.smartschoolTransport] to drive the *production*
+/// Smartschool pull, which reads the operator's rules from the live settings
+/// document at pull time (#246).
+class GroupTreeSoap implements ss.SmartschoolSoapTransport {
+  /// The group codes `getAllAccountsExtended` was called for, in walk order.
+  final List<String> accountCodes = <String>[];
+
+  static const String _tree = '<groups>'
+      '<group><name>School</name><type>G</type><code>SCH</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Organisatie</name><type>G</type><code>ORG</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Verborgen</name><type>G</type><code>HID</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '<group><name>Klassen</name><type>G</type><code>KLA</code>'
+      '<visible>1</visible><children>'
+      '<group><name>1A</name><type>K</type><code>C1A</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '</children></group></groups>';
+
+  @override
+  Future<String> send({
+    required Uri endpoint,
+    required String soapAction,
+    required String envelope,
+  }) async {
+    // The SOAPAction is `<namespace>#<method>`.
+    final String method = soapAction.split('#').last;
+    if (method == ss.SmartschoolMethod.getAllGroupsAndClasses) {
+      return _wrap(
+        method,
+        base64.encode(utf8.encode(_tree)),
+        'xsd:base64Binary',
+      );
+    }
+    if (method == ss.SmartschoolMethod.getAllAccountsExtended) {
+      accountCodes.add(
+        RegExp(r'<code[^>]*>([^<]*)</code>').firstMatch(envelope)?.group(1) ??
+            '',
+      );
+      return _wrap(method, '19', 'xsd:int'); // Smartschool: no direct accounts.
+    }
+    return _wrap(method, '0', 'xsd:int');
+  }
+
+  String _wrap(String method, String value, String type) =>
+      '<?xml version="1.0" encoding="utf-8"?>'
+      '<soap:Envelope '
+      'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" '
+      'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+      '<soap:Body><${method}Response>'
+      '<return xsi:type="$type">$value</return>'
+      '</${method}Response></soap:Body></soap:Envelope>';
+}
+
+/// The Smartschool class tree the live document configures, or null when it
+/// configures none — in which case the harness's own [ReconcileHarness.classTree]
+/// fixture stands in (#246).
+///
+/// Built with the production [classTreeFrom], so a test that saves a tree in
+/// Instellingen gets the tree the real bootstrap would derive.
+SmartschoolClassTree? _liveClassTree(SmartschoolConnection smartschool) {
+  final tree = classTreeFrom(smartschool);
+  final unset =
+      tree.years.isEmpty && tree.grades.isEmpty && tree.path.trim().isEmpty;
+  return unset ? null : tree;
 }
 
 /// One assembled reconcile stack against fakes: scripted per-system syncers
@@ -2278,6 +2350,18 @@ class ReconcileHarness {
         linkedStore = linkedStore ?? InMemoryLinkedStore() {
     log = LogBuffer(clock: () => kFixtureDate);
     final wisaRules = WisaImportRules();
+
+    // The controller reads its school profiles from the live document now
+    // (#246), so a fixture that curates schools has to put them there — which
+    // is what `bootstrapReconcile` does when it publishes the document it just
+    // loaded. Seeded only when the caller's own document carries none, so a test
+    // driving Instellingen for real always wins.
+    if (schoolProfiles.isNotEmpty &&
+        this.liveSettings.current.wisaSchools.isEmpty) {
+      this.liveSettings.publish(
+            this.liveSettings.current.copyWith(wisaSchools: schoolProfiles),
+          );
+    }
 
     // The scripted per-system pulls (with call counters). When a [store] is
     // wired, each is wrapped so a successful pull persists — mirroring how
@@ -2343,7 +2427,13 @@ class ReconcileHarness {
       );
       ssSync = (_) async {
         ssSyncs++;
-        return connector.sync(rules: smartschoolRules);
+        // The live document's rules win when it carries any (#246), exactly as
+        // `bootstrapReconcile` reads `live.current.smartschoolRules` at pull
+        // time; the [smartschoolRules] fixture stands in otherwise.
+        final live = this.liveSettings.current.smartschoolRules;
+        return connector.sync(
+          rules: live.isEmpty ? smartschoolRules : live,
+        );
       };
     } else {
       ssSync = (_) async {
@@ -2379,9 +2469,16 @@ class ReconcileHarness {
         expectedEmployeeIds: () => <String>{
           ...managedStudentEmployeeIds(
             app.wisa.snapshot,
-            ourSchoolIds: ourSchoolIds,
+            ourSchoolIds:
+                managedSchoolIdsOf(this.liveSettings.current) ?? ourSchoolIds,
           ),
           ...managedStaffEmployeeIds(app.wisa.snapshot),
+        },
+        // The prefix the pull scopes by, read live (#246) — the fixture's 'GBS'
+        // until a test saves one in Instellingen.
+        schoolPrefix: () {
+          final prefix = this.liveSettings.current.schoolPrefix;
+          return prefix.isEmpty ? 'GBS' : prefix;
         },
       );
       azSync = (previous) async {
@@ -2468,23 +2565,39 @@ class ReconcileHarness {
       ),
       resolver: SeqResolver(),
       wisaRules: wisaRules,
-      // The Smartschool group tree a freshly created class hangs under. Left
-      // unconfigured by default (no parent resolves, as in a bare tenant); a
-      // fixture that applies `AddToSmartschool` for real names the root here.
-      classTree: classTree,
-      studentConfig: actions.StudentActionConfig(
-        schoolPrefix: 'GBS',
-        azureDomain: 'school.example',
-      ),
-      staffConfig: actions.StaffActionConfig(
-        schoolPrefix: 'GBS',
-        azureDomain: 'school.example',
-      ),
       passwordQueue: passwordQueue,
-      // The operator's managed-school set from Settings (#178). When unset, the
-      // linker falls back to the WISA snapshot's MarkAsOurs flags, as bootstrap
-      // does for a not-yet-configured group.
-      ourSchoolIds: ourSchoolIds,
+      // Every settings-derived input, read from the live document on each link
+      // and apply exactly as `bootstrapReconcile` wires it (#246) — so a test
+      // can publish a save (or drive Instellingen for real) and see the very
+      // next relink honour it. Each value falls back to this harness's own
+      // fixture when the live document leaves it unset, mirroring how bootstrap
+      // falls back to the dart-define sign-in config; the ~40 fixtures that
+      // publish no document therefore behave exactly as before.
+      settings: () {
+        final s = this.liveSettings.current;
+        final prefix = s.schoolPrefix.isEmpty ? 'GBS' : s.schoolPrefix;
+        final domain =
+            s.azure.domain.isEmpty ? 'school.example' : s.azure.domain;
+        return ApplierSettings(
+          studentConfig: actions.StudentActionConfig(
+            schoolPrefix: prefix,
+            azureDomain: domain,
+          ),
+          staffConfig: actions.StaffActionConfig(
+            schoolPrefix: prefix,
+            azureDomain: domain,
+          ),
+          // The Smartschool group tree a freshly created class hangs under.
+          // Left unconfigured by default (no parent resolves, as in a bare
+          // tenant); a fixture that applies `AddToSmartschool` for real names
+          // the root here, and a test that saves one in Instellingen wins.
+          classTree: _liveClassTree(s.smartschool) ?? classTree,
+          // The operator's managed-school set from Settings (#178). When unset,
+          // the linker falls back to the WISA snapshot's MarkAsOurs flags, as
+          // bootstrap does for a not-yet-configured group.
+          ourSchoolIds: managedSchoolIdsOf(s) ?? ourSchoolIds,
+        );
+      },
     );
 
     final signalHub = hub;

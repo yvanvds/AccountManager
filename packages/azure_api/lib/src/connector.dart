@@ -98,18 +98,29 @@ class AzureConnector {
   /// student who transferred in from a sibling group school — whose account
   /// carries neither our `companyName` nor our `department` — is seen instead of
   /// being proposed for a second, duplicate account.
+  ///
+  /// [schoolPrefix] overrides [AzureCredentials.schoolPrefix] for this one pull
+  /// (#246). The prefix is operator-editable in Instellingen while the app runs,
+  /// but the credentials are baked into the connector at bootstrap — so the
+  /// caller passes the prefix as it stands *now* and the credentials' copy is
+  /// only the default. Both managers already take it as a parameter, so nothing
+  /// below this line had to change.
   Future<AzureSnapshot> sync({
     String? deltaToken,
     AzureSnapshot? previous,
     Iterable<String> expectedEmployeeIds = const <String>[],
+    String? schoolPrefix,
   }) async {
-    final groupList = await groups.listGroups(credentials.schoolPrefix);
+    final prefix = schoolPrefix ?? credentials.schoolPrefix;
+    final groupList = await groups.listGroups(prefix);
 
-    if (deltaToken == null) return _fullRead(groupList, expectedEmployeeIds);
+    if (deltaToken == null) {
+      return _fullRead(groupList, expectedEmployeeIds, prefix);
+    }
 
     final UserDelta delta;
     try {
-      delta = await users.delta(deltaToken, credentials.schoolPrefix);
+      delta = await users.delta(deltaToken, prefix);
     } on GraphException catch (e) {
       if (!e.isRejectedDeltaToken) rethrow;
       _log?.addMessage(
@@ -118,7 +129,7 @@ class AzureConnector {
         '(${_tokenAge(previous)}) — $e. Discarding it and re-reading all '
         'accounts in full.',
       );
-      return _fullRead(groupList, expectedEmployeeIds);
+      return _fullRead(groupList, expectedEmployeeIds, prefix);
     }
 
     // No `@odata.deltaLink` on the final page means this walk produced no
@@ -154,10 +165,11 @@ class AzureConnector {
   Future<AzureSnapshot> _fullRead(
     List<AzureGroup> groupList,
     Iterable<String> expectedEmployeeIds,
+    String schoolPrefix,
   ) async {
     final token = await users.latestDeltaToken();
     final userList = await _adoptByEmployeeId(
-      await users.load(credentials.schoolPrefix),
+      await users.load(schoolPrefix),
       expectedEmployeeIds,
     );
     return AzureSnapshot(

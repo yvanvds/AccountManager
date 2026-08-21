@@ -41,7 +41,7 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
-    show SmartschoolConnector, SmartschoolMethod, SmartschoolSoapTransport;
+    show DiscardSmartschoolGroup, SmartschoolConnector;
 import 'package:wisa_api/wisa_api.dart' show WisaSchool, parseSchoolRow;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
@@ -4643,7 +4643,7 @@ void main() {
 
     // …and the next pull really is pruned by them: the production connector,
     // over a scripted SOAP wire, handed nothing but what Settings persisted.
-    final wire = _GroupTreeSoap();
+    final wire = GroupTreeSoap();
     final snapshot = await SmartschoolConnector.fromParts(
       site: 'school',
       accessCode: 'ac',
@@ -4673,7 +4673,7 @@ void main() {
     // (a typo) is named in the panel instead of vanishing.
     useTallWindow(tester);
     final settings = SettingsHarness();
-    final wire = _GroupTreeSoap();
+    final wire = GroupTreeSoap();
     // The next session's reconcile stack, whose Smartschool pull is the
     // production connector over that wire; its rules are picked up from the
     // settings document below, as bootstrapReconcile picks them up on open.
@@ -4832,6 +4832,158 @@ void main() {
           .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
           .onPressed,
       isNotNull,
+    );
+  });
+
+  testWidgets(
+      'marking a school beheerd in Instellingen surfaces its students without '
+      'a relaunch (#246)', (WidgetTester tester) async {
+    // The headline symptom of #246, driven the way the operator lives it: the
+    // Actions drill-down hides a school's students, they tick **beheerd** in
+    // Instellingen, save, and come back. Before #246 the applier's managed-school
+    // set was captured when `bootstrapReconcile` assembled the stack, so the
+    // student stayed in the leaver bucket until the app was relaunched — with
+    // nothing on screen to explain why.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
+      wisaSchools: const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
+        WisaSchoolProfile(schoolId: 2, code: 'S2', name: 'Sint-Pieter'),
+      ],
+    );
+    final live = LiveSettings(stored);
+    // One student, enrolled in school 2 and fully present in our Smartschool +
+    // Azure. The WISA schools carry no `MarkAsOurs` flag, so who is managed can
+    // only come from the settings document — the #178 wiring, now live.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 2)],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azUser()]),
+      liveSettings: live,
+    );
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // School 2 is not ours yet, so its student is re-bucketed as a leaver and
+    // their class is nowhere in the tree.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Niet toegewezen'), findsOneWidget);
+    expect(find.text('Jaar 3'), findsNothing);
+
+    // Instellingen → Wisa → tick "beheerd" for Sint-Pieter → Opslaan.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final ours = find.byKey(const ValueKey('settings-wisa-school-2-ours'));
+    await tester.ensureVisible(ours);
+    await tester.pumpAndSettle();
+    await tester.tap(ours);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).managedWisaSchoolIds, const {1, 2});
+
+    // Back on Reconcile, Check for drift is offered: ownership is applied when
+    // the view is relinked, not when WISA is pulled, so the #238 gate — which
+    // guards the WISA pull inputs — must not stand in the way here.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(find.byKey(const ValueKey('reconcile-relaunch-required')),
+        findsNothing);
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    // …and the student is out of the leaver bucket and browsable under their
+    // own class, with no relaunch anywhere in this test.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Niet toegewezen'), findsNothing);
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(find.text('3C'), findsWidgets);
+  });
+
+  testWidgets(
+      'a Smartschool import rule saved in Instellingen prunes the very next '
+      'Smartschool pull (#246)', (WidgetTester tester) async {
+    // #241's end-to-end proved the rules work; it had to hand-carry the saved
+    // document into the reconcile harness itself, because the running pull had
+    // closed over the bootstrap one. Nothing is handed over here — the two
+    // bootstraps share one LiveSettings, exactly as `main()` wires them.
+    useTallWindow(tester);
+    final wire = GroupTreeSoap();
+    final live = LiveSettings(const AppSettings());
+    final settings = SettingsHarness(liveSettings: live);
+    final harness =
+        ReconcileHarness(smartschoolTransport: wire, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first pass, on the rules as they stand: the whole tree comes in.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      harness.app.smartschool.snapshot?.groups.map((g) => g.id.value).toList(),
+      <String>['SCH', 'ORG', 'HID', 'KLA', 'C1A'],
+    );
+
+    // The operator authors the rule that drops "Organisatie" and saves.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+    await addSmartschoolRule(tester, 'discardGroup', 'Organisatie');
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect(
+      (await settings.store.load()).smartschoolRules.single,
+      isA<DiscardSmartschoolGroup>(),
+    );
+
+    // Back on Reconcile the operator presses **Check for drift** — the pass
+    // that re-reads Smartschool at all, since #99's smart sync leaves a system
+    // this session already holds alone. It is offered, because an import rule is
+    // not a WISA pull input and so never arms #238's gate…
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    // …and the pull it just ran is the pruned one. No hand-off, no relaunch.
+    expect(
+      harness.app.smartschool.snapshot?.groups.map((g) => g.id.value).toList(),
+      <String>['SCH', 'KLA', 'C1A'],
     );
   });
 
@@ -5847,62 +5999,4 @@ class _FakeSignalRSocket implements SignalRSocket {
   void serverSend(String frame) {
     if (!_incoming.isClosed) _incoming.add(frame);
   }
-}
-
-/// A scripted Smartschool SOAP wire for the import-rule end-to-end (#202):
-/// answers `getAllGroupsAndClasses` with a small base64 group tree and reports
-/// "no direct accounts" (code 19) for every group, recording the group codes the
-/// connector asked about so the test can see the pruned ones were never read.
-class _GroupTreeSoap implements SmartschoolSoapTransport {
-  /// The group codes `getAllAccountsExtended` was called for, in walk order.
-  final List<String> accountCodes = <String>[];
-
-  static const String _tree = '<groups>'
-      '<group><name>School</name><type>G</type><code>SCH</code>'
-      '<visible>1</visible><children>'
-      '<group><name>Organisatie</name><type>G</type><code>ORG</code>'
-      '<visible>1</visible><children>'
-      '<group><name>Verborgen</name><type>G</type><code>HID</code>'
-      '<visible>1</visible></group>'
-      '</children></group>'
-      '<group><name>Klassen</name><type>G</type><code>KLA</code>'
-      '<visible>1</visible><children>'
-      '<group><name>1A</name><type>K</type><code>C1A</code>'
-      '<visible>1</visible></group>'
-      '</children></group>'
-      '</children></group></groups>';
-
-  @override
-  Future<String> send({
-    required Uri endpoint,
-    required String soapAction,
-    required String envelope,
-  }) async {
-    // The SOAPAction is `<namespace>#<method>`.
-    final String method = soapAction.split('#').last;
-    if (method == SmartschoolMethod.getAllGroupsAndClasses) {
-      return _wrap(
-        method,
-        base64.encode(utf8.encode(_tree)),
-        'xsd:base64Binary',
-      );
-    }
-    if (method == SmartschoolMethod.getAllAccountsExtended) {
-      accountCodes.add(
-        RegExp(r'<code[^>]*>([^<]*)</code>').firstMatch(envelope)?.group(1) ??
-            '',
-      );
-      return _wrap(method, '19', 'xsd:int'); // Smartschool: no direct accounts.
-    }
-    return _wrap(method, '0', 'xsd:int');
-  }
-
-  String _wrap(String method, String value, String type) =>
-      '<?xml version="1.0" encoding="utf-8"?>'
-      '<soap:Envelope '
-      'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" '
-      'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
-      '<soap:Body><${method}Response>'
-      '<return xsi:type="$type">$value</return>'
-      '</${method}Response></soap:Body></soap:Envelope>';
 }

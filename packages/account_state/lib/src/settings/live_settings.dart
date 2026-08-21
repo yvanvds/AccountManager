@@ -72,3 +72,32 @@ String wisaPullFingerprint(AppSettings settings) {
 
 String _workDateKey(WorkDateSetting setting) =>
     setting.isNow ? 'now' : (setting.date?.toIso8601String() ?? 'unset');
+
+/// A stable identity for the settings a running session **cannot** adopt: the
+/// endpoints and credential refs the three connectors were constructed from
+/// (#246).
+///
+/// #246 made every *derived* settings value live — the managed-school set, the
+/// school prefix, the Azure domain, the Smartschool class tree and import
+/// rules — by routing each reader through [LiveSettings] at use time. The
+/// connection profiles are the residue that cannot follow. A WISA host, port,
+/// database or login is baked into a live SQL connection; a Smartschool site
+/// into a SOAP endpoint; either password ref into a Key Vault secret the
+/// bootstrap already resolved (an async read that cannot happen inside a
+/// syncer). Re-reading them mid-session would mean tearing down and rebuilding
+/// the connectors under whatever pass is in flight.
+///
+/// So they stay frozen, and the reconcile screen says so instead: a document
+/// whose fingerprint has moved since bootstrap means the connectors in hand are
+/// talking to the *previous* endpoints, which is exactly the silent-stale-input
+/// failure #238 set out to end. Fingerprinting only the secret **ref** (never a
+/// value) keeps this free of anything sensitive — rotating the secret behind an
+/// unchanged ref is a Key Vault event this cannot and need not see.
+String connectionFingerprint(AppSettings settings) {
+  final wisa = settings.wisa;
+  final smartschool = settings.smartschool;
+  return 'wisa=${wisa.server.trim()}:${wisa.port.trim()}/'
+      '${wisa.database.trim()}@${wisa.username.trim()}'
+      '#${wisa.passwordRef.name};'
+      'smartschool=${smartschool.uri.trim()}#${smartschool.passphraseRef.name}';
+}
