@@ -350,8 +350,10 @@ class CategorySummary {
 /// the fresh pull against it. When WISA is unchanged and a linked view already
 /// exists, it reports "no account changes needed" and stops — no re-link, no
 /// action churn. Smartschool / Azure are pulled only when still missing this
-/// session; re-reading them is the explicit [checkDrift] action (someone
-/// edited via another tool), not the default.
+/// session **or when their own settings inputs have moved** ([
+/// systemsAwaitingSettings], #259); re-reading them for drift somebody else
+/// introduced through another tool is the explicit [checkDrift] action, not the
+/// default.
 class ReconcileController extends ChangeNotifier {
   ReconcileController({
     required this.app,
@@ -373,6 +375,12 @@ class ReconcileController extends ChangeNotifier {
     // The snapshot this session starts with — seeded from the cold store, or
     // pulled later — belongs to the settings as they stand right now (#238).
     _wisaPullFingerprint = _wisaFingerprint();
+    // The same claim for the other two systems (#259). A cold seed was pulled
+    // by some other session whose settings this one cannot know, so — exactly
+    // as for WISA — it is credited to the document in hand, and only a save
+    // made *from here on* asks for a re-pull.
+    _smartschoolPullFingerprint = _settingsFingerprint(core.Origin.smartschool);
+    _azurePullFingerprint = _settingsFingerprint(core.Origin.azure);
     // The endpoints and credential refs the connectors in hand were built from
     // (#246). Unlike everything else, a later change to these cannot be adopted
     // — see [relaunchRequiredReason].
@@ -483,6 +491,13 @@ class ReconcileController extends ChangeNotifier {
   /// holds was pulled with (#238). Re-stamped on every WISA pull; compared
   /// against the live document to arm [driftBlockedReason].
   late String _wisaPullFingerprint;
+
+  /// The [smartschoolPullFingerprint] / [azurePullFingerprint] of the settings
+  /// the snapshot this session holds for that system was pulled with (#259).
+  /// Re-stamped on every pull of that system; compared against the live
+  /// document to arm [systemsAwaitingSettings].
+  late String _smartschoolPullFingerprint;
+  late String _azurePullFingerprint;
 
   ReconcilePhase _phase = ReconcilePhase.idle;
   double _progress = 0.0;
@@ -1073,8 +1088,67 @@ class ReconcileController extends ChangeNotifier {
   /// Whether **Check for drift** can be started right now: no pass running, no
   /// other operator holding the lease, and the WISA settings unchanged since
   /// this session's roster was pulled (#238).
+  ///
+  /// Deliberately *not* gated on [systemsAwaitingSettings]: a drift pass
+  /// unconditionally re-reads Smartschool and Azure, so it is one of the two
+  /// passes that adopt a saved rule or prefix rather than a pass that would
+  /// reconcile around it.
   bool get canCheckDrift =>
       !busy && !syncLockedByOther && driftBlockedReason == null;
+
+  /// The pull-input fingerprint of [system] as the live document stands right
+  /// now, or the empty sentinel when no [liveSettings] holder is wired — which
+  /// makes every comparison equal and leaves [systemsAwaitingSettings] empty
+  /// for the harnesses that model no settings at all.
+  String _settingsFingerprint(core.Origin system) {
+    final live = liveSettings;
+    if (live == null) return '';
+    return switch (system) {
+      core.Origin.smartschool => smartschoolPullFingerprint(live.current),
+      core.Origin.azure => azurePullFingerprint(live.current),
+      _ => '',
+    };
+  }
+
+  /// The systems whose *own* pull inputs have been changed in Instellingen
+  /// since the snapshot this session holds for them was pulled (#259).
+  ///
+  /// #99's smart sync re-pulls Smartschool and Azure only when this session
+  /// does not hold them yet, which is right when the question is "did somebody
+  /// edit those systems behind our back" (that is [checkDrift]'s job) and wrong
+  /// when the operator has just changed what the pull itself asks for. A saved
+  /// `DiscardSmartschoolGroup` or a new school prefix then reached the running
+  /// stack (#246) but no pass applied it, while [sync] reported "geen
+  /// accountwijzigingen nodig" over the very save it had skipped.
+  ///
+  /// So this is the targeted equivalent of the `snapshot == null` condition:
+  /// non-empty means the next [sync] re-pulls those systems, and
+  /// [pendingSettingsReason] says so on screen until it has.
+  Set<core.Origin> get systemsAwaitingSettings => <core.Origin>{
+        if (_settingsFingerprint(core.Origin.smartschool) !=
+            _smartschoolPullFingerprint)
+          core.Origin.smartschool,
+        if (_settingsFingerprint(core.Origin.azure) != _azurePullFingerprint)
+          core.Origin.azure,
+      };
+
+  /// Which saved settings are waiting for a Synchroniseer to be applied, or
+  /// `null` when none are (#259).
+  ///
+  /// Nothing is refused — the next [sync] adopts them by itself, and so does a
+  /// [checkDrift]. This only ends the silence between the save and that pass,
+  /// the way [driftBlockedReason] and [relaunchRequiredReason] name their own
+  /// situations.
+  String? get pendingSettingsReason {
+    final systems = systemsAwaitingSettings;
+    if (systems.isEmpty) return null;
+    final names = <String>[
+      if (systems.contains(core.Origin.smartschool)) 'Smartschool',
+      if (systems.contains(core.Origin.azure)) 'Azure AD',
+    ];
+    return 'Instellingen voor ${names.join(' en ')} gewijzigd — '
+        'synchroniseer om ze toe te passen.';
+  }
 
   /// Why this session must be relaunched before it can honour the settings as
   /// they now stand, or `null` when it can honour all of them (#246).
@@ -1109,6 +1183,17 @@ class ReconcileController extends ChangeNotifier {
   /// mid-pull stays pending rather than being credited to a pull that never saw
   /// it (#238).
   void _stampWisaPull(String fingerprint) => _wisaPullFingerprint = fingerprint;
+
+  /// The same record for Smartschool / Azure (#259): [fingerprint] is read
+  /// *before* the pull goes out, so a save landing mid-pull stays pending
+  /// rather than being credited to a pull that never saw it.
+  void _stampPull(core.Origin system, String fingerprint) {
+    if (system == core.Origin.smartschool) {
+      _smartschoolPullFingerprint = fingerprint;
+    } else if (system == core.Origin.azure) {
+      _azurePullFingerprint = fingerprint;
+    }
+  }
 
   /// Whether the store holds a materialized overview (rollups) to drill into —
   /// true after any session has synced, even without a pull this session.
@@ -1412,6 +1497,13 @@ class ReconcileController extends ChangeNotifier {
       // same document, so this names exactly the settings WISA was asked with
       // (#238).
       final pulledWith = _wisaFingerprint();
+      // Which held system's own pull inputs moved since it was pulled (#259),
+      // sampled before anything goes out for the same reason [pulledWith] is:
+      // a save landing mid-pass belongs to the next one. Read here rather than
+      // after the WISA pull so the school-profile back-fill below — which
+      // publishes a repaired document of its own (#207) — can never be mistaken
+      // for the operator changing something.
+      final stale = systemsAwaitingSettings;
       log.addMessage(core.Origin.wisa, 'Syncing WISA…');
       final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
       _stampWisaPull(pulledWith);
@@ -1428,8 +1520,13 @@ class ReconcileController extends ChangeNotifier {
       // schools have no names.
       await _backfillSchoolProfiles(fresh.schools);
 
+      // "Nothing to do" is only honest while every input is the one the view in
+      // hand was built from. A saved import rule or school prefix (#259) is a
+      // change this pass has to apply, so it falls through to the re-pull below
+      // instead of reporting "geen accountwijzigingen nodig" over it.
       if (previous != null &&
           _linked != null &&
+          stale.isEmpty &&
           wisaSnapshotUnchanged(previous, fresh)) {
         _noChangesNeeded = true;
         log.addMessage(
@@ -1444,17 +1541,41 @@ class ReconcileController extends ChangeNotifier {
       }
 
       // First pass of the session: the linked view needs all three systems.
-      if (app.smartschool.snapshot == null) {
+      // And since #259, so does a pass whose own settings inputs moved — the
+      // targeted equivalent of that condition, keyed on the per-system
+      // fingerprint rather than on "do we hold anything at all".
+      final ssStale = stale.contains(core.Origin.smartschool);
+      if (app.smartschool.snapshot == null || ssStale) {
         await _renewLock();
+        if (ssStale) {
+          log.addMessage(
+            core.Origin.smartschool,
+            'Smartschool-instellingen gewijzigd — Smartschool wordt opnieuw '
+            'opgehaald.',
+          );
+        }
         log.addMessage(core.Origin.smartschool, 'Syncing Smartschool…');
+        final ssPulledWith = _settingsFingerprint(core.Origin.smartschool);
         _recordPull(
             core.Origin.smartschool, await app.sync(core.Origin.smartschool));
+        _stampPull(core.Origin.smartschool, ssPulledWith);
       }
       _setProgress(0.45);
-      if (app.azure.snapshot == null) {
+      final azStale = stale.contains(core.Origin.azure);
+      if (app.azure.snapshot == null || azStale) {
         await _renewLock();
+        if (azStale) {
+          // Worth naming: a moved prefix also drops the delta token (#246), so
+          // this one is a full tenant read rather than an incremental pass.
+          log.addMessage(
+            core.Origin.azure,
+            'Azure-instellingen gewijzigd — Azure AD wordt opnieuw opgehaald.',
+          );
+        }
         log.addMessage(core.Origin.azure, 'Syncing Azure AD…');
+        final azPulledWith = _settingsFingerprint(core.Origin.azure);
         _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
+        _stampPull(core.Origin.azure, azPulledWith);
       }
       _setProgress(0.65);
 
@@ -1505,12 +1626,20 @@ class ReconcileController extends ChangeNotifier {
         core.Origin.smartschool,
         'Checking Smartschool for drift…',
       );
+      // A drift pass re-reads both systems unconditionally, so it adopts a
+      // saved import rule or school prefix as surely as a sync does — and must
+      // stamp that, or the next Synchroniseer would re-pull for a change this
+      // pass already applied (#259).
+      final ssPulledWith = _settingsFingerprint(core.Origin.smartschool);
       _recordPull(
           core.Origin.smartschool, await app.sync(core.Origin.smartschool));
+      _stampPull(core.Origin.smartschool, ssPulledWith);
       _setProgress(0.35);
       await _renewLock();
       log.addMessage(core.Origin.azure, 'Checking Azure AD for drift…');
+      final azPulledWith = _settingsFingerprint(core.Origin.azure);
       _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
+      _stampPull(core.Origin.azure, azPulledWith);
       _setProgress(0.6);
 
       if (app.wisa.snapshot == null) {

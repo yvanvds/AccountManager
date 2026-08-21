@@ -196,6 +196,10 @@ class _Header extends StatelessWidget {
     // The one class of saved setting this running session cannot adopt — the
     // connection profiles the connectors were constructed from (#246).
     final String? relaunch = controller.relaunchRequiredReason;
+    // Saved Smartschool / Azure pull inputs the next pass will adopt but no
+    // pass has yet (#259) — the gap in which Synchroniseer used to report
+    // "geen accountwijzigingen nodig" over a save it had skipped.
+    final String? pendingSettings = controller.pendingSettingsReason;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,6 +241,18 @@ class _Header extends StatelessWidget {
               Icon(Icons.info_outline, size: 16, color: colors.primary),
               const SizedBox(width: PlinkSpacing.s2),
               Flexible(child: Text(driftBlocked, style: text.bodySmall)),
+            ],
+          ),
+        ],
+        if (pendingSettings != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            key: const ValueKey('reconcile-settings-pending'),
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.info_outline, size: 16, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(child: Text(pendingSettings, style: text.bodySmall)),
             ],
           ),
         ],

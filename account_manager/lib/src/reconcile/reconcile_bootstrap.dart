@@ -433,10 +433,10 @@ Future<ReconcileServices> bootstrapReconcile({
         // The operator's import rules, read from the live document at pull time
         // (#241 authored them, #246 unfroze them): authoring a
         // `DiscardSmartschoolGroup` in Instellingen reaches the very next
-        // Smartschool pull rather than the next launch. Which pass that is stays
-        // the smart-sync contract — Synchroniseer leaves a system this session
-        // already holds alone, so it is **Check for drift** that adopts a rule
-        // change (filed as #259).
+        // Smartschool pull rather than the next launch. Since #259 that is
+        // whichever pass the operator runs next: a moved
+        // `smartschoolPullFingerprint` makes the smart sync re-pull this system
+        // instead of leaving the snapshot it already holds alone.
         inner: (_) => ssConnector.sync(rules: live.current.smartschoolRules),
       ),
     ),
@@ -468,9 +468,9 @@ Future<ReconcileServices> bootstrapReconcile({
           },
           // The prefix scopes the whole Azure pull, and it is operator-editable
           // (#246). Changing it makes this pass re-read in full rather than
-          // layering the new school's changes over the old school's users. As
-          // with the Smartschool rules, the pass that re-reads Azure at all is
-          // Check for drift (#259).
+          // layering the new school's changes over the old school's users — and
+          // since #259 it is also what makes the next Synchroniseer re-pull
+          // Azure at all, rather than leaving the snapshot in hand alone.
           schoolPrefix: schoolPrefixNow,
         ),
       ),

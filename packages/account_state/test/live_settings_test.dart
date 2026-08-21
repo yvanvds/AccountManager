@@ -1,4 +1,5 @@
 import 'package:account_state/account_state.dart';
+import 'package:smartschool_api/smartschool_api.dart';
 import 'package:test/test.dart';
 
 AppSettings _settings({
@@ -121,6 +122,122 @@ void main() {
       expect(
         wisaPullFingerprint(_settings(schools: const [a, b])),
         wisaPullFingerprint(_settings(schools: const [b, a])),
+      );
+    });
+  });
+
+  group('smartschoolPullFingerprint (#259)', () {
+    test('changes when the operator authors an import rule', () {
+      final before = smartschoolPullFingerprint(_settings());
+      final after = smartschoolPullFingerprint(_settings().copyWith(
+        smartschoolRules: const [DiscardSmartschoolGroup('Organisatie')],
+      ));
+      expect(after, isNot(before));
+    });
+
+    test('changes when a rule is retargeted, not merely counted', () {
+      final a = smartschoolPullFingerprint(_settings().copyWith(
+        smartschoolRules: const [DiscardSmartschoolGroup('Organisatie')],
+      ));
+      final b = smartschoolPullFingerprint(_settings().copyWith(
+        smartschoolRules: const [DiscardSmartschoolGroup('Personeel')],
+      ));
+      expect(a, isNot(b));
+    });
+
+    test('is order-sensitive, because the rules are applied in sequence', () {
+      const a = DiscardSmartschoolGroup('Organisatie');
+      const b = NoSmartschoolSubgroups('Klassen');
+      expect(
+        smartschoolPullFingerprint(
+            _settings().copyWith(smartschoolRules: const [a, b])),
+        isNot(smartschoolPullFingerprint(
+            _settings().copyWith(smartschoolRules: const [b, a]))),
+      );
+    });
+
+    test('ignores settings a Smartschool pull does not depend on', () {
+      // The pull takes the rules and nothing else; the class tree, the prefix
+      // and the werkdatum all feed other readers and must not force a re-pull.
+      final base = _settings();
+      expect(
+        smartschoolPullFingerprint(base.copyWith(
+          schoolPrefix: 'GBS',
+          smartschool: base.smartschool.copyWith(studentGroup: 'SCHOOL'),
+          wisa: base.wisa.copyWith(
+            workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9)),
+          ),
+        )),
+        smartschoolPullFingerprint(base),
+      );
+    });
+
+    test('is stable across two reads of the same document', () {
+      final settings = _settings().copyWith(
+        smartschoolRules: const [DiscardSmartschoolGroup('Organisatie')],
+      );
+      expect(
+        smartschoolPullFingerprint(settings),
+        smartschoolPullFingerprint(settings),
+      );
+    });
+  });
+
+  group('azurePullFingerprint (#259)', () {
+    test('changes when the school prefix moves', () {
+      expect(
+        azurePullFingerprint(_settings().copyWith(schoolPrefix: 'SSM')),
+        isNot(azurePullFingerprint(_settings().copyWith(schoolPrefix: 'GBS'))),
+      );
+    });
+
+    test("changes when a school's beheerd mark is flipped", () {
+      // The managed set decides which WISA ids the `employeeId in (…)`
+      // back-fill asks Azure about (#224/#231), so it is a pull input too.
+      const school = WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A');
+      expect(
+        azurePullFingerprint(_settings(schools: const [school])),
+        isNot(azurePullFingerprint(_settings(schools: const [
+          WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A', ours: true),
+        ]))),
+      );
+    });
+
+    test('is insensitive to the order the managed schools are stored in', () {
+      const a =
+          WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A', ours: true);
+      const b =
+          WisaSchoolProfile(schoolId: 2, code: 'B', name: 'B', ours: true);
+      expect(
+        azurePullFingerprint(_settings(schools: const [a, b])),
+        azurePullFingerprint(_settings(schools: const [b, a])),
+      );
+    });
+
+    test('is insensitive to whitespace an operator typed around the prefix',
+        () {
+      expect(
+        azurePullFingerprint(_settings().copyWith(schoolPrefix: '  GBS  ')),
+        azurePullFingerprint(_settings().copyWith(schoolPrefix: 'GBS')),
+      );
+    });
+
+    test('ignores settings an Azure pull does not depend on', () {
+      // The virtual mark and the import rules belong to the other two pulls;
+      // neither may cost the operator a full tenant re-read.
+      final base = _settings();
+      expect(
+        azurePullFingerprint(base.copyWith(
+          smartschoolRules: const [DiscardSmartschoolGroup('Organisatie')],
+          wisaSchools: const [
+            WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A', virtual: true),
+          ],
+        )),
+        azurePullFingerprint(base.copyWith(
+          wisaSchools: const [
+            WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A'),
+          ],
+        )),
       );
     });
   });

@@ -5123,11 +5123,19 @@ void main() {
 
   testWidgets(
       'a Smartschool import rule saved in Instellingen prunes the very next '
-      'Smartschool pull (#246)', (WidgetTester tester) async {
+      'Synchroniseer, and the screen says so meanwhile (#246/#259)',
+      (WidgetTester tester) async {
     // #241's end-to-end proved the rules work; it had to hand-carry the saved
     // document into the reconcile harness itself, because the running pull had
     // closed over the bootstrap one. Nothing is handed over here — the two
     // bootstraps share one LiveSettings, exactly as `main()` wires them.
+    //
+    // And the pass driven here is the one the operator actually reaches for.
+    // Until #259 this journey ended in the reported bug: #99's smart sync left
+    // Smartschool alone because the session already held it, so Synchroniseer
+    // pulled WISA, found it unchanged and reported "geen accountwijzigingen
+    // nodig" — over the rule the operator had just saved. Only Check for drift
+    // adopted it, and nothing on screen said so.
     useTallWindow(tester);
     final wire = GroupTreeSoap();
     final live = LiveSettings(const AppSettings());
@@ -5165,20 +5173,45 @@ void main() {
       isA<DiscardSmartschoolGroup>(),
     );
 
-    // Back on Reconcile the operator presses **Check for drift** — the pass
-    // that re-reads Smartschool at all, since #99's smart sync leaves a system
-    // this session already holds alone. It is offered, because an import rule is
-    // not a WISA pull input and so never arms #238's gate…
+    // Back on Reconcile the screen names the save that is still waiting — the
+    // silence #259 closed. Nothing is refused: an import rule is not a WISA
+    // pull input, so #238's drift gate stays open too.
     await tester.tap(find.text('Reconcile'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Instellingen voor Smartschool gewijzigd'),
+      findsOneWidget,
+    );
+
+    // The operator presses **Synchroniseer**, the pass they reach for.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // …and the pull it just ran is the pruned one. No hand-off, no relaunch.
+    // The pull it just ran is the pruned one. No drift check, no hand-off, no
+    // relaunch.
     expect(
       harness.app.smartschool.snapshot?.groups.map((g) => g.id.value).toList(),
       <String>['SCH', 'KLA', 'C1A'],
+    );
+    // …the notice is gone, because the pass applied it…
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsNothing,
+    );
+    // …and the Log panel never claimed there was nothing to do, which is the
+    // half of this bug the operator actually saw.
+    expect(find.textContaining('geen accountwijzigingen nodig'), findsNothing);
+    expect(
+      find.textContaining(
+        'Smartschool-instellingen gewijzigd — Smartschool wordt opnieuw '
+        'opgehaald.',
+      ),
+      findsOneWidget,
     );
   });
 
