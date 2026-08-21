@@ -85,4 +85,50 @@ void main() {
     expect(forest.first.name, 'Solo');
     expect(forest.first.code, 'S1');
   });
+
+  group('a class node carrying a subgroup (#225)', () {
+    // The shape of the real `2G`: an official class with its own subgroup
+    // hanging under it. The parent must keep its own name, code and
+    // official flag — a subgroup that reaches the snapshot while its parent
+    // does not is what made the class look like it had never been created.
+    const xml = '<groups><group>'
+        '<name>2G</name><type>K</type><code>C2G</code>'
+        '<isOfficial>1</isOfficial><adminNumber>77</adminNumber>'
+        '<children><group>'
+        '<name>2G LAT</name><type>K</type><code>C2GLAT</code>'
+        '<isOfficial>1</isOfficial>'
+        '</group></children>'
+        '</group></groups>';
+    final forest = parseGroupTree(base64.encode(utf8.encode(xml)));
+
+    test('the parent keeps its own name, code and isOfficial', () {
+      final parent = forest.single;
+      expect(parent.name, '2G');
+      expect(parent.code, 'C2G');
+      expect(parent.official, isTrue);
+      expect(parent.type, core.GroupType.classGroup);
+      expect(parent.adminNumber, 77);
+    });
+
+    test('the subgroup is nested under it, never in its place', () {
+      final child = forest.single.children.single;
+      expect(child.name, '2G LAT');
+      expect(child.code, 'C2GLAT');
+      expect(child.parentCode, 'C2G');
+      // A child can only be reached through its parent, so a snapshot that
+      // holds the subgroup necessarily holds the class above it.
+      expect(forest.single.children, hasLength(1));
+    });
+  });
+
+  test('a padded 1/0 flag still reads as the flag it is (#225)', () {
+    // A class whose `isOfficial` arrives wrapped onto its own line must not
+    // silently read as "not an official class" — that drops it from the group
+    // link and its WISA twin then looks like a class nobody has created.
+    const xml = '<group><name>2G</name><type>K</type><code>C2G</code>'
+        '<isOfficial>\n  1\n</isOfficial><visible> 1 </visible></group>';
+    final parsed = parseGroupTree(base64.encode(utf8.encode(xml))).single;
+    expect(parsed.official, isTrue);
+    expect(parsed.visible, isTrue);
+  });
 }

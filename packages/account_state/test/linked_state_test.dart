@@ -607,6 +607,51 @@ void main() {
     });
 
     test(
+        'a class Smartschool already holds as a plain group is never proposed '
+        'for creation (#225)', () {
+      // The `2G` of #225 driven through the layer the app actually uses: WISA
+      // has the populated class, Smartschool has it as a group that is not
+      // flagged as an official class. The class exists — proposing to create it
+      // asks Smartschool for a duplicate name.
+      final wisa = _wSnap(
+        students: [_wStudent(wisaId: '1', classGroup: '2G')],
+        classGroups: [_wClass('2G', adminCode: 'g1')],
+      );
+      final smartschool = _sSnap(
+        groups: [
+          _ssGroup('Eerste graad',
+              code: 'G1', official: false, type: core.GroupType.group),
+          _ssGroup('2G',
+              code: 'G2G', official: false, type: core.GroupType.group),
+        ],
+      );
+
+      final state = LinkedState.recompute(
+        wisa: wisa,
+        smartschool: smartschool,
+        azure: _aSnap(),
+        resolver: _SeqResolver(),
+        studentConfig: _studentConfig,
+        staffConfig: _staffConfig,
+        classTree: const SmartschoolClassTree(grades: ['G1', 'G2', 'G3']),
+      );
+
+      expect(state.groupActions.whereType<AddToSmartschool>(), isEmpty);
+      expect(state.groupActions.whereType<CreateInSmartschool>(), isEmpty);
+      final notice =
+          state.groupActions.whereType<ClassExistsAsSmartschoolGroup>().single;
+      expect(notice.canApply, isFalse);
+      expect(notice.describeChanges().summary, contains('geen officiële klas'));
+
+      // And the skip is on the record for the operator to read, not silent.
+      final warning = state.snapshot.warnings
+          .whereType<core.SmartschoolNamesakeSkipped>()
+          .single;
+      expect(warning.wisaName, '2G');
+      expect(warning.smartschool.id.value, 'G2G');
+    });
+
+    test(
         'MoveToSmartschoolClassGroup surfaces only with the placement callback',
         () {
       final wisa = _wSnap(students: [_wStudent(wisaId: '1', classGroup: '3C')]);

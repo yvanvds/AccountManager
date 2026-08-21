@@ -370,14 +370,15 @@ void main() {
         findsOneWidget);
   });
 
-  // --- Classroom filters: toggle + name search (#187) ----------------------
+  // --- The global Acties filter + the Personeel name search (#187/#226) -----
 
   testWidgets(
-      'the Leerlingen classroom toggle shows only accounts with actions, and '
-      'that tab carries no name search (#187)', (WidgetTester tester) async {
+      'the global filter lists only accounts with actions inside an opened '
+      'Leerlingen class, is set in exactly one place, and gives the full class '
+      'back when switched off (#187/#226)', (WidgetTester tester) async {
     _useTallWindow(tester);
     // A passive-session class with a mix: one student with an applyable action,
-    // one without. The toggle must narrow to the former (its `hasPending`).
+    // one without. The filter must narrow to the former (its `hasPending`).
     final store = await seededLinkedStore(<MaterializedAccount>[
       matAccount(id: 's1', label: 'Jane Doe', withAction: true),
       matAccount(id: 's2', label: 'Kees Bakker', withAction: false),
@@ -386,24 +387,32 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    await _drill(tester, node: 'Jaar 3', classroom: '3C');
-    // Both accounts show unfiltered; the Leerlingen tab has no search box.
-    expect(find.text('Jane Doe'), findsOneWidget);
-    expect(find.text('Kees Bakker'), findsOneWidget);
-    expect(find.byKey(const ValueKey('actions-search')), findsNothing);
-
-    // Toggle "only with actions": the action-free account drops out.
+    // One switch, on the Acties tab itself and already on — the operator never
+    // sets it per class (#226).
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    expect(toggle, findsOneWidget);
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    // The action-free account is already out, with nothing touched in here; the
+    // Leerlingen tab has no search box, and no second copy of the switch.
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(find.text('Kees Bakker'), findsNothing);
+    expect(find.byKey(const ValueKey('actions-search')), findsNothing);
+    expect(toggle, findsOneWidget,
+        reason: 'the filter is not settable in two places');
+
+    // Switched off, the class is the full inventory again.
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(find.text('Jane Doe'), findsOneWidget);
-    expect(find.text('Kees Bakker'), findsNothing);
+    expect(find.text('Kees Bakker'), findsOneWidget);
   });
 
   testWidgets(
       'the Personeel classroom search matches any part of the name in any '
-      'order and combines with the only-with-actions toggle (#187/#217)',
+      'order and combines with the only-with-actions filter (#187/#217/#226)',
       (WidgetTester tester) async {
     _useTallWindow(tester);
     // Three staff in the one synthetic Personeel class: two share the surname
@@ -415,6 +424,13 @@ void main() {
     ]);
     final harness = ReconcileHarness(linkedStore: store);
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The global filter is on by default (#226); this half of the test is about
+    // the name search, so start from the full inventory.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
     await tester.pumpAndSettle();
 
     // Switch to the Personeel tab and drill into its single staff class.
@@ -476,15 +492,14 @@ void main() {
     expect(
         find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
 
-    // Combine the toggle with the search: search "Smit" AND only-with-actions
-    // keeps just Anna (Clara matches the name but has no action).
+    // Combine the two: search "Smit" AND the global only-with-actions filter
+    // back on keeps just Anna (Clara matches the name but has no action).
     await tester.enterText(
         find.byKey(const ValueKey('actions-search')), 'smit');
     await tester.pump();
-    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('Anna Smit'), findsOneWidget);
     expect(find.text('Clara Smit'), findsNothing);
     expect(find.text('Bram Jansen'), findsNothing);
@@ -495,6 +510,146 @@ void main() {
     await tester.pump();
     expect(
         find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
+  });
+
+  // --- The filter thins out the jaar → klas tree (#226) --------------------
+
+  /// A passive-session view shaped for the tree filter: Jaar 3 has one class
+  /// with work (3A) and one without (3B); Jaar 4 has two classes and nothing to
+  /// do in either; Jaar 5 has a single class with nothing to do.
+  Future<ReconcileHarness> filterTreeHarness() async => ReconcileHarness(
+        linkedStore: await seededLinkedStore(<MaterializedAccount>[
+          matAccount(
+              id: 's1',
+              label: 'Jane Doe',
+              gradeYear: '3',
+              classroom: '3A',
+              withAction: true),
+          matAccount(
+              id: 's2', label: 'Kees Bakker', gradeYear: '3', classroom: '3B'),
+          matAccount(
+              id: 's3', label: 'Piet Peeters', gradeYear: '4', classroom: '4A'),
+          matAccount(
+              id: 's4', label: 'Marie Maes', gradeYear: '4', classroom: '4B'),
+          matAccount(
+              id: 's5', label: 'Sam Sels', gradeYear: '5', classroom: '5A'),
+        ]),
+      );
+
+  testWidgets(
+      'with the filter on, the jaar → klas tree drops the classrooms and the '
+      'whole years with nothing pending, and says how many it hid (#226)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = await filterTreeHarness();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Only the year that still has work is an accordion at all.
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|4')), findsNothing,
+        reason: "both of Jaar 4's classes are done — the year goes with them");
+    expect(find.byKey(const ValueKey('rollup-grade-grades|5')), findsNothing,
+        reason: 'Jaar 5 has one class and nothing to do in it');
+
+    // The hiding is announced, so a year the operator expected is explained
+    // rather than merely absent: 3B, Jaar 4 and Jaar 5.
+    expect(find.byKey(const ValueKey('actions-filter-hidden')), findsOneWidget);
+    expect(find.textContaining('Verborgen door de filter: 3'), findsOneWidget);
+
+    // Inside the surviving year, only the class with work is listed.
+    await tester.tap(find.byKey(const ValueKey('rollup-grade-grades|3')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3A')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|3|3B')), findsNothing,
+        reason: 'a ticked-off class is not rendered under the filter');
+
+    // Switched off, the tree is the full inventory again — every year, every
+    // class, and nothing left for the note to explain.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|4')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|5')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-filter-hidden')), findsNothing);
+    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3B')),
+        findsOneWidget);
+  });
+
+  testWidgets(
+      'a view with nothing pending says the filter hid it all — not that there '
+      'is no overview (#226)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe'),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('actions-filter-all-hidden')),
+        findsOneWidget);
+    expect(find.textContaining('Zet de filter af'), findsOneWidget);
+    expect(find.text('Nog geen gematerialiseerd overzicht.'), findsNothing,
+        reason: 'there *is* a materialized overview — the filter is hiding it');
+
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-filter-all-hidden')), findsNothing);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
+  });
+
+  testWidgets(
+      'the filter switch survives a Leerlingen ↔ Personeel tab change, and '
+      'thins the Personeel tree the same way (#226)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // One student and one staff member, neither carrying an action: both trees
+    // are empty under the filter and full without it.
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe'),
+      matStaff(id: 't1', label: 'Anna Smit'),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+
+    // Personeel obeys the same switch: its school node has no work under it, so
+    // it is gone too, with the same explanation in its place.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(toggle).value, isTrue,
+        reason: 'the mode outlives the tab it was set on');
+    expect(
+        find.byKey(const ValueKey('rollup-school-school|staff')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-filter-all-hidden')),
+        findsOneWidget);
+
+    // Switch it off from the Personeel tab: the staff tree comes back.
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-school-school|staff')),
+        findsOneWidget);
+
+    // Back to Leerlingen, and the off state came along — the tab change used to
+    // reset it, which is why the filter had to be re-flipped constantly (#226).
+    await tester.tap(find.byKey(const ValueKey('actions-tab-leerlingen')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(toggle).value, isFalse);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('actions-filter-all-hidden')), findsNothing);
   });
 
   // --- Address diff in the drill-down (#153) -------------------------------
@@ -634,6 +789,10 @@ void main() {
   testWidgets(
       'a passive session surfaces the Klasgroepen node and opens the group '
       'detail (#119/#154)', (WidgetTester tester) async {
+    // Tall, like its siblings: the top-level filter switch #226 added above the
+    // family tab bar costs the group tiles their place on an 800×600 fold, and
+    // this test is about which node opened, not about where the fold falls.
+    _useTallWindow(tester);
     final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
     await ReconcileHarness(store: snapshots, linkedStore: linkedStore)

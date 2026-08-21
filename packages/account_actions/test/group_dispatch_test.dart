@@ -63,6 +63,70 @@ void main() {
       expect(called, isFalse, reason: 'only WISA-only classes need placement');
     });
 
+    test(
+        'WISA only, but Smartschool already has the name → the notice replaces '
+        'the create (#225)', () {
+      // The `2G` of #225: WISA has the populated class, Smartschool has a group
+      // of the same name that is not flagged official, so the linker could not
+      // adopt it. Offering to create the class would ask Smartschool for a
+      // duplicate name.
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+        ),
+        placementFor: (_) => groupPlacement(containsStudents: true),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromWisa, ClassExistsAsSmartschoolGroup],
+      );
+    });
+
+    test('the namesake notice also displaces the empty-class notice (#225)',
+        () {
+      // Same shape with an empty WISA class: "delete this class, it has no
+      // students" is the wrong advice for a class that *is* provisioned
+      // downstream.
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+        ),
+        placementFor: (_) => groupPlacement(containsStudents: false),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromWisa, ClassExistsAsSmartschoolGroup],
+      );
+    });
+
+    test('the namesake notice needs no placement to be raised (#225)', () {
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+        ),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromWisa, ClassExistsAsSmartschoolGroup],
+      );
+    });
+
+    test('a linked class never carries the namesake notice (#225)', () {
+      // Defensive: the linker only sets the namesake on an unlinked class, but
+      // the both-present branch must not raise it even if one arrived.
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(),
+          smartschoolNamesake: ssGroupNode(code: 'G3A', name: '3A'),
+        ),
+      );
+      expect(actions, isEmpty);
+    });
+
     test('Smartschool only → DoNotImportFromSmartschool (informational)', () {
       final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
       expect(actions.map((a) => a.runtimeType), [DoNotImportFromSmartschool]);

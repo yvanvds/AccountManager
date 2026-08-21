@@ -482,6 +482,35 @@ void main() {
       expect(view.rollups.where((r) => r.level == RollupLevel.school), isEmpty);
     });
 
+    test('the suppressed student is counted, not silently dropped (#230)', () {
+      // Suppressing them is right (#178), vanishing without trace is not: an
+      // unflagged school in Instellingen then looks exactly like a WISA pull
+      // that never returned the class, which is what the operator hit.
+      final view = materialize(
+        linkedInSchool(schoolId: 2, ourSchoolIds: {1}, withOurAccounts: false),
+        generation: 1,
+      );
+
+      expect(view.skippedUnmanagedStudents, 1);
+    });
+
+    test('nothing is counted when every student is placed (#230)', () {
+      final managed = materialize(
+        linkedInSchool(schoolId: 1, ourSchoolIds: {1}),
+        generation: 1,
+      );
+      expect(managed.skippedUnmanagedStudents, 0);
+
+      // A groupOnly student who still owns one of our accounts is *kept* (#134)
+      // — re-bucketed, not skipped, so counting them would be a false alarm.
+      final departed = materialize(
+        linkedInSchool(schoolId: 2, ourSchoolIds: {1}),
+        generation: 1,
+      );
+      expect(departed.accounts, hasLength(1));
+      expect(departed.skippedUnmanagedStudents, 0);
+    });
+
     test('toggling the managed set flips which schools appear', () {
       // Same student in school 2. Not managing school 2 → suppressed from the
       // school tree (re-bucketed to unassigned); managing it → it shows.

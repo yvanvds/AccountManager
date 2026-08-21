@@ -406,4 +406,129 @@ void main() {
       expect(upn, 'jan.peeters@school.example');
     });
   });
+
+  group('loadByEmployeeIds (#224)', () {
+    /// One Graph `/users` row for a transferred-in student: the employeeId is
+    /// ours, the companyName is unset and the department still names the school
+    /// they came from — the exact shape [UserManager.load]'s `$filter` misses.
+    Map<String, dynamic> transferred(String employeeId) => <String, dynamic>{
+          'id': 'az-$employeeId',
+          'userPrincipalName': 'alfio.ambre@student.other.example',
+          'employeeId': employeeId,
+          'displayName': 'Alfio Ambre',
+          'department': 'OTHER-3A',
+        };
+
+    test('asks Graph for exactly the ids, with the advanced-query header',
+        () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({'value': <Object>[]}),
+      );
+      final users = UserManager(clientWith(transport));
+
+      await users.loadByEmployeeIds(['W1', 'W2']);
+
+      expect(transport.requests, hasLength(1));
+      final req = transport.last;
+      expect(req.method, 'GET');
+      expect(req.url.path, endsWith('/users'));
+      expect(
+        req.url.queryParameters[r'$filter'],
+        "employeeId in ('W1','W2')",
+      );
+      expect(req.url.queryParameters[r'$count'], 'true');
+      expect(req.headers['ConsistencyLevel'], 'eventual');
+      // The pull stays as narrow as the bulk read's (PAIN-2).
+      expect(
+        req.url.queryParameters[r'$select'],
+        'id,userPrincipalName,employeeId,displayName,givenName,surname,'
+        'companyName,department,accountEnabled',
+      );
+    });
+
+    test('returns the accounts the school filter cannot see', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          'value': [transferred('W7')],
+        }),
+      );
+      final users = UserManager(clientWith(transport));
+
+      final found = await users.loadByEmployeeIds(['W7']);
+
+      expect(found, hasLength(1));
+      expect(found.single.employeeId, 'W7');
+      expect(found.single.companyName, isNull);
+      expect(found.single.upn, 'alfio.ambre@student.other.example');
+    });
+
+    test('chunks a long id list and de-duplicates the result', () async {
+      final ids = [for (var i = 0; i < 32; i++) 'W$i'];
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          // Every chunk answers with the same row, so a naive merge would
+          // report it three times.
+          'value': [transferred('W7')],
+        }),
+      );
+      final users = UserManager(clientWith(transport));
+
+      final found = await users.loadByEmployeeIds(ids);
+
+      expect(transport.requests, hasLength(3), reason: '15 + 15 + 2');
+      expect(
+        transport.requests.last.url.queryParameters[r'$filter'],
+        "employeeId in ('W30','W31')",
+      );
+      expect(found, hasLength(1));
+    });
+
+    test('blank and duplicate ids never reach Graph', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({'value': <Object>[]}),
+      );
+      final users = UserManager(clientWith(transport));
+
+      expect(await users.loadByEmployeeIds(const ['', '  ']), isEmpty);
+      expect(transport.requests, isEmpty);
+
+      await users.loadByEmployeeIds([' W1 ', 'W1', '']);
+      expect(
+        transport.last.url.queryParameters[r'$filter'],
+        "employeeId in ('W1')",
+      );
+    });
+
+    test('escapes a single quote in an id', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({'value': <Object>[]}),
+      );
+      final users = UserManager(clientWith(transport));
+
+      await users.loadByEmployeeIds(["O'1"]);
+      expect(
+        transport.last.url.queryParameters[r'$filter'],
+        "employeeId in ('O''1')",
+      );
+    });
+
+    test('findByEmployeeId returns the hit, or null when the tenant has none',
+        () async {
+      final hit = FakeGraphTransport(
+        (_) => jsonOk({
+          'value': [transferred('W7')],
+        }),
+      );
+      expect(
+        (await UserManager(clientWith(hit)).findByEmployeeId('W7'))?.id,
+        'az-W7',
+      );
+
+      final miss = FakeGraphTransport((_) => jsonOk({'value': <Object>[]}));
+      expect(
+        await UserManager(clientWith(miss)).findByEmployeeId('W7'),
+        isNull,
+      );
+    });
+  });
 }

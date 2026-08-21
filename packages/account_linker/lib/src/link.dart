@@ -140,6 +140,7 @@ LinkedSnapshot link(
     azureSnapshot,
     effectiveOurSchoolIds,
     virtualSchoolIds,
+    warnings,
   );
 
   return LinkedSnapshot.fromRecords(
@@ -433,6 +434,18 @@ List<_StaffRecord> _buildStaffRecords(
 /// `AddSmartschoolChildGroups` walked the "Leerlingen" subtree and linked only
 /// official classes); organisational sub-groups never match or seed orphans.
 ///
+/// That skip used to be *silent*, which is how #225 happened: a class that
+/// exists in Smartschool but is not flagged official reads exactly like a class
+/// that is not there at all, and the action engine then offered to create it —
+/// a duplicate name Smartschool either rejects or ends up holding twice. So
+/// **every** Smartschool group is indexed by name, official or not: a WISA class
+/// left unlinked but whose name a Smartschool group already carries keeps that
+/// group on [LinkedGroup.smartschoolNamesake] (never as [LinkedGroup.smartschool]
+/// — an unofficial group is still not a class) and raises a
+/// [SmartschoolNamesakeSkipped] warning. The namesake lookup falls back to the
+/// whitespace-insensitive [groupNameFingerprint], so a hand-typed `2 G` is
+/// recognised as the existing `2G` even though it is too loose a key to link on.
+///
 /// Azure carries no `official`-style signal — [az.AzureGroup] is just
 /// `{id, displayName, securityEnabled}` — so an unmatched Azure group is kept
 /// as an orphan *unless* its name looks administrative (see
@@ -451,10 +464,25 @@ List<LinkedGroup> _linkGroups(
   az.AzureSnapshot azureSnapshot,
   Set<int> ourSchoolIds,
   Set<int> virtualSchoolIds,
+  List<LinkWarning> warnings,
 ) {
   final records = <_GroupRecord>[];
   // Normalized fullName/name/displayName -> the record indexed under it.
   final byName = <String, _GroupRecord>{};
+
+  // Every Smartschool group by name, official or not (#225) — the index the
+  // "does this class already exist downstream?" guard consults after the link
+  // passes have run. Two keys per group: the exact match key, and the looser
+  // whitespace-insensitive fingerprint. First wins on both, so the answer is a
+  // deterministic function of snapshot order (INV-20).
+  final ssByName = <String, Group>{};
+  final ssByFingerprint = <String, Group>{};
+  for (final group in smartschoolSnapshot.groups) {
+    final key = normalizeGroupName(group.name);
+    if (key == null) continue;
+    ssByName.putIfAbsent(key, () => group);
+    ssByFingerprint.putIfAbsent(groupNameFingerprint(group.name)!, () => group);
+  }
 
   // 1. Seed one record per distinct WISA class group, in snapshot order, keyed
   //    by its `fullName`. Class groups of schools we do not manage are skipped
@@ -469,7 +497,7 @@ List<LinkedGroup> _linkGroups(
     if (!_seedsClassGroups(group.schoolId, ourSchoolIds, virtualSchoolIds)) {
       continue;
     }
-    final key = _norm(group.fullName);
+    final key = normalizeGroupName(group.fullName);
     if (key == null || byName.containsKey(key)) continue;
     final rec = _GroupRecord(wisa: group);
     records.add(rec);
@@ -482,7 +510,7 @@ List<LinkedGroup> _linkGroups(
   //    dropped.
   for (final group in smartschoolSnapshot.groups) {
     if (!group.official) continue;
-    final key = _norm(group.name);
+    final key = normalizeGroupName(group.name);
     if (key == null) continue;
     final existing = byName[key];
     if (existing != null) {
@@ -494,11 +522,40 @@ List<LinkedGroup> _linkGroups(
     }
   }
 
+  // 2b. A WISA class the official pass left unmatched, whose name Smartschool
+  //     already carries in *some* form, keeps that namesake (#225) instead of
+  //     reading as "not there" — the state that made the engine propose
+  //     creating a duplicate class. Runs after pass 2 so a class that did link
+  //     is never second-guessed, and skips a group another WISA class already
+  //     linked to: that name belongs to *that* class, not this one. A
+  //     Smartschool-only orphan (#52) is deliberately not "taken" — no WISA
+  //     class owns it, and its name is exactly the one a create would collide
+  //     with.
+  final claimed = <String>{
+    for (final rec in records)
+      if (rec.wisa != null && rec.smartschool != null)
+        rec.smartschool!.id.value,
+  };
+  for (final rec in records) {
+    final wisa = rec.wisa;
+    if (wisa == null || rec.smartschool != null) continue;
+    final key = normalizeGroupName(wisa.fullName);
+    if (key == null) continue;
+    final namesake =
+        ssByName[key] ?? ssByFingerprint[groupNameFingerprint(wisa.fullName)!];
+    if (namesake == null || claimed.contains(namesake.id.value)) continue;
+    rec.smartschoolNamesake = namesake;
+    warnings.add(
+      SmartschoolNamesakeSkipped(
+          wisaName: wisa.fullName, smartschool: namesake),
+    );
+  }
+
   // 3. Attach Azure groups by displayName. An Azure group matching no
   //    existing record becomes an orphan too (#52), but only when it looks
   //    like a stale class rather than a staff/administrative group.
   for (final group in azureSnapshot.groups) {
-    final key = _norm(group.displayName);
+    final key = normalizeGroupName(group.displayName);
     if (key == null) continue;
     final existing = byName[key];
     if (existing != null) {
@@ -516,6 +573,7 @@ List<LinkedGroup> _linkGroups(
       LinkedGroup(
         wisa: rec.wisa == null ? null : _wisaToCoreGroup(rec.wisa!),
         smartschool: rec.smartschool,
+        smartschoolNamesake: rec.smartschoolNamesake,
         azure: rec.azure,
         confidence:
             rec.wisa != null && rec.smartschool != null && rec.azure != null
@@ -546,7 +604,7 @@ const List<String> _nonClassGroupSuffixes = [
 /// Whether an unmatched Azure group is plausible as a stale class rather than
 /// a known staff/administrative group. See [_nonClassGroupSuffixes].
 bool _looksLikeClassGroup(String? displayName) {
-  final name = _norm(displayName);
+  final name = normalizeGroupName(displayName);
   if (name == null) return false;
   return !_nonClassGroupSuffixes.any(name.endsWith);
 }
@@ -606,6 +664,10 @@ class _GroupRecord {
   Group? smartschool;
   az.AzureGroup? azure;
 
+  /// The Smartschool group carrying this class's name that the official-class
+  /// pass could not adopt (#225). See [LinkedGroup.smartschoolNamesake].
+  Group? smartschoolNamesake;
+
   _GroupRecord({this.wisa, this.smartschool, this.azure});
 }
 
@@ -620,6 +682,11 @@ bool _isStaffRole(PersonRole? role) =>
 /// Trims and lowercases [value] for case-insensitive, whitespace-tolerant
 /// comparison (INV-12). Returns `null` when [value] is null or blank so empty
 /// keys never match or index anything.
+///
+/// For **identifiers** — mails, uids, wisaIds, staff codes — where internal
+/// whitespace is not a thing an operator types by accident. Group *names* go
+/// through [normalizeGroupName] instead, which additionally collapses internal
+/// whitespace runs and non-breaking spaces (#225).
 String? _norm(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();

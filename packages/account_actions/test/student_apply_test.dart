@@ -111,6 +111,16 @@ void main() {
     test('AddStudentToAzure: creates the user and returns it', () async {
       final transport = RecordingGraphTransport(
         handler: (req) {
+          if (req.method == 'GET' &&
+              (req.url.queryParameters[r'$filter'] ?? '')
+                  .startsWith('employeeId in')) {
+            // The tenant holds no account for this WISA id (#224).
+            return az.GraphResponse(
+              statusCode: 200,
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({'value': const <Object>[]}),
+            );
+          }
           if (req.method == 'GET') {
             // No existing user with the candidate UPN → it is unique.
             return az.GraphResponse(
@@ -141,6 +151,72 @@ void main() {
       expect(transport.sent('POST', pathContains: 'users'), isTrue);
       expect(result.azure?.id, 'az-new');
       expect(result.azure?.employeeId, 'W1');
+    });
+
+    test(
+        'AddStudentToAzure: refuses to create when the tenant already has an '
+        'account with this employeeId (#224)', () async {
+      // The duplicate this guards: the account is invisible to the school-
+      // scoped pull (no companyName, another school's department), so the
+      // snapshot says "no Azure account" and the dispatcher raises the create.
+      // `createPrincipalName` would resolve the UPN collision by suffixing, so
+      // the create *succeeds* and the person silently ends up with two.
+      final transport = RecordingGraphTransport(
+        handler: (req) {
+          if (req.method == 'GET' &&
+              (req.url.queryParameters[r'$filter'] ?? '')
+                  .startsWith('employeeId in')) {
+            return az.GraphResponse(
+              statusCode: 200,
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({
+                'value': [
+                  {
+                    'id': 'az-transferred',
+                    'userPrincipalName': 'alfio.ambre@student.other.example',
+                    'employeeId': 'W1',
+                    'department': 'OTHER-3A',
+                  },
+                ],
+              }),
+            );
+          }
+          // Everything a create needs is deliberately available: the projected
+          // UPN is free (404) and the POST would succeed. So an unguarded apply
+          // creates the duplicate cleanly — this test's failure mode without
+          // the guard is "it created one", not "it errored on the way".
+          if (req.method == 'GET') {
+            return az.GraphResponse(
+              statusCode: 404,
+              body: jsonEncode({
+                'error': {'code': 'NotFound', 'message': 'no'},
+              }),
+            );
+          }
+          if (req.method == 'POST') {
+            return az.GraphResponse(
+              statusCode: 201,
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({
+                'id': 'az-duplicate',
+                'userPrincipalName': 'jan.peeters@student.school.example',
+              }),
+            );
+          }
+          return const az.GraphResponse(statusCode: 204);
+        },
+      );
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = AddStudentToAzure(linked(wisa: wisaStudent()), cfg);
+
+      final result = await action.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(transport.sent('POST'), isFalse, reason: 'nothing was created');
+      expect(result.azure, isNull);
+      // The operator is told what to do about it, and which account it is.
+      expect('${result.error}', contains('W1'));
+      expect('${result.error}', contains('alfio.ambre@student.other.example'));
     });
 
     test('AddStudentToSmartschool: saves account, mail = Azure UPN', () async {

@@ -47,6 +47,7 @@ MaterializedView materialize(
   final warningsByUid = _warningsByUid(linked.snapshot.warnings);
 
   final accounts = <MaterializedAccount>[];
+  var skippedUnmanagedStudents = 0;
   for (final account in linked.snapshot.accounts) {
     // #178: keep the Actions view to schools we manage. A student present only
     // in a sibling school we do not manage ([WisaPresence.groupOnly]) with no
@@ -54,9 +55,15 @@ MaterializedView materialize(
     // A groupOnly student who still has one of *our* accounts is a departed
     // student whose Smartschool/Azure cleanup we keep (#134); [_placeAccount]
     // re-buckets them to "Niet toegewezen" so no non-managed school node shows.
+    //
+    // The drop is counted (#230): silently vanishing is indistinguishable from
+    // a student the pull never returned, which is exactly how an unflagged
+    // school in Instellingen used to read — no node, no count, no log line, and
+    // an operator hunting a missing intake with nothing to go on.
     if (account.wisaPresence == core.WisaPresence.groupOnly &&
         account.smartschool == null &&
         account.azure == null) {
+      skippedUnmanagedStudents++;
       continue;
     }
     final place = _placeAccount(account, schoolLabels);
@@ -106,6 +113,7 @@ MaterializedView materialize(
     accounts: accounts,
     groups: groups,
     rollups: [...rollups, if (groupsRollup != null) groupsRollup],
+    skippedUnmanagedStudents: skippedUnmanagedStudents,
   );
 }
 
@@ -293,6 +301,12 @@ Map<String, List<String>> _warningsByUid(List<core.LinkWarning> warnings) {
         for (final a in accounts) {
           (byUid[a.uid] ??= <String>[]).add(message);
         }
+      case core.SmartschoolNamesakeSkipped():
+        // Names a *class*, not an account, so it has no uid to hang on. The
+        // class itself carries the situation as the informational
+        // `ClassExistsAsSmartschoolGroup` candidate on its group document, and
+        // the sync log names every skipped namesake (#225).
+        break;
     }
   }
   return byUid;

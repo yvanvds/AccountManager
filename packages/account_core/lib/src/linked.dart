@@ -142,11 +142,29 @@ class LinkedGroup {
   final AzureGroup? azure;
   final LinkConfidence confidence;
 
+  /// A Smartschool group that already carries this class's name but which the
+  /// group link could **not** adopt as [smartschool] (#225) — set only when
+  /// [smartschool] is null and [wisa] is not.
+  ///
+  /// Two shapes reach here, and the difference is visible on the record itself
+  /// ([Group.official], [Group.name]):
+  /// - the namesake is not flagged as an official class, so the link skipped
+  ///   it (a class Smartschool holds as an organisational group);
+  /// - the namesake *is* an official class but its name differs from the WISA
+  ///   one by more than the match key tolerates (`2 G` vs `2G`).
+  ///
+  /// Either way the class exists downstream in some form, so proposing to
+  /// create it would ask Smartschool for a duplicate name — it either rejects
+  /// the write or ends up with two classes. The action engine raises an
+  /// explicit notice on this field instead of a create.
+  final Group? smartschoolNamesake;
+
   const LinkedGroup({
     this.wisa,
     this.smartschool,
     this.azure,
     required this.confidence,
+    this.smartschoolNamesake,
   });
 }
 
@@ -173,6 +191,30 @@ class ResolveDuplicateMail extends LinkWarning {
   final List<SmartschoolAccount> accounts;
 
   const ResolveDuplicateMail({required this.mail, required this.accounts});
+}
+
+/// #225: a WISA class whose name already exists in Smartschool as a group the
+/// class link did not adopt — because the group is not flagged as an official
+/// class, or because its name differs from the WISA one by more than the match
+/// key tolerates.
+///
+/// The skip itself is legitimate (only official classes link), but it used to
+/// be **silent**: the WISA class then looked unmatched, and the action engine
+/// offered to create a class Smartschool already had. Every skipped namesake is
+/// surfaced so the operator can see which class was passed over and why.
+class SmartschoolNamesakeSkipped extends LinkWarning {
+  /// The WISA class name as written (its `fullName`, the match key's source).
+  final String wisaName;
+
+  /// The Smartschool group carrying that name. [Group.official] says which of
+  /// the two skip reasons applies; [Group.name] shows the name as Smartschool
+  /// spells it.
+  final Group smartschool;
+
+  const SmartschoolNamesakeSkipped({
+    required this.wisaName,
+    required this.smartschool,
+  });
 }
 
 /// Per-system tally for one [LinkedSnapshot], mirroring the counters legacy

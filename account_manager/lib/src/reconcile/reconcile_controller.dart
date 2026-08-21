@@ -1407,7 +1407,7 @@ class ReconcileController extends ChangeNotifier {
 
     try {
       for (final (index, option) in selected.indexed) {
-        results.add(await _applyOne(
+        results.addAll(await _applyOne(
           () => _applyAny(option.action, options),
           option.target,
           option.changes,
@@ -1454,7 +1454,16 @@ class ReconcileController extends ChangeNotifier {
     return applier.applyGroup(action as actions.GroupAction, options: options);
   }
 
-  Future<ActionOutcomeEntry> _applyOne(
+  /// Runs one selected option and returns a result row per **write it
+  /// performed**: the option's own, followed by any follow-up the State layer
+  /// chained onto it (#230).
+  ///
+  /// A new student's provisioning is one such chain — the Office 365 create
+  /// unlocks the Smartschool create, which the applier runs against the freshly
+  /// relinked record — and the operator's one click therefore made two writes.
+  /// Both are logged and both land in the results list; hiding the second would
+  /// under-report what the app just did.
+  Future<List<ActionOutcomeEntry>> _applyOne(
     Future<ApplyResult> Function() run,
     String target,
     actions.ChangeSet changes,
@@ -1463,31 +1472,46 @@ class ReconcileController extends ChangeNotifier {
       final applied = await run();
       if (applied.refreshed) _linked = applied.linked;
       final result = applied.result;
-      if (result.outcome == actions.ActionOutcome.failed) {
-        log.addError(
-          changes.system,
-          '$target — ${changes.summary}: ${result.error}',
-        );
-      } else {
-        log.addMessage(core.Origin.all, '$target — ${changes.summary}');
-      }
-      return ActionOutcomeEntry(
-        target: target,
-        changes: changes,
-        outcome: result.outcome,
-        error: result.error,
-      );
+      return <ActionOutcomeEntry>[
+        _record(target, changes, result),
+        for (final followUp in applied.followUps)
+          _record(target, followUp.changes, followUp),
+      ];
     } on Object catch (e) {
       // An action that throws (instead of returning failed) must not abort
       // the rest of the pass.
       log.addError(changes.system, '$target — ${changes.summary}: $e');
-      return ActionOutcomeEntry(
-        target: target,
-        changes: changes,
-        outcome: actions.ActionOutcome.failed,
-        error: e,
-      );
+      return <ActionOutcomeEntry>[
+        ActionOutcomeEntry(
+          target: target,
+          changes: changes,
+          outcome: actions.ActionOutcome.failed,
+          error: e,
+        ),
+      ];
     }
+  }
+
+  /// Logs one action's outcome and shapes it as a results-list row.
+  ActionOutcomeEntry _record(
+    String target,
+    actions.ChangeSet changes,
+    actions.ActionResult result,
+  ) {
+    if (result.outcome == actions.ActionOutcome.failed) {
+      log.addError(
+        changes.system,
+        '$target — ${changes.summary}: ${result.error}',
+      );
+    } else {
+      log.addMessage(core.Origin.all, '$target — ${changes.summary}');
+    }
+    return ActionOutcomeEntry(
+      target: target,
+      changes: changes,
+      outcome: result.outcome,
+      error: result.error,
+    );
   }
 
   Future<void> _relink() async {
@@ -1502,8 +1526,31 @@ class ReconcileController extends ChangeNotifier {
       '${s.groups.length} groups; ${pendingActions.length} pending '
       'action(s), ${s.warnings.length} warning(s).',
     );
+    _logSkippedNamesakes(s.warnings);
     _setProgress(0.9);
     await _persist(_linked!);
+  }
+
+  /// Names every WISA class the group link passed over because Smartschool
+  /// already carries its name on a group it could not adopt (#225).
+  ///
+  /// The skip is correct — an unofficial group is not a class — but it used to
+  /// be invisible, and an unmatched WISA class reads exactly like a class that
+  /// does not exist downstream. That is what had the Klasgroepen list offering
+  /// to create a class Smartschool already had, so each one gets a line of its
+  /// own naming the group that was skipped and why.
+  void _logSkippedNamesakes(List<core.LinkWarning> warnings) {
+    for (final w in warnings) {
+      if (w is! core.SmartschoolNamesakeSkipped) continue;
+      final ss = w.smartschool;
+      log.addMessage(
+        core.Origin.smartschool,
+        'Klas "${w.wisaName}" niet gekoppeld: Smartschool heeft al '
+        '"${ss.name}" (code ${ss.id.value}), '
+        '${ss.official ? 'met een andere schrijfwijze' : 'maar geen '
+            'officiële klas'}.',
+      );
+    }
   }
 
   /// Materializes the fresh linked view and writes it to the shared store
@@ -1520,6 +1567,17 @@ class ReconcileController extends ChangeNotifier {
         generation: previous.generation + 1,
         schoolLabels: _schoolLabels(),
       );
+      // Say so when the managed-school filter dropped students (#230). The drop
+      // is deliberate (#178) but it used to be invisible, so a school the
+      // operator forgot to flag as ours in Instellingen looked exactly like a
+      // WISA pull that never returned the class.
+      if (view.skippedUnmanagedStudents > 0) {
+        log.addMessage(
+          core.Origin.wisa,
+          '${view.skippedUnmanagedStudents} leerling(en) overgeslagen: '
+          'niet in een school die we beheren.',
+        );
+      }
       final merge = mergeDecisions(
         accounts: view.accounts,
         groups: view.groups,

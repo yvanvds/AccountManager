@@ -237,4 +237,74 @@ void main() {
       );
     });
   });
+
+  group('ClassExistsAsSmartschoolGroup is informational (#225)', () {
+    test('canApply is false and apply throws UnsupportedError', () {
+      final action = ClassExistsAsSmartschoolGroup(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+        ),
+      );
+      expect(action.canApply, isFalse);
+      expect(
+        () => action.apply(const Connectors(), const ApplyOptions()),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('a non-official namesake reads as "not an official class"', () {
+      final action = ClassExistsAsSmartschoolGroup(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+        ),
+      );
+      expect(action.evaluate(), isTrue);
+      final changes = action.describeChanges();
+      expect(changes.system, Origin.smartschool);
+      expect(changes.summary, contains('geen officiële klas'));
+      // The operator has to find the group in Smartschool: name and code.
+      expect(
+        changes.fields.map((f) => '${f.field}:${f.before}'),
+        containsAll(<String>['name:2G', 'code:G2G']),
+      );
+    });
+
+    test('an official namesake reads as a spelling mismatch instead', () {
+      final action = ClassExistsAsSmartschoolGroup(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroup(code: 'C2G', name: '2 G'),
+        ),
+      );
+      expect(action.evaluate(), isTrue);
+      final changes = action.describeChanges();
+      expect(changes.summary, contains('andere schrijfwijze'));
+      expect(changes.summary, isNot(contains('geen officiële klas')));
+      expect(
+        changes.fields.map((f) => '${f.field}:${f.before}'),
+        contains('name:2 G'),
+      );
+    });
+
+    test('does not evaluate without a namesake, or once the class is linked',
+        () {
+      expect(
+        ClassExistsAsSmartschoolGroup(linkedGroup(wisa: wisaGroup()))
+            .evaluate(),
+        isFalse,
+      );
+      expect(
+        ClassExistsAsSmartschoolGroup(
+          linkedGroup(
+            wisa: wisaGroup(),
+            smartschool: ssGroup(),
+            smartschoolNamesake: ssGroupNode(),
+          ),
+        ).evaluate(),
+        isFalse,
+      );
+    });
+  });
 }

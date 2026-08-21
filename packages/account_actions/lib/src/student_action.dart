@@ -62,6 +62,28 @@ sealed class StudentAction {
   /// ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
 
+  /// The action types this one **unlocks** on the same target (#230).
+  ///
+  /// Provisioning a brand-new student is a chain, not a single action: the
+  /// Smartschool account is built with the Azure UPN as its `mail`, so
+  /// [AddStudentToSmartschool] cannot even [evaluate] true until
+  /// [AddStudentToAzure] has run. The dispatcher (§6.3) is a pure function of
+  /// the *current* record, so it can only ever offer the first link of that
+  /// chain — which is why a WISA-only student used to be offered one create,
+  /// leaving the operator to apply, wait for the relink, and apply again.
+  ///
+  /// Declaring the follow-up here lets the State layer run it immediately
+  /// against the **freshly relinked** record. It must be the relinked record
+  /// and never a projection: `createPrincipalName` resolves a UPN collision by
+  /// suffixing, so the UPN that actually landed can differ from the one
+  /// [describeChanges] projected, and the Smartschool account would then carry
+  /// the wrong `mail`.
+  ///
+  /// Pure and constant — it names what *may* follow, never what must: the
+  /// follow-up's own [evaluate] still decides whether it applies, exactly as it
+  /// would on the next sync.
+  Set<Type> get unlocks => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3).
@@ -115,6 +137,13 @@ class AddStudentToAzure extends StudentAction {
   @override
   bool evaluate() => account.isInOurWisa && account.azure == null;
 
+  /// Creating the Office 365 account unlocks the Smartschool create, which
+  /// needs the fresh UPN as the new account's `mail` (#230). Without the chain
+  /// a new student's second create only appears on the *next* pass, so the
+  /// Acties panel never showed the full provisioning intent.
+  @override
+  Set<Type> get unlocks => const {AddStudentToSmartschool};
+
   @override
   ChangeSet describeChanges() {
     final wisa = _wisa;
@@ -163,6 +192,25 @@ class AddStudentToAzure extends StudentAction {
 
     try {
       final users = _requireAzure(connectors).users;
+      // #224: never create a second account for a person who already has one.
+      // The snapshot this action was derived from can be stale — or blind, when
+      // the account carries neither our `companyName` nor our `department` — and
+      // `createPrincipalName` resolves the UPN collision by suffixing, so the
+      // duplicate create would succeed silently. `employeeId` is the one key
+      // that survives a transfer between group schools, so a hit means the
+      // account exists and the next sync must adopt it instead.
+      final existing = await users.findByEmployeeId(wisa.wisaId.value);
+      if (existing != null) {
+        return _failed(
+          changes,
+          Origin.azure,
+          StateError(
+            'Office 365 already has an account with employeeId '
+            '${wisa.wisaId.value} (${existing.upn}). Sync Azure again so the '
+            'existing account is linked instead of creating a duplicate.',
+          ),
+        );
+      }
       final upn = await users.createPrincipalName(
         given,
         wisa.name,
@@ -605,14 +653,18 @@ class ModifyAzureName extends StudentAction {
 
 /// Correct a student's Azure `companyName` to the school prefix. Ported from
 /// `Action\StudentAccount\ModifyAzureSchool`.
+///
+/// A **missing** `companyName` counts as differing (#224). The legacy guard
+/// returned false for null, which made the transferred-student case
+/// self-perpetuating: an adopted account whose `companyName` was never set is
+/// invisible to the next sync's `$filter`, and the one action that would stamp
+/// our prefix on it — this one — refused to fire precisely because the field was
+/// unset. Setting it is what makes the adoption stick.
 class ModifyAzureSchool extends StudentAction {
   const ModifyAzureSchool(super.account, super.config);
 
   @override
-  bool evaluate() {
-    final company = _az.companyName;
-    return company != null && !_eq(company, config.schoolPrefix);
-  }
+  bool evaluate() => !_eq(_az.companyName, config.schoolPrefix);
 
   @override
   ChangeSet describeChanges() => ChangeSet(

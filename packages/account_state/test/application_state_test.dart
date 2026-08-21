@@ -178,5 +178,172 @@ void main() {
       expect(snapshot.deltaToken, 'PRIMED2');
       expect(azure.lastSync, snapshot.fetchedAt);
     });
+
+    test('the expected employeeIds are read at sync time, not at wiring time',
+        () async {
+      // The seam that lets the Azure pull see the WISA snapshot this pass just
+      // produced (#224): the syncer is built before WISA has synced, so the ids
+      // must come from a callback, not a captured value.
+      var ids = <String>[];
+      final state = SystemState<AzureSnapshot>(
+        system: core.Origin.azure,
+        syncer: azureSyncer(
+          AzureConnector(
+            credentials: AzureCredentials(
+              clientId: 'c',
+              tenantId: 't',
+              azureDomain: 'school.example',
+              schoolPrefix: 'GBS',
+            ),
+            authProvider: const StaticAuthProvider('T'),
+            transport: transport,
+          ),
+          expectedEmployeeIds: () => ids,
+        ),
+      );
+
+      // Nothing expected yet ⇒ no employeeId lookup at all.
+      await state.sync();
+      expect(
+        transport.requests.where(
+          (r) => (r.url.queryParameters[r'$filter'] ?? '')
+              .startsWith('employeeId in'),
+        ),
+        isEmpty,
+      );
+
+      // The WISA pull lands between the two syncs; the next Azure pass sees it.
+      ids = <String>['W7'];
+      await state.sync();
+      expect(
+        transport.requests
+            .map((r) => r.url.queryParameters[r'$filter'])
+            .whereType<String>()
+            .where((f) => f.startsWith('employeeId in')),
+        ["employeeId in ('W7')"],
+      );
+    });
+  });
+
+  group('managedStudentEmployeeIds (#224)', () {
+    WisaStudent student(String id, {int schoolId = 1}) => WisaStudent(
+          wisaId: core.WisaId(id),
+          classGroup: '1A',
+          classSubGroup: '',
+          name: 'Doe',
+          firstName: 'Jane',
+          preferredName: '',
+          birthDate: DateTime.utc(2010),
+          stemId: '',
+          gender: core.Gender.female,
+          nationalId: '',
+          birthPlace: '',
+          nationality: '',
+          address: const core.Address(
+            street: '',
+            houseNumber: '',
+            postalCode: '',
+            city: '',
+            country: '',
+          ),
+          classChange: DateTime.utc(2026),
+          schoolId: schoolId,
+        );
+
+    WisaSnapshot snap(
+      List<WisaStudent> students, {
+      List<WisaSchool> schools = const [],
+    }) =>
+        WisaSnapshot(
+          fetchedAt: DateTime.utc(2026),
+          students: students,
+          staff: const [],
+          classGroups: const [],
+          schools: schools,
+        );
+
+    test('no snapshot yet ⇒ nothing expected', () {
+      expect(managedStudentEmployeeIds(null), isEmpty);
+    });
+
+    test('scopes to the managed schools from Settings', () {
+      final ids = managedStudentEmployeeIds(
+        snap([student('W1'), student('W2', schoolId: 2)]),
+        ourSchoolIds: const {1},
+      );
+      // A sibling school's student is none of our business, and looking their
+      // account up would grow the bounded pull for nothing.
+      expect(ids, {'W1'});
+    });
+
+    test('falls back to the snapshot\'s own isOurs flags', () {
+      final ids = managedStudentEmployeeIds(
+        snap(
+          [student('W1'), student('W2', schoolId: 2)],
+          schools: [
+            const WisaSchool(id: 1, name: '', code: '', isOurs: false),
+            const WisaSchool(id: 2, name: '', code: '', isOurs: true),
+          ],
+        ),
+      );
+      expect(ids, {'W2'});
+    });
+
+    test('an unconfigured ownership set means every student counts', () {
+      final ids = managedStudentEmployeeIds(
+        snap([student('W1'), student('W2', schoolId: 2)]),
+      );
+      expect(ids, {'W1', 'W2'});
+    });
+  });
+
+  group('managedStaffEmployeeIds (#231)', () {
+    WisaStaff member(String code, {String? wisaId}) => WisaStaff(
+          code: core.WisaStaffCode(code),
+          wisaId: wisaId == null ? null : core.WisaId(wisaId),
+          firstName: 'Anna',
+          lastName: 'Smit',
+        );
+
+    WisaSnapshot snap(List<WisaStaff> staff) => WisaSnapshot(
+          fetchedAt: DateTime.utc(2026),
+          students: const [],
+          staff: staff,
+          classGroups: const [],
+          schools: const [],
+        );
+
+    test('no snapshot yet ⇒ nothing expected', () {
+      expect(managedStaffEmployeeIds(null), isEmpty);
+    });
+
+    test('every staff member the SmaSyncPer pull returned counts', () {
+      // No school scoping is possible or wanted: a staff row carries no school
+      // id, so the pull is already exactly the staff we manage.
+      expect(
+        managedStaffEmployeeIds(
+            snap([member('SMIT', wisaId: '42'), member('JANS', wisaId: '43')])),
+        {'42', '43'},
+      );
+    });
+
+    test('the wisaId is the id, never the staff code', () {
+      // The Azure bridge for staff is `wisaId ≡ employeeId` (linker
+      // `_buildStaffRecords` step 3); `code` bridges Smartschool instead
+      // (OQ-1), and looking it up in Graph would match nothing.
+      expect(managedStaffEmployeeIds(snap([member('SMIT', wisaId: '42')])),
+          {'42'});
+    });
+
+    test('a staff member without a wisaId is dropped, not asked about', () {
+      // `wisaId` is nullable on a staff row; without one there is no
+      // `employeeId` to look up and none on the account to find either.
+      expect(
+        managedStaffEmployeeIds(
+          snap([member('SMIT'), member('JANS', wisaId: '  43  ')]),
+        ),
+        {'43'},
+      );
+    });
   });
 }

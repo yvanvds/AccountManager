@@ -338,7 +338,17 @@ Future<ReconcileServices> bootstrapReconcile({
     onError: (e) => logSnapshotIssue(core.Origin.azure, e),
   );
 
-  final app = ApplicationState(
+  // The operator's managed-school set from Settings, shared by the linker
+  // (#178) and by the Azure back-fill below (#224) so both scope to the same
+  // schools. Null when no school is flagged, so a not-yet-configured group
+  // falls back to the snapshot's own `MarkAsOurs` flags.
+  final Set<int>? ourSchoolIds =
+      settings.wisaSchools.isEmpty ? null : settings.managedWisaSchoolIds;
+
+  // Assigned immediately below; the Azure syncer closes over it so it can read
+  // the WISA snapshot *this* pass just pulled (WISA always syncs first).
+  late final ApplicationState app;
+  app = ApplicationState(
     wisa: SystemState<wapi.WisaSnapshot>(
       system: core.Origin.wisa,
       initial: wisaSeed,
@@ -394,7 +404,23 @@ Future<ReconcileServices> bootstrapReconcile({
         payloadOf: (s) => s.toJson(),
         deltaTokenOf: (s) => s.deltaToken,
         onError: (e) => logSnapshotIssue(core.Origin.azure, e),
-        inner: azureSyncer(azConnector),
+        // The prefix-scoped pull is blind to anyone who transferred in from a
+        // sibling group school — a student's account carries neither our
+        // `companyName` nor our `department`, a staff member's `department`
+        // still names the school they came from — so the app proposed creating
+        // a duplicate. Hand the connector the WISA ids this pass expects, both
+        // populations, and it looks the unaccounted-for ones up by `employeeId`
+        // (#224 students, #231 staff).
+        inner: azureSyncer(
+          azConnector,
+          expectedEmployeeIds: () => <String>{
+            ...managedStudentEmployeeIds(
+              app.wisa.snapshot,
+              ourSchoolIds: ourSchoolIds,
+            ),
+            ...managedStaffEmployeeIds(app.wisa.snapshot),
+          },
+        ),
       ),
     ),
   );
@@ -422,8 +448,7 @@ Future<ReconcileServices> bootstrapReconcile({
     // Actions view only surfaces schools we manage. Null when no school is
     // flagged, so a not-yet-configured group falls back to the snapshot's
     // `MarkAsOurs` flags rather than treating an empty managed set as "none".
-    ourSchoolIds:
-        settings.wisaSchools.isEmpty ? null : settings.managedWisaSchoolIds,
+    ourSchoolIds: ourSchoolIds,
   );
 
   // The live SignalR subscriber (#124): on every (re)connect it re-reads the

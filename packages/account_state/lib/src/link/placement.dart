@@ -105,7 +105,7 @@ class PlacementResolver {
     // the current-class and logical-parent lookups). First wins on a
     // collision, keeping the result a deterministic function of snapshot order.
     for (final group in smartschool.groups) {
-      final name = _norm(group.name);
+      final name = normalizeGroupName(group.name);
       if (name != null) _groupsByName.putIfAbsent(name, () => group);
       _groupsByCode.putIfAbsent(group.id.value, () => group);
     }
@@ -146,7 +146,7 @@ class PlacementResolver {
       if (wisaId != null) {
         _wisaStudentByWisaId.putIfAbsent(wisaId, () => student);
       }
-      final classGroup = _norm(student.classGroup);
+      final classGroup = normalizeGroupName(student.classGroup);
       if (classGroup != null && _isOurSchool(student.schoolId)) {
         _classGroupsWithStudents.add(classGroup);
       }
@@ -170,12 +170,12 @@ class PlacementResolver {
     // duplicate fullNames to the first record (INV-20), so this mirrors it.
     final adminCodesByClass = <(int, String), Set<String>>{};
     for (final group in wisa.classGroups) {
-      final name = _norm(group.name);
+      final name = normalizeGroupName(group.name);
       if (name != null) {
         adminCodesByClass.putIfAbsent(
             (group.schoolId, name), () => <String>{}).add(group.adminCode);
       }
-      final fullName = _norm(group.fullName);
+      final fullName = normalizeGroupName(group.fullName);
       if (fullName != null) _wisaByFullName.putIfAbsent(fullName, () => group);
     }
     for (final entry in adminCodesByClass.entries) {
@@ -242,7 +242,7 @@ class PlacementResolver {
     return ClassPlacement(
       className: className,
       currentClass: currentClass,
-      resolveClass: (name) => _groupsByName[_norm(name)],
+      resolveClass: (name) => _groupsByName[normalizeGroupName(name)],
     );
   }
 
@@ -263,7 +263,7 @@ class PlacementResolver {
     final classGroup = student.classGroup;
     final subGroup = student.classSubGroup.trim();
     if (subGroup.isEmpty || subGroup == _noSubGroupSentinel) return classGroup;
-    final name = _norm(classGroup);
+    final name = normalizeGroupName(classGroup);
     if (name == null) return classGroup;
     return _subGroupClasses.contains((student.schoolId, name))
         ? '$classGroup $subGroup'
@@ -286,9 +286,9 @@ class PlacementResolver {
   GroupPlacement groupPlacementFor(LinkedGroup group) {
     // [LinkedGroup.wisa] is keyed by fullName; recover the source WISA class to
     // read its bare name and year.
-    final wisaClass = _wisaByFullName[_norm(group.wisa?.name)];
+    final wisaClass = _wisaByFullName[normalizeGroupName(group.wisa?.name)];
     final containsStudents = wisaClass != null &&
-        _classGroupsWithStudents.contains(_norm(wisaClass.name));
+        _classGroupsWithStudents.contains(normalizeGroupName(wisaClass.name));
     final parentCode = classTree.parentCodeForYear(wisaClass?.year ?? -1);
     final parent = parentCode == null ? null : _groupsByCode[parentCode];
 
@@ -307,6 +307,11 @@ const String _noSubGroupSentinel = '00';
 /// Trims and lower-cases [value] for case-insensitive, whitespace-tolerant
 /// matching (INV-12), returning `null` for a null or blank input so an empty
 /// key never indexes or matches anything. Mirrors the linker's `_norm`.
+///
+/// For identifiers only (a Smartschool `uid`). Every group *name* key here goes
+/// through [normalizeGroupName] instead — the same function the linker keys its
+/// own group records by (#225), so the two layers cannot disagree about which
+/// class a name refers to.
 String? _norm(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();

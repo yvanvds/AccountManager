@@ -31,7 +31,8 @@ import 'group_placement.dart';
 ///   [ActionResult.group] (a [Group]), not [ActionResult.smartschool] (a
 ///   `SmartschoolAccount`).
 ///
-/// **Scope.** The whole family ships here. [DoNotImportFromWisa],
+/// **Scope.** The whole family ships here, plus one action legacy never had:
+/// [ClassExistsAsSmartschoolGroup] (informational, #225). [DoNotImportFromWisa],
 /// [DoNotImportFromSmartschool] (informational), and [ModifySmartschoolData]
 /// derive everything from the WISA/Smartschool group pair (#54). The remaining
 /// three — [AddToSmartschool], [CreateInSmartschool] (informational), and
@@ -157,6 +158,12 @@ class DoNotImportFromWisa extends GroupAction {
 /// gate on the parent, matching legacy, which offers the action regardless and
 /// only checks the parent at apply time.
 ///
+/// One guard legacy has no notion of: a class whose name Smartschool already
+/// carries in some form ([LinkedGroup.smartschoolNamesake], #225) is never
+/// offered for creation — the write would ask for a duplicate name, which
+/// Smartschool either rejects or ends up holding twice.
+/// [ClassExistsAsSmartschoolGroup] takes over for that shape.
+///
 /// **Key divergence.** Legacy builds the class `Code`/`Name`/`Untis` from the
 /// raw WISA `Group.Name`; the canonical [LinkedGroup.wisa] carries only the
 /// `fullName` (the cross-system match key), so the created class is keyed on
@@ -173,6 +180,7 @@ class AddToSmartschool extends GroupAction {
   bool evaluate() =>
       group.wisa != null &&
       group.smartschool == null &&
+      group.smartschoolNamesake == null &&
       placement.containsStudents;
 
   /// The official Smartschool class to create, derived from the WISA class and
@@ -271,7 +279,11 @@ class AddToSmartschool extends GroupAction {
 /// `false` and [apply] throws.
 ///
 /// Distinguished from [AddToSmartschool] purely by the [GroupPlacement]
-/// membership signal: same WISA-only shape, but `!containsStudents`.
+/// membership signal: same WISA-only shape, but `!containsStudents`. It carries
+/// the same #225 guard: a class Smartschool already has under this name is
+/// [ClassExistsAsSmartschoolGroup]'s business, not an "empty class" notice —
+/// telling the operator to delete a WISA class that *is* provisioned downstream
+/// is the wrong advice.
 class CreateInSmartschool extends GroupAction {
   /// The membership context, injected by the dispatch. Only
   /// [GroupPlacement.containsStudents] matters here (it must be `false`).
@@ -283,6 +295,7 @@ class CreateInSmartschool extends GroupAction {
   bool evaluate() =>
       group.wisa != null &&
       group.smartschool == null &&
+      group.smartschoolNamesake == null &&
       !placement.containsStudents;
 
   @override
@@ -300,6 +313,71 @@ class CreateInSmartschool extends GroupAction {
   Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
       throw UnsupportedError(
         'CreateInSmartschool is informational and cannot be applied '
+        '(canApply is false)',
+      );
+}
+
+/// A WISA class whose name Smartschool **already carries**, on a group the
+/// linker could not adopt as the class's counterpart (#225). Informational only
+/// (`canApply == false`): the resolution is a hand edit in Smartschool, which
+/// no API call here should guess at.
+///
+/// It has no legacy counterpart — legacy had no way to see the situation. The
+/// class exists downstream in one of two shapes, both readable off
+/// [LinkedGroup.smartschoolNamesake]:
+/// - the group is **not flagged as an official class**, so it holds no students
+///   and never links (the real `2G` of #225). The operator makes it official in
+///   Smartschool, and the next sync links it;
+/// - the group *is* an official class but spells its name differently enough
+///   that the match key does not join them (`2 G` vs `2G`). The operator aligns
+///   the two names.
+///
+/// Either way the important part is what this action *replaces*:
+/// [AddToSmartschool] / [CreateInSmartschool], which would have proposed
+/// creating a class that is already there.
+class ClassExistsAsSmartschoolGroup extends GroupAction {
+  const ClassExistsAsSmartschoolGroup(super.group);
+
+  @override
+  bool evaluate() =>
+      group.wisa != null &&
+      group.smartschool == null &&
+      group.smartschoolNamesake != null;
+
+  @override
+  bool get canApply => false;
+
+  Group get _namesake => group.smartschoolNamesake!;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.smartschool,
+        summary: _namesake.official
+            ? 'Deze klas bestaat in Smartschool als "${_namesake.name}", met '
+                'een andere schrijfwijze. Stem beide namen op elkaar af, dan '
+                'wordt ze gekoppeld.'
+            : 'Deze klas bestaat in Smartschool maar is geen officiële klas. '
+                'Maak ze in Smartschool officieel (of hernoem ze), dan wordt '
+                'ze gekoppeld.',
+        fields: [
+          FieldChange(
+            'name',
+            before: _namesake.name,
+            after: _wisa.name,
+          ),
+          FieldChange('code', before: _namesake.id.value),
+          FieldChange(
+            'officiële klas',
+            before: _namesake.official ? 'ja' : 'nee',
+            after: 'ja',
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      throw UnsupportedError(
+        'ClassExistsAsSmartschoolGroup is informational and cannot be applied '
         '(canApply is false)',
       );
 }

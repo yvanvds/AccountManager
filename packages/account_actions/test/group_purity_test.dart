@@ -102,6 +102,25 @@ void main() {
       );
     });
 
+    test('neither create action evaluates once Smartschool has the name (#225)',
+        () {
+      final group = linkedGroup(
+        wisa: wisaGroup(name: '2G'),
+        smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+      );
+      expect(
+        AddToSmartschool(group, groupPlacement(containsStudents: true))
+            .evaluate(),
+        isFalse,
+        reason: 'creating it would ask Smartschool for a duplicate name',
+      );
+      expect(
+        CreateInSmartschool(group, groupPlacement(containsStudents: false))
+            .evaluate(),
+        isFalse,
+      );
+    });
+
     test('DoNotImportFromWisa describes the rule it would add', () {
       final change =
           DoNotImportFromWisa(linkedGroup(wisa: wisaGroup(name: '3A')))

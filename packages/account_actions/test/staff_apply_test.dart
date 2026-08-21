@@ -49,6 +49,25 @@ void main() {
       expect(transport.soapActions, isEmpty);
     });
 
+    test('ModifyStaffAzureSchool dry run: no PATCH, repaired value projected',
+        () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ModifyStaffAzureSchool(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(department: 'OTHER - Wiskunde'),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, ApplyOptions.dry);
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect(transport.requests, isEmpty);
+      expect((result.azure! as az.AzureUser).department, 'SSM - Wiskunde');
+    });
+
     test('SetStaffCopyCode dry run: no write, padded fax projected', () async {
       final transport = RecordingSmartschoolTransport();
       final connectors =
@@ -138,6 +157,16 @@ void main() {
         () async {
       final transport = RecordingGraphTransport(
         handler: (req) {
+          if (req.method == 'GET' &&
+              (req.url.queryParameters[r'$filter'] ?? '')
+                  .startsWith('employeeId in')) {
+            // The tenant holds no account for this WISA id (#231).
+            return az.GraphResponse(
+              statusCode: 200,
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({'value': const <Object>[]}),
+            );
+          }
           if (req.method == 'GET') {
             // No existing user with the candidate UPN → it is unique.
             return az.GraphResponse(
@@ -175,6 +204,123 @@ void main() {
       expect((result.azure! as az.AzureUser).department, 'SSM');
     });
 
+    test(
+        'AddStaffToAzure: refuses to create when the tenant already has an '
+        'account with this employeeId (#231)', () async {
+      // The duplicate this guards, the staff half of #224: the account is
+      // invisible to the school-scoped pull (its `department` still names the
+      // sibling group school the member moved in from), so the snapshot says
+      // "no Azure account" and the dispatcher raises the create.
+      // `createPrincipalName` would resolve the UPN collision by suffixing, so
+      // the create *succeeds* and the person silently ends up with two.
+      final transport = RecordingGraphTransport(
+        handler: (req) {
+          if (req.method == 'GET' &&
+              (req.url.queryParameters[r'$filter'] ?? '')
+                  .startsWith('employeeId in')) {
+            return az.GraphResponse(
+              statusCode: 200,
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({
+                'value': [
+                  {
+                    'id': 'az-moved',
+                    'userPrincipalName': 'smit.anna@other.example',
+                    'employeeId': '42',
+                    'department': 'OTHER - Wiskunde',
+                  },
+                ],
+              }),
+            );
+          }
+          // Everything a create needs is deliberately available: the projected
+          // UPN is free (404) and the POST would succeed. So an unguarded apply
+          // creates the duplicate cleanly — this test's failure mode without
+          // the guard is "it created one", not "it errored on the way".
+          if (req.method == 'GET') {
+            return az.GraphResponse(
+              statusCode: 404,
+              body: jsonEncode({
+                'error': {'code': 'NotFound', 'message': 'no'},
+              }),
+            );
+          }
+          if (req.method == 'POST') {
+            return az.GraphResponse(
+              statusCode: 201,
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({
+                'id': 'az-duplicate',
+                'userPrincipalName': 'anna.smit@school.example',
+              }),
+            );
+          }
+          return const az.GraphResponse(statusCode: 204);
+        },
+      );
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = AddStaffToAzure(
+        linkedStaff(wisa: wisaStaff(wisaId: '42')),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(transport.sent('POST'), isFalse, reason: 'nothing was created');
+      expect(result.azure, isNull);
+      // The operator is told what to do about it, and which account it is.
+      expect('${result.error}', contains('42'));
+      expect('${result.error}', contains('smit.anna@other.example'));
+    });
+
+    test(
+        'AddStaffToAzure: a staff member with no wisaId is created without an '
+        'employeeId lookup (#231)', () async {
+      // `wisaId` is nullable on a staff row (`code` is the staff primary key,
+      // OQ-1). There is nothing to look up — and nothing to stamp on the new
+      // account either — so the guard must step aside rather than send Graph a
+      // filter with an empty literal in it.
+      final transport = RecordingGraphTransport(
+        handler: (req) {
+          if (req.method == 'GET') {
+            return az.GraphResponse(
+              statusCode: 404,
+              body: jsonEncode({
+                'error': {'code': 'NotFound', 'message': 'no'},
+              }),
+            );
+          }
+          if (req.method == 'POST') {
+            return az.GraphResponse(
+              statusCode: 201,
+              headers: const {'content-type': 'application/json'},
+              body: jsonEncode({
+                'id': 'az-new',
+                'userPrincipalName': 'anna.smit@school.example',
+              }),
+            );
+          }
+          return const az.GraphResponse(statusCode: 204);
+        },
+      );
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = AddStaffToAzure(
+        linkedStaff(wisa: wisaStaff(wisaId: null)),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(
+        transport.requests.where(
+          (r) => (r.url.queryParameters[r'$filter'] ?? '')
+              .startsWith('employeeId in'),
+        ),
+        isEmpty,
+      );
+    });
+
     test('AddStaffToSmartschool: saves account, accountId ← WISA code',
         () async {
       final transport = RecordingSmartschoolTransport();
@@ -195,6 +341,41 @@ void main() {
       expect(result.smartschool?.mail, 'anna.smit@school.example');
       // The WISA numeric id becomes the copy-code (fax).
       expect((result.smartschool! as ss.SmartschoolAccount).fax, '42');
+    });
+
+    test(
+        'ModifyStaffAzureSchool: PATCHes department so the next bulk read can '
+        'see the account (#233)', () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ModifyStaffAzureSchool(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(id: 'az-moved', department: 'OTHER - Wiskunde'),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.system, Origin.azure);
+
+      final patch = transport.requests
+          .singleWhere((r) => r.method == 'PATCH', orElse: () => throw 'none');
+      expect(patch.url.path, contains('az-moved'));
+      expect(
+        jsonDecode(patch.body!) as Map<String, dynamic>,
+        {'department': 'SSM - Wiskunde'},
+        reason: 'only the department is touched, prefix first',
+      );
+      // Prefix-first is the whole point: it is the `startswith(department, …)`
+      // leg of UserManager.filterFor, so the school-scoped pull now returns the
+      // account without the employeeId back-fill having to find it (#231).
+      expect(
+        (result.azure! as az.AzureUser).department!.startsWith('SSM'),
+        isTrue,
+      );
     });
 
     test('RemoveStaffFromAzure: deletes the user', () async {

@@ -60,11 +60,62 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
 class RecordingGraph implements az.GraphTransport {
   final List<az.GraphRequest> requests = <az.GraphRequest>[];
 
+  /// The bodies of every `POST /users` this transport accepted, in order — the
+  /// accounts a create action actually asked Graph to make (#230).
+  final List<Map<String, dynamic>> createdUsers = <Map<String, dynamic>>[];
+
+  int _created = 0;
+
+  /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
+  /// reads before it writes: `AddStudentToAzure` first asks
+  /// `employeeId in (…)` whether the person already has an account (#224), then
+  /// `createPrincipalName` probes `users/<upn>` for each UPN candidate until one
+  /// is free. This models an empty tenant — the collection reads come back
+  /// empty, the single-user reads `404` — and echoes the created resource the
+  /// way Graph does, so the whole create path runs offline (#230).
+  ///
+  /// Answering those GETs matters: a bare `204` decodes to an empty JSON object,
+  /// which `AzureUser.fromGraphJson` happily turns into a user, so every UPN
+  /// candidate would read as taken and `createPrincipalName` would spin forever.
   @override
   Future<az.GraphResponse> send(az.GraphRequest request) async {
     requests.add(request);
+    if (request.method == 'GET') {
+      return _singleUserPath.hasMatch(request.url.path)
+          ? const az.GraphResponse(
+              statusCode: 404,
+              headers: <String, String>{'content-type': 'application/json'},
+              body: '{"error":{"code":"Request_ResourceNotFound",'
+                  '"message":"Resource does not exist."}}',
+            )
+          : _ok(<String, dynamic>{'value': const <Object>[]}, statusCode: 200);
+    }
+    if (request.method == 'POST' && request.url.path.endsWith('/users')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      createdUsers.add(body);
+      return _ok(
+        <String, dynamic>{...body, 'id': 'az-created-${++_created}'},
+        statusCode: 201,
+      );
+    }
     return const az.GraphResponse(statusCode: 204);
   }
+
+  /// `/v1.0/users/<id-or-upn>` — a read of one user, as opposed to the
+  /// collection reads `/v1.0/users` and `/v1.0/users/delta`.
+  static final RegExp _singleUserPath = RegExp(r'/users/(?!delta$)[^/]+$');
+
+  static az.GraphResponse _ok(
+    Map<String, dynamic> body, {
+    required int statusCode,
+  }) =>
+      az.GraphResponse(
+        statusCode: statusCode,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
 }
 
 /// A [az.GraphTransport] that answers the way Graph does for a school whose
@@ -147,6 +198,113 @@ class StaleDeltaTokenGraph implements az.GraphTransport {
                 '$freshToken',
         'value': const <Object>[],
       });
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
+/// A [az.GraphTransport] answering the way the tenant answered in #224 (a
+/// student) and #231 (a staff member): the school-scoped bulk read finds
+/// **nothing** for someone who transferred in from a sibling group school, while
+/// a targeted `employeeId in (…)` lookup turns up the Office 365 account they
+/// already have.
+///
+/// That account is exactly what the operator found on Ambre Kalenga Alfio: our
+/// `employeeId`, **no** `companyName`, a `department` still naming the school
+/// they came from, and a UPN whose given/family-name order that school mangled —
+/// so neither leg of the connector's `$filter` matches it and the UPN is no use
+/// as a matching key either. A moved staff member's account is in the same
+/// state; only the `department` text differs, which is what [department] is for.
+///
+/// Wire it into [ReconcileHarness.azureTransport] to drive the **production**
+/// Azure pull, the only place the back-fill lives.
+class TransferredAccountGraph implements az.GraphTransport {
+  TransferredAccountGraph({
+    this.employeeId = 'W7',
+    this.upn = 'alfio.ambre@student.other.example',
+    this.displayName = 'Alfio Ambre',
+    this.department = 'OTHER-3A',
+    this.deltaToken = 'AZ-TOKEN',
+    this.visibleUsers = const <az.AzureUser>[],
+  });
+
+  /// The WISA id the existing account carries — the one usable matching key.
+  /// For a student that is `WisaStudent.wisaId`; for a staff member the
+  /// (nullable) `WisaStaff.wisaId`, never their `code`.
+  final String employeeId;
+  final String upn;
+  final String displayName;
+
+  /// The `department` the school they came from left on the account — never
+  /// one of ours, which is the whole reason the `$filter` cannot see it.
+  final String department;
+  final String deltaToken;
+
+  /// What the `$filter`-scoped bulk read returns. Empty by default: the whole
+  /// point is that the transferred account is not among them.
+  final List<az.AzureUser> visibleUsers;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every `employeeId in (…)` filter the connector issued, in order — so a
+  /// test can prove it asked only about the ids it could not account for.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$deltaToken',
+        'value': const <Object>[],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{
+        'value': filter.contains("'$employeeId'")
+            ? <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'az-transferred',
+                  'userPrincipalName': upn,
+                  'employeeId': employeeId,
+                  'displayName': displayName,
+                  // No companyName: the other school never stamped one, and
+                  // ours was never stamped either.
+                  'department': department,
+                  'accountEnabled': true,
+                },
+              ]
+            : const <Object>[],
+      });
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{
+      'value': <Map<String, dynamic>>[
+        for (final az.AzureUser u in visibleUsers)
+          <String, dynamic>{
+            'id': u.id,
+            'userPrincipalName': u.upn,
+            if (u.employeeId != null) 'employeeId': u.employeeId,
+            if (u.companyName != null) 'companyName': u.companyName,
+            'accountEnabled': u.accountEnabled,
+          },
+      ],
+    });
+  }
 
   static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
         statusCode: 200,
@@ -343,6 +501,11 @@ ss.SmartschoolAccount ssAccount({
   String givenName = 'Jane',
   String surname = 'Doe',
   core.Address address = _addr,
+  // A staff-role account is what the linker's `_buildStaffRecords` seeds a
+  // LinkedStaff from; `fax` carries the zero-padded copy-code, so a fixture that
+  // wants no SetStaffCopyCode must set it.
+  core.PersonRole role = core.PersonRole.student,
+  String fax = '',
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
@@ -350,7 +513,7 @@ ss.SmartschoolAccount ssAccount({
       mail: mail,
       registerId: '',
       stemId: 0,
-      role: core.PersonRole.student,
+      role: role,
       givenName: givenName,
       surname: surname,
       extraNames: '',
@@ -363,20 +526,53 @@ ss.SmartschoolAccount ssAccount({
       address: address,
       mobilePhone: '',
       homePhone: '',
-      fax: '',
+      fax: fax,
       untisId: '',
       status: 'actief',
     );
 
+/// A Smartschool **staff** account — a teacher-role [ssAccount], the shape the
+/// linker seeds a `LinkedStaff` from. The defaults line up with [wisaStaff] so a
+/// complete staff record raises no Smartschool action of its own: `accountId` is
+/// the WISA staff `code` and `fax` the zero-padded `wisaId`.
+ss.SmartschoolAccount ssStaffAccount({
+  String uid = 'anna.smit',
+  String accountId = 'SMIT',
+  String mail = 'anna.smit@school.example',
+  String givenName = 'Anna',
+  String surname = 'Smit',
+  String fax = '0042',
+}) =>
+    ssAccount(
+      uid: uid,
+      accountId: accountId,
+      mail: mail,
+      givenName: givenName,
+      surname: surname,
+      role: core.PersonRole.teacher,
+      fax: fax,
+    );
+
+/// An Azure account. [displayName] is left empty by default, which is what most
+/// fixtures want — it makes `ModifyAzureName` evaluate true, so the pass has an
+/// action to show. A fixture that needs an account with **nothing** pending
+/// (a class the Acties filter must hide, #226) passes the student's WISA
+/// `fullName` here so the names already agree.
 az.AzureUser azUser({
   String id = 'az1',
   String upn = 'jane.doe@student.school.example',
   String? employeeId = '1',
+  String displayName = '',
+  String givenName = '',
+  String surname = '',
 }) =>
     az.AzureUser(
       id: id,
       upn: upn,
       employeeId: employeeId,
+      displayName: displayName,
+      givenName: givenName,
+      surname: surname,
       companyName: 'GBS',
     );
 
@@ -751,6 +947,44 @@ ReconcileHarness siblingPopulatedClassHarness() => ReconcileHarness(
       ),
       smartschool: ssSnap(
         groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the class Smartschool already has (#225). Our school 1 has the
+/// populated class `2G`; Smartschool holds `2G` too — under `2de Jaar`, beside
+/// the classes it *did* flag official, and with the subgroup `2G LAT` hanging
+/// under it — but the `2G` node itself is not flagged as an official class.
+///
+/// The official-class link skips it, correctly and (before #225) silently, so
+/// the WISA class read as one nobody had created yet: the Klasgroepen list
+/// offered "Voeg deze klas toe aan Smartschool", the applyable action that
+/// would have asked Smartschool for a second class named `2G`. The subgroup, an
+/// official class of its own with no WISA counterpart, keeps its own
+/// Smartschool-only notice — that one is correct.
+ReconcileHarness nonOfficialSmartschoolClassHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '2G')],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '2G',
+            description: '2e lj A Klassieke talen',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('2de Jaar',
+              code: '2dejaar', official: false, type: core.GroupType.group),
+          ssGroup('2G', code: 'G2G', official: false),
+          ssGroup('2G LAT', code: 'C2GLAT'),
+        ],
         accounts: const [],
         memberships: const [],
       ),
@@ -1293,17 +1527,30 @@ class ReconcileHarness {
     final azureTransport = this.azureTransport;
     Syncer<az.AzureSnapshot> azSync;
     if (azureTransport != null) {
-      final inner = azureSyncer(az.AzureConnector(
-        credentials: az.AzureCredentials(
-          clientId: 'c',
-          tenantId: 't',
-          azureDomain: 'school.example',
-          schoolPrefix: 'GBS',
+      final inner = azureSyncer(
+        az.AzureConnector(
+          credentials: az.AzureCredentials(
+            clientId: 'c',
+            tenantId: 't',
+            azureDomain: 'school.example',
+            schoolPrefix: 'GBS',
+          ),
+          authProvider: const az.StaticAuthProvider('token'),
+          transport: azureTransport,
+          log: log,
         ),
-        authProvider: const az.StaticAuthProvider('token'),
-        transport: azureTransport,
-        log: log,
-      ));
+        // Exactly as `bootstrapReconcile` composes it (#224 students, #231
+        // staff): the ids this pass expects Azure accounts for come from both
+        // populations of the WISA snapshot the same ApplicationState pulled
+        // moments earlier.
+        expectedEmployeeIds: () => <String>{
+          ...managedStudentEmployeeIds(
+            app.wisa.snapshot,
+            ourSchoolIds: ourSchoolIds,
+          ),
+          ...managedStaffEmployeeIds(app.wisa.snapshot),
+        },
+      );
       azSync = (previous) async {
         azSyncs++;
         return inner(previous);

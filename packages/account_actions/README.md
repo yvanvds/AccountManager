@@ -64,17 +64,38 @@ per record, applies the legacy `AccountActionParser` rule:
 
 The two sets never coexist for one record, exactly as in legacy.
 
+### Unlocked follow-ups (#230)
+
+Dispatch is a pure function of the record **as it stands**, which cannot express
+a chain. Provisioning a brand-new student is one: `AddStudentToSmartschool`
+builds its account with the Azure UPN as the `mail`, so it evaluates false until
+`AddStudentToAzure` has run, and a WISA-only student is therefore offered exactly
+one create even though they need two.
+
+`StudentAction.unlocks` names the action types a write may unlock on the same
+target — `AddStudentToAzure.unlocks == {AddStudentToSmartschool}`, everything
+else empty. It stays a pure, constant declaration: it says what *may* follow,
+never what must, and the follow-up's own `evaluate()` still decides.
+
+Acting on it belongs to the State layer, not here: `StateApplier.applyStudent`
+re-reads the follow-up from the **relinked** view's own dispatch and runs it, so
+the operator's one apply provisions the student end to end. It must be the
+relinked record and never a projection — `createPrincipalName` resolves a UPN
+collision by suffixing, so the UPN that landed can differ from the one
+`describeChanges()` projected, and the Smartschool account would carry the wrong
+`mail`. The staff family has the same two-pass shape and is tracked as #240.
+
 `staffActions(snapshot, config)` does the same over the snapshot's staff
 records. The legacy staff parser writes the modify branch as `if (OK)` rather
 than `else`, but sets `OK = false` inside the missing branch, so the two
 branches are mutually exclusive just like the student parser. The staff
 lifecycle set is `AddStaffToAzure`, `AddStaffToSmartschool`,
 `RemoveStaffFromSmartschool`, `DontImportStaffFromWisa`, `RemoveStaffFromAzure`;
-the modify set is `UpdateStaffWisaName`, `ModifySmartschoolStaffEmail`,
-`SetStaffCopyCode`. Staff bridge to Smartschool by `WisaStaff.code` (not
-`wisaId`) — `AddStaffToSmartschool` and `UpdateStaffWisaName` write the code
-into `accountId` (spec §4, OQ-1), while the numeric `wisaId` becomes the
-copy-code.
+the modify set is `ModifyStaffAzureSchool`, `UpdateStaffWisaName`,
+`ModifySmartschoolStaffEmail`, `SetStaffCopyCode`. Staff bridge to Smartschool
+by `WisaStaff.code` (not `wisaId`) — `AddStaffToSmartschool` and
+`UpdateStaffWisaName` write the code into `accountId` (spec §4, OQ-1), while the
+numeric `wisaId` becomes the copy-code.
 
 `groupActions(snapshot)` walks the snapshot's class groups, ported from the
 legacy `GroupActionParser`. The split is on the WISA/Smartschool **pair** rather
@@ -170,6 +191,21 @@ connector leaves that guard to the caller), so an ANS/BNS student whose
   the action converges after one apply.
 - **Staff gender on create.** Legacy `AddToSmartschool` hard-codes `Female` for
   new staff (WISA staff rows carry no gender); preserved verbatim.
+- **`ModifyStaffAzureSchool` is an addition, not a port.** The legacy staff
+  family has no `department` repair, so an Azure account adopted by the
+  `employeeId` back-fill (#231) never carried our marker and stayed invisible to
+  the school-scoped bulk read forever (#233). It fires when `department` does not
+  *start with* the school prefix — a missing one included, mirroring what #224
+  taught the student `ModifyAzureSchool` about a null `companyName` — and it is
+  `startswith`, not the linker's laxer `contains`, because that is the exact
+  server-side test `UserManager.filterFor` applies. **Assumed value shape:**
+  `<school>` or `<school> - <suffix>` (real data carries a subject suffix,
+  `Arcadia - Wiskunde`), so only the leading school segment is replaced and any
+  suffix is preserved. Legacy's staff `RemoveFromAzure` renders the field under
+  an "Active Schools" header and both linkers test it with `contains`, so it may
+  instead enumerate several schools — in which case replacing the head segment
+  evicts a sibling school's claim and this needs to become a prepend. Tracked as
+  #237.
 - Smartschool `uid` uniqueness for new accounts is the caller's concern (the
   State layer holds the account set); the default builder is deliberately
   simple.

@@ -119,6 +119,44 @@ class Group {
       );
 }
 
+/// The cross-system match key for a group *name* (#225).
+///
+/// A class carries no stable id across WISA, Smartschool and Azure — the name
+/// **is** the bridge — so every layer that joins groups by name must normalize
+/// it the same way, or the linker and the placement resolver disagree about
+/// which classes exist. Trimmed and lower-cased (INV-12), plus every run of
+/// whitespace collapsed to a single ASCII space: a class name is typed by an
+/// operator in Smartschool, so it picks up double spaces and the non-breaking
+/// space a copy-paste leaves behind, neither of which makes it a different
+/// class from the WISA one.
+///
+/// Returns `null` for a null or blank name so an empty key never matches or
+/// indexes anything.
+String? normalizeGroupName(String? name) {
+  if (name == null) return null;
+  final collapsed = name.replaceAll(_whitespaceRun, ' ').trim();
+  return collapsed.isEmpty ? null : collapsed.toLowerCase();
+}
+
+/// A deliberately *looser* key than [normalizeGroupName]: the same name with
+/// **all** whitespace removed, so `2G` and `2 G` share one key.
+///
+/// Never used to link two systems' groups together — dropping the space that
+/// separates a class from its sub-group (`5A 01`) would fuse names that really
+/// are distinct. It exists for the one question where a false positive is
+/// cheap and a false negative is not: "does a group by roughly this name
+/// already exist in Smartschool?" (#225). Answering that wrongly-yes costs an
+/// informational notice; answering it wrongly-no proposes creating a class
+/// Smartschool already has.
+String? groupNameFingerprint(String? name) =>
+    normalizeGroupName(name)?.replaceAll(' ', '');
+
+/// A run of Unicode whitespace, spelled out rather than left to `\s` alone so
+/// the non-breaking (U+00A0) and narrow no-break (U+202F) spaces are covered
+/// whatever the regex engine's reading of `\s` is.
+final RegExp _whitespaceRun =
+    RegExp(r'[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+');
+
 /// First-class many-to-many link between a [Person] and a [Group].
 ///
 /// Replaces the legacy "groups own their members" model. Multiple memberships
