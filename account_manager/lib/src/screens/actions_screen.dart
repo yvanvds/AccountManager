@@ -923,8 +923,8 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     return Text(
-      'Nog geen gematerialiseerd overzicht. Synchroniseer op het Reconcile-'
-      'scherm om openstaande acties per klas te zien.',
+      'Nog geen gematerialiseerd overzicht. Synchroniseer op het tabblad '
+      'Synchronisatie om openstaande acties per klas te zien.',
       style: text.bodyMedium,
     );
   }

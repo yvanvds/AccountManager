@@ -29,7 +29,7 @@ void main() {
     await tester.pumpWidget(_wrap(const ReconcileScreen(bootstrap: null)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Not configured'), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-sync')), findsNothing);
   });
 
@@ -52,7 +52,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Could not prepare the reconcile screen'),
+      find.text('Kan het Synchronisatie-scherm niet openen'),
       findsOneWidget,
     );
     expect(find.textContaining('wisa.password'), findsOneWidget);
@@ -72,12 +72,12 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('(Attempt'), findsNothing);
+    expect(find.textContaining('(Poging'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('reconcile-bootstrap-retry')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('(Attempt 2 failed.)'), findsOneWidget);
+    expect(find.textContaining('(Poging 2 mislukt.)'), findsOneWidget);
   });
 
   testWidgets(
@@ -207,10 +207,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // The freshness now renders as a dedicated box headed "Last sync", with one
-    // row per system rather than a run-on line (#188).
+    // The freshness now renders as a dedicated box headed "Laatste
+    // synchronisatie", with one row per system rather than a run-on line
+    // (#188).
     expect(find.byKey(const ValueKey('reconcile-last-sync')), findsOneWidget);
-    expect(find.text('Last sync'), findsOneWidget);
+    expect(find.text('Laatste synchronisatie'), findsOneWidget);
     expect(
         find.byKey(const ValueKey('reconcile-last-sync-wisa')), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-last-sync-smartschool')),
@@ -221,7 +222,7 @@ void main() {
     expect(find.text('Smartschool'), findsOneWidget);
     expect(find.text('Azure'), findsOneWidget);
     // Each row names the operator who last synced it.
-    expect(find.textContaining('by operator@school.example'), findsWidgets);
+    expect(find.textContaining('door operator@school.example'), findsWidgets);
   });
 
   testWidgets(
@@ -259,10 +260,10 @@ void main() {
 
     // WISA is the sync; Smartschool and Azure are drift checks — each on its
     // own row, no longer packed into one wrapped sentence.
-    expect(rowText('wisa'), contains('sync'));
-    expect(rowText('wisa'), isNot(contains('drift check')));
-    expect(rowText('smartschool'), contains('drift check'));
-    expect(rowText('azure'), contains('drift check'));
+    expect(rowText('wisa'), contains('synchronisatie'));
+    expect(rowText('wisa'), isNot(contains('driftcontrole')));
+    expect(rowText('smartschool'), contains('driftcontrole'));
+    expect(rowText('azure'), contains('driftcontrole'));
   });
 
   testWidgets(
@@ -300,7 +301,7 @@ void main() {
         .join(' ');
 
     // Today: unchanged, still the short time-only form.
-    expect(rowText('wisa'), contains('sync · 09:14'));
+    expect(rowText('wisa'), contains('synchronisatie · 09:14'));
     expect(rowText('wisa'), isNot(contains('/')));
     expect(rowText('wisa'), isNot(contains('gisteren')));
 
@@ -308,7 +309,7 @@ void main() {
     expect(rowText('smartschool'), contains('gisteren 08:05'));
     expect(rowText('azure'), contains('15/08/${now.year - 1} 16:40'));
     // …and the operator is still named on every row.
-    expect(rowText('azure'), contains('by operator@school.example'));
+    expect(rowText('azure'), contains('door operator@school.example'));
   });
 
   testWidgets('the last-sync box survives a restart / passive session (#162)',
@@ -326,10 +327,10 @@ void main() {
 
     expect(passive.wisaSyncs, 0, reason: 'a passive session pulls nothing');
     expect(find.byKey(const ValueKey('reconcile-last-sync')), findsOneWidget);
-    expect(find.text('Last sync'), findsOneWidget);
+    expect(find.text('Laatste synchronisatie'), findsOneWidget);
     expect(
         find.byKey(const ValueKey('reconcile-last-sync-wisa')), findsOneWidget);
-    expect(find.textContaining('by operator@school.example'), findsWidgets);
+    expect(find.textContaining('door operator@school.example'), findsWidgets);
   });
 
   testWidgets(

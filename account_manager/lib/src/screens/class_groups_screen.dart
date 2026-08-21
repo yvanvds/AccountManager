@@ -299,8 +299,8 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
     if (rows.isEmpty) {
       return slivers
         ..add(_section(const EmptyLine(
-          'Nog geen klasinventaris. Synchroniseer op het Reconcile-scherm om '
-          'alle klassen te zien.',
+          'Nog geen klasinventaris. Synchroniseer op het tabblad '
+          'Synchronisatie om alle klassen te zien.',
         )))
         ..add(_gap(PlinkSpacing.s6));
     }

@@ -479,15 +479,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (widget.bootstrap == null) {
       return const _MessagePanel(
         eyebrow: 'Arcadia · instellingen',
-        title: 'Not configured',
-        message: 'Azure AD is not configured for this build, so the settings '
-            'store cannot be reached. Provide the AAD --dart-define values and '
-            'restart.',
+        title: 'Niet geconfigureerd',
+        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
+            'instellingenopslag is onbereikbaar. Geef de AAD '
+            '--dart-define-waarden mee en start opnieuw op.',
       );
     }
     final error = _error;
     if (error != null && _loaded == null) {
-      final retryNote = _attempts > 1 ? '\n\n(Attempt $_attempts failed.)' : '';
+      final retryNote = _attempts > 1 ? '\n\n(Poging $_attempts mislukt.)' : '';
       return _MessagePanel(
         eyebrow: 'Arcadia · instellingen',
         title: 'Kon de instellingen niet laden',

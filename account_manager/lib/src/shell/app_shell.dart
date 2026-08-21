@@ -50,18 +50,21 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   late final List<ShellDestination> _destinations = <ShellDestination>[
+    // Every label is the operator's language and the name of the page behind
+    // it (#257): the rail is read together with the heading it leads to, so a
+    // rail saying "Actions" over a page titled "Acties" reads as two apps.
     ShellDestination(
-      label: 'Home',
+      label: 'Start',
       icon: Icons.home_outlined,
       builder: (_) => const HomeScreen(),
     ),
     ShellDestination(
-      label: 'Reconcile',
+      label: 'Synchronisatie',
       icon: Icons.sync_alt_outlined,
       builder: (_) => ReconcileScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
-      label: 'Actions',
+      label: 'Acties',
       icon: Icons.checklist_outlined,
       builder: (_) => ActionsScreen(bootstrap: widget.reconcileBootstrap),
     ),
@@ -74,12 +77,12 @@ class _AppShellState extends State<AppShell> {
       builder: (_) => ClassGroupsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
-      label: 'Passwords',
+      label: 'Wachtwoorden',
       icon: Icons.password_outlined,
       builder: (_) => PasswordsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
-      label: 'Settings',
+      label: 'Instellingen',
       icon: Icons.settings_outlined,
       builder: (_) => SettingsScreen(bootstrap: widget.settingsBootstrap),
     ),

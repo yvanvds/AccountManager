@@ -67,35 +67,35 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
   Widget build(BuildContext context) {
     if (widget.bootstrap == null) {
       return const _MessagePanel(
-        eyebrow: 'Arcadia · reconcile',
-        title: 'Not configured',
-        message: 'Azure AD is not configured for this build, so the settings '
-            'store and connectors cannot be reached. Provide the AAD '
-            '--dart-define values and restart.',
+        eyebrow: 'Arcadia · synchronisatie',
+        title: 'Niet geconfigureerd',
+        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
+            'instellingenopslag en de connectoren zijn onbereikbaar. Geef de '
+            'AAD --dart-define-waarden mee en start opnieuw op.',
       );
     }
     final error = _bootstrapError;
     if (error != null) {
       // A fast failure makes a retry look like a dead button — say the
       // attempt happened.
-      final retryNote = _attempts > 1 ? '\n\n(Attempt $_attempts failed.)' : '';
+      final retryNote = _attempts > 1 ? '\n\n(Poging $_attempts mislukt.)' : '';
       return _MessagePanel(
-        eyebrow: 'Arcadia · reconcile',
-        title: 'Could not prepare the reconcile screen',
+        eyebrow: 'Arcadia · synchronisatie',
+        title: 'Kan het Synchronisatie-scherm niet openen',
         message: '$error$retryNote',
         action: FilledButton(
           key: const ValueKey('reconcile-bootstrap-retry'),
           onPressed: _bootstrap,
-          child: const Text('Try again'),
+          child: const Text('Probeer opnieuw'),
         ),
       );
     }
     final services = _services;
     if (_bootstrapping || services == null) {
       return const _MessagePanel(
-        eyebrow: 'Arcadia · reconcile',
-        title: 'Preparing…',
-        message: 'Loading the settings and connection profiles.',
+        eyebrow: 'Arcadia · synchronisatie',
+        title: 'Voorbereiden…',
+        message: 'De instellingen en verbindingsprofielen worden geladen.',
         progress: true,
       );
     }
@@ -204,9 +204,10 @@ class _Header extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Eyebrow('Arcadia · reconcile', onInk: ink),
+        Eyebrow('Arcadia · synchronisatie', onInk: ink),
         const SizedBox(height: PlinkSpacing.s4),
-        Text('Reconcile', style: text.headlineMedium),
+        // The page names itself the way the rail names it (#257).
+        Text('Synchronisatie', style: text.headlineMedium),
         const SizedBox(height: PlinkSpacing.s4),
         Wrap(
           spacing: PlinkSpacing.s3,
@@ -305,11 +306,12 @@ class _Header extends StatelessWidget {
   }
 }
 
-/// The shared per-system "Last sync" box (#188): a bordered card headed
-/// "Last sync" with one row per system — WISA, Smartschool, Azure — each on its
-/// own line showing whether it was refreshed by a sync or a drift check, the
-/// time, and which operator ran it. This replaces the old run-on freshness line
-/// that packed all three systems into a single wrapped sentence.
+/// The shared per-system last-sync box (#188): a bordered card headed
+/// "Laatste synchronisatie" with one row per system — WISA, Smartschool,
+/// Azure — each on its own line showing whether it was refreshed by a sync or a
+/// drift check, the time, and which operator ran it. This replaces the old
+/// run-on freshness line that packed all three systems into a single wrapped
+/// sentence.
 ///
 /// Read from the materialized store so it names *whichever* operator last synced
 /// each system — not just this session (#108). WISA is the Synchronise target;
@@ -353,7 +355,7 @@ class _LastSyncBox extends StatelessWidget {
             children: <Widget>[
               Icon(Icons.schedule_outlined, size: 18, color: colors.primary),
               const SizedBox(width: PlinkSpacing.s2),
-              Text('Last sync', style: text.titleMedium),
+              Text('Laatste synchronisatie', style: text.titleMedium),
             ],
           ),
           const SizedBox(height: PlinkSpacing.s3),
@@ -397,14 +399,14 @@ class _SystemRow extends StatelessWidget {
 
     final String status;
     if (meta == null) {
-      status = 'not synced yet';
+      status = 'nog niet gesynchroniseerd';
     } else {
       // Dated as soon as it leaves today (#192): a stamp from three days ago
       // must not read like this morning's, since a stale row is exactly what
       // this box exists to surface.
       final String when = formatFreshnessStamp(meta.at);
-      final String kind = isSync ? 'sync' : 'drift check';
-      final String by = meta.syncedBy.isEmpty ? '' : ' · by ${meta.syncedBy}';
+      final String kind = isSync ? 'synchronisatie' : 'driftcontrole';
+      final String by = meta.syncedBy.isEmpty ? '' : ' · door ${meta.syncedBy}';
       status = '$kind · $when$by';
     }
 
