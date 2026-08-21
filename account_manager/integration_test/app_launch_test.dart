@@ -153,6 +153,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ReconcileScreen), findsOneWidget);
     expect(find.text('Not configured'), findsOneWidget);
+
+    // The Acties screen renders the same panel, in the operator's language
+    // (#253): everything the Acties view says is Dutch, including the states
+    // that stand in for it.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ActionsScreen), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
   });
 
   testWidgets(
@@ -218,7 +226,7 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('actions-dry-run')));
     await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
     await tester.pumpAndSettle();
-    expect(find.text('Dry-run result'), findsOneWidget);
+    expect(find.text('Resultaat van de dry-run'), findsOneWidget);
     expect(harness.soap.soapActions, isEmpty);
 
     // Apply all: confirm the dialog, the Smartschool write happens for real.
@@ -227,7 +235,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty);
 
     // Back on Reconcile, re-sync with unchanged WISA: the smart diff reports
@@ -410,7 +418,7 @@ void main() {
     gates[1].complete();
     await tester.pumpAndSettle();
     expect(progressDialog, findsNothing);
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty);
     expect(tester.takeException(), isNull);
   });
@@ -446,7 +454,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(progressDialog, findsNothing);
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(
       find.textContaining('Smartschool weigerde de schrijfactie'),
       findsWidgets,
@@ -458,7 +466,7 @@ void main() {
   });
 
   testWidgets(
-      'a completed sync logs a terminal "Sync complete … Ready." line and the '
+      'a completed sync logs a terminal "Sync voltooid … Klaar." line and the '
       'last-sync box renders a row per system end-to-end (#162/#188)',
       (WidgetTester tester) async {
     // The real app composition over the offline harness, driven the way the
@@ -485,7 +493,7 @@ void main() {
     // The terminal ready line is logged (newest-first in the log panel) so the
     // operator knows the pass finished, and it names the pending-action count.
     expect(
-      find.textContaining('Sync complete — 4 pending action(s). Ready.'),
+      find.textContaining('Sync voltooid — 4 openstaande actie(s). Klaar.'),
       findsOneWidget,
     );
     // The last-sync freshness now renders as a dedicated box headed "Last sync"
@@ -506,7 +514,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('Sync complete — no account changes needed. Ready.'),
+      find.textContaining(
+          'Sync voltooid — geen accountwijzigingen nodig. Klaar.'),
       findsOneWidget,
     );
   });
@@ -706,7 +715,7 @@ void main() {
     expect(
         find.byKey(const ValueKey('reconcile-last-sync-wisa')), findsOneWidget);
     expect(find.textContaining('by yvan@school.example'), findsWidgets);
-    // …and the terminal "Sync complete" line names them too (#169).
+    // …and the terminal "Sync voltooid" line names them too (#169).
     expect(
       find.textContaining('Operator: yvan@school.example'),
       findsOneWidget,
@@ -823,7 +832,7 @@ void main() {
       harness.log.entries.where((e) => e.isError).map((e) => e.message),
       isEmpty,
     );
-    expect(find.textContaining('Sync complete'), findsOneWidget);
+    expect(find.textContaining('Sync voltooid'), findsOneWidget);
 
     // Throttling was reported as progress, not silence (#196.5).
     expect(
@@ -981,7 +990,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty);
     final summaries =
         harness.controller.applyResults!.map((r) => r.changes.summary);
@@ -1047,7 +1056,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty);
     expect(harness.graph.requests, isEmpty, reason: 'Azure account is kept');
     final summaries =
@@ -1385,6 +1394,13 @@ void main() {
     expect(find.text('Kies één oplossing:'), findsOneWidget);
     expect(find.text('Negeer deze klas bij het importeren uit WISA'),
         findsOneWidget);
+    // The pre-selected notice writes nothing, and the detail under the radios
+    // says so in Dutch (#253) — it used to read "(manual — not applied
+    // automatically)" on an otherwise Dutch screen.
+    expect(
+      find.textContaining('(manueel — wordt niet automatisch toegepast)'),
+      findsOneWidget,
+    );
     expect(
       tester
           .widget<FilledButton>(find.byKey(const ValueKey('entry-apply-1A')))
@@ -1860,7 +1876,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
 
     // Graph was asked for exactly one group, and for the right kind of group.
     expect(harness.graph.createdGroups, hasLength(1));
@@ -2410,7 +2426,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsWidgets);
+    expect(find.text('Resultaat van het toepassen'), findsWidgets);
     expect(harness.controller.classroomPendingEntries, isEmpty,
         reason: 'the live list drops the work immediately — it always did');
 
@@ -2495,6 +2511,10 @@ void main() {
     final key = harness.controller.classroomPendingEntries.first.situationKey;
     final bulk = find.byKey(ValueKey('situation-apply-$key'));
     await tester.ensureVisible(bulk);
+    // The header line the count sits on is Dutch, like the rest of the screen
+    // (#253) — the operator-facing language everywhere in this app.
+    expect(
+        find.textContaining('2 accounts in dezelfde situatie'), findsOneWidget);
     expect(
         find.descendant(of: bulk, matching: find.text('Alles toepassen (2)')),
         findsOneWidget);
@@ -2507,7 +2527,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsWidgets);
+    expect(find.text('Resultaat van het toepassen'), findsWidgets);
     expect(harness.controller.applyResults, hasLength(2));
     final patched = harness.graph.requests
         .where((r) => r.method == 'PATCH')
@@ -3644,7 +3664,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     final queued = await harness.passwordQueue.load();
     expect(queued, hasLength(1),
         reason: 'the created account\'s password landed in the queue');
@@ -5268,7 +5288,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
 
     // One PATCH, touching `department` only, with our prefix at the head and
     // the subject the other school wrote still on it.
@@ -5378,7 +5398,7 @@ void main() {
     // And confirming really does write only there: one Graph PATCH, no SOAP.
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(
       harness.graph.requests.where((r) => r.method == 'PATCH'),
       hasLength(1),
@@ -5477,7 +5497,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
 
     // Both accounts exist now, off that single click, and both writes are
     // reported — the second is a real write the operator must see, not a
@@ -5589,7 +5609,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
 
     // Both accounts exist now, off that single click, and both writes are
     // reported — the second is a real write the operator must see, not a silent

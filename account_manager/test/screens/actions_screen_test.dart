@@ -43,8 +43,34 @@ void main() {
     await tester.pumpWidget(_wrap(const ActionsScreen(bootstrap: null)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Not configured'), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
     expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
+  });
+
+  testWidgets('a failed bootstrap offers a retry, in Dutch (#253)',
+      (WidgetTester tester) async {
+    // The stand-in panels are as operator-facing as the tree they replace, so
+    // they speak the same language as it. The retry itself is the point of the
+    // panel: a second attempt has to be one button away.
+    var attempts = 0;
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: () async {
+      attempts++;
+      if (attempts == 1) throw StateError('geen verbinding');
+      return ReconcileHarness().bootstrap();
+    })));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Kan het Acties-scherm niet openen'), findsOneWidget);
+    final retry = find.byKey(const ValueKey('actions-bootstrap-retry'));
+    expect(find.descendant(of: retry, matching: find.text('Probeer opnieuw')),
+        findsOneWidget);
+
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+
+    expect(attempts, 2);
+    expect(find.text('Kan het Acties-scherm niet openen'), findsNothing);
+    expect(find.text('Acties'), findsOneWidget);
   });
 
   testWidgets(
@@ -96,7 +122,7 @@ void main() {
     // Dry-run everything from the header — no drill needed, nothing written.
     await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
     await tester.pumpAndSettle();
-    expect(find.text('Dry-run result'), findsOneWidget);
+    expect(find.text('Resultaat van de dry-run'), findsOneWidget);
     expect(harness.soap.soapActions, isEmpty);
 
     // Apply everything: confirm the dialog, the Smartschool write happens.
@@ -106,7 +132,7 @@ void main() {
     expect(find.text('Openstaande acties toepassen?'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty);
   });
 
@@ -125,7 +151,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(harness.soap.soapActions, isEmpty);
-    expect(find.text('Apply result'), findsNothing);
+    expect(find.text('Resultaat van het toepassen'), findsNothing);
   });
 
   group('the apply-confirmation dialog says what the pass really writes (#234)',
@@ -307,6 +333,10 @@ void main() {
     final deleteAlt = ValueKey('alt-$id-DeleteStudentFromSmartschool');
     expect(find.byKey(unregisterAlt), findsOneWidget);
     expect(find.byKey(deleteAlt), findsOneWidget);
+    // An unregister carries no field diff, so the detail under the radios is
+    // the lifecycle note — in Dutch, like the rest of the screen (#253).
+    expect(find.text('Levenscyclusactie — geen wijzigingen per veld.'),
+        findsOneWidget);
 
     await tester.tap(find.byKey(deleteAlt));
     await tester.pumpAndSettle();
@@ -317,7 +347,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty,
         reason: 'delete is a real Smartschool write');
     final summaries =
@@ -339,7 +369,7 @@ void main() {
     await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
 
     expect(
-        find.textContaining('accounts in the same situation'), findsOneWidget);
+        find.textContaining('accounts in dezelfde situatie'), findsOneWidget);
     final key = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student')
         .situationKey;
@@ -365,7 +395,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.controller.applyResults, hasLength(2));
     final summaries =
         harness.controller.applyResults!.map((r) => r.changes.summary).toList();
@@ -415,7 +445,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.controller.applyResults, hasLength(2),
         reason: 'one write per account of the open class');
     final patched = harness.graph.requests
@@ -1633,7 +1663,7 @@ void main() {
       gates[1].complete();
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
-      expect(find.text('Apply result'), findsOneWidget);
+      expect(find.text('Resultaat van het toepassen'), findsOneWidget);
       expect(harness.controller.applyResults, hasLength(2));
       expect(harness.soap.soapActions, isNotEmpty);
     });
@@ -1664,7 +1694,7 @@ void main() {
       gate.complete();
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
-      expect(find.text('Dry-run result'), findsOneWidget);
+      expect(find.text('Resultaat van de dry-run'), findsOneWidget);
       expect(harness.soap.soapActions, isEmpty);
     });
 
@@ -1696,7 +1726,7 @@ void main() {
 
       expect(dialog, findsNothing,
           reason: 'a failed pass must not trap anyone');
-      expect(find.text('Apply result'), findsOneWidget);
+      expect(find.text('Resultaat van het toepassen'), findsOneWidget);
       expect(
         harness.controller.applyResults!.map((r) => r.outcome),
         everyElement(ActionOutcome.failed),
@@ -1754,7 +1784,7 @@ void main() {
       gate.complete();
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
-      expect(find.text('Apply result'), findsOneWidget);
+      expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     });
   });
 }

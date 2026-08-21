@@ -140,13 +140,13 @@ void main() {
       // names the operator who ran the pass (#169).
       expect(
         h.log.entries.map((e) => e.message),
-        contains('Sync complete — 4 pending action(s). Ready. '
+        contains('Sync voltooid — 4 openstaande actie(s). Klaar. '
             'Operator: operator@school.example.'),
       );
       // It is the *last* line — the operator sees it closing the pass.
       expect(
           h.log.entries.last.message,
-          'Sync complete — 4 pending action(s). Ready. '
+          'Sync voltooid — 4 openstaande actie(s). Klaar. '
           'Operator: operator@school.example.');
     });
 
@@ -157,7 +157,7 @@ void main() {
       await h.controller.sync();
 
       expect(h.log.entries.last.message,
-          'Sync complete — 4 pending action(s). Ready.');
+          'Sync voltooid — 4 openstaande actie(s). Klaar.');
     });
 
     test('the "no changes needed" path also logs a ready line', () async {
@@ -172,12 +172,12 @@ void main() {
       expect(h.controller.noChangesNeeded, isTrue);
       expect(
         h.log.entries.map((e) => e.message),
-        contains('Sync complete — no account changes needed. Ready. '
+        contains('Sync voltooid — geen accountwijzigingen nodig. Klaar. '
             'Operator: operator@school.example.'),
       );
       expect(
           h.log.entries.last.message,
-          'Sync complete — no account changes needed. Ready. '
+          'Sync voltooid — geen accountwijzigingen nodig. Klaar. '
           'Operator: operator@school.example.');
     });
   });

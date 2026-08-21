@@ -1427,8 +1427,9 @@ class ReconcileController extends ChangeNotifier {
     // operator degrades gracefully (nothing appended, no dangling "by ").
     final by = syncedBy.isEmpty ? '' : ' Operator: $syncedBy.';
     final message = _noChangesNeeded
-        ? 'Sync complete — no account changes needed. Ready.$by'
-        : 'Sync complete — ${pendingActions.length} pending action(s). Ready.$by';
+        ? 'Sync voltooid — geen accountwijzigingen nodig. Klaar.$by'
+        : 'Sync voltooid — ${pendingActions.length} openstaande actie(s). '
+            'Klaar.$by';
     log.addMessage(core.Origin.all, message);
   }
 
@@ -1494,7 +1495,7 @@ class ReconcileController extends ChangeNotifier {
       if (_phase == ReconcilePhase.idle) _phase = ReconcilePhase.ready;
       notifyListeners();
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not load the overview: $e');
+      log.addError(core.Origin.all, 'Kon het overzicht niet laden: $e');
     }
   }
 
@@ -1522,7 +1523,8 @@ class ReconcileController extends ChangeNotifier {
     try {
       await _refetchFromStore();
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not catch up after reconnect: $e');
+      log.addError(
+          core.Origin.all, 'Kon niet bijwerken na het herverbinden: $e');
     }
   }
 
@@ -1542,14 +1544,14 @@ class ReconcileController extends ChangeNotifier {
           classroom: open.classroom,
         );
       } on Object catch (e) {
-        log.addError(core.Origin.all, 'Could not refresh ${open.label}: $e');
+        log.addError(core.Origin.all, 'Kon ${open.label} niet vernieuwen: $e');
       }
     }
     if (_showingGroups) {
       try {
         _groupDocs = await store.readGroups();
       } on Object catch (e) {
-        log.addError(core.Origin.all, 'Could not refresh the class groups: $e');
+        log.addError(core.Origin.all, 'Kon de klasgroepen niet vernieuwen: $e');
       }
     }
     notifyListeners();
@@ -1568,7 +1570,7 @@ class ReconcileController extends ChangeNotifier {
         classroom: classroom.classroom,
       );
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not open ${classroom.label}: $e');
+      log.addError(core.Origin.all, 'Kon ${classroom.label} niet openen: $e');
       _classroomAccounts = const [];
     } finally {
       _loadingClassroom = false;
@@ -1596,7 +1598,7 @@ class ReconcileController extends ChangeNotifier {
     try {
       _groupDocs = await store.readGroups();
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not open the class groups: $e');
+      log.addError(core.Origin.all, 'Kon de klasgroepen niet openen: $e');
       _groupDocs = const [];
     } finally {
       _loadingGroups = false;
@@ -1881,7 +1883,9 @@ class ReconcileController extends ChangeNotifier {
       // A correction that fails must not turn a successful apply into a failed
       // pass; the counts then simply stay as stale as they were before.
       log.addError(
-          core.Origin.all, 'Could not refresh the overview counts: $e');
+          core.Origin.all,
+          'Kon de tellingen in het overzicht niet '
+          'vernieuwen: $e');
     }
   }
 

@@ -103,23 +103,23 @@ class _ActionsScreenState extends State<ActionsScreen> {
     if (widget.bootstrap == null) {
       return const _MessagePanel(
         eyebrow: 'Arcadia · acties',
-        title: 'Not configured',
-        message: 'Azure AD is not configured for this build, so the settings '
-            'store and connectors cannot be reached. Provide the AAD '
-            '--dart-define values and restart.',
+        title: 'Niet geconfigureerd',
+        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
+            'instellingenopslag en de connectoren zijn onbereikbaar. Geef de '
+            'AAD --dart-define-waarden mee en start opnieuw op.',
       );
     }
     final error = _bootstrapError;
     if (error != null) {
-      final retryNote = _attempts > 1 ? '\n\n(Attempt $_attempts failed.)' : '';
+      final retryNote = _attempts > 1 ? '\n\n(Poging $_attempts mislukt.)' : '';
       return _MessagePanel(
         eyebrow: 'Arcadia · acties',
-        title: 'Could not prepare the actions screen',
+        title: 'Kan het Acties-scherm niet openen',
         message: '$error$retryNote',
         action: FilledButton(
           key: const ValueKey('actions-bootstrap-retry'),
           onPressed: _bootstrap,
-          child: const Text('Try again'),
+          child: const Text('Probeer opnieuw'),
         ),
       );
     }
@@ -127,8 +127,8 @@ class _ActionsScreenState extends State<ActionsScreen> {
     if (_bootstrapping || services == null) {
       return const _MessagePanel(
         eyebrow: 'Arcadia · acties',
-        title: 'Preparing…',
-        message: 'Loading the settings and connection profiles.',
+        title: 'Voorbereiden…',
+        message: 'De instellingen en verbindingsprofielen worden geladen.',
         progress: true,
       );
     }
@@ -793,8 +793,8 @@ class _ActionsBodyState extends State<_ActionsBody>
       slivers
         ..add(_gap(PlinkSpacing.s5))
         ..addAll(_resultSectionSlivers(
-          title: 'Dry-run result',
-          subtitle: 'No changes were written. This is what an apply would do.',
+          title: 'Resultaat van de dry-run',
+          subtitle: 'Er is niets geschreven. Dit is wat toepassen zou doen.',
           results: dry,
         ));
     }
@@ -802,8 +802,8 @@ class _ActionsBodyState extends State<_ActionsBody>
       slivers
         ..add(_gap(PlinkSpacing.s5))
         ..addAll(_resultSectionSlivers(
-          title: 'Apply result',
-          subtitle: 'Written to the target systems.',
+          title: 'Resultaat van het toepassen',
+          subtitle: 'Weggeschreven naar de doelsystemen.',
           results: applied,
         ));
     }
@@ -1898,7 +1898,7 @@ class _SituationHeader extends StatelessWidget {
           Expanded(
             child: Text(
               '${entries.first.situationLabel} — ${entries.length} '
-              'accounts in the same situation',
+              'accounts in dezelfde situatie',
               style: text.titleSmall,
             ),
           ),
@@ -2119,9 +2119,9 @@ class _OptionDetail extends StatelessWidget {
           ? <Widget>[
               Text(
                 option.canApply
-                    ? 'Lifecycle action — no per-field diff.'
+                    ? 'Levenscyclusactie — geen wijzigingen per veld.'
                     : '${option.changes.summary} '
-                        '(manual — not applied automatically)',
+                        '(manueel — wordt niet automatisch toegepast)',
                 style: text.bodySmall,
               ),
             ]
