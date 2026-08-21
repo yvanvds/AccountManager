@@ -3777,6 +3777,113 @@ void main() {
     expect(harness.controller.linked!.snapshot.staff.single.azure?.id,
         'az-transferred');
   });
+
+  testWidgets(
+      'a WISA-only student reaches Acties under their own class, and one '
+      'apply provisions both of their accounts (#230)',
+      (WidgetTester tester) async {
+    // The new-intake case the operator reported as "they never get offered the
+    // account creates". Two halves, and only a run of the real app covers both.
+    //
+    // That they show up at all is the first half: a student present only in
+    // WISA has no Smartschool and no Azure record, so every join the linker
+    // makes is empty, and the managed-school filter (#178) drops exactly this
+    // shape of record when the school is *not* flagged as ours. Here it is, so
+    // they must land under their real class — not "Zonder klas", not
+    // "Niet toegewezen", not nowhere.
+    //
+    // The second half is what the panel offers. Provisioning is a chain:
+    // AddStudentToSmartschool builds its account with the Azure UPN as the
+    // `mail`, so it evaluates false until the Office 365 account exists, and the
+    // dispatcher — a pure function of the current record — can only ever offer
+    // the first link. The operator used to have to apply, notice the relink, and
+    // apply again. Now the State layer runs the follow-up against the freshly
+    // relinked record, so the one click the operator makes provisions the
+    // student end to end.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        schools: [wisaSchool(1, ours: true)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Browse Acties → Leerlingen the way the operator did when they reported
+    // this: the student is under their own year and class.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    expect(find.text('Jane Doe'), findsWidgets,
+        reason: 'a student with no downstream account is still listed');
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+
+    // Apply that one row.
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    final id = entry.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+
+    // Both accounts exist now, off that single click, and both writes are
+    // reported — the second is a real write the operator must see, not a
+    // silent extra.
+    expect(
+      harness.controller.applyResults!.map((r) => r.changes.summary),
+      <String>[
+        'Maak een nieuw Office 365 account',
+        'Maak een nieuw Smartschool account',
+      ],
+    );
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
+    expect(harness.graph.createdUsers.single['employeeId'], 'W7');
+    expect(harness.soap.soapActions.any((a) => a.contains('saveUser')), isTrue);
+
+    // The Smartschool account carries the UPN that actually landed — the whole
+    // reason the follow-up runs against the relinked record instead of the
+    // projection the first action described.
+    final linked = harness.controller.linked!.snapshot.accounts.single;
+    expect(linked.azure, isNotNull);
+    expect(linked.smartschool?.mail, linked.azure?.upn);
+
+    // And both writes are in the log the operator reads.
+    final messages = harness.log.entries.map((e) => e.message);
+    expect(messages, contains(contains('Maak een nieuw Office 365 account')));
+    expect(messages, contains(contains('Maak een nieuw Smartschool account')));
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.

@@ -60,11 +60,62 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
 class RecordingGraph implements az.GraphTransport {
   final List<az.GraphRequest> requests = <az.GraphRequest>[];
 
+  /// The bodies of every `POST /users` this transport accepted, in order — the
+  /// accounts a create action actually asked Graph to make (#230).
+  final List<Map<String, dynamic>> createdUsers = <Map<String, dynamic>>[];
+
+  int _created = 0;
+
+  /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
+  /// reads before it writes: `AddStudentToAzure` first asks
+  /// `employeeId in (…)` whether the person already has an account (#224), then
+  /// `createPrincipalName` probes `users/<upn>` for each UPN candidate until one
+  /// is free. This models an empty tenant — the collection reads come back
+  /// empty, the single-user reads `404` — and echoes the created resource the
+  /// way Graph does, so the whole create path runs offline (#230).
+  ///
+  /// Answering those GETs matters: a bare `204` decodes to an empty JSON object,
+  /// which `AzureUser.fromGraphJson` happily turns into a user, so every UPN
+  /// candidate would read as taken and `createPrincipalName` would spin forever.
   @override
   Future<az.GraphResponse> send(az.GraphRequest request) async {
     requests.add(request);
+    if (request.method == 'GET') {
+      return _singleUserPath.hasMatch(request.url.path)
+          ? const az.GraphResponse(
+              statusCode: 404,
+              headers: <String, String>{'content-type': 'application/json'},
+              body: '{"error":{"code":"Request_ResourceNotFound",'
+                  '"message":"Resource does not exist."}}',
+            )
+          : _ok(<String, dynamic>{'value': const <Object>[]}, statusCode: 200);
+    }
+    if (request.method == 'POST' && request.url.path.endsWith('/users')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      createdUsers.add(body);
+      return _ok(
+        <String, dynamic>{...body, 'id': 'az-created-${++_created}'},
+        statusCode: 201,
+      );
+    }
     return const az.GraphResponse(statusCode: 204);
   }
+
+  /// `/v1.0/users/<id-or-upn>` — a read of one user, as opposed to the
+  /// collection reads `/v1.0/users` and `/v1.0/users/delta`.
+  static final RegExp _singleUserPath = RegExp(r'/users/(?!delta$)[^/]+$');
+
+  static az.GraphResponse _ok(
+    Map<String, dynamic> body, {
+    required int statusCode,
+  }) =>
+      az.GraphResponse(
+        statusCode: statusCode,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
 }
 
 /// A [az.GraphTransport] that answers the way Graph does for a school whose

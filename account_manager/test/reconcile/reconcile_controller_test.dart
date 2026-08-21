@@ -504,6 +504,152 @@ void main() {
     });
   });
 
+  group('provisioning a WISA-only student (#230)', () {
+    /// A new intake: one student in a managed school with neither a Smartschool
+    /// nor an Office 365 account, and the Smartschool class they belong to.
+    ReconcileHarness newIntakeHarness() => ReconcileHarness(
+          wisa: wisaSnap(
+            students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+            schools: [wisaSchool(1, ours: true)],
+          ),
+          smartschool: ssSnap(
+            groups: [ssGroup('3C', code: '3C_ss')],
+            accounts: const [],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+          ourSchoolIds: const {1},
+        );
+
+    /// The student's own pending entry (the Smartschool class the fixture
+    /// carries has no WISA counterpart, so it raises a group entry of its own).
+    PendingAccountEntry studentEntry(ReconcileController controller) =>
+        controller.pendingEntries.singleWhere((e) => e.family == 'student');
+
+    test('is offered exactly one applyable entry', () async {
+      final h = newIntakeHarness();
+      await h.controller.sync();
+
+      final entry = studentEntry(h.controller);
+      expect(entry.canApply, isTrue);
+      expect(entry.choices.single.selected.kind, 'AddStudentToAzure');
+    });
+
+    test('applying it provisions both accounts and reports both writes',
+        () async {
+      final h = newIntakeHarness();
+      await h.controller.sync();
+
+      await h.controller.applyEntry(studentEntry(h.controller));
+
+      expect(h.controller.error, isNull);
+      expect(
+        h.controller.applyResults!.map((r) => r.changes.summary),
+        <String>[
+          'Maak een nieuw Office 365 account',
+          'Maak een nieuw Smartschool account',
+        ],
+        reason: 'one click, the whole provisioning chain',
+      );
+      expect(
+        h.controller.applyResults!.map((r) => r.outcome),
+        everyElement(actions.ActionOutcome.applied),
+      );
+      // Both writes really happened, and the linked view carries both records.
+      expect(h.graph.createdUsers.single['employeeId'], 'W7');
+      expect(h.soap.soapActions.any((a) => a.contains('saveUser')), isTrue);
+      final linked = h.controller.linked!.snapshot.accounts.single;
+      expect(linked.azure, isNotNull);
+      expect(linked.smartschool, isNotNull);
+    });
+
+    test('the chained write is logged like any other', () async {
+      final h = newIntakeHarness();
+      await h.controller.sync();
+
+      await h.controller.applyEntry(studentEntry(h.controller));
+
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(contains('Maak een nieuw Smartschool account')),
+      );
+    });
+
+    test('a dry run projects only the write it can actually describe',
+        () async {
+      // The chain rides the incremental refresh, which a dry run does not
+      // perform — so it stays a projection of the one write, with no Graph POST
+      // and no Smartschool call behind it.
+      final h = newIntakeHarness();
+      await h.controller.sync();
+
+      await h.controller.dryRunEntry(studentEntry(h.controller));
+
+      expect(
+        h.controller.dryRunResults!.map((r) => r.changes.summary),
+        <String>['Maak een nieuw Office 365 account'],
+      );
+      expect(h.graph.createdUsers, isEmpty);
+      expect(h.soap.soapActions, isEmpty);
+    });
+  });
+
+  group('managed-school filter visibility (#230)', () {
+    test('a sync says how many students the filter dropped', () async {
+      // School 2 is not in the managed set, and its student owns no account of
+      // ours — so they are (correctly, #178) kept out of the Actions view. That
+      // used to happen with no node, no count and no log line, which is exactly
+      // how a school the operator forgot to flag in Instellingen reads.
+      final h = ReconcileHarness(
+        wisa: wisaSnap(
+          students: [
+            wisaStudent(wisaId: '1'),
+            wisaStudent(wisaId: '2', schoolId: 2),
+          ],
+          schools: [wisaSchool(1), wisaSchool(2)],
+        ),
+        smartschool: ssSnap(
+          groups: const [],
+          accounts: const [],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+        ourSchoolIds: const {1},
+      );
+
+      await h.controller.sync();
+
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains('1 leerling(en) overgeslagen: '
+            'niet in een school die we beheren.'),
+      );
+    });
+
+    test('a sync with nothing dropped stays quiet', () async {
+      final h = ReconcileHarness(
+        wisa: wisaSnap(
+          students: [wisaStudent(wisaId: '1')],
+          schools: [wisaSchool(1)],
+        ),
+        smartschool: ssSnap(
+          groups: const [],
+          accounts: const [],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+        ourSchoolIds: const {1},
+      );
+
+      await h.controller.sync();
+
+      expect(
+        h.log.entries.map((e) => e.message),
+        isNot(contains(contains('overgeslagen'))),
+      );
+    });
+  });
+
   group('busy-pass progress (#176)', () {
     /// Records [ReconcileController.progress] on every notification, so a test
     /// can assert the pass stepped the bar forward through its stages even

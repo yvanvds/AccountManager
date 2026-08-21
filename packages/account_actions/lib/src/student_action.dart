@@ -62,6 +62,28 @@ sealed class StudentAction {
   /// ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
 
+  /// The action types this one **unlocks** on the same target (#230).
+  ///
+  /// Provisioning a brand-new student is a chain, not a single action: the
+  /// Smartschool account is built with the Azure UPN as its `mail`, so
+  /// [AddStudentToSmartschool] cannot even [evaluate] true until
+  /// [AddStudentToAzure] has run. The dispatcher (§6.3) is a pure function of
+  /// the *current* record, so it can only ever offer the first link of that
+  /// chain — which is why a WISA-only student used to be offered one create,
+  /// leaving the operator to apply, wait for the relink, and apply again.
+  ///
+  /// Declaring the follow-up here lets the State layer run it immediately
+  /// against the **freshly relinked** record. It must be the relinked record
+  /// and never a projection: `createPrincipalName` resolves a UPN collision by
+  /// suffixing, so the UPN that actually landed can differ from the one
+  /// [describeChanges] projected, and the Smartschool account would then carry
+  /// the wrong `mail`.
+  ///
+  /// Pure and constant — it names what *may* follow, never what must: the
+  /// follow-up's own [evaluate] still decides whether it applies, exactly as it
+  /// would on the next sync.
+  Set<Type> get unlocks => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3).
@@ -114,6 +136,13 @@ class AddStudentToAzure extends StudentAction {
 
   @override
   bool evaluate() => account.isInOurWisa && account.azure == null;
+
+  /// Creating the Office 365 account unlocks the Smartschool create, which
+  /// needs the fresh UPN as the new account's `mail` (#230). Without the chain
+  /// a new student's second create only appears on the *next* pass, so the
+  /// Acties panel never showed the full provisioning intent.
+  @override
+  Set<Type> get unlocks => const {AddStudentToSmartschool};
 
   @override
   ChangeSet describeChanges() {

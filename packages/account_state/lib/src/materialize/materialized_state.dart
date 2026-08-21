@@ -680,6 +680,7 @@ class MaterializedView {
     required this.accounts,
     required this.rollups,
     this.groups = const [],
+    this.skippedUnmanagedStudents = 0,
   });
 
   final int generation;
@@ -688,4 +689,13 @@ class MaterializedView {
   /// The per-group documents for the group-action family (#119).
   final List<MaterializedGroup> groups;
   final List<Rollup> rollups;
+
+  /// How many linked students the materialize deliberately left out because
+  /// they exist only in a school we do **not** manage and own no account of
+  /// ours (#178) — the drop that used to be silent (#230).
+  ///
+  /// Not part of the persisted view; it is pass metadata the sync reports, so an
+  /// operator who cannot find an intake in Acties can tell "filtered out by the
+  /// managed-school flags in Instellingen" from "never came back from WISA".
+  final int skippedUnmanagedStudents;
 }

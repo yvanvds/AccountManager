@@ -20,14 +20,24 @@ import 'wisa_import_rules.dart';
 /// dry run or a failed apply the snapshot is untouched, so [linked] is `null`
 /// and the caller keeps its previous [LinkedState].
 class ApplyResult {
-  const ApplyResult(this.result, this.linked);
+  const ApplyResult(this.result, this.linked, {this.followUps = const []});
 
   /// The action's own result — outcome, changes, mutated record.
   final ActionResult result;
 
   /// The linked view recomputed after the incremental refresh, or `null` when
-  /// nothing was written (dry run / failure).
+  /// nothing was written (dry run / failure). When [followUps] ran, this is the
+  /// view the **last** of them left behind.
   final LinkedState? linked;
+
+  /// The results of the follow-up actions this write unlocked on the same
+  /// target and the applier ran straight away (#230), in the order they ran.
+  ///
+  /// Empty for every action that declares no `unlocks`, and for a dry run or a
+  /// failed write (nothing was written, so nothing was unlocked). The caller
+  /// reports these beside [result]: they are writes the operator's one click
+  /// performed and must see.
+  final List<ActionResult> followUps;
 
   /// Whether the snapshot was patched and [linked] recomputed.
   bool get refreshed => linked != null;
@@ -130,17 +140,93 @@ class StateApplier {
         ourSchoolIds: ourSchoolIds,
       );
 
-  /// Applies a [StudentAction] and refreshes the snapshot on a real write.
+  /// Applies a [StudentAction] and refreshes the snapshot on a real write, then
+  /// runs whatever that write unlocked on the same student (#230).
   Future<ApplyResult> applyStudent(
     StudentAction action, {
     ApplyOptions options = const ApplyOptions(),
   }) async {
     final result = await action.apply(connectors, options);
-    return _refresh(
+    final applied = await _refresh(
       result,
       removedSmartschoolUid: action.target.smartschool?.uid,
       removedAzureId: action.target.azure?.id,
     );
+    return _chainStudentFollowUps(action, applied, options);
+  }
+
+  /// Runs the follow-up actions [action]'s write unlocked on the same student,
+  /// against the **relinked** record (#230).
+  ///
+  /// Provisioning a new student is a two-link chain: `AddStudentToSmartschool`
+  /// builds the account with the Azure UPN as its `mail`, so it cannot evaluate
+  /// true until `AddStudentToAzure` has run. The dispatcher is a pure function
+  /// of the current record and can only offer the first link, so one click used
+  /// to create the Office 365 account and stop, leaving the Smartschool create
+  /// to a second pass the operator had to notice and trigger.
+  ///
+  /// Each link is taken from the freshly recomputed [LinkedState]'s own
+  /// dispatch — the same list the UI would show on the next render — so the
+  /// follow-up is bound to the record the previous write produced, placement
+  /// and all, and its own `evaluate()` has already agreed it applies. Never a
+  /// projection: `createPrincipalName` resolves a UPN collision by suffixing,
+  /// so the UPN that landed can differ from the projected one.
+  ///
+  /// The walk is bounded three ways, so no declaration can spin it: nothing is
+  /// unlocked when nothing was written (a dry run or a failure returns no
+  /// refreshed view), each action type runs at most once per chain, and a
+  /// failed link stops it — the failure is reported and the next sync re-offers
+  /// whatever is still missing.
+  Future<ApplyResult> _chainStudentFollowUps(
+    StudentAction action,
+    ApplyResult applied,
+    ApplyOptions options,
+  ) async {
+    var linked = applied.linked;
+    if (linked == null || action.unlocks.isEmpty) return applied;
+
+    final targetId = action.target.id;
+    final ran = <Type>{action.runtimeType};
+    final followUps = <ActionResult>[];
+    var unlocks = action.unlocks;
+
+    while (unlocks.isNotEmpty) {
+      final next = _unlockedStudentAction(linked!, targetId, unlocks, ran);
+      if (next == null) break;
+      ran.add(next.runtimeType);
+      final result = await next.apply(connectors, options);
+      followUps.add(result);
+      final refreshed = await _refresh(
+        result,
+        removedSmartschoolUid: next.target.smartschool?.uid,
+        removedAzureId: next.target.azure?.id,
+      );
+      if (!refreshed.refreshed) break;
+      linked = refreshed.linked;
+      unlocks = next.unlocks;
+    }
+
+    if (followUps.isEmpty) return applied;
+    return ApplyResult(applied.result, linked, followUps: followUps);
+  }
+
+  /// The first action [linked]'s dispatch raised for [targetId] whose type is
+  /// named by [unlocks] and has not run yet this chain, or null when the write
+  /// unlocked nothing after all.
+  StudentAction? _unlockedStudentAction(
+    LinkedState linked,
+    core.LinkedAccountId targetId,
+    Set<Type> unlocks,
+    Set<Type> ran,
+  ) {
+    for (final candidate in linked.studentActions) {
+      if (candidate.target.id == targetId &&
+          unlocks.contains(candidate.runtimeType) &&
+          !ran.contains(candidate.runtimeType)) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   /// Applies a [StaffAction] and refreshes the snapshot on a real write.

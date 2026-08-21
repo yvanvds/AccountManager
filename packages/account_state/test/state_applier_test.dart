@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:account_actions/account_actions.dart';
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
@@ -22,7 +24,13 @@ const core.Address _addr = core.Address(
 // ---------------------------------------------------------------------------
 
 class _RecordingSoap implements ss.SmartschoolSoapTransport {
+  _RecordingSoap({this.resultCode = 0});
+
   final List<String> soapActions = [];
+
+  /// The integer result every write returns; non-zero is Smartschool's way of
+  /// saying the call failed.
+  final int resultCode;
 
   @override
   Future<String> send({
@@ -31,23 +39,55 @@ class _RecordingSoap implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
-    // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '
         'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
-        '<soap:Body><response><return>0</return></response>'
+        '<soap:Body><response><return>$resultCode</return></response>'
         '</soap:Body></soap:Envelope>';
   }
 }
 
+/// Graph for an empty tenant. PATCH/DELETE answer `204` the way Graph does,
+/// while a **create** reads before it writes — `employeeId in (…)` to prove the
+/// person has no account yet (#224), then `users/<upn>` per UPN candidate until
+/// one is free — so those reads must answer "nothing here" and the create must
+/// echo the new resource (#230). A bare `204` would decode to an empty JSON
+/// object, which `AzureUser.fromGraphJson` turns into a user, so every UPN
+/// candidate would read as taken and `createPrincipalName` would spin forever.
 class _RecordingGraph implements az.GraphTransport {
   final List<az.GraphRequest> requests = [];
+
+  int _created = 0;
+
+  static final RegExp _singleUserPath = RegExp(r'/users/(?!delta$)[^/]+$');
 
   @override
   Future<az.GraphResponse> send(az.GraphRequest request) async {
     requests.add(request);
+    if (request.method == 'GET') {
+      return _singleUserPath.hasMatch(request.url.path)
+          ? const az.GraphResponse(
+              statusCode: 404,
+              headers: {'content-type': 'application/json'},
+              body: '{"error":{"code":"Request_ResourceNotFound"}}',
+            )
+          : _ok(<String, dynamic>{'value': const <Object>[]}, 200);
+    }
+    if (request.method == 'POST' && request.url.path.endsWith('/users')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      return _ok({...body, 'id': 'az-created-${++_created}'}, 201);
+    }
     return const az.GraphResponse(statusCode: 204);
   }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body, int statusCode) =>
+      az.GraphResponse(
+        statusCode: statusCode,
+        headers: const {'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
 }
 
 ss.SmartschoolConnector _ssConn(_RecordingSoap t) =>
@@ -235,7 +275,8 @@ class _Harness {
     List<wapi.WisaStudent> wisaBaseStudents = const [],
     ss.SmartschoolSnapshot? smartschool,
     az.AzureSnapshot? azure,
-  }) {
+    int soapResultCode = 0,
+  }) : soap = _RecordingSoap(resultCode: soapResultCode) {
     final ssSnap = smartschool ?? _sSnap();
     final azSnap = azure ?? _aSnap();
     rules = WisaImportRules();
@@ -284,7 +325,7 @@ class _Harness {
     );
   }
 
-  final soap = _RecordingSoap();
+  final _RecordingSoap soap;
   final graph = _RecordingGraph();
   late final WisaImportRules rules;
   late final ApplicationState app;
@@ -411,6 +452,127 @@ void main() {
         ['KEEP'],
       );
       expect(applied.refreshed, isTrue);
+    });
+  });
+
+  group('provisioning a new student is one chain, not two passes (#230)', () {
+    /// A student who exists only in WISA — a new intake with neither a
+    /// Smartschool nor an Office 365 account. The dispatcher can only offer the
+    /// Azure create: `AddStudentToSmartschool` builds its account with the Azure
+    /// UPN as the `mail`, so it evaluates false until that account exists.
+    _Harness newIntake({int soapResultCode = 0}) => _Harness(
+          wisa: _wSnap(students: [_wStudent(wisaId: 'W1')]),
+          soapResultCode: soapResultCode,
+        );
+
+    test('the Azure create chains the Smartschool create it unlocked',
+        () async {
+      final harness = newIntake();
+      final before = await harness.applier.link();
+      final create = before.studentActions.single;
+      expect(create, isA<AddStudentToAzure>(),
+          reason: 'the dispatcher can only see the first link of the chain');
+
+      final applied = await harness.applier.applyStudent(create);
+
+      // Both writes happened, off one apply.
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.result.system, core.Origin.azure);
+      expect(applied.followUps.map((r) => r.changes.summary),
+          ['Maak een nieuw Smartschool account']);
+      expect(applied.followUps.single.outcome, ActionOutcome.applied);
+
+      // And both records are in the snapshots the pass left behind.
+      final azure = harness.app.azure.snapshot!.users.single;
+      expect(azure.employeeId, 'W1');
+      final smartschool = harness.app.smartschool.snapshot!.accounts.single;
+      expect(smartschool.accountId, 'W1');
+      expect(smartschool.mail, azure.upn,
+          reason: 'the follow-up read the UPN that actually landed, not the '
+              'projected one');
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the chain rides the incremental refresh — no re-sync');
+    });
+
+    test('the chained account is what the linker now sees', () async {
+      final harness = newIntake();
+      final create = (await harness.applier.link()).studentActions.single;
+
+      final applied = await harness.applier.applyStudent(create);
+
+      final linked = applied.linked!.snapshot.accounts.single;
+      expect(linked.wisa, isNotNull);
+      expect(linked.azure, isNotNull);
+      expect(linked.smartschool, isNotNull,
+          reason: 'the returned view is the one the *last* link produced');
+      expect(
+        applied.linked!.studentActions.whereType<AddStudentToAzure>(),
+        isEmpty,
+      );
+      expect(
+        applied.linked!.studentActions.whereType<AddStudentToSmartschool>(),
+        isEmpty,
+      );
+    });
+
+    test('a dry run projects the first write and chains nothing', () async {
+      final harness = newIntake();
+      final create = (await harness.applier.link()).studentActions.single;
+
+      final applied =
+          await harness.applier.applyStudent(create, options: ApplyOptions.dry);
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(applied.followUps, isEmpty,
+          reason: 'nothing was written, so nothing was unlocked');
+      expect(harness.soap.soapActions, isEmpty);
+      expect(harness.graph.requests.where((r) => r.method == 'POST'), isEmpty);
+      expect(harness.app.smartschool.snapshot!.accounts, isEmpty);
+    });
+
+    test('a failing follow-up stops the chain and is reported', () async {
+      // Smartschool refuses the create (non-zero return code); the Azure
+      // account it followed still exists and must stay in the snapshot, so the
+      // next pass offers exactly the one create that is still missing.
+      final harness = newIntake(soapResultCode: 1);
+      final create = (await harness.applier.link()).studentActions.single;
+
+      final applied = await harness.applier.applyStudent(create);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.followUps.single.outcome, ActionOutcome.failed);
+      expect(applied.linked, isNotNull,
+          reason: 'the successful Azure write is still reflected');
+      expect(harness.app.azure.snapshot!.users, hasLength(1));
+      expect(harness.app.smartschool.snapshot!.accounts, isEmpty);
+      expect(
+        applied.linked!.studentActions.single,
+        isA<AddStudentToSmartschool>(),
+      );
+    });
+
+    test('both minted passwords land on one password sheet (#105)', () async {
+      final queue = InMemoryPasswordQueueStore();
+      final harness = newIntake();
+      final applier = StateApplier(
+        app: harness.app,
+        connectors: Connectors(
+          smartschool: _ssConn(harness.soap),
+          azure: _azConn(harness.graph),
+        ),
+        resolver: _SeqResolver(),
+        wisaRules: harness.rules,
+        studentConfig: _studentConfig(),
+        staffConfig: _staffConfig(),
+        passwordQueue: queue,
+      );
+
+      await applier.applyStudent((await applier.link()).studentActions.single);
+
+      final entry = (await queue.load()).single;
+      expect(entry.azurePassword, isNotNull);
+      expect(entry.smartschoolPassword, isNotNull,
+          reason: 'the chained create merges onto the entry the first left');
     });
   });
 

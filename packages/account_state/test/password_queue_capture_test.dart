@@ -288,62 +288,33 @@ void main() {
       expect(entry.mail, 'jan.peeters@student.school.example');
     });
 
-    test('an Azure create enqueues the Azure password only', () async {
-      // WISA present, Azure missing → AddStudentToAzure.
+    test(
+        "provisioning a new student fills both halves of one sheet from the "
+        "operator's single apply (#230)", () async {
+      // WISA only — a new intake. The dispatcher offers just AddStudentToAzure,
+      // because the Smartschool create needs the Azure UPN as its mail; the
+      // State layer then chains that follow-up against the relinked record, so
+      // one apply mints two passwords. They belong to the same student, so they
+      // must land on one sheet — not two rows (legacy `AccountPassword`).
       final harness = _Harness(wisa: _wSnap(students: [_wStudent()]));
       final target = _linkedStudent(wisa: _wStudent());
 
-      await harness.applier.applyStudent(
+      final applied = await harness.applier.applyStudent(
         AddStudentToAzure(target, harness.applier.studentConfig),
       );
+      expect(applied.followUps, hasLength(1), reason: 'the chain ran');
 
       final entries = await harness.queue.load();
-      expect(entries, hasLength(1));
+      expect(entries, hasLength(1), reason: 'one sheet per student, not two');
       final entry = entries.single;
-      expect(entry.azurePassword, 'pw1');
-      expect(entry.smartschoolPassword, isNull);
-      expect(entry.displayName, 'Jan Peeters');
-    });
-
-    test(
-        'Azure then Smartschool creates merge onto one entry with both passwords',
-        () async {
-      // The realistic two-pass flow: Azure is created first (Smartschool-create
-      // requires Azure to exist), then Smartschool. Both are the same WISA
-      // student, so they must land on one sheet — not two rows.
-      final harness = _Harness(wisa: _wSnap(students: [_wStudent()]));
-
-      final azApplied = await harness.applier.applyStudent(
-        AddStudentToAzure(
-          _linkedStudent(wisa: _wStudent()),
-          harness.applier.studentConfig,
-        ),
-      );
-      // After the Azure create the queue holds one entry with only the Azure
-      // password.
-      final afterAzure = await harness.queue.load();
-      expect(afterAzure, hasLength(1));
-      expect(afterAzure.single.azurePassword, 'pw1');
-      expect(afterAzure.single.smartschoolPassword, isNull);
-
-      // Now Smartschool, targeting the account with the freshly created Azure
-      // record (as the dispatcher would after the incremental relink).
-      final createdAzure = azApplied.result.azure! as az.AzureUser;
-      await harness.applier.applyStudent(
-        AddStudentToSmartschool(
-          _linkedStudent(wisa: _wStudent(), azure: createdAzure),
-          harness.applier.studentConfig,
-        ),
-      );
-
-      final merged = await harness.queue.load();
-      expect(merged, hasLength(1), reason: 'one sheet per student, not two');
-      final entry = merged.single;
-      expect(entry.azurePassword, 'pw1', reason: 'kept from the Azure create');
+      expect(entry.kind, PasswordAccountKind.account);
+      expect(entry.azurePassword, 'pw1', reason: 'from the Azure create');
       expect(entry.smartschoolPassword, 'pw2',
-          reason: 'filled by the Smartschool create — a distinct password');
+          reason: 'from the chained Smartschool create — a distinct password');
+      expect(entry.displayName, 'Jan Peeters');
       expect(entry.accountName, 'jan.peeters',
           reason: 'the now-known Smartschool uid');
+      expect(entry.classGroup, '3A');
     });
 
     test('a dry-run create enqueues nothing (no write, no password)', () async {

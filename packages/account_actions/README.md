@@ -64,6 +64,27 @@ per record, applies the legacy `AccountActionParser` rule:
 
 The two sets never coexist for one record, exactly as in legacy.
 
+### Unlocked follow-ups (#230)
+
+Dispatch is a pure function of the record **as it stands**, which cannot express
+a chain. Provisioning a brand-new student is one: `AddStudentToSmartschool`
+builds its account with the Azure UPN as the `mail`, so it evaluates false until
+`AddStudentToAzure` has run, and a WISA-only student is therefore offered exactly
+one create even though they need two.
+
+`StudentAction.unlocks` names the action types a write may unlock on the same
+target — `AddStudentToAzure.unlocks == {AddStudentToSmartschool}`, everything
+else empty. It stays a pure, constant declaration: it says what *may* follow,
+never what must, and the follow-up's own `evaluate()` still decides.
+
+Acting on it belongs to the State layer, not here: `StateApplier.applyStudent`
+re-reads the follow-up from the **relinked** view's own dispatch and runs it, so
+the operator's one apply provisions the student end to end. It must be the
+relinked record and never a projection — `createPrincipalName` resolves a UPN
+collision by suffixing, so the UPN that landed can differ from the one
+`describeChanges()` projected, and the Smartschool account would carry the wrong
+`mail`. The staff family has the same two-pass shape and is tracked as #240.
+
 `staffActions(snapshot, config)` does the same over the snapshot's staff
 records. The legacy staff parser writes the modify branch as `if (OK)` rather
 than `else`, but sets `OK = false` inside the missing branch, so the two

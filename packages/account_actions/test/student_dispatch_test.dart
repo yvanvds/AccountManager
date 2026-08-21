@@ -65,6 +65,46 @@ void main() {
       expect(actions.single.alternativeGroup, isNull);
     });
 
+    test('the WISA-only create declares its Smartschool follow-up (#230)', () {
+      // Provisioning a new student is a chain the dispatcher cannot express:
+      // AddStudentToSmartschool needs the Azure UPN as the new account's mail,
+      // so it evaluates false until the Azure account exists. Naming the
+      // follow-up here is what lets the State layer run it straight after the
+      // create, against the relinked record — one click, both accounts.
+      final actions = studentActionsFor(linked(wisa: wisaStudent()), cfg);
+      final create = actions.single as AddStudentToAzure;
+      expect(create.unlocks, <Type>{AddStudentToSmartschool});
+    });
+
+    test('the Smartschool create ends the chain (#230)', () {
+      // Nothing follows it: the record is complete afterwards, so the next pass
+      // is the ordinary modify branch, not another link of this chain.
+      final actions = studentActionsFor(
+        linked(wisa: wisaStudent(), azure: azureUser()),
+        cfg,
+      );
+      expect(actions.single.unlocks, isEmpty);
+    });
+
+    test('every other student action unlocks nothing (#230)', () {
+      // The chain is opt-in per action; a stray declaration would make the
+      // applier write beyond what the operator selected.
+      for (final account in <LinkedAccount>[
+        linked(smartschool: ssAccount(status: 'actief')),
+        linked(azure: azureUser(companyName: 'SSM')),
+        linked(
+          wisa: wisaStudent(wisaId: 'W1'),
+          smartschool: ssAccount(accountId: 'W9'),
+          azure: azureUser(),
+        ),
+      ]) {
+        for (final action in studentActionsFor(account, cfg)) {
+          if (action is AddStudentToAzure) continue;
+          expect(action.unlocks, isEmpty, reason: '${action.runtimeType}');
+        }
+      }
+    });
+
     test('disabled Smartschool-only account → Delete only (not Unregister)',
         () {
       final actions = studentActionsFor(
