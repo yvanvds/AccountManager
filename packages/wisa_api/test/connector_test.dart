@@ -183,6 +183,41 @@ void main() {
       expect(werkdates, {'01/09/2024'});
     });
 
+    test('stamps the snapshot with the werkdatum it pulled as of (#247)',
+        () async {
+      // The roster and the date it is *as of* must travel together: the caller
+      // cannot re-derive the date afterwards, because "volg de huidige datum"
+      // resolves afresh on every ask.
+      final t = _FakeTransport(fixtures);
+      final c = buildConnector(t);
+      final schools = await c.loadSchools();
+      final snapshot = await c.sync(
+        schools: [schools.firstWhere((s) => s.id == 25)],
+        workDate: DateTime(2024, 9, 1),
+      );
+      expect(snapshot.workDate, DateTime(2024, 9, 1));
+    });
+
+    test(
+        'stamps the ordinary werkdatum even when a virtual school pulled its '
+        'own (#247)', () async {
+      // The virtuele werkdatum is a per-school override; the snapshot names the
+      // date the pass asked for, which is the one the overview reports.
+      final t = _FakeTransport(fixtures);
+      final c = buildConnector(t);
+      final schools = await c.loadSchools();
+      final snapshot = await c.sync(
+        schools: [
+          schools.firstWhere((s) => s.id == 25).copyWith(
+                isVirtual: true,
+              )
+        ],
+        workDate: DateTime(2024, 9, 1),
+        virtualWorkDate: DateTime(2025, 9, 1),
+      );
+      expect(snapshot.workDate, DateTime(2024, 9, 1));
+    });
+
     test('uses virtualWorkDate when school.isVirtual is true', () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);

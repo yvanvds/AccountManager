@@ -43,8 +43,34 @@ void main() {
     await tester.pumpWidget(_wrap(const ActionsScreen(bootstrap: null)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Not configured'), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
     expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
+  });
+
+  testWidgets('a failed bootstrap offers a retry, in Dutch (#253)',
+      (WidgetTester tester) async {
+    // The stand-in panels are as operator-facing as the tree they replace, so
+    // they speak the same language as it. The retry itself is the point of the
+    // panel: a second attempt has to be one button away.
+    var attempts = 0;
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: () async {
+      attempts++;
+      if (attempts == 1) throw StateError('geen verbinding');
+      return ReconcileHarness().bootstrap();
+    })));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Kan het Acties-scherm niet openen'), findsOneWidget);
+    final retry = find.byKey(const ValueKey('actions-bootstrap-retry'));
+    expect(find.descendant(of: retry, matching: find.text('Probeer opnieuw')),
+        findsOneWidget);
+
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+
+    expect(attempts, 2);
+    expect(find.text('Kan het Acties-scherm niet openen'), findsNothing);
+    expect(find.text('Acties'), findsOneWidget);
   });
 
   testWidgets(
@@ -96,7 +122,7 @@ void main() {
     // Dry-run everything from the header — no drill needed, nothing written.
     await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
     await tester.pumpAndSettle();
-    expect(find.text('Dry-run result'), findsOneWidget);
+    expect(find.text('Resultaat van de dry-run'), findsOneWidget);
     expect(harness.soap.soapActions, isEmpty);
 
     // Apply everything: confirm the dialog, the Smartschool write happens.
@@ -106,7 +132,7 @@ void main() {
     expect(find.text('Openstaande acties toepassen?'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty);
   });
 
@@ -125,7 +151,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(harness.soap.soapActions, isEmpty);
-    expect(find.text('Apply result'), findsNothing);
+    expect(find.text('Resultaat van het toepassen'), findsNothing);
   });
 
   group('the apply-confirmation dialog says what the pass really writes (#234)',
@@ -307,6 +333,10 @@ void main() {
     final deleteAlt = ValueKey('alt-$id-DeleteStudentFromSmartschool');
     expect(find.byKey(unregisterAlt), findsOneWidget);
     expect(find.byKey(deleteAlt), findsOneWidget);
+    // An unregister carries no field diff, so the detail under the radios is
+    // the lifecycle note — in Dutch, like the rest of the screen (#253).
+    expect(find.text('Levenscyclusactie — geen wijzigingen per veld.'),
+        findsOneWidget);
 
     await tester.tap(find.byKey(deleteAlt));
     await tester.pumpAndSettle();
@@ -317,7 +347,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.soap.soapActions, isNotEmpty,
         reason: 'delete is a real Smartschool write');
     final summaries =
@@ -339,12 +369,25 @@ void main() {
     await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
 
     expect(
-        find.textContaining('accounts in the same situation'), findsOneWidget);
+        find.textContaining('accounts in dezelfde situatie'), findsOneWidget);
     final key = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student')
         .situationKey;
     final bulkApply = ValueKey('situation-apply-$key');
     expect(find.byKey(bulkApply), findsOneWidget);
+
+    // Switch the second row to delete, leaving the first on the default. The
+    // header hands the pass the entries it is *showing*, so the pick has to
+    // survive the rebuild that publishes it (#110/#252).
+    final second = harness.controller.classroomPendingEntries[1].targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$second')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$second')));
+    await tester.pumpAndSettle();
+    final deleteAlt =
+        find.byKey(ValueKey('alt-$second-DeleteStudentFromSmartschool'));
+    await tester.ensureVisible(deleteAlt);
+    await tester.tap(deleteAlt);
+    await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.byKey(bulkApply));
     await tester.tap(find.byKey(bulkApply));
@@ -352,8 +395,73 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Apply result'), findsOneWidget);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     expect(harness.controller.applyResults, hasLength(2));
+    final summaries =
+        harness.controller.applyResults!.map((r) => r.changes.summary).toList();
+    expect(summaries, contains('Schrijf de leerling uit in Smartschool'));
+    expect(summaries, contains('Verwijder dit account uit Smartschool'),
+        reason: "the bulk pass runs each row's own chosen alternative");
+  });
+
+  testWidgets(
+      "a class's bulk apply stops at that class: the identical situation in "
+      'another class is left untouched (#252)', (WidgetTester tester) async {
+    // Three students in one situation — a stale Office 365 name — split across
+    // two classes: Sam and Sara in 3C, Tom in 3D. The bulk header lives inside
+    // one class and counts one class, but the pass behind it used to resolve
+    // its situation key back through the whole linked view, so pressing
+    // "Alles toepassen (2)" in 3C wrote Tom too.
+    _useTallWindow(tester);
+    final harness = crossClassSituationHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    final inClass = harness.controller.classroomPendingEntries;
+    expect(inClass, hasLength(2), reason: '3C holds Sam and Sara');
+    final key = inClass.first.situationKey;
+    expect(
+      harness.controller.pendingEntries.where((e) => e.situationKey == key),
+      hasLength(3),
+      reason: "Tom's 3D entry is the very same situation, group-wide",
+    );
+
+    // The button's own count is the class's, and so is what it writes.
+    final bulkApply = find.byKey(ValueKey('situation-apply-$key'));
+    await tester.ensureVisible(bulkApply);
+    expect(tester.widget<FilledButton>(bulkApply).child, isA<Text>());
+    expect(
+        find.descendant(
+            of: bulkApply, matching: find.text('Alles toepassen (2)')),
+        findsOneWidget);
+
+    await tester.tap(bulkApply);
+    await tester.pumpAndSettle();
+    // The confirmation quotes the same two writes, not three (#234).
+    expect(find.textContaining('2 wijzigingen'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+    expect(harness.controller.applyResults, hasLength(2),
+        reason: 'one write per account of the open class');
+    final patched = harness.graph.requests
+        .where((r) => r.method == 'PATCH')
+        .map((r) => r.url.path)
+        .toList();
+    expect(patched, hasLength(2));
+    expect(patched.any((p) => p.endsWith(kSam3C)), isTrue);
+    expect(patched.any((p) => p.endsWith(kSara3C)), isTrue);
+    expect(patched.any((p) => p.endsWith(kTom3D)), isFalse,
+        reason: 'the operator never opened 3D — it must not be written');
+    // …and Tom's work is still pending, waiting for someone to open his class.
+    expect(
+      harness.controller.pendingEntries.where((e) => e.situationKey == key),
+      hasLength(1),
+    );
   });
 
   testWidgets(
@@ -1178,6 +1286,69 @@ void main() {
   });
 
   testWidgets(
+      'a read-only account card marks an informational candidate "(manueel)" '
+      '(#255)', (WidgetTester tester) async {
+    // A passive session over a student who sits in the wrong Office 365 class
+    // group (#245): the write belongs to the class row, so this candidate only
+    // diagnoses and the card's badge counts it zero. The card used to render
+    // every candidate as a bare bullet, so this line read exactly like due work
+    // beside a (0) badge — while the group tile and the interactive tile have
+    // both marked it "(manueel)" all along.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(
+        id: 's1',
+        label: 'Sam Sels',
+        classroom: '3C',
+        candidates: wrongAzureClassGroupNotice(),
+      ),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Nothing here is applyable, so the work list hides the class until the
+    // inventory toggle is flipped (#226) — the state the unmarked line was most
+    // misleading in.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    expect(harness.controller.linked, isNull, reason: 'passive session');
+    expect(find.text('Sam Sels'), findsOneWidget);
+
+    expect(
+      find.text('• Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats '
+          'van GBS-1B. Werk het ledenbestand van beide klassen bij. (manueel)'),
+      findsOneWidget,
+      reason: 'the operator must be able to tell manual work from due work',
+    );
+
+    // …and it stays a "(manueel)" line, never a "(keuze)" one: it stands alone.
+    expect(find.textContaining('(keuze)'), findsNothing);
+  });
+
+  testWidgets(
+      'a read-only account card leaves an applyable candidate unmarked (#255)',
+      (WidgetTester tester) async {
+    // The other half of the same rule: marking must distinguish, so an ordinary
+    // applyable candidate keeps its bare summary.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    expect(find.text('• Wijzig de klas in Smartschool'), findsOneWidget);
+    expect(find.textContaining('(manueel)'), findsNothing);
+  });
+
+  testWidgets(
       "a generation bump refetches the passive Actions overview's freshness "
       '(#108)', (WidgetTester tester) async {
     final linkedStore = InMemoryLinkedStore();
@@ -1231,6 +1402,93 @@ void main() {
     expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
     expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
         reason: 'a stamp from a past day is never rendered as bare time');
+  });
+
+  testWidgets(
+      "the overview's freshness stamp names the werkdatum the roster was "
+      'pulled with (#247)', (WidgetTester tester) async {
+    // "Wie synchroniseerde, wanneer" says when the pass ran, never which school
+    // year it describes — and WISA answers *as of* a date, so a pull made on
+    // the wrong side of the rollover reads here exactly like a class that went
+    // missing (#239). The stamp comes off the shared per-system record, so this
+    // passive session reads the date without having run the pull.
+    final store = await seededLinkedStore(
+      <MaterializedAccount>[
+        matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+      ],
+      systemSyncs: <Origin, SystemSyncMeta>{
+        Origin.wisa: SystemSyncMeta(
+          syncedBy: 'operator@school.example',
+          at: kFixtureDate,
+          workDate: DateTime(2025, 9, 1),
+        ),
+      },
+    );
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // In the wire's own dd/MM/yyyy, the way the Log panel's pull line and the
+    // `Werkdatum` SOAP parameter both spell it.
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a shared view synced before the werkdatum was recorded renders the '
+      'stamp unchanged (#247)', (WidgetTester tester) async {
+    // The store in production already holds views written without it, and a
+    // Smartschool/Azure-only stamp never has one. Neither may invent a date,
+    // and neither may lose the "wie, wanneer" half over its absence.
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('werkdatum'), findsNothing);
+    expect(
+      find.textContaining('Generatie 1'),
+      findsOneWidget,
+      reason: 'the who/when half stands on its own',
+    );
+  });
+
+  testWidgets(
+      'the stamp names the werkdatum the stored view was pulled with, not the '
+      'one Instellingen now holds (#247)', (WidgetTester tester) async {
+    // The disagreement the issue is about. #238 made the werkdatum live, so
+    // between a save and the next Synchroniseer the setting says one school
+    // year and the installed roster is another. Driven over the *production*
+    // WISA pull, so the date on screen is the one that really went out.
+    final live = LiveSettings(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    ));
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    await harness.controller.sync();
+    expect(wire.werkdatums, <String>['01/09/2025']);
+
+    // The operator moves the werkdatum to the new school year and saves. Until
+    // they sync, the overview below is still the old year's.
+    live.publish(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
+      ),
+    ));
+
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+    expect(find.textContaining('01/09/2026'), findsNothing,
+        reason: 'a saved werkdatum describes the next pull, not this view');
   });
 
   // --- The read-only drill-down state (#214) -------------------------------
@@ -1492,7 +1750,7 @@ void main() {
       gates[1].complete();
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
-      expect(find.text('Apply result'), findsOneWidget);
+      expect(find.text('Resultaat van het toepassen'), findsOneWidget);
       expect(harness.controller.applyResults, hasLength(2));
       expect(harness.soap.soapActions, isNotEmpty);
     });
@@ -1523,7 +1781,7 @@ void main() {
       gate.complete();
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
-      expect(find.text('Dry-run result'), findsOneWidget);
+      expect(find.text('Resultaat van de dry-run'), findsOneWidget);
       expect(harness.soap.soapActions, isEmpty);
     });
 
@@ -1555,7 +1813,7 @@ void main() {
 
       expect(dialog, findsNothing,
           reason: 'a failed pass must not trap anyone');
-      expect(find.text('Apply result'), findsOneWidget);
+      expect(find.text('Resultaat van het toepassen'), findsOneWidget);
       expect(
         harness.controller.applyResults!.map((r) => r.outcome),
         everyElement(ActionOutcome.failed),
@@ -1613,7 +1871,7 @@ void main() {
       gate.complete();
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
-      expect(find.text('Apply result'), findsOneWidget);
+      expect(find.text('Resultaat van het toepassen'), findsOneWidget);
     });
   });
 }

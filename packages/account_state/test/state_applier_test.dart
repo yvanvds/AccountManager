@@ -329,7 +329,7 @@ class _Harness {
 
     app =
         ApplicationState(wisa: wisaState, smartschool: ssState, azure: azState);
-    applier = StateApplier(
+    applier = StateApplier.fixed(
       app: app,
       connectors: Connectors(smartschool: _ssConn(soap), azure: _azConn(graph)),
       resolver: _SeqResolver(),
@@ -568,7 +568,7 @@ void main() {
     test('both minted passwords land on one password sheet (#105)', () async {
       final queue = InMemoryPasswordQueueStore();
       final harness = newIntake();
-      final applier = StateApplier(
+      final applier = StateApplier.fixed(
         app: harness.app,
         connectors: Connectors(
           smartschool: _ssConn(harness.soap),
@@ -722,7 +722,7 @@ void main() {
     test('both minted passwords land on one password sheet (#105)', () async {
       final queue = InMemoryPasswordQueueStore();
       final harness = newHire();
-      final applier = StateApplier(
+      final applier = StateApplier.fixed(
         app: harness.app,
         connectors: Connectors(
           smartschool: _ssConn(harness.soap),
@@ -985,6 +985,134 @@ void main() {
           everyElement(contains('ledenbestand')),
         );
       });
+    });
+  });
+
+  group('settings are read live, never captured (#246)', () {
+    /// An applier over one Azure-only orphan carrying `companyName: SSM`, with
+    /// the settings-derived inputs coming from a mutable [ApplierSettings] the
+    /// test rewrites between links — the shape `bootstrapReconcile` wires over
+    /// `LiveSettings`.
+    (StateApplier, void Function(ApplierSettings)) build() {
+      var current = ApplierSettings(
+        studentConfig: _studentConfig(),
+        staffConfig: _staffConfig(),
+      );
+      final applier = StateApplier(
+        app: ApplicationState(
+          wisa: SystemState<wapi.WisaSnapshot>(
+            system: core.Origin.wisa,
+            initial: _wSnap(),
+            syncer: (_) async => _wSnap(),
+          ),
+          smartschool: SystemState<ss.SmartschoolSnapshot>(
+            system: core.Origin.smartschool,
+            initial: _sSnap(),
+            syncer: (_) async => _sSnap(),
+          ),
+          azure: SystemState<az.AzureSnapshot>(
+            system: core.Origin.azure,
+            initial: _aSnap(users: [_azUser(id: 'az-orphan')]),
+            syncer: (_) async => _aSnap(),
+          ),
+        ),
+        connectors:
+            Connectors(smartschool: _ssConn(_RecordingSoap()), azure: null),
+        resolver: _SeqResolver(),
+        wisaRules: WisaImportRules(),
+        settings: () => current,
+      );
+      return (applier, (next) => current = next);
+    }
+
+    test('a school prefix saved after bootstrap scopes the very next link()',
+        () async {
+      // INV-22: an Azure-only user stamped with our `companyName` is a former
+      // student we keep so the engine can flag it. Whether this orphan is ours
+      // is therefore a pure function of the prefix — which used to be frozen
+      // into the applier when bootstrap built it.
+      final (applier, publish) = build();
+
+      final before = await applier.link();
+      expect(before.snapshot.accounts, hasLength(1),
+          reason: 'companyName SSM matches the prefix in force');
+
+      publish(ApplierSettings(
+        studentConfig: StudentActionConfig(
+          schoolPrefix: 'OTHER',
+          azureDomain: 'school.example',
+        ),
+        staffConfig: StaffActionConfig(
+          schoolPrefix: 'OTHER',
+          azureDomain: 'school.example',
+        ),
+      ));
+
+      final after = await applier.link();
+      expect(after.snapshot.accounts, isEmpty,
+          reason: 'the relink honoured the new prefix without a relaunch');
+    });
+
+    test('the class tree and managed-school set are re-read on every access',
+        () {
+      final (applier, publish) = build();
+      expect(applier.classTree.path, '');
+      expect(applier.ourSchoolIds, isNull);
+
+      publish(ApplierSettings(
+        studentConfig: _studentConfig(),
+        staffConfig: _staffConfig(),
+        classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+        ourSchoolIds: const {1, 2},
+      ));
+
+      expect(applier.classTree.path, 'SCHOOL');
+      expect(applier.ourSchoolIds, const {1, 2});
+    });
+
+    test('the uid-uniqueness wrapping survives the change', () async {
+      // The wrapping used to happen once, in the constructor. Rebuilding the
+      // config per read must not lose it, or a created login could collide with
+      // an account an earlier apply spliced into the snapshot (#72).
+      final (applier, publish) = build();
+      expect(applier.studentConfig.smartschoolUid('Jan', 'Peeters'),
+          'jan.peeters');
+
+      publish(ApplierSettings(
+        studentConfig: StudentActionConfig(
+          schoolPrefix: 'OTHER',
+          azureDomain: 'other.example',
+        ),
+        staffConfig: StaffActionConfig(
+          schoolPrefix: 'OTHER',
+          azureDomain: 'other.example',
+        ),
+      ));
+
+      expect(applier.studentConfig.azureDomain, 'other.example');
+      expect(applier.studentConfig.studentDomain, 'student.other.example');
+      expect(applier.staffConfig.schoolPrefix, 'OTHER');
+      expect(
+          applier.studentConfig.smartschoolUid('Jan', 'Peeters'), 'jan.peeters',
+          reason: 'still uniqueness-aware against the current snapshot');
+    });
+
+    test('StateApplier.fixed keeps answering with the one config it was given',
+        () {
+      final applier = StateApplier.fixed(
+        app: _Harness().app,
+        connectors:
+            Connectors(smartschool: _ssConn(_RecordingSoap()), azure: null),
+        resolver: _SeqResolver(),
+        wisaRules: WisaImportRules(),
+        studentConfig: _studentConfig(),
+        staffConfig: _staffConfig(),
+        classTree: const SmartschoolClassTree(path: 'ROOT'),
+        ourSchoolIds: const {7},
+      );
+      expect(applier.studentConfig.schoolPrefix, 'SSM');
+      expect(applier.classTree.path, 'ROOT');
+      expect(applier.ourSchoolIds, const {7});
     });
   });
 }

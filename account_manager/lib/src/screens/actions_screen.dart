@@ -13,6 +13,9 @@ import 'package:account_state/account_state.dart'
         pendingDecisionCount;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
+// The `Werkdatum` SOAP parameter's own formatter, so the overview names the
+// date exactly as it went on the wire and as the Log panel reports it (#247).
+import 'package:wisa_api/wisa_api.dart' as wapi show formatWerkdatum;
 
 import '../format/timestamps.dart';
 import '../reconcile/reconcile_bootstrap.dart';
@@ -103,23 +106,23 @@ class _ActionsScreenState extends State<ActionsScreen> {
     if (widget.bootstrap == null) {
       return const _MessagePanel(
         eyebrow: 'Arcadia · acties',
-        title: 'Not configured',
-        message: 'Azure AD is not configured for this build, so the settings '
-            'store and connectors cannot be reached. Provide the AAD '
-            '--dart-define values and restart.',
+        title: 'Niet geconfigureerd',
+        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
+            'instellingenopslag en de connectoren zijn onbereikbaar. Geef de '
+            'AAD --dart-define-waarden mee en start opnieuw op.',
       );
     }
     final error = _bootstrapError;
     if (error != null) {
-      final retryNote = _attempts > 1 ? '\n\n(Attempt $_attempts failed.)' : '';
+      final retryNote = _attempts > 1 ? '\n\n(Poging $_attempts mislukt.)' : '';
       return _MessagePanel(
         eyebrow: 'Arcadia · acties',
-        title: 'Could not prepare the actions screen',
+        title: 'Kan het Acties-scherm niet openen',
         message: '$error$retryNote',
         action: FilledButton(
           key: const ValueKey('actions-bootstrap-retry'),
           onPressed: _bootstrap,
-          child: const Text('Try again'),
+          child: const Text('Probeer opnieuw'),
         ),
       );
     }
@@ -127,8 +130,8 @@ class _ActionsScreenState extends State<ActionsScreen> {
     if (_bootstrapping || services == null) {
       return const _MessagePanel(
         eyebrow: 'Arcadia · acties',
-        title: 'Preparing…',
-        message: 'Loading the settings and connection profiles.',
+        title: 'Voorbereiden…',
+        message: 'De instellingen en verbindingsprofielen worden geladen.',
         progress: true,
       );
     }
@@ -793,8 +796,8 @@ class _ActionsBodyState extends State<_ActionsBody>
       slivers
         ..add(_gap(PlinkSpacing.s5))
         ..addAll(_resultSectionSlivers(
-          title: 'Dry-run result',
-          subtitle: 'No changes were written. This is what an apply would do.',
+          title: 'Resultaat van de dry-run',
+          subtitle: 'Er is niets geschreven. Dit is wat toepassen zou doen.',
           results: dry,
         ));
     }
@@ -802,8 +805,8 @@ class _ActionsBodyState extends State<_ActionsBody>
       slivers
         ..add(_gap(PlinkSpacing.s5))
         ..addAll(_resultSectionSlivers(
-          title: 'Apply result',
-          subtitle: 'Written to the target systems.',
+          title: 'Resultaat van het toepassen',
+          subtitle: 'Weggeschreven naar de doelsystemen.',
           results: applied,
         ));
     }
@@ -1457,6 +1460,18 @@ class _DrillDownSection extends StatelessWidget {
     );
   }
 
+  /// The one-line freshness stamp above the tree: which generation of the
+  /// shared view this is, when it was materialized, by whom — and, since #247,
+  /// the werkdatum the WISA roster underneath it was pulled with.
+  ///
+  /// That last part is not a restatement of the timestamp. WISA answers *as
+  /// of* a date, so "gisteren 09:14 door jan" says when the pass ran, never
+  /// which school year it describes; a pass run on the wrong side of the
+  /// rollover reads on Acties exactly like a class that went missing (#239).
+  /// It comes off the shared per-system stamp rather than the operator's own
+  /// Instellingen, so it names the date this *stored view* was pulled with even
+  /// when the setting has since moved on (#238) — and a passive session that
+  /// never ran the pass reads the same line.
   String? _freshness() {
     final state = controller.syncState;
     if (state.generation == 0) return null;
@@ -1467,7 +1482,14 @@ class _DrillDownSection extends StatelessWidget {
     final who = state.updatedBy == null || state.updatedBy!.isEmpty
         ? ''
         : ' door ${state.updatedBy}';
-    return 'Generatie ${state.generation}$when$who';
+    // Rendered with the connector's own formatter, so it reads exactly as the
+    // `Werkdatum` SOAP parameter went out and as the Log panel's pull line
+    // names it. Absent on a view synced before #247 recorded it.
+    final workDate = state.systems[core.Origin.wisa]?.workDate;
+    final asOf = workDate == null
+        ? ''
+        : ' · werkdatum ${wapi.formatWerkdatum(workDate)}';
+    return 'Generatie ${state.generation}$when$who$asOf';
   }
 
   @override
@@ -1754,16 +1776,16 @@ class _AccountTile extends StatelessWidget {
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(w, style: text.bodySmall),
             ),
-          // One line per *decision* (#251): a departed student's unregister /
-          // delete pair is one either/or, so it reads as the single choice the
-          // interactive tile shows — never as two bullets that both look due.
+          // One line per *decision* (#251), worded exactly as the interactive
+          // tile words it: a departed student's unregister / delete pair is one
+          // either/or, so it reads as the single choice the interactive tile
+          // shows — never as two bullets that both look due — and an
+          // informational candidate is marked "(manueel)" (#255).
           for (final c in candidateChoices(account.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(
-                c.isChoice
-                    ? '• ${c.selected.summary} (keuze)'
-                    : '• ${c.selected.summary}',
+                _readOnlyCandidateLine(c),
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),
@@ -1790,10 +1812,15 @@ class _ReadOnlyLock extends StatelessWidget {
       );
 }
 
-/// One read-only candidate line of a passive-session group tile, worded exactly
-/// as the interactive [_PendingEntryTile]'s: an either/or reads as one "(keuze)"
-/// on its pre-selected half (#251), an informational notice keeps its
-/// "(manueel)" marker (#225), and an ordinary action is its bare summary.
+/// One read-only candidate line of a passive-session tile — [_AccountTile] and
+/// [_GroupTile] share it — worded exactly as the interactive
+/// [_PendingEntryTile]'s: an either/or reads as one "(keuze)" on its
+/// pre-selected half (#251), an informational notice keeps its "(manueel)"
+/// marker (#225), and an ordinary action is its bare summary.
+///
+/// The account card used to render a bare bullet for every candidate (#255), so
+/// a student's informational candidate — since #245 the student family has one —
+/// read like due work next to a badge that counted it zero.
 String _readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
   final summary = choice.selected.summary;
   if (choice.isChoice) return '• $summary (keuze)';
@@ -1862,6 +1889,15 @@ class _GroupTile extends StatelessWidget {
 /// resolution to all" affordance that honours each entry's own chosen
 /// alternative. Rendered as its own row in the lazy list, only when more than
 /// one account shares the situation.
+///
+/// Every affordance here acts on [entries] — the exact subset this header was
+/// built over and counts (#252). That list is already scoped by whatever list
+/// rendered it: the open classroom's pending entries, or the group drill-down's,
+/// narrowed further by the search box. The bulk pass used to re-resolve the
+/// situation key against the *whole* linked view instead, so a header reading
+/// "Alles toepassen (1)" inside one class wrote every account group-wide in the
+/// same situation. The label, the confirmation scope and the write are now one
+/// list, so they cannot drift apart again.
 class _SituationHeader extends StatelessWidget {
   const _SituationHeader({required this.controller, required this.entries});
 
@@ -1884,7 +1920,7 @@ class _SituationHeader extends StatelessWidget {
           Expanded(
             child: Text(
               '${entries.first.situationLabel} — ${entries.length} '
-              'accounts in the same situation',
+              'accounts in dezelfde situatie',
               style: text.titleSmall,
             ),
           ),
@@ -1897,7 +1933,7 @@ class _SituationHeader extends StatelessWidget {
                       context,
                       controller: controller,
                       dry: true,
-                      run: () => controller.dryRunSituation(key),
+                      run: () => controller.dryRunEntries(entries),
                     ),
             child: const Text('Dry-run alles'),
           ),
@@ -1910,15 +1946,10 @@ class _SituationHeader extends StatelessWidget {
                       context,
                       controller: controller,
                       title: 'Toepassen op ${entries.length} accounts?',
-                      // Scoped exactly as [ReconcileController.applySituation]
-                      // scopes the pass — every entry in this situation, not
-                      // only the ones this classroom happens to render — so the
-                      // dialog names what will actually be written (#234).
-                      scope: controller.applyScope(
-                        controller.pendingEntries
-                            .where((e) => e.situationKey == key),
-                      ),
-                      apply: () => controller.applySituation(key),
+                      // The dialog is scoped to the very entries the pass below
+                      // runs over — the ones this header counted (#234/#252).
+                      scope: controller.applyScope(entries),
+                      apply: () => controller.applyEntries(entries),
                     ),
             child: Text('Alles toepassen ($applyable)'),
           ),
@@ -2110,9 +2141,9 @@ class _OptionDetail extends StatelessWidget {
           ? <Widget>[
               Text(
                 option.canApply
-                    ? 'Lifecycle action — no per-field diff.'
+                    ? 'Levenscyclusactie — geen wijzigingen per veld.'
                     : '${option.changes.summary} '
-                        '(manual — not applied automatically)',
+                        '(manueel — wordt niet automatisch toegepast)',
                 style: text.bodySmall,
               ),
             ]

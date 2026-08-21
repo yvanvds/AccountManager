@@ -1,6 +1,8 @@
+import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'reconcile_fakes.dart';
@@ -283,6 +285,140 @@ void main() {
     });
   });
 
+  group('the shared state carries the werkdatum it was pulled with (#247)', () {
+    DateTime? storedWerkdatum(ReconcileHarness h) =>
+        h.controller.syncState.systems[core.Origin.wisa]?.workDate;
+
+    test('a sync stamps the WISA meta with the date it asked WISA for',
+        () async {
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final wire = RecordingWisaSoap();
+      final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+
+      expect(wire.werkdatums, <String>['01/09/2025']);
+      expect(storedWerkdatum(harness), DateTime(2025, 9, 1));
+    });
+
+    test('the stamp names the pull, not whatever Instellingen now says',
+        () async {
+      // The case the issue exists for. #238 made the werkdatum live, so the
+      // setting and the installed roster routinely disagree: the operator moves
+      // the date to the new school year and, until they press Synchroniseer,
+      // the shared view is still last year's. The stamp must say *pulled*.
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+
+      live.publish(_settings(workDate: _pinned(DateTime(2026, 9, 1))));
+
+      expect(storedWerkdatum(harness), DateTime(2025, 9, 1),
+          reason: 'a save is not a pull');
+    });
+
+    test('a "volg de huidige datum" pull stamps the date it resolved to',
+        () async {
+      // The default setting, and the one that produces the reported symptom:
+      // the stamp has to name the resolved date, not the fact that it follows
+      // the clock.
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: LiveSettings(_settings()),
+      );
+
+      await harness.controller.sync();
+
+      // The harness clock is fixed at kFixtureDate (2026-07-01), and the stamp
+      // is the instant the pull resolved — not a re-ask a moment later, which
+      // is the whole reason it rides out on the snapshot.
+      expect(storedWerkdatum(harness), kFixtureDate);
+      expect(wapi.formatWerkdatum(storedWerkdatum(harness)!), '01/07/2026');
+    });
+
+    test('a passive session reads the same werkdatum off the shared store',
+        () async {
+      // The whole point of putting it on the shared record rather than in this
+      // session's log: an operator who never ran the pass can still tell which
+      // school year the view in front of them describes.
+      final linkedStore = InMemoryLinkedStore();
+      final snapshots = InMemorySnapshotStore();
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final syncer = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await syncer.controller.sync();
+
+      final passive = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await passive.controller.loadOverview();
+
+      expect(storedWerkdatum(passive), DateTime(2025, 9, 1));
+    });
+
+    test('a drift pass that does not re-pull WISA keeps the roster stamp',
+        () async {
+      // Check-for-drift re-reads Smartschool and Azure only, so the roster —
+      // and the date it is as of — is still the one the last sync installed.
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+      await harness.controller.checkDrift();
+
+      expect(harness.controller.syncState.generation, 2,
+          reason: 'the drift pass really did rewrite the view');
+      expect(storedWerkdatum(harness), DateTime(2025, 9, 1));
+    });
+
+    test('the "WISA unchanged" shortcut still records the new werkdatum',
+        () async {
+      // A werkdatum change that lands the identical roster skips the re-link,
+      // but the view is now known to describe a different date — and the light
+      // metadata write is what has to carry it.
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+      final generation = harness.controller.syncState.generation;
+
+      live.publish(_settings(workDate: _pinned(DateTime(2026, 9, 1))));
+      await harness.controller.sync();
+
+      expect(harness.controller.syncState.generation, generation,
+          reason: 'an unchanged roster is not a new view');
+      expect(storedWerkdatum(harness), DateTime(2026, 9, 1));
+    });
+
+    test('a scripted pull that never named a werkdatum stamps none', () async {
+      // Every other harness builds its WISA snapshot by hand, and a snapshot
+      // restored from a pre-#247 document carries no date either. Neither may
+      // be given one it does not have.
+      final harness = ReconcileHarness();
+      await harness.controller.sync();
+
+      expect(harness.controller.syncState.systems[core.Origin.wisa], isNotNull);
+      expect(storedWerkdatum(harness), isNull);
+    });
+  });
+
   group('wisaSyncer', () {
     test('reads the rules live too, so a DontImportFromWisa apply lands (#72)',
         () async {
@@ -309,4 +445,211 @@ void main() {
       expect((await syncer(null)).classGroups, isEmpty);
     });
   });
+
+  group('the rest of the reconcile stack reads settings live too (#246)', () {
+    /// The #178 fixture, but with ownership coming from the settings document
+    /// rather than a constructor argument: one student enrolled in school 2 and
+    /// fully present in our Smartschool + Azure, and no `MarkAsOurs` flag on the
+    /// WISA schools — so who is managed is decided solely by [live].
+    ReconcileHarness managedFrom(LiveSettings live) => ReconcileHarness(
+          wisa: wisaSnap(
+            students: [wisaStudent(schoolId: 2)],
+            schools: [wisaSchool(1), wisaSchool(2)],
+          ),
+          smartschool: ssSnap(
+            groups: const [],
+            accounts: [ssAccount()],
+            memberships: const [],
+          ),
+          azure: azSnap(users: [azUser()]),
+          liveSettings: live,
+        );
+
+    AppSettings withSchools(List<WisaSchoolProfile> schools) =>
+        _settings(schools: schools);
+
+    test("a school's beheerd mark reaches the very next relink", () async {
+      // The headline symptom: the operator marks a school managed in
+      // Instellingen, and the Actions view keeps hiding its students until the
+      // app is relaunched.
+      final live = LiveSettings(withSchools(const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 1, code: 'S1', name: 'School 1', ours: true),
+        WisaSchoolProfile(schoolId: 2, code: 'S2', name: 'School 2'),
+      ]));
+      final harness = managedFrom(live);
+
+      await harness.controller.sync();
+      expect(harness.applier.ourSchoolIds, const {1});
+      var linked = await harness.applier.link();
+      expect(linked.snapshot.accounts.single.wisaPresence,
+          core.WisaPresence.groupOnly,
+          reason: "school 2 is not ours, so its student is out of scope");
+
+      live.publish(withSchools(const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 1, code: 'S1', name: 'School 1', ours: true),
+        WisaSchoolProfile(
+            schoolId: 2, code: 'S2', name: 'School 2', ours: true),
+      ]));
+
+      expect(harness.applier.ourSchoolIds, const {1, 2});
+      linked = await harness.applier.link();
+      expect(
+          linked.snapshot.accounts.single.wisaPresence, core.WisaPresence.ours,
+          reason: 'no relaunch: the relink honoured the save');
+    });
+
+    test('a beheerd mark does not block Check for drift', () async {
+      // #238 refuses drift while the *WISA pull inputs* have moved, because
+      // drift never re-pulls WISA. Ownership is not one of them — it is applied
+      // at link time — so drift is exactly the pass that adopts it.
+      final live = LiveSettings(withSchools(const <WisaSchoolProfile>[
+        WisaSchoolProfile(schoolId: 2, code: 'S2', name: 'School 2'),
+      ]));
+      final harness = managedFrom(live);
+      await harness.controller.sync();
+
+      live.publish(withSchools(const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 2, code: 'S2', name: 'School 2', ours: true),
+      ]));
+
+      expect(harness.controller.driftBlockedReason, isNull);
+      await harness.controller.checkDrift();
+      expect(harness.controller.linked?.snapshot.accounts.single.wisaPresence,
+          core.WisaPresence.ours);
+    });
+
+    test('the Smartschool import rules are read at pull time', () async {
+      // #241 authored them; before #246 the pull closed over the bootstrap
+      // document, so a rule saved in Instellingen pruned nothing until the next
+      // launch. The pass that adopts it is **Check for drift** — the one that
+      // re-reads Smartschool at all (#99's smart sync leaves it alone once this
+      // session has it) — and a rule change never arms #238's WISA gate, so
+      // drift is offered.
+      final wire = GroupTreeSoap();
+      final live = LiveSettings(_settings());
+      final harness =
+          ReconcileHarness(smartschoolTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+      expect(
+        harness.app.smartschool.snapshot?.groups.map((g) => g.id.value),
+        <String>['SCH', 'ORG', 'HID', 'KLA', 'C1A'],
+      );
+
+      live.publish(_settings().copyWith(
+        smartschoolRules: const <ss.SmartschoolImportRule>[
+          ss.DiscardSmartschoolGroup('Organisatie'),
+        ],
+      ));
+      expect(harness.controller.driftBlockedReason, isNull);
+      await harness.controller.checkDrift();
+
+      expect(
+        harness.app.smartschool.snapshot?.groups.map((g) => g.id.value),
+        <String>['SCH', 'KLA', 'C1A'],
+        reason: 'the saved rule pruned the very next pull, subtree and all',
+      );
+    });
+
+    test('the Azure pull scopes by the school prefix as it now stands',
+        () async {
+      final wire = RecordingGraph();
+      final live = LiveSettings(_settings());
+      final harness =
+          ReconcileHarness(azureTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+      expect(_userFilters(wire).last, contains('GBS'));
+
+      live.publish(_settings().copyWith(schoolPrefix: 'SSM'));
+      await harness.controller.checkDrift();
+
+      expect(_userFilters(wire).last, contains('SSM'),
+          reason: 'a saved prefix re-scopes the pull without a relaunch');
+    });
+
+    // The companion guard — that a moved prefix drops the delta token so no
+    // old-prefix user survives the pass — is proved in `account_state`'s
+    // `application_state_test`, over a transport that actually primes one;
+    // `RecordingGraph` answers every collection read empty, so it never gets a
+    // deltaLink and every pass here is a full read anyway.
+
+    test('the school profiles the drill-down is labelled from are live',
+        () async {
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(liveSettings: live);
+      expect(harness.controller.schoolProfiles, isEmpty);
+
+      live.publish(withSchools(const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+          schoolId: 25,
+          code: 'ISMAA',
+          name: 'Instituut Sancta Maria-A',
+          ours: true,
+        ),
+      ]));
+
+      expect(harness.controller.schoolProfiles.single.code, 'ISMAA');
+    });
+  });
+
+  group('a connection profile the session cannot adopt says so (#246)', () {
+    test('stays silent while only live-adoptable values move', () async {
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(liveSettings: live);
+      expect(harness.controller.relaunchRequiredReason, isNull);
+
+      live.publish(_settings(workDate: _pinned(DateTime(2026, 9, 1))).copyWith(
+        schoolPrefix: 'GBS',
+        wisaSchools: const <WisaSchoolProfile>[
+          WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A', ours: true),
+        ],
+      ));
+
+      expect(harness.controller.relaunchRequiredReason, isNull,
+          reason: 'every one of these reaches the running stack now');
+    });
+
+    test('names the relaunch when a WISA endpoint moves under the session',
+        () async {
+      // The connectors were constructed from the bootstrap document — a live
+      // SQL connection and a resolved Key Vault secret — so this session keeps
+      // talking to the old server. Saying so is the whole point: syncing the
+      // *previous* WISA host while Instellingen shows a new one is the silent
+      // stale-input failure #238 set out to end.
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(liveSettings: live);
+
+      live.publish(AppSettings(
+        wisa: const WisaConnection(server: 'nieuw.example', port: '9000'),
+      ));
+
+      expect(
+        harness.controller.relaunchRequiredReason,
+        'Verbindingsinstellingen gewijzigd — deze sessie blijft de vorige '
+        'gebruiken tot de app herstart wordt.',
+      );
+      // Nothing is refused, though — the operator may have edited a profile
+      // they are not using, and stranding them would be worse than the notice.
+      expect(harness.controller.canCheckDrift, isTrue);
+    });
+
+    test('a harness with no settings holder never nags', () {
+      expect(ReconcileHarness().controller.relaunchRequiredReason, isNull);
+    });
+  });
 }
+
+/// The `$filter` of every prefix-scoped `/users` bulk read [wire] saw, in
+/// order — the targeted `employeeId in (…)` back-fill lookups (#224) hit the
+/// same path but carry no prefix, so they are left out.
+List<String> _userFilters(RecordingGraph wire) => <String>[
+      for (final r in wire.requests)
+        if (r.url.path.endsWith('/users'))
+          if (!(r.url.queryParameters[r'$filter'] ?? '')
+              .startsWith('employeeId in'))
+            r.url.queryParameters[r'$filter'] ?? '',
+    ];

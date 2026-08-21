@@ -1032,6 +1032,100 @@ ReconcileHarness appliedClassWorkHarness({
       ourSchoolIds: const {1},
     );
 
+/// A harness for the classroom-scoped bulk apply (#252). One managed school,
+/// two third-year classes, and the **same** student situation in both: every
+/// student's Office 365 display name is stale, so each raises a lone
+/// `ModifyAzureName` and they all share one `situationKey`.
+///
+/// 3C holds two of them (Sam and Sara) — enough for the same-situation bulk
+/// header to render at all, since it only appears above a subset of more than
+/// one — while 3D holds a third (Tom) in the identical situation. So an
+/// "Alles toepassen (2)" pressed inside 3C must write exactly Sam and Sara and
+/// leave Tom pending: before the fix the header resolved its situation key back
+/// through the whole linked view and wrote all three, none of which the
+/// operator drilled into.
+///
+/// Both classes are otherwise in sync with WISA (matching `untis` codes), so
+/// the only work anywhere in the student family is those three names.
+ReconcileHarness crossClassSituationHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '1', classGroup: '3C', firstName: 'Sam', name: 'Sels'),
+          wisaStudent(
+              wisaId: '2', classGroup: '3C', firstName: 'Sara', name: 'Segers'),
+          wisaStudent(
+              wisaId: '3', classGroup: '3D', firstName: 'Tom', name: 'Tas'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+          wisaClassGroup('3D', adminCode: 'a4', schoolCode: '111'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('3C', code: '3C_ss', untis: '3C'),
+          ssGroup('3D', code: '3D_ss', untis: '3D'),
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'sam',
+            accountId: '1',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'sara',
+            accountId: '2',
+            mail: 'sara.segers@student.school.example',
+            givenName: 'Sara',
+            surname: 'Segers',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '3',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        memberships: [
+          member('sam', '3C_ss'),
+          member('sara', '3C_ss'),
+          member('tom', '3D_ss'),
+        ],
+      ),
+      // Every display name left blank, so all three raise `ModifyAzureName` —
+      // one situation spanning two classes.
+      azure: azSnap(users: [
+        azUser(
+          id: kSam3C,
+          upn: 'sam.sels@student.school.example',
+          employeeId: '1',
+        ),
+        azUser(
+          id: kSara3C,
+          upn: 'sara.segers@student.school.example',
+          employeeId: '2',
+        ),
+        azUser(
+          id: kTom3D,
+          upn: 'tom.tas@student.school.example',
+          employeeId: '3',
+        ),
+      ]),
+      ourSchoolIds: const {1},
+    );
+
+/// The Azure object ids of [crossClassSituationHarness]'s three students — what
+/// a test matches the recorded Graph writes against to prove which accounts a
+/// classroom-scoped bulk apply actually touched (#252).
+const String kSam3C = 'az-sam-3c';
+const String kSara3C = 'az-sara-3c';
+const String kTom3D = 'az-tom-3d';
+
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
 /// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),
@@ -1174,7 +1268,17 @@ ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
 /// The class rows in Klasgroepen therefore carry the two applyable roster syncs,
 /// and each student's own card carries the informational reading of the same
 /// fact.
-ReconcileHarness azureClassMembershipHarness() => ReconcileHarness(
+///
+/// Wiring [store] / [linkedStore] persists what it syncs, so a second session
+/// can [ReconcileHarness.resume] over the same shared view and read those cards
+/// passively (#255).
+ReconcileHarness azureClassMembershipHarness({
+  SnapshotStore? store,
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      store: store,
+      linkedStore: linkedStore,
       wisa: wisaSnap(
         students: [
           wisaStudent(wisaId: '1', classGroup: '1A'),
@@ -1425,6 +1529,84 @@ ReconcileHarness newClassChoiceHarness() => ReconcileHarness(
       classTree: const SmartschoolClassTree(path: 'SCHOOL'),
     );
 
+/// A harness for the namesake-class either/or (#250) — the shape the #225
+/// notice leaves behind, alongside a genuinely new class so both readings are on
+/// screen at once.
+///
+/// Our school 1 runs four classes, each holding a student. Smartschool already
+/// carries `2G` and `2H`, but on groups that are **not flagged official**, so the
+/// class link passes them over and each lands as a
+/// [core.LinkedGroup.smartschoolNamesake]: the operator is told to make the
+/// group official by hand (#225). `1A` and `1B` are genuinely absent downstream
+/// and are the ordinary create-or-ignore choice of #244.
+///
+/// The bug this reproduces: both create actions refuse a namesake class, so
+/// `classImportAlternative` was left holding only `DoNotImportFromWisa` — a
+/// choice of one, hence always selected. **Alles toepassen** then wrote a
+/// `DontImportClass` rule on `2G` and `2H`, dropping from the next WISA snapshot
+/// the very classes the notice beside them had just said to repair in
+/// Smartschool, while the Smartschool groups stayed behind unmanaged.
+///
+/// Two of each on purpose: two namesake classes put them in a "same situation"
+/// subset of their own with its own bulk header — which is where the pooling
+/// half of the issue shows, since they must not share the new classes' subset —
+/// and two new classes give that other subset a header too, proving the fix did
+/// not simply silence the list: their creates still run.
+ReconcileHarness namesakeClassChoiceHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '1B'),
+          wisaStudent(wisaId: '3', classGroup: '2G'),
+          wisaStudent(wisaId: '4', classGroup: '2H'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '1A',
+            description: 'Onze eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '1B',
+            description: 'Onze tweede klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '2G',
+            description: '2e lj A Klassieke talen',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '2H',
+            description: '2e lj A Handel',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: core.GroupType.group,
+          ),
+          ssGroup('2G', code: 'G2G', official: false),
+          ssGroup('2H', code: 'G2H', official: false),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+
 /// A harness for the "new staff member" choice (#248) — the staff twin of
 /// [newClassChoiceHarness]. Two freshly hired teachers exist in WISA only, so
 /// each raises `AddStaffToAzure` (which since #240 chains the Smartschool
@@ -1575,12 +1757,28 @@ List<CandidateAction> departureChoice() => const <CandidateAction>[
       ),
     ];
 
+/// The lone **informational** candidate a student's account doc carries when
+/// they sit in the wrong Office 365 class group (#245): the class-level roster
+/// sync performs the one write, so the per-account row only diagnoses
+/// (`canApply == false`) and the badge beside it counts zero. The shape a
+/// passive card has to mark "(manueel)" (#255).
+List<CandidateAction> wrongAzureClassGroupNotice() => const <CandidateAction>[
+      CandidateAction(
+        family: 'student',
+        kind: 'AzureClassGroupMembership',
+        system: core.Origin.azure,
+        summary: 'Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats '
+            'van GBS-1B. Werk het ledenbestand van beide klassen bij.',
+        canApply: false,
+      ),
+    ];
+
 /// One [MaterializedAccount] for a passive-session classroom, placed in
 /// [school]/[gradeYear]/[classroom]. [withAction] decides whether it carries an
 /// applyable candidate — i.e. whether [MaterializedAccount.hasPending] is true,
 /// the "has actions" predicate the toggle filters on. [candidates] overrides it
 /// outright for a doc that needs a specific candidate set (e.g. the either/or of
-/// [departureChoice]).
+/// [departureChoice] or the notice of [wrongAzureClassGroupNotice]).
 MaterializedAccount matAccount({
   required String id,
   required String label,
@@ -1642,6 +1840,8 @@ MaterializedAccount matStaff({
 Future<InMemoryLinkedStore> seededLinkedStore(
   List<MaterializedAccount> accounts, {
   String syncedBy = 'operator@school.example',
+  Map<core.Origin, SystemSyncMeta> systemSyncs =
+      const <core.Origin, SystemSyncMeta>{},
 }) async {
   final store = InMemoryLinkedStore();
   await store.writeMaterialized(
@@ -1652,6 +1852,10 @@ Future<InMemoryLinkedStore> seededLinkedStore(
     ),
     syncedBy: syncedBy,
     at: kFixtureDate,
+    // The per-system stamps another operator's sync left behind (#108), the
+    // WISA one of which also names the werkdatum the roster is as of (#247).
+    // Empty by default: most fixtures only need the view itself.
+    systemSyncs: systemSyncs,
   );
   return store;
 }
@@ -1999,11 +2203,8 @@ class GatedApplier extends StateApplier {
     required super.connectors,
     required super.resolver,
     required super.wisaRules,
-    required super.studentConfig,
-    required super.staffConfig,
-    super.classTree,
+    required super.settings,
     super.passwordQueue,
-    super.ourSchoolIds,
   });
 
   /// Awaited before each action; `null` for the ordinary harness.
@@ -2040,6 +2241,81 @@ class GatedApplier extends StateApplier {
     await _park();
     return super.applyGroup(action, options: options);
   }
+}
+
+/// A scripted Smartschool SOAP wire for the import-rule end-to-end (#202/#241):
+/// answers `getAllGroupsAndClasses` with a small base64 group tree and reports
+/// "no direct accounts" (code 19) for every group, recording the group codes the
+/// connector asked about so a test can see the pruned ones were never read.
+///
+/// Wire it as [ReconcileHarness.smartschoolTransport] to drive the *production*
+/// Smartschool pull, which reads the operator's rules from the live settings
+/// document at pull time (#246).
+class GroupTreeSoap implements ss.SmartschoolSoapTransport {
+  /// The group codes `getAllAccountsExtended` was called for, in walk order.
+  final List<String> accountCodes = <String>[];
+
+  static const String _tree = '<groups>'
+      '<group><name>School</name><type>G</type><code>SCH</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Organisatie</name><type>G</type><code>ORG</code>'
+      '<visible>1</visible><children>'
+      '<group><name>Verborgen</name><type>G</type><code>HID</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '<group><name>Klassen</name><type>G</type><code>KLA</code>'
+      '<visible>1</visible><children>'
+      '<group><name>1A</name><type>K</type><code>C1A</code>'
+      '<visible>1</visible></group>'
+      '</children></group>'
+      '</children></group></groups>';
+
+  @override
+  Future<String> send({
+    required Uri endpoint,
+    required String soapAction,
+    required String envelope,
+  }) async {
+    // The SOAPAction is `<namespace>#<method>`.
+    final String method = soapAction.split('#').last;
+    if (method == ss.SmartschoolMethod.getAllGroupsAndClasses) {
+      return _wrap(
+        method,
+        base64.encode(utf8.encode(_tree)),
+        'xsd:base64Binary',
+      );
+    }
+    if (method == ss.SmartschoolMethod.getAllAccountsExtended) {
+      accountCodes.add(
+        RegExp(r'<code[^>]*>([^<]*)</code>').firstMatch(envelope)?.group(1) ??
+            '',
+      );
+      return _wrap(method, '19', 'xsd:int'); // Smartschool: no direct accounts.
+    }
+    return _wrap(method, '0', 'xsd:int');
+  }
+
+  String _wrap(String method, String value, String type) =>
+      '<?xml version="1.0" encoding="utf-8"?>'
+      '<soap:Envelope '
+      'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" '
+      'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+      '<soap:Body><${method}Response>'
+      '<return xsi:type="$type">$value</return>'
+      '</${method}Response></soap:Body></soap:Envelope>';
+}
+
+/// The Smartschool class tree the live document configures, or null when it
+/// configures none — in which case the harness's own [ReconcileHarness.classTree]
+/// fixture stands in (#246).
+///
+/// Built with the production [classTreeFrom], so a test that saves a tree in
+/// Instellingen gets the tree the real bootstrap would derive.
+SmartschoolClassTree? _liveClassTree(SmartschoolConnection smartschool) {
+  final tree = classTreeFrom(smartschool);
+  final unset =
+      tree.years.isEmpty && tree.grades.isEmpty && tree.path.trim().isEmpty;
+  return unset ? null : tree;
 }
 
 /// One assembled reconcile stack against fakes: scripted per-system syncers
@@ -2080,6 +2356,18 @@ class ReconcileHarness {
         linkedStore = linkedStore ?? InMemoryLinkedStore() {
     log = LogBuffer(clock: () => kFixtureDate);
     final wisaRules = WisaImportRules();
+
+    // The controller reads its school profiles from the live document now
+    // (#246), so a fixture that curates schools has to put them there — which
+    // is what `bootstrapReconcile` does when it publishes the document it just
+    // loaded. Seeded only when the caller's own document carries none, so a test
+    // driving Instellingen for real always wins.
+    if (schoolProfiles.isNotEmpty &&
+        this.liveSettings.current.wisaSchools.isEmpty) {
+      this.liveSettings.publish(
+            this.liveSettings.current.copyWith(wisaSchools: schoolProfiles),
+          );
+    }
 
     // The scripted per-system pulls (with call counters). When a [store] is
     // wired, each is wrapped so a successful pull persists — mirroring how
@@ -2145,7 +2433,13 @@ class ReconcileHarness {
       );
       ssSync = (_) async {
         ssSyncs++;
-        return connector.sync(rules: smartschoolRules);
+        // The live document's rules win when it carries any (#246), exactly as
+        // `bootstrapReconcile` reads `live.current.smartschoolRules` at pull
+        // time; the [smartschoolRules] fixture stands in otherwise.
+        final live = this.liveSettings.current.smartschoolRules;
+        return connector.sync(
+          rules: live.isEmpty ? smartschoolRules : live,
+        );
       };
     } else {
       ssSync = (_) async {
@@ -2181,9 +2475,16 @@ class ReconcileHarness {
         expectedEmployeeIds: () => <String>{
           ...managedStudentEmployeeIds(
             app.wisa.snapshot,
-            ourSchoolIds: ourSchoolIds,
+            ourSchoolIds:
+                managedSchoolIdsOf(this.liveSettings.current) ?? ourSchoolIds,
           ),
           ...managedStaffEmployeeIds(app.wisa.snapshot),
+        },
+        // The prefix the pull scopes by, read live (#246) — the fixture's 'GBS'
+        // until a test saves one in Instellingen.
+        schoolPrefix: () {
+          final prefix = this.liveSettings.current.schoolPrefix;
+          return prefix.isEmpty ? 'GBS' : prefix;
         },
       );
       azSync = (previous) async {
@@ -2270,23 +2571,39 @@ class ReconcileHarness {
       ),
       resolver: SeqResolver(),
       wisaRules: wisaRules,
-      // The Smartschool group tree a freshly created class hangs under. Left
-      // unconfigured by default (no parent resolves, as in a bare tenant); a
-      // fixture that applies `AddToSmartschool` for real names the root here.
-      classTree: classTree,
-      studentConfig: actions.StudentActionConfig(
-        schoolPrefix: 'GBS',
-        azureDomain: 'school.example',
-      ),
-      staffConfig: actions.StaffActionConfig(
-        schoolPrefix: 'GBS',
-        azureDomain: 'school.example',
-      ),
       passwordQueue: passwordQueue,
-      // The operator's managed-school set from Settings (#178). When unset, the
-      // linker falls back to the WISA snapshot's MarkAsOurs flags, as bootstrap
-      // does for a not-yet-configured group.
-      ourSchoolIds: ourSchoolIds,
+      // Every settings-derived input, read from the live document on each link
+      // and apply exactly as `bootstrapReconcile` wires it (#246) — so a test
+      // can publish a save (or drive Instellingen for real) and see the very
+      // next relink honour it. Each value falls back to this harness's own
+      // fixture when the live document leaves it unset, mirroring how bootstrap
+      // falls back to the dart-define sign-in config; the ~40 fixtures that
+      // publish no document therefore behave exactly as before.
+      settings: () {
+        final s = this.liveSettings.current;
+        final prefix = s.schoolPrefix.isEmpty ? 'GBS' : s.schoolPrefix;
+        final domain =
+            s.azure.domain.isEmpty ? 'school.example' : s.azure.domain;
+        return ApplierSettings(
+          studentConfig: actions.StudentActionConfig(
+            schoolPrefix: prefix,
+            azureDomain: domain,
+          ),
+          staffConfig: actions.StaffActionConfig(
+            schoolPrefix: prefix,
+            azureDomain: domain,
+          ),
+          // The Smartschool group tree a freshly created class hangs under.
+          // Left unconfigured by default (no parent resolves, as in a bare
+          // tenant); a fixture that applies `AddToSmartschool` for real names
+          // the root here, and a test that saves one in Instellingen wins.
+          classTree: _liveClassTree(s.smartschool) ?? classTree,
+          // The operator's managed-school set from Settings (#178). When unset,
+          // the linker falls back to the WISA snapshot's MarkAsOurs flags, as
+          // bootstrap does for a not-yet-configured group.
+          ourSchoolIds: managedSchoolIdsOf(s) ?? ourSchoolIds,
+        );
+      },
     );
 
     final signalHub = hub;

@@ -50,6 +50,28 @@ void main() {
       expect(snap.schools, hasLength(1));
     });
 
+    test('workDate is null when nothing stamped one', () {
+      // A hand-built fixture, or a snapshot restored from a document written
+      // before the werkdatum was recorded (#247).
+      expect(snapshot.workDate, isNull);
+      expect(snapshot.toJson().containsKey('workDate'), isFalse);
+    });
+
+    test('toJson/fromJson round-trips the werkdatum (#247)', () {
+      // The date the roster is *as of*, which the shared state carries onto the
+      // Acties freshness stamp — so a cold-stored snapshot must not lose it.
+      final stamped = WisaSnapshot(
+        fetchedAt: DateTime.utc(2026, 8, 21, 9, 0),
+        workDate: DateTime(2026, 9, 1),
+        students: const [],
+        staff: const [],
+        classGroups: const [],
+        schools: const [],
+      );
+      expect(WisaSnapshot.fromJson(stamped.toJson()).workDate,
+          DateTime(2026, 9, 1));
+    });
+
     test('toJson/fromJson round-trips every list and field (#107)', () {
       final full = WisaSnapshot(
         fetchedAt: DateTime.utc(2026, 5, 20, 9, 30, 15),

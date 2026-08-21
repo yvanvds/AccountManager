@@ -223,6 +223,111 @@ void main() {
         ["employeeId in ('W7')"],
       );
     });
+
+    test(
+        'the school prefix is read at sync time too, not at wiring time (#246)',
+        () async {
+      // The prefix scopes the whole pull, and the operator can change it in
+      // Instellingen mid-session. Before #246 the connector's credentials —
+      // frozen when bootstrap built them — were the only answer, so a saved
+      // prefix took a relaunch.
+      var prefix = 'GBS';
+      final state = SystemState<AzureSnapshot>(
+        system: core.Origin.azure,
+        syncer: azureSyncer(
+          AzureConnector(
+            credentials: AzureCredentials(
+              clientId: 'c',
+              tenantId: 't',
+              azureDomain: 'school.example',
+              schoolPrefix: 'FROZEN',
+            ),
+            authProvider: const StaticAuthProvider('T'),
+            transport: transport,
+          ),
+          schoolPrefix: () => prefix,
+        ),
+      );
+
+      await state.sync();
+      final first =
+          transport.requests.firstWhere((r) => r.url.path.endsWith('/users'));
+      expect(first.url.queryParameters[r'$filter'], contains('GBS'));
+      expect(first.url.queryParameters[r'$filter'], isNot(contains('FROZEN')));
+
+      prefix = 'SSM';
+      await state.sync();
+      final second =
+          transport.requests.lastWhere((r) => r.url.path.endsWith('/users'));
+      expect(second.url.queryParameters[r'$filter'], contains('SSM'));
+    });
+
+    test(
+        'a changed prefix re-reads in full instead of deltaing over the old '
+        'school (#246)', () async {
+      // `/users/delta` returns tenant changes filtered client-side by prefix, so
+      // an incremental pass would layer the *new* school's changes on the *old*
+      // school's user list — a snapshot mixing two schools that then persists to
+      // the cold store and materializes for the whole team. Dropping the token
+      // costs one full read and cannot lie.
+      var prefix = 'GBS';
+      final state = SystemState<AzureSnapshot>(
+        system: core.Origin.azure,
+        syncer: azureSyncer(
+          AzureConnector(
+            credentials: AzureCredentials(
+              clientId: 'c',
+              tenantId: 't',
+              azureDomain: 'school.example',
+              schoolPrefix: 'GBS',
+            ),
+            authProvider: const StaticAuthProvider('T'),
+            transport: transport,
+          ),
+          schoolPrefix: () => prefix,
+        ),
+      );
+
+      await state.sync();
+      // Unchanged prefix ⇒ the ordinary incremental pass, as before #246.
+      await state.sync();
+      expect(
+        transport.requests
+            .lastWhere((r) => r.url.path.contains('users/delta'))
+            .url
+            .queryParameters[r'$deltatoken'],
+        'PRIMED1',
+      );
+
+      final bulkReadsBefore =
+          transport.requests.where((r) => r.url.path.endsWith('/users')).length;
+      prefix = 'SSM';
+      final snapshot = await state.sync();
+
+      final bulkReadsAfter =
+          transport.requests.where((r) => r.url.path.endsWith('/users')).length;
+      expect(bulkReadsAfter, bulkReadsBefore + 1,
+          reason: 'the prefix moved ⇒ a full read, not a delta');
+      expect(
+        transport.requests
+            .lastWhere((r) => r.url.path.endsWith('/users'))
+            .url
+            .queryParameters[r'$filter'],
+        contains('SSM'),
+      );
+      expect(snapshot.deltaToken, 'PRIMED1',
+          reason: 'the full read primes a fresh token for the new prefix');
+
+      // …and the pass after that is incremental again: only the *change* forces
+      // the full read, not the new prefix forever.
+      final beforeSteady =
+          transport.requests.where((r) => r.url.path.endsWith('/users')).length;
+      await state.sync();
+      expect(
+        transport.requests.where((r) => r.url.path.endsWith('/users')).length,
+        beforeSteady,
+      );
+    });
   });
 
   group('managedStudentEmployeeIds (#224)', () {

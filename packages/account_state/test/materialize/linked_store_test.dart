@@ -188,6 +188,43 @@ void main() {
       expect(back.generation, 3);
       expect(back.systems[core.Origin.smartschool]?.syncedBy, 'mieke@school');
       expect(back.systems[core.Origin.smartschool]?.at, t0);
+      expect(back.systems[core.Origin.smartschool]?.workDate, isNull,
+          reason: 'only a WISA pull is made as of a werkdatum');
+    });
+
+    test("json carries a WISA stamp's werkdatum (#247)", () {
+      // The date the installed roster was pulled as of. It has to survive the
+      // store, or a passive session reading somebody else's sync would have no
+      // way to tell which school year the view describes.
+      final state = SyncState(
+        generation: 3,
+        updatedAt: t0,
+        updatedBy: 'jan@school',
+        systems: {
+          core.Origin.wisa: SystemSyncMeta(
+            syncedBy: 'jan@school',
+            at: t0,
+            workDate: DateTime(2026, 9, 1),
+          ),
+        },
+      );
+
+      final back = SyncState.fromJson(state.toJson());
+      expect(back.systems[core.Origin.wisa]?.workDate, DateTime(2026, 9, 1));
+    });
+
+    test('a stamp written before #247 reads back without a werkdatum', () {
+      // Forward-compatibility the other way round: the shared document in
+      // Cosmos predates the field, and must still parse.
+      final legacy = <String, dynamic>{
+        'generation': 2,
+        'systems': {
+          'wisa': {'syncedBy': 'jan@school', 'at': t0.toIso8601String()},
+        },
+      };
+      final back = SyncState.fromJson(legacy);
+      expect(back.systems[core.Origin.wisa]?.at, t0);
+      expect(back.systems[core.Origin.wisa]?.workDate, isNull);
     });
   });
 }

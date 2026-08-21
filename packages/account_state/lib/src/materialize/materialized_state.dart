@@ -582,7 +582,11 @@ class Rollup {
 /// not just this session's in-process [SystemState.lastSync]. Written into the
 /// [SyncState.systems] map by the operator whose sync pulled that system.
 class SystemSyncMeta {
-  const SystemSyncMeta({required this.syncedBy, required this.at});
+  const SystemSyncMeta({
+    required this.syncedBy,
+    required this.at,
+    this.workDate,
+  });
 
   /// The operator (AAD UPN) whose session pulled this system.
   final String syncedBy;
@@ -590,14 +594,31 @@ class SystemSyncMeta {
   /// When that pull's snapshot was fetched.
   final DateTime at;
 
+  /// The **werkdatum** a WISA pull asked for — the date the roster now
+  /// installed is *as of* (#247). Null for Smartschool and Azure, which have
+  /// no such input, and on a WISA stamp written before this was recorded.
+  ///
+  /// It rides here rather than on [SyncState] itself because it is a property
+  /// of the WISA *pull*, not of the materialize: a Check-for-drift re-links
+  /// without re-pulling WISA, so the roster — and the date it describes — stays
+  /// the one this entry already names, exactly as [at] and [syncedBy] do. That
+  /// also puts it in the shared store, so a passive session (#115) reading a
+  /// view somebody else synced can tell which school year it describes without
+  /// having run the pass itself.
+  final DateTime? workDate;
+
   Map<String, dynamic> toJson() => {
         'syncedBy': syncedBy,
         'at': at.toIso8601String(),
+        if (workDate != null) 'workDate': workDate!.toIso8601String(),
       };
 
   factory SystemSyncMeta.fromJson(Map<String, dynamic> json) => SystemSyncMeta(
         syncedBy: json['syncedBy'] as String,
         at: DateTime.parse(json['at'] as String),
+        workDate: json['workDate'] == null
+            ? null
+            : DateTime.parse(json['workDate'] as String),
       );
 }
 

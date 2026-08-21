@@ -79,15 +79,43 @@ class ApplicationState {
 /// one-liner `(_) => connector.sync(...)`, written at the wiring site because
 /// their per-sync parameters (WISA schools/workdate, the import-rule sets) come
 /// from live-config that a later slice folds in.
+///
+/// [schoolPrefix] is likewise read **at sync time** (#246): the prefix scopes
+/// both the bulk `$filter` and the group listing, and the operator can change it
+/// in Instellingen while the app runs, so the connector's own
+/// `AzureCredentials.schoolPrefix` — frozen when bootstrap built it — must not
+/// be the last word. Omit it and the pull is exactly as it shipped before #246.
+///
+/// **Changing the prefix forces a full read.** `/users/delta` returns the
+/// tenant's changes and the walk filters them client-side by prefix, so an
+/// incremental pass layers the new prefix's *changes* on top of the previous
+/// pass's *old-prefix* user list. The snapshot would then be a mix of two
+/// schools that no relink could untangle, and it would persist to the cold store
+/// and materialize for everyone. So when the prefix has moved since the last
+/// pull this syncer performed, the stored token and previous list are dropped
+/// and the pass re-reads in full — the same recovery #213 already makes when
+/// Graph refuses a token.
 Syncer<AzureSnapshot> azureSyncer(
   AzureConnector connector, {
   Iterable<String> Function()? expectedEmployeeIds,
-}) =>
-    (previous) => connector.sync(
-          deltaToken: previous?.deltaToken,
-          previous: previous,
-          expectedEmployeeIds: expectedEmployeeIds?.call() ?? const <String>[],
-        );
+  String Function()? schoolPrefix,
+}) {
+  // The prefix the snapshot in hand was read with. Seeded from the wiring-time
+  // value, which is the one the cold seed (if any) was pulled with: bootstrap
+  // wires this from the very document it just loaded.
+  var pulledWith = schoolPrefix?.call() ?? connector.credentials.schoolPrefix;
+  return (previous) {
+    final prefix = schoolPrefix?.call() ?? connector.credentials.schoolPrefix;
+    final moved = prefix != pulledWith;
+    pulledWith = prefix;
+    return connector.sync(
+      deltaToken: moved ? null : previous?.deltaToken,
+      previous: moved ? null : previous,
+      expectedEmployeeIds: expectedEmployeeIds?.call() ?? const <String>[],
+      schoolPrefix: prefix,
+    );
+  };
+}
 
 /// The WISA ids of the students in [snapshot] that belong to a school we
 /// manage — the ids [azureSyncer] hands the connector as the accounts this pass

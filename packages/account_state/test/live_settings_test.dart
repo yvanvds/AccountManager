@@ -124,4 +124,73 @@ void main() {
       );
     });
   });
+
+  group('connectionFingerprint (#246)', () {
+    test('moves for every endpoint half a connector is built from', () {
+      final base = _settings();
+      final variants = <String, AppSettings>{
+        'server': base.copyWith(wisa: base.wisa.copyWith(server: 'other.host')),
+        'port': base.copyWith(wisa: base.wisa.copyWith(port: '9001')),
+        'database': base.copyWith(wisa: base.wisa.copyWith(database: 'other')),
+        'username': base.copyWith(wisa: base.wisa.copyWith(username: 'other')),
+        'passwordRef': base.copyWith(
+          wisa: base.wisa.copyWith(passwordRef: const SecretRef('wisa.pw2')),
+        ),
+        'uri': base.copyWith(
+          smartschool: base.smartschool.copyWith(uri: 'other.smartschool.be'),
+        ),
+        'passphraseRef': base.copyWith(
+          smartschool: base.smartschool
+              .copyWith(passphraseRef: const SecretRef('ss.pass2')),
+        ),
+      };
+      for (final entry in variants.entries) {
+        expect(
+          connectionFingerprint(entry.value),
+          isNot(connectionFingerprint(base)),
+          reason: 'changing ${entry.key} rebuilds a connector',
+        );
+      }
+    });
+
+    test('never carries a secret value — only the ref that names one', () {
+      // The whole point of the SecretRef seam: nothing sensitive is ever
+      // serialized, and a fingerprint is a string this app logs and renders
+      // around. Rotating the secret behind an unchanged ref is a Key Vault
+      // event, invisible (and irrelevant) here.
+      final print = connectionFingerprint(_settings());
+      expect(print, contains('wisa.password'));
+      expect(print, isNot(contains('geheim')));
+    });
+
+    test('ignores everything #246 made live, so a live change never nags', () {
+      // The values the running stack now adopts must not raise the
+      // relaunch notice: the prefix, the domain, the managed/virtual marks, the
+      // class tree, the rules and the werkdatum all reach the next pass.
+      final base = _settings();
+      final live = base.copyWith(
+        schoolPrefix: 'GBS',
+        azure: const AzureConnection(domain: 'school.example'),
+        smartschool: base.smartschool.copyWith(
+          studentGroup: 'SCHOOL',
+          useYears: true,
+          years: const ['1', '2', '3', '4', '5', '6', '7'],
+        ),
+        wisa: base.wisa.copyWith(
+          workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9)),
+        ),
+        wisaSchools: const [
+          WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A', ours: true),
+        ],
+      );
+      expect(connectionFingerprint(live), connectionFingerprint(base));
+    });
+
+    test('is insensitive to surrounding whitespace an operator typed', () {
+      final base = _settings();
+      final padded =
+          base.copyWith(wisa: base.wisa.copyWith(server: '  wisa.local  '));
+      expect(connectionFingerprint(padded), connectionFingerprint(base));
+    });
+  });
 }

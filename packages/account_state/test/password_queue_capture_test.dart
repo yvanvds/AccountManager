@@ -236,7 +236,7 @@ class _Harness {
     );
     var n = 0;
     String nextPassword() => 'pw${++n}';
-    applier = StateApplier(
+    applier = StateApplier.fixed(
       app: app,
       connectors: Connectors(smartschool: _ssConn(), azure: _azConn()),
       resolver: _SeqResolver(),

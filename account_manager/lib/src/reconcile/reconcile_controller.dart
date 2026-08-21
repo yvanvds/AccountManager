@@ -133,7 +133,7 @@ class PendingActionOption {
 /// dialog (#234).
 ///
 /// Built by [ReconcileController.applyScope] from the **selected**, applyable
-/// option of each choice — exactly the actions `applyAll` / `applySituation` /
+/// option of each choice — exactly the actions `applyAll` / `applyEntries` /
 /// `applyEntry` would run — so the dialog names the systems the pass genuinely
 /// reaches instead of the hard-coded "Smartschool and Azure AD" it used to
 /// claim for every action.
@@ -359,19 +359,26 @@ class ReconcileController extends ChangeNotifier {
     required this.log,
     required this.store,
     this.syncedBy = '',
-    this.schoolProfiles = const <WisaSchoolProfile>[],
+    List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
     this.settingsStore,
     this.liveSettings,
     this.publisher,
     this.subscriber,
     this.persistTimeout = const Duration(minutes: 10),
     DateTime Function()? clock,
-  }) : _now = clock ?? DateTime.now {
+  })  : _bootstrapSchoolProfiles = schoolProfiles,
+        _now = clock ?? DateTime.now {
     final sub = subscriber;
     if (sub != null) _signalSub = sub.signals.listen(_onSignal);
     // The snapshot this session starts with — seeded from the cold store, or
     // pulled later — belongs to the settings as they stand right now (#238).
     _wisaPullFingerprint = _wisaFingerprint();
+    // The endpoints and credential refs the connectors in hand were built from
+    // (#246). Unlike everything else, a later change to these cannot be adopted
+    // — see [relaunchRequiredReason].
+    final live = liveSettings;
+    _bootstrapConnection =
+        live == null ? null : connectionFingerprint(live.current);
     // A save the operator makes in Instellingen must repaint this screen: it is
     // kept alive across tab switches, so nothing else would tell it the WISA
     // pull inputs moved.
@@ -395,6 +402,15 @@ class ReconcileController extends ChangeNotifier {
   /// The operator (UPN) whose session writes the materialized view.
   final String syncedBy;
 
+  /// The profiles bootstrap was assembled with — the fallback for a session
+  /// that models no live settings document at all.
+  final List<WisaSchoolProfile> _bootstrapSchoolProfiles;
+
+  /// The [connectionFingerprint] of the document the connectors were built
+  /// from, or null when no [liveSettings] is wired (which leaves
+  /// [relaunchRequiredReason] permanently silent).
+  late final String? _bootstrapConnection;
+
   /// The operator-curated WISA schools from the settings document
   /// (AppSettings.wisaSchools), each carrying the school's short code and long
   /// name. They are what [_schoolLabels] names a school with, so the Actions
@@ -402,7 +418,12 @@ class ReconcileController extends ChangeNotifier {
   /// session that has not pulled WISA yet (#204). Empty until an operator has
   /// filled the WISA-scholen grid in, which is when the label falls back to the
   /// snapshot and finally to `School <id>`.
-  final List<WisaSchoolProfile> schoolProfiles;
+  ///
+  /// Read from [liveSettings] when one is wired (#246), so renaming a school —
+  /// or adding one — in Instellingen re-labels the drill-down on the next
+  /// materialize instead of on the next launch.
+  List<WisaSchoolProfile> get schoolProfiles =>
+      liveSettings?.current.wisaSchools ?? _bootstrapSchoolProfiles;
 
   /// Where [schoolProfiles] is persisted, so a WISA pull can repair the stored
   /// profiles from the school list it just loaded (#207).
@@ -1056,6 +1077,34 @@ class ReconcileController extends ChangeNotifier {
   bool get canCheckDrift =>
       !busy && !syncLockedByOther && driftBlockedReason == null;
 
+  /// Why this session must be relaunched before it can honour the settings as
+  /// they now stand, or `null` when it can honour all of them (#246).
+  ///
+  /// #246 made every *derived* settings value live — the managed-school set, the
+  /// school prefix, the Azure domain, the Smartschool class tree and import
+  /// rules all reach the next pass. The connection profiles cannot follow: a
+  /// WISA host/port/database/login is bound into an open SQL connection, a
+  /// Smartschool site into a SOAP endpoint, and either password ref into a Key
+  /// Vault secret bootstrap resolved once, asynchronously, before any of this
+  /// existed. Rebuilding the connectors under a running pass is not something
+  /// this layer can do safely.
+  ///
+  /// So the session keeps talking to the endpoints it was built with, and says
+  /// so. Nothing is refused — the operator may well have edited a profile they
+  /// are not using this session, and stranding them behind a hard block would be
+  /// worse than a plain statement of fact. That statement is the point: silently
+  /// syncing the *previous* WISA server while Instellingen shows a new one is
+  /// exactly the class of lie #238 set out to end.
+  String? get relaunchRequiredReason {
+    final live = liveSettings;
+    final at = _bootstrapConnection;
+    if (live == null || at == null) return null;
+    return connectionFingerprint(live.current) == at
+        ? null
+        : 'Verbindingsinstellingen gewijzigd — deze sessie blijft de vorige '
+            'gebruiken tot de app herstart wordt.';
+  }
+
   /// Records that the WISA snapshot now in hand was pulled with [fingerprint] —
   /// the live settings as they stood when the pull *started*, so a save landing
   /// mid-pull stays pending rather than being credited to a pull that never saw
@@ -1315,7 +1364,11 @@ class ReconcileController extends ChangeNotifier {
 
   /// What a confirmed apply of [entries] would actually write (#234) — the
   /// systems the apply-confirmation dialog names, derived from the very options
-  /// [applyAll] / [applySituation] / [applyEntry] would run.
+  /// [applyAll] / [applyEntries] / [applyEntry] would run.
+  ///
+  /// Pass the confirmation dialog the *same* list the pass will run over
+  /// (#252): the dialog and the write agreeing is the whole point of building
+  /// both from one resolution.
   ///
   /// Two halves, because they are not the same claim. [ApplyScope.systems] is
   /// what the selected actions write themselves, one entry per action.
@@ -1423,8 +1476,9 @@ class ReconcileController extends ChangeNotifier {
     // operator degrades gracefully (nothing appended, no dangling "by ").
     final by = syncedBy.isEmpty ? '' : ' Operator: $syncedBy.';
     final message = _noChangesNeeded
-        ? 'Sync complete — no account changes needed. Ready.$by'
-        : 'Sync complete — ${pendingActions.length} pending action(s). Ready.$by';
+        ? 'Sync voltooid — geen accountwijzigingen nodig. Klaar.$by'
+        : 'Sync voltooid — ${pendingActions.length} openstaande actie(s). '
+            'Klaar.$by';
     log.addMessage(core.Origin.all, message);
   }
 
@@ -1490,7 +1544,7 @@ class ReconcileController extends ChangeNotifier {
       if (_phase == ReconcilePhase.idle) _phase = ReconcilePhase.ready;
       notifyListeners();
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not load the overview: $e');
+      log.addError(core.Origin.all, 'Kon het overzicht niet laden: $e');
     }
   }
 
@@ -1518,7 +1572,8 @@ class ReconcileController extends ChangeNotifier {
     try {
       await _refetchFromStore();
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not catch up after reconnect: $e');
+      log.addError(
+          core.Origin.all, 'Kon niet bijwerken na het herverbinden: $e');
     }
   }
 
@@ -1538,14 +1593,14 @@ class ReconcileController extends ChangeNotifier {
           classroom: open.classroom,
         );
       } on Object catch (e) {
-        log.addError(core.Origin.all, 'Could not refresh ${open.label}: $e');
+        log.addError(core.Origin.all, 'Kon ${open.label} niet vernieuwen: $e');
       }
     }
     if (_showingGroups) {
       try {
         _groupDocs = await store.readGroups();
       } on Object catch (e) {
-        log.addError(core.Origin.all, 'Could not refresh the class groups: $e');
+        log.addError(core.Origin.all, 'Kon de klasgroepen niet vernieuwen: $e');
       }
     }
     notifyListeners();
@@ -1564,7 +1619,7 @@ class ReconcileController extends ChangeNotifier {
         classroom: classroom.classroom,
       );
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not open ${classroom.label}: $e');
+      log.addError(core.Origin.all, 'Kon ${classroom.label} niet openen: $e');
       _classroomAccounts = const [];
     } finally {
       _loadingClassroom = false;
@@ -1592,7 +1647,7 @@ class ReconcileController extends ChangeNotifier {
     try {
       _groupDocs = await store.readGroups();
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not open the class groups: $e');
+      log.addError(core.Origin.all, 'Kon de klasgroepen niet openen: $e');
       _groupDocs = const [];
     } finally {
       _loadingGroups = false;
@@ -1620,29 +1675,34 @@ class ReconcileController extends ChangeNotifier {
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>
-      _run(_selectedActions([entry]), dry: true);
+      dryRunEntries(<PendingAccountEntry>[entry]);
 
   /// Applies one entry's chosen resolution (#110): the per-row apply.
   Future<void> applyEntry(PendingAccountEntry entry) =>
-      _run(_selectedActions([entry]), dry: false);
+      applyEntries(<PendingAccountEntry>[entry]);
 
-  /// Applies the chosen resolution to every entry in the same situation (#110):
-  /// "apply this resolution to all departed students". Each entry keeps its own
-  /// chosen alternative. [situationKey] matches [PendingAccountEntry.situationKey].
-  Future<void> applySituation(String situationKey) => _run(
-        _selectedActions(
-          pendingEntries.where((e) => e.situationKey == situationKey),
-        ),
-        dry: false,
-      );
+  /// Applies the chosen resolution of every entry in [entries] (#110) — the
+  /// bulk "apply this resolution to all of these" pass. Each entry keeps its
+  /// own chosen alternative, so a subset of departed students can be
+  /// unregistered while another is deleted.
+  ///
+  /// It takes the entries themselves rather than a `situationKey` to resolve
+  /// back through [pendingEntries], and that is the whole of #252. The bulk
+  /// header this runs for is rendered over a **scoped** list — the open
+  /// classroom's entries, or the group drill-down's, minus whatever the search
+  /// box filters out — while re-resolving a key against [pendingEntries] means
+  /// every entry in the entire linked view, across every class. A button
+  /// labelled "Alles toepassen (1)" therefore wrote every account group-wide
+  /// that happened to share the situation, none of which the operator had seen.
+  /// Passing the very list the header counted makes that mismatch structurally
+  /// impossible: label, confirmation scope ([applyScope]) and write are one
+  /// list.
+  Future<void> applyEntries(Iterable<PendingAccountEntry> entries) =>
+      _run(_selectedActions(entries), dry: false);
 
-  /// Dry-runs every entry in the same situation (#110).
-  Future<void> dryRunSituation(String situationKey) => _run(
-        _selectedActions(
-          pendingEntries.where((e) => e.situationKey == situationKey),
-        ),
-        dry: true,
-      );
+  /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes.
+  Future<void> dryRunEntries(Iterable<PendingAccountEntry> entries) =>
+      _run(_selectedActions(entries), dry: true);
 
   /// Runs [selected] — the pre-resolved, applyable options — through the apply
   /// path (dry or real). Shared by the global, per-entry, and per-situation
@@ -1872,7 +1932,9 @@ class ReconcileController extends ChangeNotifier {
       // A correction that fails must not turn a successful apply into a failed
       // pass; the counts then simply stay as stale as they were before.
       log.addError(
-          core.Origin.all, 'Could not refresh the overview counts: $e');
+          core.Origin.all,
+          'Kon de tellingen in het overzicht niet '
+          'vernieuwen: $e');
     }
   }
 
@@ -2004,7 +2066,15 @@ class ReconcileController extends ChangeNotifier {
           if (repaired[i] != stored.wisaSchools[i]) repaired[i].schoolId,
       ];
       if (healed.isEmpty) return;
-      await store.save(stored.copyWith(wisaSchools: repaired));
+      final saved = stored.copyWith(wisaSchools: repaired);
+      await store.save(saved);
+      // Publish what we just wrote (#246). [schoolProfiles] now reads the live
+      // document, and this pass has both repaired the stored profiles *and*
+      // possibly picked up another operator's save in the re-read above — so
+      // without this the holder would keep serving the pre-repair names for the
+      // rest of the session, and the Settings view would show one thing while
+      // the drill-down labelled another.
+      liveSettings?.publish(saved);
       log.addMessage(
         core.Origin.wisa,
         'Updated the name and code of ${healed.length} WISA school(s) in the '
@@ -2032,9 +2102,19 @@ class ReconcileController extends ChangeNotifier {
 
   /// Stamps [snapshot]'s fetch time against [system] for this pass, folded into
   /// the shared store's per-system freshness on persist (#108).
+  ///
+  /// A WISA pull also stamps the **werkdatum** it asked for (#247), taken off
+  /// the snapshot the connector built rather than re-resolved here: with
+  /// `isNow: true` the date is resolved inside the pull, so asking the live
+  /// settings a second time could answer for a different day (a pass running
+  /// across midnight) or for a document saved while the pull was in flight.
+  /// The one place that resolved it is the only place that can say what it was.
   void _recordPull(core.Origin system, core.Snapshot snapshot) {
-    _pulled[system] =
-        SystemSyncMeta(syncedBy: syncedBy, at: snapshot.fetchedAt);
+    _pulled[system] = SystemSyncMeta(
+      syncedBy: syncedBy,
+      at: snapshot.fetchedAt,
+      workDate: snapshot is wapi.WisaSnapshot ? snapshot.workDate : null,
+    );
   }
 
   /// Stamps the smart-sync "WISA unchanged" path: nothing was re-linked, so the

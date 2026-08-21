@@ -97,13 +97,20 @@ class ReconcileServices {
   });
 
   /// The settings document as it stood when the stack was assembled. A
-  /// point-in-time copy: what the WISA pull actually uses lives in
-  /// [liveSettings] (#238).
+  /// point-in-time copy, kept only for what genuinely froze with it — the
+  /// connection profiles the three connectors were constructed from. Everything
+  /// the running stack acts on is read from [liveSettings] instead (#238/#246).
   final AppSettings settings;
 
-  /// The shared settings holder the WISA syncer reads at pull time and the
-  /// Settings view publishes into, so a saved werkdatum reaches the next
-  /// Synchroniseer without relaunching the app (#238).
+  /// The shared settings holder every settings-derived value in this stack is
+  /// read from, and the Settings view publishes into on every load and save.
+  ///
+  /// #238 wired the WISA pull inputs (werkdatum, virtuele werkdatum, virtual
+  /// marks) through it; #246 the rest — the managed-school set, the school
+  /// prefix, the Azure domain, the Smartschool class tree and import rules, and
+  /// the curated school profiles. So a save reaches the next pass rather than
+  /// the next launch. What it cannot reach is the connectors' own endpoints and
+  /// credential refs; `ReconcileController.relaunchRequiredReason` says so.
   final LiveSettings liveSettings;
 
   final ApplicationState app;
@@ -152,10 +159,20 @@ class ReconcileConfigException implements Exception {
 /// `ApplicationState` → `StateApplier` → [ReconcileController].
 ///
 /// [liveSettings] is the process-wide settings holder the Settings view
-/// publishes into (#238). The WISA pull reads its werkdatum pair and virtual
-/// marks from it at pull time, so a save reaches the next Synchroniseer without
-/// a relaunch. Production wires the same instance into [bootstrapSettings];
-/// omitting it gives this stack a private holder that only bootstrap writes.
+/// publishes into (#238). Everything this stack derives from the settings
+/// document is read back from it **at use time** rather than captured here —
+/// the WISA pull's werkdatum pair and virtual marks (#238), and the
+/// managed-school set, school prefix, Azure domain, Smartschool class tree and
+/// import rules, and curated school profiles (#246) — so a save reaches the next
+/// pass instead of the next launch. Production wires the same instance into
+/// [bootstrapSettings]; omitting it gives this stack a private holder that only
+/// bootstrap writes.
+///
+/// The one residue is the connection profiles: the WISA server/port/database/
+/// login, the Smartschool site, and the two secret refs are resolved here, once,
+/// into live connections and Key Vault reads. Changing one needs a relaunch, and
+/// `ReconcileController.relaunchRequiredReason` puts that on screen rather than
+/// letting the session quietly keep talking to the previous endpoints.
 ///
 /// The optional parameters are test seams; production callers pass only
 /// [session], [aad] and [liveSettings]. The Cosmos containers are provisioned
@@ -323,14 +340,21 @@ Future<ReconcileServices> bootstrapReconcile({
 
   // Per-school values prefer the persisted settings and fall back to the
   // dart-define sign-in config, so a not-yet-filled settings row still runs.
-  final schoolPrefix = _firstNonEmpty(settings.schoolPrefix, aad.schoolPrefix);
-  final azureDomain = _firstNonEmpty(settings.azure.domain, aad.azureDomain);
+  // Both are read from the **live** document at every use (#246): the operator
+  // can change either in Instellingen, and before #246 the value captured here
+  // was the only one the session ever saw. The credentials below still carry the
+  // bootstrap-time prefix, but only as the connector's default — every pull
+  // passes the current one explicitly.
+  String schoolPrefixNow() =>
+      _firstNonEmpty(live.current.schoolPrefix, aad.schoolPrefix);
+  String azureDomainNow() =>
+      _firstNonEmpty(live.current.azure.domain, aad.azureDomain);
   final azConnector = az.AzureConnector(
     credentials: az.AzureCredentials(
       clientId: aad.clientId,
       tenantId: aad.tenantId,
-      azureDomain: azureDomain,
-      schoolPrefix: schoolPrefix,
+      azureDomain: azureDomainNow(),
+      schoolPrefix: schoolPrefixNow(),
     ),
     authProvider: GraphSessionAuthProvider(session, aad.graph),
     log: logBuffer,
@@ -365,8 +389,12 @@ Future<ReconcileServices> bootstrapReconcile({
   // (#178) and by the Azure back-fill below (#224) so both scope to the same
   // schools. Null when no school is flagged, so a not-yet-configured group
   // falls back to the snapshot's own `MarkAsOurs` flags.
-  final Set<int>? ourSchoolIds =
-      settings.wisaSchools.isEmpty ? null : settings.managedWisaSchoolIds;
+  //
+  // Read from the live document at every use (#246) — flipping a school's
+  // **beheerd** mark in Instellingen must reach the next relink, not the next
+  // launch. Both readers below call this, so the linker and the Azure back-fill
+  // can never end up scoping to different school sets.
+  Set<int>? ourSchoolIdsNow() => managedSchoolIdsOf(live.current);
 
   // Assigned immediately below; the Azure syncer closes over it so it can read
   // the WISA snapshot *this* pass just pulled (WISA always syncs first).
@@ -402,7 +430,14 @@ Future<ReconcileServices> bootstrapReconcile({
         syncedBy: syncedBy,
         payloadOf: (s) => s.toJson(),
         onError: (e) => logSnapshotIssue(core.Origin.smartschool, e),
-        inner: (_) => ssConnector.sync(rules: settings.smartschoolRules),
+        // The operator's import rules, read from the live document at pull time
+        // (#241 authored them, #246 unfroze them): authoring a
+        // `DiscardSmartschoolGroup` in Instellingen reaches the very next
+        // Smartschool pull rather than the next launch. Which pass that is stays
+        // the smart-sync contract — Synchroniseer leaves a system this session
+        // already holds alone, so it is **Check for drift** that adopts a rule
+        // change (filed as #259).
+        inner: (_) => ssConnector.sync(rules: live.current.smartschoolRules),
       ),
     ),
     azure: SystemState<az.AzureSnapshot>(
@@ -427,10 +462,16 @@ Future<ReconcileServices> bootstrapReconcile({
           expectedEmployeeIds: () => <String>{
             ...managedStudentEmployeeIds(
               app.wisa.snapshot,
-              ourSchoolIds: ourSchoolIds,
+              ourSchoolIds: ourSchoolIdsNow(),
             ),
             ...managedStaffEmployeeIds(app.wisa.snapshot),
           },
+          // The prefix scopes the whole Azure pull, and it is operator-editable
+          // (#246). Changing it makes this pass re-read in full rather than
+          // layering the new school's changes over the old school's users. As
+          // with the Smartschool rules, the pass that re-reads Azure at all is
+          // Check for drift (#259).
+          schoolPrefix: schoolPrefixNow,
         ),
       ),
     ),
@@ -444,22 +485,29 @@ Future<ReconcileServices> bootstrapReconcile({
     ),
     resolver: CosmosPersonIdResolver(client: client),
     wisaRules: wisaRules,
-    studentConfig: actions.StudentActionConfig(
-      schoolPrefix: schoolPrefix,
-      azureDomain: azureDomain,
-    ),
-    staffConfig: actions.StaffActionConfig(
-      schoolPrefix: schoolPrefix,
-      azureDomain: azureDomain,
-    ),
-    classTree: classTreeFrom(settings.smartschool),
     passwordQueue: passwordQueue,
-    // Wire the operator's managed-school choice into the linker (#178): the
-    // `ours`-flagged WISA schools from Settings drive `wisaPresence`, so the
-    // Actions view only surfaces schools we manage. Null when no school is
-    // flagged, so a not-yet-configured group falls back to the snapshot's
-    // `MarkAsOurs` flags rather than treating an empty managed set as "none".
-    ourSchoolIds: ourSchoolIds,
+    // Every settings-derived input the applier needs, sampled from the live
+    // document on each link and each apply (#246). Before this the four values
+    // were captured here once, so the school prefix, the Azure domain, the
+    // Smartschool class tree and the managed-school set — the last of which
+    // drives which schools the Actions view surfaces at all (#178) — were
+    // relaunch-only.
+    settings: () {
+      final prefix = schoolPrefixNow();
+      final domain = azureDomainNow();
+      return ApplierSettings(
+        studentConfig: actions.StudentActionConfig(
+          schoolPrefix: prefix,
+          azureDomain: domain,
+        ),
+        staffConfig: actions.StaffActionConfig(
+          schoolPrefix: prefix,
+          azureDomain: domain,
+        ),
+        classTree: classTreeFrom(live.current.smartschool),
+        ourSchoolIds: ourSchoolIdsNow(),
+      );
+    },
   );
 
   // The live SignalR subscriber (#124): on every (re)connect it re-reads the
@@ -519,6 +567,19 @@ Future<ReconcileServices> bootstrapReconcile({
     ),
   );
 }
+
+/// The WISA school ids the operator manages, as the linker and the Azure
+/// back-fill both want them: the `ours`-flagged ids of [settings], or `null`
+/// when the operator has curated no school at all.
+///
+/// The null is load-bearing and is why this is a named function rather than an
+/// inline read (#178/#246). An **empty set** means "ownership is configured and
+/// nothing is ours"; `null` means "not configured", which makes `link()` and
+/// [PlacementResolver] fall back to the snapshot's own `MarkAsOurs` flags. A
+/// group that has never filled the WISA-scholen grid in must get the second, not
+/// the first.
+Set<int>? managedSchoolIdsOf(AppSettings settings) =>
+    settings.wisaSchools.isEmpty ? null : settings.managedWisaSchoolIds;
 
 /// The Smartschool class-tree live-config, derived from the persisted
 /// connection profile: the year or grade group codes (whichever the school

@@ -44,6 +44,42 @@ class ApplyResult {
   bool get refreshed => linked != null;
 }
 
+/// Everything [StateApplier] derives from the operator's settings document,
+/// gathered into one value it re-reads at every use (#246).
+///
+/// These four used to be `final` fields on the applier, captured when
+/// `bootstrapReconcile` assembled the stack and never looked at again. That made
+/// the school prefix, the Azure domain, the Smartschool class tree and the
+/// managed-school set relaunch-only: an operator could flip a school's
+/// **beheerd** mark in Instellingen, save, sync, and get the old scoping back
+/// with nothing on screen to explain it. Bundling them means the applier takes
+/// **one** supplier rather than four, and that a pass which samples them
+/// ([StateApplier.link]) is guaranteed to see one consistent document.
+class ApplierSettings {
+  const ApplierSettings({
+    required this.studentConfig,
+    required this.staffConfig,
+    this.classTree = const SmartschoolClassTree(),
+    this.ourSchoolIds,
+  });
+
+  /// Student action config — the school prefix the linker scopes Azure by and
+  /// the UPN domains new accounts are minted under.
+  final StudentActionConfig studentConfig;
+
+  /// Staff action config; carries the same prefix and base domain.
+  final StaffActionConfig staffConfig;
+
+  /// The Smartschool grade/year vocabulary and group root a freshly created
+  /// class hangs under (`classTreeFrom(settings.smartschool)`).
+  final SmartschoolClassTree classTree;
+
+  /// The `ours`-flagged WISA school ids (#178), or null when no school is
+  /// flagged — which falls back to the snapshot's own `MarkAsOurs` flags rather
+  /// than treating an empty managed set as "none".
+  final Set<int>? ourSchoolIds;
+}
+
 /// Drives the action engine from the State layer and keeps the in-memory
 /// snapshots consistent afterwards (spec `docs/domain-model.md` §6.4; #72).
 ///
@@ -67,19 +103,50 @@ class ApplyResult {
 /// `uid1`, `uid2`, … — the legacy `AccountManager.CreateUID` counter). Read the
 /// current derived view (and the actions to apply) via [link], so both linking
 /// and applying use those uniqueness-aware configs.
+///
+/// **Settings are read live (#246).** Every settings-derived input arrives as
+/// one [ApplierSettings] supplier that is called *per link and per apply*, never
+/// captured in a field. Before #246 the four values were `final`, so an operator
+/// who flipped a school's **beheerd** mark, changed the school prefix or edited
+/// the Smartschool class tree kept getting the bootstrap-time answer until the
+/// app was relaunched.
 class StateApplier {
   StateApplier({
     required this.app,
     required this.connectors,
     required this.resolver,
     required this.wisaRules,
+    required ApplierSettings Function() settings,
+    this.passwordQueue,
+  }) : _settings = settings;
+
+  /// Convenience wiring for a stack whose settings genuinely cannot change
+  /// while it lives — a headless linking pass, a fixture, a unit test. Supplies
+  /// the same [ApplierSettings] on every read; production always uses the
+  /// unnamed constructor with a supplier over the live document.
+  StateApplier.fixed({
+    required ApplicationState app,
+    required Connectors connectors,
+    required core.PersonIdResolver resolver,
+    required WisaImportRules wisaRules,
     required StudentActionConfig studentConfig,
     required StaffActionConfig staffConfig,
-    this.classTree = const SmartschoolClassTree(),
-    this.passwordQueue,
-    this.ourSchoolIds,
-  })  : _studentConfig = _uniqueStudentConfig(studentConfig, _uidsFrom(app)),
-        _staffConfig = _uniqueStaffConfig(staffConfig, _uidsFrom(app));
+    SmartschoolClassTree classTree = const SmartschoolClassTree(),
+    Set<int>? ourSchoolIds,
+    PasswordQueueStore? passwordQueue,
+  }) : this(
+          app: app,
+          connectors: connectors,
+          resolver: resolver,
+          wisaRules: wisaRules,
+          passwordQueue: passwordQueue,
+          settings: () => ApplierSettings(
+            studentConfig: studentConfig,
+            staffConfig: staffConfig,
+            classTree: classTree,
+            ourSchoolIds: ourSchoolIds,
+          ),
+        );
 
   /// The snapshots this applier reads and patches.
   final ApplicationState app;
@@ -95,9 +162,6 @@ class StateApplier {
   /// [WisaImportRules]).
   final WisaImportRules wisaRules;
 
-  /// Smartschool class-tree live-config the placement resolver needs.
-  final SmartschoolClassTree classTree;
-
   /// The shared password-distribution queue (#105). When wired, every apply that
   /// **creates** an account drops the password it minted into this store, keyed
   /// by [core.PersonId], so one operator can generate while another prints and
@@ -108,21 +172,31 @@ class StateApplier {
   /// still written to the target system but not queued.
   final PasswordQueueStore? passwordQueue;
 
+  /// The settings-derived inputs, read afresh on every use (#246).
+  final ApplierSettings Function() _settings;
+
+  /// The settings-derived inputs as they stand **right now**. Call this once
+  /// per operation and use the result throughout it, so a save landing mid-pass
+  /// cannot split one link across two documents.
+  ApplierSettings get settings => _settings();
+
   /// The WISA school ids the operator actually manages (from the persisted
   /// `AppSettings.wisaSchools` ownership flags, #178). Threaded into `link()` so
   /// a student present only in a non-managed sibling school is classified
   /// [core.WisaPresence.groupOnly] and kept out of the managed-school Actions
   /// view. Null falls back to the snapshot's `MarkAsOurs` flags (see `link()`).
-  final Set<int>? ourSchoolIds;
+  Set<int>? get ourSchoolIds => settings.ourSchoolIds;
 
-  final StudentActionConfig _studentConfig;
-  final StaffActionConfig _staffConfig;
+  /// Smartschool class-tree live-config the placement resolver needs.
+  SmartschoolClassTree get classTree => settings.classTree;
 
   /// The uid-uniqueness-aware student config used for both linking and applying.
-  StudentActionConfig get studentConfig => _studentConfig;
+  StudentActionConfig get studentConfig =>
+      _uniqueStudentConfig(settings.studentConfig, _uidsFrom(app));
 
   /// The uid-uniqueness-aware staff config used for both linking and applying.
-  StaffActionConfig get staffConfig => _staffConfig;
+  StaffActionConfig get staffConfig =>
+      _uniqueStaffConfig(settings.staffConfig, _uidsFrom(app));
 
   /// The current derived linked view over [app]'s snapshots, built with the
   /// uniqueness-aware configs. Rebuild the UI's action lists from this after
@@ -132,14 +206,24 @@ class StateApplier {
   /// Asynchronous because [resolver] may be a [PreparablePersonIdResolver] (the
   /// DB-backed identity map), which is primed before the pure `link()` runs; a
   /// file/in-memory resolver skips that step and this resolves immediately.
-  Future<LinkedState> link() => LinkedState.fromApplicationAsync(
-        app,
-        resolver: resolver,
-        studentConfig: _studentConfig,
-        staffConfig: _staffConfig,
-        classTree: classTree,
-        ourSchoolIds: ourSchoolIds,
-      );
+  ///
+  /// The settings are sampled **once** here and threaded through the whole pass
+  /// (#246): the school prefix the linker scopes by, the managed-school set and
+  /// the class tree must all describe the same document, or `link()` would scope
+  /// Azure by one prefix while `naturalKeysFor` primed the resolver with
+  /// another.
+  Future<LinkedState> link() {
+    final now = settings;
+    final uids = _uidsFrom(app);
+    return LinkedState.fromApplicationAsync(
+      app,
+      resolver: resolver,
+      studentConfig: _uniqueStudentConfig(now.studentConfig, uids),
+      staffConfig: _uniqueStaffConfig(now.staffConfig, uids),
+      classTree: now.classTree,
+      ourSchoolIds: now.ourSchoolIds,
+    );
+  }
 
   /// Applies a [StudentAction] and refreshes the snapshot on a real write, then
   /// runs whatever that write unlocked on the same student (#230).

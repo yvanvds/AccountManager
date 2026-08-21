@@ -130,7 +130,17 @@ ride alongside **both** branches:
   **no** students; informational), and `DoNotImportFromSmartschool` (orphan
   Smartschool class; informational). A WISA-only class therefore raises
   `DoNotImportFromWisa` plus exactly one of `AddToSmartschool` /
-  `CreateInSmartschool`.
+  `CreateInSmartschool` — or, when Smartschool already carries the name on a
+  group the linker could not adopt (#225), the informational
+  `ClassExistsAsSmartschoolGroup` in place of both creates.
+
+  These are never independent to-dos: `DoNotImportFromWisa` shares an
+  `alternativeGroup` key with the reading it contradicts, so the pending list
+  renders one either/or and an apply runs only the picked half. The key is
+  `classImportAlternative` for a genuinely new class (#244) and
+  `namesakeClassAlternative` for one Smartschool already has (#250), which keeps
+  the two situations in separate bulk-apply subsets. The default is always the
+  provisioning/diagnosis half, never the blacklist.
 - **Present in both** → only `ModifySmartschoolData` (sync institute number,
   Untis code, and description).
 
