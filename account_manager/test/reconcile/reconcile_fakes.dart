@@ -155,6 +155,104 @@ class StaleDeltaTokenGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering the way the tenant answered in #224: the
+/// school-scoped bulk read finds **nothing** for a student who transferred in
+/// from a sibling group school, while a targeted `employeeId in (…)` lookup
+/// turns up the Office 365 account they already have.
+///
+/// That account is exactly what the operator found on Ambre Kalenga Alfio: our
+/// `employeeId`, **no** `companyName`, a `department` still naming the school
+/// they came from, and a UPN whose given/family-name order that school mangled —
+/// so neither leg of the connector's `$filter` matches it and the UPN is no use
+/// as a matching key either.
+///
+/// Wire it into [ReconcileHarness.azureTransport] to drive the **production**
+/// Azure pull, the only place the back-fill lives.
+class TransferredStudentGraph implements az.GraphTransport {
+  TransferredStudentGraph({
+    this.employeeId = 'W7',
+    this.upn = 'alfio.ambre@student.other.example',
+    this.displayName = 'Alfio Ambre',
+    this.deltaToken = 'AZ-TOKEN',
+    this.visibleUsers = const <az.AzureUser>[],
+  });
+
+  /// The WISA id the existing account carries — the one usable matching key.
+  final String employeeId;
+  final String upn;
+  final String displayName;
+  final String deltaToken;
+
+  /// What the `$filter`-scoped bulk read returns. Empty by default: the whole
+  /// point is that the transferred account is not among them.
+  final List<az.AzureUser> visibleUsers;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every `employeeId in (…)` filter the connector issued, in order — so a
+  /// test can prove it asked only about the ids it could not account for.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$deltaToken',
+        'value': const <Object>[],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{
+        'value': filter.contains("'$employeeId'")
+            ? <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'az-transferred',
+                  'userPrincipalName': upn,
+                  'employeeId': employeeId,
+                  'displayName': displayName,
+                  // No companyName: the other school never stamped one, and
+                  // ours was never stamped either.
+                  'department': 'OTHER-3A',
+                  'accountEnabled': true,
+                },
+              ]
+            : const <Object>[],
+      });
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{
+      'value': <Map<String, dynamic>>[
+        for (final az.AzureUser u in visibleUsers)
+          <String, dynamic>{
+            'id': u.id,
+            'userPrincipalName': u.upn,
+            if (u.employeeId != null) 'employeeId': u.employeeId,
+            if (u.companyName != null) 'companyName': u.companyName,
+            'accountEnabled': u.accountEnabled,
+          },
+      ],
+    });
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [az.GraphTransport] answering the way the tenant answered in #216: the
 /// user lookup succeeds, and the `passwordProfile` PATCH that follows is
 /// refused with `403 Authorization_RequestDenied`, because the app
@@ -1293,17 +1391,26 @@ class ReconcileHarness {
     final azureTransport = this.azureTransport;
     Syncer<az.AzureSnapshot> azSync;
     if (azureTransport != null) {
-      final inner = azureSyncer(az.AzureConnector(
-        credentials: az.AzureCredentials(
-          clientId: 'c',
-          tenantId: 't',
-          azureDomain: 'school.example',
-          schoolPrefix: 'GBS',
+      final inner = azureSyncer(
+        az.AzureConnector(
+          credentials: az.AzureCredentials(
+            clientId: 'c',
+            tenantId: 't',
+            azureDomain: 'school.example',
+            schoolPrefix: 'GBS',
+          ),
+          authProvider: const az.StaticAuthProvider('token'),
+          transport: azureTransport,
+          log: log,
         ),
-        authProvider: const az.StaticAuthProvider('token'),
-        transport: azureTransport,
-        log: log,
-      ));
+        // Exactly as `bootstrapReconcile` composes it (#224): the ids this pass
+        // expects Azure accounts for come from the WISA snapshot the same
+        // ApplicationState pulled moments earlier.
+        expectedEmployeeIds: () => managedStudentEmployeeIds(
+          app.wisa.snapshot,
+          ourSchoolIds: ourSchoolIds,
+        ),
+      );
       azSync = (previous) async {
         azSyncs++;
         return inner(previous);

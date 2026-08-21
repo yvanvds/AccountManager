@@ -137,6 +137,25 @@ void main() {
       expect(types(actions), [ModifyAzureSchool]);
     });
 
+    test('a missing companyName fires ModifyAzureSchool too (#224)', () {
+      // The adopted transfer account: `companyName` was never stamped by the
+      // school it came from. The old `company != null` guard made this the one
+      // case the repair refused to fire on — which kept the account invisible
+      // to the next sync's `$filter` and made the whole problem recur forever.
+      final actions = studentActionsFor(
+        linked(
+          wisa: wisaStudent(),
+          smartschool: ssAccount(),
+          azure: azureUser(companyName: null, department: 'OTHER-3A'),
+        ),
+        cfg,
+      );
+      expect(types(actions), [ModifyAzureSchool]);
+      final change = actions.single.describeChanges();
+      expect(change.fields.single.before, isNull);
+      expect(change.fields.single.after, 'SSM');
+    });
+
     test('present-branch never emits a lifecycle action', () {
       final actions = studentActionsFor(
         linked(

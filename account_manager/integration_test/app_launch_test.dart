@@ -3449,6 +3449,92 @@ void main() {
     expect(azureWire.bulkReads, 1, reason: 'no second full read');
     expect(harness.controller.error, isNull);
   });
+
+  testWidgets(
+      "a transferred student's existing Office 365 account is found by "
+      'employeeId and repaired, never duplicated (#224)',
+      (WidgetTester tester) async {
+    // The real app over the *production* Azure pull — a real AzureConnector
+    // behind the real azureSyncer — with Graph answering the way the tenant
+    // answered for Ambre Kalenga Alfio: the school-scoped `$filter` finds
+    // nothing (no `companyName`, another school's `department`), so before the
+    // fix the account was simply absent from the snapshot and Acties →
+    // Leerlingen offered "Maak een nieuw Office 365 account". Applying that
+    // created a *second* account, silently: `createPrincipalName` resolves the
+    // UPN collision by suffixing, so the create succeeds.
+    //
+    // Only this layer sees the whole thing: the back-fill needs the WISA
+    // snapshot the same pass pulled, the linker needs the row it produces, and
+    // the repair the operator should see instead is a different action family
+    // than the one that was offered.
+    useTallWindow(tester);
+    final azureWire = TransferredStudentGraph();
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        schools: [wisaSchool(1, ours: true)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss')],
+        accounts: [ssAccount(accountId: 'W7')],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azureTransport: azureWire,
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The bounded pull stayed bounded (PAIN-2): one `$filter` bulk read, plus
+    // one targeted lookup for the single id it could not account for.
+    expect(azureWire.bulkReads, 1);
+    expect(azureWire.employeeIdLookups, <String>["employeeId in ('W7')"]);
+
+    // The account the school filter cannot see is in the snapshot, and the
+    // linker joined it to the WISA student by employeeId alone.
+    expect(harness.app.azure.snapshot?.users.map((u) => u.id),
+        <String>['az-transferred']);
+    final linked = harness.controller.linked!.snapshot.accounts.single;
+    expect(linked.wisa, isNotNull);
+    expect(linked.azure?.id, 'az-transferred');
+
+    // Nothing anywhere in the pass proposes creating an account.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((a) => a.kind),
+      isNot(contains('AddStudentToAzure')),
+    );
+
+    // And that is what the operator sees: browse Acties → Leerlingen the way
+    // they did when they reported this.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+
+    expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
+        reason: 'the account already exists — creating one duplicates it');
+    // The repair that adopts it. Stamping our `companyName` is what makes the
+    // adoption stick: without it the account stays invisible to the next
+    // sync's `$filter`, and the whole problem recurs every pass.
+    expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.

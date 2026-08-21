@@ -98,6 +98,82 @@ class UserManager {
     return "companyName eq '$p' or startswith(department,'$p')";
   }
 
+  /// How many `employeeId`s one [loadByEmployeeIds] request asks about. Graph
+  /// caps an `in (…)` list well below the URL length limit, so the lookup is
+  /// chunked rather than sent as one enormous filter.
+  static const int _employeeIdChunk = 15;
+
+  /// Targeted read of the users carrying one of [employeeIds], regardless of
+  /// `companyName`/`department` (#224).
+  ///
+  /// [load] and [delta] are deliberately scoped to the school's own prefix
+  /// (PAIN-2), which makes them blind to exactly the account this lookup is
+  /// for: a student who transferred in from a sibling school inside the tenant
+  /// already has an Office 365 account whose `employeeId` is their WISA id, but
+  /// whose `companyName` is unset and whose `department` still names the other
+  /// school. Nothing else about such an account is trustworthy — another school
+  /// routinely mangles the given/family-name order of a foreign name, so the UPN
+  /// is not a usable key. The `employeeId` is.
+  ///
+  /// The caller passes only the ids it could **not** account for, so the set
+  /// stays small and bounded and the PAIN-2 property of the bulk read survives.
+  /// Blank ids are dropped, duplicates collapse, and the result is de-duplicated
+  /// by Azure object id.
+  Future<List<AzureUser>> loadByEmployeeIds(
+      Iterable<String> employeeIds) async {
+    // A set literal preserves insertion order, so the chunking (and therefore
+    // the requests a test asserts on) is deterministic.
+    final unique = <String>{
+      for (final raw in employeeIds)
+        if (raw.trim().isNotEmpty) raw.trim(),
+    }.toList();
+    if (unique.isEmpty) return const <AzureUser>[];
+
+    final found = <String, AzureUser>{};
+    for (var i = 0; i < unique.length; i += _employeeIdChunk) {
+      final chunk = unique.sublist(
+        i,
+        (i + _employeeIdChunk).clamp(0, unique.length),
+      );
+      final literals =
+          chunk.map((id) => "'${_escapeODataString(id)}'").join(',');
+      final url = _graph.uri(
+        'users',
+        query: {
+          r'$select': _select,
+          r'$count': 'true',
+          r'$filter': 'employeeId in ($literals)',
+        },
+      );
+      final rows = await _graph.getCollection(
+        url,
+        headers: _advancedQueryHeaders,
+      );
+      for (final row in rows) {
+        final user = AzureUser.fromGraphJson(row);
+        found[user.id] = user;
+      }
+    }
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: looked up ${unique.length} employeeId(s) directly — '
+      '${found.length} existing account(s) found.',
+    );
+    return found.values.toList();
+  }
+
+  /// The single user carrying [employeeId], or `null` when the tenant has none.
+  ///
+  /// The pre-create guard of #224: `employeeId` is the one key that survives a
+  /// transfer between group schools, so an account bearing it already belongs to
+  /// this person and a second one must never be created. Graph resolves a UPN
+  /// collision by suffixing, so without this check a duplicate create *succeeds*
+  /// and is silent.
+  Future<AzureUser?> findByEmployeeId(String employeeId) async {
+    final matches = await loadByEmployeeIds([employeeId]);
+    return matches.isEmpty ? null : matches.first;
+  }
+
   /// Bulk read of the school's users with `$filter` + `$select`, following
   /// pagination. This is the first-sync path; subsequent syncs should use
   /// [delta].

@@ -88,13 +88,21 @@ class AzureConnector {
   /// one. That is what makes [AzureSnapshot.fetchedAt] a truthful age for the
   /// token it ships with, and what keeps a token from silently ageing past
   /// Graph's 30-day limit while every sync appears to succeed.
+  ///
+  /// [expectedEmployeeIds] are the WISA ids this pass expects to find accounts
+  /// for. Any that the prefix-scoped read did not turn up are looked up
+  /// directly by `employeeId` and merged in ([_adoptByEmployeeId], #224), so a
+  /// student who transferred in from a sibling group school — whose account
+  /// carries neither our `companyName` nor our `department` — is seen instead of
+  /// being proposed for a second, duplicate account.
   Future<AzureSnapshot> sync({
     String? deltaToken,
     AzureSnapshot? previous,
+    Iterable<String> expectedEmployeeIds = const <String>[],
   }) async {
     final groupList = await groups.listGroups(credentials.schoolPrefix);
 
-    if (deltaToken == null) return _fullRead(groupList);
+    if (deltaToken == null) return _fullRead(groupList, expectedEmployeeIds);
 
     final UserDelta delta;
     try {
@@ -107,7 +115,7 @@ class AzureConnector {
         '(${_tokenAge(previous)}) — $e. Discarding it and re-reading all '
         'accounts in full.',
       );
-      return _fullRead(groupList);
+      return _fullRead(groupList, expectedEmployeeIds);
     }
 
     // No `@odata.deltaLink` on the final page means this walk produced no
@@ -123,7 +131,10 @@ class AzureConnector {
       );
     }
 
-    final userList = _applyDelta(previous?.users ?? const [], delta);
+    final userList = await _adoptByEmployeeId(
+      _applyDelta(previous?.users ?? const [], delta),
+      expectedEmployeeIds,
+    );
     return AzureSnapshot(
       fetchedAt: _now(),
       deltaToken: delta.deltaToken,
@@ -137,15 +148,84 @@ class AzureConnector {
   ///
   /// The token is primed *before* the bulk read so anything that changes while
   /// the (long) read runs is picked up by the next delta rather than lost.
-  Future<AzureSnapshot> _fullRead(List<AzureGroup> groupList) async {
+  Future<AzureSnapshot> _fullRead(
+    List<AzureGroup> groupList,
+    Iterable<String> expectedEmployeeIds,
+  ) async {
     final token = await users.latestDeltaToken();
-    final userList = await users.load(credentials.schoolPrefix);
+    final userList = await _adoptByEmployeeId(
+      await users.load(credentials.schoolPrefix),
+      expectedEmployeeIds,
+    );
     return AzureSnapshot(
       fetchedAt: _now(),
       deltaToken: token,
       users: userList,
       groups: groupList,
     );
+  }
+
+  /// Completes [current] with the accounts the prefix-scoped read cannot see
+  /// (#224): for every id in [expectedEmployeeIds] that no user in [current]
+  /// carries, one targeted `employeeId` lookup, merged in by object id.
+  ///
+  /// This is the whole fix for the transferred-student duplicate. The `$filter`
+  /// that keeps the bulk read bounded (PAIN-2) — `companyName eq` /
+  /// `startswith(department, …)` against the school prefix — matches nothing on
+  /// an account a sibling school left behind, and `_walkDelta` applies the same
+  /// test client-side, so an incremental pass is equally blind. The linker
+  /// already has the `employeeId → wisaId` bridge; it just never got the row.
+  /// Only the ids that went unaccounted for are asked about, so the set stays
+  /// small.
+  ///
+  /// A Graph failure here is **not** fatal: this step enriches a snapshot that
+  /// is otherwise complete, and losing the whole pass over it would be worse
+  /// than missing the adoption for one sync. The failure is logged as an error,
+  /// and `AddStudentToAzure` still refuses to create over an existing
+  /// `employeeId` at apply time, so a missed adoption cannot become a duplicate.
+  Future<List<AzureUser>> _adoptByEmployeeId(
+    List<AzureUser> current,
+    Iterable<String> expectedEmployeeIds,
+  ) async {
+    final known = <String>{
+      for (final u in current)
+        if ((u.employeeId ?? '').trim().isNotEmpty)
+          u.employeeId!.trim().toLowerCase(),
+    };
+    final missing = <String>{
+      for (final id in expectedEmployeeIds)
+        if (id.trim().isNotEmpty && !known.contains(id.trim().toLowerCase()))
+          id.trim(),
+    };
+    if (missing.isEmpty) return current;
+
+    final List<AzureUser> adopted;
+    try {
+      adopted = await users.loadByEmployeeIds(missing);
+    } on Object catch (e) {
+      _log?.addError(
+        core.Origin.azure,
+        'Azure: could not look up ${missing.length} unmatched employeeId(s) — '
+        '$e. Any existing account for them stays unseen this pass.',
+      );
+      return current;
+    }
+    if (adopted.isEmpty) return current;
+
+    final byId = {for (final u in current) u.id: u};
+    var added = 0;
+    for (final u in adopted) {
+      if (byId.containsKey(u.id)) continue;
+      byId[u.id] = u;
+      added++;
+    }
+    if (added == 0) return current;
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: adopted $added existing account(s) found by employeeId that the '
+      'school filter does not match (transferred students).',
+    );
+    return byId.values.toList();
   }
 
   /// Whether [e] means "this delta token is no longer usable", the one Graph

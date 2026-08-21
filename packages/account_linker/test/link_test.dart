@@ -184,6 +184,39 @@ void main() {
       expect(a.confidence, LinkConfidence.medium);
     });
 
+    test(
+        'a transferred student\'s account links by employeeId alone — no '
+        'companyName, an unusable UPN (#224)', () {
+      // The state a transfer from a sibling group school leaves behind: the
+      // account exists, the employeeId is our WISA id, `companyName` was never
+      // stamped, `department` still names the other school, and that school
+      // mangled the given/family-name order of a foreign name, so the UPN is
+      // nothing we would ever project. `employeeId` is the only usable key —
+      // and it must be enough, or the app proposes a second account.
+      final snapshot = link(
+        wisaSnap([wisaStudent('W7')]),
+        ssSnap(const []),
+        azSnap([
+          azureUser(
+            id: 'az-transferred',
+            upn: 'alfio.ambre@student.other.example',
+            employeeId: 'W7',
+            department: 'OTHER-3A',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      // One record, not two: the Azure user joined the WISA student rather
+      // than being dropped as "another school's" or kept as an orphan.
+      expect(snapshot.accounts, hasLength(1));
+      final a = snapshot.accounts.single;
+      expect(a.wisa?.wisaId.value, 'W7');
+      expect(a.azure?.id, 'az-transferred');
+      expect(a.smartschool, isNull);
+    });
+
     test('a WISA student leaves groups untouched', () {
       final snapshot = link(
         wisaSnap([wisaStudent('W10')]),

@@ -23,8 +23,9 @@ const core.Address _addr = core.Address(
 
 // ---------------------------------------------------------------------------
 // Fakes: a SOAP transport whose every write succeeds, and a Graph transport
-// that answers the create path — 404 to the pre-create UPN-existence probe (so
-// `createPrincipalName` takes the first candidate) and 201 with an id echo to
+// that answers the create path — an empty `employeeId in (…)` collection to the
+// duplicate-account guard (#224), 404 to the pre-create UPN-existence probe (so
+// `createPrincipalName` takes the first candidate), and 201 with an id echo to
 // the POST that creates the user.
 // ---------------------------------------------------------------------------
 
@@ -52,6 +53,16 @@ class _CreatingGraph implements az.GraphTransport {
       return az.GraphResponse(
         statusCode: 201,
         body: '{"id":"az-created-$_created"}',
+      );
+    }
+    // The duplicate guard's lookup (#224): a `$filter` query never 404s — it
+    // answers with an empty collection when the tenant holds no such account.
+    if ((request.url.queryParameters[r'$filter'] ?? '')
+        .startsWith('employeeId in')) {
+      return const az.GraphResponse(
+        statusCode: 200,
+        headers: {'content-type': 'application/json'},
+        body: '{"value":[]}',
       );
     }
     // The UPN-existence probe (GET) — report "not found" so the first

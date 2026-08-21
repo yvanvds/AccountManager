@@ -354,4 +354,141 @@ void main() {
       );
     });
   });
+
+  group('employeeId back-fill (#224)', () {
+    /// The transferred-in student's Graph row: our `employeeId`, **no**
+    /// `companyName`, a `department` naming the school they came from, and a
+    /// UPN whose given/family order the other school mangled. Neither leg of
+    /// [UserManager.filterFor] matches it, so it is absent from every
+    /// prefix-scoped read.
+    const Map<String, dynamic> ambre = <String, dynamic>{
+      'id': 'az-transferred',
+      'userPrincipalName': 'alfio.ambre@student.other.example',
+      'employeeId': 'W7',
+      'displayName': 'Alfio Ambre',
+      'department': 'OTHER-3A',
+    };
+
+    /// [route], plus an answer for the targeted `employeeId in (…)` lookup.
+    GraphResponse Function(GraphRequest) routeWithBackfill({
+      required List<String> lookups,
+      List<Map<String, dynamic>> hits = const [ambre],
+    }) =>
+        (req) {
+          final filter = req.url.queryParameters[r'$filter'] ?? '';
+          if (req.url.path.endsWith('/users') &&
+              filter.startsWith('employeeId in')) {
+            lookups.add(filter);
+            return jsonOk({'value': hits});
+          }
+          return route(req);
+        };
+
+    test(
+        'a full sync adopts the account the school filter cannot see, asking '
+        'only about the ids it could not account for', () async {
+      final lookups = <String>[];
+      final transport = FakeGraphTransport(routeWithBackfill(lookups: lookups));
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: transport,
+        log: log,
+      );
+
+      // `users_page1/2.json` carry W1001, W1002 and S2001; W7 is the transfer.
+      final snapshot = await connector.sync(
+        expectedEmployeeIds: const ['W1001', 'W1002', 'S2001', 'W7'],
+      );
+
+      // The three already-visible ids were never asked about — the bounded
+      // pull (PAIN-2) stays bounded.
+      expect(lookups, ["employeeId in ('W7')"]);
+      // …and the missing account is in the snapshot, so the linker's
+      // employeeId → wisaId bridge can reach it.
+      final adopted = snapshot.users.singleWhere((u) => u.employeeId == 'W7');
+      expect(adopted.id, 'az-transferred');
+      expect(adopted.companyName, isNull);
+      expect(snapshot.users, hasLength(4));
+      expect(
+        log.messages.any((m) => m.contains('adopted 1 existing account')),
+        isTrue,
+      );
+    });
+
+    test('an incremental sync adopts it too — the delta path is equally blind',
+        () async {
+      final lookups = <String>[];
+      final transport = FakeGraphTransport(routeWithBackfill(lookups: lookups));
+      final connector = connectorWith(transport);
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: AzureSnapshot(
+          fetchedAt: DateTime.utc(2026, 6, 1),
+          deltaToken: 'OLDTOKEN',
+          users: const [],
+          groups: const [],
+        ),
+        expectedEmployeeIds: const ['W7'],
+      );
+
+      expect(lookups, ["employeeId in ('W7')"]);
+      expect(snapshot.users.map((u) => u.employeeId), contains('W7'));
+    });
+
+    test('no lookup at all when every expected id is already accounted for',
+        () async {
+      final lookups = <String>[];
+      final transport = FakeGraphTransport(routeWithBackfill(lookups: lookups));
+      final connector = connectorWith(transport);
+
+      final snapshot =
+          await connector.sync(expectedEmployeeIds: const ['W1001', 'S2001']);
+
+      expect(lookups, isEmpty);
+      expect(snapshot.users, hasLength(3));
+    });
+
+    test('an id the tenant has no account for changes nothing', () async {
+      final transport = FakeGraphTransport(
+        routeWithBackfill(lookups: <String>[], hits: const []),
+      );
+      final connector = connectorWith(transport);
+
+      final snapshot = await connector.sync(expectedEmployeeIds: const ['W99']);
+      expect(snapshot.users, hasLength(3));
+    });
+
+    test(
+        'a Graph failure on the lookup logs and leaves the snapshot otherwise '
+        'complete, rather than losing the whole pass', () async {
+      GraphResponse failingLookup(GraphRequest req) {
+        final filter = req.url.queryParameters[r'$filter'] ?? '';
+        if (req.url.path.endsWith('/users') &&
+            filter.startsWith('employeeId in')) {
+          return graphError(400, 'Request_UnsupportedQuery', 'nope');
+        }
+        return route(req);
+      }
+
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: FakeGraphTransport(failingLookup),
+        log: log,
+      );
+
+      final snapshot = await connector.sync(expectedEmployeeIds: const ['W7']);
+
+      expect(snapshot.users, hasLength(3));
+      expect(snapshot.deltaToken, 'PRIMEDTOKEN123');
+      expect(
+        log.errors.any((m) => m.contains('unmatched employeeId')),
+        isTrue,
+      );
+    });
+  });
 }

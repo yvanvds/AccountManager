@@ -163,6 +163,25 @@ class AddStudentToAzure extends StudentAction {
 
     try {
       final users = _requireAzure(connectors).users;
+      // #224: never create a second account for a person who already has one.
+      // The snapshot this action was derived from can be stale — or blind, when
+      // the account carries neither our `companyName` nor our `department` — and
+      // `createPrincipalName` resolves the UPN collision by suffixing, so the
+      // duplicate create would succeed silently. `employeeId` is the one key
+      // that survives a transfer between group schools, so a hit means the
+      // account exists and the next sync must adopt it instead.
+      final existing = await users.findByEmployeeId(wisa.wisaId.value);
+      if (existing != null) {
+        return _failed(
+          changes,
+          Origin.azure,
+          StateError(
+            'Office 365 already has an account with employeeId '
+            '${wisa.wisaId.value} (${existing.upn}). Sync Azure again so the '
+            'existing account is linked instead of creating a duplicate.',
+          ),
+        );
+      }
       final upn = await users.createPrincipalName(
         given,
         wisa.name,
@@ -605,14 +624,18 @@ class ModifyAzureName extends StudentAction {
 
 /// Correct a student's Azure `companyName` to the school prefix. Ported from
 /// `Action\StudentAccount\ModifyAzureSchool`.
+///
+/// A **missing** `companyName` counts as differing (#224). The legacy guard
+/// returned false for null, which made the transferred-student case
+/// self-perpetuating: an adopted account whose `companyName` was never set is
+/// invisible to the next sync's `$filter`, and the one action that would stamp
+/// our prefix on it — this one — refused to fire precisely because the field was
+/// unset. Setting it is what makes the adoption stick.
 class ModifyAzureSchool extends StudentAction {
   const ModifyAzureSchool(super.account, super.config);
 
   @override
-  bool evaluate() {
-    final company = _az.companyName;
-    return company != null && !_eq(company, config.schoolPrefix);
-  }
+  bool evaluate() => !_eq(_az.companyName, config.schoolPrefix);
 
   @override
   ChangeSet describeChanges() => ChangeSet(
