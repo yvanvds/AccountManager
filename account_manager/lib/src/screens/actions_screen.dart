@@ -1754,16 +1754,16 @@ class _AccountTile extends StatelessWidget {
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(w, style: text.bodySmall),
             ),
-          // One line per *decision* (#251): a departed student's unregister /
-          // delete pair is one either/or, so it reads as the single choice the
-          // interactive tile shows — never as two bullets that both look due.
+          // One line per *decision* (#251), worded exactly as the interactive
+          // tile words it: a departed student's unregister / delete pair is one
+          // either/or, so it reads as the single choice the interactive tile
+          // shows — never as two bullets that both look due — and an
+          // informational candidate is marked "(manueel)" (#255).
           for (final c in candidateChoices(account.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(
-                c.isChoice
-                    ? '• ${c.selected.summary} (keuze)'
-                    : '• ${c.selected.summary}',
+                _readOnlyCandidateLine(c),
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),
@@ -1790,10 +1790,15 @@ class _ReadOnlyLock extends StatelessWidget {
       );
 }
 
-/// One read-only candidate line of a passive-session group tile, worded exactly
-/// as the interactive [_PendingEntryTile]'s: an either/or reads as one "(keuze)"
-/// on its pre-selected half (#251), an informational notice keeps its
-/// "(manueel)" marker (#225), and an ordinary action is its bare summary.
+/// One read-only candidate line of a passive-session tile — [_AccountTile] and
+/// [_GroupTile] share it — worded exactly as the interactive
+/// [_PendingEntryTile]'s: an either/or reads as one "(keuze)" on its
+/// pre-selected half (#251), an informational notice keeps its "(manueel)"
+/// marker (#225), and an ordinary action is its bare summary.
+///
+/// The account card used to render a bare bullet for every candidate (#255), so
+/// a student's informational candidate — since #245 the student family has one —
+/// read like due work next to a badge that counted it zero.
 String _readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
   final summary = choice.selected.summary;
   if (choice.isChoice) return '• $summary (keuze)';

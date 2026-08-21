@@ -1256,6 +1256,69 @@ void main() {
   });
 
   testWidgets(
+      'a read-only account card marks an informational candidate "(manueel)" '
+      '(#255)', (WidgetTester tester) async {
+    // A passive session over a student who sits in the wrong Office 365 class
+    // group (#245): the write belongs to the class row, so this candidate only
+    // diagnoses and the card's badge counts it zero. The card used to render
+    // every candidate as a bare bullet, so this line read exactly like due work
+    // beside a (0) badge — while the group tile and the interactive tile have
+    // both marked it "(manueel)" all along.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(
+        id: 's1',
+        label: 'Sam Sels',
+        classroom: '3C',
+        candidates: wrongAzureClassGroupNotice(),
+      ),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Nothing here is applyable, so the work list hides the class until the
+    // inventory toggle is flipped (#226) — the state the unmarked line was most
+    // misleading in.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    expect(harness.controller.linked, isNull, reason: 'passive session');
+    expect(find.text('Sam Sels'), findsOneWidget);
+
+    expect(
+      find.text('• Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats '
+          'van GBS-1B. Werk het ledenbestand van beide klassen bij. (manueel)'),
+      findsOneWidget,
+      reason: 'the operator must be able to tell manual work from due work',
+    );
+
+    // …and it stays a "(manueel)" line, never a "(keuze)" one: it stands alone.
+    expect(find.textContaining('(keuze)'), findsNothing);
+  });
+
+  testWidgets(
+      'a read-only account card leaves an applyable candidate unmarked (#255)',
+      (WidgetTester tester) async {
+    // The other half of the same rule: marking must distinguish, so an ordinary
+    // applyable candidate keeps its bare summary.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    expect(find.text('• Wijzig de klas in Smartschool'), findsOneWidget);
+    expect(find.textContaining('(manueel)'), findsNothing);
+  });
+
+  testWidgets(
       "a generation bump refetches the passive Actions overview's freshness "
       '(#108)', (WidgetTester tester) async {
     final linkedStore = InMemoryLinkedStore();

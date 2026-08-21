@@ -2009,6 +2009,78 @@ void main() {
   });
 
   testWidgets(
+      'a passive session marks the same informational candidate "(manueel)" on '
+      'the account card end-to-end (#255)', (WidgetTester tester) async {
+    // The same #245 fixture, read the way most operators meet it: session 1
+    // syncs and materializes the shared view, session 2 is the real app over
+    // those stores and never syncs, so Acties renders stored documents as static
+    // cards (#214) instead of interactive tiles.
+    //
+    // This is the layer that sees the bug. The two renderings are different
+    // widgets fed by different pipelines — the interactive tile reads live
+    // `PendingChoice`s, the passive card reads `CandidateAction`s round-tripped
+    // through the store's JSON — and only a full-app run puts an operator in
+    // front of the passive one. There Sam's line used to read as ordinary due
+    // work beside a badge counting it 0, with no way to tell "the app will do
+    // this" from "you must do this by hand".
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await azureClassMembershipHarness(
+      store: snapshots,
+      linkedStore: linkedStore,
+    ).controller.sync();
+
+    final resumed = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: resumed.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    // Nothing applyable hangs off the students, so the work list hides their
+    // classes until the inventory toggle is flipped (#226) — exactly the state
+    // in which the unmarked line was most misleading.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    await tester.ensureVisible(yearNode);
+    await tester.tap(yearNode);
+    await tester.pumpAndSettle();
+    final klas1B = find.byKey(const ValueKey('rollup-class-class|1|1|1B'));
+    await tester.ensureVisible(klas1B);
+    await tester.tap(klas1B);
+    await tester.pumpAndSettle();
+
+    // The card is the passive one — locked, no interactive entry tile — and
+    // Sam's one line now says the operator has to fix this by hand.
+    expect(resumed.controller.linked, isNull,
+        reason: 'link() is never called in a passive session');
+    expect(find.byKey(const ValueKey('actions-read-only')), findsOneWidget);
+    expect(find.text('Sam Sels'), findsOneWidget);
+    expect(
+      find.textContaining('Zit in de verkeerde Office 365-klasgroep: GBS-1A '
+          'in plaats van GBS-1B'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(manueel)'), findsOneWidget,
+        reason: 'the class row performs the write, so this card diagnoses');
+    expect(resumed.wisaSyncs, 0);
+    expect(resumed.ssSyncs, 0);
+    expect(resumed.azSyncs, 0);
+  });
+
+  testWidgets(
       'the Acties drill-down opens on grade-years merged across the managed '
       'schools end-to-end, with no school level to guess at (#210)',
       (WidgetTester tester) async {

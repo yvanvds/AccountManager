@@ -1268,7 +1268,17 @@ ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
 /// The class rows in Klasgroepen therefore carry the two applyable roster syncs,
 /// and each student's own card carries the informational reading of the same
 /// fact.
-ReconcileHarness azureClassMembershipHarness() => ReconcileHarness(
+///
+/// Wiring [store] / [linkedStore] persists what it syncs, so a second session
+/// can [ReconcileHarness.resume] over the same shared view and read those cards
+/// passively (#255).
+ReconcileHarness azureClassMembershipHarness({
+  SnapshotStore? store,
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      store: store,
+      linkedStore: linkedStore,
       wisa: wisaSnap(
         students: [
           wisaStudent(wisaId: '1', classGroup: '1A'),
@@ -1747,12 +1757,28 @@ List<CandidateAction> departureChoice() => const <CandidateAction>[
       ),
     ];
 
+/// The lone **informational** candidate a student's account doc carries when
+/// they sit in the wrong Office 365 class group (#245): the class-level roster
+/// sync performs the one write, so the per-account row only diagnoses
+/// (`canApply == false`) and the badge beside it counts zero. The shape a
+/// passive card has to mark "(manueel)" (#255).
+List<CandidateAction> wrongAzureClassGroupNotice() => const <CandidateAction>[
+      CandidateAction(
+        family: 'student',
+        kind: 'AzureClassGroupMembership',
+        system: core.Origin.azure,
+        summary: 'Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats '
+            'van GBS-1B. Werk het ledenbestand van beide klassen bij.',
+        canApply: false,
+      ),
+    ];
+
 /// One [MaterializedAccount] for a passive-session classroom, placed in
 /// [school]/[gradeYear]/[classroom]. [withAction] decides whether it carries an
 /// applyable candidate — i.e. whether [MaterializedAccount.hasPending] is true,
 /// the "has actions" predicate the toggle filters on. [candidates] overrides it
 /// outright for a doc that needs a specific candidate set (e.g. the either/or of
-/// [departureChoice]).
+/// [departureChoice] or the notice of [wrongAzureClassGroupNotice]).
 MaterializedAccount matAccount({
   required String id,
   required String label,
