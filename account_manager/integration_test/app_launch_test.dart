@@ -3635,6 +3635,121 @@ void main() {
     // Smartschool side — the proposal the adoption unlocks.
     expect(find.text('Maak een nieuw Smartschool account'), findsOneWidget);
   });
+
+  testWidgets(
+      'an adopted staff account is stamped with our department, so the repair '
+      'sticks instead of depending on the back-fill forever (#233)',
+      (WidgetTester tester) async {
+    // The third piece of the transferred-account problem, and the one the staff
+    // family never had. #231 made the pull *find* Anna Smit's existing account
+    // by employeeId, but nothing wrote our marker onto it: her `department`
+    // still names the sibling group school, so neither leg of the connector's
+    // `$filter` matches and every single pass has to re-adopt her by back-fill.
+    // Once she leaves WISA her id drops out of `managedStaffEmployeeIds`, the
+    // back-fill stops asking, and the account is invisible for good — no
+    // RemoveStaffFromAzure would ever be proposed for it.
+    //
+    // Here the record is complete (WISA + Smartschool + Azure), which is the
+    // pass after AddStaffToSmartschool ran, so the modify branch is live.
+    useTallWindow(tester);
+    final azureWire = TransferredAccountGraph(
+      employeeId: '42',
+      upn: 'smit.anna@other.example',
+      displayName: 'Smit Anna',
+      department: 'OTHER - Wiskunde',
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        // Her Smartschool mail already matches the adopted UPN, so the only
+        // thing left wrong about this staff member is the Azure department.
+        accounts: [ssStaffAccount(mail: 'smit.anna@other.example')],
+        memberships: const [],
+      ),
+      azureTransport: azureWire,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The starting state: invisible to the school-scoped read, present only
+    // because the #231 back-fill went looking for her by employeeId.
+    expect(azureWire.bulkReads, 1);
+    expect(azureWire.employeeIdLookups, <String>["employeeId in ('42')"]);
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.wisa, isNotNull);
+    expect(linked.smartschool, isNotNull);
+    expect(linked.azure?.id, 'az-transferred');
+    expect(harness.app.azure.snapshot!.users.single.department,
+        'OTHER - Wiskunde');
+
+    // Acties → Personeel: the operator is offered the repair.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+
+    // Apply just that row.
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'staff');
+    final id = entry.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-staff-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-staff-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+
+    // One PATCH, touching `department` only, with our prefix at the head and
+    // the subject the other school wrote still on it.
+    final patches =
+        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
+    expect(patches, hasLength(1));
+    expect(patches.single.url.path, contains('az-transferred'));
+    expect(
+      jsonDecode(patches.single.body!) as Map<String, dynamic>,
+      <String, dynamic>{'department': 'GBS - Wiskunde'},
+    );
+    expect(azureWire.bulkReads, 1, reason: 'the repair is a write, not a read');
+
+    // Prefix-first is what makes it stick: that is exactly the
+    // `startswith(department,'GBS')` leg of UserManager.filterFor, so the next
+    // school-scoped bulk read returns the account on its own — no employeeId
+    // back-fill required, and a later departure can raise a removal.
+    final repaired = harness.app.azure.snapshot!.users.single.department!;
+    expect(repaired, 'GBS - Wiskunde');
+    expect(repaired.startsWith('GBS'), isTrue);
+    // …and the re-linked view the operator now sees carries it too.
+    expect(harness.controller.linked!.snapshot.staff.single.azure?.id,
+        'az-transferred');
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.

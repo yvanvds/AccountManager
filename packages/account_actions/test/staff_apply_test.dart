@@ -49,6 +49,25 @@ void main() {
       expect(transport.soapActions, isEmpty);
     });
 
+    test('ModifyStaffAzureSchool dry run: no PATCH, repaired value projected',
+        () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ModifyStaffAzureSchool(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(department: 'OTHER - Wiskunde'),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, ApplyOptions.dry);
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect(transport.requests, isEmpty);
+      expect((result.azure! as az.AzureUser).department, 'SSM - Wiskunde');
+    });
+
     test('SetStaffCopyCode dry run: no write, padded fax projected', () async {
       final transport = RecordingSmartschoolTransport();
       final connectors =
@@ -322,6 +341,41 @@ void main() {
       expect(result.smartschool?.mail, 'anna.smit@school.example');
       // The WISA numeric id becomes the copy-code (fax).
       expect((result.smartschool! as ss.SmartschoolAccount).fax, '42');
+    });
+
+    test(
+        'ModifyStaffAzureSchool: PATCHes department so the next bulk read can '
+        'see the account (#233)', () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ModifyStaffAzureSchool(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(id: 'az-moved', department: 'OTHER - Wiskunde'),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.system, Origin.azure);
+
+      final patch = transport.requests
+          .singleWhere((r) => r.method == 'PATCH', orElse: () => throw 'none');
+      expect(patch.url.path, contains('az-moved'));
+      expect(
+        jsonDecode(patch.body!) as Map<String, dynamic>,
+        {'department': 'SSM - Wiskunde'},
+        reason: 'only the department is touched, prefix first',
+      );
+      // Prefix-first is the whole point: it is the `startswith(department, …)`
+      // leg of UserManager.filterFor, so the school-scoped pull now returns the
+      // account without the employeeId back-fill having to find it (#231).
+      expect(
+        (result.azure! as az.AzureUser).department!.startsWith('SSM'),
+        isTrue,
+      );
     });
 
     test('RemoveStaffFromAzure: deletes the user', () async {

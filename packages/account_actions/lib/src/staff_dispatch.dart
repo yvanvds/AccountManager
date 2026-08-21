@@ -19,6 +19,11 @@ import 'staff_action_config.dart';
 /// The legacy `AddToAzureStaffGroup` / `AddToStaffGroup` actions are **not**
 /// dispatched here: they evaluate against Office 365 group membership, which a
 /// [LinkedStaff] does not carry (see the package README).
+///
+/// [ModifyStaffAzureSchool] has no legacy counterpart at all — the staff family
+/// never had a `department` repair (#233). Like the student `ModifyAzureSchool`
+/// it sits in the modify branch, so an adopted account is stamped on the pass
+/// *after* its Smartschool side is built and the record is complete.
 List<StaffAction> staffActionsFor(
   LinkedStaff staff,
   StaffActionConfig config,
@@ -28,6 +33,7 @@ List<StaffAction> staffActionsFor(
 
   final candidates = complete
       ? <StaffAction>[
+          ModifyStaffAzureSchool(staff, config),
           UpdateStaffWisaName(staff, config),
           ModifySmartschoolStaffEmail(staff, config),
           SetStaffCopyCode(staff, config),

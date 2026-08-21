@@ -450,6 +450,11 @@ ss.SmartschoolAccount ssAccount({
   String givenName = 'Jane',
   String surname = 'Doe',
   core.Address address = _addr,
+  // A staff-role account is what the linker's `_buildStaffRecords` seeds a
+  // LinkedStaff from; `fax` carries the zero-padded copy-code, so a fixture that
+  // wants no SetStaffCopyCode must set it.
+  core.PersonRole role = core.PersonRole.student,
+  String fax = '',
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
@@ -457,7 +462,7 @@ ss.SmartschoolAccount ssAccount({
       mail: mail,
       registerId: '',
       stemId: 0,
-      role: core.PersonRole.student,
+      role: role,
       givenName: givenName,
       surname: surname,
       extraNames: '',
@@ -470,9 +475,31 @@ ss.SmartschoolAccount ssAccount({
       address: address,
       mobilePhone: '',
       homePhone: '',
-      fax: '',
+      fax: fax,
       untisId: '',
       status: 'actief',
+    );
+
+/// A Smartschool **staff** account — a teacher-role [ssAccount], the shape the
+/// linker seeds a `LinkedStaff` from. The defaults line up with [wisaStaff] so a
+/// complete staff record raises no Smartschool action of its own: `accountId` is
+/// the WISA staff `code` and `fax` the zero-padded `wisaId`.
+ss.SmartschoolAccount ssStaffAccount({
+  String uid = 'anna.smit',
+  String accountId = 'SMIT',
+  String mail = 'anna.smit@school.example',
+  String givenName = 'Anna',
+  String surname = 'Smit',
+  String fax = '0042',
+}) =>
+    ssAccount(
+      uid: uid,
+      accountId: accountId,
+      mail: mail,
+      givenName: givenName,
+      surname: surname,
+      role: core.PersonRole.teacher,
+      fax: fax,
     );
 
 az.AzureUser azUser({

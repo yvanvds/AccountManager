@@ -50,6 +50,24 @@ void main() {
       expect(actions.whereType<UpdateStaffWisaName>(), isEmpty);
       expect(actions.whereType<ModifySmartschoolStaffEmail>(), isEmpty);
       expect(actions.whereType<SetStaffCopyCode>(), isEmpty);
+      expect(actions.whereType<ModifyStaffAzureSchool>(), isEmpty);
+    });
+
+    test(
+        'an adopted account with another school\'s department is not repaired '
+        'until the record is complete (#233)', () {
+      // WISA + Azure, no Smartschool — the state #231's back-fill leaves a
+      // moved staff member in. The mutually exclusive branches (§6.3) mean the
+      // department repair waits for the pass after AddStaffToSmartschool, the
+      // same way the student `ModifyAzureSchool` does.
+      final actions = staffActionsFor(
+        linkedStaff(
+          wisa: wisaStaff(),
+          azure: azureStaff(department: 'OTHER - Wiskunde'),
+        ),
+        cfg,
+      );
+      expect(types(actions), [AddStaffToSmartschool, DontImportStaffFromWisa]);
     });
   });
 
@@ -102,6 +120,31 @@ void main() {
         cfg,
       );
       expect(types(actions), [SetStaffCopyCode]);
+    });
+
+    test(
+        "an Azure department naming another school → only "
+        'ModifyStaffAzureSchool (#233)', () {
+      final actions = staffActionsFor(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(department: 'OTHER - Wiskunde'),
+        ),
+        cfg,
+      );
+      expect(types(actions), [ModifyStaffAzureSchool]);
+    });
+
+    test('a fully-synced staff member with our prefix raises no repair (#233)',
+        () {
+      // The default fixture's `department` is exactly the prefix, so the new
+      // action must not turn every clean staff record into a pending item.
+      expect(
+        staffActionsFor(fullySyncedStaff(), cfg)
+            .whereType<ModifyStaffAzureSchool>(),
+        isEmpty,
+      );
     });
 
     test('present-branch never emits a lifecycle action', () {

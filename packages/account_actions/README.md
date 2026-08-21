@@ -70,11 +70,11 @@ than `else`, but sets `OK = false` inside the missing branch, so the two
 branches are mutually exclusive just like the student parser. The staff
 lifecycle set is `AddStaffToAzure`, `AddStaffToSmartschool`,
 `RemoveStaffFromSmartschool`, `DontImportStaffFromWisa`, `RemoveStaffFromAzure`;
-the modify set is `UpdateStaffWisaName`, `ModifySmartschoolStaffEmail`,
-`SetStaffCopyCode`. Staff bridge to Smartschool by `WisaStaff.code` (not
-`wisaId`) — `AddStaffToSmartschool` and `UpdateStaffWisaName` write the code
-into `accountId` (spec §4, OQ-1), while the numeric `wisaId` becomes the
-copy-code.
+the modify set is `ModifyStaffAzureSchool`, `UpdateStaffWisaName`,
+`ModifySmartschoolStaffEmail`, `SetStaffCopyCode`. Staff bridge to Smartschool
+by `WisaStaff.code` (not `wisaId`) — `AddStaffToSmartschool` and
+`UpdateStaffWisaName` write the code into `accountId` (spec §4, OQ-1), while the
+numeric `wisaId` becomes the copy-code.
 
 `groupActions(snapshot)` walks the snapshot's class groups, ported from the
 legacy `GroupActionParser`. The split is on the WISA/Smartschool **pair** rather
@@ -170,6 +170,21 @@ connector leaves that guard to the caller), so an ANS/BNS student whose
   the action converges after one apply.
 - **Staff gender on create.** Legacy `AddToSmartschool` hard-codes `Female` for
   new staff (WISA staff rows carry no gender); preserved verbatim.
+- **`ModifyStaffAzureSchool` is an addition, not a port.** The legacy staff
+  family has no `department` repair, so an Azure account adopted by the
+  `employeeId` back-fill (#231) never carried our marker and stayed invisible to
+  the school-scoped bulk read forever (#233). It fires when `department` does not
+  *start with* the school prefix — a missing one included, mirroring what #224
+  taught the student `ModifyAzureSchool` about a null `companyName` — and it is
+  `startswith`, not the linker's laxer `contains`, because that is the exact
+  server-side test `UserManager.filterFor` applies. **Assumed value shape:**
+  `<school>` or `<school> - <suffix>` (real data carries a subject suffix,
+  `Arcadia - Wiskunde`), so only the leading school segment is replaced and any
+  suffix is preserved. Legacy's staff `RemoveFromAzure` renders the field under
+  an "Active Schools" header and both linkers test it with `contains`, so it may
+  instead enumerate several schools — in which case replacing the head segment
+  evicts a sibling school's claim and this needs to become a prepend. Tracked as
+  #237.
 - Smartschool `uid` uniqueness for new accounts is the caller's concern (the
   State layer holds the account set); the default builder is deliberately
   simple.
