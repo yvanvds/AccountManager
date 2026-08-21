@@ -4592,6 +4592,119 @@ void main() {
     expect(messages, contains(contains('Maak een nieuw Office 365 account')));
     expect(messages, contains(contains('Maak een nieuw Smartschool account')));
   });
+
+  testWidgets(
+      'a WISA-only staff member is provisioned by one apply in Acties → '
+      'Personeel (#240)', (WidgetTester tester) async {
+    // The staff twin of the #230 student case, and the same two-pass friction:
+    // AddStaffToSmartschool builds its account with the Azure UPN as the `mail`,
+    // so it evaluates false until the Office 365 account exists, and the
+    // dispatch — a pure function of the record as it stands — can only ever
+    // offer the first link. The operator had to apply, notice the relink, and
+    // apply again; Acties → Personeel never showed the full provisioning intent.
+    //
+    // Only a run of the real app covers the whole path: the staff member has to
+    // reach the synthetic "Personeel" tree at all, the tile has to offer the
+    // create, and the follow-up has to run against the record the *relink*
+    // produced — `createPrincipalName` suffixes on a UPN collision, so the
+    // Smartschool account must carry the UPN that landed, not the projection.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Browse Acties → Personeel: the staff member is under the synthetic staff
+    // school, with the first link of the chain offered and only that one.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    expect(find.text('Anna Smit'), findsWidgets,
+        reason: 'a staff member with no downstream account is still listed');
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    expect(find.text('Maak een nieuw Smartschool account'), findsNothing,
+        reason: 'the dispatch can only see the first link of the chain');
+
+    // Apply that one row.
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'staff');
+    final id = entry.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-staff-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-staff-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+
+    // Both accounts exist now, off that single click, and both writes are
+    // reported — the second is a real write the operator must see, not a silent
+    // extra. The third row is the entry's *other* pending item, the WISA ignore
+    // rule this family also offers for a staff member with no Smartschool
+    // account; it is not part of the chain (tracked as #248).
+    expect(
+      harness.controller.applyResults!.map((r) => r.changes.summary),
+      <String>[
+        'Maak een nieuw Office 365 account',
+        'Maak een nieuw Smartschool account',
+        'Negeer dit account bij het importeren uit WISA',
+      ],
+    );
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
+    expect(harness.graph.createdUsers.single['employeeId'], '42',
+        reason: 'the staff Azure bridge is wisaId, never the staff code');
+    expect(harness.soap.soapActions.any((a) => a.contains('saveUser')), isTrue);
+
+    // The Smartschool account carries the UPN that actually landed, and the
+    // WISA staff `code` as its accountId (the staff Smartschool bridge).
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.azure, isNotNull);
+    expect(linked.smartschool?.mail, linked.azure?.upn);
+    expect(linked.smartschool?.accountId, 'SMIT');
+
+    // And both writes are in the log the operator reads.
+    final messages = harness.log.entries.map((e) => e.message);
+    expect(messages, contains(contains('Maak een nieuw Office 365 account')));
+    expect(messages, contains(contains('Maak een nieuw Smartschool account')));
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.

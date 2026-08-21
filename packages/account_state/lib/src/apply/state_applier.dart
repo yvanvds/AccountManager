@@ -32,7 +32,7 @@ class ApplyResult {
 
   /// The results of the follow-up actions this write unlocked on the same
   /// target and the applier ran straight away (#230 for students, #245 for
-  /// class groups), in the order they ran.
+  /// class groups, #240 for staff), in the order they ran.
   ///
   /// Empty for every action that declares no `unlocks`, and for a dry run or a
   /// failed write (nothing was written, so nothing was unlocked). The caller
@@ -147,100 +147,41 @@ class StateApplier {
     StudentAction action, {
     ApplyOptions options = const ApplyOptions(),
   }) async {
-    final result = await action.apply(connectors, options);
-    final applied = await _refresh(
-      result,
-      removedSmartschoolUid: action.target.smartschool?.uid,
-      removedAzureId: action.target.azure?.id,
-    );
-    return _chainStudentFollowUps(action, applied, options);
-  }
-
-  /// Runs the follow-up actions [action]'s write unlocked on the same student,
-  /// against the **relinked** record (#230).
-  ///
-  /// Provisioning a new student is a two-link chain: `AddStudentToSmartschool`
-  /// builds the account with the Azure UPN as its `mail`, so it cannot evaluate
-  /// true until `AddStudentToAzure` has run. The dispatcher is a pure function
-  /// of the current record and can only offer the first link, so one click used
-  /// to create the Office 365 account and stop, leaving the Smartschool create
-  /// to a second pass the operator had to notice and trigger.
-  ///
-  /// Each link is taken from the freshly recomputed [LinkedState]'s own
-  /// dispatch — the same list the UI would show on the next render — so the
-  /// follow-up is bound to the record the previous write produced, placement
-  /// and all, and its own `evaluate()` has already agreed it applies. Never a
-  /// projection: `createPrincipalName` resolves a UPN collision by suffixing,
-  /// so the UPN that landed can differ from the projected one.
-  ///
-  /// The walk is bounded three ways, so no declaration can spin it: nothing is
-  /// unlocked when nothing was written (a dry run or a failure returns no
-  /// refreshed view), each action type runs at most once per chain, and a
-  /// failed link stops it — the failure is reported and the next sync re-offers
-  /// whatever is still missing.
-  Future<ApplyResult> _chainStudentFollowUps(
-    StudentAction action,
-    ApplyResult applied,
-    ApplyOptions options,
-  ) async {
-    var linked = applied.linked;
-    if (linked == null || action.unlocks.isEmpty) return applied;
-
+    final applied = await _applyStudentOnce(action, options);
     final targetId = action.target.id;
-    final ran = <Type>{action.runtimeType};
-    final followUps = <ActionResult>[];
-    var unlocks = action.unlocks;
-
-    while (unlocks.isNotEmpty) {
-      final next = _unlockedStudentAction(linked!, targetId, unlocks, ran);
-      if (next == null) break;
-      ran.add(next.runtimeType);
-      final result = await next.apply(connectors, options);
-      followUps.add(result);
-      final refreshed = await _refresh(
-        result,
-        removedSmartschoolUid: next.target.smartschool?.uid,
-        removedAzureId: next.target.azure?.id,
-      );
-      if (!refreshed.refreshed) break;
-      linked = refreshed.linked;
-      unlocks = next.unlocks;
-    }
-
-    if (followUps.isEmpty) return applied;
-    return ApplyResult(applied.result, linked, followUps: followUps);
+    return _chainFollowUps<StudentAction>(
+      action,
+      applied,
+      options,
+      dispatch: (linked) => linked.studentActions,
+      sameTarget: (candidate) => candidate.target.id == targetId,
+      canApply: (candidate) => candidate.canApply,
+      unlocksOf: (candidate) => candidate.unlocks,
+      run: _applyStudentOnce,
+    );
   }
 
-  /// The first action [linked]'s dispatch raised for [targetId] whose type is
-  /// named by [unlocks] and has not run yet this chain, or null when the write
-  /// unlocked nothing after all.
-  StudentAction? _unlockedStudentAction(
-    LinkedState linked,
-    core.LinkedAccountId targetId,
-    Set<Type> unlocks,
-    Set<Type> ran,
-  ) {
-    for (final candidate in linked.studentActions) {
-      if (candidate.target.id == targetId &&
-          candidate.canApply &&
-          unlocks.contains(candidate.runtimeType) &&
-          !ran.contains(candidate.runtimeType)) {
-        return candidate;
-      }
-    }
-    return null;
-  }
-
-  /// Applies a [StaffAction] and refreshes the snapshot on a real write.
+  /// Applies a [StaffAction] and refreshes the snapshot on a real write, then
+  /// runs whatever that write unlocked on the same staff member (#240).
   Future<ApplyResult> applyStaff(
     StaffAction action, {
     ApplyOptions options = const ApplyOptions(),
   }) async {
-    final result = await action.apply(connectors, options);
-    return _refresh(
-      result,
-      removedSmartschoolUid: action.target.smartschool?.uid,
-      removedAzureId: action.target.azure?.id,
+    final applied = await _applyStaffOnce(action, options);
+    final targetId = action.target.id;
+    return _chainFollowUps<StaffAction>(
+      action,
+      applied,
+      options,
+      dispatch: (linked) => linked.staffActions,
+      // A staff member's [core.LinkedAccountId] comes from the resolver's
+      // natural key (`wisaId`, else the staff `code`), and an Azure create
+      // stamps that same `wisaId` as the account's `employeeId` — so the record
+      // that raised the create is the same record after the relink.
+      sameTarget: (candidate) => candidate.target.id == targetId,
+      canApply: (candidate) => candidate.canApply,
+      unlocksOf: (candidate) => candidate.unlocks,
+      run: _applyStaffOnce,
     );
   }
 
@@ -250,81 +191,139 @@ class StateApplier {
     GroupAction action, {
     ApplyOptions options = const ApplyOptions(),
   }) async {
+    final applied = await _applyGroupOnce(action, options);
+    final targetKey = _groupKeyOf(action.target);
+    return _chainFollowUps<GroupAction>(
+      action,
+      applied,
+      options,
+      dispatch: (linked) => linked.groupActions,
+      sameTarget: (candidate) => _groupKeyOf(candidate.target) == targetKey,
+      canApply: (candidate) => candidate.canApply,
+      unlocksOf: (candidate) => candidate.unlocks,
+      run: _applyGroupOnce,
+    );
+  }
+
+  /// Runs one student action and refreshes the snapshot — the single link the
+  /// chain repeats.
+  Future<ApplyResult> _applyStudentOnce(
+    StudentAction action,
+    ApplyOptions options,
+  ) async {
     final result = await action.apply(connectors, options);
-    final applied = await _refresh(
+    return _refresh(
+      result,
+      removedSmartschoolUid: action.target.smartschool?.uid,
+      removedAzureId: action.target.azure?.id,
+    );
+  }
+
+  /// Runs one staff action and refreshes the snapshot.
+  Future<ApplyResult> _applyStaffOnce(
+    StaffAction action,
+    ApplyOptions options,
+  ) async {
+    final result = await action.apply(connectors, options);
+    return _refresh(
+      result,
+      removedSmartschoolUid: action.target.smartschool?.uid,
+      removedAzureId: action.target.azure?.id,
+    );
+  }
+
+  /// Runs one group action and refreshes the snapshot.
+  Future<ApplyResult> _applyGroupOnce(
+    GroupAction action,
+    ApplyOptions options,
+  ) async {
+    final result = await action.apply(connectors, options);
+    return _refresh(
       result,
       removedGroupId: action.target.smartschool?.id,
     );
-    return _chainGroupFollowUps(action, applied, options);
   }
 
-  /// Runs the follow-up actions [action]'s write unlocked on the same class,
-  /// against the **relinked** record (#245) — the group family's half of the
-  /// chaining [applyStudent] has done since #230, sharing its mechanism rather
-  /// than inventing a second one.
+  /// Runs the follow-up actions [action]'s write unlocked on the same target,
+  /// against the **relinked** record — one walk, shared by all three families
+  /// (students #230, class groups #245, staff #240) rather than a copy per
+  /// family. Only the typed dispatch it reads and the target identity differ,
+  /// so those arrive as parameters.
   ///
-  /// Provisioning a class group is a two-link chain: Graph creates a group
-  /// empty, so `CreateAzureClassGroup` leaves `SSM-2F` with nobody in it and
-  /// `SyncAzureClassGroupMembers` is what enrols the class. The dispatcher is a
-  /// pure function of the current record and can only offer the first link, so
-  /// one click used to create the group and stop, leaving the roster to a second
-  /// pass the operator had to notice and trigger.
+  /// Provisioning is a two-link chain in every family, and dispatch (§6.3) is a
+  /// pure function of the record *as it stands*, so it can only ever offer the
+  /// first link. `AddStudentToSmartschool` / [AddStaffToSmartschool] build their
+  /// account with the Azure UPN as its `mail` and evaluate false until the
+  /// Office 365 account exists; `CreateAzureClassGroup` leaves an empty group
+  /// because Graph writes the roster separately. In each case one click used to
+  /// perform the first write and stop, leaving the rest to a second pass the
+  /// operator had to notice and trigger.
   ///
   /// Each link is taken from the freshly recomputed [LinkedState]'s own
-  /// dispatch — the same list the UI would show on the next render — so the
-  /// follow-up is bound to the record the previous write produced (the created
-  /// group carrying the id Graph minted, spliced into the Azure snapshot), and
-  /// its own `evaluate()` has already agreed it applies. Never a projection: the
-  /// created group's id is not knowable before the write.
+  /// [dispatch] — the same list the UI would show on the next render — so the
+  /// follow-up is bound to the record the previous write produced, placement and
+  /// all, and its own `evaluate()` has already agreed it applies. Never a
+  /// projection: `createPrincipalName` resolves a UPN collision by suffixing, so
+  /// the UPN that landed can differ from the projected one, and a created
+  /// group's id is not knowable before the write at all.
   ///
-  /// Bounded exactly as the student chain is, so no declaration can spin it:
-  /// nothing is unlocked when nothing was written, each action type runs at most
-  /// once per chain, an informational action is never run, and a failed link
-  /// stops it.
-  Future<ApplyResult> _chainGroupFollowUps(
-    GroupAction action,
+  /// The walk is bounded four ways, so no declaration can spin it: nothing is
+  /// unlocked when nothing was written (a dry run or a failure returns no
+  /// refreshed view), each action type runs at most once per chain, an
+  /// informational action ([canApply] false) is never run, and a failed link
+  /// stops it — the failure is reported and the next sync re-offers whatever is
+  /// still missing.
+  Future<ApplyResult> _chainFollowUps<A extends Object>(
+    A action,
     ApplyResult applied,
-    ApplyOptions options,
-  ) async {
+    ApplyOptions options, {
+    required List<A> Function(LinkedState linked) dispatch,
+    required bool Function(A candidate) sameTarget,
+    required bool Function(A candidate) canApply,
+    required Set<Type> Function(A candidate) unlocksOf,
+    required Future<ApplyResult> Function(A action, ApplyOptions options) run,
+  }) async {
     var linked = applied.linked;
-    if (linked == null || action.unlocks.isEmpty) return applied;
+    var unlocks = unlocksOf(action);
+    if (linked == null || unlocks.isEmpty) return applied;
 
-    final targetKey = _groupKeyOf(action.target);
     final ran = <Type>{action.runtimeType};
     final followUps = <ActionResult>[];
-    var unlocks = action.unlocks;
 
     while (unlocks.isNotEmpty) {
-      final next = _unlockedGroupAction(linked!, targetKey, unlocks, ran);
+      final next = _firstUnlocked(
+        dispatch(linked!),
+        unlocks,
+        ran,
+        sameTarget,
+        canApply,
+      );
       if (next == null) break;
       ran.add(next.runtimeType);
-      final result = await next.apply(connectors, options);
-      followUps.add(result);
-      final refreshed = await _refresh(
-        result,
-        removedGroupId: next.target.smartschool?.id,
-      );
+      final refreshed = await run(next, options);
+      followUps.add(refreshed.result);
       if (!refreshed.refreshed) break;
       linked = refreshed.linked;
-      unlocks = next.unlocks;
+      unlocks = unlocksOf(next);
     }
 
     if (followUps.isEmpty) return applied;
     return ApplyResult(applied.result, linked, followUps: followUps);
   }
 
-  /// The first action [linked]'s group dispatch raised for [targetKey] whose
-  /// type is named by [unlocks] and has not run yet this chain, or null when the
+  /// The first of [candidates] that targets the same record, is applyable, has a
+  /// type named by [unlocks], and has not run yet this chain — or null when the
   /// write unlocked nothing after all.
-  GroupAction? _unlockedGroupAction(
-    LinkedState linked,
-    String targetKey,
+  A? _firstUnlocked<A extends Object>(
+    List<A> candidates,
     Set<Type> unlocks,
     Set<Type> ran,
+    bool Function(A candidate) sameTarget,
+    bool Function(A candidate) canApply,
   ) {
-    for (final candidate in linked.groupActions) {
-      if (_groupKeyOf(candidate.target) == targetKey &&
-          candidate.canApply &&
+    for (final candidate in candidates) {
+      if (sameTarget(candidate) &&
+          canApply(candidate) &&
           unlocks.contains(candidate.runtimeType) &&
           !ran.contains(candidate.runtimeType)) {
         return candidate;

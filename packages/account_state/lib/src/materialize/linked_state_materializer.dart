@@ -43,8 +43,10 @@ MaterializedView materialize(
   }
   final byStaff = <String, List<CandidateAction>>{};
   for (final a in linked.staffActions) {
+    // Read off the action like the other two families since #240: every staff
+    // action is applyable today, but nothing here should assume it.
     (byStaff[a.target.id.value] ??= <CandidateAction>[])
-        .add(_candidate('staff', a, a.describeChanges(), canApply: true));
+        .add(_candidate('staff', a, a.describeChanges(), canApply: a.canApply));
   }
 
   // Account-scoped warnings, keyed by the Smartschool uid they name.

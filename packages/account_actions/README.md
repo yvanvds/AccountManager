@@ -83,7 +83,7 @@ the operator's one apply provisions the student end to end. It must be the
 relinked record and never a projection — `createPrincipalName` resolves a UPN
 collision by suffixing, so the UPN that landed can differ from the one
 `describeChanges()` projected, and the Smartschool account would carry the wrong
-`mail`. The staff family has the same two-pass shape and is tracked as #240.
+`mail`.
 
 `GroupAction.unlocks` is the same mechanism for the group family (#245), not a
 second one: `CreateAzureClassGroup.unlocks == {SyncAzureClassGroupMembers}`,
@@ -92,6 +92,17 @@ creating `SSM-2F` used to leave a class group with nobody in it until the
 operator clicked again. `StateApplier.applyGroup` chains it against the relinked
 record, which is the only place the id Graph just minted exists. The walk skips
 an informational follow-up, so a `canApply == false` action is never applied.
+
+`StaffAction.unlocks` completes the set (#240): the staff family has the very
+same two-pass shape as the student one — `AddStaffToSmartschool` builds its
+account with the Azure UPN as the `mail` — so
+`AddStaffToAzure.unlocks == {AddStaffToSmartschool}` and
+`StateApplier.applyStaff` chains it exactly as `applyStudent` does. The applier
+runs **one** walk for all three families, parameterized by the typed dispatch it
+reads and the target identity; the bounds are therefore identical everywhere:
+nothing chains off a dry run or a failed write, each action type runs at most
+once per chain, an informational action is never run, and a failed link stops
+the chain.
 
 `staffActions(snapshot, config)` does the same over the snapshot's staff
 records. The legacy staff parser writes the modify branch as `if (OK)` rather

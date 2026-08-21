@@ -60,6 +60,40 @@ sealed class StaffAction {
   /// [alternativeGroup]. Ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
 
+  /// Whether [apply] can perform a change. `false` for an informational action
+  /// (the legacy `CanBeApplied == false` case): it surfaces a diagnosis but has
+  /// no automated write, so calling [apply] throws. Every staff action is
+  /// applyable today, so this is always `true`; the getter exists so the UI's
+  /// apply affordance and the follow-up walk (#240) read the flag off the action
+  /// for every family instead of assuming it for this one. See
+  /// [StudentAction.canApply] and [GroupAction.canApply].
+  bool get canApply => true;
+
+  /// The action types this one **unlocks** on the same target (#240) — the staff
+  /// family's half of the chaining [StudentAction.unlocks] introduced for
+  /// students (#230) and extended to class groups in #245, deliberately the same
+  /// mechanism rather than a third one.
+  ///
+  /// Provisioning a brand-new staff member is a chain, not a single action: the
+  /// Smartschool account is built with the Azure UPN as its `mail`, so
+  /// [AddStaffToSmartschool] cannot even [evaluate] true until [AddStaffToAzure]
+  /// has run. The dispatch (§6.3) is a pure function of the *current* record and
+  /// can only ever offer the first link, which is why a WISA-only staff member
+  /// used to be offered one create and the operator had to apply, notice the
+  /// relink, and apply again.
+  ///
+  /// Declaring the follow-up here lets the State layer run it immediately
+  /// against the **freshly relinked** record. It must be the relinked record and
+  /// never a projection: `createPrincipalName` resolves a UPN collision by
+  /// suffixing, so the UPN that actually landed can differ from the one
+  /// [describeChanges] projected, and the Smartschool account would then carry
+  /// the wrong `mail`.
+  ///
+  /// Pure and constant — it names what *may* follow, never what must: the
+  /// follow-up's own [evaluate] still decides whether it applies, exactly as it
+  /// would on the next sync.
+  Set<Type> get unlocks => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3).
@@ -100,6 +134,14 @@ class AddStaffToAzure extends StaffAction {
 
   @override
   bool evaluate() => staff.wisa != null && staff.azure == null;
+
+  /// Creating the Office 365 account unlocks the Smartschool create, which
+  /// needs the fresh UPN as the new account's `mail` (#240) — the staff twin of
+  /// [AddStudentToAzure]'s chain (#230). Without it a new staff member's second
+  /// create only appeared on the *next* pass, so Acties → Personeel never showed
+  /// the full provisioning intent.
+  @override
+  Set<Type> get unlocks => const {AddStaffToSmartschool};
 
   String get _displayName => '${_wisa.firstName} ${_wisa.lastName}'.trim();
 

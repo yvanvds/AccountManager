@@ -590,6 +590,162 @@ void main() {
     });
   });
 
+  group('provisioning a new staff member is one chain, not two passes (#240)',
+      () {
+    /// A staff member who exists only in WISA — a new hire with neither a
+    /// Smartschool nor an Office 365 account. The dispatch can only offer the
+    /// Azure create: `AddStaffToSmartschool` builds its account with the Azure
+    /// UPN as the `mail`, so it evaluates false until that account exists.
+    _Harness newHire({int soapResultCode = 0}) => _Harness(
+          wisa: _wSnap(staff: [_wStaff(code: 'SMIT', wisaId: '42')]),
+          wisaBaseStaff: [_wStaff(code: 'SMIT', wisaId: '42')],
+          soapResultCode: soapResultCode,
+        );
+
+    test('the Azure create chains the Smartschool create it unlocked',
+        () async {
+      final harness = newHire();
+      final before = await harness.applier.link();
+      final create = before.staffActions.whereType<AddStaffToAzure>().single;
+
+      final applied = await harness.applier.applyStaff(create);
+
+      // Both writes happened, off one apply.
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.result.system, core.Origin.azure);
+      expect(applied.followUps.map((r) => r.changes.summary),
+          ['Maak een nieuw Smartschool account']);
+      expect(applied.followUps.single.outcome, ActionOutcome.applied);
+
+      // And both records are in the snapshots the pass left behind.
+      final azure = harness.app.azure.snapshot!.users.single;
+      expect(azure.employeeId, '42');
+      final smartschool = harness.app.smartschool.snapshot!.accounts.single;
+      expect(smartschool.accountId, 'SMIT',
+          reason: 'staff bridge to Smartschool by their WISA code, not wisaId');
+      expect(smartschool.mail, azure.upn,
+          reason: 'the follow-up read the UPN that actually landed, not the '
+              'projected one');
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the chain rides the incremental refresh — no re-sync');
+    });
+
+    test('the chained account is what the linker now sees', () async {
+      final harness = newHire();
+      final create = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied = await harness.applier.applyStaff(create);
+
+      final linked = applied.linked!.snapshot.staff.single;
+      expect(linked.wisa, isNotNull);
+      expect(linked.azure, isNotNull);
+      expect(linked.smartschool, isNotNull,
+          reason: 'the returned view is the one the *last* link produced');
+      expect(
+          applied.linked!.staffActions.whereType<AddStaffToAzure>(), isEmpty);
+      expect(applied.linked!.staffActions.whereType<AddStaffToSmartschool>(),
+          isEmpty);
+    });
+
+    test('a dry run projects the first write and chains nothing', () async {
+      final harness = newHire();
+      final create = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied =
+          await harness.applier.applyStaff(create, options: ApplyOptions.dry);
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(applied.followUps, isEmpty,
+          reason: 'nothing was written, so nothing was unlocked');
+      expect(harness.soap.soapActions, isEmpty);
+      expect(harness.graph.requests.where((r) => r.method == 'POST'), isEmpty);
+      expect(harness.app.smartschool.snapshot!.accounts, isEmpty);
+    });
+
+    test('a failing follow-up stops the chain and is reported', () async {
+      // Smartschool refuses the create (non-zero return code); the Azure
+      // account it followed still exists and must stay in the snapshot, so the
+      // next pass offers exactly the one create that is still missing.
+      final harness = newHire(soapResultCode: 1);
+      final create = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied = await harness.applier.applyStaff(create);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.followUps.single.outcome, ActionOutcome.failed);
+      expect(applied.linked, isNotNull,
+          reason: 'the successful Azure write is still reflected');
+      expect(harness.app.azure.snapshot!.users, hasLength(1));
+      expect(harness.app.smartschool.snapshot!.accounts, isEmpty);
+      expect(
+        applied.linked!.staffActions.whereType<AddStaffToSmartschool>(),
+        hasLength(1),
+      );
+    });
+
+    test('an unrelated staff action chains nothing', () async {
+      // The chain is opt-in per action: applying the copy-code repair on a
+      // complete record must stay one write.
+      final staff = _linkedStaff(
+        wisa: _wStaff(code: 'SMIT', wisaId: '42'),
+        smartschool: _ssAccount(
+          uid: 'anna.smit',
+          accountId: 'SMIT',
+          mail: 'anna.smit@school.example',
+          role: core.PersonRole.teacher,
+        ),
+        azure: _azUser(id: 'az-9', upn: 'anna.smit@school.example'),
+      );
+      final harness = _Harness(
+        wisa: _wSnap(staff: [_wStaff(code: 'SMIT', wisaId: '42')]),
+        smartschool:
+            _sSnap(accounts: [staff.smartschool! as ss.SmartschoolAccount]),
+        azure: _aSnap(users: [staff.azure! as az.AzureUser]),
+      );
+      final action = SetStaffCopyCode(staff, harness.applier.staffConfig);
+
+      final applied = await harness.applier.applyStaff(action);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.followUps, isEmpty);
+    });
+
+    test('both minted passwords land on one password sheet (#105)', () async {
+      final queue = InMemoryPasswordQueueStore();
+      final harness = newHire();
+      final applier = StateApplier(
+        app: harness.app,
+        connectors: Connectors(
+          smartschool: _ssConn(harness.soap),
+          azure: _azConn(harness.graph),
+        ),
+        resolver: _SeqResolver(),
+        wisaRules: harness.rules,
+        studentConfig: _studentConfig(),
+        staffConfig: _staffConfig(),
+        passwordQueue: queue,
+      );
+
+      await applier.applyStaff(
+        (await applier.link()).staffActions.whereType<AddStaffToAzure>().single,
+      );
+
+      final entry = (await queue.load()).single;
+      expect(entry.azurePassword, isNotNull);
+      expect(entry.smartschoolPassword, isNotNull,
+          reason: 'the chained create merges onto the entry the first left');
+    });
+  });
+
   group('Smartschool uid uniqueness for created accounts (#72)', () {
     test(
         'suffixes a colliding login and stays unique across sequential creates',

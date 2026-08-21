@@ -534,7 +534,9 @@ class ReconcileController extends ChangeNotifier {
       group: (a) => a.alternativeGroup,
       isDefault: (a) => a.isDefaultAlternative,
       changes: (a) => a.describeChanges(),
-      canApply: (_) => true,
+      // Read off the action like the other two families since #240: every staff
+      // action is applyable today, but nothing here should assume it.
+      canApply: (a) => a.canApply,
     ));
     entries.addAll(_entriesFor(
       family: 'group',
