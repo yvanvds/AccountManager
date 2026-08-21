@@ -1157,6 +1157,66 @@ void main() {
   });
 
   testWidgets(
+      'an empty class beside a sibling school\'s populated namesake stays the '
+      'read-only empty notice end-to-end (#222)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Our school 1 has an empty
+    // `1A`; the sibling school 2 we do not manage has its own populated `1A`,
+    // pulled by the same shared WISA credentials. Only ours is linked (#205), so
+    // exactly one class reaches the Klasgroepen list — and it is empty.
+    //
+    // Before the fix the tally behind `containsStudents` pooled every school's
+    // students under the bare class name, so the sibling's student made our
+    // empty class read as populated: the list offered "Voeg deze klas toe aan
+    // Smartschool", the applyable action that also enrols students into the
+    // class it creates. This is the layer that sees it — the misclassification
+    // needs two schools in one snapshot, which no single-resolver assertion
+    // composes, and the flip is what the operator reads off the tile.
+    useTallWindow(tester);
+    final harness = siblingPopulatedClassHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Our 1A is the only class on the list, and it reads as the empty one.
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
+    expect(find.textContaining('bevat nog geen leerlingen'), findsOneWidget);
+    expect(
+        find.textContaining('Voeg deze klas toe aan Smartschool'), findsNothing,
+        reason: 'nobody of ours is in 1A — creating + enrolling is not due');
+
+    // The notice is marked manual — there is nothing to write for an empty
+    // class — while the only applyable line stays the "ignore this class"
+    // opt-out every WISA-only class carries.
+    expect(find.textContaining('(manueel)'), findsOneWidget);
+    expect(find.textContaining('Negeer deze klas bij het importeren uit WISA'),
+        findsOneWidget);
+
+    // And the pass itself never constructed the create-and-enrol action for it.
+    final kinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(kinds, contains('CreateInSmartschool'));
+    expect(kinds, isNot(contains('AddToSmartschool')));
+  });
+
+  testWidgets(
       'the Acties drill-down opens on grade-years merged across the managed '
       'schools end-to-end, with no school level to guess at (#210)',
       (WidgetTester tester) async {
@@ -1206,6 +1266,96 @@ void main() {
     expect(harness.controller.classroomAccounts, hasLength(1));
     expect(
         find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+  });
+
+  testWidgets(
+      'a single-group class whose name another school shares raises no class '
+      'change, and "00" never reaches a class name end-to-end (#221)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Two managed schools each have
+    // their own single-group `1C` — one `SyncKlas` row, `KLASGROEP = 00`, and
+    // (because `ADMINGROEP` is only unique within a school) a different
+    // `ADMINGROEP` each. Both students already sit in the Smartschool `1C`
+    // their WISA record names, so the correct pass proposes nothing.
+    //
+    // Before the fix the two schools' admin codes pooled under the bare name
+    // `1C`, the class read as sub-grouped, and each student's `KLASGROEP` was
+    // appended verbatim: every student of both classes was offered "Wijzig de
+    // klas in Smartschool — 1C → 1C 00", a move into a class that exists
+    // nowhere. This is the layer that sees it: the misclassification needs two
+    // schools in one snapshot, which no single-resolver assertion composes.
+    useTallWindow(tester);
+    final harness = subGroupSentinelHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Not one class move is proposed anywhere in the pass, and no projected
+    // change carries the sentinel.
+    final alternatives = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives);
+    expect(
+      alternatives.map((a) => a.kind),
+      isNot(contains('MoveToSmartschoolClassGroup')),
+      reason: 'both classes are single-group — nobody moves',
+    );
+    expect(
+      alternatives
+          .expand((a) => a.changes.fields)
+          .expand((f) => <String?>[f.before, f.after]),
+      isNot(contains('1C 00')),
+      reason: 'the "no sub-groups" sentinel is never part of a class name',
+    );
+
+    // Browse it the way the operator does: the merged first year holds both
+    // schools' `1C`, each still keyed to its own school partition. Closing a
+    // classroom rebuilds — and so collapses — the drill-down tree, so the year
+    // is re-opened for each school.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    Future<void> openYear() async {
+      final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+      await tester.ensureVisible(yearNode);
+      await tester.tap(yearNode);
+      await tester.pumpAndSettle();
+    }
+
+    await openYear();
+    expect(find.text('1C 00'), findsNothing,
+        reason: 'the sentinel never names a class in the drill-down either');
+
+    // Each school's class in turn: opened, and carrying no class-change row.
+    for (final school in <String>['1', '2']) {
+      if (harness.controller.selectedClassroom != null) {
+        await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+        await tester.pumpAndSettle();
+        await openYear();
+      }
+      final classNode = find.byKey(ValueKey('rollup-class-class|$school|1|1C'));
+      expect(classNode, findsOneWidget);
+      await tester.ensureVisible(classNode);
+      await tester.tap(classNode);
+      await tester.pumpAndSettle();
+
+      // The drill-down really opened (both the populated and the empty branch
+      // render this header), so the absence assertions below mean something.
+      expect(
+          find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+      expect(harness.controller.selectedClassroom?.school, school);
+      expect(find.text('Wijzig de klas in Smartschool'), findsNothing,
+          reason: 'school $school\'s 1C is single-group — no move is due');
+      expect(find.textContaining('1C 00'), findsNothing);
+    }
   });
 
   testWidgets(

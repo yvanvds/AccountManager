@@ -63,8 +63,11 @@ class LinkedState {
   /// [ourSchoolIds] is the set of WISA school ids the operator actually manages
   /// (from the persisted `AppSettings.wisaSchools` ownership flags, #178). It is
   /// threaded into `link()` so `wisaPresence` is authoritative from Settings
-  /// rather than only the snapshot's `MarkAsOurs` flags. When null, `link()`
-  /// falls back to those snapshot flags (see its doc-comment).
+  /// rather than only the snapshot's `MarkAsOurs` flags, **and** into the
+  /// [PlacementResolver] so "does this class hold students?" counts only the
+  /// students of a school we manage (#222) — the two must agree, since the
+  /// linker seeds a class group only for a managed school (#205). When null,
+  /// both fall back to those snapshot flags (see their doc-comments).
   factory LinkedState.recompute({
     required wapi.WisaSnapshot wisa,
     required ss.SmartschoolSnapshot smartschool,
@@ -93,6 +96,7 @@ class LinkedState {
       wisa: wisa,
       smartschool: smartschool,
       classTree: classTree,
+      ourSchoolIds: ourSchoolIds,
     );
 
     return LinkedState(

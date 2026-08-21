@@ -255,6 +255,113 @@ void main() {
       expect(placement.className, '3C');
     });
 
+    test(
+        'two schools that each have their own single-group 1C keep the bare '
+        'name — admin codes never pool across schools (#221)', () {
+      // `ADMINGROEP` is only unique *within* a school, and the snapshot pools
+      // every school. Keyed on the name alone, school 1's `a1` and school 2's
+      // `a2` read as two admin codes for "1C", so both schools' students got
+      // their `KLASGROEP` appended and every one of them was proposed for a
+      // move to the non-existent class "1C 00".
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(
+                wisaId: '1',
+                classGroup: '1C',
+                classSubGroup: '00',
+                schoolId: 1),
+            _wStudent(
+                wisaId: '2',
+                classGroup: '1C',
+                classSubGroup: '00',
+                schoolId: 2),
+          ],
+          classGroups: [
+            _wClass('1C', adminCode: 'a1', schoolId: 1),
+            _wClass('1C', adminCode: 'a2', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1C');
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '2')).className,
+          '1C');
+    });
+
+    test(
+        'a genuinely sub-grouped class still widens even when another school '
+        'shares its name (#221)', () {
+      // The over-correction guard: per-school scoping must not swallow a real
+      // split. School 1's `1A` has two admin codes of its own.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: 'A'),
+            _wStudent(
+                wisaId: '2',
+                classGroup: '1A',
+                classSubGroup: '00',
+                schoolId: 2),
+          ],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+            _wClass('1A', adminCode: 'z9', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1A A');
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '2')).className,
+          '1A',
+          reason: 'school 2\'s own 1A is single-group');
+    });
+
+    test(
+        'a student whose KLASGROEP is the 00 sentinel keeps the bare name even '
+        'in a sub-grouped class (#221)', () {
+      // `00` means "no sub-groups" — it names no group, so it is never part of
+      // a class name (the guard `WisaClassGroup.fullName` already applies).
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '00'),
+          ],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1A');
+    });
+
+    test('a blank sub-group never leaves a trailing separator (#221)', () {
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '  '),
+          ],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1A');
+    });
+
     test('currentClass is the student\'s official-class membership', () {
       final resolver = PlacementResolver(
         wisa: _wSnap(students: [_wStudent(wisaId: '1', classGroup: '3C')]),
@@ -378,6 +485,87 @@ void main() {
       );
 
       expect(resolver.groupPlacementFor(_linkedWisaGroup('1A')).parent, isNull);
+    });
+
+    // #222: the WISA snapshot pools every school the shared credentials reach,
+    // so the student tally behind `containsStudents` must be scoped to the
+    // schools we manage — the same set the linker seeds class groups by (#205).
+    test('a sibling school\'s populated class does not populate ours', () {
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          // Our own 1A is empty; the sibling school's 1A holds the student.
+          students: [_wStudent(wisaId: '1', classGroup: '1A', schoolId: 2)],
+          classGroups: [_wClass('1A', adminCode: 'a1', schoolId: 1)],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      expect(
+        resolver.groupPlacementFor(_linkedWisaGroup('1A')).containsStudents,
+        isFalse,
+        reason: 'another school\'s students never populate our class',
+      );
+    });
+
+    test(
+        'our own populated class stays populated beside a sibling\'s empty one',
+        () {
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '1A')],
+          classGroups: [
+            _wClass('1A', adminCode: 'a1', schoolId: 1),
+            _wClass('1A', adminCode: 'a2', schoolCode: '222', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      expect(
+        resolver.groupPlacementFor(_linkedWisaGroup('1A')).containsStudents,
+        isTrue,
+      );
+    });
+
+    test('with ownership unconfigured every school still counts', () {
+      // Mirrors the linker's `_isOurWisaSchool` fallback: no managed set and no
+      // `isOurs` flags means ownership is unconfigured, not "nothing is ours".
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '1A', schoolId: 2)],
+          classGroups: [_wClass('1A', adminCode: 'a1', schoolId: 1)],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(
+        resolver.groupPlacementFor(_linkedWisaGroup('1A')).containsStudents,
+        isTrue,
+      );
+    });
+
+    test('the managed set falls back to the snapshot\'s isOurs flags', () {
+      // No caller-supplied set, but the snapshot says which school is ours —
+      // the same derivation `link()` applies, so the two layers agree.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '1A', schoolId: 2)],
+          classGroups: [_wClass('1A', adminCode: 'a1', schoolId: 1)],
+          schools: const [
+            wapi.WisaSchool(
+                id: 1, name: 'Onze school', code: 'ISM', isOurs: true),
+            wapi.WisaSchool(id: 2, name: 'Andere school', code: 'AND'),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(
+        resolver.groupPlacementFor(_linkedWisaGroup('1A')).containsStudents,
+        isFalse,
+      );
     });
   });
 
@@ -517,6 +705,70 @@ void main() {
 
       final action = state.groupActions.whereType<AddToSmartschool>().single;
       expect(action.target.wisa!.instituteNumber, '111');
+    });
+  });
+
+  group('containsStudents counts only the students we manage (#222)', () {
+    /// Recomputes over [classGroups] + [students] with the managed-school set
+    /// pinned to [ourSchoolIds] — the Settings-derived path the app wires.
+    LinkedState recompute({
+      required List<wapi.WisaClassGroup> classGroups,
+      required List<wapi.WisaStudent> students,
+      Set<int>? ourSchoolIds,
+    }) =>
+        LinkedState.recompute(
+          wisa: _wSnap(students: students, classGroups: classGroups),
+          smartschool: _sSnap(
+            groups: [
+              _ssGroup('Eerste graad',
+                  code: 'G1', official: false, type: core.GroupType.group),
+            ],
+          ),
+          azure: _aSnap(),
+          resolver: _SeqResolver(),
+          studentConfig: _studentConfig,
+          staffConfig: _staffConfig,
+          classTree: const SmartschoolClassTree(grades: ['G1', 'G2', 'G3']),
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test(
+        'our empty class beside a sibling\'s populated one is the empty notice',
+        () {
+      // Our 1A holds nobody; the sibling school we do not manage has its own 1A
+      // with a student in it. Pooled, that student flipped `containsStudents`
+      // and raised the applyable AddToSmartschool — which also enrols students
+      // — for a class that is empty.
+      final state = recompute(
+        classGroups: [
+          _wClass('1A', adminCode: 'a2', schoolCode: '222', schoolId: 2),
+          _wClass('1A', adminCode: 'a1', schoolCode: '111', schoolId: 1),
+        ],
+        students: [_wStudent(wisaId: '1', classGroup: '1A', schoolId: 2)],
+        ourSchoolIds: const {1},
+      );
+
+      expect(state.groupActions.whereType<AddToSmartschool>(), isEmpty,
+          reason: 'our 1A holds no student of ours');
+      final notice = state.groupActions.whereType<CreateInSmartschool>().single;
+      expect(notice.canApply, isFalse);
+      expect(notice.target.wisa!.name, '1A');
+    });
+
+    test('our own populated class still raises the applyable create action',
+        () {
+      // The mirror image: the sibling school's 1A is the empty one now.
+      final state = recompute(
+        classGroups: [
+          _wClass('1A', adminCode: 'a2', schoolCode: '222', schoolId: 2),
+          _wClass('1A', adminCode: 'a1', schoolCode: '111', schoolId: 1),
+        ],
+        students: [_wStudent(wisaId: '1', classGroup: '1A')],
+        ourSchoolIds: const {1},
+      );
+
+      expect(state.groupActions.whereType<CreateInSmartschool>(), isEmpty);
+      expect(state.groupActions.whereType<AddToSmartschool>(), hasLength(1));
     });
   });
 
