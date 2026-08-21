@@ -1560,6 +1560,133 @@ void main() {
   });
 
   testWidgets(
+      'a class the #225 notice says to fix by hand survives "Alles toepassen" '
+      'untouched end-to-end (#250)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Smartschool
+    // write path. Four WISA classes: `1A`/`1B` are genuinely new, while `2G`
+    // and `2H` already exist in Smartschool on groups that are not flagged as
+    // official classes — the #225 shape, where the app offers no create and
+    // tells the operator to make the group official by hand.
+    //
+    // Refusing the create left "Negeer deze klas bij het importeren uit WISA"
+    // as the *only* member of the create-or-ignore either/or of #244, and a
+    // choice of one is always the selected one. The bulk **Alles toepassen**
+    // therefore wrote a DontImportClass rule on the very classes the notice
+    // beside them had just said to align by hand: they dropped out of the next
+    // WISA snapshot while the Smartschool groups stayed behind, unmanaged.
+    //
+    // This is the layer that sees it. Which half of a choice is pre-selected,
+    // which bulk subset a class lands in, and what the button on that subset
+    // writes are three different halves of the screen, composed by the
+    // dispatch, the entry grouping and the drill-down — only a full run puts
+    // the notice and the button that acts on it on screen together.
+    useTallWindow(tester);
+    final harness = namesakeClassChoiceHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Every class is on the list, and each namesake one reads as the hand-fix
+    // notice — the resolution that is pre-selected for it.
+    for (final id in const ['2G', '2H']) {
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey('entry-group-$id')),
+          matching: find.textContaining(
+              'Deze klas bestaat in Smartschool maar is geen officiële klas'),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
+        findsNWidgets(2),
+        reason: '1A and 1B are the ordinary new-class case');
+    expect(
+        find.text('Negeer deze klas bij het importeren uit WISA'), findsNothing,
+        reason: 'the opt-out is an alternative to pick, never a to-do that '
+            'also runs');
+
+    // The namesake classes form a bulk subset of their own. Pooling them with
+    // the new classes would have filed them under a header offering to create
+    // classes that already exist.
+    final namesakeKey = harness.controller.groupPendingEntries
+        .firstWhere((e) => e.targetId == '2G')
+        .situationKey;
+    final newKey = harness.controller.groupPendingEntries
+        .firstWhere((e) => e.targetId == '1A')
+        .situationKey;
+    expect(namesakeKey, isNot(newKey));
+
+    final namesakeBulk = find.byKey(ValueKey('situation-apply-$namesakeKey'));
+    await tester.ensureVisible(namesakeBulk);
+    expect(
+      find.textContaining('dan wordt ze gekoppeld. / Negeer deze klas bij '
+          'het importeren uit WISA'),
+      findsOneWidget,
+      reason: 'the header names one either/or led by the hand-fix notice',
+    );
+
+    // Run that whole subset. It is not a no-op — each class still needs its
+    // Office 365 group (#228), which is a decision of its own — but nothing it
+    // writes touches the class's import: no Smartschool class is created, and
+    // no DontImportClass rule is written.
+    final pulls = harness.wisaSyncs;
+    await tester.tap(namesakeBulk);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(
+      harness.controller.applyResults!.map((r) => r.changes.summary),
+      isNot(contains('Negeer deze klas bij het importeren uit WISA')),
+      reason: 'the rule would drop the classes the app just said to repair',
+    );
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        isEmpty,
+        reason: 'Smartschool already holds 2G and 2H');
+    // A DontImportClass rule re-pulls WISA, so an untouched pull count is the
+    // proof that none was written.
+    expect(harness.wisaSyncs, pulls);
+
+    // The two classes are still on the list, still asking for the hand repair.
+    for (final id in const ['2G', '2H']) {
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey('entry-group-$id')),
+          matching: find.textContaining(
+              'Deze klas bestaat in Smartschool maar is geen officiële klas'),
+        ),
+        findsOneWidget,
+      );
+    }
+
+    // And the fix did not simply silence the list: the other subset still
+    // creates the genuinely new classes, and blacklists neither.
+    final newBulk = find.byKey(ValueKey('situation-apply-$newKey'));
+    await tester.ensureVisible(newBulk);
+    await tester.tap(newBulk);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(2));
+    expect(
+      harness.controller.applyResults!.map((r) => r.changes.summary),
+      isNot(contains('Negeer deze klas bij het importeren uit WISA')),
+    );
+    expect(harness.wisaSyncs, pulls);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Acties badges count one pending item per either/or, so the '
       'Klasgroepen node agrees with the list it opens end-to-end (#251)',
       (WidgetTester tester) async {

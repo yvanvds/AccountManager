@@ -72,7 +72,9 @@ sealed class GroupAction {
 
   /// The key shared by mutually-exclusive alternatives resolving the same
   /// situation (#110). `null` (the default) means the action stands on its own.
-  /// The group family's one key is [classImportAlternative] (#244). See
+  /// The group family has two: [classImportAlternative] for a class Smartschool
+  /// does not have (#244) and [namesakeClassAlternative] for one it already
+  /// carries under a group the linker could not adopt (#250). See
   /// [StudentAction.alternativeGroup].
   String? get alternativeGroup => null;
 
@@ -155,7 +157,10 @@ sealed class GroupAction {
 ///
 /// The two create actions never fire together (the [GroupPlacement] membership
 /// signal picks exactly one), so all three can share the single key and exactly
-/// one default is ever offered.
+/// one default is ever offered — except when Smartschool already carries the
+/// name, where both creates step aside and the pair moves to
+/// [namesakeClassAlternative] instead (#250). This key therefore always has a
+/// create in it, and the blacklist is never left alone in it.
 ///
 /// **The default is the create action, deliberately the opposite polarity from
 /// [smartschoolDepartureAlternative]**, where the conservative "keep the
@@ -175,6 +180,33 @@ sealed class GroupAction {
 /// leads the radio list and is also what the grouping falls back to if a
 /// default is ever forgotten.
 const String classImportAlternative = 'class-import';
+
+/// The [GroupAction.alternativeGroup] key shared by the mutually exclusive
+/// readings of a WISA class Smartschool **already carries**, on a group the
+/// linker could not adopt (#225): repair it in Smartschool by hand
+/// ([ClassExistsAsSmartschoolGroup]) *or* stop offering the class altogether
+/// ([DoNotImportFromWisa]).
+///
+/// **Why a second key and not a third member of [classImportAlternative].** The
+/// pending list keys a "same situation" bulk-apply subset on this very string
+/// (`PendingChoice.situationId`), so pooling the namesake classes with the
+/// genuinely new ones would file both under one header naming both readings and
+/// one **Apply to all**. They are different situations — "create this class" and
+/// "this class is already there, go fix its flag" — so they get different keys
+/// and each keeps its own bulk pass.
+///
+/// **The default is the notice**, the same polarity [CreateInSmartschool] has
+/// inside [classImportAlternative]: it is informational, so a bulk apply writes
+/// **nothing** for a namesake class and blacklisting one stays a deliberate
+/// pick. That is the whole of #250. Before it, the create actions refused a
+/// namesake class (they would ask Smartschool for a duplicate name) while
+/// [DoNotImportFromWisa] still declared [classImportAlternative], so the choice
+/// collapsed to a single member — and a lone option is always the selected one.
+/// "Apply to all" therefore wrote a [wapi.DontImportClass] rule on the very
+/// class the notice beside it had just told the operator to align by hand: the
+/// class dropped out of the next WISA snapshot while the Smartschool group
+/// stayed, which is exactly the failure mode #244 fixed for the create case.
+const String namesakeClassAlternative = 'class-namesake';
 
 /// Stop importing a class from WISA. Ported from `Action\Group\DoNotImportFromWisa`:
 /// the class exists in WISA but not Smartschool, and the operator judges it need
@@ -197,11 +229,24 @@ class DoNotImportFromWisa extends GroupAction {
   @override
   bool evaluate() => group.wisa != null && group.smartschool == null;
 
-  /// Blacklisting the class is one half of the [classImportAlternative] choice
-  /// (#244) — never a to-do beside the create it contradicts. It is not the
-  /// default: an operator has to pick it.
+  /// Blacklisting the class is never a to-do beside the reading it contradicts
+  /// — it is one half of a choice. *Which* choice depends on what Smartschool
+  /// already holds:
+  /// - **no namesake** (#244): the class is genuinely absent downstream, so the
+  ///   either/or is [classImportAlternative] — create it ([AddToSmartschool] /
+  ///   [CreateInSmartschool]'s wait-or-delete notice) or stop offering it;
+  /// - **a namesake** ([LinkedGroup.smartschoolNamesake], #250): the class is
+  ///   already there under a group the linker could not adopt, so the either/or
+  ///   is [namesakeClassAlternative] — repair it by hand
+  ///   ([ClassExistsAsSmartschoolGroup]) or stop offering it.
+  ///
+  /// The two keys are deliberately distinct: they are different situations, and
+  /// the pending list bulk-applies per situation key. Either way this half is
+  /// never the default — an operator has to pick it.
   @override
-  String? get alternativeGroup => classImportAlternative;
+  String? get alternativeGroup => group.smartschoolNamesake != null
+      ? namesakeClassAlternative
+      : classImportAlternative;
 
   wapi.DontImportClass _rule() => wapi.DontImportClass(_wisa.name);
 
@@ -443,6 +488,17 @@ class ClassExistsAsSmartschoolGroup extends GroupAction {
       group.wisa != null &&
       group.smartschool == null &&
       group.smartschoolNamesake != null;
+
+  /// The notice leads — and is the default of — the [namesakeClassAlternative]
+  /// choice (#250). [DoNotImportFromWisa] is its other half: the two are
+  /// opposite readings of one class, so they are one either/or and never two
+  /// to-dos. Being informational, the default makes a bulk apply write nothing
+  /// for a class the app has just told the operator to repair in Smartschool.
+  @override
+  String? get alternativeGroup => namesakeClassAlternative;
+
+  @override
+  bool get isDefaultAlternative => true;
 
   @override
   bool get canApply => false;

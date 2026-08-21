@@ -1519,6 +1519,84 @@ ReconcileHarness newClassChoiceHarness() => ReconcileHarness(
       classTree: const SmartschoolClassTree(path: 'SCHOOL'),
     );
 
+/// A harness for the namesake-class either/or (#250) — the shape the #225
+/// notice leaves behind, alongside a genuinely new class so both readings are on
+/// screen at once.
+///
+/// Our school 1 runs four classes, each holding a student. Smartschool already
+/// carries `2G` and `2H`, but on groups that are **not flagged official**, so the
+/// class link passes them over and each lands as a
+/// [core.LinkedGroup.smartschoolNamesake]: the operator is told to make the
+/// group official by hand (#225). `1A` and `1B` are genuinely absent downstream
+/// and are the ordinary create-or-ignore choice of #244.
+///
+/// The bug this reproduces: both create actions refuse a namesake class, so
+/// `classImportAlternative` was left holding only `DoNotImportFromWisa` — a
+/// choice of one, hence always selected. **Alles toepassen** then wrote a
+/// `DontImportClass` rule on `2G` and `2H`, dropping from the next WISA snapshot
+/// the very classes the notice beside them had just said to repair in
+/// Smartschool, while the Smartschool groups stayed behind unmanaged.
+///
+/// Two of each on purpose: two namesake classes put them in a "same situation"
+/// subset of their own with its own bulk header — which is where the pooling
+/// half of the issue shows, since they must not share the new classes' subset —
+/// and two new classes give that other subset a header too, proving the fix did
+/// not simply silence the list: their creates still run.
+ReconcileHarness namesakeClassChoiceHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '1B'),
+          wisaStudent(wisaId: '3', classGroup: '2G'),
+          wisaStudent(wisaId: '4', classGroup: '2H'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '1A',
+            description: 'Onze eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '1B',
+            description: 'Onze tweede klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '2G',
+            description: '2e lj A Klassieke talen',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '2H',
+            description: '2e lj A Handel',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: core.GroupType.group,
+          ),
+          ssGroup('2G', code: 'G2G', official: false),
+          ssGroup('2H', code: 'G2H', official: false),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+
 /// A harness for the "new staff member" choice (#248) — the staff twin of
 /// [newClassChoiceHarness]. Two freshly hired teachers exist in WISA only, so
 /// each raises `AddStaffToAzure` (which since #240 chains the Smartschool

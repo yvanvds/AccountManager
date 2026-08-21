@@ -30,6 +30,14 @@ import 'group_placement.dart';
 /// raised whether or not [placementFor] is wired, and a WISA-only class is
 /// never left with a create proposal as its only reading.
 ///
+/// Taking the create's place means taking its side of the either/or too (#250):
+/// the notice and [DoNotImportFromWisa] share [namesakeClassAlternative], a key
+/// of their own so the namesake classes are not bulk-applied together with the
+/// genuinely new ones. Without it the blacklist was the *lone* member of
+/// [classImportAlternative] on such a class, hence always selected, and "Apply
+/// to all" wrote a `DontImportClass` rule on the class the notice beside it had
+/// just said to fix by hand.
+///
 /// [placementFor] wires the membership-dependent creation actions (#65). When
 /// supplied it is called for each WISA-only class (`wisa != null &&
 /// smartschool == null`) to build its [GroupPlacement]: the membership signal
@@ -75,11 +83,12 @@ List<GroupAction> groupActionsFor(
     if (both)
       ModifySmartschoolData(group)
     else ...[
+      // Whichever reading of the class fires — the namesake notice (#250) or a
+      // create (#244) — it leads the [DoNotImportFromWisa] it is mutually
+      // exclusive with: the order is the order the operator reads the radio
+      // pair in, and the fallback the grouping uses if a default is ever
+      // forgotten, so the blacklist is never first.
       ClassExistsAsSmartschoolGroup(group),
-      // The create actions lead [DoNotImportFromWisa], which they are mutually
-      // exclusive with (#244): the order is the order the operator reads the
-      // radio pair in, and the fallback the grouping uses if a default is ever
-      // forgotten — so the provisioning half comes first, never the blacklist.
       if (placement != null) AddToSmartschool(group, placement),
       if (placement != null) CreateInSmartschool(group, placement),
       DoNotImportFromWisa(group),

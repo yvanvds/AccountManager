@@ -214,10 +214,12 @@ void main() {
       expect(actions.single.alternativeGroup, isNull);
     });
 
-    test('the namesake notice (#225) is not part of the choice', () {
-      // It is a different reading of the class — "align the names by hand" —
-      // and merging it into the key would pool it with the create bucket for
-      // bulk apply. It keeps its own situation.
+    test('the namesake notice (#225) leads a choice of its own (#250)', () {
+      // The notice takes the create's place for a class Smartschool already
+      // carries, so it takes the create's side of the either/or too — under its
+      // own key, because "this class is already there, go fix its flag" is a
+      // different situation from "create this class" and must not share a bulk
+      // apply with it.
       final actions = groupActionsFor(
         linkedGroup(
           wisa: wisaGroup(name: '2G'),
@@ -225,13 +227,53 @@ void main() {
         ),
         placementFor: (_) => groupPlacement(containsStudents: true),
       );
+      final notice = actions.whereType<ClassExistsAsSmartschoolGroup>().single;
+      final ignore = actions.whereType<DoNotImportFromWisa>().single;
+
+      expect(notice.alternativeGroup, namesakeClassAlternative);
+      expect(ignore.alternativeGroup, namesakeClassAlternative);
       expect(
-        actions
-            .whereType<ClassExistsAsSmartschoolGroup>()
-            .single
-            .alternativeGroup,
-        isNull,
+        notice.alternativeGroup,
+        isNot(classImportAlternative),
+        reason: 'a namesake class is not bulk-applied with the new classes',
       );
+
+      // Polarity: the informational notice leads and is the default, so a bulk
+      // apply writes *nothing* for a class the operator was told to repair by
+      // hand — blacklisting it stays a deliberate pick (#250).
+      expect(notice.isDefaultAlternative, isTrue);
+      expect(notice.canApply, isFalse);
+      expect(ignore.isDefaultAlternative, isFalse);
+      expect(actions.indexOf(notice), lessThan(actions.indexOf(ignore)));
+    });
+
+    test('the blacklist is never the lone member of a choice (#250)', () {
+      // The bug: the creates refuse a namesake class, so `class-import` was
+      // left holding only `DoNotImportFromWisa` — and a lone option is always
+      // the selected one, which made "Apply to all" blacklist the class.
+      for (final hasStudents in const [true, false]) {
+        final actions = groupActionsFor(
+          linkedGroup(
+            wisa: wisaGroup(name: '2G'),
+            smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+          ),
+          placementFor: (_) => groupPlacement(containsStudents: hasStudents),
+        );
+        final ignore = actions.whereType<DoNotImportFromWisa>().single;
+        final siblings = actions
+            .where((a) => a.alternativeGroup == ignore.alternativeGroup)
+            .toList();
+
+        expect(siblings, hasLength(2),
+            reason: 'the blacklist always has the reading it contradicts '
+                'beside it');
+        expect(siblings.where((a) => a.isDefaultAlternative), hasLength(1));
+        expect(
+          siblings.singleWhere((a) => a.isDefaultAlternative).canApply,
+          isFalse,
+          reason: 'nothing is written for a namesake class by default',
+        );
+      }
     });
   });
 

@@ -333,6 +333,111 @@ void main() {
     });
   });
 
+  group('a class Smartschool already has is never blacklisted (#250)', () {
+    const String notice =
+        'Deze klas bestaat in Smartschool maar is geen officiële klas';
+    const String ignore = 'Negeer deze klas bij het importeren uit WISA';
+    const String create = 'Voeg deze klas toe aan Smartschool';
+
+    List<String> summariesOf(ReconcileHarness h) =>
+        h.controller.applyResults!.map((r) => r.changes.summary).toList();
+
+    PendingAccountEntry entryFor(ReconcileHarness h, String id) =>
+        h.controller.groupPendingEntries.firstWhere((e) => e.targetId == id);
+
+    PendingChoice importChoiceOf(PendingAccountEntry entry) =>
+        entry.choices.singleWhere(
+          (c) => c.alternatives.any((a) => a.kind == 'DoNotImportFromWisa'),
+        );
+
+    test('the notice and the blacklist collapse into one choice, notice first',
+        () async {
+      final h = namesakeClassChoiceHarness();
+      await h.controller.sync();
+      final choice = importChoiceOf(entryFor(h, '2G'));
+
+      expect(choice.situationId, actions.namesakeClassAlternative);
+      expect(choice.isChoice, isTrue,
+          reason: 'repair it by hand or stop offering it — never both, and '
+              'never a choice of one');
+      expect(
+        choice.alternatives.map((a) => a.kind),
+        ['ClassExistsAsSmartschoolGroup', 'DoNotImportFromWisa'],
+        reason: 'the notice leads the radio pair',
+      );
+      expect(choice.selected.kind, 'ClassExistsAsSmartschoolGroup');
+      expect(choice.selected.canApply, isFalse,
+          reason: 'the default writes nothing: the repair is a hand edit');
+    });
+
+    test('a namesake class is not pooled with the new classes for bulk apply',
+        () async {
+      final h = namesakeClassChoiceHarness();
+      await h.controller.sync();
+
+      expect(
+        importChoiceOf(entryFor(h, '1A')).situationId,
+        actions.classImportAlternative,
+      );
+      expect(
+        entryFor(h, '2G').situationKey,
+        isNot(entryFor(h, '1A').situationKey),
+        reason: '"create this class" and "this class is already there" are two '
+            'situations, so they get two bulk headers',
+      );
+      expect(entryFor(h, '2G').situationKey, entryFor(h, '2H').situationKey);
+    });
+
+    test('"apply to all" creates the new classes and blacklists no namesake',
+        () async {
+      // The report's headline: Apply to all wrote a DontImportClass rule on
+      // every class the #225 notice had just told the operator to repair by
+      // hand.
+      final h = namesakeClassChoiceHarness();
+      await h.controller.sync();
+      final pulls = h.wisaSyncs;
+
+      await h.controller.applyEntries(h.controller.groupPendingEntries);
+
+      final summaries = summariesOf(h);
+      expect(summaries, isNot(contains(ignore)),
+          reason: 'the rule would drop the classes the notice says to repair');
+      expect(summaries.where((s) => s == create), hasLength(2),
+          reason: 'the genuinely new classes are still created');
+      expect(
+        h.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(2),
+        reason: '2G and 2H already exist downstream — never created again',
+      );
+      expect(h.wisaSyncs, pulls,
+          reason: 'no import rule was added, so WISA was never re-pulled');
+    });
+
+    test('the operator can still blacklist a namesake class deliberately',
+        () async {
+      final h = namesakeClassChoiceHarness();
+      await h.controller.sync();
+      final entry = entryFor(h, '2G');
+      expect(importChoiceOf(entry).selected.canApply, isFalse,
+          reason: 'the import decision writes nothing until the operator '
+              'picks the opt-out (the class\'s Office 365 group is a '
+              'separate, orthogonal decision)');
+
+      h.controller.chooseAlternative(
+        entry: entry,
+        group: actions.namesakeClassAlternative,
+        kind: 'DoNotImportFromWisa',
+      );
+      final chosen = entryFor(h, '2G');
+      expect(chosen.canApply, isTrue);
+
+      await h.controller.applyEntry(chosen);
+
+      expect(summariesOf(h), contains(ignore));
+      expect(summariesOf(h), isNot(contains(notice)));
+    });
+  });
+
   group('a new staff member is one choice, not two to-dos (#248)', () {
     const String createAzure = 'Maak een nieuw Office 365 account';
     const String createSs = 'Maak een nieuw Smartschool account';
