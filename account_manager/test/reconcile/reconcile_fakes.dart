@@ -958,6 +958,80 @@ ReconcileHarness twoSchoolHarness() => ReconcileHarness(
       ourSchoolIds: const {1, 2},
     );
 
+/// A harness for the post-apply overview counts (#236). One managed school with
+/// two third-year classes, both correctly placed in Smartschool, so the only
+/// **student** work anywhere is Sam's stale Office 365 display name — one
+/// applyable action, on 3C, which a real apply genuinely clears (the applier
+/// patches the Azure record and re-links, so the refreshed view no longer raises
+/// it). 3D carries nothing.
+///
+/// The two classes also carry group work of their own (Smartschool class data,
+/// and the Office 365 groups the empty tenant has neither of). That is the point:
+/// applying *the class's* work must drop 3C's badge to nothing while the
+/// Klasgroepen node keeps its own count — a re-derivation of what changed, not a
+/// blanket reset.
+///
+/// [applyGate] is awaited before every action, as everywhere else — a test that
+/// needs one write refused throws from it on the call it picks.
+ReconcileHarness appliedClassWorkHarness({
+  Future<void> Function()? applyGate,
+}) =>
+    ReconcileHarness(
+      applyGate: applyGate,
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '3', classGroup: '3C', firstName: 'Sam', name: 'Sels'),
+          wisaStudent(
+              wisaId: '4', classGroup: '3D', firstName: 'Tom', name: 'Tas'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+          wisaClassGroup('3D', adminCode: 'a4', schoolCode: '111'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('3C', code: '3C_ss', untis: '3C'),
+          ssGroup('3D', code: '3D_ss', untis: '3D'),
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'sam',
+            accountId: '3',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '4',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        memberships: [member('sam', '3C_ss'), member('tom', '3D_ss')],
+      ),
+      // Sam's display name is left blank (stale) so `ModifyAzureName` fires;
+      // Tom's already carries his WISA name, so his class is done.
+      azure: azSnap(users: [
+        azUser(
+          id: 'az3',
+          upn: 'sam.sels@student.school.example',
+          employeeId: '3',
+        ),
+        azUser(
+          id: 'az4',
+          upn: 'tom.tas@student.school.example',
+          employeeId: '4',
+          displayName: 'Tom Tas',
+        ),
+      ]),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
 /// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),

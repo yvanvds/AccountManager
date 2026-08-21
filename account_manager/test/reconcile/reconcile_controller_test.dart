@@ -487,6 +487,126 @@ void main() {
           reason: 'a real write re-links from the patched snapshot');
     });
 
+    /// Every node of the overview tree keyed by its rollup key, with the count
+    /// the badge renders — the whole projection #236 is about, in one map.
+    Map<String, int> pendingByNode(ReconcileController c) => <String, int>{
+          for (final root in c.studentRollups) ...<String, int>{
+            root.key: root.pendingCount,
+            for (final klas in c.studentChildrenOf(root))
+              klas.key: klas.pendingCount,
+          },
+          if (c.groupRollup case final groups?) groups.key: groups.pendingCount,
+        };
+
+    /// The classroom node whose badge the fixture's one student action sits
+    /// under: Sam's class, 3C of school 1.
+    Rollup klas3C(ReconcileController c) => c
+        .studentChildrenOf(
+            c.studentRollups.singleWhere((r) => r.gradeYear == '3'))
+        .singleWhere((r) => r.classroom == '3C');
+
+    /// Sam's pending entry — the one applyable student action in the fixture.
+    PendingAccountEntry samEntry(ReconcileController c) =>
+        c.pendingEntries.singleWhere((e) => e.family == 'student');
+
+    test('re-derives the counts the pass just changed, and only those (#236)',
+        () async {
+      // The badges read `Rollup.pendingCount` off `_rollups`, which only
+      // [_persist] assigned — and that runs from `_relink()` alone. So an apply
+      // left the drilled-in list (live, derived from `_linked`) and the overview
+      // disagreeing until the next Synchroniseer.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      expect(klas3C(h.controller).pendingCount, 1);
+      expect(h.controller.groupRollup!.pendingCount, 4);
+
+      await h.controller.applyEntry(samEntry(h.controller));
+
+      expect(h.controller.error, isNull);
+      expect(klas3C(h.controller).pendingCount, 0,
+          reason: 'the badge used to keep its pre-apply count until a re-sync');
+      expect(
+        h.controller.studentRollups
+            .singleWhere((r) => r.gradeYear == '3')
+            .pendingCount,
+        0,
+        reason: 'the grade-year above it is summed from the same rollups',
+      );
+      expect(h.controller.groupRollup!.pendingCount, 4,
+          reason: 'a re-derivation of what changed, not a blanket reset');
+    });
+
+    test('a dry-run leaves every count exactly as it found it (#236)',
+        () async {
+      // The correction is gated on a *real* write: a projection changes nothing,
+      // so it must not move a single badge.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final before = pendingByNode(h.controller);
+      expect(before.values, contains(greaterThan(0)));
+
+      await h.controller.dryRun();
+
+      expect(pendingByNode(h.controller), before);
+      expect(h.soap.soapActions, isEmpty, reason: 'nothing was written');
+      expect(h.graph.requests, isEmpty, reason: 'nothing was written');
+    });
+
+    test(
+        'a pass with a refused write clears only what really went through '
+        '(#236)', () async {
+      // The counts must follow the writes, not the pass: the first action is
+      // refused, the rest land. Sam's class keeps its badge while the class
+      // groups lose theirs.
+      var calls = 0;
+      final h = appliedClassWorkHarness(applyGate: () async {
+        if (++calls == 1) throw StateError('Office 365 weigerde dit');
+      });
+      await h.controller.sync();
+      expect(klas3C(h.controller).pendingCount, 1);
+
+      await h.controller.applyAll();
+
+      expect(
+        h.controller.applyResults!.map((r) => r.outcome),
+        containsAll(<actions.ActionOutcome>[
+          actions.ActionOutcome.failed,
+          actions.ActionOutcome.applied,
+        ]),
+      );
+      expect(klas3C(h.controller).pendingCount, 1,
+          reason: "the refused write left Sam's name as it was");
+      expect(h.controller.groupRollup, isNull,
+          reason: 'the class-group work that did land is gone');
+    });
+
+    test(
+        'the refreshed counts are local — the shared store keeps its generation '
+        '(#236, shared half in #254)', () async {
+      // A deliberate choice, not an oversight: rewriting ~9.6k documents per
+      // apply is not affordable, and bumping this session's generation would
+      // gate out the very `onStoreChanged` that should overrule this
+      // correction. Other operators catch up on the next sync.
+      final h = appliedClassWorkHarness();
+      Future<Rollup> stored3C() async => (await h.linkedStore.readRollups())
+          .singleWhere((r) => r.classroom == '3C' && r.school == '1');
+
+      await h.controller.sync();
+      final before = await h.linkedStore.readSyncState();
+
+      await h.controller.applyEntry(samEntry(h.controller));
+
+      expect(
+          (await h.linkedStore.readSyncState()).generation, before.generation,
+          reason: 'no write, so no new generation');
+      expect(h.controller.syncState.generation, before.generation,
+          reason: 'the session must stay behind the store, never ahead of it');
+      expect((await stored3C()).pendingCount, 1,
+          reason: 'the stored view stays pre-apply until someone syncs (#254)');
+      expect(klas3C(h.controller).pendingCount, 0,
+          reason: '…while this session already reads the corrected count');
+    });
+
     test('informational group actions are listed but never applied', () async {
       // An orphan Smartschool class (no WISA counterpart) surfaces the
       // informational DoNotImportFromSmartschool — visible in the pending

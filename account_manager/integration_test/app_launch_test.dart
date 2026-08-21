@@ -2050,6 +2050,90 @@ void main() {
   });
 
   testWidgets(
+      'applying a class\'s work updates its Acties badge on the way back to '
+      'the overview, without a re-sync end-to-end (#236)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. The badges are read from the
+    // materialized rollups, which only a sync used to rewrite, so a class whose
+    // work had just been applied kept advertising it — and since #226 that same
+    // stale count decides whether the class is in the tree at all.
+    //
+    // This is the layer that sees it: the overview and the drilled-in list are
+    // two projections composed by different halves of the screen, and the bug is
+    // precisely that they disagree. Only a run that syncs, drills in, applies,
+    // and comes back out puts both on screen in that order.
+    useTallWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
+    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
+    final klasgroepen = find.byKey(const ValueKey('rollup-groups'));
+
+    // Sam's stale Office 365 name is the only student work: 3C carries it,
+    // badged 1, and the class groups carry four writes of their own.
+    await tester.ensureVisible(jaar3);
+    await tester.tap(jaar3);
+    await tester.pumpAndSettle();
+    expect(
+        find.descendant(of: klas3C, matching: find.text('1')), findsOneWidget);
+    expect(find.descendant(of: klasgroepen, matching: find.text('4')),
+        findsOneWidget);
+
+    // Drill into 3C and apply that one entry, confirmation dialog and all.
+    await tester.ensureVisible(klas3C);
+    await tester.tap(klas3C);
+    await tester.pumpAndSettle();
+    final entry = harness.controller.classroomPendingEntries.single;
+    await tester.tap(find.byKey(ValueKey('entry-student-${entry.targetId}')));
+    await tester.pumpAndSettle();
+    final applyEntry = find.byKey(ValueKey('entry-apply-${entry.targetId}'));
+    await tester.ensureVisible(applyEntry);
+    await tester.tap(applyEntry);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsWidgets);
+    expect(harness.controller.classroomPendingEntries, isEmpty,
+        reason: 'the live list drops the work immediately — it always did');
+
+    // Overzicht: the class is done, so under the work-list filter it is gone,
+    // and with 3D already clean the whole year goes with it.
+    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    await tester.pumpAndSettle();
+    expect(klas3C, findsNothing,
+        reason: 'the class used to come back still badged 1');
+    expect(jaar3, findsNothing);
+    // …while the work nobody touched is untouched: a re-derivation of what
+    // changed, not a blanket reset.
+    expect(find.descendant(of: klasgroepen, matching: find.text('4')),
+        findsOneWidget);
+
+    // Off the filter, the class is back in the inventory — now ticked off
+    // rather than badged, with no sync between.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(jaar3);
+    if (klas3C.evaluate().isEmpty) {
+      await tester.tap(jaar3);
+      await tester.pumpAndSettle();
+    }
+    expect(find.descendant(of: klas3C, matching: find.text('1')), findsNothing);
+    expect(find.descendant(of: klas3C, matching: find.byIcon(Icons.check)),
+        findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a single-group class whose name another school shares raises no class '
       'change, and "00" never reaches a class name end-to-end (#221)',
       (WidgetTester tester) async {

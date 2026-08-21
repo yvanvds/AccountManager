@@ -1693,6 +1693,7 @@ class ReconcileController extends ChangeNotifier {
       } else {
         _applyResults = results;
         _dryRunResults = null;
+        _refreshRollups();
       }
       _applyStep = null;
       _finish(ReconcilePhase.ready);
@@ -1703,6 +1704,9 @@ class ReconcileController extends ChangeNotifier {
         _dryRunResults = results;
       } else {
         _applyResults = results;
+        // A pass that broke halfway still wrote whatever it got through, so the
+        // overview owes the operator those counts too (#236).
+        _refreshRollups();
       }
       // Nothing is in flight any more, however the pass ended (#243).
       _applyStep = null;
@@ -1817,6 +1821,49 @@ class ReconcileController extends ChangeNotifier {
         '${ss.official ? 'met een andere schrijfwijze' : 'maar geen '
             'officiële klas'}.',
       );
+    }
+  }
+
+  /// Re-derives the overview rollups from the refreshed linked view after a
+  /// **real** apply (#236) — the badge counts, and since #226 which nodes the
+  /// tree shows at all.
+  ///
+  /// Until this, `_rollups` was assigned by [_persist] alone, which only ever
+  /// runs from [_relink]. An apply patches the snapshot and adopts the refreshed
+  /// `_linked` but never re-materialized, so the two halves of the Acties screen
+  /// disagreed the moment a pass finished: the drilled-in list (derived from the
+  /// live view) had dropped the work, while the overview kept advertising it —
+  /// and under the default filter kept a finished class in the tree — until the
+  /// next Synchroniseer. [materialize] is pure and already derives exactly these
+  /// aggregates from a [LinkedState], so the correction is the same computation
+  /// the sync path runs, minus the store write.
+  ///
+  /// Deliberately **local-only**. Nothing is written back and the generation is
+  /// not bumped, for three reasons: the stored view is ~9.6k documents and
+  /// rewriting it per apply is not affordable ([LinkedStore.writeMaterialized]
+  /// is the sync path's tool, not an apply's); this session's generation must
+  /// stay behind the store's so a later [onStoreChanged] still wins over this
+  /// correction rather than being gated out as stale; and there is no narrow
+  /// per-account write seam to do it properly. So other operators keep the
+  /// pre-apply counts until someone syncs — the shared half of the bug, filed
+  /// separately (#254) because it needs that seam plus a [ChangeSignal] shard.
+  ///
+  /// Never called from the dry-run path: a projection writes nothing, so it must
+  /// leave every count exactly as it found it.
+  void _refreshRollups() {
+    final linked = _linked;
+    if (linked == null) return;
+    try {
+      _rollups = materialize(
+        linked,
+        generation: _syncState.generation,
+        schoolLabels: _schoolLabels(),
+      ).rollups;
+    } on Object catch (e) {
+      // A correction that fails must not turn a successful apply into a failed
+      // pass; the counts then simply stay as stale as they were before.
+      log.addError(
+          core.Origin.all, 'Could not refresh the overview counts: $e');
     }
   }
 
