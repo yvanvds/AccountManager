@@ -136,9 +136,14 @@ void main() {
         group: actions.smartschoolDepartureAlternative,
         kind: 'DeleteStudentFromSmartschool',
       );
+      // Re-read the subset after the choice (the list is rebuilt), exactly as
+      // the screen does: `chooseAlternative` notifies, the bulk header rebuilds,
+      // and it hands the pass the entries it is showing (#252).
+      final chosen = h.controller.pendingEntries
+          .where((e) => e.family == 'student')
+          .toList();
 
-      final key = entries.first.situationKey;
-      await h.controller.applySituation(key);
+      await h.controller.applyEntries(chosen);
 
       final summaries =
           h.controller.applyResults!.map((r) => r.changes.summary).toList();
@@ -285,14 +290,15 @@ void main() {
       expect(entries.map((e) => e.targetId), containsAll(<String>['1A', '1B']));
 
       final key = entries.firstWhere((e) => e.targetId == '1A').situationKey;
+      final subset = entries.where((e) => e.situationKey == key).toList();
       expect(
-        entries.where((e) => e.situationKey == key).map((e) => e.targetId),
+        subset.map((e) => e.targetId),
         containsAll(<String>['1A', '1B']),
         reason: 'both new classes are the same situation, bulk-applied at once',
       );
       final pulls = h.wisaSyncs;
 
-      await h.controller.applySituation(key);
+      await h.controller.applyEntries(subset);
 
       final summaries = summariesOf(h);
       expect(summaries.where((s) => s == create), hasLength(2));
@@ -409,14 +415,15 @@ void main() {
       expect(entries, hasLength(2));
 
       final key = entries.first.situationKey;
+      final subset = entries.where((e) => e.situationKey == key).toList();
       expect(
-        entries.where((e) => e.situationKey == key),
+        subset,
         hasLength(2),
         reason: 'both new hires are the same situation, bulk-applied at once',
       );
       final pulls = h.wisaSyncs;
 
-      await h.controller.applySituation(key);
+      await h.controller.applyEntries(subset);
 
       final summaries = summariesOf(h);
       expect(summaries.where((s) => s == createAzure), hasLength(2));

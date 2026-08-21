@@ -2245,6 +2245,99 @@ void main() {
   });
 
   testWidgets(
+      'a classroom\'s bulk "Alles toepassen" writes only that classroom, '
+      'leaving the identical situation in another class pending (#252)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Three students share one
+    // situation — a stale Office 365 display name — but they are split across
+    // two classes: Sam and Sara in 3C, Tom in 3D.
+    //
+    // This is the layer that sees it. The bulk header is built over *one*
+    // class's entries and counts them, while the pass behind it re-resolved the
+    // situation key against the whole linked view — so the operator drilled
+    // into 3C, read "Alles toepassen (2)", and wrote three accounts including
+    // one in a class they never opened. Only a run that drills into a class,
+    // presses the class's own bulk button, and then comes back out to look at
+    // the other class puts both sides on screen in that order.
+    useTallWindow(tester);
+    final harness = crossClassSituationHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
+    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
+    final klas3D = find.byKey(const ValueKey('rollup-class-class|1|3|3D'));
+
+    // Two classes, both carrying the same student work: 3C badged 2, 3D 1.
+    await tester.ensureVisible(jaar3);
+    await tester.tap(jaar3);
+    await tester.pumpAndSettle();
+    expect(
+        find.descendant(of: klas3C, matching: find.text('2')), findsOneWidget);
+    expect(
+        find.descendant(of: klas3D, matching: find.text('1')), findsOneWidget);
+
+    // Drill into 3C. Its bulk header counts this class, and only this class.
+    await tester.ensureVisible(klas3C);
+    await tester.tap(klas3C);
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom?.classroom, '3C');
+    expect(find.text('Sam Sels'), findsWidgets);
+    expect(find.text('Sara Segers'), findsWidgets);
+    expect(find.text('Tom Tas'), findsNothing,
+        reason: 'the operator is looking at 3C — Tom is not on this page');
+
+    final key = harness.controller.classroomPendingEntries.first.situationKey;
+    final bulk = find.byKey(ValueKey('situation-apply-$key'));
+    await tester.ensureVisible(bulk);
+    expect(
+        find.descendant(of: bulk, matching: find.text('Alles toepassen (2)')),
+        findsOneWidget);
+
+    // The confirmation quotes the same two writes the label counts (#234) —
+    // the mismatch that surfaced this said "3 wijzigingen" here.
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('2 wijzigingen'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply result'), findsWidgets);
+    expect(harness.controller.applyResults, hasLength(2));
+    final patched = harness.graph.requests
+        .where((r) => r.method == 'PATCH')
+        .map((r) => r.url.path)
+        .toList();
+    expect(patched, hasLength(2),
+        reason: 'two accounts written, not every account group-wide');
+    expect(patched.any((p) => p.endsWith(kSam3C)), isTrue);
+    expect(patched.any((p) => p.endsWith(kSara3C)), isTrue);
+    expect(patched.any((p) => p.endsWith(kTom3D)), isFalse,
+        reason: "Tom's class was never opened, so it must not be written");
+
+    // Overzicht: 3C is done and drops out under the work filter, while 3D still
+    // stands there badged 1 — its identical situation is untouched, waiting for
+    // someone to open it.
+    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(jaar3);
+    if (klas3D.evaluate().isEmpty) {
+      await tester.tap(jaar3);
+      await tester.pumpAndSettle();
+    }
+    expect(klas3C, findsNothing, reason: 'the class the operator cleared');
+    expect(
+        find.descendant(of: klas3D, matching: find.text('1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a single-group class whose name another school shares raises no class '
       'change, and "00" never reaches a class name end-to-end (#221)',
       (WidgetTester tester) async {

@@ -1862,6 +1862,15 @@ class _GroupTile extends StatelessWidget {
 /// resolution to all" affordance that honours each entry's own chosen
 /// alternative. Rendered as its own row in the lazy list, only when more than
 /// one account shares the situation.
+///
+/// Every affordance here acts on [entries] — the exact subset this header was
+/// built over and counts (#252). That list is already scoped by whatever list
+/// rendered it: the open classroom's pending entries, or the group drill-down's,
+/// narrowed further by the search box. The bulk pass used to re-resolve the
+/// situation key against the *whole* linked view instead, so a header reading
+/// "Alles toepassen (1)" inside one class wrote every account group-wide in the
+/// same situation. The label, the confirmation scope and the write are now one
+/// list, so they cannot drift apart again.
 class _SituationHeader extends StatelessWidget {
   const _SituationHeader({required this.controller, required this.entries});
 
@@ -1897,7 +1906,7 @@ class _SituationHeader extends StatelessWidget {
                       context,
                       controller: controller,
                       dry: true,
-                      run: () => controller.dryRunSituation(key),
+                      run: () => controller.dryRunEntries(entries),
                     ),
             child: const Text('Dry-run alles'),
           ),
@@ -1910,15 +1919,10 @@ class _SituationHeader extends StatelessWidget {
                       context,
                       controller: controller,
                       title: 'Toepassen op ${entries.length} accounts?',
-                      // Scoped exactly as [ReconcileController.applySituation]
-                      // scopes the pass — every entry in this situation, not
-                      // only the ones this classroom happens to render — so the
-                      // dialog names what will actually be written (#234).
-                      scope: controller.applyScope(
-                        controller.pendingEntries
-                            .where((e) => e.situationKey == key),
-                      ),
-                      apply: () => controller.applySituation(key),
+                      // The dialog is scoped to the very entries the pass below
+                      // runs over — the ones this header counted (#234/#252).
+                      scope: controller.applyScope(entries),
+                      apply: () => controller.applyEntries(entries),
                     ),
             child: Text('Alles toepassen ($applyable)'),
           ),

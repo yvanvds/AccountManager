@@ -133,7 +133,7 @@ class PendingActionOption {
 /// dialog (#234).
 ///
 /// Built by [ReconcileController.applyScope] from the **selected**, applyable
-/// option of each choice — exactly the actions `applyAll` / `applySituation` /
+/// option of each choice — exactly the actions `applyAll` / `applyEntries` /
 /// `applyEntry` would run — so the dialog names the systems the pass genuinely
 /// reaches instead of the hard-coded "Smartschool and Azure AD" it used to
 /// claim for every action.
@@ -1315,7 +1315,11 @@ class ReconcileController extends ChangeNotifier {
 
   /// What a confirmed apply of [entries] would actually write (#234) — the
   /// systems the apply-confirmation dialog names, derived from the very options
-  /// [applyAll] / [applySituation] / [applyEntry] would run.
+  /// [applyAll] / [applyEntries] / [applyEntry] would run.
+  ///
+  /// Pass the confirmation dialog the *same* list the pass will run over
+  /// (#252): the dialog and the write agreeing is the whole point of building
+  /// both from one resolution.
   ///
   /// Two halves, because they are not the same claim. [ApplyScope.systems] is
   /// what the selected actions write themselves, one entry per action.
@@ -1620,29 +1624,34 @@ class ReconcileController extends ChangeNotifier {
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>
-      _run(_selectedActions([entry]), dry: true);
+      dryRunEntries(<PendingAccountEntry>[entry]);
 
   /// Applies one entry's chosen resolution (#110): the per-row apply.
   Future<void> applyEntry(PendingAccountEntry entry) =>
-      _run(_selectedActions([entry]), dry: false);
+      applyEntries(<PendingAccountEntry>[entry]);
 
-  /// Applies the chosen resolution to every entry in the same situation (#110):
-  /// "apply this resolution to all departed students". Each entry keeps its own
-  /// chosen alternative. [situationKey] matches [PendingAccountEntry.situationKey].
-  Future<void> applySituation(String situationKey) => _run(
-        _selectedActions(
-          pendingEntries.where((e) => e.situationKey == situationKey),
-        ),
-        dry: false,
-      );
+  /// Applies the chosen resolution of every entry in [entries] (#110) — the
+  /// bulk "apply this resolution to all of these" pass. Each entry keeps its
+  /// own chosen alternative, so a subset of departed students can be
+  /// unregistered while another is deleted.
+  ///
+  /// It takes the entries themselves rather than a `situationKey` to resolve
+  /// back through [pendingEntries], and that is the whole of #252. The bulk
+  /// header this runs for is rendered over a **scoped** list — the open
+  /// classroom's entries, or the group drill-down's, minus whatever the search
+  /// box filters out — while re-resolving a key against [pendingEntries] means
+  /// every entry in the entire linked view, across every class. A button
+  /// labelled "Alles toepassen (1)" therefore wrote every account group-wide
+  /// that happened to share the situation, none of which the operator had seen.
+  /// Passing the very list the header counted makes that mismatch structurally
+  /// impossible: label, confirmation scope ([applyScope]) and write are one
+  /// list.
+  Future<void> applyEntries(Iterable<PendingAccountEntry> entries) =>
+      _run(_selectedActions(entries), dry: false);
 
-  /// Dry-runs every entry in the same situation (#110).
-  Future<void> dryRunSituation(String situationKey) => _run(
-        _selectedActions(
-          pendingEntries.where((e) => e.situationKey == situationKey),
-        ),
-        dry: true,
-      );
+  /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes.
+  Future<void> dryRunEntries(Iterable<PendingAccountEntry> entries) =>
+      _run(_selectedActions(entries), dry: true);
 
   /// Runs [selected] — the pre-resolved, applyable options — through the apply
   /// path (dry or real). Shared by the global, per-entry, and per-situation

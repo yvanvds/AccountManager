@@ -1032,6 +1032,100 @@ ReconcileHarness appliedClassWorkHarness({
       ourSchoolIds: const {1},
     );
 
+/// A harness for the classroom-scoped bulk apply (#252). One managed school,
+/// two third-year classes, and the **same** student situation in both: every
+/// student's Office 365 display name is stale, so each raises a lone
+/// `ModifyAzureName` and they all share one `situationKey`.
+///
+/// 3C holds two of them (Sam and Sara) — enough for the same-situation bulk
+/// header to render at all, since it only appears above a subset of more than
+/// one — while 3D holds a third (Tom) in the identical situation. So an
+/// "Alles toepassen (2)" pressed inside 3C must write exactly Sam and Sara and
+/// leave Tom pending: before the fix the header resolved its situation key back
+/// through the whole linked view and wrote all three, none of which the
+/// operator drilled into.
+///
+/// Both classes are otherwise in sync with WISA (matching `untis` codes), so
+/// the only work anywhere in the student family is those three names.
+ReconcileHarness crossClassSituationHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '1', classGroup: '3C', firstName: 'Sam', name: 'Sels'),
+          wisaStudent(
+              wisaId: '2', classGroup: '3C', firstName: 'Sara', name: 'Segers'),
+          wisaStudent(
+              wisaId: '3', classGroup: '3D', firstName: 'Tom', name: 'Tas'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+          wisaClassGroup('3D', adminCode: 'a4', schoolCode: '111'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('3C', code: '3C_ss', untis: '3C'),
+          ssGroup('3D', code: '3D_ss', untis: '3D'),
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'sam',
+            accountId: '1',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'sara',
+            accountId: '2',
+            mail: 'sara.segers@student.school.example',
+            givenName: 'Sara',
+            surname: 'Segers',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '3',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        memberships: [
+          member('sam', '3C_ss'),
+          member('sara', '3C_ss'),
+          member('tom', '3D_ss'),
+        ],
+      ),
+      // Every display name left blank, so all three raise `ModifyAzureName` —
+      // one situation spanning two classes.
+      azure: azSnap(users: [
+        azUser(
+          id: kSam3C,
+          upn: 'sam.sels@student.school.example',
+          employeeId: '1',
+        ),
+        azUser(
+          id: kSara3C,
+          upn: 'sara.segers@student.school.example',
+          employeeId: '2',
+        ),
+        azUser(
+          id: kTom3D,
+          upn: 'tom.tas@student.school.example',
+          employeeId: '3',
+        ),
+      ]),
+      ourSchoolIds: const {1},
+    );
+
+/// The Azure object ids of [crossClassSituationHarness]'s three students — what
+/// a test matches the recorded Graph writes against to prove which accounts a
+/// classroom-scoped bulk apply actually touched (#252).
+const String kSam3C = 'az-sam-3c';
+const String kSara3C = 'az-sara-3c';
+const String kTom3D = 'az-tom-3d';
+
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
 /// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),

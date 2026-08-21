@@ -346,6 +346,19 @@ void main() {
     final bulkApply = ValueKey('situation-apply-$key');
     expect(find.byKey(bulkApply), findsOneWidget);
 
+    // Switch the second row to delete, leaving the first on the default. The
+    // header hands the pass the entries it is *showing*, so the pick has to
+    // survive the rebuild that publishes it (#110/#252).
+    final second = harness.controller.classroomPendingEntries[1].targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$second')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$second')));
+    await tester.pumpAndSettle();
+    final deleteAlt =
+        find.byKey(ValueKey('alt-$second-DeleteStudentFromSmartschool'));
+    await tester.ensureVisible(deleteAlt);
+    await tester.tap(deleteAlt);
+    await tester.pumpAndSettle();
+
     await tester.ensureVisible(find.byKey(bulkApply));
     await tester.tap(find.byKey(bulkApply));
     await tester.pumpAndSettle();
@@ -354,6 +367,71 @@ void main() {
 
     expect(find.text('Apply result'), findsOneWidget);
     expect(harness.controller.applyResults, hasLength(2));
+    final summaries =
+        harness.controller.applyResults!.map((r) => r.changes.summary).toList();
+    expect(summaries, contains('Schrijf de leerling uit in Smartschool'));
+    expect(summaries, contains('Verwijder dit account uit Smartschool'),
+        reason: "the bulk pass runs each row's own chosen alternative");
+  });
+
+  testWidgets(
+      "a class's bulk apply stops at that class: the identical situation in "
+      'another class is left untouched (#252)', (WidgetTester tester) async {
+    // Three students in one situation — a stale Office 365 name — split across
+    // two classes: Sam and Sara in 3C, Tom in 3D. The bulk header lives inside
+    // one class and counts one class, but the pass behind it used to resolve
+    // its situation key back through the whole linked view, so pressing
+    // "Alles toepassen (2)" in 3C wrote Tom too.
+    _useTallWindow(tester);
+    final harness = crossClassSituationHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    final inClass = harness.controller.classroomPendingEntries;
+    expect(inClass, hasLength(2), reason: '3C holds Sam and Sara');
+    final key = inClass.first.situationKey;
+    expect(
+      harness.controller.pendingEntries.where((e) => e.situationKey == key),
+      hasLength(3),
+      reason: "Tom's 3D entry is the very same situation, group-wide",
+    );
+
+    // The button's own count is the class's, and so is what it writes.
+    final bulkApply = find.byKey(ValueKey('situation-apply-$key'));
+    await tester.ensureVisible(bulkApply);
+    expect(tester.widget<FilledButton>(bulkApply).child, isA<Text>());
+    expect(
+        find.descendant(
+            of: bulkApply, matching: find.text('Alles toepassen (2)')),
+        findsOneWidget);
+
+    await tester.tap(bulkApply);
+    await tester.pumpAndSettle();
+    // The confirmation quotes the same two writes, not three (#234).
+    expect(find.textContaining('2 wijzigingen'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(harness.controller.applyResults, hasLength(2),
+        reason: 'one write per account of the open class');
+    final patched = harness.graph.requests
+        .where((r) => r.method == 'PATCH')
+        .map((r) => r.url.path)
+        .toList();
+    expect(patched, hasLength(2));
+    expect(patched.any((p) => p.endsWith(kSam3C)), isTrue);
+    expect(patched.any((p) => p.endsWith(kSara3C)), isTrue);
+    expect(patched.any((p) => p.endsWith(kTom3D)), isFalse,
+        reason: 'the operator never opened 3D — it must not be written');
+    // …and Tom's work is still pending, waiting for someone to open his class.
+    expect(
+      harness.controller.pendingEntries.where((e) => e.situationKey == key),
+      hasLength(1),
+    );
   });
 
   testWidgets(
