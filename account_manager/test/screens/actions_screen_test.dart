@@ -1135,6 +1135,49 @@ void main() {
   });
 
   testWidgets(
+      'a read-only session badges an either/or once and lists it as the one '
+      'choice it is (#251)', (WidgetTester tester) async {
+    // A passive session over a departed student's stored doc: it carries the
+    // unregister *and* the delete, which are two readings of one situation the
+    // operator resolves once. The class node used to advertise 2 and the card
+    // listed both as separate bullets, so a class with one leaver read as two
+    // pieces of work — and since #226 that same count decides what is visible.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(
+        id: 's1',
+        label: 'Jane Doe',
+        classroom: '3C',
+        candidates: departureChoice(),
+      ),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The class node in the tree: one decision, badged once.
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
+    await tester.ensureVisible(klas3C);
+    expect(
+        find.descendant(of: klas3C, matching: find.text('1')), findsOneWidget,
+        reason: 'one leaver is one pending decision, not two');
+    expect(find.descendant(of: klas3C, matching: find.text('2')), findsNothing);
+
+    // Drilling in, the card says the same thing: one line, marked as the choice
+    // it is, with the alternative behind it rather than beside it.
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.linked, isNull, reason: 'passive session');
+    expect(find.text('• Schrijf de leerling uit in Smartschool (keuze)'),
+        findsOneWidget);
+    expect(find.text('• Verwijder dit account uit Smartschool'), findsNothing,
+        reason: 'the delete is the alternative, not a second to-do');
+  });
+
+  testWidgets(
       "a generation bump refetches the passive Actions overview's freshness "
       '(#108)', (WidgetTester tester) async {
     final linkedStore = InMemoryLinkedStore();

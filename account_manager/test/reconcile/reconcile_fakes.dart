@@ -1553,10 +1553,34 @@ ReconcileHarness namedSchoolHarness() => ReconcileHarness(
 // seeded straight into an [InMemoryLinkedStore] a passive session reads back.
 // ---------------------------------------------------------------------------
 
+/// The pair of mutually-exclusive candidates a WISA-departed student's account
+/// doc carries (#110), as the materializer writes them since #251: both halves
+/// applyable, sharing one `alternativeGroup`, the unregister pre-selected. One
+/// decision, two readings — the shape whose badge used to read 2.
+List<CandidateAction> departureChoice() => const <CandidateAction>[
+      CandidateAction(
+        family: 'student',
+        kind: 'UnregisterStudentFromSmartschool',
+        system: core.Origin.smartschool,
+        summary: 'Schrijf de leerling uit in Smartschool',
+        alternativeGroup: actions.smartschoolDepartureAlternative,
+        isDefaultAlternative: true,
+      ),
+      CandidateAction(
+        family: 'student',
+        kind: 'DeleteStudentFromSmartschool',
+        system: core.Origin.smartschool,
+        summary: 'Verwijder dit account uit Smartschool',
+        alternativeGroup: actions.smartschoolDepartureAlternative,
+      ),
+    ];
+
 /// One [MaterializedAccount] for a passive-session classroom, placed in
 /// [school]/[gradeYear]/[classroom]. [withAction] decides whether it carries an
 /// applyable candidate — i.e. whether [MaterializedAccount.hasPending] is true,
-/// the "has actions" predicate the toggle filters on.
+/// the "has actions" predicate the toggle filters on. [candidates] overrides it
+/// outright for a doc that needs a specific candidate set (e.g. the either/or of
+/// [departureChoice]).
 MaterializedAccount matAccount({
   required String id,
   required String label,
@@ -1566,6 +1590,7 @@ MaterializedAccount matAccount({
   String classroom = '3C',
   bool isStaff = false,
   bool withAction = false,
+  List<CandidateAction>? candidates,
 }) =>
     MaterializedAccount(
       id: core.LinkedAccountId(id),
@@ -1580,16 +1605,17 @@ MaterializedAccount matAccount({
       inWisa: true,
       inSmartschool: true,
       inAzure: true,
-      candidates: withAction
-          ? <CandidateAction>[
-              CandidateAction(
-                family: isStaff ? 'staff' : 'student',
-                kind: 'MoveToSmartschoolClassGroup',
-                system: core.Origin.smartschool,
-                summary: 'Wijzig de klas in Smartschool',
-              ),
-            ]
-          : const <CandidateAction>[],
+      candidates: candidates ??
+          (withAction
+              ? <CandidateAction>[
+                  CandidateAction(
+                    family: isStaff ? 'staff' : 'student',
+                    kind: 'MoveToSmartschoolClassGroup',
+                    system: core.Origin.smartschool,
+                    summary: 'Wijzig de klas in Smartschool',
+                  ),
+                ]
+              : const <CandidateAction>[]),
     );
 
 /// A staff [MaterializedAccount] in the synthetic "Personeel" school/class the

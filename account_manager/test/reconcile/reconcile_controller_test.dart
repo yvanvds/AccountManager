@@ -1063,13 +1063,16 @@ void main() {
     test('departed students sum across the unassigned bucket, not staff',
         () async {
       // Three WISA-departed, Smartschool-only accounts, all in the synthetic
-      // "unassigned" school — never the staff bucket. Each carries two applyable
-      // candidates (the unregister + delete alternatives), so the rollup
-      // pendingCount is 3 × 2.
+      // "unassigned" school — never the staff bucket. Each raises the
+      // unregister/delete pair, which is one either/or the operator resolves
+      // once — so the rollup pendingCount is 3, not the 3 × 2 it counted before
+      // #251 (an apply pass writes one resolution per student, never both).
       final h = manyDepartedHarness(count: 3);
       await h.controller.sync();
 
-      expectSummary(h.controller.studentSummary, total: 3, pending: 6);
+      expectSummary(h.controller.studentSummary, total: 3, pending: 3);
+      expect(h.controller.applyableCount, 3,
+          reason: 'the badge and the live list agree on what is pending');
       expectSummary(h.controller.staffSummary, total: 0, pending: 0);
     });
 

@@ -1560,6 +1560,117 @@ void main() {
   });
 
   testWidgets(
+      'the Acties badges count one pending item per either/or, so the '
+      'Klasgroepen node agrees with the list it opens end-to-end (#251)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Two brand-new WISA classes,
+    // each carrying the create-or-ignore either/or of #244 plus an Office 365
+    // group to create: four decisions in all.
+    //
+    // The badge counted *actions*, so it read 6 — both halves of both choices —
+    // while the list behind it offered four resolutions and Apply to all wrote
+    // four. The overview and the list disagreed about how much work there was,
+    // and since #226 that same count decides whether a node is in the tree at
+    // all.
+    //
+    // This is the layer that sees it: the badge is derived from the persisted
+    // rollups, the list from the live dispatch, and they are composed by
+    // different halves of the screen — only a full run puts both on screen in
+    // that order.
+    useTallWindow(tester);
+    final harness = newClassChoiceHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final klasgroepen = find.byKey(const ValueKey('rollup-groups'));
+    await tester.ensureVisible(klasgroepen);
+    expect(find.descendant(of: klasgroepen, matching: find.text('4')),
+        findsOneWidget,
+        reason: 'two classes × (one either/or + one Office 365 group)');
+    expect(find.descendant(of: klasgroepen, matching: find.text('6')),
+        findsNothing,
+        reason: 'the badge used to count both halves of both choices');
+
+    // Each student's own class carries one action and is badged once, so the
+    // collapse did not simply deflate every count.
+    final jaar1 = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    await tester.ensureVisible(jaar1);
+    await tester.tap(jaar1);
+    await tester.pumpAndSettle();
+    final klas1A = find.byKey(const ValueKey('rollup-class-class|1|1|1A'));
+    await tester.ensureVisible(klas1A);
+    expect(
+        find.descendant(of: klas1A, matching: find.text('1')), findsOneWidget);
+
+    // The number on the node is exactly what a confirmed apply of that list
+    // would write — the claim the badge and the dialog used to disagree on.
+    await tester.ensureVisible(klasgroepen);
+    await tester.tap(klasgroepen);
+    await tester.pumpAndSettle();
+    final groups = harness.controller.groupPendingEntries;
+    expect(groups, hasLength(2));
+    expect(harness.controller.applyScope(groups).systems, hasLength(4));
+    expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
+        findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a new hire is one pending item on the Personeel badge, not two '
+      'end-to-end (#251/#248)', (WidgetTester tester) async {
+    // The staff twin of the class case, and the crisp version of the count: two
+    // freshly hired teachers, each raising the provision-or-ignore either/or of
+    // #248 and nothing else. Two people, two decisions — the node read 4.
+    //
+    // The Personeel tree is the deeper one (school → jaar → klas), so this also
+    // proves the collapse survives every level of the aggregation rather than
+    // only the leaf the operator drills into.
+    useTallWindow(tester);
+    final harness = newStaffChoiceHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    expect(find.descendant(of: staffClass, matching: find.text('2')),
+        findsOneWidget,
+        reason: 'two hires, one either/or each');
+    expect(
+        find.descendant(of: staffClass, matching: find.text('4')), findsNothing,
+        reason: 'the opt-out is the alternative, never a second to-do');
+
+    // The Personeel tab badge is derived the same way and agrees.
+    expect(harness.controller.staffPendingCount, 2);
+    expect(harness.controller.applyableCount, 2,
+        reason: 'an apply writes one resolution per hire');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a class without an Office 365 group is proposed once — named after the '
       'parent class — and applying it creates a unified group end-to-end '
       '(#228)', (WidgetTester tester) async {

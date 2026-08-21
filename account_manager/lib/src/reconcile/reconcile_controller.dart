@@ -817,34 +817,43 @@ class ReconcileController extends ChangeNotifier {
   /// non-null [PendingActionOption.group] become one mutually-exclusive choice
   /// (its selection honoured from [_choices], defaulting to the group default);
   /// every other option is a choice of one.
+  ///
+  /// The partition itself is `account_actions`' [actions.collapseAlternatives]
+  /// (#251) — the one definition of "these actions are one either/or", shared
+  /// with the materializer so the badges and this list cannot disagree about
+  /// what a decision is. Only the operator's session-local pick is layered on
+  /// here; a passive session has no picks to apply.
   List<PendingChoice> _choicesFor(
     String targetId,
     List<PendingActionOption> options,
+  ) =>
+      [
+        for (final choice in actions.collapseAlternatives<PendingActionOption>(
+          options,
+          groupOf: (o) => o.group,
+          isDefault: (o) => o.isDefault,
+        ))
+          PendingChoice(
+            alternatives: choice.options,
+            selected: _chosen(targetId, choice),
+          ),
+      ];
+
+  /// The option the operator picked for [choice] on [targetId] (#110), or the
+  /// group's pre-selected default when they have not picked one — or picked a
+  /// kind this pass no longer offers.
+  PendingActionOption _chosen(
+    String targetId,
+    actions.Alternatives<PendingActionOption> choice,
   ) {
-    final choices = <PendingChoice>[];
-    final groupOrder = <String>[];
-    final byGroup = <String, List<PendingActionOption>>{};
-    for (final o in options) {
-      final g = o.group;
-      if (g == null) {
-        choices.add(PendingChoice(alternatives: [o], selected: o));
-      } else {
-        if (!byGroup.containsKey(g)) groupOrder.add(g);
-        (byGroup[g] ??= <PendingActionOption>[]).add(o);
-      }
-    }
-    for (final g in groupOrder) {
-      final alts = byGroup[g]!;
-      final defaultKind =
-          alts.firstWhere((a) => a.isDefault, orElse: () => alts.first).kind;
-      final chosenKind = _choices['$targetId|$g'] ?? defaultKind;
-      final selected = alts.firstWhere(
-        (a) => a.kind == chosenKind,
-        orElse: () => alts.firstWhere((a) => a.kind == defaultKind),
-      );
-      choices.add(PendingChoice(alternatives: alts, selected: selected));
-    }
-    return choices;
+    final group = choice.options.first.group;
+    if (group == null) return choice.selected;
+    final kind = _choices['$targetId|$group'];
+    if (kind == null) return choice.selected;
+    return choice.options.firstWhere(
+      (a) => a.kind == kind,
+      orElse: () => choice.selected,
+    );
   }
 
   /// Records the operator's pick of a mutually-exclusive alternative (#110):

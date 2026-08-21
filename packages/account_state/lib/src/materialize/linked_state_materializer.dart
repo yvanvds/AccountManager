@@ -37,16 +37,29 @@ MaterializedView materialize(
     // Since #245 the student family has an informational member too
     // (`AzureClassGroupMembership`), so the flag is read off the action rather
     // than assumed — a diagnosis must not count as pending work or offer an
-    // apply the action would throw on.
-    (byAccount[a.target.id.value] ??= <CandidateAction>[]).add(
-        _candidate('student', a, a.describeChanges(), canApply: a.canApply));
+    // apply the action would throw on. The alternative-group keys ride along
+    // since #251 so the persisted view can tell one either/or from two to-dos.
+    (byAccount[a.target.id.value] ??= <CandidateAction>[]).add(_candidate(
+      'student',
+      a,
+      a.describeChanges(),
+      canApply: a.canApply,
+      alternativeGroup: a.alternativeGroup,
+      isDefaultAlternative: a.isDefaultAlternative,
+    ));
   }
   final byStaff = <String, List<CandidateAction>>{};
   for (final a in linked.staffActions) {
     // Read off the action like the other two families since #240: every staff
     // action is applyable today, but nothing here should assume it.
-    (byStaff[a.target.id.value] ??= <CandidateAction>[])
-        .add(_candidate('staff', a, a.describeChanges(), canApply: a.canApply));
+    (byStaff[a.target.id.value] ??= <CandidateAction>[]).add(_candidate(
+      'staff',
+      a,
+      a.describeChanges(),
+      canApply: a.canApply,
+      alternativeGroup: a.alternativeGroup,
+      isDefaultAlternative: a.isDefaultAlternative,
+    ));
   }
 
   // Account-scoped warnings, keyed by the Smartschool uid they name.
@@ -134,8 +147,14 @@ List<MaterializedGroup> _materializeGroups(
   final targets = <String, core.LinkedGroup>{};
   for (final a in groupActions) {
     final key = _groupKey(a.target);
-    (byGroup[key] ??= <CandidateAction>[])
-        .add(_candidate('group', a, a.describeChanges(), canApply: a.canApply));
+    (byGroup[key] ??= <CandidateAction>[]).add(_candidate(
+      'group',
+      a,
+      a.describeChanges(),
+      canApply: a.canApply,
+      alternativeGroup: a.alternativeGroup,
+      isDefaultAlternative: a.isDefaultAlternative,
+    ));
     targets.putIfAbsent(key, () => a.target);
   }
   return [
@@ -154,12 +173,14 @@ List<MaterializedGroup> _materializeGroups(
 
 /// The single "Klasgroepen" [Rollup] over every [MaterializedGroup], or `null`
 /// when no group has a pending action (nothing to drill into). [accountCount] is
-/// the number of group docs, [pendingCount] their applyable actions.
+/// the number of group docs, [pendingCount] the **decisions** they carry
+/// ([pendingDecisionCount], #251) — since #244 every new class of the school
+/// year is one create-or-ignore either/or, which counted as two.
 Rollup? _buildGroupsRollup(List<MaterializedGroup> groups) {
   if (groups.isEmpty) return null;
   var pending = 0;
   for (final g in groups) {
-    pending += g.candidates.where((c) => c.canApply).length;
+    pending += pendingDecisionCount(g.candidates);
   }
   return Rollup(
     level: RollupLevel.groups,
@@ -177,7 +198,8 @@ Rollup? _buildGroupsRollup(List<MaterializedGroup> groups) {
 /// Derives the school / grade-year / classroom [Rollup] tree from the
 /// materialized [accounts]. Exposed for direct testing: each node's
 /// [Rollup.accountCount] is the number of accounts beneath it and
-/// [Rollup.pendingCount] the total applyable candidate actions they carry.
+/// [Rollup.pendingCount] the total pending **decisions** they carry — one per
+/// either/or, not one per alternative ([pendingDecisionCount], #251).
 List<Rollup> buildRollups(List<MaterializedAccount> accounts) {
   // classroomKey -> aggregate; grade/school keys accumulate from these.
   final classrooms = <String, _Agg>{};
@@ -185,7 +207,7 @@ List<Rollup> buildRollups(List<MaterializedAccount> accounts) {
   final schools = <String, _Agg>{};
 
   for (final a in accounts) {
-    final pending = a.candidates.where((c) => c.canApply).length;
+    final pending = pendingDecisionCount(a.candidates);
     final schoolKey = _schoolKey(a.school);
     final gradeKey = _gradeKey(a.school, a.gradeYear);
     final classKey = _classroomKey(a.school, a.gradeYear, a.classroom);
@@ -336,6 +358,8 @@ CandidateAction _candidate(
   Object action,
   actions.ChangeSet changes, {
   required bool canApply,
+  required String? alternativeGroup,
+  required bool isDefaultAlternative,
 }) =>
     CandidateAction(
       family: family,
@@ -344,6 +368,8 @@ CandidateAction _candidate(
       summary: changes.summary,
       fields: changes.fields,
       canApply: canApply,
+      alternativeGroup: alternativeGroup,
+      isDefaultAlternative: isDefaultAlternative,
     );
 
 // The core linked records carry only linking keys; human names live on the

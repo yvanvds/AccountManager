@@ -3,7 +3,14 @@ import 'dart:async';
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart'
-    show MaterializedAccount, MaterializedGroup, Rollup, RollupLevel;
+    show
+        CandidateAction,
+        MaterializedAccount,
+        MaterializedGroup,
+        Rollup,
+        RollupLevel,
+        candidateChoices,
+        pendingDecisionCount;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -1734,8 +1741,7 @@ class _AccountTile extends StatelessWidget {
               Expanded(child: Text(account.label, style: text.bodyLarge)),
               const _ReadOnlyLock(),
               const SizedBox(width: PlinkSpacing.s2),
-              _PendingBadge(
-                  count: account.candidates.where((c) => c.canApply).length),
+              _PendingBadge(count: pendingDecisionCount(account.candidates)),
             ],
           ),
           const SizedBox(height: PlinkSpacing.s2),
@@ -1748,11 +1754,16 @@ class _AccountTile extends StatelessWidget {
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(w, style: text.bodySmall),
             ),
-          for (final c in account.candidates)
+          // One line per *decision* (#251): a departed student's unregister /
+          // delete pair is one either/or, so it reads as the single choice the
+          // interactive tile shows — never as two bullets that both look due.
+          for (final c in candidateChoices(account.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(
-                '• ${c.summary}',
+                c.isChoice
+                    ? '• ${c.selected.summary} (keuze)'
+                    : '• ${c.selected.summary}',
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),
@@ -1777,6 +1788,16 @@ class _ReadOnlyLock extends StatelessWidget {
           color: Theme.of(context).disabledColor,
         ),
       );
+}
+
+/// One read-only candidate line of a passive-session group tile, worded exactly
+/// as the interactive [_PendingEntryTile]'s: an either/or reads as one "(keuze)"
+/// on its pre-selected half (#251), an informational notice keeps its
+/// "(manueel)" marker (#225), and an ordinary action is its bare summary.
+String _readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
+  final summary = choice.selected.summary;
+  if (choice.isChoice) return '• $summary (keuze)';
+  return choice.selected.canApply ? '• $summary' : '• $summary (manueel)';
 }
 
 /// One class group's read-only summary in a passive-session group drill-down,
@@ -1812,8 +1833,7 @@ class _GroupTile extends StatelessWidget {
               Expanded(child: Text(group.label, style: text.bodyLarge)),
               const _ReadOnlyLock(),
               const SizedBox(width: PlinkSpacing.s2),
-              _PendingBadge(
-                  count: group.candidates.where((c) => c.canApply).length),
+              _PendingBadge(count: pendingDecisionCount(group.candidates)),
             ],
           ),
           const SizedBox(height: PlinkSpacing.s2),
@@ -1821,11 +1841,14 @@ class _GroupTile extends StatelessWidget {
             spacing: PlinkSpacing.s2,
             children: <Widget>[for (final s in systems) PlinkBadge(s)],
           ),
-          for (final c in group.candidates)
+          // One line per *decision* (#251), marked exactly as the interactive
+          // tile marks it: since #244 a new class is one "create it or stop
+          // importing it" either/or, which used to read as two separate to-dos.
+          for (final c in candidateChoices(group.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(
-                c.canApply ? '• ${c.summary}' : '• ${c.summary} (manueel)',
+                _readOnlyCandidateLine(c),
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),
