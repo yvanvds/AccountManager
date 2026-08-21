@@ -22,6 +22,7 @@ import 'package:account_state/account_state.dart'
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
         InMemorySignalHub,
+        LiveSettings,
         MaterializedAccount,
         SecretRef,
         SignalRConfig,
@@ -35,6 +36,7 @@ import 'package:account_state/account_state.dart'
         WisaConnection,
         WisaSchoolProfile,
         WisaSchoolProfileLabel,
+        WorkDateSetting,
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
@@ -3902,6 +3904,109 @@ void main() {
     // operator could not make before.
     expect(find.textContaining('Import rule "organisatie"'), findsNothing);
     expect(find.textContaining('Import rule "KLASSEN"'), findsNothing);
+  });
+
+  testWidgets(
+      'a werkdatum saved in Instellingen reaches the very next Synchroniseer, '
+      'and Check for drift refuses until it has (#238)',
+      (WidgetTester tester) async {
+    // The whole loop the operator lives, end-to-end in the real app: sync,
+    // change the werkdatum in Instellingen, save, sync again — and read back
+    // which date WISA was actually asked for. Both bootstraps share **one**
+    // LiveSettings, exactly as `main()` wires them; before #238 they each held
+    // their own frozen copy, so a saved werkdatum reached the connector only
+    // after a relaunch and nothing on screen said so.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer pulls WISA with the stored werkdatum.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(wire.werkdatums, <String>['01/09/2025']);
+
+    // Now the operator moves the werkdatum, the way they do: Instellingen →
+    // Algemeen → Kies datum → Opslaan.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    final pick = find.byKey(const ValueKey('settings-workdate-pick'));
+    await tester.ensureVisible(pick);
+    await tester.pumpAndSettle();
+    await tester.tap(pick);
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('15'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect(
+      (await settings.store.load()).wisa.workDate.date,
+      DateTime(2025, 9, 15),
+    );
+
+    // Back on Reconcile the change is *visible*: Check for drift is disabled
+    // and says why. A drift pass never re-reads WISA, so running one now would
+    // relink against the roster the change never reached and publish that to
+    // every other operator.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('reconcile-drift-blocked')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('WISA-instellingen gewijzigd — synchroniseer eerst.'),
+      findsOneWidget,
+    );
+    final OutlinedButton drift = tester.widget<OutlinedButton>(
+      find.byKey(const ValueKey('reconcile-drift')),
+    );
+    expect(drift.onPressed, isNull);
+    // Synchroniseer stays available — it is the way out.
+    final FilledButton syncButton = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('reconcile-sync')),
+    );
+    expect(syncButton.onPressed, isNotNull);
+
+    // Pressing it pulls WISA with the werkdatum just saved — no relaunch — and
+    // the drift check is offered again.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(wire.werkdatums, <String>['01/09/2025', '15/09/2025']);
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNotNull,
+    );
   });
 
   testWidgets(

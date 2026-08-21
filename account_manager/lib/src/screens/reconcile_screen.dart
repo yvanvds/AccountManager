@@ -190,6 +190,9 @@ class _Header extends StatelessWidget {
     final bool ink = Theme.of(context).brightness == Brightness.dark;
     final bool hasFreshness = controller.syncState.systems.isNotEmpty;
     final lockedByOther = controller.syncLockedByOther;
+    // Why Check for drift is unavailable, when it is the WISA settings rather
+    // than another operator's lease that blocks it (#238).
+    final String? driftBlocked = controller.driftBlockedReason;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -212,14 +215,28 @@ class _Header extends StatelessWidget {
             ),
             OutlinedButton.icon(
               key: const ValueKey('reconcile-drift'),
-              onPressed: controller.busy || lockedByOther
-                  ? null
-                  : controller.checkDrift,
+              // Also disabled while a saved WISA setting has not been synced
+              // yet: a drift pass never re-reads WISA, so it would reconcile
+              // against the roster the change never reached (#238).
+              onPressed:
+                  controller.canCheckDrift ? controller.checkDrift : null,
               icon: const Icon(Icons.difference_outlined),
               label: const Text('Check for drift'),
             ),
           ],
         ),
+        if (driftBlocked != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            key: const ValueKey('reconcile-drift-blocked'),
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.info_outline, size: 16, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(child: Text(driftBlocked, style: text.bodySmall)),
+            ],
+          ),
+        ],
         if (hasFreshness) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s4),
           _LastSyncBox(controller: controller),

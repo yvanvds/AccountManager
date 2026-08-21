@@ -68,6 +68,7 @@ class SettingsServices {
     required this.store,
     required this.secrets,
     this.fetchWisaSchools,
+    this.liveSettings,
   });
 
   /// The persistence seam for the [AppSettings] document (#114: Cosmos-backed).
@@ -82,6 +83,13 @@ class SettingsServices {
   /// cannot fetch (no fetcher wired); the screen then keeps the manual-entry
   /// path only.
   final WisaSchoolFetcher? fetchWisaSchools;
+
+  /// The process-wide settings holder the reconcile stack reads at pull time
+  /// (#238). The screen publishes every document it loads or saves into it, so
+  /// a saved werkdatum reaches the next Synchroniseer instead of waiting for a
+  /// relaunch. Null when the build wires no reconcile stack (the settings-only
+  /// harnesses), which simply skips the hand-off.
+  final LiveSettings? liveSettings;
 }
 
 /// Wires the Settings view's two seams for one signed-in session: a
@@ -95,6 +103,7 @@ class SettingsServices {
 /// a reload affordance can re-read without re-bootstrapping.
 Future<SettingsServices> bootstrapSettings({
   required SignInSession session,
+  LiveSettings? liveSettings,
   StoreEndpoints? endpoints,
   SettingsStore? settingsStore,
   SecretProvider? secretProvider,
@@ -121,5 +130,6 @@ Future<SettingsServices> bootstrapSettings({
     store: store,
     secrets: secrets,
     fetchWisaSchools: fetchWisaSchools ?? fetchWisaSchoolsLive,
+    liveSettings: liveSettings,
   );
 }

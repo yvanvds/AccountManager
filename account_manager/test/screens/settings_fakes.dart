@@ -15,6 +15,7 @@ class SettingsHarness {
     AppSettings initial = const AppSettings(),
     Map<SecretRef, String> secrets = const {},
     this.fetchWisaSchools,
+    this.liveSettings,
   })  : store = InMemorySettingsStore(initial),
         secrets = InMemorySecretProvider(secrets);
 
@@ -26,10 +27,17 @@ class SettingsHarness {
   /// to drive the fetch flow offline.
   final WisaSchoolFetcher? fetchWisaSchools;
 
+  /// The shared settings holder the screen publishes every loaded/saved
+  /// document into (#238). Pass a [ReconcileHarness]'s own holder to model what
+  /// production does — one instance behind both bootstraps — so a save in
+  /// Instellingen reaches the running reconcile stack.
+  final LiveSettings? liveSettings;
+
   SettingsServices get services => SettingsServices(
         store: store,
         secrets: secrets,
         fetchWisaSchools: fetchWisaSchools,
+        liveSettings: liveSettings,
       );
 
   /// A ready-made bootstrap closure for [SettingsScreen]/[AccountManagerApp].

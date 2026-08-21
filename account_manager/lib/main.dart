@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:account_state/account_state.dart' show LiveSettings;
 import 'package:azure_api/azure_api.dart'
     show
         EncryptedTokenCache,
@@ -52,6 +53,14 @@ void main() {
 
   final session = SignInSession(broker);
 
+  // One settings document, shared by the two otherwise-independent bootstraps
+  // (#238). The Settings view publishes every document it loads or saves into
+  // it; the reconcile stack's WISA pull reads it back at pull time, and the
+  // reconcile screen refuses a drift check while a saved change has not been
+  // synced yet. Without this shared instance the two stacks each held their own
+  // copy and a save reached the connectors only on the next launch.
+  final liveSettings = LiveSettings();
+
   runApp(
     AccountManagerApp(
       session: session,
@@ -64,7 +73,11 @@ void main() {
       // failed attempt is not cached, so the reconcile screen's retry re-runs it.
       reconcileBootstrap: config.isConfigured
           ? _memoizeOnSuccess(
-              () => bootstrapReconcile(session: session, aad: config),
+              () => bootstrapReconcile(
+                session: session,
+                aad: config,
+                liveSettings: liveSettings,
+              ),
             )
           : null,
       // The settings seams (Cosmos-backed store + Key Vault secrets) are
@@ -74,7 +87,12 @@ void main() {
       // incomplete config, so it must not depend on the connectors bootstrapping
       // successfully.
       settingsBootstrap: config.isConfigured
-          ? _memoizeOnSuccess(() => bootstrapSettings(session: session))
+          ? _memoizeOnSuccess(
+              () => bootstrapSettings(
+                session: session,
+                liveSettings: liveSettings,
+              ),
+            )
           : null,
     ),
   );

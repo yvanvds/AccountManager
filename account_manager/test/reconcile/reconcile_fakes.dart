@@ -359,6 +359,86 @@ class TransferredAccountGraph implements az.GraphTransport {
       );
 }
 
+/// A [wapi.WisaSoapTransport] serving a tiny, complete WISA export for one
+/// school, so the **production** WISA pull (a real [wapi.WisaConnector] behind
+/// the real `wisaSyncer`) runs offline.
+///
+/// Every query is answered with a well-formed CSV blob in the base64
+/// `GetCSVDataResponse` envelope the connector decodes, and each request's
+/// `QueryCode` + `Werkdatum` are recorded — which is the whole point: the
+/// werkdatum an operator saves in Instellingen is only observable on the wire,
+/// as the `Werkdatum` parameter of the row queries (#238).
+///
+/// Wire it into [ReconcileHarness.wisaTransport].
+class RecordingWisaSoap implements wapi.WisaSoapTransport {
+  RecordingWisaSoap({
+    this.schools = const <(int, String, String)>[(1, 'School 1', 'S1')],
+  });
+
+  /// The schools `SMAGetInst` reports, as `(id, name, code)`.
+  final List<(int, String, String)> schools;
+
+  /// Every query issued, as `(queryCode, schoolId, werkdatum)` — the werkdatum
+  /// exactly as it went on the wire (`dd/MM/yyyy`).
+  final List<(String, String, String)> queries = <(String, String, String)>[];
+
+  /// The distinct werkdatums the row queries (class groups / students / staff)
+  /// were issued with, in order of first use. `SMAGetInst` carries none.
+  List<String> get werkdatums => <String>{
+        for (final q in queries)
+          if (q.$3.isNotEmpty) q.$3,
+      }.toList();
+
+  @override
+  Future<String> send({
+    required Uri endpoint,
+    required String soapAction,
+    required String envelope,
+  }) async {
+    final query = _tag.firstMatch(envelope)?.group(1) ?? '';
+    final params = <String, String>{
+      for (final m in _param.allMatches(envelope))
+        m.group(1)!: m.group(2) ?? '',
+    };
+    queries.add((query, params['IS_ID'] ?? '', params['Werkdatum'] ?? ''));
+    return _envelope(_csvFor(query));
+  }
+
+  String _csvFor(String query) => switch (query) {
+        wapi.WisaQuery.getSchools => <String>[
+            'ID,NAME,DESCRIPTION',
+            for (final (id, name, code) in schools) '$id,$name,$code',
+          ].join('\n'),
+        wapi.WisaQuery.syncClassGroups =>
+          'KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER\n'
+              '3C,00,Derde jaar C,a1,111',
+        wapi.WisaQuery.syncStudents =>
+          'KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,'
+              'STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,'
+              'NATIONALITEIT,STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,'
+              'KLASWIJZIGING\n'
+              '3C,,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,'
+              '1/9/2025',
+        wapi.WisaQuery.syncStaff => 'CODE,WISAID,FAMILIENAAM,VOORNAAM',
+        _ => '',
+      };
+
+  static String _envelope(String csv) {
+    final encoded = base64.encode(latin1.encode(csv));
+    return '<?xml version="1.0" encoding="utf-8"?>'
+        '<SOAP-ENV:Envelope '
+        'xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<SOAP-ENV:Body><NS1:GetCSVDataResponse '
+        'xmlns:NS1="urn:WisaAPIService-WisaAPIService">'
+        '<Result>$encoded</Result>'
+        '</NS1:GetCSVDataResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>';
+  }
+
+  static final RegExp _tag = RegExp(r'<QueryCode[^>]*>([^<]*)</QueryCode>');
+  static final RegExp _param =
+      RegExp(r'<Name>([^<]*)</Name><Value[^>]*>([^<]*)</Value>');
+}
+
 /// A [az.GraphTransport] answering the way the tenant answered in #216: the
 /// user lookup succeeds, and the `passwordProfile` PATCH that follows is
 /// refused with `403 Authorization_RequestDenied`, because the app
@@ -1736,14 +1816,17 @@ class ReconcileHarness {
     this.azureTransport,
     this.smartschoolTransport,
     this.smartschoolRules = const <ss.SmartschoolImportRule>[],
+    this.wisaTransport,
     this.passwordGraph,
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
     List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
     this.settingsStore,
+    LiveSettings? liveSettings,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
+        liveSettings = liveSettings ?? LiveSettings(),
         linkedStore = linkedStore ?? InMemoryLinkedStore() {
     log = LogBuffer(clock: () => kFixtureDate);
     final wisaRules = WisaImportRules();
@@ -1751,12 +1834,44 @@ class ReconcileHarness {
     // The scripted per-system pulls (with call counters). When a [store] is
     // wired, each is wrapped so a successful pull persists — mirroring how
     // bootstrap composes persistence over the real syncers (#107).
-    Syncer<wapi.WisaSnapshot> wisaSync = (_) async {
-      wisaSyncs++;
-      final error = wisaError;
-      if (error != null) throw error;
-      return wisaResult;
-    };
+    //
+    // The WISA pull. Scripted by default; wiring a [wisaTransport] swaps in the
+    // *production* pull instead — a real [wapi.WisaConnector] behind the real
+    // [wisaSyncer], reading the werkdatum pair and virtual marks live from
+    // [liveSettings] exactly as `bootstrapReconcile` composes them. That is the
+    // only way a test can save a werkdatum in Instellingen and then see which
+    // one the next Synchroniseer actually asked WISA for (#238).
+    final wisaWire = wisaTransport;
+    Syncer<wapi.WisaSnapshot> wisaSync;
+    if (wisaWire != null) {
+      final inner = wisaSyncer(
+        wapi.WisaConnector.fromParts(
+          server: 'wisa.example',
+          port: 9000,
+          database: 'wisadb',
+          username: 'operator',
+          password: 'geheim',
+          transport: wisaWire,
+          log: log,
+        ),
+        settings: this.liveSettings,
+        rules: wisaRules,
+        clock: () => kFixtureDate,
+      );
+      wisaSync = (previous) async {
+        wisaSyncs++;
+        final error = wisaError;
+        if (error != null) throw error;
+        return inner(previous);
+      };
+    } else {
+      wisaSync = (_) async {
+        wisaSyncs++;
+        final error = wisaError;
+        if (error != null) throw error;
+        return wisaResult;
+      };
+    }
     // The Smartschool pull. Scripted by default; wiring a
     // [smartschoolTransport] swaps in the *production* pull instead — a real
     // [ss.SmartschoolConnector] over that SOAP wire, applying
@@ -1925,6 +2040,9 @@ class ReconcileHarness {
       // so a pull can fill their names back in (#207).
       schoolProfiles: schoolProfiles,
       settingsStore: settingsStore,
+      // The same holder the WISA pull reads, so the drift gate sees a save the
+      // moment Instellingen publishes it (#238).
+      liveSettings: this.liveSettings,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),
@@ -1985,6 +2103,20 @@ class ReconcileHarness {
   /// can answer as Smartschool's group tree does and see what the operator's
   /// own [smartschoolRules] then do to the pull (#241).
   final ss.SmartschoolSoapTransport? smartschoolTransport;
+
+  /// When set, the WISA pull is the **production** one — a real
+  /// [wapi.WisaConnector] behind the real [wisaSyncer] — instead of the scripted
+  /// [wisaResult]. The third of the connector seams, and the only way a test can
+  /// read back which `Werkdatum` a pass actually asked WISA for after the
+  /// operator changed it in Instellingen (#238).
+  final wapi.WisaSoapTransport? wisaTransport;
+
+  /// The live settings document (#238): what the production WISA pull reads its
+  /// werkdatum pair and virtual-school marks from at pull time, and what the
+  /// controller's drift gate compares against. Publish into it to model the
+  /// operator saving in Instellingen mid-session — the real Settings view does
+  /// exactly that, into the very same holder.
+  final LiveSettings liveSettings;
 
   /// The operator's Smartschool import rules, applied by the production pull
   /// [smartschoolTransport] enables — the settings document's
@@ -2110,6 +2242,7 @@ class ReconcileHarness {
   /// The bundle the screen's bootstrap seam expects.
   ReconcileServices get services => ReconcileServices(
         settings: const AppSettings(),
+        liveSettings: liveSettings,
         app: app,
         applier: applier,
         controller: controller,

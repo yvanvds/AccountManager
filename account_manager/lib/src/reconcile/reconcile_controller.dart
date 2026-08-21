@@ -275,6 +275,7 @@ class ReconcileController extends ChangeNotifier {
     this.syncedBy = '',
     this.schoolProfiles = const <WisaSchoolProfile>[],
     this.settingsStore,
+    this.liveSettings,
     this.publisher,
     this.subscriber,
     this.persistTimeout = const Duration(minutes: 10),
@@ -282,6 +283,13 @@ class ReconcileController extends ChangeNotifier {
   }) : _now = clock ?? DateTime.now {
     final sub = subscriber;
     if (sub != null) _signalSub = sub.signals.listen(_onSignal);
+    // The snapshot this session starts with — seeded from the cold store, or
+    // pulled later — belongs to the settings as they stand right now (#238).
+    _wisaPullFingerprint = _wisaFingerprint();
+    // A save the operator makes in Instellingen must repaint this screen: it is
+    // kept alive across tab switches, so nothing else would tell it the WISA
+    // pull inputs moved.
+    _settingsSub = liveSettings?.changes.listen((_) => notifyListeners());
   }
 
   /// The three connector snapshots (owned by the State layer).
@@ -324,6 +332,20 @@ class ReconcileController extends ChangeNotifier {
   /// repair.
   final SettingsStore? settingsStore;
 
+  /// The live settings document (#238) — the same holder the WISA syncer reads
+  /// at pull time and the Settings view publishes into on every load and save.
+  ///
+  /// The controller uses it for one thing: to tell whether the WISA pull inputs
+  /// (werkdatum, virtuele werkdatum, virtual-school marks) have moved since the
+  /// snapshot this session holds was pulled. A drift pass never re-reads WISA —
+  /// that is what Synchroniseer is for — so once they have, a drift check would
+  /// silently relink against a roster built with the old settings and publish
+  /// the result to every other operator. [driftBlockedReason] refuses instead.
+  ///
+  /// Null in the harnesses that do not model settings at all; the gate is then
+  /// never armed and drift behaves exactly as before.
+  final LiveSettings? liveSettings;
+
   /// Publishes a [ChangeSignal] when this session takes/releases the sync lease
   /// or writes a new view generation, so other operators are nudged in real time
   /// (#116). Null when no realtime transport is wired — the store's `generation`
@@ -347,6 +369,13 @@ class ReconcileController extends ChangeNotifier {
   final DateTime Function() _now;
 
   StreamSubscription<ChangeSignal>? _signalSub;
+
+  StreamSubscription<AppSettings>? _settingsSub;
+
+  /// The [wisaPullFingerprint] of the settings the WISA snapshot this session
+  /// holds was pulled with (#238). Re-stamped on every WISA pull; compared
+  /// against the live document to arm [driftBlockedReason].
+  late String _wisaPullFingerprint;
 
   ReconcilePhase _phase = ReconcilePhase.idle;
   double _progress = 0.0;
@@ -875,6 +904,42 @@ class ReconcileController extends ChangeNotifier {
   /// The operator (UPN) holding the sync/drift lease, when [syncLockedByOther].
   String? get syncLockOwner => _lock?.owner;
 
+  /// The [wisaPullFingerprint] of the live settings, or the stamped one when no
+  /// [liveSettings] holder is wired (which leaves the gate permanently open).
+  String _wisaFingerprint() {
+    final live = liveSettings;
+    return live == null
+        ? _wisaPullFingerprint
+        : wisaPullFingerprint(live.current);
+  }
+
+  /// Why **Check for drift** is unavailable right now, or `null` when it can
+  /// run (#238).
+  ///
+  /// A drift pass deliberately re-reads only Smartschool and Azure: the WISA
+  /// roster it links them against is whatever this session already holds, cold
+  /// seed included. So once the operator saves a werkdatum — or a virtuele
+  /// werkdatum, or a school's virtual mark — that roster is not the one their
+  /// change asks for, and a drift pass would relink against the old one,
+  /// materialize the result, bump the generation and broadcast it to every other
+  /// operator. Refusing until a full [sync] has pulled WISA with the new
+  /// settings is the honest answer.
+  String? get driftBlockedReason => _wisaFingerprint() == _wisaPullFingerprint
+      ? null
+      : 'WISA-instellingen gewijzigd — synchroniseer eerst.';
+
+  /// Whether **Check for drift** can be started right now: no pass running, no
+  /// other operator holding the lease, and the WISA settings unchanged since
+  /// this session's roster was pulled (#238).
+  bool get canCheckDrift =>
+      !busy && !syncLockedByOther && driftBlockedReason == null;
+
+  /// Records that the WISA snapshot now in hand was pulled with [fingerprint] —
+  /// the live settings as they stood when the pull *started*, so a save landing
+  /// mid-pull stays pending rather than being credited to a pull that never saw
+  /// it (#238).
+  void _stampWisaPull(String fingerprint) => _wisaPullFingerprint = fingerprint;
+
   /// Whether the store holds a materialized overview (rollups) to drill into —
   /// true after any session has synced, even without a pull this session.
   bool get hasOverview => _rollups.isNotEmpty;
@@ -1115,8 +1180,13 @@ class ReconcileController extends ChangeNotifier {
     _begin(ReconcilePhase.syncing);
     try {
       final previous = app.wisa.snapshot;
+      // Read before the pull, stamped after it: the syncer resolves the very
+      // same document, so this names exactly the settings WISA was asked with
+      // (#238).
+      final pulledWith = _wisaFingerprint();
       log.addMessage(core.Origin.wisa, 'Syncing WISA…');
       final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
+      _stampWisaPull(pulledWith);
       _recordPull(core.Origin.wisa, fresh);
       _setProgress(0.25);
       log.addMessage(
@@ -1186,8 +1256,19 @@ class ReconcileController extends ChangeNotifier {
   /// Explicitly re-reads Smartschool and Azure (drift introduced by edits made
   /// through other tools) and re-links. WISA is not re-pulled — that is what
   /// [sync] is for.
+  ///
+  /// Refuses outright while [driftBlockedReason] is set: because WISA is not
+  /// re-pulled here, a pass run after a werkdatum change would reconcile against
+  /// the roster the change never reached and publish that to the whole team
+  /// (#238). The button is disabled with the same reason on screen; this guard
+  /// is the backstop for every other caller.
   Future<void> checkDrift() async {
     if (busy) return;
+    final blocked = driftBlockedReason;
+    if (blocked != null) {
+      log.addMessage(core.Origin.wisa, blocked);
+      return;
+    }
     if (!await _acquireLock()) return;
     _begin(ReconcilePhase.syncing);
     try {
@@ -1205,8 +1286,10 @@ class ReconcileController extends ChangeNotifier {
 
       if (app.wisa.snapshot == null) {
         await _renewLock();
+        final pulledWith = _wisaFingerprint();
         log.addMessage(core.Origin.wisa, 'Syncing WISA…');
         _recordPull(core.Origin.wisa, await app.sync(core.Origin.wisa));
+        _stampWisaPull(pulledWith);
       }
 
       await _relink();
@@ -1845,6 +1928,7 @@ class ReconcileController extends ChangeNotifier {
   @override
   void dispose() {
     _signalSub?.cancel();
+    _settingsSub?.cancel();
     subscriber?.close();
     super.dispose();
   }
