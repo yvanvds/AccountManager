@@ -1734,6 +1734,8 @@ class ReconcileHarness {
     az.AzureSnapshot? azureInitial,
     this.azureGate,
     this.azureTransport,
+    this.smartschoolTransport,
+    this.smartschoolRules = const <ss.SmartschoolImportRule>[],
     this.passwordGraph,
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
@@ -1755,10 +1757,33 @@ class ReconcileHarness {
       if (error != null) throw error;
       return wisaResult;
     };
-    Syncer<ss.SmartschoolSnapshot> ssSync = (_) async {
-      ssSyncs++;
-      return ssResult;
-    };
+    // The Smartschool pull. Scripted by default; wiring a
+    // [smartschoolTransport] swaps in the *production* pull instead — a real
+    // [ss.SmartschoolConnector] over that SOAP wire, applying
+    // [smartschoolRules] and logging into this harness's LogBuffer exactly as
+    // `bootstrapReconcile` composes it (`ssConnector.sync(rules:
+    // settings.smartschoolRules)`). That is the only way a test can drive the
+    // operator's own import rules through the pass they trigger, and see what
+    // the Log panel then tells them (#241).
+    final ssTransport = smartschoolTransport;
+    Syncer<ss.SmartschoolSnapshot> ssSync;
+    if (ssTransport != null) {
+      final connector = ss.SmartschoolConnector.fromParts(
+        site: 'demo',
+        accessCode: 'secret',
+        transport: ssTransport,
+        log: log,
+      );
+      ssSync = (_) async {
+        ssSyncs++;
+        return connector.sync(rules: smartschoolRules);
+      };
+    } else {
+      ssSync = (_) async {
+        ssSyncs++;
+        return ssResult;
+      };
+    }
     // The Azure pull. By default it is scripted like the other two; wiring an
     // [azureTransport] swaps in the *production* pull instead — a real
     // [az.AzureConnector] behind the real [azureSyncer], logging into this
@@ -1953,6 +1978,22 @@ class ReconcileHarness {
   /// scripted [azResult]. Lets a test answer as Graph does (e.g. rejecting a
   /// stored delta token, #213) and drive the result through the real pass.
   final az.GraphTransport? azureTransport;
+
+  /// When set, the Smartschool pull is the **production** one — a real
+  /// [ss.SmartschoolConnector] over this SOAP wire — instead of the scripted
+  /// [ssResult]. The counterpart of [azureTransport], and the only way a test
+  /// can answer as Smartschool's group tree does and see what the operator's
+  /// own [smartschoolRules] then do to the pull (#241).
+  final ss.SmartschoolSoapTransport? smartschoolTransport;
+
+  /// The operator's Smartschool import rules, applied by the production pull
+  /// [smartschoolTransport] enables — the settings document's
+  /// `smartschoolRules`, as `bootstrapReconcile` hands them to the connector.
+  /// Ignored by the scripted pull, which returns [ssResult] whole.
+  ///
+  /// Read at sync time, like [ssResult]: assign between passes to model the
+  /// session that bootstraps on rules the operator has just saved in Settings.
+  List<ss.SmartschoolImportRule> smartschoolRules;
 
   /// When set, the Passwords screen writes through the **production**
   /// [ConnectorPasswordBackends] over this transport instead of the recording

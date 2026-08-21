@@ -3832,6 +3832,79 @@ void main() {
   });
 
   testWidgets(
+      'a Smartschool import rule fires however the operator spelled it, and a '
+      'rule that matches nothing says so in the log (#241)',
+      (WidgetTester tester) async {
+    // The whole loop the operator lives: author the rules in Instellingen, then
+    // Synchronise and read the Log panel. The rules used to be matched against
+    // the group tree with a raw `==`, so a rule typed in lower case — or one
+    // carrying the spacing of a name pasted out of Smartschool — quietly did
+    // nothing at all, and looked exactly like a rule that had matched a subtree
+    // which was already empty. Both halves are checked end-to-end here: the
+    // differently-spelled rules really prune the pull, and the third rule
+    // (a typo) is named in the panel instead of vanishing.
+    useTallWindow(tester);
+    final settings = SettingsHarness();
+    final wire = _GroupTreeSoap();
+    // The next session's reconcile stack, whose Smartschool pull is the
+    // production connector over that wire; its rules are picked up from the
+    // settings document below, as bootstrapReconcile picks them up on open.
+    final harness = ReconcileHarness(smartschoolTransport: wire);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+
+    // Smartschool spells them `Organisatie` and `Klassen`; the operator does
+    // not, and never had a reason to think it mattered. The third rule names a
+    // group Smartschool does not carry at all.
+    await addSmartschoolRule(tester, 'discardGroup', 'organisatie');
+    await addSmartschoolRule(tester, 'noSubgroups', 'KLASSEN');
+    await addSmartschoolRule(tester, 'discardGroup', 'Sportclub');
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await settings.store.load();
+    expect(saved.smartschoolRules, hasLength(3));
+    harness.smartschoolRules = saved.smartschoolRules;
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The pull really was pruned by rules spelled nothing like the tree:
+    // "Organisatie" and its subtree are gone, "Klassen" survives as a leaf, and
+    // the connector never even asked Smartschool about the removed groups.
+    expect(
+      harness.app.smartschool.snapshot?.groups.map((g) => g.id.value).toList(),
+      <String>['SCH', 'KLA'],
+    );
+    expect(wire.accountCodes, <String>['SCH', 'KLA']);
+
+    // …and the rule that matched nothing is named in the Log panel, so the
+    // typo is visible rather than silent.
+    expect(
+      find.textContaining(
+        'Import rule "Sportclub" matched no Smartschool group in this pull',
+      ),
+      findsOneWidget,
+    );
+    // The two that did fire are not reported — that is the distinction the
+    // operator could not make before.
+    expect(find.textContaining('Import rule "organisatie"'), findsNothing);
+    expect(find.textContaining('Import rule "KLASSEN"'), findsNothing);
+  });
+
+  testWidgets(
       'a Check for drift whose stored Azure delta token Graph refuses still '
       'finishes, on a full re-read that leaves a usable token behind, and '
       'reads as the clean pass it was (#213/#229)',
