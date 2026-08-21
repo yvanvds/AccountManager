@@ -1362,20 +1362,144 @@ void main() {
     expect(body['mailEnabled'], isTrue);
     expect(body['securityEnabled'], isFalse);
 
-    // The created group is spliced into the snapshot, so the very next render
-    // no longer offers the create — it offers the roster the empty group needs.
+    // The one click also filled the group (#245). Graph creates a group empty,
+    // so the create used to land an `GBS-2F` with nobody in it and the roster
+    // waited for a second click; the applier now chains the membership write
+    // against the relinked record — the only place the id Graph just minted
+    // exists — and both sub-groups' students land in the one parent group.
+    expect(
+      harness.graph.batchedWrites,
+      hasLength(2),
+      reason: "both sub-groups' students belong to the one parent group",
+    );
+    expect(
+      harness.graph.batchedWrites,
+      everyElement(startsWith('POST /groups/az-group-1/members')),
+    );
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-2F bij (2 toevoegen'),
+      findsOneWidget,
+      reason: 'the chained write is reported beside the create, not hidden',
+    );
+
+    // …so nothing about this class is left pending: no create, and no roster.
     final kinds = harness.controller.pendingEntries
         .expand((e) => e.choices)
         .expand((c) => c.alternatives)
         .map((a) => a.kind)
         .toList();
     expect(kinds, isNot(contains('CreateAzureClassGroup')));
-    expect(kinds, contains('SyncAzureClassGroupMembers'));
+    expect(kinds, isNot(contains('SyncAzureClassGroupMembers')));
+  });
+
+  testWidgets(
+      "a student's Office 365 class group is reported on their own account "
+      'end-to-end, pointing at the one class-level write (#245)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Both classes already have
+    // their group and are in sync with Smartschool, so the Azure roster is the
+    // only work: Jane is missing from her own GBS-1A, and Sam — who moved to
+    // 1B — is missing from GBS-1B while still sitting in GBS-1A.
+    //
+    // This is the layer that sees what the issue is actually about: whether an
+    // operator who opens *one* student finds their class-group placement there
+    // at all. The Klasgroepen row and the account row are two projections of the
+    // same dispatch, composed by different screens, and only a full-app run
+    // shows both and proves the write is offered exactly once.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    // The class rows still carry the single applyable write, on both classes.
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+    // (Both classes raise the same kind of action, so the list also renders a
+    // "same situation" header carrying the first one's summary — hence
+    // findsWidgets rather than findsOneWidget.)
     expect(
-      find.textContaining('Werk het ledenbestand van GBS-2F bij (2 toevoegen'),
-      findsOneWidget,
-      reason: 'both sub-groups\' students belong to the one parent group',
+      find.textContaining('Werk het ledenbestand van GBS-1A bij '
+          '(1 toevoegen, 1 verwijderen)'),
+      findsWidgets,
     );
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-1B bij (1 toevoegen'),
+      findsWidgets,
+    );
+    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    await tester.pumpAndSettle();
+
+    // Nothing applyable hangs off either class's *students*, so the work list
+    // hides them — the switch is what turns the view into the inventory an
+    // operator answering a phone call browses (#226).
+    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing);
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    // Closing a classroom rebuilds — and so collapses — the tree, so the year
+    // is re-opened for each of the two students.
+    Future<void> openYear() async {
+      final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+      await tester.ensureVisible(yearNode);
+      await tester.tap(yearNode);
+      await tester.pumpAndSettle();
+    }
+
+    // Sam, in 1B: one line, naming both groups, and marked as a manual fix.
+    await openYear();
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
+    await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sam Sels'), findsOneWidget);
+    expect(
+      find.textContaining(
+          'Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats van '
+          'GBS-1B'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets,
+        reason: 'the class row performs the write, so this one diagnoses');
+
+    // Jane, in 1A: the plain "missing from her own group" reading.
+    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    await tester.pumpAndSettle();
+    await openYear();
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
+    await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
+    await tester.pumpAndSettle();
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(
+      find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
+      findsOneWidget,
+    );
+
+    // And the account view offers no second write for the same fact: only the
+    // two class-level syncs are applyable anywhere.
+    final applyable = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .where((a) => a.canApply)
+        .map((a) => a.kind)
+        .toList();
+    expect(applyable,
+        ['SyncAzureClassGroupMembers', 'SyncAzureClassGroupMembers']);
   });
 
   testWidgets(

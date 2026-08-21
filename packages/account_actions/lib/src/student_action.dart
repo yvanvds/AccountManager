@@ -5,6 +5,7 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'action_result.dart';
 import 'apply_options.dart';
+import 'azure_class_placement.dart';
 import 'change_set.dart';
 import 'class_placement.dart';
 import 'connectors.dart';
@@ -61,6 +62,16 @@ sealed class StudentAction {
   /// pre-selection. Exactly one alternative in a group should return `true`;
   /// ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
+
+  /// Whether [apply] can perform a change. `false` for an informational action
+  /// (the legacy `CanBeApplied == false` case): it surfaces a diagnosis on the
+  /// account but has no automated write of its own, so calling [apply] throws.
+  /// Callers (UI / State layer) gate the "apply" affordance on this.
+  ///
+  /// The whole legacy student family is applyable; [AzureClassGroupMembership]
+  /// (#245) is the first member that is not, and it mirrors how the group family
+  /// has carried informational members since #54.
+  bool get canApply => true;
 
   /// The action types this one **unlocks** on the same target (#230).
   ///
@@ -1044,6 +1055,81 @@ class MoveToSmartschoolClassGroup extends StudentAction {
       return _failed(changes, Origin.smartschool, e);
     }
   }
+}
+
+/// The student's Office 365 class-group placement, when it disagrees with their
+/// WISA class (#245): they are missing from `<PREFIX>-<KLAS>`, or still sitting
+/// in the group of a class they left — or both.
+///
+/// The Azure counterpart of [MoveToSmartschoolClassGroup], and the per-account
+/// half of #228: the roster diff was previously reported only on the class row
+/// in Klasgroepen, so an operator looking at *one* student — the usual entry
+/// point when a parent phones about a class team — saw nothing about their group
+/// membership. It reads its [AzureClassPlacement] from the very same resolver
+/// that builds the class-level `AzureClassGroupPlan`, so the two views can never
+/// disagree about the same student.
+///
+/// **Informational** (`canApply == false`), deliberately. Class-group membership
+/// is a class-level fact with exactly one automated remedy —
+/// `SyncAzureClassGroupMembers`, which rewrites the whole roster in one batched
+/// write — and this action names it. Giving the account its own write would ask
+/// Graph to add the same member twice whenever an "apply all" pass ran both
+/// (the class plan is computed off the snapshot, so it cannot know the
+/// per-student write already landed), and would count one unit of work twice in
+/// the pending totals. So the per-account row diagnoses, the class row applies.
+class AzureClassGroupMembership extends StudentAction {
+  /// The Office 365 class-group context this action reads, injected by the
+  /// dispatch.
+  final AzureClassPlacement placement;
+
+  const AzureClassGroupMembership(
+    super.account,
+    super.config,
+    this.placement,
+  );
+
+  @override
+  bool evaluate() => account.azure != null && placement.differs;
+
+  @override
+  bool get canApply => false;
+
+  String get _strays => placement.strayGroupNames.join(', ');
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: _summary(),
+        fields: [
+          FieldChange(
+            'Office 365-klasgroep',
+            before: _strays,
+            after: placement.groupName ?? '',
+          ),
+        ],
+      );
+
+  String _summary() {
+    final target = placement.groupName ?? placement.className;
+    if (!placement.missingFromOwnGroup) {
+      return 'Staat nog in de Office 365-klasgroep $_strays. Werk het '
+          'ledenbestand van die klas bij.';
+    }
+    if (placement.strayGroupNames.isEmpty) {
+      return 'Ontbreekt in de Office 365-klasgroep $target. Werk het '
+          'ledenbestand van klas ${placement.className} bij.';
+    }
+    return 'Zit in de verkeerde Office 365-klasgroep: $_strays in plaats van '
+        '$target. Werk het ledenbestand van beide klassen bij.';
+  }
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      throw UnsupportedError(
+        'AzureClassGroupMembership is informational and cannot be applied '
+        '(canApply is false) — the class-level SyncAzureClassGroupMembers '
+        'performs the membership write',
+      );
 }
 
 // ---------------------------------------------------------------------------

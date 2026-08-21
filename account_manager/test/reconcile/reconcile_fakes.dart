@@ -69,6 +69,10 @@ class RecordingGraph implements az.GraphTransport {
   /// (#228).
   final List<Map<String, dynamic>> createdGroups = <Map<String, dynamic>>[];
 
+  /// Every `$batch` sub-request this transport accepted, as `<METHOD> <url>` —
+  /// the membership writes a class-group roster sync performs (#228/#245).
+  final List<String> batchedWrites = <String>[];
+
   int _created = 0;
 
   /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
@@ -120,6 +124,26 @@ class RecordingGraph implements az.GraphTransport {
           'mail': '${body['mailNickname']}@student.school.example',
         },
         statusCode: 201,
+      );
+    }
+    // The membership writes ride in a `$batch`, and Graph answers with a
+    // per-sub-request status list rather than a bare 204 (#228/#245).
+    if (request.method == 'POST' && request.url.path.endsWith(r'/$batch')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      final subs = (body['requests'] as List).cast<Map<String, dynamic>>();
+      for (final sub in subs) {
+        batchedWrites.add('${sub['method']} ${sub['url']}');
+      }
+      return _ok(
+        <String, dynamic>{
+          'responses': <Map<String, dynamic>>[
+            for (final sub in subs)
+              <String, dynamic>{'id': sub['id'], 'status': 204},
+          ],
+        },
+        statusCode: 200,
       );
     }
     return const az.GraphResponse(statusCode: 204);
@@ -447,13 +471,18 @@ wapi.WisaStudent wisaStudent({
   String classSubGroup = '',
   int schoolId = 1,
   core.Address address = _addr,
+  // Most fixtures browse the tree by node rather than by person, so every
+  // student is "Jane Doe" by default; a fixture that has to tell two students
+  // apart on screen (#245) names them.
+  String firstName = 'Jane',
+  String name = 'Doe',
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
       classGroup: classGroup,
       classSubGroup: classSubGroup,
-      name: 'Doe',
-      firstName: 'Jane',
+      name: name,
+      firstName: firstName,
       preferredName: '',
       birthDate: kFixtureDate,
       stemId: '',
@@ -975,6 +1004,87 @@ ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
         groups: [
           azClassGroup('1A', memberIds: const ['az1']),
           if (withStaleGroup) azClassGroup('9Z'),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the **per-student** view of Office 365 class-group membership
+/// (#245). Both classes already have their group, and both classes are in sync
+/// between WISA and Smartschool, so the only work anywhere is the Azure roster:
+///
+/// - Jane's class is `1A` and `GBS-1A` exists, but she is not in it;
+/// - Sam moved to `1B`, so he is missing from `GBS-1B` **and** still sitting in
+///   `GBS-1A` — the "wrong class group" shape.
+///
+/// The class rows in Klasgroepen therefore carry the two applyable roster syncs,
+/// and each student's own card carries the informational reading of the same
+/// fact.
+ReconcileHarness azureClassMembershipHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '1B',
+            firstName: 'Sam',
+            name: 'Sels',
+          ),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('1A', description: 'Eerste jaar A'),
+          wisaClassGroup('1B', description: 'Eerste jaar B'),
+        ],
+      ),
+      smartschool: ssSnap(
+        // In sync with WISA, so no class raises Smartschool work of its own.
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+          ssGroup('1B',
+              description: 'Eerste jaar B',
+              instituteNumber: '123',
+              untis: '1B'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane',
+              accountId: '1',
+              mail: 'jane.doe@student.school.example'),
+          ssAccount(
+            uid: 'sam',
+            accountId: '2',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+        ],
+        // Smartschool already has both students in their WISA class, so no
+        // `MoveToSmartschoolClassGroup` competes with the Azure reading.
+        memberships: [member('jane', '1A'), member('sam', '1B')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+            id: 'az1',
+            upn: 'jane.doe@student.school.example',
+            employeeId: '1',
+            displayName: 'Jane Doe',
+          ),
+          azUser(
+            id: 'az2',
+            upn: 'sam.sels@student.school.example',
+            employeeId: '2',
+            displayName: 'Sam Sels',
+          ),
+        ],
+        groups: [
+          // Sam is in Jane's group; Jane is in nobody's.
+          azClassGroup('1A', memberIds: const ['az2']),
+          azClassGroup('1B'),
         ],
       ),
       ourSchoolIds: const {1},

@@ -124,6 +124,61 @@ void main() {
     });
   });
 
+  group('creating a class group is one chain, not two clicks (#245)', () {
+    test('the create declares the roster sync as its follow-up', () {
+      // Graph creates a group empty — membership is a separate write — so the
+      // dispatcher, a pure function of the current record, can only offer the
+      // create. Naming the follow-up here is what lets the State layer run the
+      // roster against the relinked record, which is the only place the id
+      // Graph minted exists.
+      final actions = groupActionsFor(
+        linkedGroup(wisa: wisaGroup(), smartschool: ssGroup()),
+        azurePlanFor: (_) => azurePlan(),
+      );
+      final create = actions.single as CreateAzureClassGroup;
+      expect(create.unlocks, <Type>{SyncAzureClassGroupMembers});
+    });
+
+    test('the roster sync ends the chain', () {
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(),
+          azure: azureClassGroup('3A'),
+        ),
+        azurePlanFor: (_) => azurePlan(membersToAdd: const ['az-1']),
+      );
+      expect(actions.single.unlocks, isEmpty);
+    });
+
+    test('every other group action unlocks nothing', () {
+      // The chain is opt-in per action; a stray declaration would make the
+      // applier write beyond what the operator selected.
+      final groups = <LinkedGroup>[
+        linkedGroup(wisa: wisaGroup()),
+        linkedGroup(smartschool: ssGroup()),
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(untis: 'stale'),
+        ),
+        linkedGroup(
+          azure: azureClassGroup('9Z'),
+          className: '9Z',
+        ),
+      ];
+      for (final group in groups) {
+        for (final action in groupActionsFor(
+          group,
+          placementFor: (_) => groupPlacement(),
+          azurePlanFor: (_) => azurePlan(membersToAdd: const ['az-1']),
+        )) {
+          if (action is CreateAzureClassGroup) continue;
+          expect(action.unlocks, isEmpty, reason: '${action.runtimeType}');
+        }
+      }
+    });
+  });
+
   group('membership follows the roster (#228)', () {
     test('a roster difference raises the membership sync', () {
       final actions = groupActionsFor(

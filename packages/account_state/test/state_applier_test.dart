@@ -719,5 +719,116 @@ void main() {
         isEmpty,
       );
     });
+
+    group('provisioning a class group is one apply, not two (#245)', () {
+      test('the create chains the roster sync it unlocked', () async {
+        // Graph creates a group empty, so #228 left `SSM-2A` with nobody in it
+        // and the enrolment waited for the operator's second click. The chain
+        // runs the roster against the **relinked** record — the only place the
+        // id Graph just minted exists.
+        final harness = classHarness();
+        final before = await harness.applier.link();
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(create);
+
+        expect(applied.result.outcome, ActionOutcome.applied);
+        expect(applied.followUps, hasLength(1));
+        expect(applied.followUps.single.outcome, ActionOutcome.applied);
+        expect(
+          applied.followUps.single.changes.summary,
+          contains('Werk het ledenbestand van SSM-2A bij'),
+        );
+        expect(
+          harness.app.azure.snapshot!.groups.single.memberIds,
+          ['az-1'],
+          reason: 'the created group holds the class straight away',
+        );
+        expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
+        expect(
+          applied.linked!.groupActions.whereType<CreateAzureClassGroup>(),
+          isEmpty,
+        );
+        expect(
+          applied.linked!.groupActions.whereType<SyncAzureClassGroupMembers>(),
+          isEmpty,
+          reason: 'the class is provisioned and in sync after the one apply',
+        );
+      });
+
+      test('a dry run projects the create and chains nothing', () async {
+        final harness = classHarness();
+        final before = await harness.applier.link();
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(
+          create,
+          options: const ApplyOptions(dryRun: true),
+        );
+
+        expect(applied.result.outcome, ActionOutcome.dryRun);
+        expect(applied.followUps, isEmpty,
+            reason: 'nothing was written, so nothing was unlocked');
+      });
+
+      test('a class whose students have no Office 365 account chains nothing',
+          () async {
+        // The follow-up's own evaluate() still decides: there is no roster to
+        // add, so the created group is simply left empty.
+        final harness = _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1', classGroup: '2A')],
+            classGroups: [
+              const wapi.WisaClassGroup(
+                name: '2A',
+                groupName: '00',
+                description: 'Klas 2A',
+                adminCode: '',
+                schoolCode: '123',
+                schoolId: 1,
+              ),
+            ],
+          ),
+        );
+        final before = await harness.applier.link();
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(create);
+
+        expect(applied.result.outcome, ActionOutcome.applied);
+        expect(applied.followUps, isEmpty);
+        expect(harness.app.azure.snapshot!.groups.single.memberIds, isEmpty);
+      });
+
+      test('an informational group action is never chained', () async {
+        // The orphan notice throws on apply; the walk must skip it whatever a
+        // future `unlocks` declaration says.
+        final harness = classHarness(groups: [
+          az.AzureGroup(
+            id: 'az-9Z',
+            displayName: 'SSM-9Z',
+            mail: 'SSM-9Z@student.school.example',
+            mailNickname: 'SSM-9Z',
+          ),
+        ]);
+        final before = await harness.applier.link();
+        expect(
+          before.groupActions.whereType<AzureClassGroupWithoutClass>(),
+          hasLength(1),
+        );
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(create);
+
+        expect(
+          applied.followUps.map((r) => r.changes.summary),
+          everyElement(contains('ledenbestand')),
+        );
+      });
+    });
   });
 }

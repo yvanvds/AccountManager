@@ -80,6 +80,28 @@ sealed class GroupAction {
   /// [alternativeGroup]. Ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
 
+  /// The action types this one **unlocks** on the same target (#245) — the
+  /// group family's half of the chaining [StudentAction.unlocks] introduced for
+  /// students (#230), and deliberately the same mechanism rather than a second
+  /// one.
+  ///
+  /// Provisioning a class group is a chain, not a single action:
+  /// [CreateAzureClassGroup] leaves an **empty** group, because Graph creates
+  /// the group and its membership in separate writes, so the roster only lands
+  /// once [SyncAzureClassGroupMembers] runs. The dispatch (§6.3) is a pure
+  /// function of the *current* record and can only offer the first link, which
+  /// is why creating `SSM-2F` used to need the operator's second click.
+  ///
+  /// Declaring the follow-up here lets the State layer run it immediately
+  /// against the **relinked** record — the created group with the id Graph
+  /// minted, spliced into the snapshot — and never against a projection.
+  ///
+  /// Pure and constant: it names what *may* follow, never what must. The
+  /// follow-up's own [evaluate] still decides (a class whose students have no
+  /// Office 365 account yet has nothing to add), and an informational follow-up
+  /// is never run.
+  Set<Type> get unlocks => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3). Throws [UnsupportedError] when
@@ -587,6 +609,12 @@ class CreateAzureClassGroup extends GroupAction {
       group.wisa != null &&
       group.azure == null &&
       plan.containsStudents;
+
+  /// Creating the group unlocks the roster write that fills it (#245): Graph
+  /// creates a group empty, so without the chain the operator's click left an
+  /// `SSM-2F` with nobody in it and the enrolment waited for a second click.
+  @override
+  Set<Type> get unlocks => const {SyncAzureClassGroupMembers};
 
   @override
   ChangeSet describeChanges() => ChangeSet(

@@ -492,7 +492,10 @@ class ReconcileController extends ChangeNotifier {
       group: (a) => a.alternativeGroup,
       isDefault: (a) => a.isDefaultAlternative,
       changes: (a) => a.describeChanges(),
-      canApply: (_) => true,
+      // Since #245 the student family has an informational member too
+      // (`AzureClassGroupMembership`), so the apply affordance is gated on the
+      // action rather than assumed, exactly as the group family's is.
+      canApply: (a) => a.canApply,
     ));
     entries.addAll(_entriesFor(
       family: 'staff',

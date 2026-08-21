@@ -102,7 +102,9 @@ class LinkedState {
 
     // The Office 365 class-group plans are derived from the *linked* view, not
     // the raw snapshots (#228): the roster is expressed as Azure object ids, and
-    // the `wisaId ≡ employeeId` bridge that produces them is the linker's.
+    // the `wisaId ≡ employeeId` bridge that produces them is the linker's. The
+    // same resolver feeds the per-student view of that membership (#245), so
+    // the class row and the account row read one set of facts.
     final azureClassGroups = AzureClassGroupResolver(
       linked: snapshot,
       schoolPrefix: studentConfig.schoolPrefix,
@@ -115,6 +117,7 @@ class LinkedState {
         snapshot,
         studentConfig,
         placementFor: placements.classPlacementFor,
+        azurePlacementFor: azureClassGroups.placementFor,
       ),
       staffActions: actions.staffActions(snapshot, staffConfig),
       groupActions: actions.groupActions(

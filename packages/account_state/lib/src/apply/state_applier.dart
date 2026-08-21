@@ -31,7 +31,8 @@ class ApplyResult {
   final LinkedState? linked;
 
   /// The results of the follow-up actions this write unlocked on the same
-  /// target and the applier ran straight away (#230), in the order they ran.
+  /// target and the applier ran straight away (#230 for students, #245 for
+  /// class groups), in the order they ran.
   ///
   /// Empty for every action that declares no `unlocks`, and for a dry run or a
   /// failed write (nothing was written, so nothing was unlocked). The caller
@@ -221,6 +222,7 @@ class StateApplier {
   ) {
     for (final candidate in linked.studentActions) {
       if (candidate.target.id == targetId &&
+          candidate.canApply &&
           unlocks.contains(candidate.runtimeType) &&
           !ran.contains(candidate.runtimeType)) {
         return candidate;
@@ -242,17 +244,105 @@ class StateApplier {
     );
   }
 
-  /// Applies a [GroupAction] and refreshes the snapshot on a real write.
+  /// Applies a [GroupAction] and refreshes the snapshot on a real write, then
+  /// runs whatever that write unlocked on the same class (#245).
   Future<ApplyResult> applyGroup(
     GroupAction action, {
     ApplyOptions options = const ApplyOptions(),
   }) async {
     final result = await action.apply(connectors, options);
-    return _refresh(
+    final applied = await _refresh(
       result,
       removedGroupId: action.target.smartschool?.id,
     );
+    return _chainGroupFollowUps(action, applied, options);
   }
+
+  /// Runs the follow-up actions [action]'s write unlocked on the same class,
+  /// against the **relinked** record (#245) — the group family's half of the
+  /// chaining [applyStudent] has done since #230, sharing its mechanism rather
+  /// than inventing a second one.
+  ///
+  /// Provisioning a class group is a two-link chain: Graph creates a group
+  /// empty, so `CreateAzureClassGroup` leaves `SSM-2F` with nobody in it and
+  /// `SyncAzureClassGroupMembers` is what enrols the class. The dispatcher is a
+  /// pure function of the current record and can only offer the first link, so
+  /// one click used to create the group and stop, leaving the roster to a second
+  /// pass the operator had to notice and trigger.
+  ///
+  /// Each link is taken from the freshly recomputed [LinkedState]'s own
+  /// dispatch — the same list the UI would show on the next render — so the
+  /// follow-up is bound to the record the previous write produced (the created
+  /// group carrying the id Graph minted, spliced into the Azure snapshot), and
+  /// its own `evaluate()` has already agreed it applies. Never a projection: the
+  /// created group's id is not knowable before the write.
+  ///
+  /// Bounded exactly as the student chain is, so no declaration can spin it:
+  /// nothing is unlocked when nothing was written, each action type runs at most
+  /// once per chain, an informational action is never run, and a failed link
+  /// stops it.
+  Future<ApplyResult> _chainGroupFollowUps(
+    GroupAction action,
+    ApplyResult applied,
+    ApplyOptions options,
+  ) async {
+    var linked = applied.linked;
+    if (linked == null || action.unlocks.isEmpty) return applied;
+
+    final targetKey = _groupKeyOf(action.target);
+    final ran = <Type>{action.runtimeType};
+    final followUps = <ActionResult>[];
+    var unlocks = action.unlocks;
+
+    while (unlocks.isNotEmpty) {
+      final next = _unlockedGroupAction(linked!, targetKey, unlocks, ran);
+      if (next == null) break;
+      ran.add(next.runtimeType);
+      final result = await next.apply(connectors, options);
+      followUps.add(result);
+      final refreshed = await _refresh(
+        result,
+        removedGroupId: next.target.smartschool?.id,
+      );
+      if (!refreshed.refreshed) break;
+      linked = refreshed.linked;
+      unlocks = next.unlocks;
+    }
+
+    if (followUps.isEmpty) return applied;
+    return ApplyResult(applied.result, linked, followUps: followUps);
+  }
+
+  /// The first action [linked]'s group dispatch raised for [targetKey] whose
+  /// type is named by [unlocks] and has not run yet this chain, or null when the
+  /// write unlocked nothing after all.
+  GroupAction? _unlockedGroupAction(
+    LinkedState linked,
+    String targetKey,
+    Set<Type> unlocks,
+    Set<Type> ran,
+  ) {
+    for (final candidate in linked.groupActions) {
+      if (_groupKeyOf(candidate.target) == targetKey &&
+          candidate.canApply &&
+          unlocks.contains(candidate.runtimeType) &&
+          !ran.contains(candidate.runtimeType)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  /// The identity of a linked class record across a relink. A [core.LinkedGroup]
+  /// carries no id of its own, so this uses the keys the linker builds it from,
+  /// WISA first: the WISA `fullName` is what the linker keys records by (INV-20)
+  /// and is untouched by any Azure or Smartschool write, so the record that
+  /// raised the create is the same record after the relink.
+  static String _groupKeyOf(core.LinkedGroup group) =>
+      group.wisa?.id.value ??
+      group.smartschool?.id.value ??
+      group.azure?.id ??
+      '';
 
   /// Patches the owning snapshot from [result] and re-links, unless nothing was
   /// written. The `removed*` keys identify the record to drop for a delete

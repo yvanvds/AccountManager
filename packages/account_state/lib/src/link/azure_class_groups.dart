@@ -7,10 +7,15 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// (#228), from the linked snapshot the pure `link()` just produced.
 ///
 /// The Azure counterpart of [PlacementResolver]: it walks the linked records
-/// **once** in its constructor and exposes one tear-off, [planFor], that the
-/// State layer hands to the group dispatcher as its `azurePlanFor` callback.
-/// Keeping the walk here is what lets `account_actions` stay a pure function of
-/// its inputs.
+/// **once** in its constructor and exposes two tear-offs — [planFor], which the
+/// State layer hands to the group dispatcher as its `azurePlanFor` callback, and
+/// [placementFor] (#245), which it hands to the *student* dispatcher as its
+/// `azurePlacementFor` callback. Keeping the walk here is what lets
+/// `account_actions` stay a pure function of its inputs.
+///
+/// One resolver serving both is the point: the per-class roster diff and the
+/// per-account "are you in your class's group?" are the same fact read two ways,
+/// so they are derived from the same indexes rather than computed twice.
 ///
 /// Three questions live here that no single [LinkedGroup] can answer:
 ///
@@ -75,6 +80,24 @@ class AzureClassGroupResolver {
       if (key == null || className == null || group.wisa == null) continue;
       _ownerKeyByClass.putIfAbsent(className, () => key);
     }
+
+    // 3. The per-student view of the same facts (#245): which classes have a
+    //    group today, and which of those groups each Azure account sits in.
+    //
+    //    Only a class that still exists is indexed (`wisa != null`), which is
+    //    exactly the set the class-level `SyncAzureClassGroupMembers` can act
+    //    on — so every membership this reports has a remedy. A sub-grouped
+    //    class contributes several records that all carry the one group, and
+    //    they collapse onto the single bare-name key.
+    for (final group in linked.groups) {
+      final className = normalizeGroupName(group.className);
+      final azure = group.azure;
+      if (className == null || group.wisa == null || azure == null) continue;
+      _groupNameByClass.putIfAbsent(className, () => azure.displayName);
+      for (final memberId in _memberIdsOf(azure)) {
+        (_classesByMemberId[memberId] ??= <String>{}).add(className);
+      }
+    }
   }
 
   /// The Azure `companyName`/group-name prefix the school stamps on its own
@@ -99,6 +122,17 @@ class AzureClassGroupResolver {
   /// Normalized bare class name -> the [_ownerKeyOf] of the record that raises
   /// that class's Office 365 actions.
   final Map<String, String> _ownerKeyByClass = {};
+
+  /// Normalized bare class name -> the display name of the Office 365 group
+  /// that class **has today**, for the classes that still exist (#245). In
+  /// linked-snapshot order, so the per-student report is deterministic.
+  final Map<String, String> _groupNameByClass = {};
+
+  /// Azure object id -> the normalized bare class names of the class groups it
+  /// is currently a member of (#245). Built from the very same `memberIds`
+  /// [planFor] diffs the roster against, so the per-account and per-class views
+  /// of one student cannot disagree.
+  final Map<String, Set<String>> _classesByMemberId = {};
 
   /// The plan for one linked class, or `null` when the record names no Office
   /// 365 class group: it carries no WISA class (an orphan), the school prefix
@@ -136,6 +170,43 @@ class AzureClassGroupResolver {
       membersToRemove: <String>[
         for (final id in current)
           if (_ourStudentAzureIds.contains(id) && !roster.contains(id)) id,
+      ],
+    );
+  }
+
+  /// The Office 365 class-group placement of one student (#245) — the
+  /// per-account view of the membership [planFor] reports per class.
+  ///
+  /// The State layer hands this to the student dispatcher as its
+  /// `azurePlacementFor` callback, exactly as [planFor] is handed to the group
+  /// dispatcher. Both read the same two indexes, so a student the class plan
+  /// wants added is the same student this reports as missing.
+  ///
+  /// A record with no WISA student, no class, or no Azure account yields an
+  /// inert placement: their class group is not their account's problem yet —
+  /// `AddStudentToAzure` is.
+  AzureClassPlacement placementFor(LinkedAccount account) {
+    final wisa = account.wisa;
+    final rawName = wisa is wapi.WisaStudent ? wisa.classGroup.trim() : '';
+    final className = normalizeGroupName(rawName);
+    final groupName = _groupNameByClass[className] ??
+        azureClassGroupName(schoolPrefix, rawName);
+
+    final azureId = account.azure?.id.trim();
+    final memberOf = (azureId == null || azureId.isEmpty)
+        ? const <String>{}
+        : (_classesByMemberId[azureId] ?? const <String>{});
+
+    return AzureClassPlacement(
+      className: rawName,
+      groupName: groupName,
+      groupExists:
+          className != null && _groupNameByClass.containsKey(className),
+      isMember: className != null && memberOf.contains(className),
+      strayGroupNames: <String>[
+        for (final entry in _groupNameByClass.entries)
+          if (entry.key != className && memberOf.contains(entry.key))
+            entry.value,
       ],
     );
   }

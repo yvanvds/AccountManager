@@ -78,6 +78,34 @@ az.AzureGroup _classGroup(String className,
       memberIds: memberIds,
     );
 
+/// A Smartschool account bridged to a WISA student by `accountId ≡ wisaId`, so
+/// the linked record is complete and the student dispatch takes its modify
+/// branch — where the per-account class-group view lives (#245).
+ss.SmartschoolAccount _ssAccount(String uid, {required String accountId}) =>
+    ss.SmartschoolAccount(
+      uid: uid,
+      accountId: accountId,
+      mail: '$uid@$_domain',
+      registerId: '',
+      stemId: 0,
+      role: core.PersonRole.student,
+      givenName: 'Jane',
+      surname: 'Doe',
+      extraNames: '',
+      initials: '',
+      preferredName: '',
+      gender: core.Gender.female,
+      birthDate: _d,
+      birthPlace: '',
+      birthCountry: '',
+      address: _addr,
+      mobilePhone: '',
+      homePhone: '',
+      fax: '',
+      untisId: '',
+      status: 'actief',
+    );
+
 class _SeqResolver implements core.PersonIdResolver {
   final Map<String, String> _seen = {};
 
@@ -92,6 +120,7 @@ LinkedState _recompute({
   List<az.AzureUser> azureUsers = const [],
   List<az.AzureGroup> azureGroups = const [],
   List<core.Group> ssGroups = const [],
+  List<ss.SmartschoolAccount> ssAccounts = const [],
 }) =>
     LinkedState.recompute(
       wisa: wapi.WisaSnapshot(
@@ -104,7 +133,7 @@ LinkedState _recompute({
       smartschool: ss.SmartschoolSnapshot(
         fetchedAt: _d,
         groups: ssGroups,
-        accounts: const [],
+        accounts: ssAccounts,
         memberships: const [],
       ),
       azure: az.AzureSnapshot(
@@ -355,6 +384,194 @@ void main() {
       expect(notices, hasLength(1));
       expect(notices.single.canApply, isFalse);
       expect(notices.single.target.className, '9Z');
+    });
+  });
+
+  group('the same membership, read per account (#245)', () {
+    /// The per-student class-group actions of a linked view, keyed by the
+    /// account they target.
+    Map<String, actions.AzureClassGroupMembership> memberships(
+      LinkedState linked,
+    ) =>
+        {
+          for (final a in linked.studentActions
+              .whereType<actions.AzureClassGroupMembership>())
+            a.target.id.value: a,
+        };
+
+    test('a student missing from their own class group says so on the account',
+        () {
+      // The very state the class row reports as "1 toevoegen": w2 is on the
+      // roster of 2A but not in GBS-2A.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [
+          _student(wisaId: 'w1', classGroup: '2A'),
+          _student(wisaId: 'w2', classGroup: '2A'),
+        ],
+        ssAccounts: [
+          _ssAccount('jane', accountId: 'w1'),
+          _ssAccount('joe', accountId: 'w2'),
+        ],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-2', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1'])
+        ],
+      );
+
+      final sync =
+          _actionsOfType<actions.SyncAzureClassGroupMembers>(linked).single;
+      expect(sync.plan.membersToAdd, ['az-2'],
+          reason: 'the class row still reports the same one student');
+
+      final byAccount = memberships(linked);
+      expect(byAccount, hasLength(1),
+          reason: 'only the student the class row would add reports anything');
+      final action = byAccount.values.single;
+      expect(action.placement.className, '2A');
+      expect(action.placement.groupName, 'GBS-2A');
+      expect(action.placement.missingFromOwnGroup, isTrue);
+      expect(action.placement.strayGroupNames, isEmpty);
+      expect(action.canApply, isFalse,
+          reason: 'the class-level sync performs the one write');
+      expect(action.describeChanges().summary, contains('GBS-2A'));
+    });
+
+    test('a student left in their old class group names that group', () {
+      final linked = _recompute(
+        classGroups: [_wClass('2A'), _wClass('2B')],
+        students: [_student(wisaId: 'w1', classGroup: '2B')],
+        ssAccounts: [_ssAccount('jane', accountId: 'w1')],
+        azureUsers: [_azUser('az-1', employeeId: 'w1')],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1']),
+          _classGroup('2B', memberIds: const ['az-1']),
+        ],
+      );
+
+      final action = memberships(linked).values.single;
+      expect(action.placement.isMember, isTrue,
+          reason: 'they are already in their own 2B group');
+      expect(action.placement.missingFromOwnGroup, isFalse);
+      expect(action.placement.strayGroupNames, ['GBS-2A']);
+      expect(action.describeChanges().summary, contains('GBS-2A'));
+    });
+
+    test('the wrong class group is reported once, in both directions', () {
+      final linked = _recompute(
+        classGroups: [_wClass('2A'), _wClass('2B')],
+        students: [_student(wisaId: 'w1', classGroup: '2B')],
+        ssAccounts: [_ssAccount('jane', accountId: 'w1')],
+        azureUsers: [_azUser('az-1', employeeId: 'w1')],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1']),
+          _classGroup('2B'),
+        ],
+      );
+
+      final action = memberships(linked).values.single;
+      expect(action.placement.missingFromOwnGroup, isTrue);
+      expect(action.placement.strayGroupNames, ['GBS-2A']);
+      final summary = action.describeChanges().summary;
+      expect(summary, contains('GBS-2A in plaats van GBS-2B'));
+
+      // And it is the same fact the two class rows report, not a third one.
+      final syncs = {
+        for (final s
+            in _actionsOfType<actions.SyncAzureClassGroupMembers>(linked))
+          s.plan.className: s.plan,
+      };
+      expect(syncs['2A']!.membersToRemove, ['az-1']);
+      expect(syncs['2B']!.membersToAdd, ['az-1']);
+    });
+
+    test('a sub-grouped class reports the parent group, not the sub-group', () {
+      final linked = _recompute(
+        classGroups: [
+          _wClass('2F', groupName: 'ECO', adminCode: 'a'),
+          _wClass('2F', groupName: 'MAW', adminCode: 'b'),
+        ],
+        students: [
+          _student(wisaId: 'w1', classGroup: '2F', classSubGroup: 'ECO'),
+          _student(wisaId: 'w2', classGroup: '2F', classSubGroup: 'MAW'),
+        ],
+        ssAccounts: [
+          _ssAccount('jane', accountId: 'w1'),
+          _ssAccount('joe', accountId: 'w2'),
+        ],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-2', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('2F', memberIds: const ['az-1'])
+        ],
+      );
+
+      final byAccount = memberships(linked);
+      expect(byAccount, hasLength(1));
+      final action = byAccount.values.single;
+      expect(action.placement.groupName, 'GBS-2F',
+          reason: 'sub-groups share the parent class\'s one group');
+      expect(action.placement.strayGroupNames, isEmpty,
+          reason: 'their own group is not a stray one');
+    });
+
+    test('a class with no group yet reports nothing per student', () {
+      // CreateAzureClassGroup is the work, and it chains the roster (#245);
+      // repeating it on every student of the class would be pure noise.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        ssAccounts: [_ssAccount('jane', accountId: 'w1')],
+        azureUsers: [_azUser('az-1', employeeId: 'w1')],
+      );
+
+      expect(
+          _actionsOfType<actions.CreateAzureClassGroup>(linked), hasLength(1));
+      expect(memberships(linked), isEmpty);
+    });
+
+    test('the group of a vanished class is never reported as a stray', () {
+      // Nothing removes a member from it — AzureClassGroupWithoutClass is a
+      // manual-cleanup notice — so naming it per student would be work nobody
+      // can do.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        ssAccounts: [_ssAccount('jane', accountId: 'w1')],
+        azureUsers: [_azUser('az-1', employeeId: 'w1')],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1']),
+          _classGroup('9Z', memberIds: const ['az-1']),
+        ],
+      );
+
+      expect(_actionsOfType<actions.AzureClassGroupWithoutClass>(linked),
+          hasLength(1));
+      expect(memberships(linked), isEmpty);
+    });
+
+    test('a member this app cannot account for gets no per-account report', () {
+      // The class titular sitting in GBS-2A is not one of our students, so
+      // neither the class plan nor the per-account view names them.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        ssAccounts: [_ssAccount('jane', accountId: 'w1')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-teacher', employeeId: 'staff'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-teacher']),
+        ],
+      );
+
+      expect(memberships(linked), isEmpty);
     });
   });
 }

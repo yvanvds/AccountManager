@@ -34,8 +34,12 @@ MaterializedView materialize(
   // Group the dispatched actions by the account/staff they target.
   final byAccount = <String, List<CandidateAction>>{};
   for (final a in linked.studentActions) {
-    (byAccount[a.target.id.value] ??= <CandidateAction>[])
-        .add(_candidate('student', a, a.describeChanges(), canApply: true));
+    // Since #245 the student family has an informational member too
+    // (`AzureClassGroupMembership`), so the flag is read off the action rather
+    // than assumed — a diagnosis must not count as pending work or offer an
+    // apply the action would throw on.
+    (byAccount[a.target.id.value] ??= <CandidateAction>[]).add(
+        _candidate('student', a, a.describeChanges(), canApply: a.canApply));
   }
   final byStaff = <String, List<CandidateAction>>{};
   for (final a in linked.staffActions) {
