@@ -285,6 +285,140 @@ void main() {
     });
   });
 
+  group('the shared state carries the werkdatum it was pulled with (#247)', () {
+    DateTime? storedWerkdatum(ReconcileHarness h) =>
+        h.controller.syncState.systems[core.Origin.wisa]?.workDate;
+
+    test('a sync stamps the WISA meta with the date it asked WISA for',
+        () async {
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final wire = RecordingWisaSoap();
+      final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+
+      expect(wire.werkdatums, <String>['01/09/2025']);
+      expect(storedWerkdatum(harness), DateTime(2025, 9, 1));
+    });
+
+    test('the stamp names the pull, not whatever Instellingen now says',
+        () async {
+      // The case the issue exists for. #238 made the werkdatum live, so the
+      // setting and the installed roster routinely disagree: the operator moves
+      // the date to the new school year and, until they press Synchroniseer,
+      // the shared view is still last year's. The stamp must say *pulled*.
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+
+      live.publish(_settings(workDate: _pinned(DateTime(2026, 9, 1))));
+
+      expect(storedWerkdatum(harness), DateTime(2025, 9, 1),
+          reason: 'a save is not a pull');
+    });
+
+    test('a "volg de huidige datum" pull stamps the date it resolved to',
+        () async {
+      // The default setting, and the one that produces the reported symptom:
+      // the stamp has to name the resolved date, not the fact that it follows
+      // the clock.
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: LiveSettings(_settings()),
+      );
+
+      await harness.controller.sync();
+
+      // The harness clock is fixed at kFixtureDate (2026-07-01), and the stamp
+      // is the instant the pull resolved — not a re-ask a moment later, which
+      // is the whole reason it rides out on the snapshot.
+      expect(storedWerkdatum(harness), kFixtureDate);
+      expect(wapi.formatWerkdatum(storedWerkdatum(harness)!), '01/07/2026');
+    });
+
+    test('a passive session reads the same werkdatum off the shared store',
+        () async {
+      // The whole point of putting it on the shared record rather than in this
+      // session's log: an operator who never ran the pass can still tell which
+      // school year the view in front of them describes.
+      final linkedStore = InMemoryLinkedStore();
+      final snapshots = InMemorySnapshotStore();
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final syncer = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await syncer.controller.sync();
+
+      final passive = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await passive.controller.loadOverview();
+
+      expect(storedWerkdatum(passive), DateTime(2025, 9, 1));
+    });
+
+    test('a drift pass that does not re-pull WISA keeps the roster stamp',
+        () async {
+      // Check-for-drift re-reads Smartschool and Azure only, so the roster —
+      // and the date it is as of — is still the one the last sync installed.
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+      await harness.controller.checkDrift();
+
+      expect(harness.controller.syncState.generation, 2,
+          reason: 'the drift pass really did rewrite the view');
+      expect(storedWerkdatum(harness), DateTime(2025, 9, 1));
+    });
+
+    test('the "WISA unchanged" shortcut still records the new werkdatum',
+        () async {
+      // A werkdatum change that lands the identical roster skips the re-link,
+      // but the view is now known to describe a different date — and the light
+      // metadata write is what has to carry it.
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+      final generation = harness.controller.syncState.generation;
+
+      live.publish(_settings(workDate: _pinned(DateTime(2026, 9, 1))));
+      await harness.controller.sync();
+
+      expect(harness.controller.syncState.generation, generation,
+          reason: 'an unchanged roster is not a new view');
+      expect(storedWerkdatum(harness), DateTime(2026, 9, 1));
+    });
+
+    test('a scripted pull that never named a werkdatum stamps none', () async {
+      // Every other harness builds its WISA snapshot by hand, and a snapshot
+      // restored from a pre-#247 document carries no date either. Neither may
+      // be given one it does not have.
+      final harness = ReconcileHarness();
+      await harness.controller.sync();
+
+      expect(harness.controller.syncState.systems[core.Origin.wisa], isNotNull);
+      expect(storedWerkdatum(harness), isNull);
+    });
+  });
+
   group('wisaSyncer', () {
     test('reads the rules live too, so a DontImportFromWisa apply lands (#72)',
         () async {

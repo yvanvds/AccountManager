@@ -2102,9 +2102,19 @@ class ReconcileController extends ChangeNotifier {
 
   /// Stamps [snapshot]'s fetch time against [system] for this pass, folded into
   /// the shared store's per-system freshness on persist (#108).
+  ///
+  /// A WISA pull also stamps the **werkdatum** it asked for (#247), taken off
+  /// the snapshot the connector built rather than re-resolved here: with
+  /// `isNow: true` the date is resolved inside the pull, so asking the live
+  /// settings a second time could answer for a different day (a pass running
+  /// across midnight) or for a document saved while the pull was in flight.
+  /// The one place that resolved it is the only place that can say what it was.
   void _recordPull(core.Origin system, core.Snapshot snapshot) {
-    _pulled[system] =
-        SystemSyncMeta(syncedBy: syncedBy, at: snapshot.fetchedAt);
+    _pulled[system] = SystemSyncMeta(
+      syncedBy: syncedBy,
+      at: snapshot.fetchedAt,
+      workDate: snapshot is wapi.WisaSnapshot ? snapshot.workDate : null,
+    );
   }
 
   /// Stamps the smart-sync "WISA unchanged" path: nothing was re-linked, so the

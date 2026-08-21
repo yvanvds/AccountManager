@@ -1840,6 +1840,8 @@ MaterializedAccount matStaff({
 Future<InMemoryLinkedStore> seededLinkedStore(
   List<MaterializedAccount> accounts, {
   String syncedBy = 'operator@school.example',
+  Map<core.Origin, SystemSyncMeta> systemSyncs =
+      const <core.Origin, SystemSyncMeta>{},
 }) async {
   final store = InMemoryLinkedStore();
   await store.writeMaterialized(
@@ -1850,6 +1852,10 @@ Future<InMemoryLinkedStore> seededLinkedStore(
     ),
     syncedBy: syncedBy,
     at: kFixtureDate,
+    // The per-system stamps another operator's sync left behind (#108), the
+    // WISA one of which also names the werkdatum the roster is as of (#247).
+    // Empty by default: most fixtures only need the view itself.
+    systemSyncs: systemSyncs,
   );
   return store;
 }

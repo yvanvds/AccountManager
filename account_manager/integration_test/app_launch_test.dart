@@ -5053,6 +5053,108 @@ void main() {
   });
 
   testWidgets(
+      "the Acties overview's freshness stamp names the werkdatum the shared "
+      'view was pulled with, and holds it across a settings save (#247)',
+      (WidgetTester tester) async {
+    // #239 put the werkdatum in the Log panel, which is a *session* diagnostic:
+    // it is gone when the app closes, and a passive operator reading the shared
+    // view never saw it at all. The date is a per-pass input the whole
+    // materialized view depends on, so it belongs beside "wie synchroniseerde,
+    // wanneer" — and it has to name the pull, not the setting, because #238
+    // made those two able to disagree. Driven over the *production* WISA pull
+    // and the real Instellingen form, so the date on screen is the one that
+    // really went on the wire.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(wire.werkdatums, <String>['01/09/2025']);
+
+    // The overview names the school year it describes, in the wire's own
+    // dd/MM/yyyy, on the same line as the generation and the operator.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Generatie 1 · ', skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('· werkdatum 01/09/2025', skipOffstage: false),
+      findsOneWidget,
+    );
+
+    // The operator moves the werkdatum in Instellingen and saves. That is the
+    // *next* pull's input; the view on Acties is still the one pulled as of
+    // 01/09/2025 and must keep saying so.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    final pick = find.byKey(const ValueKey('settings-workdate-pick'));
+    await tester.ensureVisible(pick);
+    await tester.pumpAndSettle();
+    await tester.tap(pick);
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('15'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('· werkdatum 01/09/2025', skipOffstage: false),
+      findsOneWidget,
+      reason: 'the stamp describes the pull, not the pending setting',
+    );
+    expect(
+      find.textContaining('15/09/2025', skipOffstage: false),
+      findsNothing,
+    );
+
+    // Only the Synchroniseer moves it — the same pass that moves the roster.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(wire.werkdatums, <String>['01/09/2025', '15/09/2025']);
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('· werkdatum 15/09/2025', skipOffstage: false),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
       'a Check for drift whose stored Azure delta token Graph refuses still '
       'finishes, on a full re-read that leaves a usable token behind, and '
       'reads as the clean pass it was (#213/#229)',

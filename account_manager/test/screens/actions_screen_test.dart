@@ -1404,6 +1404,93 @@ void main() {
         reason: 'a stamp from a past day is never rendered as bare time');
   });
 
+  testWidgets(
+      "the overview's freshness stamp names the werkdatum the roster was "
+      'pulled with (#247)', (WidgetTester tester) async {
+    // "Wie synchroniseerde, wanneer" says when the pass ran, never which school
+    // year it describes — and WISA answers *as of* a date, so a pull made on
+    // the wrong side of the rollover reads here exactly like a class that went
+    // missing (#239). The stamp comes off the shared per-system record, so this
+    // passive session reads the date without having run the pull.
+    final store = await seededLinkedStore(
+      <MaterializedAccount>[
+        matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+      ],
+      systemSyncs: <Origin, SystemSyncMeta>{
+        Origin.wisa: SystemSyncMeta(
+          syncedBy: 'operator@school.example',
+          at: kFixtureDate,
+          workDate: DateTime(2025, 9, 1),
+        ),
+      },
+    );
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // In the wire's own dd/MM/yyyy, the way the Log panel's pull line and the
+    // `Werkdatum` SOAP parameter both spell it.
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a shared view synced before the werkdatum was recorded renders the '
+      'stamp unchanged (#247)', (WidgetTester tester) async {
+    // The store in production already holds views written without it, and a
+    // Smartschool/Azure-only stamp never has one. Neither may invent a date,
+    // and neither may lose the "wie, wanneer" half over its absence.
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('werkdatum'), findsNothing);
+    expect(
+      find.textContaining('Generatie 1'),
+      findsOneWidget,
+      reason: 'the who/when half stands on its own',
+    );
+  });
+
+  testWidgets(
+      'the stamp names the werkdatum the stored view was pulled with, not the '
+      'one Instellingen now holds (#247)', (WidgetTester tester) async {
+    // The disagreement the issue is about. #238 made the werkdatum live, so
+    // between a save and the next Synchroniseer the setting says one school
+    // year and the installed roster is another. Driven over the *production*
+    // WISA pull, so the date on screen is the one that really went out.
+    final live = LiveSettings(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    ));
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    await harness.controller.sync();
+    expect(wire.werkdatums, <String>['01/09/2025']);
+
+    // The operator moves the werkdatum to the new school year and saves. Until
+    // they sync, the overview below is still the old year's.
+    live.publish(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
+      ),
+    ));
+
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+    expect(find.textContaining('01/09/2026'), findsNothing,
+        reason: 'a saved werkdatum describes the next pull, not this view');
+  });
+
   // --- The read-only drill-down state (#214) -------------------------------
 
   final readOnly = find.byKey(const ValueKey('actions-read-only'));

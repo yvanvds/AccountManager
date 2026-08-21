@@ -13,6 +13,9 @@ import 'package:account_state/account_state.dart'
         pendingDecisionCount;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
+// The `Werkdatum` SOAP parameter's own formatter, so the overview names the
+// date exactly as it went on the wire and as the Log panel reports it (#247).
+import 'package:wisa_api/wisa_api.dart' as wapi show formatWerkdatum;
 
 import '../format/timestamps.dart';
 import '../reconcile/reconcile_bootstrap.dart';
@@ -1457,6 +1460,18 @@ class _DrillDownSection extends StatelessWidget {
     );
   }
 
+  /// The one-line freshness stamp above the tree: which generation of the
+  /// shared view this is, when it was materialized, by whom — and, since #247,
+  /// the werkdatum the WISA roster underneath it was pulled with.
+  ///
+  /// That last part is not a restatement of the timestamp. WISA answers *as
+  /// of* a date, so "gisteren 09:14 door jan" says when the pass ran, never
+  /// which school year it describes; a pass run on the wrong side of the
+  /// rollover reads on Acties exactly like a class that went missing (#239).
+  /// It comes off the shared per-system stamp rather than the operator's own
+  /// Instellingen, so it names the date this *stored view* was pulled with even
+  /// when the setting has since moved on (#238) — and a passive session that
+  /// never ran the pass reads the same line.
   String? _freshness() {
     final state = controller.syncState;
     if (state.generation == 0) return null;
@@ -1467,7 +1482,14 @@ class _DrillDownSection extends StatelessWidget {
     final who = state.updatedBy == null || state.updatedBy!.isEmpty
         ? ''
         : ' door ${state.updatedBy}';
-    return 'Generatie ${state.generation}$when$who';
+    // Rendered with the connector's own formatter, so it reads exactly as the
+    // `Werkdatum` SOAP parameter went out and as the Log panel's pull line
+    // names it. Absent on a view synced before #247 recorded it.
+    final workDate = state.systems[core.Origin.wisa]?.workDate;
+    final asOf = workDate == null
+        ? ''
+        : ' · werkdatum ${wapi.formatWerkdatum(workDate)}';
+    return 'Generatie ${state.generation}$when$who$asOf';
   }
 
   @override

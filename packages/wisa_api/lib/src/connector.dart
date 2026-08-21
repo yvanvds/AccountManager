@@ -163,6 +163,10 @@ class WisaConnector {
 
     return WisaSnapshot(
       fetchedAt: DateTime.now(),
+      // The roster is only meaningful together with the date it is *as of*, so
+      // the snapshot carries it out of here rather than leaving the caller to
+      // re-derive a date that may already have moved on (#247).
+      workDate: workDate,
       students: allStudents,
       staff: applyRulesToStaff(allStaff, rules),
       classGroups: applyRulesToClassGroups(allClassGroups, rules),
