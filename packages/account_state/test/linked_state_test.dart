@@ -255,6 +255,113 @@ void main() {
       expect(placement.className, '3C');
     });
 
+    test(
+        'two schools that each have their own single-group 1C keep the bare '
+        'name — admin codes never pool across schools (#221)', () {
+      // `ADMINGROEP` is only unique *within* a school, and the snapshot pools
+      // every school. Keyed on the name alone, school 1's `a1` and school 2's
+      // `a2` read as two admin codes for "1C", so both schools' students got
+      // their `KLASGROEP` appended and every one of them was proposed for a
+      // move to the non-existent class "1C 00".
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(
+                wisaId: '1',
+                classGroup: '1C',
+                classSubGroup: '00',
+                schoolId: 1),
+            _wStudent(
+                wisaId: '2',
+                classGroup: '1C',
+                classSubGroup: '00',
+                schoolId: 2),
+          ],
+          classGroups: [
+            _wClass('1C', adminCode: 'a1', schoolId: 1),
+            _wClass('1C', adminCode: 'a2', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1C');
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '2')).className,
+          '1C');
+    });
+
+    test(
+        'a genuinely sub-grouped class still widens even when another school '
+        'shares its name (#221)', () {
+      // The over-correction guard: per-school scoping must not swallow a real
+      // split. School 1's `1A` has two admin codes of its own.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: 'A'),
+            _wStudent(
+                wisaId: '2',
+                classGroup: '1A',
+                classSubGroup: '00',
+                schoolId: 2),
+          ],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+            _wClass('1A', adminCode: 'z9', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1A A');
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '2')).className,
+          '1A',
+          reason: 'school 2\'s own 1A is single-group');
+    });
+
+    test(
+        'a student whose KLASGROEP is the 00 sentinel keeps the bare name even '
+        'in a sub-grouped class (#221)', () {
+      // `00` means "no sub-groups" — it names no group, so it is never part of
+      // a class name (the guard `WisaClassGroup.fullName` already applies).
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '00'),
+          ],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1A');
+    });
+
+    test('a blank sub-group never leaves a trailing separator (#221)', () {
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [
+            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '  '),
+          ],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+          '1A');
+    });
+
     test('currentClass is the student\'s official-class membership', () {
       final resolver = PlacementResolver(
         wisa: _wSnap(students: [_wStudent(wisaId: '1', classGroup: '3C')]),

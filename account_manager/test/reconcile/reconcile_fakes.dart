@@ -258,16 +258,20 @@ class RecordingPasswordBackends implements PasswordBackends {
 // Record + snapshot builders.
 // ---------------------------------------------------------------------------
 
+/// A WISA student. [classSubGroup] is the raw `KLASGROEP` column: a real
+/// sub-group code for a split class, or the `00` "no sub-groups" sentinel —
+/// which must never end up in the student's class name (#221).
 wapi.WisaStudent wisaStudent({
   String wisaId = '1',
   String classGroup = '3C',
+  String classSubGroup = '',
   int schoolId = 1,
   core.Address address = _addr,
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
       classGroup: classGroup,
-      classSubGroup: '',
+      classSubGroup: classSubGroup,
       name: 'Doe',
       firstName: 'Jane',
       preferredName: '',
@@ -713,6 +717,64 @@ ReconcileHarness virtualClassGroupHarness() => ReconcileHarness(
       ),
       azure: azSnap(users: const []),
       ourSchoolIds: const {1, 99},
+    );
+
+/// A harness for the `00` sub-group sentinel (#221). Two managed schools that
+/// each have their own `1C`, and each of those is a **single-group** class: one
+/// `SyncKlas` row with `KLASGROEP = 00` and — because `ADMINGROEP` is only
+/// unique within a school — a *different* `ADMINGROEP` from the other school's.
+///
+/// Both students are already in the Smartschool class `1C` their WISA record
+/// names, so a correct pass proposes nothing. Before the fix the two schools'
+/// admin codes pooled under the bare name `1C`, the class read as sub-grouped,
+/// and each student's `KLASGROEP` was appended verbatim — so every student of
+/// both classes was offered "Wijzig de klas in Smartschool: 1C → 1C 00", a move
+/// into a class that exists nowhere.
+ReconcileHarness subGroupSentinelHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1C', classSubGroup: '00'),
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '1C',
+            classSubGroup: '00',
+            schoolId: 2,
+          ),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+        classGroups: [
+          wisaClassGroup('1C', adminCode: 'a1', schoolCode: '111'),
+          wisaClassGroup(
+            '1C',
+            adminCode: 'a2',
+            schoolCode: '222',
+            schoolId: 2,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('1C', code: '1C_ss')],
+        accounts: [
+          ssAccount(),
+          ssAccount(
+            uid: 'jan',
+            accountId: '2',
+            mail: 'jan.peeters@student.school.example',
+            givenName: 'Jan',
+            surname: 'Peeters',
+          ),
+        ],
+        memberships: [member('jane', '1C_ss'), member('jan', '1C_ss')],
+      ),
+      azure: azSnap(users: [
+        azUser(),
+        azUser(
+          id: 'az2',
+          upn: 'jan.peeters@student.school.example',
+          employeeId: '2',
+        ),
+      ]),
+      ourSchoolIds: const {1, 2},
     );
 
 /// A harness for the school-label drill-down (#204). One student enrolled in

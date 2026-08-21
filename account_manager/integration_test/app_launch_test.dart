@@ -1209,6 +1209,96 @@ void main() {
   });
 
   testWidgets(
+      'a single-group class whose name another school shares raises no class '
+      'change, and "00" never reaches a class name end-to-end (#221)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Two managed schools each have
+    // their own single-group `1C` — one `SyncKlas` row, `KLASGROEP = 00`, and
+    // (because `ADMINGROEP` is only unique within a school) a different
+    // `ADMINGROEP` each. Both students already sit in the Smartschool `1C`
+    // their WISA record names, so the correct pass proposes nothing.
+    //
+    // Before the fix the two schools' admin codes pooled under the bare name
+    // `1C`, the class read as sub-grouped, and each student's `KLASGROEP` was
+    // appended verbatim: every student of both classes was offered "Wijzig de
+    // klas in Smartschool — 1C → 1C 00", a move into a class that exists
+    // nowhere. This is the layer that sees it: the misclassification needs two
+    // schools in one snapshot, which no single-resolver assertion composes.
+    useTallWindow(tester);
+    final harness = subGroupSentinelHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Not one class move is proposed anywhere in the pass, and no projected
+    // change carries the sentinel.
+    final alternatives = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives);
+    expect(
+      alternatives.map((a) => a.kind),
+      isNot(contains('MoveToSmartschoolClassGroup')),
+      reason: 'both classes are single-group — nobody moves',
+    );
+    expect(
+      alternatives
+          .expand((a) => a.changes.fields)
+          .expand((f) => <String?>[f.before, f.after]),
+      isNot(contains('1C 00')),
+      reason: 'the "no sub-groups" sentinel is never part of a class name',
+    );
+
+    // Browse it the way the operator does: the merged first year holds both
+    // schools' `1C`, each still keyed to its own school partition. Closing a
+    // classroom rebuilds — and so collapses — the drill-down tree, so the year
+    // is re-opened for each school.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    Future<void> openYear() async {
+      final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+      await tester.ensureVisible(yearNode);
+      await tester.tap(yearNode);
+      await tester.pumpAndSettle();
+    }
+
+    await openYear();
+    expect(find.text('1C 00'), findsNothing,
+        reason: 'the sentinel never names a class in the drill-down either');
+
+    // Each school's class in turn: opened, and carrying no class-change row.
+    for (final school in <String>['1', '2']) {
+      if (harness.controller.selectedClassroom != null) {
+        await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+        await tester.pumpAndSettle();
+        await openYear();
+      }
+      final classNode = find.byKey(ValueKey('rollup-class-class|$school|1|1C'));
+      expect(classNode, findsOneWidget);
+      await tester.ensureVisible(classNode);
+      await tester.tap(classNode);
+      await tester.pumpAndSettle();
+
+      // The drill-down really opened (both the populated and the empty branch
+      // render this header), so the absence assertions below mean something.
+      expect(
+          find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+      expect(harness.controller.selectedClassroom?.school, school);
+      expect(find.text('Wijzig de klas in Smartschool'), findsNothing,
+          reason: 'school $school\'s 1C is single-group — no move is due');
+      expect(find.textContaining('1C 00'), findsNothing);
+    }
+  });
+
+  testWidgets(
       'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
       'staff drill in one tab, students in the other (#179)',
       (WidgetTester tester) async {
