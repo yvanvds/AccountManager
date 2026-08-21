@@ -157,6 +157,69 @@ String? groupNameFingerprint(String? name) =>
 final RegExp _whitespaceRun =
     RegExp(r'[\s\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+');
 
+/// The Office 365 group name for a class: `<PREFIX>-<KLAS>` (#228).
+///
+/// [className] is the **bare** WISA class name \u2014 `2F`, never the sub-grouped
+/// `2F ECO`: sub-groups get no group of their own, so every one of their
+/// students belongs to the parent class's group. The same string is used as the
+/// group's `displayName` and its `mailNickname`, which makes the resulting
+/// address `<PREFIX>-<KLAS>@<studentdomein>`.
+///
+/// Returns `null` when either half is blank \u2014 there is no group to name then.
+String? azureClassGroupName(String? schoolPrefix, String? className) {
+  final prefix = schoolPrefix?.trim() ?? '';
+  final name = className?.trim() ?? '';
+  if (prefix.isEmpty || name.isEmpty) return null;
+  return '$prefix-$name';
+}
+
+/// The bare class name an Azure group's [displayName] stands for, given the
+/// school's [schoolPrefix] \u2014 the inverse of [azureClassGroupName] (#228).
+///
+/// The Azure side of the class-group bridge is **prefix-aware**: a group named
+/// `SSM-2A` is the Office 365 group of class `2A`, and matching its display name
+/// against the WISA class name directly never joins the two. Comparison of the
+/// prefix is case-insensitive (INV-12); the remainder is returned as written so
+/// it can be displayed.
+///
+/// Returns `null` when [displayName] is not in our `<PREFIX>-` namespace, or
+/// when nothing follows the separator.
+String? azureClassNameOf(String? displayName, String? schoolPrefix) {
+  final name = displayName?.trim() ?? '';
+  final prefix = schoolPrefix?.trim() ?? '';
+  if (name.isEmpty || prefix.isEmpty) return null;
+  final marker = '$prefix-';
+  if (name.length <= marker.length) return null;
+  if (name.substring(0, marker.length).toLowerCase() != marker.toLowerCase()) {
+    return null;
+  }
+  final bare = name.substring(marker.length).trim();
+  return bare.isEmpty ? null : bare;
+}
+
+/// Whether [nickname] is usable verbatim as a Graph `mailNickname` (#228).
+///
+/// Bare class names carry no spaces, so `<PREFIX>-<KLAS>` needs no slug rule \u2014
+/// but nothing *enforces* that on the WISA side, and Graph rejects a create
+/// whose nickname holds a space, a diacritic, or one of its reserved
+/// characters. The group actions consult this instead of silently mangling a
+/// name into something the operator never asked for: an unusable name means no
+/// create is proposed at all.
+///
+/// Graph accepts ASCII 0\u2013127 except ``@ ( ) \ [ ] " ; : < > ,`` and space.
+bool isValidMailNickname(String? nickname) {
+  final value = nickname ?? '';
+  if (value.isEmpty || value.trim().length != value.length) return false;
+  for (final unit in value.codeUnits) {
+    if (unit < 0x21 || unit > 0x7e) return false;
+    if (_reservedNicknameChars.contains(unit)) return false;
+  }
+  return true;
+}
+
+/// The characters Graph refuses inside a `mailNickname`, as code units.
+final Set<int> _reservedNicknameChars = '@()\\[]";:<>,'.codeUnits.toSet();
+
 /// First-class many-to-many link between a [Person] and a [Group].
 ///
 /// Replaces the legacy "groups own their members" model. Multiple memberships

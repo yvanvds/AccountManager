@@ -1289,6 +1289,96 @@ void main() {
   });
 
   testWidgets(
+      'a class without an Office 365 group is proposed once — named after the '
+      'parent class — and applying it creates a unified group end-to-end '
+      '(#228)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Graph write
+    // path. Our school runs `1A` (already provisioned as GBS-1A, with its
+    // student in it) and the sub-grouped `2F` (`2F ECO` + `2F MAW`), which has
+    // no group at all. Four linked class records, one missing group.
+    //
+    // This is the layer that sees the two things that matter: that the operator
+    // gets **one** proposal rather than one per sub-group — the bare class name
+    // is gone by the time an action sees a record, so a naive implementation
+    // offers `GBS-2F ECO` and `GBS-2F MAW` — and that the write Graph receives
+    // is a mail-enabled Microsoft 365 group, not the security group legacy made
+    // for staff.
+    useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // One proposal, named after the parent class `2F` — not `2F ECO`.
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(
+      find.text('Maak de Office 365-groep GBS-2F voor klas 2F'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('GBS-2F ECO'), findsNothing,
+        reason: 'sub-groups get no group of their own');
+    expect(find.byKey(const ValueKey('entry-group-1A')), findsNothing,
+        reason: 'GBS-1A exists and holds its student — nothing to propose');
+
+    // The group of a class that no longer exists is reported, never deleted.
+    expect(
+      find.textContaining('De klas 9Z bestaat niet meer'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets);
+
+    // Expand the class's row and apply just it.
+    const entry = ValueKey('entry-group-2F ECO');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    const row = ValueKey('entry-apply-2F ECO');
+    await tester.ensureVisible(find.byKey(row));
+    await tester.tap(find.byKey(row));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+
+    // Graph was asked for exactly one group, and for the right kind of group.
+    expect(harness.graph.createdGroups, hasLength(1));
+    final body = harness.graph.createdGroups.single;
+    expect(body['displayName'], 'GBS-2F');
+    expect(body['mailNickname'], 'GBS-2F');
+    expect(body['groupTypes'], ['Unified']);
+    expect(body['mailEnabled'], isTrue);
+    expect(body['securityEnabled'], isFalse);
+
+    // The created group is spliced into the snapshot, so the very next render
+    // no longer offers the create — it offers the roster the empty group needs.
+    final kinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(kinds, isNot(contains('CreateAzureClassGroup')));
+    expect(kinds, contains('SyncAzureClassGroupMembers'));
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-2F bij (2 toevoegen'),
+      findsOneWidget,
+      reason: 'both sub-groups\' students belong to the one parent group',
+    );
+  });
+
+  testWidgets(
       'the Acties drill-down opens on grade-years merged across the managed '
       'schools end-to-end, with no school level to guess at (#210)',
       (WidgetTester tester) async {

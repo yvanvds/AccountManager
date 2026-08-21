@@ -297,6 +297,11 @@ class StateApplier {
         final current = app.azure.snapshot!;
         if (result.removed) {
           app.azure.patch(_dropAzureUser(current, removedAzureId));
+        } else if (result.azureGroup != null) {
+          // An Office 365 class group was created or had its membership
+          // rewritten (#228) — patch the snapshot's group list so the relink
+          // below sees the class as provisioned/in sync without a re-pull.
+          app.azure.patch(_putAzureGroup(current, result.azureGroup!));
         } else if (result.azure != null) {
           app.azure.patch(_putAzureUser(current, result.azure!));
         }
@@ -552,6 +557,27 @@ az.AzureSnapshot _putAzureUser(az.AzureSnapshot current, core.AzureUser user) {
     deltaToken: current.deltaToken,
     users: users,
     groups: current.groups,
+  );
+}
+
+az.AzureSnapshot _putAzureGroup(
+  az.AzureSnapshot current,
+  core.AzureGroup group,
+) {
+  final record = group as az.AzureGroup;
+  // Keyed by Azure object id, like the user splice. Only a real write reaches
+  // here (a dry run never refreshes), so a created group already carries the id
+  // Graph minted and a membership rewrite carries the group's own.
+  final groups = [
+    for (final g in current.groups)
+      if (g.id != record.id) g,
+    record,
+  ];
+  return az.AzureSnapshot(
+    fetchedAt: current.fetchedAt,
+    deltaToken: current.deltaToken,
+    users: current.users,
+    groups: groups,
   );
 }
 

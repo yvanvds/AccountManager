@@ -79,6 +79,16 @@ class _RecordingGraph implements az.GraphTransport {
       );
       return _ok({...body, 'id': 'az-created-${++_created}'}, 201);
     }
+    if (request.method == 'POST' && request.url.path.endsWith('/groups')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      return _ok({
+        ...body,
+        'id': 'az-group-${++_created}',
+        'mail': '${body['mailNickname']}@student.school.example',
+      }, 201);
+    }
     return const az.GraphResponse(statusCode: 204);
   }
 
@@ -193,12 +203,13 @@ az.AzureUser _azUser({
 wapi.WisaSnapshot _wSnap({
   List<wapi.WisaStudent> students = const [],
   List<wapi.WisaStaff> staff = const [],
+  List<wapi.WisaClassGroup> classGroups = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: _d,
       students: students,
       staff: staff,
-      classGroups: const [],
+      classGroups: classGroups,
       schools: const [],
     );
 
@@ -211,8 +222,11 @@ ss.SmartschoolSnapshot _sSnap(
       memberships: const [],
     );
 
-az.AzureSnapshot _aSnap({List<az.AzureUser> users = const []}) =>
-    az.AzureSnapshot(fetchedAt: _d, users: users, groups: const []);
+az.AzureSnapshot _aSnap({
+  List<az.AzureUser> users = const [],
+  List<az.AzureGroup> groups = const [],
+}) =>
+    az.AzureSnapshot(fetchedAt: _d, users: users, groups: groups);
 
 core.LinkedAccount _linkedStudent({
   wapi.WisaStudent? wisa,
@@ -608,6 +622,101 @@ void main() {
       expect(
         harness.app.smartschool.snapshot!.accounts.map((a) => a.uid),
         containsAll(['jan.peeters', 'jan.peeters1', 'jan.peeters2']),
+      );
+    });
+  });
+
+  group('Office 365 class groups (#228)', () {
+    /// A WISA class with one enrolled student who already has an Office 365
+    /// account — the state that raises the class-group create.
+    _Harness classHarness({List<az.AzureGroup> groups = const []}) => _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1', classGroup: '2A')],
+            classGroups: [
+              const wapi.WisaClassGroup(
+                name: '2A',
+                groupName: '00',
+                description: 'Klas 2A',
+                adminCode: '',
+                schoolCode: '123',
+                schoolId: 1,
+              ),
+            ],
+          ),
+          azure: _aSnap(
+            users: [_azUser(id: 'az-1', employeeId: 'W1')],
+            groups: groups,
+          ),
+        );
+
+    test('a create patches the Azure snapshot, so the relink sees the group',
+        () async {
+      final harness = classHarness();
+      final before = await harness.applier.link();
+      final create = before.groupActions.whereType<CreateAzureClassGroup>();
+      expect(create, hasLength(1),
+          reason: 'the class has students and no Office 365 group yet');
+
+      final applied = await harness.applier.applyGroup(create.single);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.refreshed, isTrue);
+      expect(
+        harness.app.azure.snapshot!.groups.map((g) => g.displayName),
+        ['SSM-2A'],
+        reason: 'no re-sync — the created group is spliced in (#72)',
+      );
+      expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
+      // The relinked view no longer offers the create; the class is provisioned.
+      expect(applied.linked!.groupActions.whereType<CreateAzureClassGroup>(),
+          isEmpty);
+    });
+
+    test('a membership sync patches the members in place', () async {
+      final harness = classHarness(groups: [
+        az.AzureGroup(
+          id: 'az-2A',
+          displayName: 'SSM-2A',
+          mail: 'SSM-2A@student.school.example',
+          mailNickname: 'SSM-2A',
+        ),
+      ]);
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<SyncAzureClassGroupMembers>().single;
+      expect(sync.plan.membersToAdd, ['az-1']);
+
+      final applied = await harness.applier.applyGroup(sync);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(
+        (harness.app.azure.snapshot!.groups.single).memberIds,
+        ['az-1'],
+      );
+      expect(
+        applied.linked!.groupActions.whereType<SyncAzureClassGroupMembers>(),
+        isEmpty,
+        reason: 'the class reads as in sync straight after the write',
+      );
+    });
+
+    test('a dry run writes nothing and patches nothing', () async {
+      final harness = classHarness();
+      final before = await harness.applier.link();
+      final create =
+          before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+      final applied = await harness.applier.applyGroup(
+        create,
+        options: const ApplyOptions(dryRun: true),
+      );
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(applied.refreshed, isFalse);
+      expect(harness.app.azure.snapshot!.groups, isEmpty);
+      expect(
+        harness.graph.requests.where((r) => r.method == 'POST'),
+        isEmpty,
       );
     });
   });

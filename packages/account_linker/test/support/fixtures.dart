@@ -183,11 +183,40 @@ Group ssGroup(
       origin: Origin.smartschool,
     );
 
-/// An Azure group, matched to WISA by [displayName]. [id] defaults to
-/// [displayName].
-az.AzureGroup azureGroup(String displayName, {String? id}) => az.AzureGroup(
+/// An Azure group, matched to WISA by [displayName] — prefix-aware for a class
+/// group, so `Arcadia-2A` is the group of class `2A` (#228). [id] defaults to
+/// [displayName]. Pass [mail]/[mailNickname] to make it a *unified* group, the
+/// shape a class group has.
+az.AzureGroup azureGroup(
+  String displayName, {
+  String? id,
+  String? mail,
+  String? mailNickname,
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
       id: id ?? displayName,
       displayName: displayName,
+      mail: mail,
+      mailNickname: mailNickname,
+      memberIds: memberIds,
+    );
+
+/// A *unified* (Microsoft 365) class group named the way this app creates one:
+/// `<prefix>-<class>` as both display name and mail nickname (#228).
+az.AzureGroup azureClassGroup(
+  String prefix,
+  String className, {
+  String? id,
+  String domain = 'student.s.be',
+  List<String> memberIds = const [],
+}) =>
+    azureGroup(
+      '$prefix-$className',
+      id: id ?? '$prefix-$className',
+      mail: '$prefix-$className@$domain',
+      mailNickname: '$prefix-$className',
+      memberIds: memberIds,
     );
 
 wapi.WisaSnapshot wisaSnap(

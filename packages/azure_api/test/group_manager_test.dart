@@ -34,7 +34,7 @@ void main() {
       );
       expect(
         groupCall.url.queryParameters[r'$select'],
-        'id,displayName,securityEnabled',
+        'id,displayName,securityEnabled,mail,mailNickname',
       );
       expect(groupCall.headers['ConsistencyLevel'], 'eventual');
     });
@@ -88,6 +88,89 @@ void main() {
         log.messages.where((m) => m.contains('groepen opgehaald')),
         isEmpty,
       );
+    });
+  });
+
+  group('class-group creation (#228)', () {
+    test('creates a mail-enabled unified group, not a security group',
+        () async {
+      final transport = FakeGraphTransport((req) => jsonOk({
+            'id': 'g-new',
+            'displayName': req.body == null
+                ? ''
+                : (jsonDecode(req.body!)
+                    as Map<String, dynamic>)['displayName'],
+            'mail': 'GBS-2A@student.school.example',
+            'mailNickname': 'GBS-2A',
+          }));
+      final groups = GroupManager(clientWith(transport));
+
+      final created = await groups.createGroup(
+        displayName: 'GBS-2A',
+        mailNickname: 'GBS-2A',
+        description: 'Tweede jaar A',
+      );
+
+      expect(transport.last.method, 'POST');
+      expect(transport.last.url.path, endsWith('/groups'));
+      final body = jsonDecode(transport.last.body!) as Map<String, dynamic>;
+      expect(body['groupTypes'], ['Unified']);
+      expect(body['mailEnabled'], isTrue);
+      expect(body['securityEnabled'], isFalse);
+      expect(body['displayName'], 'GBS-2A');
+      expect(body['mailNickname'], 'GBS-2A');
+      expect(body['description'], 'Tweede jaar A');
+
+      expect(created.id, 'g-new');
+      expect(created.mail, 'GBS-2A@student.school.example');
+      expect(created.mailNickname, 'GBS-2A');
+      expect(created.isUnified, isTrue);
+      expect(created.memberIds, isEmpty,
+          reason: 'membership is a separate write');
+    });
+
+    test('an empty description is left out of the body entirely', () async {
+      final transport = FakeGraphTransport((_) => jsonOk({'id': 'g-new'}));
+      final groups = GroupManager(clientWith(transport));
+      await groups.createGroup(displayName: 'GBS-2A', mailNickname: 'GBS-2A');
+      final body = jsonDecode(transport.last.body!) as Map<String, dynamic>;
+      expect(body.containsKey('description'), isFalse);
+    });
+
+    test('findByMailNickname filters on the nickname and returns the group',
+        () async {
+      final transport = FakeGraphTransport((_) => jsonOk({
+            'value': [
+              {
+                'id': 'g-1',
+                'displayName': 'GBS-2A',
+                'mail': 'GBS-2A@student.school.example',
+                'mailNickname': 'GBS-2A',
+              },
+            ],
+          }));
+      final groups = GroupManager(clientWith(transport));
+
+      final found = await groups.findByMailNickname('GBS-2A');
+
+      expect(transport.last.url.queryParameters[r'$filter'],
+          "mailNickname eq 'GBS-2A'");
+      expect(transport.last.headers['ConsistencyLevel'], 'eventual');
+      expect(found?.id, 'g-1');
+    });
+
+    test('findByMailNickname returns null when the tenant has none', () async {
+      final transport =
+          FakeGraphTransport((_) => jsonOk({'value': const <Object>[]}));
+      final groups = GroupManager(clientWith(transport));
+      expect(await groups.findByMailNickname('GBS-2A'), isNull);
+    });
+
+    test('a blank nickname short-circuits without a call', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final groups = GroupManager(clientWith(transport));
+      expect(await groups.findByMailNickname('  '), isNull);
+      expect(transport.requests, isEmpty);
     });
   });
 

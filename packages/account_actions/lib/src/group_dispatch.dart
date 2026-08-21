@@ -1,5 +1,6 @@
 import 'package:account_core/account_core.dart';
 
+import 'azure_class_group.dart';
 import 'group_action.dart';
 import 'group_placement.dart';
 
@@ -35,33 +36,55 @@ import 'group_placement.dart';
 /// have students?". It is only called for WISA-only classes; a both-present or
 /// Smartschool-only class never needs it.
 ///
+/// [azurePlanFor] wires the **Office 365 class-group** actions (#228). Unlike
+/// [placementFor] it is consulted for *every* record, not only the WISA-only
+/// ones: a class that is perfectly in sync between WISA and Smartschool still
+/// needs its `<PREFIX>-<KLAS>` group created and its membership kept equal to
+/// the roster, so [CreateAzureClassGroup] and [SyncAzureClassGroupMembers] are
+/// candidates in both branches. The builder returns `null` for a record that
+/// names no Office 365 class group (an orphan with no WISA class, or a class
+/// name that cannot form a mail nickname), and marks exactly one record per
+/// distinct bare class name as the [AzureClassGroupPlan.owner] so a sub-grouped
+/// class raises one proposal rather than one per sub-group. When omitted, the
+/// dispatch is exactly as it shipped before #228.
+///
 /// An Azure-only orphan group (`wisa == null && smartschool == null`, #52)
-/// yields no action.
+/// yields only the informational [AzureClassGroupWithoutClass], and only when it
+/// is shaped like a group this app created; anything else still yields nothing.
 ///
 /// Each candidate is constructed bound to [group] and kept only when its pure
 /// [GroupAction.evaluate] returns true. Pure and deterministic (INV-40): same
-/// group (+ same [placementFor]) ⇒ same list.
+/// group (+ same [placementFor] / [azurePlanFor]) ⇒ same list.
 List<GroupAction> groupActionsFor(
   LinkedGroup group, {
   GroupPlacement Function(LinkedGroup group)? placementFor,
+  AzureClassGroupPlan? Function(LinkedGroup group)? azurePlanFor,
 }) {
   final both = group.wisa != null && group.smartschool != null;
   final wisaOnly = group.wisa != null && group.smartschool == null;
 
   final placement =
       (placementFor != null && wisaOnly) ? placementFor(group) : null;
+  final azurePlan = azurePlanFor?.call(group);
 
-  final candidates = both
-      ? <GroupAction>[
-          ModifySmartschoolData(group),
-        ]
-      : <GroupAction>[
-          DoNotImportFromWisa(group),
-          ClassExistsAsSmartschoolGroup(group),
-          if (placement != null) AddToSmartschool(group, placement),
-          if (placement != null) CreateInSmartschool(group, placement),
-          DoNotImportFromSmartschool(group),
-        ];
+  final candidates = <GroupAction>[
+    if (both)
+      ModifySmartschoolData(group)
+    else ...[
+      DoNotImportFromWisa(group),
+      ClassExistsAsSmartschoolGroup(group),
+      if (placement != null) AddToSmartschool(group, placement),
+      if (placement != null) CreateInSmartschool(group, placement),
+      DoNotImportFromSmartschool(group),
+    ],
+    // The Office 365 group of a class is orthogonal to its Smartschool state,
+    // so these ride alongside both branches (#228).
+    if (azurePlan != null) ...[
+      CreateAzureClassGroup(group, azurePlan),
+      SyncAzureClassGroupMembers(group, azurePlan),
+    ],
+    AzureClassGroupWithoutClass(group),
+  ];
 
   return [
     for (final action in candidates)
@@ -74,12 +97,18 @@ List<GroupAction> groupActionsFor(
 ///
 /// Only [LinkedSnapshot.groups] are considered; students and staff are handled
 /// by their own families. [placementFor] is threaded through to
-/// [groupActionsFor] to enable the membership-dependent creation actions (#65).
+/// [groupActionsFor] to enable the membership-dependent creation actions (#65),
+/// and [azurePlanFor] to enable the Office 365 class-group actions (#228).
 List<GroupAction> groupActions(
   LinkedSnapshot snapshot, {
   GroupPlacement Function(LinkedGroup group)? placementFor,
+  AzureClassGroupPlan? Function(LinkedGroup group)? azurePlanFor,
 }) =>
     [
       for (final group in snapshot.groups)
-        ...groupActionsFor(group, placementFor: placementFor),
+        ...groupActionsFor(
+          group,
+          placementFor: placementFor,
+          azurePlanFor: azurePlanFor,
+        ),
     ];

@@ -355,6 +355,98 @@ void main() {
       },
     );
 
+    test(
+        'a prefixed Office 365 class group links to the bare class it is '
+        'named after (#228)', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2A')]),
+        ssSnap(const []),
+        azSnap(const [], groups: [azureClassGroup(_prefix, '2A')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      // One record — the class — carrying its group, not a WISA class beside
+      // an unrelated Azure orphan.
+      expect(snapshot.groups, hasLength(1));
+      final g = snapshot.groups.single;
+      expect(g.wisa!.name, '2A');
+      expect(g.azure!.displayName, '$_prefix-2A');
+      expect(g.className, '2A');
+    });
+
+    test(
+        'one Office 365 group serves a sub-grouped class: every sub-group '
+        'record carries it, and they all report the bare class name (#228)',
+        () {
+      final snapshot = link(
+        wisaSnap(
+          const [],
+          classGroups: [
+            wisaClassGroup('2F', groupName: 'ECO', adminCode: 'a'),
+            wisaClassGroup('2F', groupName: 'MAW', adminCode: 'b'),
+            wisaClassGroup('2F', groupName: 'STEMW', adminCode: 'c'),
+          ],
+        ),
+        ssSnap(const []),
+        azSnap(const [], groups: [azureClassGroup(_prefix, '2F')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.groups, hasLength(3));
+      expect(snapshot.groups.map((g) => g.wisa!.name),
+          ['2F ECO', '2F MAW', '2F STEMW']);
+      expect(snapshot.groups.map((g) => g.className), ['2F', '2F', '2F']);
+      expect(
+        snapshot.groups.map((g) => g.azure?.id),
+        everyElement('$_prefix-2F'),
+        reason: 'sub-groups get no group of their own — they share the parent',
+      );
+    });
+
+    test('a prefixed group whose class is gone stays an Azure orphan (#228)',
+        () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2A')]),
+        ssSnap(const []),
+        azSnap(const [], groups: [azureClassGroup(_prefix, '9Z')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final orphan = snapshot.groups.firstWhere((g) => g.wisa == null);
+      expect(orphan.azure!.displayName, '$_prefix-9Z');
+      expect(orphan.className, '9Z',
+          reason: 'the bare class name is recovered from the prefixed name');
+    });
+
+    test(
+        'the prefix strip never turns a staff group into a class orphan '
+        '(#228)', () {
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap(const [], groups: [azureGroup('$_prefix-Personeel')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      expect(snapshot.groups, isEmpty);
+    });
+
+    test('an unprefixed Azure group still links by exact name (#228)', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5A')]),
+        ssSnap(const []),
+        azSnap(const [], groups: [azureGroup('5A')]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.groups, hasLength(1));
+      expect(snapshot.groups.single.azure!.displayName, '5A');
+    });
+
     test('WISA + Smartschool but no Azure → medium', () {
       final snapshot = link(
         wisaSnap(const [], classGroups: [wisaClassGroup('5A')]),

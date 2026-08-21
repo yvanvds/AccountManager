@@ -381,12 +381,15 @@ GroupPlacement groupPlacement({
     );
 
 /// Builds a [LinkedGroup] from optional per-system records. Omit a system to
-/// simulate the class missing there.
+/// simulate the class missing there. [className] is the **bare** class name the
+/// Office 365 group is named after (#228); it defaults to the WISA name, which
+/// is right for every class that has no sub-groups.
 LinkedGroup linkedGroup({
   Group? wisa,
   Group? smartschool,
   Group? smartschoolNamesake,
   az.AzureGroup? azure,
+  String? className,
   LinkConfidence confidence = LinkConfidence.high,
 }) =>
     LinkedGroup(
@@ -394,7 +397,50 @@ LinkedGroup linkedGroup({
       smartschool: smartschool,
       smartschoolNamesake: smartschoolNamesake,
       azure: azure,
+      className: className ?? wisa?.name,
       confidence: confidence,
+    );
+
+/// An Office 365 **class** group as this app creates one (#228): a mail-enabled
+/// unified group whose display name and mail nickname are both
+/// `<prefix>-<class>`.
+az.AzureGroup azureClassGroup(
+  String className, {
+  String prefix = 'SSM',
+  String domain = 'student.school.example',
+  String? id,
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: id ?? 'az-$prefix-$className',
+      displayName: '$prefix-$className',
+      mail: '$prefix-$className@$domain',
+      mailNickname: '$prefix-$className',
+      memberIds: memberIds,
+    );
+
+/// An [AzureClassGroupPlan] for one class. Defaults to the owner record of a
+/// populated class with membership already in sync; pass [membersToAdd] /
+/// [membersToRemove] to make the roster differ, or `owner: false` for a
+/// sub-group record that must raise nothing.
+AzureClassGroupPlan azurePlan({
+  String className = '3A',
+  String prefix = 'SSM',
+  String domain = 'student.school.example',
+  bool owner = true,
+  bool containsStudents = true,
+  List<String> membersToAdd = const [],
+  List<String> membersToRemove = const [],
+}) =>
+    AzureClassGroupPlan(
+      className: className,
+      displayName: '$prefix-$className',
+      mailNickname: '$prefix-$className',
+      mail: '$prefix-$className@$domain',
+      owner: owner,
+      containsStudents: containsStudents,
+      membersToAdd: membersToAdd,
+      membersToRemove: membersToRemove,
     );
 
 /// A class present and in sync in both WISA and Smartschool — no group action

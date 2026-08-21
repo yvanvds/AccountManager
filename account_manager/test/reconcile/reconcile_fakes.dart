@@ -64,6 +64,11 @@ class RecordingGraph implements az.GraphTransport {
   /// accounts a create action actually asked Graph to make (#230).
   final List<Map<String, dynamic>> createdUsers = <Map<String, dynamic>>[];
 
+  /// The bodies of every `POST /groups` this transport accepted, in order — the
+  /// Office 365 class groups a create action actually asked Graph to make
+  /// (#228).
+  final List<Map<String, dynamic>> createdGroups = <Map<String, dynamic>>[];
+
   int _created = 0;
 
   /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
@@ -97,6 +102,23 @@ class RecordingGraph implements az.GraphTransport {
       createdUsers.add(body);
       return _ok(
         <String, dynamic>{...body, 'id': 'az-created-${++_created}'},
+        statusCode: 201,
+      );
+    }
+    // An Office 365 class group create (#228). Like the user create it reads
+    // first — `mailNickname eq …` to prove no group answers on that address —
+    // which the collection branch above already answers empty.
+    if (request.method == 'POST' && request.url.path.endsWith('/groups')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      createdGroups.add(body);
+      return _ok(
+        <String, dynamic>{
+          ...body,
+          'id': 'az-group-${++_created}',
+          'mail': '${body['mailNickname']}@student.school.example',
+        },
         statusCode: 201,
       );
     }
@@ -581,13 +603,21 @@ core.Group ssGroup(
   String? code,
   bool official = true,
   core.GroupType type = core.GroupType.classGroup,
+  String description = '',
+  String? instituteNumber,
+  String? untis,
 }) =>
     core.Group(
       id: core.GroupId(code ?? name),
       name: name,
-      description: '',
+      description: description,
       type: type,
       official: official,
+      instituteNumber: instituteNumber,
+      // Untis defaults to blank — which reads as drift against the class name,
+      // so most fixtures get a `ModifySmartschoolData` for free. Pass the name
+      // to build a class that is genuinely in sync with WISA.
+      untis: untis ?? '',
       origin: core.Origin.smartschool,
     );
 
@@ -861,6 +891,92 @@ ReconcileHarness foreignClassGroupHarness() => ReconcileHarness(
         memberships: const [],
       ),
       azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the Office 365 class groups of #228. Our school 1 runs a
+/// sub-grouped class `2F` (`2F ECO` + `2F MAW`, the shape of a 1ste-graad class)
+/// and a plain class `1A`, all fully provisioned in Smartschool so the only work
+/// left is on the Azure side.
+///
+/// Azure already holds `GBS-1A` with its student, so `1A` is done; `2F` has no
+/// group at all. Four linked class-group records, **one** missing Office 365
+/// group, so exactly one create proposal must reach the operator — named after
+/// the parent class, never after a sub-group.
+///
+/// [withStaleGroup] adds `GBS-9Z`, the group of a class that no longer exists,
+/// which must be reported for manual cleanup and never deleted.
+ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
+    ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '2F', classSubGroup: 'ECO'),
+          wisaStudent(wisaId: '3', classGroup: '2F', classSubGroup: 'MAW'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('1A', description: 'Eerste jaar A'),
+          wisaClassGroup('2F',
+              groupName: 'ECO', adminCode: 'a', description: 'Tweede jaar F'),
+          wisaClassGroup('2F',
+              groupName: 'MAW', adminCode: 'b', description: 'Tweede jaar F'),
+        ],
+      ),
+      smartschool: ssSnap(
+        // In sync with their WISA counterparts, so the only work this fixture
+        // raises is on the Office 365 side.
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+          ssGroup('2F ECO',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F ECO'),
+          ssGroup('2F MAW',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F MAW'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+          ssAccount(
+              uid: 'joe', accountId: '2', mail: 'a2@student.school.example'),
+          ssAccount(
+              uid: 'jim', accountId: '3', mail: 'a3@student.school.example'),
+        ],
+        memberships: [
+          member('jane', '1A'),
+          member('joe', '2F ECO'),
+          member('jim', '2F MAW'),
+        ],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+          azUser(
+              id: 'az2',
+              upn: 'a2@student.school.example',
+              employeeId: '2',
+              displayName: 'Jane Doe'),
+          azUser(
+              id: 'az3',
+              upn: 'a3@student.school.example',
+              employeeId: '3',
+              displayName: 'Jane Doe'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1']),
+          if (withStaleGroup) azClassGroup('9Z'),
+        ],
+      ),
       ourSchoolIds: const {1},
     );
 
@@ -1166,13 +1282,28 @@ Future<InMemoryLinkedStore> seededLinkedStore(
 az.AzureSnapshot azSnap({
   DateTime? fetchedAt,
   List<az.AzureUser>? users,
+  List<az.AzureGroup> groups = const [],
   String? deltaToken,
 }) =>
     az.AzureSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
       deltaToken: deltaToken,
       users: users ?? [azUser()],
-      groups: const [],
+      groups: groups,
+    );
+
+/// An Office 365 **class** group as this app creates one (#228): a mail-enabled
+/// unified group whose display name and mail nickname are both `GBS-<class>`.
+az.AzureGroup azClassGroup(
+  String className, {
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: 'az-GBS-$className',
+      displayName: 'GBS-$className',
+      mail: 'GBS-$className@student.school.example',
+      mailNickname: 'GBS-$className',
+      memberIds: memberIds,
     );
 
 /// Deterministic in-memory resolver (mirrors the linker's test fixture).

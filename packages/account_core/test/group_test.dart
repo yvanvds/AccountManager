@@ -177,4 +177,61 @@ void main() {
       expect(groupNameFingerprint(null), isNull);
     });
   });
+
+  group('Office 365 class-group naming (#228)', () {
+    test('a class group is <PREFIX>-<KLAS>', () {
+      expect(azureClassGroupName('SSM', '2A'), 'SSM-2A');
+      expect(azureClassGroupName(' SSM ', ' 2A '), 'SSM-2A');
+    });
+
+    test('a missing half names no group', () {
+      expect(azureClassGroupName('', '2A'), isNull);
+      expect(azureClassGroupName('SSM', '  '), isNull);
+      expect(azureClassGroupName(null, null), isNull);
+    });
+
+    test('the bare class name is recovered from the prefixed display name', () {
+      expect(azureClassNameOf('SSM-2A', 'SSM'), '2A');
+      // The prefix compares case-insensitively (INV-12); the class name is
+      // returned as written so it can be displayed.
+      expect(azureClassNameOf('ssm-2A', 'SSM'), '2A');
+      expect(azureClassNameOf('  SSM-2A  ', 'SSM'), '2A');
+    });
+
+    test('a name outside our namespace belongs to no class', () {
+      expect(azureClassNameOf('2A', 'SSM'), isNull);
+      expect(azureClassNameOf('OTHER-2A', 'SSM'), isNull);
+      expect(azureClassNameOf('SSM-', 'SSM'), isNull);
+      expect(azureClassNameOf('SSM-2A', ''), isNull);
+      expect(azureClassNameOf(null, 'SSM'), isNull);
+    });
+
+    test('naming round-trips for every plausible bare class name', () {
+      for (final className in ['1A', '2F', '7EW', 'OKAN', '3STW']) {
+        final name = azureClassGroupName('SSM', className)!;
+        expect(azureClassNameOf(name, 'SSM'), className);
+      }
+    });
+
+    test(
+        'bare class names need no slug rule \u2014 but a name that would break the '
+        'mail nickname is rejected rather than mangled', () {
+      // The decided rule: bare class names carry no spaces, so `<PREFIX>-<KLAS>`
+      // is used verbatim. This is the assertion that tells us early if a WISA
+      // class name ever stops honouring that.
+      for (final className in ['1A', '2F', '7EW', 'OKAN', '3STW']) {
+        expect(
+            isValidMailNickname(azureClassGroupName('SSM', className)), isTrue,
+            reason: '$className must survive as a mail nickname');
+      }
+      // \u2026and the shapes Graph refuses.
+      expect(isValidMailNickname('SSM-2F ECO'), isFalse, reason: 'space');
+      expect(isValidMailNickname('SSM-2\u00c9'), isFalse, reason: 'diacritic');
+      expect(isValidMailNickname('SSM-2A@x'), isFalse, reason: 'reserved @');
+      expect(isValidMailNickname('SSM-2A;1'), isFalse, reason: 'reserved ;');
+      expect(isValidMailNickname('SSM-2A\u00a0'), isFalse, reason: 'nbsp');
+      expect(isValidMailNickname(''), isFalse);
+      expect(isValidMailNickname(null), isFalse);
+    });
+  });
 }

@@ -57,6 +57,13 @@ class ActionResult {
   /// group delete (which sets [removed] instead).
   final Group? group;
 
+  /// The created/updated Azure **group** record — the Office 365 class group a
+  /// create or membership write produced (#228). Carried separately from
+  /// [group] (a Smartschool [Group]) and from [azure] (a user) so the State
+  /// layer knows which half of the Azure snapshot to patch. Null for every
+  /// other action.
+  final AzureGroup? azureGroup;
+
   /// True when the action deleted the record from [system] (so the State layer
   /// should drop it from the snapshot rather than patch it).
   final bool removed;
@@ -88,6 +95,7 @@ class ActionResult {
     this.smartschool,
     this.azure,
     this.group,
+    this.azureGroup,
     this.removed = false,
     this.wisaRule,
     this.generatedPassword,

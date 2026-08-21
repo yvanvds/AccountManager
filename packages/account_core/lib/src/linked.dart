@@ -159,12 +159,29 @@ class LinkedGroup {
   /// explicit notice on this field instead of a create.
   final Group? smartschoolNamesake;
 
+  /// The **bare** class name behind this record — `2F` for the sub-grouped
+  /// class `2F ECO`, and simply the class name for a class without sub-groups
+  /// (#228).
+  ///
+  /// [wisa] is keyed and named by the WISA `fullName` (the cross-system match
+  /// key), which is what Smartschool spells a class by. The Office 365 group is
+  /// named after the *parent* class instead — sub-groups get no group of their
+  /// own — so without this the bare name is gone by the time an action sees the
+  /// record. Carrying it here keeps the linker the single place that knows how a
+  /// WISA class projects, rather than teaching every consumer to re-derive it.
+  ///
+  /// For an Azure-only orphan it is the name recovered from the group's
+  /// `<PREFIX>-` display name ([azureClassNameOf]); `null` for a record with
+  /// neither — a Smartschool-only orphan carries no WISA class to name.
+  final String? className;
+
   const LinkedGroup({
     this.wisa,
     this.smartschool,
     this.azure,
     required this.confidence,
     this.smartschoolNamesake,
+    this.className,
   });
 }
 

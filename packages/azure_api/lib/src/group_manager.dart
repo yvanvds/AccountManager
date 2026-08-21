@@ -63,6 +63,77 @@ class GroupManager {
     return groups;
   }
 
+  /// The group answering on [mailNickname], or `null` when the tenant has none.
+  ///
+  /// The pre-create guard for [createGroup], mirroring
+  /// `UserManager.findByEmployeeId` (#224): the nickname is what makes the
+  /// address unique, and Graph does **not** reject a second group that reuses a
+  /// display name — it happily creates a duplicate whose address it then
+  /// suffixes. Asking first is the only way a create stays idempotent across a
+  /// retry or a second operator.
+  ///
+  /// [listGroups] cannot answer this: it is scoped to the school prefix and
+  /// matches on `displayName`, so a class group somebody renamed by hand still
+  /// holds the nickname a create would collide with.
+  Future<AzureGroup?> findByMailNickname(String mailNickname) async {
+    final nickname = mailNickname.trim();
+    if (nickname.isEmpty) return null;
+    final url = _graph.uri(
+      'groups',
+      query: {
+        r'$select': _select,
+        r'$count': 'true',
+        r'$filter': "mailNickname eq '${_escapeODataString(nickname)}'",
+      },
+    );
+    final rows =
+        await _graph.getCollection(url, headers: _advancedQueryHeaders);
+    if (rows.isEmpty) return null;
+    return AzureGroup.fromGraphJson(rows.first);
+  }
+
+  /// Creates a **unified** (Microsoft 365) group — the shape a class group must
+  /// have to be mailed and attached to a Team (#228).
+  ///
+  /// Deliberately not the security group legacy created for its staff groups
+  /// (`{prefix}-Personeel` and friends): `groupTypes: ["Unified"]` +
+  /// `mailEnabled: true` + `securityEnabled: false` is what gives the group a
+  /// mailbox at `<mailNickname>@<tenant mail domain>`.
+  ///
+  /// The created group is returned with **no members**; membership is a separate
+  /// write ([addMembers]), so a create that lands but whose membership pass
+  /// fails leaves a correct, empty group rather than a half-populated one.
+  Future<AzureGroup> createGroup({
+    required String displayName,
+    required String mailNickname,
+    String description = '',
+    String visibility = 'Private',
+  }) async {
+    final body = <String, dynamic>{
+      'displayName': displayName,
+      'mailNickname': mailNickname,
+      if (description.trim().isNotEmpty) 'description': description,
+      'groupTypes': const ['Unified'],
+      'mailEnabled': true,
+      'securityEnabled': false,
+      'visibility': visibility,
+    };
+    final json = await _graph.postJson(_graph.uri('groups'), body);
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: created Microsoft 365 group $displayName ($mailNickname).',
+    );
+    // The create response echoes the new resource; fall back to the request
+    // values for anything Graph left out of its echo (as `createUser` does).
+    return AzureGroup(
+      id: (json['id'] as String?) ?? '',
+      displayName: (json['displayName'] as String?) ?? displayName,
+      securityEnabled: (json['securityEnabled'] as bool?) ?? false,
+      mail: json['mail'] as String?,
+      mailNickname: (json['mailNickname'] as String?) ?? mailNickname,
+    );
+  }
+
   /// Returns the object ids of a group's members, following pagination.
   Future<List<String>> loadMemberIds(String groupId) async {
     final url = _graph.uri(
