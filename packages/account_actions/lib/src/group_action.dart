@@ -71,9 +71,9 @@ sealed class GroupAction {
   bool get canApply => true;
 
   /// The key shared by mutually-exclusive alternatives resolving the same
-  /// situation (#110). No group action has alternatives today, so this is always
-  /// `null`; the getter exists so the pending-list grouping treats every family
-  /// uniformly. See [StudentAction.alternativeGroup].
+  /// situation (#110). `null` (the default) means the action stands on its own.
+  /// The group family's one key is [classImportAlternative] (#244). See
+  /// [StudentAction.alternativeGroup].
   String? get alternativeGroup => null;
 
   /// Whether this action is the default alternative within its
@@ -134,6 +134,42 @@ sealed class GroupAction {
 // Actions for when the group is missing from one system (§6.3).
 // ---------------------------------------------------------------------------
 
+/// The [GroupAction.alternativeGroup] key shared by the mutually exclusive
+/// readings of a WISA class Smartschool does not have (#244): import the class
+/// ([AddToSmartschool] when it holds students, [CreateInSmartschool]'s
+/// wait-or-delete notice when it does not) *or* stop offering it
+/// ([DoNotImportFromWisa]).
+///
+/// They are opposite decisions, so they are one choice and never two to-dos.
+/// Applying both created the Smartschool class and then wrote a
+/// [wapi.DontImportClass] rule on the very name it had just created —
+/// blacklisting the class, which then vanished from the next WISA snapshot
+/// while the group survived downstream, unmanaged. "Apply to all" did that to
+/// every new class of the year at once.
+///
+/// The two create actions never fire together (the [GroupPlacement] membership
+/// signal picks exactly one), so all three can share the single key and exactly
+/// one default is ever offered.
+///
+/// **The default is the create action, deliberately the opposite polarity from
+/// [smartschoolDepartureAlternative]**, where the conservative "keep the
+/// account" option leads. Adding new classes is the normal start-of-year bulk
+/// operation; a mis-defaulted bulk apply that silently blacklists a year's
+/// worth of classes is far worse than one that creates them. For an empty class
+/// the default is the informational [CreateInSmartschool], so the bulk apply
+/// writes nothing at all and the operator has to pick "ignore this class"
+/// deliberately.
+///
+/// The mechanism itself is family-agnostic: the pending-list grouping reads
+/// [alternativeGroup] / [isDefaultAlternative] off whatever action it is given,
+/// so a family with the same "provision it *or* stop importing it" pair — the
+/// staff [AddStaffToAzure] versus [DontImportStaffFromWisa] of #248 — declares
+/// its own key the same way and needs no further plumbing. Keep the
+/// provisioning action ahead of the "do not import" one in its dispatch, so it
+/// leads the radio list and is also what the grouping falls back to if a
+/// default is ever forgotten.
+const String classImportAlternative = 'class-import';
+
 /// Stop importing a class from WISA. Ported from `Action\Group\DoNotImportFromWisa`:
 /// the class exists in WISA but not Smartschool, and the operator judges it need
 /// not exist downstream, so a [wapi.DontImportClass] rule is added keyed on the
@@ -154,6 +190,12 @@ class DoNotImportFromWisa extends GroupAction {
 
   @override
   bool evaluate() => group.wisa != null && group.smartschool == null;
+
+  /// Blacklisting the class is one half of the [classImportAlternative] choice
+  /// (#244) — never a to-do beside the create it contradicts. It is not the
+  /// default: an operator has to pick it.
+  @override
+  String? get alternativeGroup => classImportAlternative;
 
   wapi.DontImportClass _rule() => wapi.DontImportClass(_wisa.name);
 
@@ -214,6 +256,15 @@ class AddToSmartschool extends GroupAction {
       group.smartschool == null &&
       group.smartschoolNamesake == null &&
       placement.containsStudents;
+
+  /// Creating the class is the leading half of the [classImportAlternative]
+  /// choice (#244), and its **default**: importing a new class is the normal
+  /// start-of-year operation, so a bulk apply provisions rather than blacklists.
+  @override
+  String? get alternativeGroup => classImportAlternative;
+
+  @override
+  bool get isDefaultAlternative => true;
 
   /// The official Smartschool class to create, derived from the WISA class and
   /// the resolved parent. Untis is set to the class name (legacy
@@ -329,6 +380,17 @@ class CreateInSmartschool extends GroupAction {
       group.smartschool == null &&
       group.smartschoolNamesake == null &&
       !placement.containsStudents;
+
+  /// The empty-class reading stands in for [AddToSmartschool] inside the
+  /// [classImportAlternative] choice (#244), and is the default in its place —
+  /// the two never fire together, so exactly one default is ever offered. Being
+  /// informational, that default makes a bulk apply write **nothing** for an
+  /// empty class: blacklisting it stays a deliberate pick.
+  @override
+  String? get alternativeGroup => classImportAlternative;
+
+  @override
+  bool get isDefaultAlternative => true;
 
   @override
   bool get canApply => false;

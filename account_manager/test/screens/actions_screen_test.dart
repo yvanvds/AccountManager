@@ -771,9 +771,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('rollup-groups')));
     await tester.pumpAndSettle();
 
-    // Our own populated class is the one and only proposal…
+    // Our own populated class is the one and only proposal… and it reads as
+    // the create side of the either/or choice #244 collapsed it into.
     expect(find.text('1A'), findsOneWidget);
-    expect(find.text('Voeg deze klas toe aan Smartschool'), findsOneWidget);
+    expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
+        findsOneWidget);
     // …and the sibling school's class is never offered: applying it would
     // create another school's class in our Smartschool.
     expect(find.text('9Z'), findsNothing);

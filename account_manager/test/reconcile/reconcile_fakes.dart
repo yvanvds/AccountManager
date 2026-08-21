@@ -1298,6 +1298,59 @@ ReconcileHarness nonOfficialSmartschoolClassHarness() => ReconcileHarness(
       ourSchoolIds: const {1},
     );
 
+/// A harness for the start-of-year "new class" choice (#244). Our school 1 runs
+/// two brand-new classes, `1A` and `1B`, each holding a student and neither
+/// known to Smartschool — the shape that raised "Voeg deze klas toe aan
+/// Smartschool" and "Negeer deze klas bij het importeren uit WISA" as two
+/// independent to-dos on the same class. Both landed in the selection, so one
+/// **Apply to all** created every new class of the year and then wrote a
+/// `DontImportClass` rule on each name it had just created: the groups survived
+/// in Smartschool, but the classes dropped out of the next WISA snapshot and
+/// were no longer managed.
+///
+/// Two classes on purpose — that is what puts them in one "same situation"
+/// subset and lights up the bulk **Apply to all** the report describes.
+/// Smartschool holds only the `Leerlingen` root the classes hang under, named
+/// by [ReconcileHarness.classTree], so the create actually lands.
+ReconcileHarness newClassChoiceHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '1B'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '1A',
+            description: 'Onze eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '1B',
+            description: 'Onze tweede klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: core.GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+
 /// A harness for the `00` sub-group sentinel (#221). Two managed schools that
 /// each have their own `1C`, and each of those is a **single-group** class: one
 /// `SyncKlas` row with `KLASGROEP = 00` and — because `ADMINGROEP` is only
@@ -1816,6 +1869,7 @@ class ReconcileHarness {
     this.azureTransport,
     this.smartschoolTransport,
     this.smartschoolRules = const <ss.SmartschoolImportRule>[],
+    this.classTree = const SmartschoolClassTree(),
     this.wisaTransport,
     this.passwordGraph,
     this.syncedBy = 'operator@school.example',
@@ -2017,6 +2071,10 @@ class ReconcileHarness {
       ),
       resolver: SeqResolver(),
       wisaRules: wisaRules,
+      // The Smartschool group tree a freshly created class hangs under. Left
+      // unconfigured by default (no parent resolves, as in a bare tenant); a
+      // fixture that applies `AddToSmartschool` for real names the root here.
+      classTree: classTree,
       studentConfig: actions.StudentActionConfig(
         schoolPrefix: 'GBS',
         azureDomain: 'school.example',
@@ -2130,6 +2188,14 @@ class ReconcileHarness {
   /// Read at sync time, like [ssResult]: assign between passes to model the
   /// session that bootstraps on rules the operator has just saved in Settings.
   List<ss.SmartschoolImportRule> smartschoolRules;
+
+  /// The Smartschool class-tree live-config the placement resolver reads to
+  /// find the group a freshly created official class hangs under — the
+  /// `classTreeFrom(settings.smartschool)` the real bootstrap injects.
+  /// Unconfigured by default, so no parent resolves and `AddToSmartschool`
+  /// fails the way it does against a bare tenant; a fixture that wants the
+  /// create to land names the root here.
+  final SmartschoolClassTree classTree;
 
   /// When set, the Passwords screen writes through the **production**
   /// [ConnectorPasswordBackends] over this transport instead of the recording

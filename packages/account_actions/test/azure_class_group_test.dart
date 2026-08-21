@@ -74,7 +74,7 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, AddToSmartschool, CreateAzureClassGroup],
+        [AddToSmartschool, DoNotImportFromWisa, CreateAzureClassGroup],
       );
     });
 
@@ -119,7 +119,7 @@ void main() {
           linkedGroup(wisa: wisaGroup()),
           placementFor: (_) => groupPlacement(containsStudents: true),
         ).map((a) => a.runtimeType),
-        [DoNotImportFromWisa, AddToSmartschool],
+        [AddToSmartschool, DoNotImportFromWisa],
       );
     });
   });

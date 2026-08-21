@@ -1088,7 +1088,9 @@ void main() {
     // Our own populated class is the only proposal on the list…
     expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
     expect(find.text('1A'), findsOneWidget);
-    expect(find.text('Voeg deze klas toe aan Smartschool'), findsOneWidget);
+    // …reading as the create side of the either/or choice of #244.
+    expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
+        findsOneWidget);
     // …and no class of the school we do not manage is anywhere near it.
     expect(find.text('9Z'), findsNothing,
         reason: 'creating another school\'s class is never ours to propose');
@@ -1201,12 +1203,29 @@ void main() {
         find.textContaining('Voeg deze klas toe aan Smartschool'), findsNothing,
         reason: 'nobody of ours is in 1A — creating + enrolling is not due');
 
-    // The notice is marked manual — there is nothing to write for an empty
-    // class — while the only applyable line stays the "ignore this class"
-    // opt-out every WISA-only class carries.
-    expect(find.textContaining('(manueel)'), findsOneWidget);
+    // The notice leads the either/or choice of #244 — the "ignore this class"
+    // opt-out is its alternative, not a second to-do — so the collapsed row
+    // reads as a choice, and the opt-out is not on it.
+    expect(find.textContaining('(keuze)'), findsOneWidget);
+    expect(find.textContaining('(manueel)'), findsNothing);
     expect(find.textContaining('Negeer deze klas bij het importeren uit WISA'),
+        findsNothing,
+        reason: 'blacklisting is the alternative, not a second to-do');
+
+    // Expanding it offers both readings as radios, the notice pre-selected —
+    // and the entry has nothing to apply until the operator picks the opt-out.
+    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
+    await tester.pumpAndSettle();
+    expect(find.text('Kies één oplossing:'), findsOneWidget);
+    expect(find.text('Negeer deze klas bij het importeren uit WISA'),
         findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('entry-apply-1A')))
+          .onPressed,
+      isNull,
+      reason: 'there is nothing to write for an empty class',
+    );
 
     // And the pass itself never constructed the create-and-enrol action for it.
     final kinds = harness.controller.pendingEntries
@@ -1288,6 +1307,90 @@ void main() {
     final lines = harness.log.entries.map((e) => e.message).join('\n');
     expect(lines, contains('Klas "2G" niet gekoppeld'));
     expect(lines, contains('G2G'));
+  });
+
+  testWidgets(
+      'a new class offers one either/or choice, and "apply to all" creates '
+      'every class without blacklisting any end-to-end (#244)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Smartschool
+    // write path. Two brand-new WISA classes, neither known to Smartschool.
+    //
+    // Each used to carry "Voeg deze klas toe aan Smartschool" *and* "Negeer
+    // deze klas bij het importeren uit WISA" as two independent to-dos, both
+    // selected — so the situation header's **Apply to all** created every new
+    // class of the year and then wrote a DontImportClass rule on the very name
+    // it had just created. The class dropped out of the next WISA snapshot
+    // while the group survived downstream, unmanaged.
+    //
+    // This is the layer that sees it: the contradiction is what the operator
+    // reads off the bulk header and clicks, and the fix has to reach it through
+    // the dispatch, the entry grouping and the drill-down.
+    useTallWindow(tester);
+    final harness = newClassChoiceHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Both new classes are on the list, each reading as *one* choice…
+    expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-1B')), findsOneWidget);
+    expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
+        findsNWidgets(2));
+    // …and no row carries the opt-out as a line of its own: it is the
+    // alternative the operator can switch to, not a second thing that also
+    // runs. (The bulk header below names both sides of the one choice.)
+    expect(find.text('Negeer deze klas bij het importeren uit WISA'),
+        findsNothing);
+
+    // The bulk header offers the one resolution for both classes.
+    final key = harness.controller.groupPendingEntries
+        .firstWhere((e) => e.targetId == '1A')
+        .situationKey;
+    final bulk = find.byKey(ValueKey('situation-apply-$key'));
+    await tester.ensureVisible(bulk);
+    expect(
+      find.textContaining('Voeg deze klas toe aan Smartschool / Negeer deze '
+          'klas bij het importeren uit WISA'),
+      findsOneWidget,
+      reason: 'the header names one either/or, not two independent to-dos',
+    );
+
+    final pulls = harness.wisaSyncs;
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both classes were created in Smartschool…
+    final saved =
+        harness.soap.soapActions.where((a) => a.endsWith('#saveClass')).length;
+    expect(saved, 2);
+    // …and not one of them was blacklisted on the way out. A DontImportClass
+    // rule re-pulls WISA, so an untouched pull count is the proof.
+    expect(harness.wisaSyncs, pulls);
+    final summaries =
+        harness.controller.applyResults!.map((r) => r.changes.summary).toList();
+    expect(summaries.where((s) => s == 'Voeg deze klas toe aan Smartschool'),
+        hasLength(2));
+    expect(
+      summaries,
+      isNot(contains('Negeer deze klas bij het importeren uit WISA')),
+      reason: 'the rule would drop the classes this same pass just created',
+    );
   });
 
   testWidgets(

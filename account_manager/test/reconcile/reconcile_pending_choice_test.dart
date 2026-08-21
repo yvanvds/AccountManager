@@ -199,4 +199,130 @@ void main() {
           reason: 'a fresh linked view must not serve a stale cached list');
     });
   });
+
+  group('a new class is one choice, not two to-dos (#244)', () {
+    const String create = 'Voeg deze klas toe aan Smartschool';
+    const String ignore = 'Negeer deze klas bij het importeren uit WISA';
+
+    List<String> summariesOf(ReconcileHarness h) =>
+        h.controller.applyResults!.map((r) => r.changes.summary).toList();
+
+    /// Whether the pass actually asked Smartschool to save a class. The
+    /// recorded SOAP action is the fully-qualified `…V3#saveClass`.
+    bool savedAClass(ReconcileHarness h) =>
+        h.soap.soapActions.any((a) => a.endsWith('#saveClass'));
+
+    test('the create and the blacklist collapse into one choice, create first',
+        () async {
+      final h = newClassChoiceHarness();
+      await h.controller.sync();
+
+      final entry = h.controller.groupPendingEntries
+          .firstWhere((e) => e.targetId == '1A');
+      final choice = entry.choices.singleWhere(
+        (c) => c.situationId == actions.classImportAlternative,
+      );
+
+      expect(choice.isChoice, isTrue,
+          reason: 'either import the class or stop offering it — never both');
+      expect(
+        choice.alternatives.map((a) => a.kind),
+        ['AddToSmartschool', 'DoNotImportFromWisa'],
+        reason: 'the create leads the radio pair',
+      );
+      expect(choice.selected.kind, 'AddToSmartschool',
+          reason: 'adding new classes is the normal start-of-year operation');
+    });
+
+    test('applying the default creates the class and blacklists nothing',
+        () async {
+      final h = newClassChoiceHarness();
+      await h.controller.sync();
+      final pulls = h.wisaSyncs;
+      final entry = h.controller.groupPendingEntries
+          .firstWhere((e) => e.targetId == '1A');
+
+      await h.controller.applyEntry(entry);
+
+      expect(summariesOf(h), contains(create));
+      expect(summariesOf(h), isNot(contains(ignore)),
+          reason: 'the rule would drop the class we just created');
+      expect(savedAClass(h), isTrue);
+      expect(h.wisaSyncs, pulls,
+          reason: 'no import rule was added, so WISA was never re-pulled');
+    });
+
+    test('choosing the blacklist applies it alone, creating nothing', () async {
+      final h = newClassChoiceHarness();
+      await h.controller.sync();
+      final entry = h.controller.groupPendingEntries
+          .firstWhere((e) => e.targetId == '1A');
+
+      h.controller.chooseAlternative(
+        entry: entry,
+        group: actions.classImportAlternative,
+        kind: 'DoNotImportFromWisa',
+      );
+      final chosen = h.controller.groupPendingEntries
+          .firstWhere((e) => e.targetId == '1A');
+      await h.controller.applyEntry(chosen);
+
+      expect(summariesOf(h), contains(ignore));
+      expect(summariesOf(h), isNot(contains(create)));
+      expect(savedAClass(h), isFalse);
+    });
+
+    test(
+        '"apply to all" over the situation creates every class and '
+        'blacklists none', () async {
+      // The report's headline: 21 new classes were created and then, in the
+      // same pass, each had a DontImportClass rule written on the very name it
+      // had just been created under.
+      final h = newClassChoiceHarness();
+      await h.controller.sync();
+      final entries = h.controller.groupPendingEntries;
+      expect(entries.map((e) => e.targetId), containsAll(<String>['1A', '1B']));
+
+      final key = entries.firstWhere((e) => e.targetId == '1A').situationKey;
+      expect(
+        entries.where((e) => e.situationKey == key).map((e) => e.targetId),
+        containsAll(<String>['1A', '1B']),
+        reason: 'both new classes are the same situation, bulk-applied at once',
+      );
+      final pulls = h.wisaSyncs;
+
+      await h.controller.applySituation(key);
+
+      final summaries = summariesOf(h);
+      expect(summaries.where((s) => s == create), hasLength(2));
+      expect(summaries, isNot(contains(ignore)));
+      expect(h.wisaSyncs, pulls);
+    });
+
+    test(
+        'an empty class defaults to its notice, so a bulk apply writes '
+        'nothing for it', () async {
+      // The empty-class reading takes the create's place inside the same
+      // choice. It is informational, so the entry offers no apply at all until
+      // the operator deliberately picks "ignore this class".
+      final h = siblingPopulatedClassHarness();
+      await h.controller.sync();
+
+      final entry = h.controller.groupPendingEntries
+          .firstWhere((e) => e.targetId == '1A');
+      final choice = entry.choices.singleWhere(
+        (c) => c.situationId == actions.classImportAlternative,
+      );
+
+      expect(choice.selected.kind, 'CreateInSmartschool');
+      expect(choice.selected.canApply, isFalse);
+      expect(entry.canApply, isFalse,
+          reason: 'nothing to write for an empty class until the operator '
+              'picks the opt-out');
+      expect(
+        choice.alternatives.map((a) => a.kind),
+        containsAll(<String>['CreateInSmartschool', 'DoNotImportFromWisa']),
+      );
+    });
+  });
 }

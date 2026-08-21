@@ -11,11 +11,15 @@ import 'group_placement.dart';
 /// the split is on the WISA/Smartschool pair rather than all three systems
 /// (there is no Azure group action):
 /// - If the class is missing from WISA **or** Smartschool, the lifecycle-style
-///   actions ([DoNotImportFromWisa], [ClassExistsAsSmartschoolGroup],
-///   [AddToSmartschool], [CreateInSmartschool], [DoNotImportFromSmartschool])
-///   are considered — in that legacy order, so a WISA-only class raises both
-///   [DoNotImportFromWisa] and exactly one of [AddToSmartschool] /
-///   [CreateInSmartschool].
+///   actions ([ClassExistsAsSmartschoolGroup], [AddToSmartschool],
+///   [CreateInSmartschool], [DoNotImportFromWisa],
+///   [DoNotImportFromSmartschool]) are considered, so a WISA-only class raises
+///   [DoNotImportFromWisa] *and* exactly one of [AddToSmartschool] /
+///   [CreateInSmartschool]. Those two are not two to-dos: they share the
+///   [classImportAlternative] key, so the pending list renders them as one
+///   either/or choice and an apply runs only the picked one (#244). Legacy
+///   ordered [DoNotImportFromWisa] first; it now trails the create it is an
+///   alternative to, so the create leads the radio pair.
 /// - If it is present in both, only [ModifySmartschoolData] is considered.
 ///
 /// [ClassExistsAsSmartschoolGroup] (#225) sits where the two create actions
@@ -71,10 +75,14 @@ List<GroupAction> groupActionsFor(
     if (both)
       ModifySmartschoolData(group)
     else ...[
-      DoNotImportFromWisa(group),
       ClassExistsAsSmartschoolGroup(group),
+      // The create actions lead [DoNotImportFromWisa], which they are mutually
+      // exclusive with (#244): the order is the order the operator reads the
+      // radio pair in, and the fallback the grouping uses if a default is ever
+      // forgotten — so the provisioning half comes first, never the blacklist.
       if (placement != null) AddToSmartschool(group, placement),
       if (placement != null) CreateInSmartschool(group, placement),
+      DoNotImportFromWisa(group),
       DoNotImportFromSmartschool(group),
     ],
     // The Office 365 group of a class is orthogonal to its Smartschool state,

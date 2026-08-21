@@ -1644,12 +1644,20 @@ class _ChoiceControl extends StatelessWidget {
               ),
             ),
           ),
+        // What the picked resolution will actually write. Collapsing two
+        // actions into one choice (#244) must not cost the operator the diff
+        // they used to read off the second row — a class create names the class,
+        // its description and its Smartschool parent, and that is exactly what
+        // decides whether the create or the opt-out is right.
+        const SizedBox(height: PlinkSpacing.s2),
+        _OptionDetail(option: choice.selected),
       ],
     );
   }
 }
 
-/// The per-field diff (or a lifecycle note) for a single, non-choice option.
+/// The per-field diff (or a lifecycle note) for a single option — the one that
+/// stands alone, or the one selected inside a [_ChoiceControl].
 class _OptionDetail extends StatelessWidget {
   const _OptionDetail({required this.option});
 
