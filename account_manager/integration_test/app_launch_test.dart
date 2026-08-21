@@ -3468,7 +3468,7 @@ void main() {
     // the repair the operator should see instead is a different action family
     // than the one that was offered.
     useTallWindow(tester);
-    final azureWire = TransferredStudentGraph();
+    final azureWire = TransferredAccountGraph();
     final harness = ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
@@ -3534,6 +3534,106 @@ void main() {
     // adoption stick: without it the account stays invisible to the next
     // sync's `$filter`, and the whole problem recurs every pass.
     expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+  });
+
+  testWidgets(
+      "a moved staff member's existing Office 365 account is found by "
+      'employeeId, so Acties → Personeel never offers a duplicate (#231)',
+      (WidgetTester tester) async {
+    // The staff half of #224, over the *production* Azure pull — a real
+    // AzureConnector behind the real azureSyncer. Anna Smit moved in from a
+    // sibling group school, so her account carries our `employeeId` (her WISA
+    // id, never her staff `code`) but a `department` still naming the school she
+    // came from. Neither leg of the connector's `$filter` matches it, so before
+    // the fix she was simply absent from the Azure snapshot and Acties →
+    // Personeel offered "Maak een nieuw Office 365 account" — which on apply
+    // created a second account, silently, because `createPrincipalName`
+    // resolves the UPN collision by suffixing.
+    //
+    // Only this layer sees the whole thing: the back-fill needs the *staff* half
+    // of the WISA snapshot the same pass pulled (`managedStaffEmployeeIds`), the
+    // linker needs the row it produces, and what the operator should be offered
+    // instead is a different action entirely.
+    useTallWindow(tester);
+    final azureWire = TransferredAccountGraph(
+      // wisaStaff()'s default wisaId — the staff Azure bridge is
+      // `wisaId ≡ employeeId`, so the staff code 'SMIT' is *not* the key.
+      employeeId: '42',
+      upn: 'smit.anna@other.example',
+      displayName: 'Smit Anna',
+      department: 'OTHER - Wiskunde',
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azureTransport: azureWire,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The bounded pull stayed bounded (PAIN-2): one `$filter` bulk read, plus
+    // one targeted lookup for the single staff id it could not account for.
+    expect(azureWire.bulkReads, 1);
+    expect(azureWire.employeeIdLookups, <String>["employeeId in ('42')"]);
+
+    // The account the school filter cannot see is in the snapshot, and the
+    // linker joined it to the WISA staff record by employeeId alone.
+    expect(harness.app.azure.snapshot?.users.map((u) => u.id),
+        <String>['az-transferred']);
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.wisa, isNotNull);
+    expect(linked.azure?.id, 'az-transferred');
+
+    // Nothing anywhere in the pass proposes creating an Azure account.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((a) => a.kind),
+      isNot(contains('AddStaffToAzure')),
+    );
+
+    // And that is what the operator sees: browse Acties → Personeel the way
+    // they did when they reported this.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+
+    expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
+        reason: 'the account already exists — creating one duplicates it');
+    // The record is now WISA + Azure, so the only thing left to build is the
+    // Smartschool side — the proposal the adoption unlocks.
+    expect(find.text('Maak een nieuw Smartschool account'), findsOneWidget);
   });
 }
 

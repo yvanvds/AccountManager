@@ -68,9 +68,12 @@ class ApplicationState {
 /// connector can look up by `employeeId` the ones the prefix-scoped read did not
 /// turn up (#224). Reading it lazily is what lets the wiring site point it at
 /// the WISA snapshot the same [ApplicationState] pulled moments earlier — WISA
-/// always syncs before Azure in a pass. Supply
-/// [managedStudentEmployeeIds] over `app.wisa.snapshot` for the production
-/// behaviour; omit it and the pull is exactly as it shipped before #224.
+/// always syncs before Azure in a pass. Supply the union of
+/// [managedStudentEmployeeIds] and [managedStaffEmployeeIds] over
+/// `app.wisa.snapshot` for the production behaviour — both populations transfer
+/// between the group's schools, and both are invisible to the prefix-scoped
+/// read afterwards (#224 students, #231 staff). Omit it and the pull is exactly
+/// as it shipped before #224.
 ///
 /// WISA and Smartschool have no equivalent helper: their syncers are the
 /// one-liner `(_) => connector.sync(...)`, written at the wiring site because
@@ -111,5 +114,30 @@ Set<String> managedStudentEmployeeIds(
     for (final student in snapshot.students)
       if (effective.isEmpty || effective.contains(student.schoolId))
         if (student.wisaId.value.trim().isNotEmpty) student.wisaId.value.trim(),
+  };
+}
+
+/// The WISA ids of the staff in [snapshot] — the personeel half of the ids
+/// [azureSyncer] hands the connector, and the staff counterpart of
+/// [managedStudentEmployeeIds] (#231).
+///
+/// A staff member who moves in from a sibling group school leaves the same
+/// wreckage a transferred student does: the Office 365 account already exists
+/// and carries their WISA id as `employeeId`, but its `department` still names
+/// the school they came from, so neither leg of the connector's `$filter`
+/// matches it and the app proposed creating a second one.
+///
+/// Unlike [managedStudentEmployeeIds] there is nothing to scope by: the
+/// `SmaSyncPer` pull carries no school id per staff row, so every staff member
+/// it returned is one this pass expects an account for. `wisaId` is **nullable**
+/// on a staff row (`code` is the staff primary key, spec §3.4 / OQ-1); a member
+/// without one is dropped, since `wisaId ≡ employeeId` is the only Azure bridge
+/// the linker has for staff and there is nothing to look up.
+Set<String> managedStaffEmployeeIds(WisaSnapshot? snapshot) {
+  if (snapshot == null) return const <String>{};
+  return <String>{
+    for (final member in snapshot.staff)
+      if ((member.wisaId?.value.trim() ?? '').isNotEmpty)
+        member.wisaId!.value.trim(),
   };
 }

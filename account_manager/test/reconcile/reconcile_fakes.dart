@@ -155,32 +155,41 @@ class StaleDeltaTokenGraph implements az.GraphTransport {
       );
 }
 
-/// A [az.GraphTransport] answering the way the tenant answered in #224: the
-/// school-scoped bulk read finds **nothing** for a student who transferred in
-/// from a sibling group school, while a targeted `employeeId in (…)` lookup
-/// turns up the Office 365 account they already have.
+/// A [az.GraphTransport] answering the way the tenant answered in #224 (a
+/// student) and #231 (a staff member): the school-scoped bulk read finds
+/// **nothing** for someone who transferred in from a sibling group school, while
+/// a targeted `employeeId in (…)` lookup turns up the Office 365 account they
+/// already have.
 ///
 /// That account is exactly what the operator found on Ambre Kalenga Alfio: our
 /// `employeeId`, **no** `companyName`, a `department` still naming the school
 /// they came from, and a UPN whose given/family-name order that school mangled —
 /// so neither leg of the connector's `$filter` matches it and the UPN is no use
-/// as a matching key either.
+/// as a matching key either. A moved staff member's account is in the same
+/// state; only the `department` text differs, which is what [department] is for.
 ///
 /// Wire it into [ReconcileHarness.azureTransport] to drive the **production**
 /// Azure pull, the only place the back-fill lives.
-class TransferredStudentGraph implements az.GraphTransport {
-  TransferredStudentGraph({
+class TransferredAccountGraph implements az.GraphTransport {
+  TransferredAccountGraph({
     this.employeeId = 'W7',
     this.upn = 'alfio.ambre@student.other.example',
     this.displayName = 'Alfio Ambre',
+    this.department = 'OTHER-3A',
     this.deltaToken = 'AZ-TOKEN',
     this.visibleUsers = const <az.AzureUser>[],
   });
 
   /// The WISA id the existing account carries — the one usable matching key.
+  /// For a student that is `WisaStudent.wisaId`; for a staff member the
+  /// (nullable) `WisaStaff.wisaId`, never their `code`.
   final String employeeId;
   final String upn;
   final String displayName;
+
+  /// The `department` the school they came from left on the account — never
+  /// one of ours, which is the whole reason the `$filter` cannot see it.
+  final String department;
   final String deltaToken;
 
   /// What the `$filter`-scoped bulk read returns. Empty by default: the whole
@@ -224,7 +233,7 @@ class TransferredStudentGraph implements az.GraphTransport {
                   'displayName': displayName,
                   // No companyName: the other school never stamped one, and
                   // ours was never stamped either.
-                  'department': 'OTHER-3A',
+                  'department': department,
                   'accountEnabled': true,
                 },
               ]
@@ -1403,13 +1412,17 @@ class ReconcileHarness {
           transport: azureTransport,
           log: log,
         ),
-        // Exactly as `bootstrapReconcile` composes it (#224): the ids this pass
-        // expects Azure accounts for come from the WISA snapshot the same
-        // ApplicationState pulled moments earlier.
-        expectedEmployeeIds: () => managedStudentEmployeeIds(
-          app.wisa.snapshot,
-          ourSchoolIds: ourSchoolIds,
-        ),
+        // Exactly as `bootstrapReconcile` composes it (#224 students, #231
+        // staff): the ids this pass expects Azure accounts for come from both
+        // populations of the WISA snapshot the same ApplicationState pulled
+        // moments earlier.
+        expectedEmployeeIds: () => <String>{
+          ...managedStudentEmployeeIds(
+            app.wisa.snapshot,
+            ourSchoolIds: ourSchoolIds,
+          ),
+          ...managedStaffEmployeeIds(app.wisa.snapshot),
+        },
       );
       azSync = (previous) async {
         azSyncs++;

@@ -296,4 +296,54 @@ void main() {
       expect(ids, {'W1', 'W2'});
     });
   });
+
+  group('managedStaffEmployeeIds (#231)', () {
+    WisaStaff member(String code, {String? wisaId}) => WisaStaff(
+          code: core.WisaStaffCode(code),
+          wisaId: wisaId == null ? null : core.WisaId(wisaId),
+          firstName: 'Anna',
+          lastName: 'Smit',
+        );
+
+    WisaSnapshot snap(List<WisaStaff> staff) => WisaSnapshot(
+          fetchedAt: DateTime.utc(2026),
+          students: const [],
+          staff: staff,
+          classGroups: const [],
+          schools: const [],
+        );
+
+    test('no snapshot yet ⇒ nothing expected', () {
+      expect(managedStaffEmployeeIds(null), isEmpty);
+    });
+
+    test('every staff member the SmaSyncPer pull returned counts', () {
+      // No school scoping is possible or wanted: a staff row carries no school
+      // id, so the pull is already exactly the staff we manage.
+      expect(
+        managedStaffEmployeeIds(
+            snap([member('SMIT', wisaId: '42'), member('JANS', wisaId: '43')])),
+        {'42', '43'},
+      );
+    });
+
+    test('the wisaId is the id, never the staff code', () {
+      // The Azure bridge for staff is `wisaId ≡ employeeId` (linker
+      // `_buildStaffRecords` step 3); `code` bridges Smartschool instead
+      // (OQ-1), and looking it up in Graph would match nothing.
+      expect(managedStaffEmployeeIds(snap([member('SMIT', wisaId: '42')])),
+          {'42'});
+    });
+
+    test('a staff member without a wisaId is dropped, not asked about', () {
+      // `wisaId` is nullable on a staff row; without one there is no
+      // `employeeId` to look up and none on the account to find either.
+      expect(
+        managedStaffEmployeeIds(
+          snap([member('SMIT'), member('JANS', wisaId: '  43  ')]),
+        ),
+        {'43'},
+      );
+    });
+  });
 }

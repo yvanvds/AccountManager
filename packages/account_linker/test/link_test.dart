@@ -793,6 +793,40 @@ void main() {
       expect(s.confidence, LinkConfidence.medium);
     });
 
+    test(
+        'a moved staff member\'s account links by employeeId alone — another '
+        'school\'s department, an unusable UPN (#231)', () {
+      // The state a move from a sibling group school leaves behind, the staff
+      // counterpart of #224: the account exists, its `employeeId` is our WISA
+      // id, but `department` still names the school they came from — so it
+      // matches neither leg of the connector's `$filter` *and* would be dropped
+      // here as "another school's" if `employeeId` did not bridge it. The UPN
+      // that school wrote is no key either. Without this link the app proposes
+      // a second Office 365 account.
+      final snapshot = link(
+        wisaSnap(const [], staff: [wisaStaff('SMITA', wisaId: '42')]),
+        ssSnap(const []),
+        azSnap([
+          azureUser(
+            id: 'az-moved',
+            upn: 'smit.anna@other.example',
+            employeeId: '42',
+            department: 'OTHER - Wiskunde',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      // One record, not two: the Azure user joined the WISA staff member
+      // rather than being dropped as another school's.
+      expect(snapshot.staff, hasLength(1));
+      final s = snapshot.staff.single;
+      expect(s.wisa?.wisaId?.value, '42');
+      expect(s.azure?.id, 'az-moved');
+      expect(s.smartschool, isNull);
+    });
+
     test('staff and students partition cleanly from one Smartschool list', () {
       // A teacher and a student share neither key; each must land in exactly
       // one population, never both.

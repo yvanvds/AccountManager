@@ -148,6 +148,33 @@ class AddStaffToAzure extends StaffAction {
 
     try {
       final users = _requireAzure(connectors).users;
+      // #231 (the staff half of #224): never create a second account for
+      // someone who already has one. The snapshot this action was derived from
+      // can be stale — or blind, when the account's `department` still names
+      // the sibling group school the member moved in from — and
+      // `createPrincipalName` resolves the UPN collision by suffixing, so the
+      // duplicate create would succeed silently. `employeeId` is the one key
+      // that survives a move between group schools, so a hit means the account
+      // exists and the next sync must adopt it instead.
+      //
+      // A staff row may carry no `wisaId` at all (`code` is the staff primary
+      // key, spec §3.4): then there is no id to look up — and none to stamp on
+      // the account either, so no future sync could confuse the two.
+      final expectedId = wisa.wisaId?.value.trim() ?? '';
+      if (expectedId.isNotEmpty) {
+        final existing = await users.findByEmployeeId(expectedId);
+        if (existing != null) {
+          return _failed(
+            changes,
+            Origin.azure,
+            StateError(
+              'Office 365 already has an account with employeeId '
+              '$expectedId (${existing.upn}). Sync Azure again so the existing '
+              'account is linked instead of creating a duplicate.',
+            ),
+          );
+        }
+      }
       final upn = await users.createPrincipalName(
         wisa.firstName,
         wisa.lastName,

@@ -404,17 +404,22 @@ Future<ReconcileServices> bootstrapReconcile({
         payloadOf: (s) => s.toJson(),
         deltaTokenOf: (s) => s.deltaToken,
         onError: (e) => logSnapshotIssue(core.Origin.azure, e),
-        // The prefix-scoped pull is blind to a student who transferred in from
-        // a sibling group school — their account carries neither our
-        // `companyName` nor our `department` — so the app proposed creating a
-        // duplicate. Hand the connector the WISA ids this pass expects, and it
-        // looks the unaccounted-for ones up by `employeeId` (#224).
+        // The prefix-scoped pull is blind to anyone who transferred in from a
+        // sibling group school — a student's account carries neither our
+        // `companyName` nor our `department`, a staff member's `department`
+        // still names the school they came from — so the app proposed creating
+        // a duplicate. Hand the connector the WISA ids this pass expects, both
+        // populations, and it looks the unaccounted-for ones up by `employeeId`
+        // (#224 students, #231 staff).
         inner: azureSyncer(
           azConnector,
-          expectedEmployeeIds: () => managedStudentEmployeeIds(
-            app.wisa.snapshot,
-            ourSchoolIds: ourSchoolIds,
-          ),
+          expectedEmployeeIds: () => <String>{
+            ...managedStudentEmployeeIds(
+              app.wisa.snapshot,
+              ourSchoolIds: ourSchoolIds,
+            ),
+            ...managedStaffEmployeeIds(app.wisa.snapshot),
+          },
         ),
       ),
     ),
