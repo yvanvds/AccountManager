@@ -268,12 +268,19 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
         g.confidence.name,
         'w:${g.wisa?.name ?? '-'}',
         's:${g.smartschool?.id.value ?? '-'}',
+        // The unadoptable Smartschool namesake (#225) is part of the record's
+        // meaning — it is what suppresses the create proposal — so a shift in
+        // which group is picked must show up as a signature difference.
+        'n:${g.smartschoolNamesake?.id.value ?? '-'}',
         'a:${g.azure?.id ?? '-'}',
       ].join('|');
 
   String warning(LinkWarning w) => switch (w) {
         ResolveDuplicateMail(:final mail, :final accounts) =>
           'dupmail:$mail:${(accounts.map((x) => x.uid).toList()..sort()).join(',')}',
+        SmartschoolNamesakeSkipped(:final wisaName, :final smartschool) =>
+          'namesake:$wisaName:${smartschool.id.value}:'
+              '${smartschool.official ? 'official' : 'group'}',
       };
 
   return [

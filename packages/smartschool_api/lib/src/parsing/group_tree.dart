@@ -59,9 +59,14 @@ SmartschoolGroup _parseGroupElement(XmlElement el, String? parentCode) {
       case 'untis':
         group.untis = child.innerText;
       case 'visible':
-        group.visible = child.innerText == '1';
+        group.visible = _flag(child.innerText);
       case 'isOfficial':
-        group.official = child.innerText == '1';
+        // Trimmed, like `adminNumber` below: a `1` that arrives padded (a CDATA
+        // section wrapped onto its own line) must not silently read as "not an
+        // official class" — that drops the class from the group link entirely
+        // and its WISA twin then looks like a class nobody has created yet
+        // (#225).
+        group.official = _flag(child.innerText);
       case 'coAccountLabel':
         group.coAccountLabel = child.innerText;
       case 'adminNumber':
@@ -100,6 +105,10 @@ Iterable<XmlElement> _childGroups(XmlElement el) sync* {
     }
   }
 }
+
+/// Smartschool's boolean flags, which it spells `1`/`0`. Trimmed, so a value
+/// padded by the surrounding XML still reads as the flag it is.
+bool _flag(String raw) => raw.trim() == '1';
 
 core.GroupType _typeFrom(String raw) {
   switch (raw) {

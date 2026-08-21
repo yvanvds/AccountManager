@@ -141,4 +141,40 @@ void main() {
       // Both are valid records — nothing here prevents holding both.
     });
   });
+
+  group('group-name normalization (#225)', () {
+    test('trims, lower-cases, and collapses internal whitespace runs', () {
+      expect(normalizeGroupName('  2G  '), '2g');
+      expect(normalizeGroupName('5A  01'), '5a 01');
+      expect(normalizeGroupName('5A\t01'), '5a 01');
+    });
+
+    test('non-breaking spaces normalize to a plain space', () {
+      // What an operator's copy-paste leaves in a Smartschool class name; it
+      // does not make it a different class from the WISA one.
+      expect(normalizeGroupName('5A\u00a001'), '5a 01');
+      expect(normalizeGroupName('5A\u202f01'), '5a 01');
+      expect(normalizeGroupName('5A\u00a0\u00a001'), '5a 01');
+    });
+
+    test('a blank or null name is no key at all', () {
+      expect(normalizeGroupName(null), isNull);
+      expect(normalizeGroupName('   '), isNull);
+      expect(normalizeGroupName('\u00a0'), isNull);
+    });
+
+    test('the space between a class and its sub-group is preserved', () {
+      // The looser fingerprint drops it; the match key must not, or `5A 01`
+      // and `5A01` would link as one class.
+      expect(normalizeGroupName('5A 01'), isNot(normalizeGroupName('5A01')));
+    });
+
+    test('the fingerprint ignores whitespace entirely', () {
+      expect(groupNameFingerprint('2 G'), groupNameFingerprint('2G'));
+      expect(groupNameFingerprint('2\u00a0g'), '2g');
+      expect(groupNameFingerprint('5A 01'), '5a01');
+      expect(groupNameFingerprint('  '), isNull);
+      expect(groupNameFingerprint(null), isNull);
+    });
+  });
 }

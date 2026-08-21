@@ -301,6 +301,12 @@ Map<String, List<String>> _warningsByUid(List<core.LinkWarning> warnings) {
         for (final a in accounts) {
           (byUid[a.uid] ??= <String>[]).add(message);
         }
+      case core.SmartschoolNamesakeSkipped():
+        // Names a *class*, not an account, so it has no uid to hang on. The
+        // class itself carries the situation as the informational
+        // `ClassExistsAsSmartschoolGroup` candidate on its group document, and
+        // the sync log names every skipped namesake (#225).
+        break;
     }
   }
   return byUid;

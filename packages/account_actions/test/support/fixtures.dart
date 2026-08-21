@@ -385,12 +385,14 @@ GroupPlacement groupPlacement({
 LinkedGroup linkedGroup({
   Group? wisa,
   Group? smartschool,
+  Group? smartschoolNamesake,
   az.AzureGroup? azure,
   LinkConfidence confidence = LinkConfidence.high,
 }) =>
     LinkedGroup(
       wisa: wisa,
       smartschool: smartschool,
+      smartschoolNamesake: smartschoolNamesake,
       azure: azure,
       confidence: confidence,
     );

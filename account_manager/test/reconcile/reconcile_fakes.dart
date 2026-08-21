@@ -943,6 +943,44 @@ ReconcileHarness siblingPopulatedClassHarness() => ReconcileHarness(
       ourSchoolIds: const {1},
     );
 
+/// A harness for the class Smartschool already has (#225). Our school 1 has the
+/// populated class `2G`; Smartschool holds `2G` too — under `2de Jaar`, beside
+/// the classes it *did* flag official, and with the subgroup `2G LAT` hanging
+/// under it — but the `2G` node itself is not flagged as an official class.
+///
+/// The official-class link skips it, correctly and (before #225) silently, so
+/// the WISA class read as one nobody had created yet: the Klasgroepen list
+/// offered "Voeg deze klas toe aan Smartschool", the applyable action that
+/// would have asked Smartschool for a second class named `2G`. The subgroup, an
+/// official class of its own with no WISA counterpart, keeps its own
+/// Smartschool-only notice — that one is correct.
+ReconcileHarness nonOfficialSmartschoolClassHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '2G')],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '2G',
+            description: '2e lj A Klassieke talen',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('2de Jaar',
+              code: '2dejaar', official: false, type: core.GroupType.group),
+          ssGroup('2G', code: 'G2G', official: false),
+          ssGroup('2G LAT', code: 'C2GLAT'),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the `00` sub-group sentinel (#221). Two managed schools that
 /// each have their own `1C`, and each of those is a **single-group** class: one
 /// `SyncKlas` row with `KLASGROEP = 00` and — because `ADMINGROEP` is only

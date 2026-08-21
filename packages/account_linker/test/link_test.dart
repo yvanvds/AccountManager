@@ -7,6 +7,10 @@ import 'support/fixtures.dart';
 
 const _prefix = 'Arcadia';
 
+/// A non-breaking space (U+00A0) — what a class name pasted into Smartschool
+/// often carries where the WISA name has a plain space (#225).
+const _nbsp = '\u00a0';
+
 void main() {
   group('link — student scenarios', () {
     test('fully linked across three systems → high confidence', () {
@@ -379,6 +383,141 @@ void main() {
       // The organisational group with the same name is ignored.
       expect(g.smartschool, isNull);
       expect(g.confidence, LinkConfidence.medium);
+    });
+
+    test(
+        'a non-official namesake is kept on the record and warned about (#225)',
+        () {
+      // The `2G` of #225: Smartschool holds the class as a group that is not
+      // flagged official. The link still refuses it — it is not a class — but
+      // the record must say the name is taken, or the action engine proposes
+      // creating a class Smartschool already has.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2G')]),
+        ssSnap(const [], groups: [ssGroup('2G', code: 'G2G', official: false)]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.smartschool, isNull, reason: 'a group is still not a class');
+      expect(g.smartschoolNamesake?.id.value, 'G2G');
+      expect(g.smartschoolNamesake?.official, isFalse);
+
+      final warning = snapshot.warnings.single as SmartschoolNamesakeSkipped;
+      expect(warning.wisaName, '2G');
+      expect(warning.smartschool.id.value, 'G2G');
+    });
+
+    test('a class Smartschool does not have carries no namesake (#225)', () {
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2G')]),
+        ssSnap(const [], groups: [ssGroup('2F', official: false)]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.groups.single.smartschoolNamesake, isNull);
+      expect(snapshot.warnings, isEmpty);
+    });
+
+    test('a linked class never carries a namesake or a warning (#225)', () {
+      // Two Smartschool groups share the name; the official one links, so
+      // nothing was skipped that matters.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2G')]),
+        ssSnap(const [], groups: [
+          ssGroup('2G', code: 'G2G', official: false),
+          ssGroup('2G', code: 'C2G'),
+        ]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.smartschool?.id.value, 'C2G');
+      expect(g.smartschoolNamesake, isNull);
+      expect(snapshot.warnings, isEmpty);
+    });
+
+    test('an internal double space in the Smartschool name still links (#225)',
+        () {
+      final snapshot = link(
+        wisaSnap(const [],
+            classGroups: [wisaClassGroup('5A', groupName: '01')]),
+        ssSnap(const [], groups: [ssGroup('5A  01', code: 'C5A01')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.smartschool?.id.value, 'C5A01');
+      expect(snapshot.warnings, isEmpty);
+    });
+
+    test('a non-breaking space in the Smartschool name still links (#225)', () {
+      // A class name an operator pasted into Smartschool: the separator is
+      // U+00A0, not a plain space, so it used to be a different class entirely.
+      final snapshot = link(
+        wisaSnap(const [],
+            classGroups: [wisaClassGroup('5A', groupName: '01')]),
+        ssSnap(const [], groups: [ssGroup('5A${_nbsp}01', code: 'C5A01')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final g = snapshot.groups.single;
+      expect(g.smartschool?.id.value, 'C5A01');
+    });
+
+    test(
+        'an official class spelled "2 G" does not link but blocks the create '
+        '(#225)', () {
+      // Too loose a key to link on — dropping the space that separates a class
+      // from its sub-group would fuse names that really are distinct — but
+      // definitely close enough to refuse to create a second `2G`.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2G')]),
+        ssSnap(const [], groups: [ssGroup('2 G', code: 'C2G')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      // The official orphan seeds its own record (#52); ours is the WISA one.
+      final ours = snapshot.groups.firstWhere((g) => g.wisa != null);
+      expect(ours.smartschool, isNull);
+      expect(ours.smartschoolNamesake?.id.value, 'C2G');
+      expect(ours.smartschoolNamesake?.official, isTrue);
+      expect(
+        (snapshot.warnings.single as SmartschoolNamesakeSkipped).wisaName,
+        '2G',
+      );
+    });
+
+    test('a namesake another class already holds is not reported twice (#225)',
+        () {
+      // WISA has both `2G` and `2 G`; the official Smartschool `2 G` links to
+      // the latter, so it is not `2G`'s name that is taken.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [
+          wisaClassGroup('2G'),
+          wisaClassGroup('2 G'),
+        ]),
+        ssSnap(const [], groups: [ssGroup('2 G', code: 'C2G')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final plain = snapshot.groups.firstWhere((g) => g.wisa!.name == '2G');
+      expect(plain.smartschoolNamesake, isNull);
+      expect(snapshot.warnings, isEmpty);
     });
 
     test('subgroup fullName (name + groupName) is the match key', () {

@@ -1217,6 +1217,78 @@ void main() {
   });
 
   testWidgets(
+      'a class Smartschool already has is never offered for creation '
+      'end-to-end (#225)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Smartschool holds `2G` under
+    // `2de Jaar` with the subgroup `2G LAT` under it — but the `2G` node is not
+    // flagged as an official class, so the class link (which only ever adopts
+    // official classes) passed it over. The WISA class then read as one nobody
+    // had created, and the Klasgroepen list offered "Voeg deze klas toe aan
+    // Smartschool": a write that asks Smartschool for a second class named
+    // `2G`, which it either rejects or leaves standing beside the first.
+    //
+    // This is the layer that sees it: the wrong proposal is what the operator
+    // reads off the tile and clicks, and the notice that replaces it has to
+    // reach the same list through the linker, the dispatch, the materializer
+    // and the drill-down.
+    useTallWindow(tester);
+    final harness = nonOfficialSmartschoolClassHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // `2G` is on the list, and it says the class is already there — not that it
+    // needs creating.
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-2G')), findsOneWidget);
+    expect(
+      find.textContaining(
+          'Deze klas bestaat in Smartschool maar is geen officiële klas'),
+      findsOneWidget,
+    );
+    expect(
+        find.textContaining('Voeg deze klas toe aan Smartschool'), findsNothing,
+        reason:
+            'Smartschool already has a 2G — creating a second is never due');
+    expect(find.textContaining('bevat nog geen leerlingen'), findsNothing,
+        reason: 'the empty-class advice is wrong for a provisioned class');
+
+    // The pass never constructed either create action for it, and the notice
+    // is manual — there is nothing here for the app to write.
+    final kinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(kinds, contains('ClassExistsAsSmartschoolGroup'));
+    expect(kinds, isNot(contains('AddToSmartschool')));
+    expect(kinds, isNot(contains('CreateInSmartschool')));
+
+    // The subgroup keeps its own, correct Smartschool-only notice: it is an
+    // official class WISA has no counterpart for.
+    expect(find.byKey(const ValueKey('entry-group-2G LAT')), findsOneWidget);
+
+    // And the skip is no longer silent — the log names the group that was
+    // passed over and why.
+    final lines = harness.log.entries.map((e) => e.message).join('\n');
+    expect(lines, contains('Klas "2G" niet gekoppeld'));
+    expect(lines, contains('G2G'));
+  });
+
+  testWidgets(
       'the Acties drill-down opens on grade-years merged across the managed '
       'schools end-to-end, with no school level to guess at (#210)',
       (WidgetTester tester) async {

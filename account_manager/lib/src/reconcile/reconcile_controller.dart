@@ -1526,8 +1526,31 @@ class ReconcileController extends ChangeNotifier {
       '${s.groups.length} groups; ${pendingActions.length} pending '
       'action(s), ${s.warnings.length} warning(s).',
     );
+    _logSkippedNamesakes(s.warnings);
     _setProgress(0.9);
     await _persist(_linked!);
+  }
+
+  /// Names every WISA class the group link passed over because Smartschool
+  /// already carries its name on a group it could not adopt (#225).
+  ///
+  /// The skip is correct — an unofficial group is not a class — but it used to
+  /// be invisible, and an unmatched WISA class reads exactly like a class that
+  /// does not exist downstream. That is what had the Klasgroepen list offering
+  /// to create a class Smartschool already had, so each one gets a line of its
+  /// own naming the group that was skipped and why.
+  void _logSkippedNamesakes(List<core.LinkWarning> warnings) {
+    for (final w in warnings) {
+      if (w is! core.SmartschoolNamesakeSkipped) continue;
+      final ss = w.smartschool;
+      log.addMessage(
+        core.Origin.smartschool,
+        'Klas "${w.wisaName}" niet gekoppeld: Smartschool heeft al '
+        '"${ss.name}" (code ${ss.id.value}), '
+        '${ss.official ? 'met een andere schrijfwijze' : 'maar geen '
+            'officiële klas'}.',
+      );
+    }
   }
 
   /// Materializes the fresh linked view and writes it to the shared store

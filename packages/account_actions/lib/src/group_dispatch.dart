@@ -10,11 +10,20 @@ import 'group_placement.dart';
 /// the split is on the WISA/Smartschool pair rather than all three systems
 /// (there is no Azure group action):
 /// - If the class is missing from WISA **or** Smartschool, the lifecycle-style
-///   actions ([DoNotImportFromWisa], [AddToSmartschool], [CreateInSmartschool],
-///   [DoNotImportFromSmartschool]) are considered — in that legacy order, so a
-///   WISA-only class raises both [DoNotImportFromWisa] and exactly one of
-///   [AddToSmartschool] / [CreateInSmartschool].
+///   actions ([DoNotImportFromWisa], [ClassExistsAsSmartschoolGroup],
+///   [AddToSmartschool], [CreateInSmartschool], [DoNotImportFromSmartschool])
+///   are considered — in that legacy order, so a WISA-only class raises both
+///   [DoNotImportFromWisa] and exactly one of [AddToSmartschool] /
+///   [CreateInSmartschool].
 /// - If it is present in both, only [ModifySmartschoolData] is considered.
+///
+/// [ClassExistsAsSmartschoolGroup] (#225) sits where the two create actions
+/// would: it fires exactly when the class already exists in Smartschool under a
+/// group the linker could not adopt ([LinkedGroup.smartschoolNamesake]), which
+/// is the same condition those two now refuse on. Unlike them it needs no
+/// placement — the situation is a property of the record alone — so it is
+/// raised whether or not [placementFor] is wired, and a WISA-only class is
+/// never left with a create proposal as its only reading.
 ///
 /// [placementFor] wires the membership-dependent creation actions (#65). When
 /// supplied it is called for each WISA-only class (`wisa != null &&
@@ -48,6 +57,7 @@ List<GroupAction> groupActionsFor(
         ]
       : <GroupAction>[
           DoNotImportFromWisa(group),
+          ClassExistsAsSmartschoolGroup(group),
           if (placement != null) AddToSmartschool(group, placement),
           if (placement != null) CreateInSmartschool(group, placement),
           DoNotImportFromSmartschool(group),
