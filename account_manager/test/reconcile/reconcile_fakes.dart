@@ -553,15 +553,26 @@ ss.SmartschoolAccount ssStaffAccount({
       fax: fax,
     );
 
+/// An Azure account. [displayName] is left empty by default, which is what most
+/// fixtures want — it makes `ModifyAzureName` evaluate true, so the pass has an
+/// action to show. A fixture that needs an account with **nothing** pending
+/// (a class the Acties filter must hide, #226) passes the student's WISA
+/// `fullName` here so the names already agree.
 az.AzureUser azUser({
   String id = 'az1',
   String upn = 'jane.doe@student.school.example',
   String? employeeId = '1',
+  String displayName = '',
+  String givenName = '',
+  String surname = '',
 }) =>
     az.AzureUser(
       id: id,
       upn: upn,
       employeeId: employeeId,
+      displayName: displayName,
+      givenName: givenName,
+      surname: surname,
       companyName: 'GBS',
     );
 

@@ -1341,6 +1341,174 @@ void main() {
   });
 
   testWidgets(
+      'the Acties filter collapses the drill-down to the work list end-to-end: '
+      'ticked-off classes and whole ticked-off years are gone, the switch is '
+      'set once and survives a tab change (#226)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Four students across three
+    // classes of two managed schools; exactly one of them (Sam, in 3C) sits in
+    // the wrong Smartschool class, so exactly one class carries work.
+    //
+    // This is the layer that sees it: the tree the operator browses is built
+    // from the stored rollups by two projections one tab apart, the switch
+    // lives above the family tab bar and has to outlive a tab change, and
+    // "which nodes render" is a whole-page composition question that a widget
+    // test of one section structurally cannot answer.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1C', classSubGroup: '00'),
+          wisaStudent(
+              wisaId: '2', classGroup: '1C', classSubGroup: '00', schoolId: 2),
+          wisaStudent(wisaId: '3', classGroup: '3C'),
+          wisaStudent(wisaId: '4', classGroup: '3D'),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+        classGroups: [
+          wisaClassGroup('1C', adminCode: 'a1', schoolCode: '111'),
+          wisaClassGroup('1C', adminCode: 'a2', schoolCode: '222', schoolId: 2),
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+          wisaClassGroup('3D', adminCode: 'a4', schoolCode: '111'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1C', code: '1C_ss'),
+          ssGroup('2B', code: '2B_ss'),
+          ssGroup('3C', code: '3C_ss'),
+          ssGroup('3D', code: '3D_ss'),
+        ],
+        accounts: [
+          ssAccount(),
+          ssAccount(
+            uid: 'jan',
+            accountId: '2',
+            mail: 'jan.peeters@student.school.example',
+            givenName: 'Jan',
+            surname: 'Peeters',
+          ),
+          ssAccount(
+            uid: 'sam',
+            accountId: '3',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '4',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        memberships: [
+          member('jane', '1C_ss'),
+          member('jan', '1C_ss'),
+          // Sam's WISA class is 3C; Smartschool still has him in 2B.
+          member('sam', '2B_ss'),
+          member('tom', '3D_ss'),
+        ],
+      ),
+      // Every Azure account already carries the WISA display name, so the only
+      // student action the pass raises anywhere is Sam's class move. (The WISA
+      // fixture names every student "Jane Doe"; the tree is browsed by node,
+      // not by person, so only the class each of them sits in matters here.)
+      azure: azSnap(users: [
+        azUser(displayName: 'Jane Doe'),
+        azUser(
+          id: 'az2',
+          upn: 'jan.peeters@student.school.example',
+          employeeId: '2',
+          displayName: 'Jane Doe',
+        ),
+        azUser(
+          id: 'az3',
+          upn: 'sam.sels@student.school.example',
+          employeeId: '3',
+          displayName: 'Jane Doe',
+        ),
+        azUser(
+          id: 'az4',
+          upn: 'tom.tas@student.school.example',
+          employeeId: '4',
+          displayName: 'Jane Doe',
+        ),
+      ]),
+      ourSchoolIds: const {1, 2},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The stored overview really does hold a mix — one class with work, three
+    // without — so the absence assertions below mean something.
+    final pendingByClass = <String, int>{
+      for (final r in harness.controller.studentRollups)
+        for (final c in harness.controller.studentChildrenOf(r))
+          '${c.school}|${c.classroom}': c.pendingCount,
+    };
+    expect(pendingByClass['1|3C'], greaterThan(0));
+    expect(pendingByClass['1|3D'], 0);
+    expect(pendingByClass['1|1C'], 0);
+    expect(pendingByClass['2|1C'], 0);
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    // One switch, on the Acties tab itself, already on.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    expect(toggle, findsOneWidget);
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+
+    // Jaar 1's two classes are both done, so the whole year is gone; Jaar 3
+    // stays because one of its classes is not.
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing,
+        reason: 'both of Jaar 1\'s classes are done — the year goes with them');
+    // …and the operator is told why a year they expected is missing.
+    expect(find.byKey(const ValueKey('actions-filter-hidden')), findsOneWidget);
+
+    // Inside the surviving year, the ticked-off class is gone too.
+    await tester.tap(find.byKey(const ValueKey('rollup-grade-grades|3')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3C')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|3|3D')), findsNothing,
+        reason: 'a class with nothing to do is not rendered under the filter');
+
+    // The switch is a mode, not a per-list setting: it outlives a tab change.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    await tester.tap(find.byKey(const ValueKey('actions-tab-leerlingen')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing);
+
+    // Switched off, the full inventory is back — every year, every class.
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-filter-hidden')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('rollup-grade-grades|3')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3D')),
+        findsOneWidget);
+  });
+
+  testWidgets(
       'a single-group class whose name another school shares raises no class '
       'change, and "00" never reaches a class name end-to-end (#221)',
       (WidgetTester tester) async {
@@ -3120,12 +3288,12 @@ void main() {
 
   testWidgets(
       'the Actions Personeel classroom filters by any part of the name in any '
-      'order and by the only-with-actions toggle end-to-end, combining both '
-      '(#187/#217)', (WidgetTester tester) async {
+      'order and by the top-level only-with-actions switch end-to-end, '
+      'combining both (#187/#217/#226)', (WidgetTester tester) async {
     // The real app, real fonts, real window over a passive session: three staff
     // seeded into the one synthetic Personeel class — two share the surname
     // "Smit" (one carrying an action, one not) and one has a distinct voornaam.
-    // The operator narrows the list by name and by the has-actions toggle, and
+    // The operator narrows the list by name and by the has-actions switch, and
     // the two filters combine.
     useTallWindow(tester);
     final store = await seededLinkedStore([
@@ -3141,12 +3309,23 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // Open the Actions tab (passive overview from the store), go to Personeel,
-    // and drill into the single staff class.
+    // Open the Actions tab (passive overview from the store). The global filter
+    // is on by default since #226 and sits above the family tab bar; this test
+    // is about the name search, so start from the full inventory.
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    expect(toggle, findsOneWidget);
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    // Go to Personeel — the switch survives the tab change (#226) — and drill
+    // into the single staff class.
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(toggle).value, isFalse);
     await tester.tap(find.byKey(const ValueKey('rollup-school-school|staff')));
     await tester.pumpAndSettle();
     await tester
@@ -3196,15 +3375,15 @@ void main() {
     expect(
         find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
 
-    // Back to "Smit", then combine with the only-with-actions toggle: only Anna
-    // keeps an action, so Clara (name-matched but action-free) drops too.
+    // Back to "Smit", then combine with the global only-with-actions switch
+    // back on: only Anna keeps an action, so Clara (name-matched but
+    // action-free) drops too.
     await tester.enterText(
         find.byKey(const ValueKey('actions-search')), 'smit');
     await tester.pump();
-    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('Anna Smit'), findsOneWidget);
     expect(find.text('Clara Smit'), findsNothing);
     expect(find.text('Bram Jansen'), findsNothing);

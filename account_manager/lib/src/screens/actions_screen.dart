@@ -25,6 +25,13 @@ import '../search/name_query.dart';
 /// on-screen tiles build. The global "Dry-run all" / "Apply all" act on every
 /// pending entry across all classes.
 ///
+/// One view-wide switch above the family tab bar — "toon enkel accounts met
+/// acties", on by default — collapses all of that to the work list (#226):
+/// grade-years and classrooms with nothing pending are not rendered, and an
+/// opened classroom lists only accounts with a pending action. What it holds
+/// back is counted and named, so a year the operator expected is explained
+/// rather than merely absent.
+///
 /// A session with no linked view — passive, or one whose pass failed before it
 /// linked — can only show the stored documents, so both drill-downs say so out
 /// loud rather than quietly swapping in static cards (#214).
@@ -141,6 +148,29 @@ class _EntryRow extends _PendingRow {
 /// overview's category order (Leerlingen, then Personeel).
 enum _ActionFamilyTab { leerlingen, personeel }
 
+/// One family tab's drill-down after the global "toon enkel accounts met acties"
+/// filter has been applied (#226): the nodes that survive, plus a count of what
+/// it removed so the tree can say why a year is missing rather than silently
+/// shrinking.
+class _FilteredTree {
+  const _FilteredTree({
+    required this.roots,
+    this.groups,
+    required this.hidden,
+  });
+
+  /// The top-level accordion nodes still worth rendering.
+  final List<Rollup> roots;
+
+  /// The "Klasgroepen" node, or `null` when this tab carries none.
+  final Rollup? groups;
+
+  /// How many nodes disappeared from what the tree would otherwise show —
+  /// counted as the operator would browse it, so a hidden year counts once
+  /// rather than once per classroom inside it.
+  final int hidden;
+}
+
 class _ActionsBody extends StatefulWidget {
   const _ActionsBody({required this.controller});
 
@@ -155,11 +185,23 @@ class _ActionsBodyState extends State<_ActionsBody>
   late final TabController _tabs;
   int _shownIndex = 0;
 
-  /// The classroom drill-down filters (#187): show only accounts carrying an
-  /// applyable action (both tabs), and a name search (Personeel tab). They
-  /// combine — a filtered account list respects both. Reset when the family tab
-  /// changes so each tab opens at a clean, unfiltered list.
-  bool _onlyWithActions = false;
+  /// The **global** Acties filter (#226), promoted out of the per-classroom bar
+  /// it was born in (#187): with the switch on, everything below it shows only
+  /// what carries an applyable action — grade-year and classroom nodes with a
+  /// zero pending count are not rendered, a grade-year left with no visible
+  /// classroom goes with them, and an opened classroom lists only accounts with
+  /// a pending action.
+  ///
+  /// One decision per session rather than one per class, so it is deliberately
+  /// **not** reset by a family tab change ([_onTabChanged]): the operator's mode
+  /// outlives whichever tab they happen to be on. Defaults on — the Acties view
+  /// exists to answer "what needs doing?", and the full inventory is the
+  /// exception, not the starting point.
+  bool _onlyWithActions = true;
+
+  /// The Personeel name search (#187/#217). Unlike [_onlyWithActions] this is a
+  /// per-list lookup, not a mode, so it stays inside the opened classroom and is
+  /// cleared on every family tab change.
   final TextEditingController _search = TextEditingController();
 
   ReconcileController get controller => widget.controller;
@@ -238,12 +280,15 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// Rebuilds the sliver content for the newly-selected family, and — when the
   /// selected family actually changed — closes any open drill-down so each tab
   /// opens at its own overview rather than showing the other family's detail.
+  ///
+  /// The name search is cleared, because it is a lookup inside the list that is
+  /// being left behind. [_onlyWithActions] is **not**: since #226 it is the
+  /// view-wide mode, set once above the tab bar, and resetting it here would put
+  /// the switch and the tree it governs out of step on every tab change.
   void _onTabChanged() {
     final index = _tabs.index;
     if (index != _shownIndex) {
       _shownIndex = index;
-      // A fresh tab opens at a clean, unfiltered list (#187).
-      _onlyWithActions = false;
       _search.clear();
       if (controller.selectedClassroom != null) controller.closeClassroom();
       if (controller.showingGroups) controller.closeGroups();
@@ -277,11 +322,94 @@ class _ActionsBodyState extends State<_ActionsBody>
   static SliverToBoxAdapter _gap(double height) =>
       SliverToBoxAdapter(child: SizedBox(height: height));
 
+  /// Whether a grade-year or classroom node survives the global filter (#226).
+  ///
+  /// [Rollup.pendingCount] is already "how many applyable actions sit under this
+  /// node", so hiding is a pure render-time projection of the stored overview —
+  /// no store or materializer change is involved.
+  bool _keepNode(Rollup r) => !_onlyWithActions || r.pendingCount > 0;
+
+  /// Whether a nested grade-year node (the Personeel tab's middle level) keeps
+  /// at least one visible classroom. A grade that would open onto nothing is
+  /// hidden as a whole rather than left as an empty accordion.
+  bool _keepGrade(Rollup grade) =>
+      !_onlyWithActions || controller.childrenOf(grade.key).any(_keepNode);
+
+  /// Whether the "Klasgroepen" node survives the global filter (#226).
+  ///
+  /// Deliberately **not** `pendingCount > 0`, unlike every other node. A class
+  /// group's candidates are not all applyable: since #225 a class can carry an
+  /// informational-only notice (`ClassExistsAsSmartschoolGroup` and friends),
+  /// which is manual work the operator still has to do — it just has no
+  /// automated write, so it adds nothing to the pending count. Filtering this
+  /// node on the pending count would hide exactly the notices #225 exists to
+  /// surface. A group document is only ever written for a class that needs
+  /// attention, so the node stays as long as it holds one.
+  bool _keepGroups(Rollup groups) => groups.accountCount > 0;
+
+  /// The Leerlingen drill-down after the global filter (#226): the merged
+  /// grade-years that still hold a visible classroom, plus the class-groups
+  /// node, and how many nodes went missing so the tree can say so.
+  _FilteredTree _studentTree() {
+    final roots = <Rollup>[];
+    var hidden = 0;
+    for (final root in controller.studentRollups) {
+      final classrooms = controller.studentChildrenOf(root);
+      final kept = classrooms.where(_keepNode).length;
+      if (_onlyWithActions && kept == 0) {
+        // The year itself disappears rather than opening onto an empty list.
+        hidden++;
+        continue;
+      }
+      roots.add(root);
+      hidden += classrooms.length - kept;
+    }
+    final groups = controller.groupRollup;
+    return _FilteredTree(
+      roots: roots,
+      groups: groups != null && _keepGroups(groups) ? groups : null,
+      hidden: hidden,
+    );
+  }
+
+  /// The Personeel drill-down after the global filter (#226): the staff school
+  /// node, kept only while some grade below it still holds a visible classroom.
+  _FilteredTree _staffTree() {
+    final root = controller.staffSchoolRollup;
+    if (root == null) return const _FilteredTree(roots: <Rollup>[], hidden: 0);
+    var hidden = 0;
+    var keptGrades = 0;
+    for (final grade in controller.childrenOf(root.key)) {
+      final classrooms = controller.childrenOf(grade.key);
+      final kept = classrooms.where(_keepNode).length;
+      if (_onlyWithActions && kept == 0) {
+        hidden++;
+        continue;
+      }
+      keptGrades++;
+      hidden += classrooms.length - kept;
+    }
+    if (_onlyWithActions && keptGrades == 0) {
+      return const _FilteredTree(roots: <Rollup>[], hidden: 1);
+    }
+    return _FilteredTree(roots: <Rollup>[root], hidden: hidden);
+  }
+
   List<Widget> _slivers(BuildContext context) {
     final slivers = <Widget>[
       _gap(PlinkSpacing.s6),
-      _section(_ActionsHeader(controller: controller)),
-      _gap(PlinkSpacing.s5),
+      _section(_ActionsHeader(
+        controller: controller,
+        onlyWithActions: _onlyWithActions,
+      )),
+      _gap(PlinkSpacing.s4),
+      // The one place the filter is set (#226): above the family tab bar, so it
+      // governs both tabs, the drill-down, and every classroom opened from it.
+      _section(_ActionsFilterBar(
+        onlyWithActions: _onlyWithActions,
+        onChanged: (v) => setState(() => _onlyWithActions = v),
+      )),
+      _gap(PlinkSpacing.s4),
       _section(_FamilyTabBar(controller: controller, tabs: _tabs)),
       _gap(PlinkSpacing.s4),
     ];
@@ -295,30 +423,40 @@ class _ActionsBodyState extends State<_ActionsBody>
       // synthetic staff school node (school → grade → classroom, unchanged); the
       // Leerlingen tab opens straight on the merged grade-years plus the
       // class-groups node (class groups are student-oriented).
-      final staffRollup = controller.staffSchoolRollup;
+      final tree = staffTab ? _staffTree() : _studentTree();
       slivers.add(_section(staffTab
           ? _DrillDownSection(
               controller: controller,
-              roots: <Rollup>[if (staffRollup != null) staffRollup],
+              roots: tree.roots,
               groups: null,
+              hidden: tree.hidden,
+              filtering: _onlyWithActions,
               emptyLabel: 'Geen openstaande personeelsacties.',
               childrenOf: (root) => <Widget>[
                 for (final grade in controller.childrenOf(root.key))
-                  _GradeNode(controller: controller, grade: grade),
+                  if (_keepGrade(grade))
+                    _GradeNode(
+                      controller: controller,
+                      grade: grade,
+                      onlyWithActions: _onlyWithActions,
+                    ),
               ],
             )
           : _DrillDownSection(
               controller: controller,
-              roots: controller.studentRollups,
-              groups: controller.groupRollup,
+              roots: tree.roots,
+              groups: tree.groups,
+              hidden: tree.hidden,
+              filtering: _onlyWithActions,
               emptyLabel: 'Nog geen gematerialiseerd overzicht.',
               childrenOf: (root) => <Widget>[
                 for (final classroom in controller.studentChildrenOf(root))
-                  _ClassroomTile(
-                    controller: controller,
-                    classroom: classroom,
-                    indent: PlinkSpacing.s5,
-                  ),
+                  if (_keepNode(classroom))
+                    _ClassroomTile(
+                      controller: controller,
+                      classroom: classroom,
+                      indent: PlinkSpacing.s5,
+                    ),
               ],
             )));
     } else {
@@ -354,12 +492,14 @@ class _ActionsBodyState extends State<_ActionsBody>
     }
     slivers.addAll(_readOnlySlivers());
 
-    Widget filterBar() => _section(_ClassroomFilterBar(
-          onlyWithActions: _onlyWithActions,
-          onOnlyWithActionsChanged: (v) => setState(() => _onlyWithActions = v),
-          showSearch: _staffTab,
-          searchController: _search,
-        ));
+    // Only the Personeel tab carries a per-list lookup; the mode switch that
+    // used to sit beside it now lives once, at the top of the view (#226).
+    final searchSlivers = _staffTab
+        ? <Widget>[
+            _section(_ClassroomSearchBar(searchController: _search)),
+            _gap(PlinkSpacing.s3),
+          ]
+        : const <Widget>[];
 
     if (controller.linked != null) {
       final situations = controller.classroomPendingSituations;
@@ -370,8 +510,7 @@ class _ActionsBodyState extends State<_ActionsBody>
       }
       final rows = _pendingRows(_filterSituations(situations));
       slivers
-        ..add(filterBar())
-        ..add(_gap(PlinkSpacing.s3))
+        ..addAll(searchSlivers)
         ..add(rows.isEmpty
             ? _section(const _EmptyLine(_noMatchLabel))
             : _rowsSliver(rows));
@@ -383,8 +522,7 @@ class _ActionsBodyState extends State<_ActionsBody>
       }
       final filtered = _filterAccounts(accounts);
       slivers
-        ..add(filterBar())
-        ..add(_gap(PlinkSpacing.s3))
+        ..addAll(searchSlivers)
         ..add(filtered.isEmpty
             ? _section(const _EmptyLine(_noMatchLabel))
             : SliverPadding(
@@ -537,9 +675,17 @@ class _ActionsBodyState extends State<_ActionsBody>
 /// (#110/#154): the secondary escape hatch that acts on every pending entry's
 /// chosen resolution, across all classes.
 class _ActionsHeader extends StatelessWidget {
-  const _ActionsHeader({required this.controller});
+  const _ActionsHeader({
+    required this.controller,
+    required this.onlyWithActions,
+  });
 
   final ReconcileController controller;
+
+  /// Whether the global filter is on, so the sub-line describes the tree the
+  /// operator is actually looking at (#226) — with the filter on there are no
+  /// ticked-off classes left to explain.
+  final bool onlyWithActions;
 
   @override
   Widget build(BuildContext context) {
@@ -555,9 +701,14 @@ class _ActionsHeader extends StatelessWidget {
         Text('Acties', style: text.headlineMedium),
         const SizedBox(height: PlinkSpacing.s2),
         Text(
-          count == 0
-              ? 'Geen openstaande acties. Klassen zonder acties tonen een vinkje.'
-              : '$count openstaande actie(s) — blader per jaar en klas.',
+          switch ((count, onlyWithActions)) {
+            (0, _) => 'Geen openstaande acties.',
+            (_, true) =>
+              '$count openstaande actie(s) — enkel jaren en klassen met '
+                  'acties worden getoond.',
+            (_, false) => '$count openstaande actie(s) — blader per jaar en '
+                'klas. Klassen zonder acties tonen een vinkje.',
+          },
           style: text.bodyMedium,
         ),
         const SizedBox(height: PlinkSpacing.s4),
@@ -592,6 +743,41 @@ class _ActionsHeader extends StatelessWidget {
           const SizedBox(height: PlinkSpacing.s4),
           const LinearProgressIndicator(),
         ],
+      ],
+    );
+  }
+}
+
+/// The one, view-wide "toon enkel accounts met acties" switch (#226).
+///
+/// It sits above the family tab bar, so the single decision it records governs
+/// both families, the whole jaar → klas drill-down, and every classroom opened
+/// from it. Its per-classroom ancestor (#187) had to be re-flipped in every
+/// class the operator opened and was reset on every tab change, which is why it
+/// never actually collapsed the tree to the work list.
+class _ActionsFilterBar extends StatelessWidget {
+  const _ActionsFilterBar({
+    required this.onlyWithActions,
+    required this.onChanged,
+  });
+
+  final bool onlyWithActions;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return Row(
+      children: <Widget>[
+        Switch(
+          key: const ValueKey('actions-only-with-actions'),
+          value: onlyWithActions,
+          onChanged: onChanged,
+        ),
+        const SizedBox(width: PlinkSpacing.s2),
+        Expanded(
+          child: Text('Toon enkel accounts met acties', style: text.bodyMedium),
+        ),
       ],
     );
   }
@@ -824,6 +1010,8 @@ class _DrillDownSection extends StatelessWidget {
     required this.groups,
     required this.emptyLabel,
     required this.childrenOf,
+    required this.hidden,
+    required this.filtering,
   });
 
   final ReconcileController controller;
@@ -843,6 +1031,25 @@ class _DrillDownSection extends StatelessWidget {
 
   /// The message shown when this tab has nothing to browse.
   final String emptyLabel;
+
+  /// How many nodes the global filter removed from this tab's tree (#226).
+  final int hidden;
+
+  /// Whether the global filter is on — the difference between "there is nothing
+  /// here" and "the filter is holding it back", which is what tells an operator
+  /// why a year they expected is missing.
+  final bool filtering;
+
+  /// The footnote under a tree the filter has thinned out, so a missing year is
+  /// explained rather than merely absent.
+  String get _hiddenNote =>
+      'Verborgen door de filter: $hidden zonder openstaande acties.';
+
+  /// The stand-in for the tree when the filter hid every last node — distinct
+  /// from [emptyLabel], which means the shared view holds nothing at all.
+  String get _allHiddenNote =>
+      'Alles is verborgen door de filter: $hidden zonder openstaande acties. '
+      'Zet de filter af voor het volledige overzicht.';
 
   String? _freshness() {
     final state = controller.syncState;
@@ -874,7 +1081,13 @@ class _DrillDownSection extends StatelessWidget {
         ],
         const SizedBox(height: PlinkSpacing.s3),
         if (roots.isEmpty && groupsNode == null)
-          Text(emptyLabel, style: text.bodyMedium)
+          filtering && hidden > 0
+              ? Text(
+                  _allHiddenNote,
+                  key: const ValueKey('actions-filter-all-hidden'),
+                  style: text.bodyMedium,
+                )
+              : Text(emptyLabel, style: text.bodyMedium)
         else ...<Widget>[
           for (final root in roots)
             Container(
@@ -904,12 +1117,29 @@ class _DrillDownSection extends StatelessWidget {
               child: ListTile(
                 key: const ValueKey('rollup-groups'),
                 title: Text(groupsNode.label, style: text.bodyLarge),
-                subtitle: Text('${groupsNode.accountCount} klasgroep(en)',
-                    style: text.bodySmall),
+                subtitle: Text(
+                  // A node the filter kept while its badge shows a tick needs
+                  // its reason on the tile (#225/#226): every class in it
+                  // carries a notice to follow up by hand, none an automated
+                  // write.
+                  groupsNode.pendingCount == 0
+                      ? '${groupsNode.accountCount} klasgroep(en) — enkel '
+                          'meldingen om manueel op te volgen'
+                      : '${groupsNode.accountCount} klasgroep(en)',
+                  style: text.bodySmall,
+                ),
                 trailing: _PendingBadge(count: groupsNode.pendingCount),
                 onTap: controller.openGroups,
               ),
             ),
+          if (filtering && hidden > 0) ...<Widget>[
+            const SizedBox(height: PlinkSpacing.s1),
+            Text(
+              _hiddenNote,
+              key: const ValueKey('actions-filter-hidden'),
+              style: text.bodySmall,
+            ),
+          ],
         ],
       ],
     );
@@ -921,10 +1151,18 @@ class _DrillDownSection extends StatelessWidget {
 /// no school to nest under, so its grade-years are [_DrillDownSection] roots and
 /// carry their "Jaar N" label from [ReconcileController.gradeNodeLabel] instead.
 class _GradeNode extends StatelessWidget {
-  const _GradeNode({required this.controller, required this.grade});
+  const _GradeNode({
+    required this.controller,
+    required this.grade,
+    required this.onlyWithActions,
+  });
 
   final ReconcileController controller;
   final Rollup grade;
+
+  /// Whether the global filter is on, in which case only the classrooms of this
+  /// year that carry an applyable action are listed (#226).
+  final bool onlyWithActions;
 
   @override
   Widget build(BuildContext context) {
@@ -938,11 +1176,12 @@ class _GradeNode extends StatelessWidget {
       trailing: _PendingBadge(count: grade.pendingCount),
       children: <Widget>[
         for (final classroom in controller.childrenOf(grade.key))
-          _ClassroomTile(
-            controller: controller,
-            classroom: classroom,
-            indent: PlinkSpacing.s6,
-          ),
+          if (!onlyWithActions || classroom.pendingCount > 0)
+            _ClassroomTile(
+              controller: controller,
+              classroom: classroom,
+              indent: PlinkSpacing.s6,
+            ),
       ],
     );
   }
@@ -1023,69 +1262,39 @@ class _DetailHeader extends StatelessWidget {
   }
 }
 
-/// The filter bar above a drilled-into classroom's account list (#187): a
-/// "toon enkel accounts met acties" toggle (both tabs) and — on the Personeel
-/// tab — a name search. Both narrow the list below and combine: the shown list
-/// respects the toggle and the search together.
-class _ClassroomFilterBar extends StatelessWidget {
-  const _ClassroomFilterBar({
-    required this.onlyWithActions,
-    required this.onOnlyWithActionsChanged,
-    required this.showSearch,
-    required this.searchController,
-  });
+/// The name search above a drilled-into classroom's account list, on the
+/// Personeel tab only (#187/#217).
+///
+/// The "toon enkel accounts met acties" toggle that used to sit beside it moved
+/// to the top of the view in #226 — it is a mode, and the filter must not be
+/// settable in two places. A name search is the opposite: a lookup inside *this*
+/// list, so it stays here.
+class _ClassroomSearchBar extends StatelessWidget {
+  const _ClassroomSearchBar({required this.searchController});
 
-  final bool onlyWithActions;
-  final ValueChanged<bool> onOnlyWithActionsChanged;
-
-  /// Whether to render the name search field (Personeel tab only).
-  final bool showSearch;
   final TextEditingController searchController;
 
   @override
   Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        if (showSearch) ...<Widget>[
-          TextField(
-            key: const ValueKey('actions-search'),
-            controller: searchController,
-            decoration: InputDecoration(
-              isDense: true,
-              prefixIcon: const Icon(Icons.search, size: 18),
-              // Same wording as the Wachtwoorden → Personeel box, which matches
-              // the same way (#217): any part of the name, in any order.
-              hintText: 'Zoek op naam…',
-              border: const OutlineInputBorder(),
-              suffixIcon: searchController.text.isEmpty
-                  ? null
-                  : IconButton(
-                      key: const ValueKey('actions-search-clear'),
-                      icon: const Icon(Icons.close, size: 18),
-                      tooltip: 'Wis zoekopdracht',
-                      onPressed: searchController.clear,
-                    ),
-            ),
-          ),
-          const SizedBox(height: PlinkSpacing.s3),
-        ],
-        Row(
-          children: <Widget>[
-            Switch(
-              key: const ValueKey('actions-only-with-actions'),
-              value: onlyWithActions,
-              onChanged: onOnlyWithActionsChanged,
-            ),
-            const SizedBox(width: PlinkSpacing.s2),
-            Expanded(
-              child: Text('Toon enkel accounts met acties',
-                  style: text.bodyMedium),
-            ),
-          ],
-        ),
-      ],
+    return TextField(
+      key: const ValueKey('actions-search'),
+      controller: searchController,
+      decoration: InputDecoration(
+        isDense: true,
+        prefixIcon: const Icon(Icons.search, size: 18),
+        // Same wording as the Wachtwoorden → Personeel box, which matches the
+        // same way (#217): any part of the name, in any order.
+        hintText: 'Zoek op naam…',
+        border: const OutlineInputBorder(),
+        suffixIcon: searchController.text.isEmpty
+            ? null
+            : IconButton(
+                key: const ValueKey('actions-search-clear'),
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Wis zoekopdracht',
+                onPressed: searchController.clear,
+              ),
+      ),
     );
   }
 }
