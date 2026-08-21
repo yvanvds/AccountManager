@@ -76,6 +76,24 @@ void main() {
       expect(create.unlocks, <Type>{AddStudentToSmartschool});
     });
 
+    test('the WISA-only create names the system its follow-up writes (#234)',
+        () {
+      // The apply-confirmation dialog has to name Smartschool for this one
+      // action, and it cannot read it off the follow-up: the follow-up does not
+      // exist until the create has run and relinked. So the action declares it
+      // — and this pins the declaration against the follow-up's own ChangeSet,
+      // which is the thing that would otherwise silently drift.
+      final create = studentActionsFor(linked(wisa: wisaStudent()), cfg).single
+          as AddStudentToAzure;
+      final followUp = studentActionsFor(
+        linked(wisa: wisaStudent(), azure: azureUser()),
+        cfg,
+      ).single as AddStudentToSmartschool;
+      expect(create.unlockedSystems, <Origin>{Origin.smartschool});
+      expect(
+          create.unlockedSystems, <Origin>{followUp.describeChanges().system});
+    });
+
     test('the Smartschool create ends the chain (#230)', () {
       // Nothing follows it: the record is complete afterwards, so the next pass
       // is the ordinary modify branch, not another link of this chain.
@@ -84,6 +102,7 @@ void main() {
         cfg,
       );
       expect(actions.single.unlocks, isEmpty);
+      expect(actions.single.unlockedSystems, isEmpty);
     });
 
     test('every other student action unlocks nothing (#230)', () {
@@ -101,6 +120,9 @@ void main() {
         for (final action in studentActionsFor(account, cfg)) {
           if (action is AddStudentToAzure) continue;
           expect(action.unlocks, isEmpty, reason: '${action.runtimeType}');
+          // …and so claims no second system on the confirmation dialog (#234).
+          expect(action.unlockedSystems, isEmpty,
+              reason: '${action.runtimeType}');
         }
       }
     });

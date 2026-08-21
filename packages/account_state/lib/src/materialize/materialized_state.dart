@@ -14,7 +14,8 @@
 /// the Cosmos-backed store.
 library;
 
-import 'package:account_actions/account_actions.dart' show FieldChange;
+import 'package:account_actions/account_actions.dart'
+    show Alternatives, FieldChange, collapseAlternatives;
 import 'package:account_core/account_core.dart' as core;
 
 /// One dispatched action, flattened for storage and display.
@@ -32,6 +33,8 @@ class CandidateAction {
     required this.summary,
     this.fields = const [],
     this.canApply = true,
+    this.alternativeGroup,
+    this.isDefaultAlternative = false,
   });
 
   /// `student`, `staff`, or `group` — the dispatcher family.
@@ -54,6 +57,23 @@ class CandidateAction {
   /// operator but the apply pass skips them).
   final bool canApply;
 
+  /// The key shared by the mutually-exclusive alternatives that resolve the
+  /// **same situation** (#110), copied off the live action's
+  /// `alternativeGroup`; `null` when the action stands on its own.
+  ///
+  /// Persisted since #251, because a passive session has nothing else to tell an
+  /// either/or from two independent to-dos: without it the rollup badges counted
+  /// both halves of one choice, and the read-only tiles listed both as separate
+  /// bullets. Absent in documents written before #251, which read back as `null`
+  /// — the pre-#110 shape, and correct for every candidate that has no
+  /// alternative.
+  final String? alternativeGroup;
+
+  /// Whether this candidate is the pre-selected default of its
+  /// [alternativeGroup] — the resolution an apply pass runs unless the operator
+  /// switches. Ignored when [alternativeGroup] is `null`.
+  final bool isDefaultAlternative;
+
   Map<String, dynamic> toJson() => {
         'family': family,
         'kind': kind,
@@ -69,6 +89,8 @@ class CandidateAction {
               },
           ],
         'canApply': canApply,
+        if (alternativeGroup != null) 'alternativeGroup': alternativeGroup,
+        if (isDefaultAlternative) 'isDefaultAlternative': true,
       };
 
   factory CandidateAction.fromJson(Map<String, dynamic> json) =>
@@ -86,7 +108,44 @@ class CandidateAction {
             ),
         ],
         canApply: json['canApply'] as bool? ?? true,
+        alternativeGroup: json['alternativeGroup'] as String?,
+        isDefaultAlternative: json['isDefaultAlternative'] as bool? ?? false,
       );
+}
+
+/// The decision points a candidate list represents (#251) — the persisted-view
+/// counterpart of the reconcile controller's `PendingChoice`, built by the one
+/// shared [collapseAlternatives] both layers use.
+///
+/// Candidates sharing a non-null [CandidateAction.alternativeGroup] collapse
+/// into a single choice pre-selected on its declared default; every other
+/// candidate is a choice of one. Exposed so the read-only tiles can render an
+/// either/or as the one line it is instead of two independent bullets.
+List<Alternatives<CandidateAction>> candidateChoices(
+  Iterable<CandidateAction> candidates,
+) =>
+    collapseAlternatives<CandidateAction>(
+      candidates,
+      groupOf: (c) => c.alternativeGroup,
+      isDefault: (c) => c.isDefaultAlternative,
+    );
+
+/// How many pending **decisions** [candidates] leave for the operator — the
+/// number behind every "N pending here" badge (#251).
+///
+/// Counts one per [candidateChoices] entry whose selected option is applyable,
+/// which is exactly what an apply pass would write (the controller's
+/// `applyableCount` resolves the same way over the live actions). So a departed
+/// student's unregister/delete pair counts **once**, a new class's
+/// create/opt-out pair counts once, an empty class — whose default half is the
+/// informational notice — counts zero, and the informational actions of #245
+/// never count at all.
+int pendingDecisionCount(Iterable<CandidateAction> candidates) {
+  var pending = 0;
+  for (final choice in candidateChoices(candidates)) {
+    if (choice.selected.canApply) pending++;
+  }
+  return pending;
 }
 
 /// The kind of operator intent an [AccountDecision] records.
@@ -237,8 +296,10 @@ class MaterializedAccount {
   final List<AccountDecision> decisions;
 
   /// Whether an apply pass would write anything here (drives the "pending"
-  /// badge counts): at least one applyable candidate.
-  bool get hasPending => candidates.any((c) => c.canApply);
+  /// badge counts): at least one decision whose selected resolution is
+  /// applyable — [pendingDecisionCount] read as a flag, so the work-list filter
+  /// keeps exactly the accounts the badges count (#251).
+  bool get hasPending => pendingDecisionCount(candidates) > 0;
 
   MaterializedAccount withDecisions(List<AccountDecision> decisions) =>
       MaterializedAccount(
@@ -377,9 +438,11 @@ class MaterializedGroup {
   /// The partition every group document shares — [groupsPartition].
   String get school => groupsPartition;
 
-  /// Whether an apply pass would write anything here: at least one applyable
-  /// candidate (the informational notices do not count).
-  bool get hasPending => candidates.any((c) => c.canApply);
+  /// Whether an apply pass would write anything here: at least one decision
+  /// whose selected resolution is applyable (#251). The informational notices do
+  /// not count, and neither does the opt-out half of an either/or the operator
+  /// has not switched to.
+  bool get hasPending => pendingDecisionCount(candidates) > 0;
 
   MaterializedGroup withDecisions(List<AccountDecision> decisions) =>
       MaterializedGroup(

@@ -26,7 +26,7 @@ void main() {
       expect(actions.map((a) => a.runtimeType), [DoNotImportFromWisa]);
     });
 
-    test('WISA only with students → DoNotImportFromWisa + AddToSmartschool',
+    test('WISA only with students → AddToSmartschool + DoNotImportFromWisa',
         () {
       final actions = groupActionsFor(
         linkedGroup(wisa: wisaGroup()),
@@ -34,11 +34,12 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, AddToSmartschool],
+        // The create leads the blacklist it is an alternative to (#244).
+        [AddToSmartschool, DoNotImportFromWisa],
       );
     });
 
-    test('WISA only, empty class → DoNotImportFromWisa + CreateInSmartschool',
+    test('WISA only, empty class → CreateInSmartschool + DoNotImportFromWisa',
         () {
       final actions = groupActionsFor(
         linkedGroup(wisa: wisaGroup()),
@@ -46,7 +47,7 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, CreateInSmartschool],
+        [CreateInSmartschool, DoNotImportFromWisa],
       );
     });
 
@@ -79,7 +80,7 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, ClassExistsAsSmartschoolGroup],
+        [ClassExistsAsSmartschoolGroup, DoNotImportFromWisa],
       );
     });
 
@@ -97,7 +98,7 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, ClassExistsAsSmartschoolGroup],
+        [ClassExistsAsSmartschoolGroup, DoNotImportFromWisa],
       );
     });
 
@@ -110,7 +111,7 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, ClassExistsAsSmartschoolGroup],
+        [ClassExistsAsSmartschoolGroup, DoNotImportFromWisa],
       );
     });
 
@@ -136,6 +137,101 @@ void main() {
       // Neither missing-branch action evaluates (each needs its own system),
       // and there is no Azure group action.
       expect(groupActionsFor(linkedGroup()), isEmpty);
+    });
+  });
+
+  group('the WISA-only class is one choice, not two to-dos (#244)', () {
+    test('create + do-not-import share one key, the create leading as default',
+        () {
+      final actions = groupActionsFor(
+        linkedGroup(wisa: wisaGroup()),
+        placementFor: (_) => groupPlacement(containsStudents: true),
+      );
+      final create = actions.whereType<AddToSmartschool>().single;
+      final ignore = actions.whereType<DoNotImportFromWisa>().single;
+
+      // Same key ⇒ the pending list collapses them into one either/or choice
+      // and an apply runs only the picked one. Both used to return null, so
+      // "apply all" created the class *and* blacklisted the name it created.
+      expect(create.alternativeGroup, classImportAlternative);
+      expect(ignore.alternativeGroup, create.alternativeGroup);
+
+      // Polarity: provisioning leads, blacklisting is a deliberate pick.
+      expect(create.isDefaultAlternative, isTrue);
+      expect(ignore.isDefaultAlternative, isFalse);
+      expect(actions.indexOf(create), lessThan(actions.indexOf(ignore)));
+    });
+
+    test('an empty class defaults to the informational wait-or-delete notice',
+        () {
+      final actions = groupActionsFor(
+        linkedGroup(wisa: wisaGroup()),
+        placementFor: (_) => groupPlacement(containsStudents: false),
+      );
+      final empty = actions.whereType<CreateInSmartschool>().single;
+      final ignore = actions.whereType<DoNotImportFromWisa>().single;
+
+      expect(empty.alternativeGroup, classImportAlternative);
+      expect(ignore.alternativeGroup, classImportAlternative);
+      // It stands in for the create, so it takes the default with it — and it
+      // cannot be applied, so a bulk apply writes nothing for an empty class.
+      expect(empty.isDefaultAlternative, isTrue);
+      expect(empty.canApply, isFalse);
+      expect(ignore.isDefaultAlternative, isFalse);
+    });
+
+    test('exactly one default is ever offered — the creates never co-occur',
+        () {
+      for (final hasStudents in const [true, false]) {
+        final actions = groupActionsFor(
+          linkedGroup(wisa: wisaGroup()),
+          placementFor: (_) => groupPlacement(containsStudents: hasStudents),
+        );
+        final alternatives = actions
+            .where((a) => a.alternativeGroup == classImportAlternative)
+            .toList();
+        expect(alternatives, hasLength(2));
+        expect(
+          alternatives.where((a) => a.isDefaultAlternative),
+          hasLength(1),
+          reason: 'containsStudents picks exactly one of the two creates',
+        );
+      }
+    });
+
+    test('a class present in both systems carries no alternatives', () {
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(description: 'Nieuw'),
+          smartschool: ssGroup(description: 'Oud'),
+        ),
+      );
+      expect(actions.single.alternativeGroup, isNull);
+    });
+
+    test('the Smartschool-only orphan notice stands on its own', () {
+      final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
+      expect(actions.single.alternativeGroup, isNull);
+    });
+
+    test('the namesake notice (#225) is not part of the choice', () {
+      // It is a different reading of the class — "align the names by hand" —
+      // and merging it into the key would pool it with the create bucket for
+      // bulk apply. It keeps its own situation.
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+        ),
+        placementFor: (_) => groupPlacement(containsStudents: true),
+      );
+      expect(
+        actions
+            .whereType<ClassExistsAsSmartschoolGroup>()
+            .single
+            .alternativeGroup,
+        isNull,
+      );
     });
   });
 
@@ -177,7 +273,7 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, AddToSmartschool],
+        [AddToSmartschool, DoNotImportFromWisa],
       );
     });
   });

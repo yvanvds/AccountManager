@@ -95,6 +95,25 @@ sealed class StudentAction {
   /// would on the next sync.
   Set<Type> get unlocks => const {};
 
+  /// The systems the [unlocks] chain would write to, beyond the one
+  /// [describeChanges] already names (#234).
+  ///
+  /// A confirmed apply is not confined to the system the visible action targets:
+  /// [AddStudentToAzure] writes Office 365 and then, through its chain, writes
+  /// Smartschool as well. The apply-confirmation dialog has to be able to say so
+  /// *before* the write, and at that point the follow-up does not exist yet —
+  /// the dispatcher cannot produce it until the first write has relinked the
+  /// record — so it cannot be read off a pending action. Declaring it here is
+  /// what lets the UI name a system the pass will genuinely reach.
+  ///
+  /// Keep it in step with [unlocks]: it names the same follow-ups' target
+  /// systems. Each family's dispatch test pins the two against the follow-up's
+  /// own [ChangeSet.system], so they cannot drift apart unnoticed.
+  ///
+  /// Like [unlocks] it names what *may* follow, never what must — the
+  /// follow-up's own [evaluate] still decides.
+  Set<Origin> get unlockedSystems => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3).
@@ -154,6 +173,11 @@ class AddStudentToAzure extends StudentAction {
   /// Acties panel never showed the full provisioning intent.
   @override
   Set<Type> get unlocks => const {AddStudentToSmartschool};
+
+  /// That follow-up writes Smartschool, so one confirmed apply of this action
+  /// reaches both systems and the confirmation dialog says both (#234).
+  @override
+  Set<Origin> get unlockedSystems => const {Origin.smartschool};
 
   @override
   ChangeSet describeChanges() {

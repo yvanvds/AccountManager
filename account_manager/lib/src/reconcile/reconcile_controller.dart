@@ -89,6 +89,7 @@ class PendingActionOption {
     required this.target,
     required this.changes,
     required this.canApply,
+    this.unlockedSystems = const {},
   });
 
   /// The live `StudentAction` / `StaffAction` / `GroupAction` this option runs.
@@ -115,6 +116,91 @@ class PendingActionOption {
 
   /// Whether an apply pass would actually write this option.
   final bool canApply;
+
+  /// The systems only a **chained follow-up** of this option would write to
+  /// (`StudentAction.unlockedSystems` et al., #234) — never the option's own
+  /// [changes] system.
+  ///
+  /// Read off the action rather than derived from the pending list, because the
+  /// follow-up is not in it: the dispatcher is a pure function of the record as
+  /// it stands, so `AddStudentToSmartschool` only appears once the Azure create
+  /// has run and relinked. The confirmation dialog has to name that second
+  /// system *before* the write.
+  final Set<core.Origin> unlockedSystems;
+}
+
+/// What a confirmed apply of a selection would write, for the confirmation
+/// dialog (#234).
+///
+/// Built by [ReconcileController.applyScope] from the **selected**, applyable
+/// option of each choice — exactly the actions `applyAll` / `applySituation` /
+/// `applyEntry` would run — so the dialog names the systems the pass genuinely
+/// reaches instead of the hard-coded "Smartschool and Azure AD" it used to
+/// claim for every action.
+class ApplyScope {
+  const ApplyScope({required this.systems, required this.chained});
+
+  /// One entry per action the pass would run: the system that action writes to.
+  /// A list, not a set — its length is the change count the dialog quotes, and
+  /// two Azure patches are two changes to one system.
+  final List<core.Origin> systems;
+
+  /// Systems only a chained follow-up would reach, with everything already in
+  /// [systems] removed. Non-empty only for the provisioning chains whose second
+  /// write lands in another system (a new student's / staff member's Office 365
+  /// create pulls the Smartschool create in behind it).
+  final Set<core.Origin> chained;
+
+  /// Nothing selected — a dialog built from this claims no write at all.
+  static const ApplyScope empty =
+      ApplyScope(systems: <core.Origin>[], chained: <core.Origin>{});
+}
+
+/// The action a running dry-run/apply pass is on **right now** (#243) — what the
+/// modal progress dialog names while the operator waits.
+///
+/// Published by [ReconcileController._run] straight off the list it is walking:
+/// the selected, applyable option of each choice, which is the very same
+/// resolution [ReconcileController.applyScope] summarised for the confirmation
+/// dialog a moment earlier. The progress dialog therefore counts exactly the
+/// actions the operator just agreed to, rather than resolving the work a second
+/// way that could disagree with what they were shown.
+class ApplyStep {
+  const ApplyStep({
+    required this.dry,
+    required this.index,
+    required this.total,
+    required this.target,
+    required this.summary,
+    this.followUps = 0,
+  });
+
+  /// Whether this pass is a dry-run (nothing is written) rather than an apply.
+  final bool dry;
+
+  /// 1-based position of the action in flight within the planned list.
+  final int index;
+
+  /// How many actions the pass set out to run.
+  ///
+  /// The *planned* actions only, and deliberately so. A chained follow-up
+  /// (#230/#240/#245) is not in the pending list at all: dispatch is a pure
+  /// function of the record as it stands, so the second link only exists once
+  /// the first write has landed and relinked, and its own `evaluate` decides
+  /// then whether it runs. It can never be counted up front — so it is reported
+  /// separately in [followUps] instead of quietly inflating a total the operator
+  /// was already shown.
+  final int total;
+
+  /// Human label of the record this action targets ("Jan Peeters").
+  final String target;
+
+  /// The action's one-line change summary ("Maak een nieuw Office 365 account").
+  final String summary;
+
+  /// Extra writes that chained off already-finished steps of this pass — the
+  /// follow-ups [total] structurally cannot include.
+  final int followUps;
 }
 
 /// One decision point within a [PendingAccountEntry]: either a lone action or a
@@ -379,6 +465,7 @@ class ReconcileController extends ChangeNotifier {
 
   ReconcilePhase _phase = ReconcilePhase.idle;
   double _progress = 0.0;
+  ApplyStep? _applyStep;
   LinkedState? _linked;
   bool _noChangesNeeded = false;
   String? _error;
@@ -388,6 +475,7 @@ class ReconcileController extends ChangeNotifier {
   SyncState _syncState = SyncState.initial;
   List<Rollup> _rollups = const [];
   Rollup? _selectedClassroom;
+  List<String> _expandedPath = const <String>[];
   List<MaterializedAccount>? _classroomAccounts;
   bool _loadingClassroom = false;
   bool _showingGroups = false;
@@ -444,6 +532,24 @@ class ReconcileController extends ChangeNotifier {
     final next = value.clamp(0.0, 1.0);
     if (next <= _progress) return;
     _progress = next;
+    notifyListeners();
+  }
+
+  /// The action the running dry-run/apply pass is on, or `null` when no pass is
+  /// walking actions (#243). Drives the modal progress dialog's text, so a pass
+  /// that writes hundreds of accounts says which account and which action it is
+  /// on instead of leaving the operator with greyed-out buttons for minutes.
+  ApplyStep? get applyStep => _applyStep;
+
+  /// Publishes the pass's current step and repaints.
+  ///
+  /// Its own notification rather than something riding along with
+  /// [_setProgress]: that one ignores any value not greater than the current
+  /// one, so a step published through it would be dropped exactly when the bar
+  /// does not move — the first action of every pass, and every action of a pass
+  /// of one.
+  void _setApplyStep(ApplyStep step) {
+    _applyStep = step;
     notifyListeners();
   }
 
@@ -525,6 +631,7 @@ class ReconcileController extends ChangeNotifier {
       // (`AzureClassGroupMembership`), so the apply affordance is gated on the
       // action rather than assumed, exactly as the group family's is.
       canApply: (a) => a.canApply,
+      unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
       family: 'staff',
@@ -537,6 +644,7 @@ class ReconcileController extends ChangeNotifier {
       // Read off the action like the other two families since #240: every staff
       // action is applyable today, but nothing here should assume it.
       canApply: (a) => a.canApply,
+      unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
       family: 'group',
@@ -547,6 +655,7 @@ class ReconcileController extends ChangeNotifier {
       isDefault: (a) => a.isDefaultAlternative,
       changes: (a) => a.describeChanges(),
       canApply: (a) => a.canApply,
+      unlockedSystems: (a) => a.unlockedSystems,
     ));
     _pendingCacheKey = l;
     _pendingCacheChoicesVersion = _choicesVersion;
@@ -665,6 +774,7 @@ class ReconcileController extends ChangeNotifier {
     required bool Function(T) isDefault,
     required actions.ChangeSet Function(T) changes,
     required bool Function(T) canApply,
+    required Set<core.Origin> Function(T) unlockedSystems,
   }) {
     final order = <String>[];
     final byTarget = <String, List<T>>{};
@@ -695,6 +805,7 @@ class ReconcileController extends ChangeNotifier {
                   target: labels[id]!,
                   changes: changes(a),
                   canApply: canApply(a),
+                  unlockedSystems: unlockedSystems(a),
                 ),
             ],
           ),
@@ -706,34 +817,43 @@ class ReconcileController extends ChangeNotifier {
   /// non-null [PendingActionOption.group] become one mutually-exclusive choice
   /// (its selection honoured from [_choices], defaulting to the group default);
   /// every other option is a choice of one.
+  ///
+  /// The partition itself is `account_actions`' [actions.collapseAlternatives]
+  /// (#251) — the one definition of "these actions are one either/or", shared
+  /// with the materializer so the badges and this list cannot disagree about
+  /// what a decision is. Only the operator's session-local pick is layered on
+  /// here; a passive session has no picks to apply.
   List<PendingChoice> _choicesFor(
     String targetId,
     List<PendingActionOption> options,
+  ) =>
+      [
+        for (final choice in actions.collapseAlternatives<PendingActionOption>(
+          options,
+          groupOf: (o) => o.group,
+          isDefault: (o) => o.isDefault,
+        ))
+          PendingChoice(
+            alternatives: choice.options,
+            selected: _chosen(targetId, choice),
+          ),
+      ];
+
+  /// The option the operator picked for [choice] on [targetId] (#110), or the
+  /// group's pre-selected default when they have not picked one — or picked a
+  /// kind this pass no longer offers.
+  PendingActionOption _chosen(
+    String targetId,
+    actions.Alternatives<PendingActionOption> choice,
   ) {
-    final choices = <PendingChoice>[];
-    final groupOrder = <String>[];
-    final byGroup = <String, List<PendingActionOption>>{};
-    for (final o in options) {
-      final g = o.group;
-      if (g == null) {
-        choices.add(PendingChoice(alternatives: [o], selected: o));
-      } else {
-        if (!byGroup.containsKey(g)) groupOrder.add(g);
-        (byGroup[g] ??= <PendingActionOption>[]).add(o);
-      }
-    }
-    for (final g in groupOrder) {
-      final alts = byGroup[g]!;
-      final defaultKind =
-          alts.firstWhere((a) => a.isDefault, orElse: () => alts.first).kind;
-      final chosenKind = _choices['$targetId|$g'] ?? defaultKind;
-      final selected = alts.firstWhere(
-        (a) => a.kind == chosenKind,
-        orElse: () => alts.firstWhere((a) => a.kind == defaultKind),
-      );
-      choices.add(PendingChoice(alternatives: alts, selected: selected));
-    }
-    return choices;
+    final group = choice.options.first.group;
+    if (group == null) return choice.selected;
+    final kind = _choices['$targetId|$group'];
+    if (kind == null) return choice.selected;
+    return choice.options.firstWhere(
+      (a) => a.kind == kind,
+      orElse: () => choice.selected,
+    );
   }
 
   /// Records the operator's pick of a mutually-exclusive alternative (#110):
@@ -1099,6 +1219,37 @@ class ReconcileController extends ChangeNotifier {
   /// Whether a classroom drill-down read is in flight.
   bool get loadingClassroom => _loadingClassroom;
 
+  /// Which accordion nodes the Acties drill-down has open, outermost first
+  /// (#235) — `['rollup-grade-grades|3']` on the flat Leerlingen tree, and
+  /// `['rollup-school-school|staff', 'rollup-grade-grade|staff|Personeel']` on
+  /// the nested Personeel one. Empty means a fully collapsed tree.
+  ///
+  /// It lives up here beside [selectedClassroom] for the reason the bug existed:
+  /// while a class is open the tree is not built at all, so expansion kept
+  /// inside the `ExpansionTile`s themselves died with them and **Overzicht**
+  /// came back fully collapsed. Held one level above the widgets it survives the
+  /// detail view — and a family tab change, which closes the drill-down but
+  /// leaves the other tab's path untouched, the two trees sharing no node key.
+  ///
+  /// One entry **per depth** is what makes it an accordion without breaking the
+  /// nested staff tree: opening a node replaces whichever sibling sat at its
+  /// depth and drops everything below, while its ancestors stay open.
+  List<String> get expandedPath => _expandedPath;
+
+  set expandedPath(List<String> path) {
+    if (_samePath(_expandedPath, path)) return;
+    _expandedPath = List<String>.unmodifiable(path);
+    notifyListeners();
+  }
+
+  static bool _samePath(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   /// The three category summaries the Reconcile overview renders (#163), summed
   /// from the stored rollups so they read in a passive session too: students are
   /// every school rollup *except* the synthetic staff bucket, staff is that
@@ -1161,6 +1312,28 @@ class ReconcileController extends ChangeNotifier {
   /// counts once (the chosen resolution), not twice, and the informational group
   /// actions are excluded.
   int get applyableCount => _selectedActions(pendingEntries).length;
+
+  /// What a confirmed apply of [entries] would actually write (#234) — the
+  /// systems the apply-confirmation dialog names, derived from the very options
+  /// [applyAll] / [applySituation] / [applyEntry] would run.
+  ///
+  /// Two halves, because they are not the same claim. [ApplyScope.systems] is
+  /// what the selected actions write themselves, one entry per action.
+  /// [ApplyScope.chained] is what only a follow-up would reach — an
+  /// `AddStudentToAzure` writes Office 365 and then, off the same click, writes
+  /// the Smartschool account its chain unlocks (#230/#240), which is a system
+  /// the visible action never names. The follow-up cannot be counted, because
+  /// its own `evaluate` decides at apply time whether it runs at all; it can
+  /// only be named.
+  ApplyScope applyScope(Iterable<PendingAccountEntry> entries) {
+    final selected = _selectedActions(entries);
+    if (selected.isEmpty) return ApplyScope.empty;
+    final systems = <core.Origin>[for (final o in selected) o.changes.system];
+    final chained = <core.Origin>{
+      for (final o in selected) ...o.unlockedSystems,
+    }..removeAll(systems);
+    return ApplyScope(systems: systems, chained: chained);
+  }
 
   /// The live actions to run for [entries]: the selected, applyable option of
   /// every choice, in order.
@@ -1495,6 +1668,18 @@ class ReconcileController extends ChangeNotifier {
 
     try {
       for (final (index, option) in selected.indexed) {
+        // Name the action *before* it runs, so the modal progress dialog says
+        // what is in flight rather than what just finished (#243). `results`
+        // already holds one row per write performed, so anything in it beyond
+        // the [index] steps that completed is a chained follow-up.
+        _setApplyStep(ApplyStep(
+          dry: dry,
+          index: index + 1,
+          total: selected.length,
+          target: option.target,
+          summary: option.changes.summary,
+          followUps: results.length - index,
+        ));
         results.addAll(await _applyOne(
           () => _applyAny(option.action, options),
           option.target,
@@ -1517,7 +1702,9 @@ class ReconcileController extends ChangeNotifier {
       } else {
         _applyResults = results;
         _dryRunResults = null;
+        _refreshRollups();
       }
+      _applyStep = null;
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       // _applyOne swallows per-action failures; reaching here means the pass
@@ -1526,7 +1713,12 @@ class ReconcileController extends ChangeNotifier {
         _dryRunResults = results;
       } else {
         _applyResults = results;
+        // A pass that broke halfway still wrote whatever it got through, so the
+        // overview owes the operator those counts too (#236).
+        _refreshRollups();
       }
+      // Nothing is in flight any more, however the pass ended (#243).
+      _applyStep = null;
       _fail(e);
     }
   }
@@ -1641,6 +1833,49 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
+  /// Re-derives the overview rollups from the refreshed linked view after a
+  /// **real** apply (#236) — the badge counts, and since #226 which nodes the
+  /// tree shows at all.
+  ///
+  /// Until this, `_rollups` was assigned by [_persist] alone, which only ever
+  /// runs from [_relink]. An apply patches the snapshot and adopts the refreshed
+  /// `_linked` but never re-materialized, so the two halves of the Acties screen
+  /// disagreed the moment a pass finished: the drilled-in list (derived from the
+  /// live view) had dropped the work, while the overview kept advertising it —
+  /// and under the default filter kept a finished class in the tree — until the
+  /// next Synchroniseer. [materialize] is pure and already derives exactly these
+  /// aggregates from a [LinkedState], so the correction is the same computation
+  /// the sync path runs, minus the store write.
+  ///
+  /// Deliberately **local-only**. Nothing is written back and the generation is
+  /// not bumped, for three reasons: the stored view is ~9.6k documents and
+  /// rewriting it per apply is not affordable ([LinkedStore.writeMaterialized]
+  /// is the sync path's tool, not an apply's); this session's generation must
+  /// stay behind the store's so a later [onStoreChanged] still wins over this
+  /// correction rather than being gated out as stale; and there is no narrow
+  /// per-account write seam to do it properly. So other operators keep the
+  /// pre-apply counts until someone syncs — the shared half of the bug, filed
+  /// separately (#254) because it needs that seam plus a [ChangeSignal] shard.
+  ///
+  /// Never called from the dry-run path: a projection writes nothing, so it must
+  /// leave every count exactly as it found it.
+  void _refreshRollups() {
+    final linked = _linked;
+    if (linked == null) return;
+    try {
+      _rollups = materialize(
+        linked,
+        generation: _syncState.generation,
+        schoolLabels: _schoolLabels(),
+      ).rollups;
+    } on Object catch (e) {
+      // A correction that fails must not turn a successful apply into a failed
+      // pass; the counts then simply stay as stale as they were before.
+      log.addError(
+          core.Origin.all, 'Could not refresh the overview counts: $e');
+    }
+  }
+
   /// Materializes the fresh linked view and writes it to the shared store
   /// (#115): one document per account, the rollup aggregates, and a bumped
   /// generation. Still-applicable operator decisions are re-attached and only
@@ -1707,8 +1942,12 @@ class ReconcileController extends ChangeNotifier {
       // Nudge every passive session to refetch: the whole view was rewritten,
       // so the signal names no narrower shard (#116).
       await _publish(ChangeSignal.viewChanged(generation: view.generation));
-      // A re-sync invalidates any open drill-down; the next open re-reads.
+      // A re-sync invalidates any open drill-down; the next open re-reads. The
+      // remembered accordion path goes with it (#235), so it can never point at
+      // a node this new generation no longer has. Written straight to the field:
+      // the pass notifies once when it finishes.
       _selectedClassroom = null;
+      _expandedPath = const <String>[];
       _classroomAccounts = null;
       _showingGroups = false;
       _groupDocs = null;
@@ -1782,6 +2021,7 @@ class ReconcileController extends ChangeNotifier {
   void _begin(ReconcilePhase phase) {
     _phase = phase;
     _progress = 0.0;
+    _applyStep = null;
     _error = null;
     _noChangesNeeded = false;
     _dryRunResults = null;

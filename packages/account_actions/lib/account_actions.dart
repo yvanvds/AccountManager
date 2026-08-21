@@ -19,6 +19,7 @@
 library;
 
 export 'src/action_result.dart';
+export 'src/alternatives.dart';
 export 'src/apply_options.dart';
 export 'src/azure_class_group.dart';
 export 'src/azure_class_placement.dart';

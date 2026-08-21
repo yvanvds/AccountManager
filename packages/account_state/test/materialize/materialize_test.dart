@@ -559,6 +559,149 @@ void main() {
     });
   });
 
+  group('pending counts are decisions, not actions (#251)', () {
+    /// A WISA-departed, Smartschool-only student: the dispatch raises the
+    /// mutually-exclusive unregister/delete pair (#110) on one account.
+    LinkedState departedLinked() => LinkedState.recompute(
+          wisa: wapi.WisaSnapshot(
+            fetchedAt: _d,
+            students: const [],
+            staff: const [],
+            classGroups: const [],
+            schools: const [],
+          ),
+          smartschool: ss.SmartschoolSnapshot(
+            fetchedAt: _d,
+            groups: const [],
+            accounts: [_ssAccount()],
+            memberships: const [],
+          ),
+          azure: az.AzureSnapshot(
+              fetchedAt: _d, users: const [], groups: const []),
+          resolver: _SeqResolver(),
+          studentConfig: _studentConfig,
+          staffConfig: _staffConfig,
+        );
+
+    CandidateAction candidate(
+      String kind, {
+      String? group,
+      bool isDefault = false,
+      bool canApply = true,
+    }) =>
+        CandidateAction(
+          family: 'group',
+          kind: kind,
+          system: core.Origin.smartschool,
+          summary: kind,
+          canApply: canApply,
+          alternativeGroup: group,
+          isDefaultAlternative: isDefault,
+        );
+
+    test('two alternatives of one choice count once', () {
+      // The heart of the bug: an operator resolves this situation once and
+      // exactly one of the two ever runs, so it is one pending item.
+      final candidates = [
+        candidate('UnregisterStudentFromSmartschool',
+            group: 'smartschool-departure', isDefault: true),
+        candidate('DeleteStudentFromSmartschool',
+            group: 'smartschool-departure'),
+      ];
+      expect(candidateChoices(candidates), hasLength(1));
+      expect(candidateChoices(candidates).single.isChoice, isTrue);
+      expect(pendingDecisionCount(candidates), 1);
+    });
+
+    test('a choice whose default is informational counts nothing', () {
+      // The empty-class reading of #244: the pre-selected half has no write, so
+      // a bulk apply writes nothing here — blacklisting stays a deliberate pick.
+      final candidates = [
+        candidate('CreateInSmartschool',
+            group: 'class-import', isDefault: true, canApply: false),
+        candidate('DoNotImportFromWisa', group: 'class-import'),
+      ];
+      expect(pendingDecisionCount(candidates), 0);
+    });
+
+    test('independent actions still count one each, informational ones zero',
+        () {
+      expect(
+        pendingDecisionCount([
+          candidate('ModifySmartschoolData'),
+          candidate('CreateAzureClassGroup'),
+          candidate('AzureClassGroupMembership', canApply: false),
+        ]),
+        2,
+        reason: 'no alternative keys ⇒ nothing collapses; #245 never counts',
+      );
+    });
+
+    test('a candidate written before #251 reads back as a lone action', () {
+      // Older documents carry no alternative keys at all, which is the pre-#110
+      // shape and correct for every candidate that has no alternative.
+      final restored = CandidateAction.fromJson(<String, dynamic>{
+        'family': 'student',
+        'kind': 'MoveToSmartschoolClassGroup',
+        'system': core.Origin.smartschool.toJson(),
+        'summary': 'Move to class',
+      });
+      expect(restored.alternativeGroup, isNull);
+      expect(restored.isDefaultAlternative, isFalse);
+      expect(pendingDecisionCount([restored]), 1);
+    });
+
+    test('the alternative keys survive a candidate JSON round-trip', () {
+      final original = candidate('UnregisterStudentFromSmartschool',
+          group: 'smartschool-departure', isDefault: true);
+      final restored = CandidateAction.fromJson(original.toJson());
+      expect(restored.alternativeGroup, 'smartschool-departure');
+      expect(restored.isDefaultAlternative, isTrue);
+    });
+
+    test('buildRollups counts the choice once at every level', () {
+      final account = _account(candidates: [
+        candidate('UnregisterStudentFromSmartschool',
+            group: 'smartschool-departure', isDefault: true),
+        candidate('DeleteStudentFromSmartschool',
+            group: 'smartschool-departure'),
+      ]);
+      for (final r in buildRollups([account])) {
+        expect(r.pendingCount, 1, reason: '${r.level} badge');
+      }
+    });
+
+    test(
+        'a departed student materializes as one pending item on every badge, '
+        'carrying both alternatives', () {
+      final view = materialize(departedLinked(), generation: 1);
+
+      final account = view.accounts.single;
+      expect(
+        account.candidates.map((c) => c.kind),
+        containsAll(<String>[
+          'UnregisterStudentFromSmartschool',
+          'DeleteStudentFromSmartschool',
+        ]),
+        reason: 'both readings are still offered — only the count collapses',
+      );
+      expect(
+        account.candidates.map((c) => c.alternativeGroup).toSet(),
+        <String>{smartschoolDepartureAlternative},
+        reason: 'the key the dispatch declares is persisted (#251)',
+      );
+      expect(
+        account.candidates.where((c) => c.isDefaultAlternative),
+        hasLength(1),
+      );
+      expect(account.hasPending, isTrue);
+
+      for (final r in view.rollups) {
+        expect(r.pendingCount, 1, reason: '${r.level} badge counted twice');
+      }
+    });
+  });
+
   group('gradeYearOf', () {
     test('takes the leading digits of the class group', () {
       expect(gradeYearOf('3C'), '3');

@@ -9,6 +9,19 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'reconcile_fakes.dart';
 
+/// Collects every distinct [ApplyStep] [controller] publishes from now on — the
+/// sequence the modal progress dialog renders as a pass walks its actions
+/// (#243). A step is notified separately from the progress value, so listening
+/// is the only way to see the ones a pass passed through.
+List<ApplyStep> recordSteps(ReconcileController controller) {
+  final steps = <ApplyStep>[];
+  controller.addListener(() {
+    final step = controller.applyStep;
+    if (step != null && !identical(steps.lastOrNull, step)) steps.add(step);
+  });
+  return steps;
+}
+
 /// A [SignalPublisher] whose every publish throws — to prove a broadcast
 /// failure is swallowed and never fails the pass that triggered it (#116).
 class _ThrowingPublisher implements SignalPublisher {
@@ -474,6 +487,126 @@ void main() {
           reason: 'a real write re-links from the patched snapshot');
     });
 
+    /// Every node of the overview tree keyed by its rollup key, with the count
+    /// the badge renders — the whole projection #236 is about, in one map.
+    Map<String, int> pendingByNode(ReconcileController c) => <String, int>{
+          for (final root in c.studentRollups) ...<String, int>{
+            root.key: root.pendingCount,
+            for (final klas in c.studentChildrenOf(root))
+              klas.key: klas.pendingCount,
+          },
+          if (c.groupRollup case final groups?) groups.key: groups.pendingCount,
+        };
+
+    /// The classroom node whose badge the fixture's one student action sits
+    /// under: Sam's class, 3C of school 1.
+    Rollup klas3C(ReconcileController c) => c
+        .studentChildrenOf(
+            c.studentRollups.singleWhere((r) => r.gradeYear == '3'))
+        .singleWhere((r) => r.classroom == '3C');
+
+    /// Sam's pending entry — the one applyable student action in the fixture.
+    PendingAccountEntry samEntry(ReconcileController c) =>
+        c.pendingEntries.singleWhere((e) => e.family == 'student');
+
+    test('re-derives the counts the pass just changed, and only those (#236)',
+        () async {
+      // The badges read `Rollup.pendingCount` off `_rollups`, which only
+      // [_persist] assigned — and that runs from `_relink()` alone. So an apply
+      // left the drilled-in list (live, derived from `_linked`) and the overview
+      // disagreeing until the next Synchroniseer.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      expect(klas3C(h.controller).pendingCount, 1);
+      expect(h.controller.groupRollup!.pendingCount, 4);
+
+      await h.controller.applyEntry(samEntry(h.controller));
+
+      expect(h.controller.error, isNull);
+      expect(klas3C(h.controller).pendingCount, 0,
+          reason: 'the badge used to keep its pre-apply count until a re-sync');
+      expect(
+        h.controller.studentRollups
+            .singleWhere((r) => r.gradeYear == '3')
+            .pendingCount,
+        0,
+        reason: 'the grade-year above it is summed from the same rollups',
+      );
+      expect(h.controller.groupRollup!.pendingCount, 4,
+          reason: 'a re-derivation of what changed, not a blanket reset');
+    });
+
+    test('a dry-run leaves every count exactly as it found it (#236)',
+        () async {
+      // The correction is gated on a *real* write: a projection changes nothing,
+      // so it must not move a single badge.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final before = pendingByNode(h.controller);
+      expect(before.values, contains(greaterThan(0)));
+
+      await h.controller.dryRun();
+
+      expect(pendingByNode(h.controller), before);
+      expect(h.soap.soapActions, isEmpty, reason: 'nothing was written');
+      expect(h.graph.requests, isEmpty, reason: 'nothing was written');
+    });
+
+    test(
+        'a pass with a refused write clears only what really went through '
+        '(#236)', () async {
+      // The counts must follow the writes, not the pass: the first action is
+      // refused, the rest land. Sam's class keeps its badge while the class
+      // groups lose theirs.
+      var calls = 0;
+      final h = appliedClassWorkHarness(applyGate: () async {
+        if (++calls == 1) throw StateError('Office 365 weigerde dit');
+      });
+      await h.controller.sync();
+      expect(klas3C(h.controller).pendingCount, 1);
+
+      await h.controller.applyAll();
+
+      expect(
+        h.controller.applyResults!.map((r) => r.outcome),
+        containsAll(<actions.ActionOutcome>[
+          actions.ActionOutcome.failed,
+          actions.ActionOutcome.applied,
+        ]),
+      );
+      expect(klas3C(h.controller).pendingCount, 1,
+          reason: "the refused write left Sam's name as it was");
+      expect(h.controller.groupRollup, isNull,
+          reason: 'the class-group work that did land is gone');
+    });
+
+    test(
+        'the refreshed counts are local — the shared store keeps its generation '
+        '(#236, shared half in #254)', () async {
+      // A deliberate choice, not an oversight: rewriting ~9.6k documents per
+      // apply is not affordable, and bumping this session's generation would
+      // gate out the very `onStoreChanged` that should overrule this
+      // correction. Other operators catch up on the next sync.
+      final h = appliedClassWorkHarness();
+      Future<Rollup> stored3C() async => (await h.linkedStore.readRollups())
+          .singleWhere((r) => r.classroom == '3C' && r.school == '1');
+
+      await h.controller.sync();
+      final before = await h.linkedStore.readSyncState();
+
+      await h.controller.applyEntry(samEntry(h.controller));
+
+      expect(
+          (await h.linkedStore.readSyncState()).generation, before.generation,
+          reason: 'no write, so no new generation');
+      expect(h.controller.syncState.generation, before.generation,
+          reason: 'the session must stay behind the store, never ahead of it');
+      expect((await stored3C()).pendingCount, 1,
+          reason: 'the stored view stays pre-apply until someone syncs (#254)');
+      expect(klas3C(h.controller).pendingCount, 0,
+          reason: '…while this session already reads the corrected count');
+    });
+
     test('informational group actions are listed but never applied', () async {
       // An orphan Smartschool class (no WISA counterpart) surfaces the
       // informational DoNotImportFromSmartschool — visible in the pending
@@ -591,6 +724,62 @@ void main() {
       );
       expect(h.graph.createdUsers, isEmpty);
       expect(h.soap.soapActions, isEmpty);
+    });
+
+    test(
+        'the published step counts planned actions and reports the chained '
+        'write apart from them (#243)', () async {
+      // The progress dialog's total can only ever be the *planned* actions:
+      // dispatch is a pure function of the record as it stands, so the
+      // Smartschool create does not exist until the Azure create has landed and
+      // relinked. Folding it into the total would mean promising a number
+      // nobody could know — so it is reported as a follow-up instead.
+      final h = newIntakeHarness();
+      await h.controller.sync();
+
+      final steps = recordSteps(h.controller);
+      await h.controller.applyAll();
+
+      expect(steps.map((s) => s.total).toSet(), <int>{steps.length},
+          reason: 'the planned total never moves mid-pass');
+      expect(
+          steps.map((s) => s.index), List.generate(steps.length, (i) => i + 1));
+      expect(steps.first.summary, 'Maak een nieuw Office 365 account');
+      expect(steps.first.followUps, 0);
+      expect(steps.first.dry, isFalse);
+      // The Azure create pulled the Smartschool create in behind it, so the
+      // pass performed one write more than it planned actions.
+      expect(h.controller.applyResults!.length, steps.length + 1);
+      expect(steps.skip(1).map((s) => s.followUps), everyElement(1));
+      // Nothing is in flight once the pass is over.
+      expect(h.controller.applyStep, isNull);
+    });
+  });
+
+  group('the pass publishes the step it is on (#243)', () {
+    test('a dry-run names each action before it runs, and clears at the end',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      final steps = recordSteps(h.controller);
+      await h.controller.dryRun();
+
+      expect(steps, isNotEmpty);
+      expect(steps.map((s) => s.dry), everyElement(isTrue));
+      expect(steps.map((s) => s.target), everyElement(isNotEmpty));
+      expect(steps.map((s) => s.summary), everyElement(isNotEmpty));
+      expect(steps.last.index, steps.last.total);
+      expect(h.controller.applyStep, isNull);
+    });
+
+    test('a sync publishes no step — it walks no actions', () async {
+      final h = ReconcileHarness();
+      final steps = recordSteps(h.controller);
+      await h.controller.sync();
+
+      expect(steps, isEmpty);
+      expect(h.controller.applyStep, isNull);
     });
   });
 
@@ -874,13 +1063,16 @@ void main() {
     test('departed students sum across the unassigned bucket, not staff',
         () async {
       // Three WISA-departed, Smartschool-only accounts, all in the synthetic
-      // "unassigned" school — never the staff bucket. Each carries two applyable
-      // candidates (the unregister + delete alternatives), so the rollup
-      // pendingCount is 3 × 2.
+      // "unassigned" school — never the staff bucket. Each raises the
+      // unregister/delete pair, which is one either/or the operator resolves
+      // once — so the rollup pendingCount is 3, not the 3 × 2 it counted before
+      // #251 (an apply pass writes one resolution per student, never both).
       final h = manyDepartedHarness(count: 3);
       await h.controller.sync();
 
-      expectSummary(h.controller.studentSummary, total: 3, pending: 6);
+      expectSummary(h.controller.studentSummary, total: 3, pending: 3);
+      expect(h.controller.applyableCount, 3,
+          reason: 'the badge and the live list agree on what is pending');
       expectSummary(h.controller.staffSummary, total: 0, pending: 0);
     });
 

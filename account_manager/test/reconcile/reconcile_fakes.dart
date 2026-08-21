@@ -958,6 +958,80 @@ ReconcileHarness twoSchoolHarness() => ReconcileHarness(
       ourSchoolIds: const {1, 2},
     );
 
+/// A harness for the post-apply overview counts (#236). One managed school with
+/// two third-year classes, both correctly placed in Smartschool, so the only
+/// **student** work anywhere is Sam's stale Office 365 display name — one
+/// applyable action, on 3C, which a real apply genuinely clears (the applier
+/// patches the Azure record and re-links, so the refreshed view no longer raises
+/// it). 3D carries nothing.
+///
+/// The two classes also carry group work of their own (Smartschool class data,
+/// and the Office 365 groups the empty tenant has neither of). That is the point:
+/// applying *the class's* work must drop 3C's badge to nothing while the
+/// Klasgroepen node keeps its own count — a re-derivation of what changed, not a
+/// blanket reset.
+///
+/// [applyGate] is awaited before every action, as everywhere else — a test that
+/// needs one write refused throws from it on the call it picks.
+ReconcileHarness appliedClassWorkHarness({
+  Future<void> Function()? applyGate,
+}) =>
+    ReconcileHarness(
+      applyGate: applyGate,
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '3', classGroup: '3C', firstName: 'Sam', name: 'Sels'),
+          wisaStudent(
+              wisaId: '4', classGroup: '3D', firstName: 'Tom', name: 'Tas'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+          wisaClassGroup('3D', adminCode: 'a4', schoolCode: '111'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('3C', code: '3C_ss', untis: '3C'),
+          ssGroup('3D', code: '3D_ss', untis: '3D'),
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'sam',
+            accountId: '3',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '4',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        memberships: [member('sam', '3C_ss'), member('tom', '3D_ss')],
+      ),
+      // Sam's display name is left blank (stale) so `ModifyAzureName` fires;
+      // Tom's already carries his WISA name, so his class is done.
+      azure: azSnap(users: [
+        azUser(
+          id: 'az3',
+          upn: 'sam.sels@student.school.example',
+          employeeId: '3',
+        ),
+        azUser(
+          id: 'az4',
+          upn: 'tom.tas@student.school.example',
+          employeeId: '4',
+          displayName: 'Tom Tas',
+        ),
+      ]),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
 /// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),
@@ -1298,6 +1372,93 @@ ReconcileHarness nonOfficialSmartschoolClassHarness() => ReconcileHarness(
       ourSchoolIds: const {1},
     );
 
+/// A harness for the start-of-year "new class" choice (#244). Our school 1 runs
+/// two brand-new classes, `1A` and `1B`, each holding a student and neither
+/// known to Smartschool — the shape that raised "Voeg deze klas toe aan
+/// Smartschool" and "Negeer deze klas bij het importeren uit WISA" as two
+/// independent to-dos on the same class. Both landed in the selection, so one
+/// **Apply to all** created every new class of the year and then wrote a
+/// `DontImportClass` rule on each name it had just created: the groups survived
+/// in Smartschool, but the classes dropped out of the next WISA snapshot and
+/// were no longer managed.
+///
+/// Two classes on purpose — that is what puts them in one "same situation"
+/// subset and lights up the bulk **Apply to all** the report describes.
+/// Smartschool holds only the `Leerlingen` root the classes hang under, named
+/// by [ReconcileHarness.classTree], so the create actually lands.
+ReconcileHarness newClassChoiceHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '1B'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '1A',
+            description: 'Onze eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+          wisaClassGroup(
+            '1B',
+            description: 'Onze tweede klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: core.GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+
+/// A harness for the "new staff member" choice (#248) — the staff twin of
+/// [newClassChoiceHarness]. Two freshly hired teachers exist in WISA only, so
+/// each raises `AddStaffToAzure` (which since #240 chains the Smartschool
+/// create) **and** `DontImportStaffFromWisa` on the same target.
+///
+/// Neither declared an `alternativeGroup`, so both landed in the selection and
+/// one click provisioned the teacher *and* wrote a `DontImportUserFromWisa` rule
+/// on the very code it had just provisioned. The rule set is persisted and
+/// re-applied on every WISA pull, so the next sync dropped the staff member the
+/// operator had just given two accounts.
+///
+/// Two staff members on purpose — that is what puts them in one "same
+/// situation" subset and lights up the bulk **Apply to all**.
+ReconcileHarness newStaffChoiceHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: const [],
+        staff: [
+          wisaStaff(),
+          wisaStaff(
+            code: 'JANS',
+            wisaId: '43',
+            firstName: 'Bram',
+            lastName: 'Jansen',
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+
 /// A harness for the `00` sub-group sentinel (#221). Two managed schools that
 /// each have their own `1C`, and each of those is a **single-group** class: one
 /// `SyncKlas` row with `KLASGROEP = 00` and — because `ADMINGROEP` is only
@@ -1392,10 +1553,34 @@ ReconcileHarness namedSchoolHarness() => ReconcileHarness(
 // seeded straight into an [InMemoryLinkedStore] a passive session reads back.
 // ---------------------------------------------------------------------------
 
+/// The pair of mutually-exclusive candidates a WISA-departed student's account
+/// doc carries (#110), as the materializer writes them since #251: both halves
+/// applyable, sharing one `alternativeGroup`, the unregister pre-selected. One
+/// decision, two readings — the shape whose badge used to read 2.
+List<CandidateAction> departureChoice() => const <CandidateAction>[
+      CandidateAction(
+        family: 'student',
+        kind: 'UnregisterStudentFromSmartschool',
+        system: core.Origin.smartschool,
+        summary: 'Schrijf de leerling uit in Smartschool',
+        alternativeGroup: actions.smartschoolDepartureAlternative,
+        isDefaultAlternative: true,
+      ),
+      CandidateAction(
+        family: 'student',
+        kind: 'DeleteStudentFromSmartschool',
+        system: core.Origin.smartschool,
+        summary: 'Verwijder dit account uit Smartschool',
+        alternativeGroup: actions.smartschoolDepartureAlternative,
+      ),
+    ];
+
 /// One [MaterializedAccount] for a passive-session classroom, placed in
 /// [school]/[gradeYear]/[classroom]. [withAction] decides whether it carries an
 /// applyable candidate — i.e. whether [MaterializedAccount.hasPending] is true,
-/// the "has actions" predicate the toggle filters on.
+/// the "has actions" predicate the toggle filters on. [candidates] overrides it
+/// outright for a doc that needs a specific candidate set (e.g. the either/or of
+/// [departureChoice]).
 MaterializedAccount matAccount({
   required String id,
   required String label,
@@ -1405,6 +1590,7 @@ MaterializedAccount matAccount({
   String classroom = '3C',
   bool isStaff = false,
   bool withAction = false,
+  List<CandidateAction>? candidates,
 }) =>
     MaterializedAccount(
       id: core.LinkedAccountId(id),
@@ -1419,16 +1605,17 @@ MaterializedAccount matAccount({
       inWisa: true,
       inSmartschool: true,
       inAzure: true,
-      candidates: withAction
-          ? <CandidateAction>[
-              CandidateAction(
-                family: isStaff ? 'staff' : 'student',
-                kind: 'MoveToSmartschoolClassGroup',
-                system: core.Origin.smartschool,
-                summary: 'Wijzig de klas in Smartschool',
-              ),
-            ]
-          : const <CandidateAction>[],
+      candidates: candidates ??
+          (withAction
+              ? <CandidateAction>[
+                  CandidateAction(
+                    family: isStaff ? 'staff' : 'student',
+                    kind: 'MoveToSmartschoolClassGroup',
+                    system: core.Origin.smartschool,
+                    summary: 'Wijzig de klas in Smartschool',
+                  ),
+                ]
+              : const <CandidateAction>[]),
     );
 
 /// A staff [MaterializedAccount] in the synthetic "Personeel" school/class the
@@ -1794,6 +1981,67 @@ CosmosLinkedStore cosmosLinkedStoreOver(
 // The harness: the real State layer over scripted syncers.
 // ---------------------------------------------------------------------------
 
+/// The real [StateApplier] with one seam: an optional [gate] awaited before
+/// every action a pass runs (#243).
+///
+/// A dry-run touches no connector and a scripted apply answers on the microtask
+/// queue, so an entire pass otherwise completes inside a single `tester.pump()`
+/// — leaving no frame in which the modal progress dialog exists to be asserted
+/// on. Parking on the gate freezes the pass exactly where the operator sees it:
+/// mid-flight, on a named account and a named action.
+///
+/// With no gate wired this is the plain applier, so the harness builds it
+/// unconditionally rather than duplicating the (long) construction twice.
+class GatedApplier extends StateApplier {
+  GatedApplier({
+    required this.gate,
+    required super.app,
+    required super.connectors,
+    required super.resolver,
+    required super.wisaRules,
+    required super.studentConfig,
+    required super.staffConfig,
+    super.classTree,
+    super.passwordQueue,
+    super.ourSchoolIds,
+  });
+
+  /// Awaited before each action; `null` for the ordinary harness.
+  final Future<void> Function()? gate;
+
+  Future<void> _park() async {
+    final g = gate;
+    if (g != null) await g();
+  }
+
+  @override
+  Future<ApplyResult> applyStudent(
+    actions.StudentAction action, {
+    actions.ApplyOptions options = const actions.ApplyOptions(),
+  }) async {
+    await _park();
+    return super.applyStudent(action, options: options);
+  }
+
+  @override
+  Future<ApplyResult> applyStaff(
+    actions.StaffAction action, {
+    actions.ApplyOptions options = const actions.ApplyOptions(),
+  }) async {
+    await _park();
+    return super.applyStaff(action, options: options);
+  }
+
+  @override
+  Future<ApplyResult> applyGroup(
+    actions.GroupAction action, {
+    actions.ApplyOptions options = const actions.ApplyOptions(),
+  }) async {
+    await _park();
+    return super.applyGroup(action, options: options);
+  }
+}
+
 /// One assembled reconcile stack against fakes: scripted per-system syncers
 /// (with call counters), a [StateApplier] wired to recording connectors, and
 /// the [ReconcileController] under test.
@@ -1813,9 +2061,11 @@ class ReconcileHarness {
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
     this.azureGate,
+    this.applyGate,
     this.azureTransport,
     this.smartschoolTransport,
     this.smartschoolRules = const <ss.SmartschoolImportRule>[],
+    this.classTree = const SmartschoolClassTree(),
     this.wisaTransport,
     this.passwordGraph,
     this.syncedBy = 'operator@school.example',
@@ -1996,7 +2246,10 @@ class ReconcileHarness {
       ),
     );
 
-    applier = StateApplier(
+    applier = GatedApplier(
+      // Null unless a test wants the pass frozen mid-flight (#243); with no
+      // gate this is the plain StateApplier the app wires.
+      gate: applyGate,
       app: app,
       connectors: actions.Connectors(
         smartschool: ss.SmartschoolConnector.fromParts(
@@ -2017,6 +2270,10 @@ class ReconcileHarness {
       ),
       resolver: SeqResolver(),
       wisaRules: wisaRules,
+      // The Smartschool group tree a freshly created class hangs under. Left
+      // unconfigured by default (no parent resolves, as in a bare tenant); a
+      // fixture that applies `AddToSmartschool` for real names the root here.
+      classTree: classTree,
       studentConfig: actions.StudentActionConfig(
         schoolPrefix: 'GBS',
         azureDomain: 'school.example',
@@ -2095,6 +2352,12 @@ class ReconcileHarness {
   /// so a widget test can observe the busy progress bar (#176).
   final Completer<void>? azureGate;
 
+  /// When set, every action of a dry-run/apply pass parks here before it runs —
+  /// the seam that freezes a pass mid-flight so a test can observe the modal
+  /// progress dialog naming the account and action in flight (#243). Unlike
+  /// [azureGate] it covers dry-runs too, which touch no connector at all.
+  final Future<void> Function()? applyGate;
+
   /// When set, the Azure pull is the **production** one — a real
   /// [az.AzureConnector] + [azureSyncer] over this transport — instead of the
   /// scripted [azResult]. Lets a test answer as Graph does (e.g. rejecting a
@@ -2130,6 +2393,14 @@ class ReconcileHarness {
   /// Read at sync time, like [ssResult]: assign between passes to model the
   /// session that bootstraps on rules the operator has just saved in Settings.
   List<ss.SmartschoolImportRule> smartschoolRules;
+
+  /// The Smartschool class-tree live-config the placement resolver reads to
+  /// find the group a freshly created official class hangs under — the
+  /// `classTreeFrom(settings.smartschool)` the real bootstrap injects.
+  /// Unconfigured by default, so no parent resolves and `AddToSmartschool`
+  /// fails the way it does against a bare tenant; a fixture that wants the
+  /// create to land names the root here.
+  final SmartschoolClassTree classTree;
 
   /// When set, the Passwords screen writes through the **production**
   /// [ConnectorPasswordBackends] over this transport instead of the recording

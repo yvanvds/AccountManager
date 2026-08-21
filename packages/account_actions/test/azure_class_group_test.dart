@@ -74,7 +74,7 @@ void main() {
       );
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromWisa, AddToSmartschool, CreateAzureClassGroup],
+        [AddToSmartschool, DoNotImportFromWisa, CreateAzureClassGroup],
       );
     });
 
@@ -119,7 +119,7 @@ void main() {
           linkedGroup(wisa: wisaGroup()),
           placementFor: (_) => groupPlacement(containsStudents: true),
         ).map((a) => a.runtimeType),
-        [DoNotImportFromWisa, AddToSmartschool],
+        [AddToSmartschool, DoNotImportFromWisa],
       );
     });
   });
@@ -139,6 +139,31 @@ void main() {
       expect(create.unlocks, <Type>{SyncAzureClassGroupMembers});
     });
 
+    test('the create names the system its follow-up writes — its own (#234)',
+        () {
+      // The roster write lands in Office 365 too, so this chain reaches no
+      // system the create does not already name and the confirmation dialog has
+      // no second system to announce for it. Pinned against the follow-up's own
+      // ChangeSet so the two cannot drift apart.
+      final create = groupActionsFor(
+        linkedGroup(wisa: wisaGroup(), smartschool: ssGroup()),
+        azurePlanFor: (_) => azurePlan(),
+      ).single as CreateAzureClassGroup;
+      final followUp = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(),
+          azure: azureClassGroup('3A'),
+        ),
+        azurePlanFor: (_) => azurePlan(membersToAdd: const ['az-1']),
+      ).single as SyncAzureClassGroupMembers;
+      expect(create.unlockedSystems, <Origin>{Origin.azure});
+      expect(
+          create.unlockedSystems, <Origin>{followUp.describeChanges().system});
+      expect(create.unlockedSystems, <Origin>{create.describeChanges().system},
+          reason: 'the chain stays inside Office 365');
+    });
+
     test('the roster sync ends the chain', () {
       final actions = groupActionsFor(
         linkedGroup(
@@ -149,6 +174,7 @@ void main() {
         azurePlanFor: (_) => azurePlan(membersToAdd: const ['az-1']),
       );
       expect(actions.single.unlocks, isEmpty);
+      expect(actions.single.unlockedSystems, isEmpty);
     });
 
     test('every other group action unlocks nothing', () {
@@ -174,6 +200,9 @@ void main() {
         )) {
           if (action is CreateAzureClassGroup) continue;
           expect(action.unlocks, isEmpty, reason: '${action.runtimeType}');
+          // …and so claims no second system on the confirmation dialog (#234).
+          expect(action.unlockedSystems, isEmpty,
+              reason: '${action.runtimeType}');
         }
       }
     });

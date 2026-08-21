@@ -1,8 +1,16 @@
 import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
+import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart'
-    show MaterializedAccount, MaterializedGroup, Rollup, RollupLevel;
+    show
+        CandidateAction,
+        MaterializedAccount,
+        MaterializedGroup,
+        Rollup,
+        RollupLevel,
+        candidateChoices,
+        pendingDecisionCount;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -31,6 +39,12 @@ import '../search/name_query.dart';
 /// opened classroom lists only accounts with a pending action. What it holds
 /// back is counted and named, so a year the operator expected is explained
 /// rather than merely absent.
+///
+/// The tree is a single-open accordion whose open path outlives the detail view
+/// (#235): drilling into a class and pressing **Overzicht** comes back to the
+/// grade-year it was opened from, and opening another year closes the one that
+/// was open. The path is held on the [ReconcileController], because while a
+/// class is open the tree is not built at all.
 ///
 /// A session with no linked view — passive, or one whose pass failed before it
 /// linked — can only show the stored documents, so both drill-downs say so out
@@ -171,6 +185,29 @@ class _FilteredTree {
   final int hidden;
 }
 
+/// The seam the drill-down's expandable nodes are driven through (#235): where
+/// a node's persistent [ExpansibleController] comes from, whether it is the open
+/// one at its depth, and where a tap on it is recorded.
+///
+/// Passed down rather than reached for, so [_DrillDownSection] and [_GradeNode]
+/// stay the stateless projections of the rollups they already were — the open
+/// path itself lives on the [ReconcileController], one level above the tree.
+class _Accordion {
+  const _Accordion({
+    required this.controllerFor,
+    required this.isOpen,
+    required this.onToggled,
+  });
+
+  final ExpansibleController Function(String node) controllerFor;
+
+  /// Whether [node] is the open node at that depth of the tree — 0 for a
+  /// top-level node, 1 for a grade-year nested under the staff school.
+  final bool Function(String node, int depth) isOpen;
+
+  final void Function(String node, int depth, bool open) onToggled;
+}
+
 class _ActionsBody extends StatefulWidget {
   const _ActionsBody({required this.controller});
 
@@ -204,6 +241,19 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// cleared on every family tab change.
   final TextEditingController _search = TextEditingController();
 
+  /// One [ExpansibleController] per accordion node the operator has met this
+  /// session, keyed by [_rollupNodeKey] (#235).
+  ///
+  /// An `ExpansionTile` reads [ExpansionTile.initiallyExpanded] once, in its
+  /// `initState`, and thereafter owns its own open/closed state — so nothing
+  /// declarative can close the year that was open when another is tapped, and
+  /// nothing survives the tile being disposed. Both halves of #235 need a handle
+  /// that outlives the tile, which is exactly what an injected controller is:
+  /// held here, it carries a node's expansion across the detail view, and it is
+  /// the one thing that can collapse a sibling on demand.
+  final Map<String, ExpansibleController> _tiles =
+      <String, ExpansibleController>{};
+
   ReconcileController get controller => widget.controller;
 
   @override
@@ -212,10 +262,18 @@ class _ActionsBodyState extends State<_ActionsBody>
     _tabs = TabController(length: _ActionFamilyTab.values.length, vsync: this)
       ..addListener(_onTabChanged);
     _search.addListener(_onSearchChanged);
+    // Anything that moves the open path without going through a tap — a re-sync
+    // clearing it (#235) — is picked up here and pushed into the tiles.
+    controller.addListener(_syncExpansion);
   }
 
   @override
   void dispose() {
+    controller.removeListener(_syncExpansion);
+    for (final ExpansibleController tile in _tiles.values) {
+      tile.dispose();
+    }
+    _tiles.clear();
     _tabs
       ..removeListener(_onTabChanged)
       ..dispose();
@@ -227,6 +285,96 @@ class _ActionsBodyState extends State<_ActionsBody>
 
   void _onSearchChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// The drill-down tree's accordion seam (#235), handed to the widgets that
+  /// build the expandable nodes.
+  _Accordion get _accordion => _Accordion(
+        controllerFor: _tileFor,
+        isOpen: _isNodeOpen,
+        onToggled: _onNodeToggled,
+      );
+
+  /// The persistent controller of one accordion node, created on first render.
+  /// Safe to call from `build`: a controller nobody is listening to yet cannot
+  /// schedule a rebuild.
+  ExpansibleController _tileFor(String node) => _tiles.putIfAbsent(node, () {
+        final ExpansibleController tile = ExpansibleController();
+        if (_isNodeOpenKey(node)) tile.expand();
+        return tile;
+      });
+
+  /// Whether [node] is the open node at [depth] of
+  /// [ReconcileController.expandedPath].
+  bool _isNodeOpen(String node, int depth) {
+    final List<String> path = controller.expandedPath;
+    return path.length > depth && path[depth] == node;
+  }
+
+  bool _isNodeOpenKey(String node) => controller.expandedPath.contains(node);
+
+  /// Records the operator opening or closing one accordion node.
+  ///
+  /// Opening replaces whatever sat at that depth — which is what makes the tree
+  /// single-open — and truncates everything below it, since a node's children
+  /// go away with it. Closing truncates from that depth. The path setter
+  /// notifies, so [_syncExpansion] does the actual collapsing of the sibling
+  /// that just lost its place.
+  void _onNodeToggled(String node, int depth, bool open) {
+    final List<String> path = controller.expandedPath;
+    if (open) {
+      controller.expandedPath = <String>[...path.take(depth), node];
+    } else if (_isNodeOpen(node, depth)) {
+      controller.expandedPath = path.take(depth).toList();
+    }
+  }
+
+  /// Brings every tile controller back in line with the open path. Idempotent —
+  /// [ExpansibleController.expand] / [ExpansibleController.collapse] are no-ops
+  /// on a controller that already agrees — so it is safe to run on every
+  /// controller notification.
+  void _syncExpansion() {
+    if (!mounted) return;
+    final Set<String> open = controller.expandedPath.toSet();
+    for (final MapEntry<String, ExpansibleController> tile in _tiles.entries) {
+      if (open.contains(tile.key)) {
+        tile.value.expand();
+      } else {
+        tile.value.collapse();
+      }
+    }
+  }
+
+  /// Forgets the tail of the open path the global filter has just stopped
+  /// rendering (#226/#235).
+  ///
+  /// Without this, a year the operator opened with the filter off would come
+  /// back open — and, having been invisible in between, unexpectedly so — the
+  /// next time they switched the filter off again.
+  void _pruneExpansion() {
+    final List<String> path = controller.expandedPath;
+    if (path.isEmpty) return;
+    final Set<String> visible = _visibleNodeKeys();
+    var keep = 0;
+    while (keep < path.length && visible.contains(path[keep])) {
+      keep++;
+    }
+    if (keep < path.length) controller.expandedPath = path.take(keep).toList();
+  }
+
+  /// The keys of every accordion node either family tree would render under the
+  /// current filter — both tabs, because the open path outlives a tab change.
+  Set<String> _visibleNodeKeys() {
+    final keys = <String>{
+      for (final root in _studentTree().roots) _rollupNodeKey(root),
+    };
+    for (final root in _staffTree().roots) {
+      keys.add(_rollupNodeKey(root));
+      for (final grade in controller.childrenOf(root.key)) {
+        if (_keepGrade(grade)) keys.add(_rollupNodeKey(grade));
+      }
+    }
+    return keys;
   }
 
   /// Whether the Personeel family tab is the selected one — the only tab that
@@ -407,7 +555,12 @@ class _ActionsBodyState extends State<_ActionsBody>
       // governs both tabs, the drill-down, and every classroom opened from it.
       _section(_ActionsFilterBar(
         onlyWithActions: _onlyWithActions,
-        onChanged: (v) => setState(() => _onlyWithActions = v),
+        onChanged: (v) {
+          setState(() => _onlyWithActions = v);
+          // Pruned after the flag has flipped, against the tree the operator is
+          // about to see (#235).
+          _pruneExpansion();
+        },
       )),
       _gap(PlinkSpacing.s4),
       _section(_FamilyTabBar(controller: controller, tabs: _tabs)),
@@ -427,6 +580,7 @@ class _ActionsBodyState extends State<_ActionsBody>
       slivers.add(_section(staffTab
           ? _DrillDownSection(
               controller: controller,
+              accordion: _accordion,
               roots: tree.roots,
               groups: null,
               hidden: tree.hidden,
@@ -437,6 +591,7 @@ class _ActionsBodyState extends State<_ActionsBody>
                   if (_keepGrade(grade))
                     _GradeNode(
                       controller: controller,
+                      accordion: _accordion,
                       grade: grade,
                       onlyWithActions: _onlyWithActions,
                     ),
@@ -444,6 +599,7 @@ class _ActionsBodyState extends State<_ActionsBody>
             )
           : _DrillDownSection(
               controller: controller,
+              accordion: _accordion,
               roots: tree.roots,
               groups: tree.groups,
               hidden: tree.hidden,
@@ -720,9 +876,14 @@ class _ActionsHeader extends StatelessWidget {
               key: const ValueKey('actions-dry-run'),
               onPressed: controller.busy || controller.applyableCount == 0
                   ? null
-                  : controller.dryRun,
+                  : () => _runWithProgress(
+                        context,
+                        controller: controller,
+                        dry: true,
+                        run: controller.dryRun,
+                      ),
               icon: const Icon(Icons.visibility_outlined),
-              label: const Text('Dry-run all'),
+              label: const Text('Dry-run alles'),
             ),
             TextButton.icon(
               key: const ValueKey('actions-apply'),
@@ -730,18 +891,25 @@ class _ActionsHeader extends StatelessWidget {
                   ? null
                   : () => _confirmAndApply(
                         context,
-                        title: 'Apply pending actions?',
-                        count: controller.applyableCount,
+                        controller: controller,
+                        title: 'Openstaande acties toepassen?',
+                        scope: controller.applyScope(controller.pendingEntries),
                         apply: controller.applyAll,
                       ),
               icon: const Icon(Icons.play_arrow_outlined),
-              label: const Text('Apply all'),
+              label: const Text('Alles toepassen'),
             ),
           ],
         ),
         if (controller.busy) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s4),
-          const LinearProgressIndicator(),
+          // Determinate, like the Reconcile header's (#176/#243): the value
+          // exists on the very same controller, and an indeterminate sweep here
+          // was a motionless bar that read as a hung app.
+          LinearProgressIndicator(
+            key: const ValueKey('actions-progress'),
+            value: controller.progress,
+          ),
         ],
       ],
     );
@@ -951,38 +1119,244 @@ class _EmptyLine extends StatelessWidget {
       Text(message, style: Theme.of(context).textTheme.bodyMedium);
 }
 
-/// Shows the apply-confirmation dialog and, on confirm, runs [apply] (#110).
-/// Shared by the global, per-situation, and per-entry apply affordances so a
-/// write is always one deliberate confirmation.
+/// The Dutch name the operator knows a system by — the same names the action
+/// summaries and the rest of the screen use (#234). Azure AD is "Office 365"
+/// throughout this app, so the dialog says that and not the tenant's technical
+/// name.
+String systemLabel(core.Origin system) => switch (system) {
+      core.Origin.azure => 'Office 365',
+      core.Origin.smartschool => 'Smartschool',
+      core.Origin.wisa => 'WISA',
+      core.Origin.all => 'alle systemen',
+      core.Origin.other => 'een ander systeem',
+    };
+
+/// Joins system names the way Dutch reads them: "a", "a en b", "a, b en c".
+String _joinSystems(Iterable<core.Origin> systems) {
+  final names = <String>[
+    // Pinned order (WISA → Smartschool → Office 365) so the same selection
+    // always reads the same way, whatever order the actions were dispatched in.
+    for (final s in systems.toSet().toList()..sort((a, b) => a.index - b.index))
+      systemLabel(s),
+  ];
+  if (names.length <= 1) return names.join();
+  return '${names.take(names.length - 1).join(', ')} en ${names.last}';
+}
+
+String _changeCount(int n) => n == 1 ? '1 wijziging' : '$n wijzigingen';
+
+String _ruleCount(int n) => n == 1 ? '1 importregel' : '$n importregels';
+
+/// The body of the apply-confirmation dialog: what this particular pass will
+/// write, and where (#234).
+///
+/// It used to be one hard-coded sentence claiming "Smartschool and Azure AD"
+/// for every action, so a single Graph `PATCH` on one display name announced a
+/// write to a system it never touched. Everything needed to say it correctly is
+/// on the actions themselves; [ApplyScope] carries it here.
+///
+/// Three things it is careful about:
+/// - **WISA is never written.** The `DontImportFromWisa` family's `ChangeSet`
+///   carries `Origin.wisa`, but what it produces is a local import rule — the
+///   connector is read-only. So those are counted as import rules and the
+///   sentence says outright that nothing is written to WISA.
+/// - **Chained follow-ups are named, not counted.** A new student's Office 365
+///   create writes Smartschool too (#230/#240). Whether the follow-up runs is
+///   decided by its own `evaluate` after the first write, so it gets its own
+///   "kan ook" sentence rather than being folded into the count.
+/// - **A chain that stays inside a system it already named adds nothing** — a
+///   class group's create and its roster write are both Office 365 (#245), so
+///   there is no second system to announce.
+String applyConfirmationMessage(ApplyScope scope) {
+  final writes = scope.systems.where((s) => s != core.Origin.wisa).toList();
+  final rules = scope.systems.length - writes.length;
+  final clauses = <String>[
+    if (writes.isNotEmpty)
+      'schrijft ${_changeCount(writes.length)} naar ${_joinSystems(writes)}',
+    if (rules > 0)
+      'legt ${_ruleCount(rules)} vast (er wordt niets naar WISA geschreven)',
+  ];
+  final what =
+      clauses.isEmpty ? 'Dit schrijft niets.' : 'Dit ${clauses.join(' en ')}.';
+  final follow = scope.chained.isEmpty
+      ? ''
+      : ' Een vervolgactie kan ook naar ${_joinSystems(scope.chained)} '
+          'schrijven.';
+  return '$what$follow Doe eerst een dry-run om de exacte wijzigingen te '
+      'bekijken.';
+}
+
+/// Shows the apply-confirmation dialog and, on confirm, runs [apply] behind the
+/// modal progress dialog (#110/#243). Shared by the global, per-situation, and
+/// per-entry apply affordances so a write is always one deliberate confirmation
+/// followed by one visible pass.
+///
+/// [scope] is what that particular confirmation covers (#234) — the systems the
+/// pass will really reach, not a fixed pair.
 Future<void> _confirmAndApply(
   BuildContext context, {
+  required ReconcileController controller,
   required String title,
-  required int count,
+  required ApplyScope scope,
   required Future<void> Function() apply,
 }) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: Text(
-        'This writes $count change(s) to Smartschool and Azure AD. '
-        'Run a dry-run first to preview the exact changes.',
-      ),
+      content: Text(applyConfirmationMessage(scope)),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Cancel'),
+          child: const Text('Annuleer'),
         ),
         FilledButton(
           key: const ValueKey('actions-apply-confirm'),
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('Apply'),
+          child: const Text('Toepassen'),
         ),
       ],
     ),
   );
-  if (confirmed ?? false) await apply();
+  if (!(confirmed ?? false)) return;
+  if (!context.mounted) return;
+  await _runWithProgress(
+    context,
+    controller: controller,
+    dry: false,
+    run: apply,
+  );
 }
+
+/// Runs one dry-run/apply pass behind a **modal** progress dialog (#243).
+///
+/// An "Apply to all" over the September "zonder klas" bucket is sequential, one
+/// connector round-trip per action, and runs for minutes. Its only feedback used
+/// to be greyed-out buttons and an indeterminate bar in a page header the
+/// operator had usually scrolled past — so the app looked hung, and nothing
+/// stopped them scrolling, switching family tab, or navigating away mid-write.
+///
+/// Every affordance goes through here — global, per-situation, per-entry, and
+/// dry-run as well as apply — so the pass behaves the same wherever it is
+/// started. A dry-run over hundreds of accounts is exactly as slow and was
+/// exactly as silent.
+///
+/// The dialog's lifetime is bound to [run]'s future rather than to any observed
+/// controller state: it is dismissed in a `finally`, so a pass that fails — or
+/// one that returns immediately because another is already running — can never
+/// strand the operator behind a modal barrier.
+Future<void> _runWithProgress(
+  BuildContext context, {
+  required ReconcileController controller,
+  required bool dry,
+  required Future<void> Function() run,
+}) async {
+  final NavigatorState navigator = Navigator.of(context, rootNavigator: true);
+  unawaited(showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) =>
+        _ApplyProgressDialog(controller: controller, dry: dry),
+  ));
+  try {
+    await run();
+  } finally {
+    if (navigator.mounted) navigator.pop();
+  }
+}
+
+/// The modal dialog a pass runs behind (#243): how far along it is, and the
+/// account and action in flight right now.
+///
+/// Rebuilt from [ReconcileController.applyStep], which the pass publishes before
+/// each action off the very list the confirmation dialog was built from, so the
+/// count here and the change count the operator just agreed to are the same
+/// resolution of the work.
+class _ApplyProgressDialog extends StatelessWidget {
+  const _ApplyProgressDialog({required this.controller, required this.dry});
+
+  final ReconcileController controller;
+
+  /// Whether this pass writes nothing, which is the one thing the operator most
+  /// wants confirmed while staring at a progress dialog for two minutes.
+  final bool dry;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    // Non-dismissible: the pass is a sequence of live writes, so there is
+    // nothing useful to do behind it and plenty of harm in navigating away.
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        key: const ValueKey('actions-progress-dialog'),
+        title: Text(dry ? 'Dry-run bezig…' : 'Acties toepassen…'),
+        content: SizedBox(
+          // A [LinearProgressIndicator] demands all the width it is offered, so
+          // without a bound the dialog stretches across a desktop window. Fixed
+          // at a readable measure, clamped so a narrow window cannot overflow.
+          width: (MediaQuery.sizeOf(context).width - 112).clamp(240.0, 400.0),
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              final ApplyStep? step = controller.applyStep;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  // Always determinate — an indeterminate sweep is what #176
+                  // replaced on Reconcile, and is what this dialog exists to
+                  // stop showing.
+                  LinearProgressIndicator(
+                    key: const ValueKey('actions-progress-bar'),
+                    value: step == null ? 0.0 : (step.index - 1) / step.total,
+                  ),
+                  const SizedBox(height: PlinkSpacing.s4),
+                  Text(
+                    key: const ValueKey('actions-progress-count'),
+                    step == null
+                        ? 'Bezig…'
+                        : 'Actie ${step.index} van ${step.total}',
+                    style: text.titleSmall,
+                  ),
+                  if (step != null) ...<Widget>[
+                    const SizedBox(height: PlinkSpacing.s1),
+                    Text(
+                      key: const ValueKey('actions-progress-step'),
+                      '${step.target} — ${step.summary}',
+                      style: text.bodyMedium,
+                    ),
+                  ],
+                  if (step != null && step.followUps > 0) ...<Widget>[
+                    const SizedBox(height: PlinkSpacing.s2),
+                    Text(
+                      key: const ValueKey('actions-progress-followups'),
+                      // Named, never folded into the count: a follow-up is not
+                      // in the pending list, so it cannot be part of the total
+                      // the operator was shown (#230/#240/#245).
+                      '+ ${_followUpCount(step.followUps)} gestart door een '
+                      'eerdere actie.',
+                      style: text.bodySmall,
+                    ),
+                  ],
+                  const SizedBox(height: PlinkSpacing.s3),
+                  Text(
+                    dry
+                        ? 'Er wordt niets geschreven.'
+                        : 'Sluit het venster niet tot de reeks klaar is.',
+                    style: text.bodySmall,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _followUpCount(int n) => n == 1 ? '1 vervolgactie' : '$n vervolgacties';
 
 /// The stable widget key of one rollup node, by level — so a test (and the
 /// element tree) names a node the same way wherever it is rendered.
@@ -1006,6 +1380,7 @@ String _rollupNodeKey(Rollup r) => switch (r.level) {
 class _DrillDownSection extends StatelessWidget {
   const _DrillDownSection({
     required this.controller,
+    required this.accordion,
     required this.roots,
     required this.groups,
     required this.emptyLabel,
@@ -1015,6 +1390,10 @@ class _DrillDownSection extends StatelessWidget {
   });
 
   final ReconcileController controller;
+
+  /// Drives the top-level nodes as a single-open accordion whose open node
+  /// outlives a drill-down (#235).
+  final _Accordion accordion;
 
   /// The top-level accordion nodes: the merged grade-years plus
   /// "Niet toegewezen" on the Leerlingen tab, the single staff school node on
@@ -1050,6 +1429,33 @@ class _DrillDownSection extends StatelessWidget {
   String get _allHiddenNote =>
       'Alles is verborgen door de filter: $hidden zonder openstaande acties. '
       'Zet de filter af voor het volledige overzicht.';
+
+  /// One top-level accordion node (depth 0), driven by [accordion] rather than
+  /// by the `ExpansionTile`'s own state (#235) — so the year the operator drilled
+  /// a class out of is still open when they come back, and opening another one
+  /// closes it.
+  Widget _rootTile(BuildContext context, Rollup root, Color hairline) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final String node = _rollupNodeKey(root);
+    return Container(
+      margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+      decoration: BoxDecoration(
+        border: Border.all(color: hairline),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: ExpansionTile(
+        key: ValueKey(node),
+        controller: accordion.controllerFor(node),
+        initiallyExpanded: accordion.isOpen(node, 0),
+        onExpansionChanged: (open) => accordion.onToggled(node, 0, open),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        title: Text(root.label, style: text.bodyLarge),
+        trailing: _PendingBadge(count: root.pendingCount),
+        children: childrenOf(root),
+      ),
+    );
+  }
 
   String? _freshness() {
     final state = controller.syncState;
@@ -1089,23 +1495,7 @@ class _DrillDownSection extends StatelessWidget {
                 )
               : Text(emptyLabel, style: text.bodyMedium)
         else ...<Widget>[
-          for (final root in roots)
-            Container(
-              margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
-              decoration: BoxDecoration(
-                border: Border.all(color: hairline),
-                borderRadius:
-                    const BorderRadius.all(Radius.circular(PlinkRadius.base)),
-              ),
-              child: ExpansionTile(
-                key: ValueKey(_rollupNodeKey(root)),
-                shape: const Border(),
-                collapsedShape: const Border(),
-                title: Text(root.label, style: text.bodyLarge),
-                trailing: _PendingBadge(count: root.pendingCount),
-                children: childrenOf(root),
-              ),
-            ),
+          for (final root in roots) _rootTile(context, root, hairline),
           if (groupsNode != null)
             Container(
               margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
@@ -1153,11 +1543,19 @@ class _DrillDownSection extends StatelessWidget {
 class _GradeNode extends StatelessWidget {
   const _GradeNode({
     required this.controller,
+    required this.accordion,
     required this.grade,
     required this.onlyWithActions,
   });
 
   final ReconcileController controller;
+
+  /// Drives this node at depth 1 (#235). The depth is what keeps the staff tree
+  /// usable: opening a grade-year replaces its *sibling* year, never the school
+  /// node above it — which single-open on one flat key would have collapsed out
+  /// from under the year the operator just opened.
+  final _Accordion accordion;
+
   final Rollup grade;
 
   /// Whether the global filter is on, in which case only the classrooms of this
@@ -1167,8 +1565,12 @@ class _GradeNode extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
+    final String node = _rollupNodeKey(grade);
     return ExpansionTile(
-      key: ValueKey(_rollupNodeKey(grade)),
+      key: ValueKey(node),
+      controller: accordion.controllerFor(node),
+      initiallyExpanded: accordion.isOpen(node, 1),
+      onExpansionChanged: (open) => accordion.onToggled(node, 1, open),
       shape: const Border(),
       collapsedShape: const Border(),
       tilePadding: const EdgeInsets.only(left: PlinkSpacing.s5, right: 16),
@@ -1339,8 +1741,7 @@ class _AccountTile extends StatelessWidget {
               Expanded(child: Text(account.label, style: text.bodyLarge)),
               const _ReadOnlyLock(),
               const SizedBox(width: PlinkSpacing.s2),
-              _PendingBadge(
-                  count: account.candidates.where((c) => c.canApply).length),
+              _PendingBadge(count: pendingDecisionCount(account.candidates)),
             ],
           ),
           const SizedBox(height: PlinkSpacing.s2),
@@ -1353,11 +1754,16 @@ class _AccountTile extends StatelessWidget {
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(w, style: text.bodySmall),
             ),
-          for (final c in account.candidates)
+          // One line per *decision* (#251): a departed student's unregister /
+          // delete pair is one either/or, so it reads as the single choice the
+          // interactive tile shows — never as two bullets that both look due.
+          for (final c in candidateChoices(account.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(
-                '• ${c.summary}',
+                c.isChoice
+                    ? '• ${c.selected.summary} (keuze)'
+                    : '• ${c.selected.summary}',
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),
@@ -1382,6 +1788,16 @@ class _ReadOnlyLock extends StatelessWidget {
           color: Theme.of(context).disabledColor,
         ),
       );
+}
+
+/// One read-only candidate line of a passive-session group tile, worded exactly
+/// as the interactive [_PendingEntryTile]'s: an either/or reads as one "(keuze)"
+/// on its pre-selected half (#251), an informational notice keeps its
+/// "(manueel)" marker (#225), and an ordinary action is its bare summary.
+String _readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
+  final summary = choice.selected.summary;
+  if (choice.isChoice) return '• $summary (keuze)';
+  return choice.selected.canApply ? '• $summary' : '• $summary (manueel)';
 }
 
 /// One class group's read-only summary in a passive-session group drill-down,
@@ -1417,8 +1833,7 @@ class _GroupTile extends StatelessWidget {
               Expanded(child: Text(group.label, style: text.bodyLarge)),
               const _ReadOnlyLock(),
               const SizedBox(width: PlinkSpacing.s2),
-              _PendingBadge(
-                  count: group.candidates.where((c) => c.canApply).length),
+              _PendingBadge(count: pendingDecisionCount(group.candidates)),
             ],
           ),
           const SizedBox(height: PlinkSpacing.s2),
@@ -1426,11 +1841,14 @@ class _GroupTile extends StatelessWidget {
             spacing: PlinkSpacing.s2,
             children: <Widget>[for (final s in systems) PlinkBadge(s)],
           ),
-          for (final c in group.candidates)
+          // One line per *decision* (#251), marked exactly as the interactive
+          // tile marks it: since #244 a new class is one "create it or stop
+          // importing it" either/or, which used to read as two separate to-dos.
+          for (final c in candidateChoices(group.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
               child: Text(
-                c.canApply ? '• ${c.summary}' : '• ${c.summary} (manueel)',
+                _readOnlyCandidateLine(c),
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),
@@ -1475,8 +1893,13 @@ class _SituationHeader extends StatelessWidget {
             key: ValueKey('situation-dry-run-$key'),
             onPressed: controller.busy || applyable == 0
                 ? null
-                : () => controller.dryRunSituation(key),
-            child: const Text('Dry-run all'),
+                : () => _runWithProgress(
+                      context,
+                      controller: controller,
+                      dry: true,
+                      run: () => controller.dryRunSituation(key),
+                    ),
+            child: const Text('Dry-run alles'),
           ),
           const SizedBox(width: PlinkSpacing.s2),
           FilledButton(
@@ -1485,11 +1908,19 @@ class _SituationHeader extends StatelessWidget {
                 ? null
                 : () => _confirmAndApply(
                       context,
-                      title: 'Apply to ${entries.length} accounts?',
-                      count: applyable,
+                      controller: controller,
+                      title: 'Toepassen op ${entries.length} accounts?',
+                      // Scoped exactly as [ReconcileController.applySituation]
+                      // scopes the pass — every entry in this situation, not
+                      // only the ones this classroom happens to render — so the
+                      // dialog names what will actually be written (#234).
+                      scope: controller.applyScope(
+                        controller.pendingEntries
+                            .where((e) => e.situationKey == key),
+                      ),
                       apply: () => controller.applySituation(key),
                     ),
-            child: Text('Apply to all ($applyable)'),
+            child: Text('Alles toepassen ($applyable)'),
           ),
         ],
       ),
@@ -1561,7 +1992,12 @@ class _PendingEntryTile extends StatelessWidget {
                 key: ValueKey('entry-dry-run-${entry.targetId}'),
                 onPressed: controller.busy || !entry.canApply
                     ? null
-                    : () => controller.dryRunEntry(entry),
+                    : () => _runWithProgress(
+                          context,
+                          controller: controller,
+                          dry: true,
+                          run: () => controller.dryRunEntry(entry),
+                        ),
                 child: const Text('Dry-run'),
               ),
               const SizedBox(width: PlinkSpacing.s2),
@@ -1571,13 +2007,14 @@ class _PendingEntryTile extends StatelessWidget {
                     ? null
                     : () => _confirmAndApply(
                           context,
-                          title: 'Apply for ${entry.target}?',
-                          count: entry.choices
-                              .where((c) => c.selected.canApply)
-                              .length,
+                          controller: controller,
+                          title: 'Toepassen voor ${entry.target}?',
+                          scope: controller.applyScope(<PendingAccountEntry>[
+                            entry,
+                          ]),
                           apply: () => controller.applyEntry(entry),
                         ),
-                child: const Text('Apply'),
+                child: const Text('Toepassen'),
               ),
             ],
           ),
@@ -1644,12 +2081,20 @@ class _ChoiceControl extends StatelessWidget {
               ),
             ),
           ),
+        // What the picked resolution will actually write. Collapsing two
+        // actions into one choice (#244) must not cost the operator the diff
+        // they used to read off the second row — a class create names the class,
+        // its description and its Smartschool parent, and that is exactly what
+        // decides whether the create or the opt-out is right.
+        const SizedBox(height: PlinkSpacing.s2),
+        _OptionDetail(option: choice.selected),
       ],
     );
   }
 }
 
-/// The per-field diff (or a lifecycle note) for a single, non-choice option.
+/// The per-field diff (or a lifecycle note) for a single option — the one that
+/// stands alone, or the one selected inside a [_ChoiceControl].
 class _OptionDetail extends StatelessWidget {
   const _OptionDetail({required this.option});
 
