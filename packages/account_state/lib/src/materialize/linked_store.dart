@@ -1,16 +1,19 @@
 import 'package:account_core/account_core.dart' as core;
 
+import 'linked_state_materializer.dart';
 import 'materialized_state.dart';
 
 /// The persistence seam for the materialized reconcile view (#115, keystone of
 /// #112).
 ///
-/// The write path (sync / check-for-drift only) replaces the derived per-account
-/// docs and rollups and bumps the generation; the read path (every passive
-/// session) reads the rollups and lazily loads one classroom's accounts, with
-/// **no connector pull and no `link()`**. Operator [AccountDecision]s live in
-/// their own documents so a re-sync never clobbers them — [writeMaterialized]
-/// only deletes the ones a merge dropped.
+/// The full write path (sync / check-for-drift only) replaces the derived
+/// per-account docs and rollups and bumps the generation; the narrow write path
+/// ([writeApplied], #254) patches just the documents one apply changed and moves
+/// the rollups above them by delta; the read path (every passive session) reads
+/// the rollups and lazily loads one classroom's accounts, with **no connector
+/// pull and no `link()`**. Operator [AccountDecision]s live in their own
+/// documents so a re-sync never clobbers them — [writeMaterialized] only deletes
+/// the ones a merge dropped.
 ///
 /// Kept an interface with an in-memory [InMemoryLinkedStore] fake and the
 /// Cosmos-backed `CosmosLinkedStore` production implementation, mirroring the
@@ -104,6 +107,115 @@ abstract interface class LinkedStore {
   /// Releases the lease if it is [owner]'s. A no-op when someone else already
   /// holds it (a taken-over lease must not be released out from under them).
   Future<void> releaseLease({required String owner});
+
+  /// Writes back the **narrow slice** of the materialized view one real apply
+  /// changed (#254): the touched per-account / per-group documents, the rollup
+  /// nodes above them, and a bumped generation.
+  ///
+  /// The counterpart of [writeMaterialized], and deliberately nothing like it.
+  /// A sync recomputes and republishes the whole ~9.6k-document view under the
+  /// coarse sync lease; an apply writes one row (or a classroom's worth) and
+  /// runs unleased and concurrently with every other operator's apply. Doing
+  /// that through [writeMaterialized] was not affordable, which is exactly why
+  /// #236 kept its correction local and left the shared view stale for everyone
+  /// else — this is the seam that closes it.
+  ///
+  /// Three rules make it safe to run without the lease:
+  ///
+  /// 1. **It stands down for a sync.** When another operator holds a live
+  ///    sync/drift lease as of [at], nothing is written and the holder comes
+  ///    back in [AppliedWrite.deferredTo]. That pass is rewriting the whole view
+  ///    from a *fresher* link than this session's, so letting a narrow patch
+  ///    land on top of it — or worse, bump the generation past it — would be
+  ///    precisely the "a local correction outranks the shared view" this issue
+  ///    must not create. The applied writes are real regardless; the shared
+  ///    counts simply catch up when that sync finishes.
+  /// 2. **The rollups move by delta, never by replacement.** What each touched
+  ///    document contributed *in the store* is subtracted and what it
+  ///    contributes now is added ([rollupChangesFor]), so two operators clearing
+  ///    different work in the same class compose instead of overwriting each
+  ///    other's counts.
+  /// 3. **Every document write is conditioned on the version it replaces**, so
+  ///    the delta and the document it was computed from cannot come apart under
+  ///    a concurrent writer: a losing write re-reads and recomputes.
+  ///
+  /// What it does **not** attempt is a merge of two operators' candidate lists
+  /// for the *same* account: the last writer's document wins there, and the next
+  /// full sync — which recomputes everything from scratch — is what heals it.
+  ///
+  /// Returns the generation it wrote so the caller can adopt it (a session that
+  /// wrote the view is current, not ahead of it) and name it in a
+  /// [ChangeSignal.viewChanged]; an empty patch writes nothing and bumps
+  /// nothing.
+  Future<AppliedWrite> writeApplied(
+    AppliedPatch patch, {
+    required String appliedBy,
+    required DateTime at,
+  });
+}
+
+/// The slice of the materialized view one **real apply** changed (#254) — the
+/// input to [LinkedStore.writeApplied].
+///
+/// Built by the reconcile controller from the targets its pass resolved: for
+/// each one, the freshly re-derived document, or its id in the `removed…` lists
+/// when the refreshed link no longer has a document for it at all (a student
+/// whose last account was just deleted, a class group that is gone).
+class AppliedPatch {
+  const AppliedPatch({
+    this.accounts = const [],
+    this.groups = const [],
+    this.removedAccountIds = const [],
+    this.removedGroupIds = const [],
+  });
+
+  /// Freshly derived documents for the accounts/staff the pass wrote to.
+  final List<MaterializedAccount> accounts;
+
+  /// Freshly derived documents for the class groups the pass wrote to (#119).
+  final List<MaterializedGroup> groups;
+
+  /// Ids the pass wrote to whose account document the refreshed link no longer
+  /// produces — the stored document must go with them.
+  final List<String> removedAccountIds;
+
+  /// The same for class-group documents.
+  final List<String> removedGroupIds;
+
+  /// True when the patch names no document at all, so there is nothing to write
+  /// and no reason to bump the generation.
+  bool get isEmpty =>
+      accounts.isEmpty &&
+      groups.isEmpty &&
+      removedAccountIds.isEmpty &&
+      removedGroupIds.isEmpty;
+
+  bool get isNotEmpty => !isEmpty;
+}
+
+/// What one [LinkedStore.writeApplied] did (#254).
+class AppliedWrite {
+  const AppliedWrite._(this.generation, this.deferredTo);
+
+  /// The patch landed and the shared view is now at [generation].
+  const AppliedWrite.written(int generation) : this._(generation, null);
+
+  /// Nothing was written because [lease]'s holder is mid sync/drift — they are
+  /// republishing the whole view from a fresher link, so a narrow patch must not
+  /// land on top of it.
+  const AppliedWrite.deferred(SyncLease lease) : this._(null, lease);
+
+  /// Nothing was written because the patch named no document.
+  const AppliedWrite.unchanged() : this._(null, null);
+
+  /// The generation the patch wrote, or `null` when nothing was written.
+  final int? generation;
+
+  /// The sync lease this write stood down for, when it did.
+  final SyncLease? deferredTo;
+
+  /// Whether the shared view actually moved.
+  bool get written => generation != null;
 }
 
 /// The stable document id for a decision: one per account + kind + situation.
@@ -113,9 +225,16 @@ String decisionDocId(AccountDecision d) =>
 /// An in-memory [LinkedStore] for tests and headless runs.
 ///
 /// Models the store's contract with no infra: a global replace on
-/// [writeMaterialized] (a sync recomputes the whole view), point reads for the
-/// rollups/classrooms, and a decision map keyed by [decisionDocId]. The Cosmos
-/// wire behaviour is covered separately by `CosmosLinkedStore`'s unit tests.
+/// [writeMaterialized] (a sync recomputes the whole view), a per-document patch
+/// with delta'd rollups on [writeApplied] (an apply corrects what it wrote),
+/// point reads for the rollups/classrooms, and a decision map keyed by
+/// [decisionDocId]. The Cosmos wire behaviour is covered separately by
+/// `CosmosLinkedStore`'s unit tests.
+///
+/// Each method runs to completion with no `await` between its reads and its
+/// writes, so — exactly as on the event loop the real sessions share — two
+/// "operators" driving one instance interleave only between calls, never inside
+/// one.
 class InMemoryLinkedStore implements LinkedStore {
   final Map<String, MaterializedAccount> _accounts = {};
   final Map<String, MaterializedGroup> _groups = {};
@@ -179,6 +298,70 @@ class InMemoryLinkedStore implements LinkedStore {
       // Merge: a system not pulled this pass keeps its earlier stamp.
       systems: {..._syncState.systems, ...systemSyncs},
     );
+  }
+
+  @override
+  Future<AppliedWrite> writeApplied(
+    AppliedPatch patch, {
+    required String appliedBy,
+    required DateTime at,
+  }) async {
+    final lease = _lease;
+    if (lease != null && lease.isLiveAt(at) && lease.owner != appliedBy) {
+      return AppliedWrite.deferred(lease);
+    }
+    if (patch.isEmpty) return const AppliedWrite.unchanged();
+
+    // What the store holds for the touched ids *right now* — the only honest
+    // basis for the delta, because it already includes whatever another operator
+    // applied and wrote since this session linked.
+    final storedAccounts = <MaterializedAccount>[
+      for (final id in <String>[
+        for (final a in patch.accounts) a.id.value,
+        ...patch.removedAccountIds,
+      ])
+        if (_accounts[id] case final stored?) stored,
+    ];
+    final storedGroups = <MaterializedGroup>[
+      for (final id in <String>[
+        for (final g in patch.groups) g.id.value,
+        ...patch.removedGroupIds,
+      ])
+        if (_groups[id] case final stored?) stored,
+    ];
+    final changes = rollupChangesFor(
+      storedAccounts: storedAccounts,
+      freshAccounts: patch.accounts,
+      storedGroups: storedGroups,
+      freshGroups: patch.groups,
+    );
+
+    for (final a in patch.accounts) {
+      _accounts[a.id.value] = a;
+    }
+    for (final id in patch.removedAccountIds) {
+      _accounts.remove(id);
+    }
+    for (final g in patch.groups) {
+      _groups[g.id.value] = g;
+    }
+    for (final id in patch.removedGroupIds) {
+      _groups.remove(id);
+    }
+
+    final byKey = <String, Rollup>{for (final r in _rollups) r.key: r};
+    for (final change in changes) {
+      final next = change.applyTo(byKey[change.key]);
+      if (next == null) {
+        byKey.remove(change.key);
+      } else {
+        byKey[change.key] = next;
+      }
+    }
+    _rollups = List.of(byKey.values);
+
+    _syncState = _syncState.bumped(at: at, by: appliedBy);
+    return AppliedWrite.written(_syncState.generation);
   }
 
   @override

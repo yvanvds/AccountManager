@@ -2554,6 +2554,106 @@ void main() {
   });
 
   testWidgets(
+      "another operator's apply reaches a running session live, with no "
+      're-sync end-to-end (#254)', (WidgetTester tester) async {
+    // The shared half of #236, at the layer it is actually felt. #236 fixed the
+    // badges of the session that ran the apply and deliberately wrote nothing
+    // back, so every *other* operator's Acties panel kept offering work that had
+    // already been applied until somebody ran a full Synchroniseer.
+    //
+    // Only a two-session run can see that: one session applies, and the bug is
+    // what the *other* one is still showing. So operator A is an offline
+    // session over the shared stores, and operator B is the real app — real
+    // fonts, real navigation, real rollup tree — reading the same shared view
+    // over the same realtime fan-out, and never syncing or linking at all.
+    useTallWindow(tester);
+    final hub = InMemorySignalHub();
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+
+    // Operator A materializes the shared view: Sam's stale Office 365 name is
+    // the one piece of student work anywhere, and it sits in 3C.
+    final operatorA = appliedClassWorkHarness(
+      store: snapshots,
+      linkedStore: linkedStore,
+      hub: hub,
+      syncedBy: 'jan@school.example',
+    );
+    await operatorA.controller.sync();
+
+    final operatorB = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+      hub: hub,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: operatorB.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
+    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
+
+    // B is offered the work, badged 1 — read from the shared documents, with no
+    // pull and no link() of its own.
+    await tester.ensureVisible(jaar3);
+    await tester.tap(jaar3);
+    await tester.pumpAndSettle();
+    expect(
+        find.descendant(of: klas3C, matching: find.text('1')), findsOneWidget);
+
+    // A applies it. B is nudged over the realtime fan-out and refetches the one
+    // shard that moved.
+    await operatorA.controller.applyEntry(
+      operatorA.controller.pendingEntries
+          .singleWhere((e) => e.family == 'student'),
+    );
+    await tester.pumpAndSettle();
+
+    // Under the work-list filter the finished class is gone, and with 3D already
+    // clean the whole year goes with it — the panel has stopped offering work
+    // that is already done.
+    expect(klas3C, findsNothing,
+        reason: 'B used to keep advertising it until someone re-synced');
+    expect(jaar3, findsNothing);
+    expect(operatorB.wisaSyncs, 0, reason: 'the nudge never triggers a pull');
+    expect(operatorB.controller.linked, isNull,
+        reason: 'link() is never called in a passive session');
+
+    // Off the filter the class is back on the inventory, ticked off rather than
+    // badged — B's drill-down agrees with the store it just re-read.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(jaar3);
+    if (klas3C.evaluate().isEmpty) {
+      await tester.tap(jaar3);
+      await tester.pumpAndSettle();
+    }
+    expect(find.descendant(of: klas3C, matching: find.text('1')), findsNothing);
+    expect(find.descendant(of: klas3C, matching: find.byIcon(Icons.check)),
+        findsOneWidget);
+
+    // …and drilling in shows the card with nothing left to do on it.
+    await tester.ensureVisible(klas3C);
+    await tester.tap(klas3C);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('actions-read-only')), findsOneWidget);
+    expect(find.text('Sam Sels'), findsOneWidget);
+    expect(
+      operatorB.controller.classroomAccounts!.expand((a) => a.candidates),
+      isEmpty,
+      reason: 'the stored document itself dropped the applied candidate',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a classroom\'s bulk "Alles toepassen" writes only that classroom, '
       'leaving the identical situation in another class pending (#252)',
       (WidgetTester tester) async {

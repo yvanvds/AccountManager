@@ -983,6 +983,199 @@ void main() {
     });
   });
 
+  group('rollupChangesFor — the post-apply deltas (#254)', () {
+    MaterializedGroup mGroup(
+      String name, {
+      List<CandidateAction> candidates = const [],
+    }) =>
+        MaterializedGroup(
+          id: core.LinkedAccountId(materializedGroupId(name)),
+          label: name,
+          confidence: core.LinkConfidence.high,
+          inWisa: true,
+          inSmartschool: true,
+          inAzure: true,
+          candidates: candidates,
+        );
+
+    RollupChange changeAt(List<RollupChange> changes, String key) =>
+        changes.singleWhere((c) => c.key == key);
+
+    test('a cleared candidate subtracts one from the class, grade and school',
+        () {
+      // The whole point of a delta: it says "one fewer pending here", not "here
+      // is my session's picture of this class".
+      final changes = rollupChangesFor(
+        storedAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+        freshAccounts: [_account()],
+      );
+
+      expect(changes.map((c) => c.key), <String>{
+        'school|1',
+        'grade|1|3',
+        'class|1|3|3C',
+      });
+      for (final change in changes) {
+        expect(change.pendingDelta, -1);
+        expect(change.accountDelta, 0,
+            reason: 'the account is still there — only its work is gone');
+      }
+    });
+
+    test('an account that stayed exactly as it was moves nothing', () {
+      // A refused write leaves the document identical, and a node nothing
+      // changed at must not be written at all.
+      final changes = rollupChangesFor(
+        storedAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+        freshAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+      );
+      expect(changes, isEmpty);
+    });
+
+    test('a document that vanished takes its account count with it', () {
+      final changes = rollupChangesFor(
+        storedAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+      );
+
+      final klas = changeAt(changes, 'class|1|3|3C');
+      expect(klas.accountDelta, -1);
+      expect(klas.pendingDelta, -1);
+    });
+
+    test('applyTo folds the delta into whatever the store currently holds', () {
+      // Two operators clearing different work in the same class: each subtracts
+      // only its own, and the second folds onto the first's result rather than
+      // replacing it.
+      final change = changeAt(
+        rollupChangesFor(
+          storedAccounts: [
+            _account(candidates: const [_moveCandidate])
+          ],
+          freshAccounts: [_account()],
+        ),
+        'class|1|3|3C',
+      );
+      const stored = Rollup(
+        level: RollupLevel.classroom,
+        key: 'class|1|3|3C',
+        parentKey: 'grade|1|3',
+        school: '1',
+        label: '3C',
+        gradeYear: '3',
+        classroom: '3C',
+        accountCount: 20,
+        pendingCount: 5,
+      );
+
+      final next = change.applyTo(stored)!;
+      expect(next.pendingCount, 4);
+      expect(next.accountCount, 20);
+      expect(next.label, '3C');
+    });
+
+    test('applyTo deletes a node its last document just left', () {
+      final change = changeAt(
+        rollupChangesFor(storedAccounts: [_account()]),
+        'class|1|3|3C',
+      );
+      const stored = Rollup(
+        level: RollupLevel.classroom,
+        key: 'class|1|3|3C',
+        parentKey: 'grade|1|3',
+        school: '1',
+        label: '3C',
+        gradeYear: '3',
+        classroom: '3C',
+        accountCount: 1,
+        pendingCount: 0,
+      );
+
+      expect(change.applyTo(stored), isNull,
+          reason: 'an empty node is one the sync path would not emit either');
+    });
+
+    test('applyTo never advertises a negative badge', () {
+      // The one way the arithmetic can drift: another operator already cleared
+      // this work and wrote it, so our subtraction lands on a count that no
+      // longer carries it. Under-counting is survivable; a negative badge is not.
+      final change = changeAt(
+        rollupChangesFor(
+          storedAccounts: [
+            _account(candidates: const [_moveCandidate])
+          ],
+          freshAccounts: [_account()],
+        ),
+        'class|1|3|3C',
+      );
+      const alreadyCleared = Rollup(
+        level: RollupLevel.classroom,
+        key: 'class|1|3|3C',
+        parentKey: 'grade|1|3',
+        school: '1',
+        label: '3C',
+        gradeYear: '3',
+        classroom: '3C',
+        accountCount: 3,
+        pendingCount: 0,
+      );
+
+      expect(change.applyTo(alreadyCleared)!.pendingCount, 0);
+    });
+
+    test('a node the store has never seen is created from the fresh document',
+        () {
+      final change = changeAt(
+        rollupChangesFor(
+          freshAccounts: [
+            _account(candidates: const [_moveCandidate])
+          ],
+        ),
+        'class|1|3|3C',
+      );
+
+      final created = change.applyTo(null)!;
+      expect(created.level, RollupLevel.classroom);
+      expect(created.parentKey, 'grade|1|3');
+      expect(created.school, '1');
+      expect(created.label, '3C');
+      expect(created.accountCount, 1);
+      expect(created.pendingCount, 1);
+    });
+
+    test("a class group's cleared work moves only the Klasgroepen node", () {
+      // Since #227 the group half of the view is one document per *class*, not
+      // per class with work — so applying a class's work leaves the inventory
+      // size alone and only the pending total moves.
+      const modify = CandidateAction(
+        family: 'group',
+        kind: 'ModifySmartschoolData',
+        system: core.Origin.smartschool,
+        summary: 'Fix the class data',
+      );
+      final changes = rollupChangesFor(
+        storedGroups: [
+          mGroup('3C', candidates: const [modify])
+        ],
+        freshGroups: [mGroup('3C')],
+      );
+
+      final node = changes.single;
+      expect(node.key, groupsPartition);
+      expect(node.level, RollupLevel.groups);
+      expect(node.pendingDelta, -1);
+      expect(node.accountDelta, 0,
+          reason: 'the class is still on the inventory (#227)');
+    });
+  });
+
   group('InMemoryLinkedStore', () {
     test('write then read: sync state, rollups, and a classroom drill-down',
         () async {

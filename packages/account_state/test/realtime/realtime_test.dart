@@ -73,6 +73,32 @@ void main() {
       expect(const ShardRef(school: 'GBS').isWholeView, isFalse);
       expect(const ShardRef(accountId: 'p1').isWholeView, isFalse);
     });
+
+    test('a shard only excludes what it positively names elsewhere (#254)', () {
+      // The receiver uses these to *skip* re-reads, so the safe answer to
+      // "might this have changed?" is always yes unless the shard says
+      // otherwise. A whole-view change says nothing, so it touches everything.
+      const whole = ShardRef();
+      expect(whole.touchesPartition('1'), isTrue);
+      expect(whole.touchesClassroom(school: '1', classroom: '3C'), isTrue);
+
+      const oneClass = ShardRef(school: '1', classroom: '3C');
+      expect(oneClass.touchesClassroom(school: '1', classroom: '3C'), isTrue);
+      expect(oneClass.touchesClassroom(school: '1', classroom: '3D'), isFalse);
+      expect(oneClass.touchesClassroom(school: '2', classroom: '3C'), isFalse);
+      expect(oneClass.touchesPartition('1'), isTrue);
+      expect(oneClass.touchesPartition(groupsPartition), isFalse,
+          reason: 'a student apply says nothing about the class inventory');
+
+      // A school-wide shard cannot rule any of its classrooms out.
+      const oneSchool = ShardRef(school: '1');
+      expect(oneSchool.touchesClassroom(school: '1', classroom: '3D'), isTrue);
+      expect(oneSchool.touchesClassroom(school: '2', classroom: '3D'), isFalse);
+
+      // …and one that names only an account narrows nothing by partition.
+      const oneAccount = ShardRef(accountId: 'p1');
+      expect(oneAccount.touchesPartition('anything'), isTrue);
+    });
   });
 
   group('InMemorySignalHub', () {

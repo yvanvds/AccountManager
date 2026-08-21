@@ -35,12 +35,15 @@ enum ChangeSignalKind {
 /// so a receiver can refetch only that shard rather than the whole view.
 ///
 /// A **null** shard on a `viewChanged` signal means the entire materialized view
-/// was rewritten — which is what the current sync/materialize path does (it
-/// replaces every per-account doc and rollup in one pass), so its signal names
-/// no narrower shard. A **named** shard (a school, a classroom, or a single
-/// account) is the forward-compatible hook the apply-level per-record signals
-/// (#109 / #110) will use to wake only one document; those are independent of the
-/// sync lease and land with the write UIs.
+/// was rewritten — which is what the sync/materialize path does (it replaces
+/// every per-account doc and rollup in one pass), so its signal names no
+/// narrower shard. A **named** shard (a school, a classroom, or a single
+/// account) is what a real apply broadcasts since #254: its write-back touches
+/// only the documents it changed, so a receiver can skip re-reading a
+/// drill-down the shard proves it cannot have moved. An apply that spans several
+/// classrooms, or that removed a document (whose partition the writer no longer
+/// knows), widens back to the whole view rather than naming a shard it cannot
+/// vouch for.
 class ShardRef {
   const ShardRef({this.school, this.classroom, this.accountId});
 
@@ -57,6 +60,22 @@ class ShardRef {
   /// True when this ref names nothing — a whole-view change (the sync path).
   bool get isWholeView =>
       school == null && classroom == null && accountId == null;
+
+  /// Whether a change in this shard **could** have touched the [school]
+  /// partition. True for a whole-view change and for any shard that names no
+  /// school; false only when this shard positively names a different one.
+  ///
+  /// Deliberately permissive: a receiver uses it to *skip* re-reads it can prove
+  /// pointless, so an unknown shard must always read as "might have".
+  bool touchesPartition(String school) =>
+      this.school == null || this.school == school;
+
+  /// Whether a change in this shard could have touched [classroom] of [school] —
+  /// the test a session with a classroom open uses to decide whether the drilled
+  /// -in list has to be re-read at all (#254).
+  bool touchesClassroom({required String school, required String classroom}) =>
+      touchesPartition(school) &&
+      (this.classroom == null || this.classroom == classroom);
 
   Map<String, dynamic> toJson() => {
         if (school != null) 'school': school,

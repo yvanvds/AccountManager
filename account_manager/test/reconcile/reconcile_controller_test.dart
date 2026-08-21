@@ -584,31 +584,192 @@ void main() {
           reason: 'the classes themselves did not disappear with their work');
     });
 
-    test(
-        'the refreshed counts are local — the shared store keeps its generation '
-        '(#236, shared half in #254)', () async {
-      // A deliberate choice, not an oversight: rewriting ~9.6k documents per
-      // apply is not affordable, and bumping this session's generation would
-      // gate out the very `onStoreChanged` that should overrule this
-      // correction. Other operators catch up on the next sync.
-      final h = appliedClassWorkHarness();
-      Future<Rollup> stored3C() async => (await h.linkedStore.readRollups())
-          .singleWhere((r) => r.classroom == '3C' && r.school == '1');
+    /// The stored counterpart of [klas3C]: 3C's node as the *shared* view holds
+    /// it, which is what every other operator reads.
+    Future<Rollup?> stored3C(ReconcileHarness h) async {
+      for (final r in await h.linkedStore.readRollups()) {
+        if (r.classroom == '3C' && r.school == '1') return r;
+      }
+      return null;
+    }
 
+    test(
+        'the applied work leaves the shared store too, not just this session '
+        '(#254)', () async {
+      // #236 fixed the local half and deliberately stopped there: rewriting
+      // ~9.6k documents per apply was not affordable and there was no narrower
+      // seam. `writeApplied` is that seam, so the stored counts now move with
+      // the session's — and every other operator stops being offered work that
+      // has already been applied.
+      final h = appliedClassWorkHarness();
       await h.controller.sync();
+      expect((await stored3C(h))!.pendingCount, 1);
       final before = await h.linkedStore.readSyncState();
 
       await h.controller.applyEntry(samEntry(h.controller));
 
+      expect(h.controller.error, isNull);
+      expect((await stored3C(h))!.pendingCount, 0,
+          reason:
+              'the stored view used to stay pre-apply until someone synced');
+      expect((await h.linkedStore.readSyncState()).generation,
+          before.generation + 1);
+      expect(h.controller.syncState.generation, before.generation + 1,
+          reason: 'a session that wrote the view is current, not ahead of it');
+      expect(klas3C(h.controller).pendingCount, 0);
+    });
+
+    test('the stored account document drops the applied candidate (#254)',
+        () async {
+      // The badge is a sum over documents, so the document has to move with it —
+      // a passive session reads the per-account docs, not just the rollups.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final entry = samEntry(h.controller);
+      final before =
+          await h.linkedStore.readClassroom(school: '1', classroom: '3C');
       expect(
-          (await h.linkedStore.readSyncState()).generation, before.generation,
-          reason: 'no write, so no new generation');
+        before.singleWhere((a) => a.id.value == entry.targetId).candidates,
+        isNotEmpty,
+      );
+
+      await h.controller.applyEntry(entry);
+
+      final after =
+          await h.linkedStore.readClassroom(school: '1', classroom: '3C');
+      expect(
+        after.singleWhere((a) => a.id.value == entry.targetId).candidates,
+        isEmpty,
+      );
+      expect(after, hasLength(before.length),
+          reason: 'the class still holds everyone it held');
+    });
+
+    test('the write-back is scoped to what the pass touched (#254)', () async {
+      // A one-row apply must not republish this session's whole picture of the
+      // view: everything it did not write to is left exactly as the last sync
+      // put it — including the class-group half, which since #227 is a document
+      // per class rather than per class with work.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final groupsBefore = await h.linkedStore.readGroups();
+
+      await h.controller.applyEntry(samEntry(h.controller));
+
+      final klasgroepen = (await h.linkedStore.readRollups())
+          .singleWhere((r) => r.level == RollupLevel.groups);
+      expect(klasgroepen.pendingCount, 4,
+          reason: 'a re-derivation of what changed, not a blanket reset');
+      expect(await h.linkedStore.readGroups(), hasLength(groupsBefore.length));
+      final threeD =
+          await h.linkedStore.readClassroom(school: '1', classroom: '3D');
+      expect(threeD, hasLength(1), reason: 'the untouched class is intact');
+    });
+
+    test('a dry-run writes nothing to the shared store either (#254)',
+        () async {
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final before = await h.linkedStore.readSyncState();
+
+      await h.controller.dryRun();
+
+      expect(
+          (await h.linkedStore.readSyncState()).generation, before.generation);
+      expect((await stored3C(h))!.pendingCount, 1);
+    });
+
+    test('an apply stands down while another operator is syncing (#254)',
+        () async {
+      // The apply path does not take the sync lease — it is frequent and
+      // concurrent by design (#108/#121). So the write-back has to notice one:
+      // that pass is republishing the whole view from a fresher link, and a
+      // narrow patch bumping the generation past it would be exactly the local
+      // correction outranking the shared view this must not create.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final before = await h.linkedStore.readSyncState();
+      await h.linkedStore
+          .acquireLease(owner: 'mieke@school', now: kFixtureDate);
+
+      await h.controller.applyEntry(samEntry(h.controller));
+
+      expect(h.controller.error, isNull,
+          reason: 'the writes to Smartschool and Office 365 really happened');
+      expect(
+          (await h.linkedStore.readSyncState()).generation, before.generation);
       expect(h.controller.syncState.generation, before.generation,
-          reason: 'the session must stay behind the store, never ahead of it');
-      expect((await stored3C()).pendingCount, 1,
-          reason: 'the stored view stays pre-apply until someone syncs (#254)');
+          reason: 'never ahead of the store');
+      expect((await stored3C(h))!.pendingCount, 1);
       expect(klas3C(h.controller).pendingCount, 0,
-          reason: '…while this session already reads the corrected count');
+          reason: "#236's local correction still stands for this session");
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(contains('mieke@school')),
+      );
+    });
+
+    test('a failing write-back is logged and never fails the pass (#254)',
+        () async {
+      final failing = StallingLinkedStore(failWith: StateError('cosmos down'));
+      final h = ReconcileHarness(controllerStore: failing);
+      await h.controller.sync();
+
+      await h.controller.applyAll();
+
+      expect(failing.appliedWriteAttempted, isTrue);
+      expect(h.controller.phase, ReconcilePhase.ready);
+      expect(h.controller.error, isNull,
+          reason: 'the connector writes succeeded; only the share failed');
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(contains('gedeelde overzicht')),
+      );
+    });
+
+    test(
+        'a stalled write-back times out and the pass still reaches ready '
+        '(#254)', () async {
+      final stalling = StallingLinkedStore();
+      final h = ReconcileHarness(
+        controllerStore: stalling,
+        persistTimeout: const Duration(milliseconds: 50),
+      );
+      await h.controller.sync();
+
+      await h.controller.applyAll();
+
+      expect(stalling.appliedWriteAttempted, isTrue);
+      expect(h.controller.phase, ReconcilePhase.ready);
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(contains('gedeelde overzicht')),
+      );
+    });
+
+    test(
+        'an operator decision on a touched account survives the write-back '
+        '(#254)', () async {
+      // The derived documents are replaced wholesale, so a decision the store
+      // holds for exactly the account a pass touched would be silently stripped
+      // if the patch did not re-attach it — the very clobber decisions live in
+      // their own documents to avoid.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final entry = samEntry(h.controller);
+      final decision = AccountDecision(
+        accountId: core.LinkedAccountId(entry.targetId),
+        kind: DecisionKind.acceptedDuplicate,
+        targetKind: 'duplicate-mail',
+        decidedBy: 'mieke@school',
+        decidedAt: kFixtureDate,
+      );
+      await h.linkedStore.putDecision(decision);
+
+      await h.controller.applyEntry(entry);
+
+      expect(await h.linkedStore.readDecisions(), hasLength(1),
+          reason: 'the decision document itself is never touched here');
     });
 
     test('informational group actions are listed but never applied', () async {
@@ -1723,6 +1884,188 @@ void main() {
         h.log.entries.map((e) => e.message),
         contains(contains('Could not publish a change signal')),
       );
+    });
+  });
+
+  group('an apply reaches the other operators (#254)', () {
+    /// 3C's node as [c] currently renders it, or null when the tree no longer
+    /// carries the class at all.
+    Rollup? klas3C(ReconcileController c) {
+      for (final school in c.studentRollups) {
+        for (final klas in c.studentChildrenOf(school)) {
+          if (klas.classroom == '3C') return klas;
+        }
+      }
+      return null;
+    }
+
+    test(
+        'a passive session catches up from the signal alone — no sync, no pull',
+        () async {
+      // The bug, at the level it is actually felt: operator B keeps being
+      // offered work operator A already applied, until *somebody* runs a full
+      // Synchroniseer. Two sessions, one shared store, one realtime hub.
+      final hub = InMemorySignalHub();
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final a = appliedClassWorkHarness(
+        store: snapshots,
+        linkedStore: linkedStore,
+        hub: hub,
+      );
+      await a.controller.sync();
+
+      final b = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        hub: hub,
+      );
+      await b.controller.loadOverview();
+      expect(klas3C(b.controller)?.pendingCount, 1,
+          reason: "B is offered Sam's stale Office 365 name");
+
+      // A applies it. B is told, and refetches the changed shard.
+      final entry =
+          a.controller.pendingEntries.singleWhere((e) => e.family == 'student');
+      await a.controller.applyEntry(entry);
+      await pumpEventQueue();
+
+      expect(b.controller.syncState.generation, 2);
+      expect(klas3C(b.controller)?.pendingCount, 0,
+          reason: 'B used to keep offering it until someone re-synced');
+      expect(b.wisaSyncs, 0, reason: 'the nudge never triggers a pull');
+      expect(b.ssSyncs, 0);
+      expect(b.azSyncs, 0);
+    });
+
+    test("a passive session's open classroom drops the applied entry",
+        () async {
+      // The drill-down is read from the per-account documents, not the rollups,
+      // so the write-back has to move both or B opens 3C and still sees the
+      // work on the card.
+      final hub = InMemorySignalHub();
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final a = appliedClassWorkHarness(
+        store: snapshots,
+        linkedStore: linkedStore,
+        hub: hub,
+      );
+      await a.controller.sync();
+
+      final b = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        hub: hub,
+      );
+      await b.controller.loadOverview();
+      await b.controller.openClassroom(klas3C(b.controller)!);
+      expect(
+        b.controller.classroomAccounts!
+            .expand((acc) => acc.candidates)
+            .where((c) => c.canApply),
+        hasLength(1),
+      );
+
+      await a.controller.applyEntry(a.controller.pendingEntries
+          .singleWhere((e) => e.family == 'student'));
+      await pumpEventQueue();
+
+      expect(
+        b.controller.classroomAccounts!.expand((acc) => acc.candidates),
+        isEmpty,
+        reason: 'the open drill-down followed the shard it was told about',
+      );
+    });
+
+    test('the apply broadcasts the classroom it changed, not the whole view',
+        () async {
+      final hub = InMemorySignalHub();
+      final h = appliedClassWorkHarness(hub: hub);
+      await h.controller.sync();
+      final before = hub.published.length;
+
+      await h.controller.applyEntry(
+        h.controller.pendingEntries.singleWhere((e) => e.family == 'student'),
+      );
+
+      final published = hub.published.sublist(before);
+      expect(published.map((s) => s.kind), [ChangeSignalKind.viewChanged],
+          reason: 'an apply takes no lease, so it opens and closes nothing');
+      final signal = published.single;
+      expect(signal.generation, 2);
+      expect(signal.shard?.school, '1');
+      expect(signal.shard?.classroom, '3C');
+      expect(signal.shard?.accountId, isNotNull,
+          reason: 'a one-row apply can name the very account it wrote');
+    });
+
+    test('a shard rules an unrelated open classroom out of the refetch',
+        () async {
+      // What the shard is for: a session with 3D open is told about a change in
+      // 3C, and does not pay for a drill-down read it can prove is pointless.
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      await appliedClassWorkHarness(store: snapshots, linkedStore: linkedStore)
+          .controller
+          .sync();
+
+      final b = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await b.controller.loadOverview();
+      final threeD = b.controller.studentRollups
+          .expand(b.controller.studentChildrenOf)
+          .singleWhere((r) => r.classroom == '3D');
+      await b.controller.openClassroom(threeD);
+      final opened = b.controller.classroomAccounts;
+
+      await b.controller.onStoreChanged(
+        99,
+        shard: const ShardRef(school: '1', classroom: '3C'),
+      );
+
+      expect(b.controller.syncState.generation, 1,
+          reason: 'the overview itself is always re-read');
+      expect(identical(b.controller.classroomAccounts, opened), isTrue,
+          reason: '3D was never re-read — the shard ruled it out');
+
+      // …while a shard that cannot rule it out does re-read it.
+      await b.controller.onStoreChanged(
+        100,
+        shard: const ShardRef(school: '1'),
+      );
+      expect(identical(b.controller.classroomAccounts, opened), isFalse);
+    });
+
+    test('a class-group apply reaches the stored group document', () async {
+      // A group entry is keyed by the class's display name, the document by the
+      // materializer's namespaced `group|<name>`. Cross that wrong and the patch
+      // writes a document nothing reads.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+      final entry =
+          h.controller.pendingEntries.firstWhere((e) => e.family == 'group');
+      final id = materializedGroupId(entry.targetId);
+      expect(
+        (await h.linkedStore.readGroups())
+            .singleWhere((g) => g.id.value == id)
+            .candidates,
+        isNotEmpty,
+      );
+
+      await h.controller.applyEntry(entry);
+
+      final stored = (await h.linkedStore.readGroups())
+          .singleWhere((g) => g.id.value == id);
+      expect(stored.hasPending, isFalse,
+          reason: 'the very document the Klasgroepen tab reads has moved');
+      expect(
+          (await h.linkedStore.readRollups())
+              .singleWhere((r) => r.level == RollupLevel.groups)
+              .pendingCount,
+          lessThan(4));
     });
   });
 

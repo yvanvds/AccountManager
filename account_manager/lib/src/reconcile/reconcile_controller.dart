@@ -1554,9 +1554,13 @@ class ReconcileController extends ChangeNotifier {
   /// realtime transport (#116) drives this from a SignalR change notification;
   /// until then it is exercised directly. A stale-or-equal [generation] is a
   /// no-op, so a duplicate notification does no work.
-  Future<void> onStoreChanged(int generation) async {
+  ///
+  /// [shard], when the signal named one (#254), says which part of the view
+  /// moved, so a drill-down the change provably cannot have touched is left
+  /// alone instead of re-read. A missing shard means "assume the whole view".
+  Future<void> onStoreChanged(int generation, {ShardRef? shard}) async {
     if (busy || generation <= _syncState.generation) return;
-    await _refetchFromStore();
+    await _refetchFromStore(shard: shard);
   }
 
   /// Catches this session up from the shared store after the realtime client
@@ -1580,13 +1584,26 @@ class ReconcileController extends ChangeNotifier {
   /// Re-reads the shared overview (sync state, rollups, lease) and any open
   /// drill-down from the store — the refetch [onStoreChanged] and
   /// [resyncFromStore] share (no pull, no `link()`).
-  Future<void> _refetchFromStore() async {
+  ///
+  /// The overview itself is always re-read: the rollups are the counts the nudge
+  /// was about, and they are small. The *drill-downs* are what [shard] narrows
+  /// (#254) — a one-classroom apply elsewhere in the school has nothing to say
+  /// about the class this session has open, or about the Klasgroepen inventory,
+  /// so those reads are skipped rather than paid for. A null shard (a sync's
+  /// whole-view rewrite, or a reconnect that cannot know what it missed) re-reads
+  /// everything, exactly as before.
+  Future<void> _refetchFromStore({ShardRef? shard}) async {
     _syncState = await store.readSyncState();
     _rollups = await store.readRollups();
     _decisions = await store.readDecisions();
     await _refreshLock();
     final open = _selectedClassroom;
-    if (open != null) {
+    if (open != null &&
+        (shard == null ||
+            shard.touchesClassroom(
+              school: open.school,
+              classroom: open.classroom,
+            ))) {
       try {
         _classroomAccounts = await store.readClassroom(
           school: open.school,
@@ -1596,7 +1613,8 @@ class ReconcileController extends ChangeNotifier {
         log.addError(core.Origin.all, 'Kon ${open.label} niet vernieuwen: $e');
       }
     }
-    if (_groupDocs != null) {
+    if (_groupDocs != null &&
+        (shard == null || shard.touchesPartition(groupsPartition))) {
       try {
         _groupDocs = await store.readGroups();
       } on Object catch (e) {
@@ -1661,14 +1679,14 @@ class ReconcileController extends ChangeNotifier {
 
   /// Dry-runs the chosen resolution of **every** pending entry (PAIN-3): the
   /// full apply path, zero writes. Results land in [dryRunResults].
-  Future<void> dryRun() => _run(_selectedActions(pendingEntries), dry: true);
+  Future<void> dryRun() => _run(pendingEntries, dry: true);
 
   /// Applies the chosen resolution of every pending entry for real, refreshing
   /// the linked view from the State layer's incremental patches as it goes.
   /// Only the **selected** alternative of each choice runs — a departed student
   /// is unregistered *or* deleted, never both (#110). Results land in
   /// [applyResults].
-  Future<void> applyAll() => _run(_selectedActions(pendingEntries), dry: false);
+  Future<void> applyAll() => _run(pendingEntries, dry: false);
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>
@@ -1695,22 +1713,33 @@ class ReconcileController extends ChangeNotifier {
   /// impossible: label, confirmation scope ([applyScope]) and write are one
   /// list.
   Future<void> applyEntries(Iterable<PendingAccountEntry> entries) =>
-      _run(_selectedActions(entries), dry: false);
+      _run(entries, dry: false);
 
   /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes.
   Future<void> dryRunEntries(Iterable<PendingAccountEntry> entries) =>
-      _run(_selectedActions(entries), dry: true);
+      _run(entries, dry: true);
 
-  /// Runs [selected] — the pre-resolved, applyable options — through the apply
-  /// path (dry or real). Shared by the global, per-entry, and per-situation
-  /// affordances so all three behave identically (#110). Each option is bound to
-  /// its own target; on a real write the applier patches the snapshot and
-  /// returns a fresh linked view we adopt as the pass proceeds.
+  /// Runs the selected, applyable option of every choice in [entries] through
+  /// the apply path (dry or real). Shared by the global, per-entry, and
+  /// per-situation affordances so all three behave identically (#110). Each
+  /// option is bound to its own target; on a real write the applier patches the
+  /// snapshot and returns a fresh linked view we adopt as the pass proceeds.
+  ///
+  /// It takes the *entries* rather than the resolved options because a real pass
+  /// owes the shared store a patch afterwards (#254), and the entries are what
+  /// name the targets it touched — an option carries only a display label.
   Future<void> _run(
-    List<PendingActionOption> selected, {
+    Iterable<PendingAccountEntry> entries, {
     required bool dry,
   }) async {
     if (busy || _linked == null) return;
+    final selected = _selectedActions(entries);
+    // The targets this pass writes to, captured before it starts: the entries
+    // are derived from the pre-apply linked view, which the pass replaces.
+    final touched = <PendingAccountEntry>[
+      for (final e in entries)
+        if (e.choices.any((c) => c.selected.canApply)) e,
+    ];
     _begin(ReconcilePhase.applying);
 
     final options =
@@ -1759,7 +1788,7 @@ class ReconcileController extends ChangeNotifier {
       } else {
         _applyResults = results;
         _dryRunResults = null;
-        _refreshRollups();
+        await _shareApplied(_refreshRollups(), touched);
       }
       _applyStep = null;
       _finish(ReconcilePhase.ready);
@@ -1771,8 +1800,9 @@ class ReconcileController extends ChangeNotifier {
       } else {
         _applyResults = results;
         // A pass that broke halfway still wrote whatever it got through, so the
-        // overview owes the operator those counts too (#236).
-        _refreshRollups();
+        // overview owes the operator those counts too (#236) — and so do the
+        // other operators (#254).
+        await _shareApplied(_refreshRollups(), touched);
       }
       // Nothing is in flight any more, however the pass ended (#243).
       _applyStep = null;
@@ -1904,27 +1934,30 @@ class ReconcileController extends ChangeNotifier {
   /// aggregates from a [LinkedState], so the correction is the same computation
   /// the sync path runs, minus the store write.
   ///
-  /// Deliberately **local-only**. Nothing is written back and the generation is
-  /// not bumped, for three reasons: the stored view is ~9.6k documents and
-  /// rewriting it per apply is not affordable ([LinkedStore.writeMaterialized]
-  /// is the sync path's tool, not an apply's); this session's generation must
-  /// stay behind the store's so a later [onStoreChanged] still wins over this
-  /// correction rather than being gated out as stale; and there is no narrow
-  /// per-account write seam to do it properly. So other operators keep the
-  /// pre-apply counts until someone syncs — the shared half of the bug, filed
-  /// separately (#254) because it needs that seam plus a [ChangeSignal] shard.
+  /// This is the **local** half. It writes nothing and does not bump the
+  /// generation: a session must never be ahead of the store on its own say-so,
+  /// or the [onStoreChanged] that should overrule it would be gated out as
+  /// stale. The shared half is [_shareApplied] (#254), which hands the same
+  /// derivation to [LinkedStore.writeApplied] and then adopts what the store
+  /// makes of it — so if the two ever disagree, the shared view wins.
+  ///
+  /// Returns the view it derived, so the shared half re-uses this one
+  /// computation rather than materializing the whole thing twice; `null` when
+  /// there is nothing to derive from or the derivation failed.
   ///
   /// Never called from the dry-run path: a projection writes nothing, so it must
   /// leave every count exactly as it found it.
-  void _refreshRollups() {
+  MaterializedView? _refreshRollups() {
     final linked = _linked;
-    if (linked == null) return;
+    if (linked == null) return null;
     try {
-      _rollups = materialize(
+      final view = materialize(
         linked,
         generation: _syncState.generation,
         schoolLabels: _schoolLabels(),
-      ).rollups;
+      );
+      _rollups = view.rollups;
+      return view;
     } on Object catch (e) {
       // A correction that fails must not turn a successful apply into a failed
       // pass; the counts then simply stay as stale as they were before.
@@ -1932,7 +1965,165 @@ class ReconcileController extends ChangeNotifier {
           core.Origin.all,
           'Kon de tellingen in het overzicht niet '
           'vernieuwen: $e');
+      return null;
     }
+  }
+
+  /// Writes the documents a **real** apply changed back to the shared store, so
+  /// every *other* operator stops being offered work this session already
+  /// applied (#254) — the half #236 deliberately left open.
+  ///
+  /// [view] is the refreshed derivation [_refreshRollups] just made; [touched]
+  /// the entries the pass actually wrote to. Together they give the patch its
+  /// exact scope: for each touched target, the document it has now — or its id
+  /// alone when the refreshed link no longer produces one (the account's last
+  /// system record was just deleted). Nothing else in the ~9.6k-document view is
+  /// read, written or even looked at.
+  ///
+  /// Three things follow the write, in this order and for a reason:
+  ///
+  /// - the session adopts the generation it just wrote, so it is *current*
+  ///   rather than ahead — a later sync bumps past it and [onStoreChanged] still
+  ///   fires;
+  /// - the rollups are re-read **from the store**, not kept from the local
+  ///   derivation, so another operator's concurrent correction outranks this
+  ///   session's picture of the same nodes rather than the other way round;
+  /// - a [ChangeSignal.viewChanged] naming the changed shard goes out, so
+  ///   passive sessions refetch that much and not the whole view.
+  ///
+  /// A write that is deferred (someone is mid-sync) or that fails leaves all
+  /// three undone: the local correction from #236 still stands for this session,
+  /// the shared view catches up on the next sync, and the operator is told which
+  /// it was. A failure here must never turn a successful apply into a failed
+  /// pass — the writes to Smartschool and Office 365 really happened.
+  Future<void> _shareApplied(
+    MaterializedView? view,
+    List<PendingAccountEntry> touched,
+  ) async {
+    if (view == null || touched.isEmpty) return;
+    final accounts = <String, MaterializedAccount>{
+      for (final a in view.accounts) a.id.value: a,
+    };
+    final groups = <String, MaterializedGroup>{
+      for (final g in view.groups) g.id.value: g,
+    };
+    final freshAccounts = <MaterializedAccount>[];
+    final freshGroups = <MaterializedGroup>[];
+    final removedAccountIds = <String>[];
+    final removedGroupIds = <String>[];
+    for (final entry in touched) {
+      if (entry.family == 'group') {
+        // A group entry is keyed by the display name the operator sees; the
+        // stored document is keyed by the materializer's namespaced form.
+        final id = materializedGroupId(entry.targetId);
+        final doc = groups[id];
+        if (doc == null) {
+          removedGroupIds.add(id);
+        } else {
+          freshGroups.add(doc);
+        }
+      } else {
+        final doc = accounts[entry.targetId];
+        if (doc == null) {
+          removedAccountIds.add(entry.targetId);
+        } else {
+          freshAccounts.add(doc);
+        }
+      }
+    }
+    // Re-attach the operator decisions the store holds for these targets, the
+    // way [_persist] does for the whole view: the derivation above carries none,
+    // and writing it raw would silently strip an accepted duplicate or a chosen
+    // alternative off exactly the documents this pass touched. Only the
+    // re-attachment is taken — `dropped` is meaningless over a subset, since
+    // every decision belonging to an untouched account would be in it.
+    final merged = mergeDecisions(
+      accounts: freshAccounts,
+      groups: freshGroups,
+      existing: _decisions,
+    );
+    final patch = AppliedPatch(
+      accounts: merged.accounts,
+      groups: merged.groups,
+      removedAccountIds: removedAccountIds,
+      removedGroupIds: removedGroupIds,
+    );
+    if (patch.isEmpty) return;
+
+    try {
+      final at = _now();
+      final written = await store
+          .writeApplied(patch, appliedBy: syncedBy, at: at)
+          .timeout(persistTimeout);
+      final generation = written.generation;
+      if (generation == null) {
+        final holder = written.deferredTo;
+        if (holder != null) {
+          log.addMessage(
+            core.Origin.all,
+            'Het gedeelde overzicht is niet bijgewerkt: ${holder.owner} '
+            'synchroniseert. De toegepaste wijzigingen komen erin zodra die '
+            'synchronisatie klaar is.',
+          );
+        }
+        return;
+      }
+      _syncState = SyncState(
+        generation: generation,
+        updatedAt: at,
+        updatedBy: syncedBy,
+        systems: _syncState.systems,
+      );
+      _rollups = await store.readRollups();
+      await _publish(ChangeSignal.viewChanged(
+        generation: generation,
+        shard: _appliedShard(patch),
+      ));
+    } on TimeoutException {
+      log.addError(
+        core.Origin.all,
+        'Het bijwerken van het gedeelde overzicht duurde langer dan '
+        '${persistTimeout.inSeconds}s — de wijzigingen zijn wel toegepast, maar '
+        'andere gebruikers zien ze pas na de volgende synchronisatie.',
+      );
+    } on Object catch (e) {
+      log.addError(
+        core.Origin.all,
+        'Kon het gedeelde overzicht niet bijwerken: $e',
+      );
+    }
+  }
+
+  /// The narrowest [ShardRef] that provably covers everything [patch] changed,
+  /// or `null` for "assume the whole view" (#254).
+  ///
+  /// Only ever narrows on what this session can vouch for, widening a level at a
+  /// time: one classroom, else one school, else the whole view. A removal's
+  /// document is gone, so where it sat is no longer knowable here, and a patch
+  /// touching accounts *and* class groups spans two partitions — in both the
+  /// honest answer is the whole view. A shard that under-claims would have
+  /// receivers skip a re-read they needed, which is far worse than one that
+  /// costs them a read they did not.
+  ShardRef? _appliedShard(AppliedPatch patch) {
+    if (patch.removedAccountIds.isNotEmpty ||
+        patch.removedGroupIds.isNotEmpty) {
+      return null;
+    }
+    final touchedGroups = patch.groups.isNotEmpty;
+    if (patch.accounts.isEmpty) {
+      return touchedGroups ? const ShardRef(school: groupsPartition) : null;
+    }
+    if (touchedGroups) return null;
+    final schools = <String>{for (final a in patch.accounts) a.school};
+    if (schools.length != 1) return null;
+    final classrooms = <String>{for (final a in patch.accounts) a.classroom};
+    if (classrooms.length != 1) return ShardRef(school: schools.single);
+    return ShardRef(
+      school: schools.single,
+      classroom: classrooms.single,
+      accountId:
+          patch.accounts.length == 1 ? patch.accounts.single.id.value : null,
+    );
   }
 
   /// Materializes the fresh linked view and writes it to the shared store
@@ -2215,7 +2406,9 @@ class ReconcileController extends ChangeNotifier {
     switch (signal.kind) {
       case ChangeSignalKind.viewChanged:
         final generation = signal.generation;
-        if (generation != null) await onStoreChanged(generation);
+        if (generation != null) {
+          await onStoreChanged(generation, shard: signal.shard);
+        }
       case ChangeSignalKind.syncStarted:
       case ChangeSignalKind.syncEnded:
         // While this session runs its own pass it owns the lease; ignore the
