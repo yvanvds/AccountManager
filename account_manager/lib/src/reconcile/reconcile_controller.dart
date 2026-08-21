@@ -475,6 +475,7 @@ class ReconcileController extends ChangeNotifier {
   SyncState _syncState = SyncState.initial;
   List<Rollup> _rollups = const [];
   Rollup? _selectedClassroom;
+  List<String> _expandedPath = const <String>[];
   List<MaterializedAccount>? _classroomAccounts;
   bool _loadingClassroom = false;
   bool _showingGroups = false;
@@ -1209,6 +1210,37 @@ class ReconcileController extends ChangeNotifier {
   /// Whether a classroom drill-down read is in flight.
   bool get loadingClassroom => _loadingClassroom;
 
+  /// Which accordion nodes the Acties drill-down has open, outermost first
+  /// (#235) — `['rollup-grade-grades|3']` on the flat Leerlingen tree, and
+  /// `['rollup-school-school|staff', 'rollup-grade-grade|staff|Personeel']` on
+  /// the nested Personeel one. Empty means a fully collapsed tree.
+  ///
+  /// It lives up here beside [selectedClassroom] for the reason the bug existed:
+  /// while a class is open the tree is not built at all, so expansion kept
+  /// inside the `ExpansionTile`s themselves died with them and **Overzicht**
+  /// came back fully collapsed. Held one level above the widgets it survives the
+  /// detail view — and a family tab change, which closes the drill-down but
+  /// leaves the other tab's path untouched, the two trees sharing no node key.
+  ///
+  /// One entry **per depth** is what makes it an accordion without breaking the
+  /// nested staff tree: opening a node replaces whichever sibling sat at its
+  /// depth and drops everything below, while its ancestors stay open.
+  List<String> get expandedPath => _expandedPath;
+
+  set expandedPath(List<String> path) {
+    if (_samePath(_expandedPath, path)) return;
+    _expandedPath = List<String>.unmodifiable(path);
+    notifyListeners();
+  }
+
+  static bool _samePath(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   /// The three category summaries the Reconcile overview renders (#163), summed
   /// from the stored rollups so they read in a passive session too: students are
   /// every school rollup *except* the synthetic staff bucket, staff is that
@@ -1854,8 +1886,12 @@ class ReconcileController extends ChangeNotifier {
       // Nudge every passive session to refetch: the whole view was rewritten,
       // so the signal names no narrower shard (#116).
       await _publish(ChangeSignal.viewChanged(generation: view.generation));
-      // A re-sync invalidates any open drill-down; the next open re-reads.
+      // A re-sync invalidates any open drill-down; the next open re-reads. The
+      // remembered accordion path goes with it (#235), so it can never point at
+      // a node this new generation no longer has. Written straight to the field:
+      // the pass notifies once when it finishes.
       _selectedClassroom = null;
+      _expandedPath = const <String>[];
       _classroomAccounts = null;
       _showingGroups = false;
       _groupDocs = null;

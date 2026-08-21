@@ -1722,17 +1722,14 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
 
-    // Closing a classroom rebuilds — and so collapses — the tree, so the year
-    // is re-opened for each of the two students.
-    Future<void> openYear() async {
-      final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
-      await tester.ensureVisible(yearNode);
-      await tester.tap(yearNode);
-      await tester.pumpAndSettle();
-    }
+    // The year is opened once and stays open across both drill-downs: since
+    // #235 pressing Overzicht comes back to the grade-year it was opened from.
+    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    await tester.ensureVisible(yearNode);
+    await tester.tap(yearNode);
+    await tester.pumpAndSettle();
 
     // Sam, in 1B: one line, naming both groups, and marked as a manual fix.
-    await openYear();
     await tester
         .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
     await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
@@ -1747,10 +1744,10 @@ void main() {
     expect(find.textContaining('(manueel)'), findsWidgets,
         reason: 'the class row performs the write, so this one diagnoses');
 
-    // Jane, in 1A: the plain "missing from her own group" reading.
+    // Jane, in 1A: the plain "missing from her own group" reading. Overzicht
+    // lands back on the still-open year, with her class already listed.
     await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
     await tester.pumpAndSettle();
-    await openYear();
     await tester
         .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
     await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
@@ -1980,17 +1977,76 @@ void main() {
     expect(tester.widget<Switch>(toggle).value, isTrue);
     expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing);
 
-    // Switched off, the full inventory is back — every year, every class.
+    // Switched off, the full inventory is back — every year, every class. Jaar
+    // 3 was left open above and, being visible under either filter setting,
+    // stays open across the switch (#235), so its ticked-off class simply
+    // reappears beside the one with work.
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsOneWidget);
     expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
     expect(find.byKey(const ValueKey('actions-filter-hidden')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('rollup-grade-grades|3')));
-    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3C')),
+        findsOneWidget);
     expect(find.byKey(const ValueKey('rollup-class-class|1|3|3D')),
         findsOneWidget);
+  });
+
+  testWidgets(
+      'the Acties tree is a single-open accordion whose grade-year survives a '
+      'drill into a class end-to-end (#235)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. This bug is a composition one:
+    // while a class is open the drill-down is not built at all, so the
+    // expansion held inside the ExpansionTiles died with them and **Overzicht**
+    // came back to a fully collapsed tree. Only an end-to-end run navigates the
+    // way that breaks it — a widget test of the tree alone never leaves it.
+    useTallWindow(tester);
+    final harness = twoSchoolHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    final jaar1 = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
+    final klas1A = find.byKey(const ValueKey('rollup-class-class|1|1|1A'));
+    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
+
+    // Open Jaar 1…
+    await tester.ensureVisible(jaar1);
+    await tester.tap(jaar1);
+    await tester.pumpAndSettle();
+    expect(klas1A, findsOneWidget);
+
+    // …then Jaar 3: one open node per level, so Jaar 1 shuts behind it.
+    await tester.ensureVisible(jaar3);
+    await tester.tap(jaar3);
+    await tester.pumpAndSettle();
+    expect(klas3C, findsOneWidget);
+    expect(klas1A, findsNothing,
+        reason: 'several years could stand open at once before #235');
+
+    // Drill into 3C and press Overzicht: the year the operator came from is
+    // still open, with its class in view rather than behind a re-expand.
+    await tester.ensureVisible(klas3C);
+    await tester.tap(klas3C);
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom?.classroom, '3C');
+    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    await tester.pumpAndSettle();
+    expect(klas3C, findsOneWidget,
+        reason: 'the tree used to come back fully collapsed');
+    expect(klas1A, findsNothing);
+    expect(harness.controller.expandedPath, <String>['rollup-grade-grades|3']);
   });
 
   testWidgets(
@@ -2042,20 +2098,15 @@ void main() {
     );
 
     // Browse it the way the operator does: the merged first year holds both
-    // schools' `1C`, each still keyed to its own school partition. Closing a
-    // classroom rebuilds — and so collapses — the drill-down tree, so the year
-    // is re-opened for each school.
+    // schools' `1C`, each still keyed to its own school partition. The year is
+    // opened once — since #235 Overzicht comes back to it still open.
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
 
-    Future<void> openYear() async {
-      final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
-      await tester.ensureVisible(yearNode);
-      await tester.tap(yearNode);
-      await tester.pumpAndSettle();
-    }
-
-    await openYear();
+    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    await tester.ensureVisible(yearNode);
+    await tester.tap(yearNode);
+    await tester.pumpAndSettle();
     expect(find.text('1C 00'), findsNothing,
         reason: 'the sentinel never names a class in the drill-down either');
 
@@ -2064,7 +2115,6 @@ void main() {
       if (harness.controller.selectedClassroom != null) {
         await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
         await tester.pumpAndSettle();
-        await openYear();
       }
       final classNode = find.byKey(ValueKey('rollup-class-class|$school|1|1C'));
       expect(classNode, findsOneWidget);

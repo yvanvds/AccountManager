@@ -33,6 +33,12 @@ import '../search/name_query.dart';
 /// back is counted and named, so a year the operator expected is explained
 /// rather than merely absent.
 ///
+/// The tree is a single-open accordion whose open path outlives the detail view
+/// (#235): drilling into a class and pressing **Overzicht** comes back to the
+/// grade-year it was opened from, and opening another year closes the one that
+/// was open. The path is held on the [ReconcileController], because while a
+/// class is open the tree is not built at all.
+///
 /// A session with no linked view — passive, or one whose pass failed before it
 /// linked — can only show the stored documents, so both drill-downs say so out
 /// loud rather than quietly swapping in static cards (#214).
@@ -172,6 +178,29 @@ class _FilteredTree {
   final int hidden;
 }
 
+/// The seam the drill-down's expandable nodes are driven through (#235): where
+/// a node's persistent [ExpansibleController] comes from, whether it is the open
+/// one at its depth, and where a tap on it is recorded.
+///
+/// Passed down rather than reached for, so [_DrillDownSection] and [_GradeNode]
+/// stay the stateless projections of the rollups they already were — the open
+/// path itself lives on the [ReconcileController], one level above the tree.
+class _Accordion {
+  const _Accordion({
+    required this.controllerFor,
+    required this.isOpen,
+    required this.onToggled,
+  });
+
+  final ExpansibleController Function(String node) controllerFor;
+
+  /// Whether [node] is the open node at that depth of the tree — 0 for a
+  /// top-level node, 1 for a grade-year nested under the staff school.
+  final bool Function(String node, int depth) isOpen;
+
+  final void Function(String node, int depth, bool open) onToggled;
+}
+
 class _ActionsBody extends StatefulWidget {
   const _ActionsBody({required this.controller});
 
@@ -205,6 +234,19 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// cleared on every family tab change.
   final TextEditingController _search = TextEditingController();
 
+  /// One [ExpansibleController] per accordion node the operator has met this
+  /// session, keyed by [_rollupNodeKey] (#235).
+  ///
+  /// An `ExpansionTile` reads [ExpansionTile.initiallyExpanded] once, in its
+  /// `initState`, and thereafter owns its own open/closed state — so nothing
+  /// declarative can close the year that was open when another is tapped, and
+  /// nothing survives the tile being disposed. Both halves of #235 need a handle
+  /// that outlives the tile, which is exactly what an injected controller is:
+  /// held here, it carries a node's expansion across the detail view, and it is
+  /// the one thing that can collapse a sibling on demand.
+  final Map<String, ExpansibleController> _tiles =
+      <String, ExpansibleController>{};
+
   ReconcileController get controller => widget.controller;
 
   @override
@@ -213,10 +255,18 @@ class _ActionsBodyState extends State<_ActionsBody>
     _tabs = TabController(length: _ActionFamilyTab.values.length, vsync: this)
       ..addListener(_onTabChanged);
     _search.addListener(_onSearchChanged);
+    // Anything that moves the open path without going through a tap — a re-sync
+    // clearing it (#235) — is picked up here and pushed into the tiles.
+    controller.addListener(_syncExpansion);
   }
 
   @override
   void dispose() {
+    controller.removeListener(_syncExpansion);
+    for (final ExpansibleController tile in _tiles.values) {
+      tile.dispose();
+    }
+    _tiles.clear();
     _tabs
       ..removeListener(_onTabChanged)
       ..dispose();
@@ -228,6 +278,96 @@ class _ActionsBodyState extends State<_ActionsBody>
 
   void _onSearchChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// The drill-down tree's accordion seam (#235), handed to the widgets that
+  /// build the expandable nodes.
+  _Accordion get _accordion => _Accordion(
+        controllerFor: _tileFor,
+        isOpen: _isNodeOpen,
+        onToggled: _onNodeToggled,
+      );
+
+  /// The persistent controller of one accordion node, created on first render.
+  /// Safe to call from `build`: a controller nobody is listening to yet cannot
+  /// schedule a rebuild.
+  ExpansibleController _tileFor(String node) => _tiles.putIfAbsent(node, () {
+        final ExpansibleController tile = ExpansibleController();
+        if (_isNodeOpenKey(node)) tile.expand();
+        return tile;
+      });
+
+  /// Whether [node] is the open node at [depth] of
+  /// [ReconcileController.expandedPath].
+  bool _isNodeOpen(String node, int depth) {
+    final List<String> path = controller.expandedPath;
+    return path.length > depth && path[depth] == node;
+  }
+
+  bool _isNodeOpenKey(String node) => controller.expandedPath.contains(node);
+
+  /// Records the operator opening or closing one accordion node.
+  ///
+  /// Opening replaces whatever sat at that depth — which is what makes the tree
+  /// single-open — and truncates everything below it, since a node's children
+  /// go away with it. Closing truncates from that depth. The path setter
+  /// notifies, so [_syncExpansion] does the actual collapsing of the sibling
+  /// that just lost its place.
+  void _onNodeToggled(String node, int depth, bool open) {
+    final List<String> path = controller.expandedPath;
+    if (open) {
+      controller.expandedPath = <String>[...path.take(depth), node];
+    } else if (_isNodeOpen(node, depth)) {
+      controller.expandedPath = path.take(depth).toList();
+    }
+  }
+
+  /// Brings every tile controller back in line with the open path. Idempotent —
+  /// [ExpansibleController.expand] / [ExpansibleController.collapse] are no-ops
+  /// on a controller that already agrees — so it is safe to run on every
+  /// controller notification.
+  void _syncExpansion() {
+    if (!mounted) return;
+    final Set<String> open = controller.expandedPath.toSet();
+    for (final MapEntry<String, ExpansibleController> tile in _tiles.entries) {
+      if (open.contains(tile.key)) {
+        tile.value.expand();
+      } else {
+        tile.value.collapse();
+      }
+    }
+  }
+
+  /// Forgets the tail of the open path the global filter has just stopped
+  /// rendering (#226/#235).
+  ///
+  /// Without this, a year the operator opened with the filter off would come
+  /// back open — and, having been invisible in between, unexpectedly so — the
+  /// next time they switched the filter off again.
+  void _pruneExpansion() {
+    final List<String> path = controller.expandedPath;
+    if (path.isEmpty) return;
+    final Set<String> visible = _visibleNodeKeys();
+    var keep = 0;
+    while (keep < path.length && visible.contains(path[keep])) {
+      keep++;
+    }
+    if (keep < path.length) controller.expandedPath = path.take(keep).toList();
+  }
+
+  /// The keys of every accordion node either family tree would render under the
+  /// current filter — both tabs, because the open path outlives a tab change.
+  Set<String> _visibleNodeKeys() {
+    final keys = <String>{
+      for (final root in _studentTree().roots) _rollupNodeKey(root),
+    };
+    for (final root in _staffTree().roots) {
+      keys.add(_rollupNodeKey(root));
+      for (final grade in controller.childrenOf(root.key)) {
+        if (_keepGrade(grade)) keys.add(_rollupNodeKey(grade));
+      }
+    }
+    return keys;
   }
 
   /// Whether the Personeel family tab is the selected one — the only tab that
@@ -408,7 +548,12 @@ class _ActionsBodyState extends State<_ActionsBody>
       // governs both tabs, the drill-down, and every classroom opened from it.
       _section(_ActionsFilterBar(
         onlyWithActions: _onlyWithActions,
-        onChanged: (v) => setState(() => _onlyWithActions = v),
+        onChanged: (v) {
+          setState(() => _onlyWithActions = v);
+          // Pruned after the flag has flipped, against the tree the operator is
+          // about to see (#235).
+          _pruneExpansion();
+        },
       )),
       _gap(PlinkSpacing.s4),
       _section(_FamilyTabBar(controller: controller, tabs: _tabs)),
@@ -428,6 +573,7 @@ class _ActionsBodyState extends State<_ActionsBody>
       slivers.add(_section(staffTab
           ? _DrillDownSection(
               controller: controller,
+              accordion: _accordion,
               roots: tree.roots,
               groups: null,
               hidden: tree.hidden,
@@ -438,6 +584,7 @@ class _ActionsBodyState extends State<_ActionsBody>
                   if (_keepGrade(grade))
                     _GradeNode(
                       controller: controller,
+                      accordion: _accordion,
                       grade: grade,
                       onlyWithActions: _onlyWithActions,
                     ),
@@ -445,6 +592,7 @@ class _ActionsBodyState extends State<_ActionsBody>
             )
           : _DrillDownSection(
               controller: controller,
+              accordion: _accordion,
               roots: tree.roots,
               groups: tree.groups,
               hidden: tree.hidden,
@@ -1225,6 +1373,7 @@ String _rollupNodeKey(Rollup r) => switch (r.level) {
 class _DrillDownSection extends StatelessWidget {
   const _DrillDownSection({
     required this.controller,
+    required this.accordion,
     required this.roots,
     required this.groups,
     required this.emptyLabel,
@@ -1234,6 +1383,10 @@ class _DrillDownSection extends StatelessWidget {
   });
 
   final ReconcileController controller;
+
+  /// Drives the top-level nodes as a single-open accordion whose open node
+  /// outlives a drill-down (#235).
+  final _Accordion accordion;
 
   /// The top-level accordion nodes: the merged grade-years plus
   /// "Niet toegewezen" on the Leerlingen tab, the single staff school node on
@@ -1269,6 +1422,33 @@ class _DrillDownSection extends StatelessWidget {
   String get _allHiddenNote =>
       'Alles is verborgen door de filter: $hidden zonder openstaande acties. '
       'Zet de filter af voor het volledige overzicht.';
+
+  /// One top-level accordion node (depth 0), driven by [accordion] rather than
+  /// by the `ExpansionTile`'s own state (#235) — so the year the operator drilled
+  /// a class out of is still open when they come back, and opening another one
+  /// closes it.
+  Widget _rootTile(BuildContext context, Rollup root, Color hairline) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final String node = _rollupNodeKey(root);
+    return Container(
+      margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+      decoration: BoxDecoration(
+        border: Border.all(color: hairline),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: ExpansionTile(
+        key: ValueKey(node),
+        controller: accordion.controllerFor(node),
+        initiallyExpanded: accordion.isOpen(node, 0),
+        onExpansionChanged: (open) => accordion.onToggled(node, 0, open),
+        shape: const Border(),
+        collapsedShape: const Border(),
+        title: Text(root.label, style: text.bodyLarge),
+        trailing: _PendingBadge(count: root.pendingCount),
+        children: childrenOf(root),
+      ),
+    );
+  }
 
   String? _freshness() {
     final state = controller.syncState;
@@ -1308,23 +1488,7 @@ class _DrillDownSection extends StatelessWidget {
                 )
               : Text(emptyLabel, style: text.bodyMedium)
         else ...<Widget>[
-          for (final root in roots)
-            Container(
-              margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
-              decoration: BoxDecoration(
-                border: Border.all(color: hairline),
-                borderRadius:
-                    const BorderRadius.all(Radius.circular(PlinkRadius.base)),
-              ),
-              child: ExpansionTile(
-                key: ValueKey(_rollupNodeKey(root)),
-                shape: const Border(),
-                collapsedShape: const Border(),
-                title: Text(root.label, style: text.bodyLarge),
-                trailing: _PendingBadge(count: root.pendingCount),
-                children: childrenOf(root),
-              ),
-            ),
+          for (final root in roots) _rootTile(context, root, hairline),
           if (groupsNode != null)
             Container(
               margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
@@ -1372,11 +1536,19 @@ class _DrillDownSection extends StatelessWidget {
 class _GradeNode extends StatelessWidget {
   const _GradeNode({
     required this.controller,
+    required this.accordion,
     required this.grade,
     required this.onlyWithActions,
   });
 
   final ReconcileController controller;
+
+  /// Drives this node at depth 1 (#235). The depth is what keeps the staff tree
+  /// usable: opening a grade-year replaces its *sibling* year, never the school
+  /// node above it — which single-open on one flat key would have collapsed out
+  /// from under the year the operator just opened.
+  final _Accordion accordion;
+
   final Rollup grade;
 
   /// Whether the global filter is on, in which case only the classrooms of this
@@ -1386,8 +1558,12 @@ class _GradeNode extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
+    final String node = _rollupNodeKey(grade);
     return ExpansionTile(
-      key: ValueKey(_rollupNodeKey(grade)),
+      key: ValueKey(node),
+      controller: accordion.controllerFor(node),
+      initiallyExpanded: accordion.isOpen(node, 1),
+      onExpansionChanged: (open) => accordion.onToggled(node, 1, open),
       shape: const Border(),
       collapsedShape: const Border(),
       tilePadding: const EdgeInsets.only(left: PlinkSpacing.s5, right: 16),

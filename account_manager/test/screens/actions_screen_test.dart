@@ -790,6 +790,176 @@ void main() {
         find.byKey(const ValueKey('actions-filter-all-hidden')), findsNothing);
   });
 
+  // --- The single-open accordion and its open path (#235) ------------------
+
+  testWidgets(
+      'drilling into a class and pressing Overzicht comes back to the '
+      'grade-year it was opened from, still expanded (#235)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = twoSchoolHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    expect(harness.controller.selectedClassroom?.classroom, '3C');
+
+    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|3|3C')), findsOneWidget,
+        reason: 'Overzicht used to come back to a fully collapsed tree');
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|1|1A')), findsNothing,
+        reason: 'the years that were closed stay closed');
+    // The open node is remembered a level above the tiles, which is what let it
+    // survive them being disposed for the detail view.
+    expect(harness.controller.expandedPath, <String>['rollup-grade-grades|3']);
+  });
+
+  testWidgets('opening a grade-year closes the one that was open (#235)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = twoSchoolHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Jaar 1'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-class-class|1|1|1A')),
+        findsOneWidget);
+
+    await tester.ensureVisible(find.text('Jaar 3'));
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3C')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|1|1A')), findsNothing,
+        reason: 'several grade-years could be open at once before #235');
+    expect(harness.controller.expandedPath, <String>['rollup-grade-grades|3']);
+
+    // Tapping the open year again shuts it, leaving nothing open.
+    await tester.ensureVisible(find.text('Jaar 3'));
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.expandedPath, isEmpty);
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|3|3C')), findsNothing);
+  });
+
+  testWidgets(
+      'the nested Personeel tree keeps the school open under an opened '
+      'grade-year, and both open across a drill-down (#235)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // The staff tree is school → grade-year → class, so "one open node" has to
+    // mean one per level: a flat single-open key would collapse the school out
+    // from under the very year it was used to reach.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [wisaStudent()], staff: [wisaStaff()]),
+    );
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    final school = find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(school);
+    await tester.tap(school);
+    await tester.pumpAndSettle();
+    final grade =
+        find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel'));
+    await tester.ensureVisible(grade);
+    await tester.tap(grade);
+    await tester.pumpAndSettle();
+
+    final klas = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    expect(klas, findsOneWidget,
+        reason: 'the school stayed open under the grade-year it revealed');
+    expect(harness.controller.expandedPath, <String>[
+      'rollup-school-school|staff',
+      'rollup-grade-grade|staff|Personeel',
+    ]);
+
+    await tester.ensureVisible(klas);
+    await tester.tap(klas);
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom?.classroom, 'Personeel');
+
+    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    await tester.pumpAndSettle();
+    expect(klas, findsOneWidget,
+        reason: 'both levels of the staff path come back open');
+  });
+
+  testWidgets(
+      'a grade-year the filter hides is forgotten rather than re-opening when '
+      'the filter goes off again (#226/#235)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = await filterTreeHarness();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Filter off: the full inventory, including the years with nothing to do.
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('rollup-grade-grades|4')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.expandedPath, <String>['rollup-grade-grades|4']);
+
+    // Filter back on: Jaar 4 has nothing pending, so it is gone — and with it
+    // the memory of it being open.
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-grade-grades|4')), findsNothing);
+    expect(harness.controller.expandedPath, isEmpty);
+
+    // Off once more: Jaar 4 is back, collapsed like every other node.
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-grade-grades|4')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|4|4A')), findsNothing,
+        reason: 'a node hidden in between must not resurrect its open state');
+  });
+
+  testWidgets(
+      "a re-sync forgets the open node instead of aiming it at a generation "
+      'that no longer has it (#235)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.expandedPath, <String>['rollup-grade-grades|3']);
+
+    // WISA moved the student, so this pass really re-links and re-materializes
+    // rather than taking the unchanged shortcut.
+    harness.wisaResult = wisaSnap(
+      students: [wisaStudent(classGroup: '3D')],
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+    );
+    await harness.controller.sync();
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.expandedPath, isEmpty);
+    expect(
+        find.byKey(const ValueKey('rollup-class-class|1|3|3D')), findsNothing,
+        reason: 'the tree comes back collapsed, not half-open');
+  });
+
   // --- Address diff in the drill-down (#153) -------------------------------
   const wisaAddr = Address(
     street: 'Koophandelstraat',
