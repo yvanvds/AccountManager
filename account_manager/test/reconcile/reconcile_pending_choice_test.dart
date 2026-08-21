@@ -1,4 +1,5 @@
 import 'package:account_actions/account_actions.dart' as actions;
+import 'package:account_manager/src/reconcile/reconcile_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'reconcile_fakes.dart';
@@ -323,6 +324,105 @@ void main() {
         choice.alternatives.map((a) => a.kind),
         containsAll(<String>['CreateInSmartschool', 'DoNotImportFromWisa']),
       );
+    });
+  });
+
+  group('a new staff member is one choice, not two to-dos (#248)', () {
+    const String createAzure = 'Maak een nieuw Office 365 account';
+    const String createSs = 'Maak een nieuw Smartschool account';
+    const String ignore = 'Negeer dit account bij het importeren uit WISA';
+
+    List<String> summariesOf(ReconcileHarness h) =>
+        h.controller.applyResults!.map((r) => r.changes.summary).toList();
+
+    List<PendingAccountEntry> staffEntries(ReconcileHarness h) =>
+        h.controller.pendingEntries.where((e) => e.family == 'staff').toList();
+
+    test('the create and the blacklist collapse into one choice, create first',
+        () async {
+      final h = newStaffChoiceHarness();
+      await h.controller.sync();
+
+      final entry = staffEntries(h).first;
+      final choice = entry.choices.singleWhere(
+        (c) => c.situationId == actions.staffImportAlternative,
+      );
+
+      expect(entry.choices, hasLength(1),
+          reason: 'the two contradictory actions are one decision, not two');
+      expect(choice.isChoice, isTrue,
+          reason: 'either provision them or stop importing them — never both');
+      expect(
+        choice.alternatives.map((a) => a.kind),
+        ['AddStaffToAzure', 'DontImportStaffFromWisa'],
+        reason: 'the create leads the radio pair',
+      );
+      expect(choice.selected.kind, 'AddStaffToAzure',
+          reason: 'provisioning a new hire is the normal operation');
+    });
+
+    test('applying the default provisions both accounts and blacklists nothing',
+        () async {
+      // The #240 chain still runs: the Azure create unlocks the Smartschool
+      // create. What must not follow is the WISA opt-out that used to ride
+      // along on the same click.
+      final h = newStaffChoiceHarness();
+      await h.controller.sync();
+      final pulls = h.wisaSyncs;
+
+      await h.controller.applyEntry(staffEntries(h).first);
+
+      expect(summariesOf(h), <String>[createAzure, createSs]);
+      expect(summariesOf(h), isNot(contains(ignore)),
+          reason: 'the rule would drop the teacher we just provisioned');
+      expect(h.graph.createdUsers, hasLength(1));
+      expect(h.wisaSyncs, pulls,
+          reason: 'no import rule was added, so WISA was never re-pulled');
+    });
+
+    test('choosing the blacklist applies it alone, provisioning nothing',
+        () async {
+      final h = newStaffChoiceHarness();
+      await h.controller.sync();
+      final entry = staffEntries(h).first;
+
+      h.controller.chooseAlternative(
+        entry: entry,
+        group: actions.staffImportAlternative,
+        kind: 'DontImportStaffFromWisa',
+      );
+      await h.controller.applyEntry(
+        staffEntries(h).firstWhere((e) => e.targetId == entry.targetId),
+      );
+
+      expect(summariesOf(h), contains(ignore));
+      expect(summariesOf(h), isNot(contains(createAzure)));
+      expect(h.graph.createdUsers, isEmpty);
+    });
+
+    test(
+        '"apply to all" over the situation provisions every new hire and '
+        'blacklists none', () async {
+      final h = newStaffChoiceHarness();
+      await h.controller.sync();
+      final entries = staffEntries(h);
+      expect(entries, hasLength(2));
+
+      final key = entries.first.situationKey;
+      expect(
+        entries.where((e) => e.situationKey == key),
+        hasLength(2),
+        reason: 'both new hires are the same situation, bulk-applied at once',
+      );
+      final pulls = h.wisaSyncs;
+
+      await h.controller.applySituation(key);
+
+      final summaries = summariesOf(h);
+      expect(summaries.where((s) => s == createAzure), hasLength(2));
+      expect(summaries.where((s) => s == createSs), hasLength(2));
+      expect(summaries, isNot(contains(ignore)));
+      expect(h.wisaSyncs, pulls);
     });
   });
 }

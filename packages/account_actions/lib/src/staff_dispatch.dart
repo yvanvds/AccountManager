@@ -24,6 +24,15 @@ import 'staff_action_config.dart';
 /// never had a `department` repair (#233). Like the student `ModifyAzureSchool`
 /// it sits in the modify branch, so an adopted account is stamped on the pass
 /// *after* its Smartschool side is built and the record is complete.
+///
+/// A staff member with no Smartschool account raises [DontImportStaffFromWisa]
+/// *and* exactly one of [AddStaffToAzure] / [AddStaffToSmartschool]. Those are
+/// not two to-dos: they share the [staffImportAlternative] key, so the pending
+/// list renders them as one either/or choice and an apply runs only the picked
+/// one (#248). The creates lead the list on purpose — that is the order the
+/// operator reads the radio pair in, and the fallback the grouping uses if a
+/// default is ever forgotten, so the provisioning half comes first and never
+/// the blacklist.
 List<StaffAction> staffActionsFor(
   LinkedStaff staff,
   StaffActionConfig config,
@@ -39,6 +48,11 @@ List<StaffAction> staffActionsFor(
           SetStaffCopyCode(staff, config),
         ]
       : <StaffAction>[
+          // The creates lead [DontImportStaffFromWisa], which they are mutually
+          // exclusive with (#248): the order is the order the operator reads the
+          // radio pair in, and the fallback the grouping uses if a default is
+          // ever forgotten — so the provisioning half comes first, never the
+          // blacklist.
           AddStaffToAzure(staff, config),
           AddStaffToSmartschool(staff, config),
           RemoveStaffFromSmartschool(staff, config),

@@ -4470,8 +4470,10 @@ void main() {
     expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
         reason: 'the account already exists — creating one duplicates it');
     // The record is now WISA + Azure, so the only thing left to build is the
-    // Smartschool side — the proposal the adoption unlocks.
-    expect(find.text('Maak een nieuw Smartschool account'), findsOneWidget);
+    // Smartschool side — the proposal the adoption unlocks, reading as the
+    // create side of the #248 choice it shares with the WISA opt-out.
+    expect(find.text('Maak een nieuw Smartschool account (keuze)'),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -4757,7 +4759,10 @@ void main() {
         find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
     expect(find.text('Anna Smit'), findsWidgets,
         reason: 'a staff member with no downstream account is still listed');
-    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    // …reading as the create side of the either/or choice of #248: the WISA
+    // opt-out this family also raises is its alternative, not a second to-do.
+    expect(
+        find.text('Maak een nieuw Office 365 account (keuze)'), findsOneWidget);
     expect(find.text('Maak een nieuw Smartschool account'), findsNothing,
         reason: 'the dispatch can only see the first link of the chain');
 
@@ -4777,15 +4782,14 @@ void main() {
 
     // Both accounts exist now, off that single click, and both writes are
     // reported — the second is a real write the operator must see, not a silent
-    // extra. The third row is the entry's *other* pending item, the WISA ignore
-    // rule this family also offers for a staff member with no Smartschool
-    // account; it is not part of the chain (tracked as #248).
+    // extra. And *only* those two: the WISA ignore rule this family also raises
+    // is the alternative of the same choice since #248, so it no longer rides
+    // along on the apply that just provisioned her.
     expect(
       harness.controller.applyResults!.map((r) => r.changes.summary),
       <String>[
         'Maak een nieuw Office 365 account',
         'Maak een nieuw Smartschool account',
-        'Negeer dit account bij het importeren uit WISA',
       ],
     );
     expect(
@@ -4807,6 +4811,126 @@ void main() {
     final messages = harness.log.entries.map((e) => e.message);
     expect(messages, contains(contains('Maak een nieuw Office 365 account')));
     expect(messages, contains(contains('Maak een nieuw Smartschool account')));
+  });
+
+  testWidgets(
+      'a new staff member offers one either/or choice, and "apply to all" '
+      'provisions every hire without blacklisting any end-to-end (#248)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Graph and
+    // Smartschool write paths. Two freshly hired teachers, present in WISA only.
+    //
+    // Each used to carry "Maak een nieuw Office 365 account" *and* "Negeer dit
+    // account bij het importeren uit WISA" as two independent to-dos, both
+    // selected — so one click provisioned the teacher end to end (the #240
+    // chain) and then wrote a DontImportUserFromWisa rule on the very code it
+    // had just provisioned. The rule set is persisted and re-applied on every
+    // WISA pull, so the next sync dropped the staff member the operator had
+    // just given two accounts, and those accounts went unmanaged.
+    //
+    // This is the layer that sees it: the contradiction is what the operator
+    // reads off Acties → Personeel and clicks, and the fix has to reach it
+    // through the dispatch, the entry grouping and the drill-down.
+    useTallWindow(tester);
+    final harness = newStaffChoiceHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Browse Acties → Personeel, where the operator met this.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+
+    // Both new hires are on the list, each reading as *one* choice…
+    expect(find.text('Anna Smit'), findsWidgets);
+    expect(find.text('Bram Jansen'), findsWidgets);
+    expect(find.text('Maak een nieuw Office 365 account (keuze)'),
+        findsNWidgets(2));
+    // …and no row carries the opt-out as a line of its own: it is the
+    // alternative the operator can switch to, not a second thing that also
+    // runs. (The bulk header below names both sides of the one choice.)
+    expect(find.text('Negeer dit account bij het importeren uit WISA'),
+        findsNothing);
+
+    // Expanding one offers both readings as radios, the create pre-selected.
+    final entries = harness.controller.pendingEntries
+        .where((e) => e.family == 'staff')
+        .toList();
+    expect(entries, hasLength(2));
+    final first = find.byKey(ValueKey('entry-staff-${entries.first.targetId}'));
+    await tester.ensureVisible(first);
+    await tester.tap(first);
+    await tester.pumpAndSettle();
+    expect(find.text('Kies één oplossing:'), findsOneWidget);
+    expect(find.text('Negeer dit account bij het importeren uit WISA'),
+        findsOneWidget);
+    await tester.tap(first);
+    await tester.pumpAndSettle();
+
+    // The bulk header offers the one resolution for both hires.
+    final key = entries.first.situationKey;
+    final bulk = find.byKey(ValueKey('situation-apply-$key'));
+    await tester.ensureVisible(bulk);
+    expect(
+      find.textContaining('Maak een nieuw Office 365 account / Negeer dit '
+          'account bij het importeren uit WISA'),
+      findsOneWidget,
+      reason: 'the header names one either/or, not two independent to-dos',
+    );
+
+    final pulls = harness.wisaSyncs;
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both teachers were provisioned end to end — Office 365 and, off the #240
+    // chain, Smartschool…
+    expect(harness.graph.createdUsers, hasLength(2));
+    final summaries =
+        harness.controller.applyResults!.map((r) => r.changes.summary).toList();
+    expect(summaries.where((s) => s == 'Maak een nieuw Office 365 account'),
+        hasLength(2));
+    expect(summaries.where((s) => s == 'Maak een nieuw Smartschool account'),
+        hasLength(2));
+    // …and not one of them was blacklisted on the way out. A
+    // DontImportUserFromWisa rule re-pulls WISA, so an untouched pull count is
+    // the proof.
+    expect(
+      summaries,
+      isNot(contains('Negeer dit account bij het importeren uit WISA')),
+      reason: 'the rule would drop the hires this same pass just provisioned',
+    );
+    expect(harness.wisaSyncs, pulls);
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
   });
 }
 

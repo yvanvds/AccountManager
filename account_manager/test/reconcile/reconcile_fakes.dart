@@ -1351,6 +1351,40 @@ ReconcileHarness newClassChoiceHarness() => ReconcileHarness(
       classTree: const SmartschoolClassTree(path: 'SCHOOL'),
     );
 
+/// A harness for the "new staff member" choice (#248) — the staff twin of
+/// [newClassChoiceHarness]. Two freshly hired teachers exist in WISA only, so
+/// each raises `AddStaffToAzure` (which since #240 chains the Smartschool
+/// create) **and** `DontImportStaffFromWisa` on the same target.
+///
+/// Neither declared an `alternativeGroup`, so both landed in the selection and
+/// one click provisioned the teacher *and* wrote a `DontImportUserFromWisa` rule
+/// on the very code it had just provisioned. The rule set is persisted and
+/// re-applied on every WISA pull, so the next sync dropped the staff member the
+/// operator had just given two accounts.
+///
+/// Two staff members on purpose — that is what puts them in one "same
+/// situation" subset and lights up the bulk **Apply to all**.
+ReconcileHarness newStaffChoiceHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: const [],
+        staff: [
+          wisaStaff(),
+          wisaStaff(
+            code: 'JANS',
+            wisaId: '43',
+            firstName: 'Bram',
+            lastName: 'Jansen',
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+
 /// A harness for the `00` sub-group sentinel (#221). Two managed schools that
 /// each have their own `1C`, and each of those is a **single-group** class: one
 /// `SyncKlas` row with `KLASGROEP = 00` and — because `ADMINGROEP` is only

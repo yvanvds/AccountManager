@@ -51,9 +51,9 @@ sealed class StaffAction {
   ChangeSet describeChanges();
 
   /// The key shared by mutually-exclusive alternatives resolving the same
-  /// situation (#110). No staff action has alternatives today, so this is always
-  /// `null`; the getter exists so the pending-list grouping treats every family
-  /// uniformly. See [StudentAction.alternativeGroup].
+  /// situation (#110). `null` (the default) means the action stands on its own.
+  /// The staff family's one key is [staffImportAlternative] (#248). See
+  /// [StudentAction.alternativeGroup].
   String? get alternativeGroup => null;
 
   /// Whether this action is the default alternative within its
@@ -126,6 +126,42 @@ sealed class StaffAction {
 // Lifecycle actions — evaluated only when a system is missing (§6.3).
 // ---------------------------------------------------------------------------
 
+/// The [StaffAction.alternativeGroup] key shared by the mutually exclusive
+/// readings of a WISA staff member with no Smartschool account (#248): finish
+/// provisioning them ([AddStaffToAzure] when the Office 365 account is still
+/// missing, [AddStaffToSmartschool] once it exists) *or* stop importing them
+/// ([DontImportStaffFromWisa]).
+///
+/// They are opposite decisions, so they are one choice and never two to-dos.
+/// Both used to return `null`, so `_choicesFor` made each its own choice-of-one
+/// and `applyEntry` ran every selected choice: one click on a newly hired
+/// teacher created their Office 365 *and* Smartschool accounts (the #240 chain)
+/// and then wrote a [wapi.DontImportUserFromWisa] rule on the very code it had
+/// just provisioned. The rule set is persisted and re-applied on every WISA
+/// pull, so the next sync dropped the staff member the operator had just
+/// provisioned — and their fresh accounts went unmanaged.
+///
+/// The two create actions never fire together — [AddStaffToAzure] needs
+/// `azure == null` and [AddStaffToSmartschool] needs `azure != null` — so all
+/// three can share the single key and exactly one default is ever offered.
+///
+/// **The default is the create action**, the same polarity the group family's
+/// [classImportAlternative] chose and deliberately the opposite of
+/// [smartschoolDepartureAlternative], where the conservative "keep the account"
+/// option leads. Provisioning a new hire is the normal operation; a
+/// mis-defaulted bulk apply that silently blacklists a term's worth of new
+/// staff — dropping them from the next snapshot entirely — is far worse than
+/// one that creates their accounts.
+///
+/// The [AddStaffToAzure] → [AddStaffToSmartschool] chain of #240 is unaffected:
+/// the applier's follow-up walk keys on [StaffAction.unlocks] and never reads
+/// this, so the Azure create still pulls the Smartschool create in behind it.
+/// The key matters for the Smartschool create in its *own* right — a record
+/// that is already WISA + Azure (an account adopted by `employeeId`, #231, or a
+/// chain whose second write failed) raises it beside the opt-out as the same
+/// two contradictory to-dos.
+const String staffImportAlternative = 'staff-import';
+
 /// Create an Office 365 account for a staff member present in WISA but not
 /// Azure. Ported from `Action\StaffAccount\AddToAzure` (the `-Personeel` group
 /// placement is deferred — see the README).
@@ -142,6 +178,15 @@ class AddStaffToAzure extends StaffAction {
   /// the full provisioning intent.
   @override
   Set<Type> get unlocks => const {AddStaffToSmartschool};
+
+  /// Provisioning the staff member is the leading half of the
+  /// [staffImportAlternative] choice (#248), and its **default**: hiring is the
+  /// normal operation, so a bulk apply provisions rather than blacklists.
+  @override
+  String? get alternativeGroup => staffImportAlternative;
+
+  @override
+  bool get isDefaultAlternative => true;
 
   String get _displayName => '${_wisa.firstName} ${_wisa.lastName}'.trim();
 
@@ -258,6 +303,19 @@ class AddStaffToSmartschool extends StaffAction {
   @override
   bool evaluate() =>
       staff.wisa != null && staff.azure != null && staff.smartschool == null;
+
+  /// Once the Office 365 account exists this create stands in for
+  /// [AddStaffToAzure] inside the [staffImportAlternative] choice (#248), and is
+  /// the default in its place — the two are separated by the `azure == null`
+  /// test, so exactly one default is ever offered. It needs the key in its own
+  /// right: a record that is already WISA + Azure (adopted by `employeeId`
+  /// (#231), or a #240 chain whose second write failed) raises this create and
+  /// [DontImportStaffFromWisa] as the same pair of contradictory to-dos.
+  @override
+  String? get alternativeGroup => staffImportAlternative;
+
+  @override
+  bool get isDefaultAlternative => true;
 
   ss.SmartschoolAccount _build() {
     final wisa = _wisa;
@@ -467,6 +525,12 @@ class DontImportStaffFromWisa extends StaffAction {
 
   @override
   bool evaluate() => staff.wisa != null && staff.smartschool == null;
+
+  /// Blacklisting the staff member is one half of the [staffImportAlternative]
+  /// choice (#248) — never a to-do beside the create it contradicts. It is not
+  /// the default: an operator has to pick it.
+  @override
+  String? get alternativeGroup => staffImportAlternative;
 
   wapi.DontImportUserFromWisa _rule() =>
       wapi.DontImportUserFromWisa(_wisa.code.value);
