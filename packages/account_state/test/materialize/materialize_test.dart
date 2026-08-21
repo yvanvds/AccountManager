@@ -76,12 +76,21 @@ az.AzureUser _azUser({String id = 'az1', String? employeeId = '1'}) =>
       companyName: 'GBS',
     );
 
-core.Group _ssGroup(String name, {String? code}) => core.Group(
+core.Group _ssGroup(
+  String name, {
+  String? code,
+  String description = '',
+  String? instituteNumber,
+  String untis = '',
+}) =>
+    core.Group(
       id: core.GroupId(code ?? name),
       name: name,
-      description: '',
+      description: description,
       type: core.GroupType.classGroup,
       official: true,
+      instituteNumber: instituteNumber,
+      untis: untis,
       origin: core.Origin.smartschool,
     );
 
@@ -151,6 +160,62 @@ LinkedState _modifyPendingLinked() => LinkedState.recompute(
         memberships: const [],
       ),
       azure: az.AzureSnapshot(fetchedAt: _d, users: const [], groups: const []),
+      resolver: _SeqResolver(),
+      studentConfig: _studentConfig,
+      staffConfig: _staffConfig,
+    );
+
+/// A class that is **entirely in order**: present in WISA, in Smartschool with
+/// matching institute number / untis / description, and in Office 365 as
+/// `GBS-3C` with its one student already in it. So the group dispatch raises
+/// nothing at all for it — the shape that used to have no document whatsoever
+/// (#227), which is why the class inventory could not be verified.
+LinkedState _cleanClassLinked() => LinkedState.recompute(
+      wisa: wapi.WisaSnapshot(
+        fetchedAt: _d,
+        students: [_wStudent()],
+        staff: const [],
+        classGroups: [
+          const wapi.WisaClassGroup(
+            name: '3C',
+            groupName: '00',
+            description: 'Derde jaar C',
+            adminCode: '',
+            schoolCode: '123',
+            schoolId: 1,
+          ),
+        ],
+        schools: const [],
+      ),
+      smartschool: ss.SmartschoolSnapshot(
+        fetchedAt: _d,
+        groups: [
+          _ssGroup(
+            '3C',
+            code: '3C_ss',
+            description: 'Derde jaar C',
+            instituteNumber: '123',
+            untis: '3C',
+          ),
+        ],
+        accounts: [_ssAccount()],
+        memberships: const [
+          ss.SmartschoolMembership(uid: 'jane', groupId: core.GroupId('3C_ss')),
+        ],
+      ),
+      azure: az.AzureSnapshot(
+        fetchedAt: _d,
+        users: [_azUser()],
+        groups: [
+          az.AzureGroup(
+            id: 'az-GBS-3C',
+            displayName: 'GBS-3C',
+            mail: 'GBS-3C@school.example',
+            mailNickname: 'GBS-3C',
+            memberIds: const ['az1'],
+          ),
+        ],
+      ),
       resolver: _SeqResolver(),
       studentConfig: _studentConfig,
       staffConfig: _staffConfig,
@@ -383,7 +448,7 @@ void main() {
       expect(rollup.pendingCount, greaterThan(0));
     });
 
-    test('no group actions → no group docs and no group rollup', () {
+    test('no class groups at all → no group docs and no group rollup', () {
       final view = materialize(_noGroupsLinked(), generation: 1);
       expect(view.groups, isEmpty);
       expect(view.rollups.where((r) => r.level == RollupLevel.groups), isEmpty);
@@ -397,6 +462,60 @@ void main() {
       expect(restored.label, group.label);
       expect(restored.inSmartschool, isTrue);
       expect(restored.candidates, hasLength(group.candidates.length));
+    });
+  });
+
+  group('the class inventory covers every class (#227)', () {
+    test('a class with nothing wrong still gets a document', () {
+      // The whole point of the tab: the documents come from the linked class
+      // list, not from the dispatched actions, so a healthy class is on the
+      // inventory — with a tick in all three columns and no candidate at all.
+      final view = materialize(_cleanClassLinked(), generation: 1);
+
+      expect(view.groups, hasLength(1));
+      final group = view.groups.single;
+      expect(group.label, '3C');
+      expect(group.candidates, isEmpty,
+          reason: 'nothing is wrong with this class');
+      expect(group.hasPending, isFalse);
+      expect(group.needsAttention, isFalse);
+      expect(group.inWisa, isTrue);
+      expect(group.inSmartschool, isTrue);
+      expect(group.inAzure, isTrue);
+    });
+
+    test('the row carries its description, bare class name and O365 group', () {
+      final group =
+          materialize(_cleanClassLinked(), generation: 1).groups.single;
+      expect(group.description, 'Derde jaar C');
+      expect(group.className, '3C');
+      expect(group.azureGroupName, 'GBS-3C',
+          reason: 'the Office 365 column names the group, not just a tick');
+
+      final restored = MaterializedGroup.fromJson(group.toJson());
+      expect(restored.description, 'Derde jaar C');
+      expect(restored.className, '3C');
+      expect(restored.azureGroupName, 'GBS-3C');
+    });
+
+    test('the Klasgroepen rollup counts every class, pending only the work',
+        () {
+      // accountCount used to mean "classes with work"; it is the inventory size
+      // now, while pendingCount still counts decisions (#251).
+      final view = materialize(_cleanClassLinked(), generation: 1);
+      final rollup =
+          view.rollups.firstWhere((r) => r.level == RollupLevel.groups);
+      expect(rollup.accountCount, 1);
+      expect(rollup.pendingCount, 0);
+    });
+
+    test('an informational-only notice is attention, not pending work', () {
+      // #225/#250: a class Smartschool already holds carries manual work with no
+      // automated write, so it must not be filtered away with the pending count.
+      final group =
+          materialize(_movePendingLinked(), generation: 1).groups.single;
+      expect(group.hasPending, isFalse);
+      expect(group.needsAttention, isTrue);
     });
   });
 

@@ -10,6 +10,7 @@ import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/actions_screen.dart';
+import 'package:account_manager/src/screens/class_groups_screen.dart';
 import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
@@ -339,6 +340,22 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
+  }
+
+  /// Opens the Klasgroepen tab from the navigation rail (#227). The class
+  /// inventory is a destination of its own now, not a node inside Acties.
+  Future<void> openKlasgroepen(WidgetTester tester) async {
+    await tester.tap(find.text('Klasgroepen'));
+    await tester.pumpAndSettle();
+  }
+
+  /// Syncs on Reconcile and lands on the Klasgroepen tab.
+  Future<void> syncThenOpenKlasgroepen(WidgetTester tester) async {
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
   }
 
   /// The text of one line of the modal progress dialog.
@@ -1254,14 +1271,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
 
-    // Our own populated class is the only proposal on the list…
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    // Our own populated class is the only class in the inventory…
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(find.text('1A'), findsOneWidget);
     // …reading as the create side of the either/or choice of #244.
     expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
@@ -1271,10 +1284,12 @@ void main() {
         reason: 'creating another school\'s class is never ours to propose');
 
     // The surviving proposal describes *our* 1A, not the sibling class that
-    // shares its name.
+    // shares its name — on the row itself and in the create's diff.
+    expect(find.text('Onze eerste klas'), findsOneWidget,
+        reason: 'the inventory row names our class');
     await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Onze eerste klas'), findsOneWidget);
+    expect(find.textContaining('Onze eerste klas'), findsNWidgets(2));
     expect(find.textContaining('Klas van een andere school'), findsNothing);
   });
 
@@ -1301,26 +1316,25 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
 
-    // Only our own class is on the list; neither virtual class is anywhere.
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    // Only our own class is in the inventory; neither virtual class is anywhere
+    // — not as an entry tile, and not as a plain row either.
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
     expect(find.byKey(const ValueKey('entry-group-1V')), findsNothing,
         reason: 'creating a virtual school\'s class is never worth proposing');
+    expect(find.byKey(const ValueKey('class-row-1V')), findsNothing);
     expect(find.byKey(const ValueKey('entry-group-9V')), findsNothing,
         reason: 'the empty-class notice for a virtual class is pure clutter');
+    expect(find.byKey(const ValueKey('class-row-9V')), findsNothing);
     expect(find.textContaining('Virtuele klas'), findsNothing);
     expect(find.textContaining('Lege virtuele klas'), findsNothing);
 
-    // Back out of Klasgroepen: the virtual school's student is still imported
-    // and still sits in the class their own WISA record names — dropping the
-    // class-group records moved nobody.
-    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    // Over on Acties: the virtual school's student is still imported and still
+    // sits in the class their own WISA record names — dropping the class-group
+    // records moved nobody.
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
     // The merged first year spans both managed schools (#210), so the virtual
     // school's 1V sits beside our own 1A under it.
@@ -1364,14 +1378,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
 
-    // Our 1A is the only class on the list, and it reads as the empty one.
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    // Our 1A is the only class in the inventory, and it reads as the empty one.
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
     expect(find.textContaining('bevat nog geen leerlingen'), findsOneWidget);
     expect(
@@ -1447,15 +1457,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
 
     // `2G` is on the list, and it says the class is already there — not that it
     // needs creating.
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('entry-group-2G')), findsOneWidget);
     expect(
       find.textContaining(
@@ -1521,11 +1527,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
 
     // Both new classes are on the list, each reading as *one* choice…
     expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
@@ -1604,10 +1606,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await syncThenOpenActions(tester);
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
 
     // Every class is on the list, and each namesake one reads as the hand-fix
     // notice — the resolution that is pre-selected for it.
@@ -1703,8 +1702,8 @@ void main() {
   });
 
   testWidgets(
-      'the Acties badges count one pending item per either/or, so the '
-      'Klasgroepen node agrees with the list it opens end-to-end (#251)',
+      'the badges count one pending item per either/or, so the Klasgroepen '
+      'rollup agrees with the list the tab renders end-to-end (#251)',
       (WidgetTester tester) async {
     // The real app, real fonts, real navigation. Two brand-new WISA classes,
     // each carrying the create-or-ignore either/or of #244 plus an Office 365
@@ -1731,13 +1730,11 @@ void main() {
     await syncThenOpenActions(tester);
     expect(harness.controller.error, isNull);
 
-    final klasgroepen = find.byKey(const ValueKey('rollup-groups'));
-    await tester.ensureVisible(klasgroepen);
-    expect(find.descendant(of: klasgroepen, matching: find.text('4')),
-        findsOneWidget,
+    // The stored Klasgroepen aggregate — what every badge on the classes is
+    // derived from — counts four decisions, never the six actions behind them.
+    expect(harness.controller.groupRollup!.pendingCount, 4,
         reason: 'two classes × (one either/or + one Office 365 group)');
-    expect(find.descendant(of: klasgroepen, matching: find.text('6')),
-        findsNothing,
+    expect(harness.controller.groupRollup!.pendingCount, isNot(6),
         reason: 'the badge used to count both halves of both choices');
 
     // Each student's own class carries one action and is badged once, so the
@@ -1751,16 +1748,25 @@ void main() {
     expect(
         find.descendant(of: klas1A, matching: find.text('1')), findsOneWidget);
 
-    // The number on the node is exactly what a confirmed apply of that list
-    // would write — the claim the badge and the dialog used to disagree on.
-    await tester.ensureVisible(klasgroepen);
-    await tester.tap(klasgroepen);
-    await tester.pumpAndSettle();
+    // The number on the aggregate is exactly what a confirmed apply of the
+    // Klasgroepen list would write — the claim the badge and the dialog used to
+    // disagree on. Each class row carries its own share of it, badged once.
+    await openKlasgroepen(tester);
     final groups = harness.controller.groupPendingEntries;
     expect(groups, hasLength(2));
     expect(harness.controller.applyScope(groups).systems, hasLength(4));
     expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
         findsNWidgets(2));
+    for (final klas in const ['1A', '1B']) {
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey('entry-group-$klas')),
+          matching: find.text('2'),
+        ),
+        findsOneWidget,
+        reason: 'one either/or plus one Office 365 group on each class',
+      );
+    }
     expect(tester.takeException(), isNull);
   });
 
@@ -1841,14 +1847,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
 
     // One proposal, named after the parent class `2F` — not `2F ECO`.
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(
       find.text('Maak de Office 365-groep GBS-2F voor klas 2F'),
       findsOneWidget,
@@ -1857,6 +1859,11 @@ void main() {
         reason: 'sub-groups get no group of their own');
     expect(find.byKey(const ValueKey('entry-group-1A')), findsNothing,
         reason: 'GBS-1A exists and holds its student — nothing to propose');
+    // …and the class is on the inventory all the same, ticked off (#227): the
+    // sibling rows say whose group they share rather than each looking like a
+    // class with a missing group of its own.
+    expect(find.byKey(const ValueKey('class-row-1A')), findsOneWidget);
+    expect(find.text('deelgroep van 2F'), findsNWidgets(2));
 
     // The group of a class that no longer exists is reported, never deleted.
     expect(
@@ -1918,6 +1925,100 @@ void main() {
   });
 
   testWidgets(
+      'the Klasgroepen tab is a full class inventory with a presence column '
+      'per system, and highlights the classes that need work end-to-end '
+      '(#227)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, real rail. Our school runs
+    // `1A` — correct in all three systems — and the sub-grouped `2F`
+    // (`2F ECO` + `2F MAW`), which has no Office 365 group; `GBS-9Z` is the
+    // group of a class that is gone.
+    //
+    // This is the layer that sees what the issue is about. The inventory is
+    // composed from the *stored* documents (which only the materializer fills)
+    // while the interactive halves come from the live dispatch, and the tab has
+    // to be reachable from the shell at all — three different halves of the app
+    // that only a full run puts on screen together. The motivating bug (#225's
+    // `2G`) was invisible precisely because every row in the old list was a
+    // change; a row that is right has to be on screen for a wrong one to stand
+    // out.
+    useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+
+    // Every class is a row — `1A` included, which raises nothing at all and so
+    // had no stored document whatsoever before this issue.
+    final healthy = find.byKey(const ValueKey('class-row-1A'));
+    expect(healthy, findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-2F MAW')), findsOneWidget);
+    final needsWork = find.byKey(const ValueKey('entry-group-2F ECO'));
+    expect(needsWork, findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-GBS-9Z')), findsOneWidget);
+    expect(find.textContaining('4 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget);
+
+    // Three presence columns, and a class that is right everywhere reads as
+    // three ticks plus the name of its Office 365 group.
+    for (final system in const ['WISA', 'Smartschool', 'Office 365']) {
+      expect(find.descendant(of: healthy, matching: find.text(system)),
+          findsOneWidget);
+    }
+    expect(
+      find.descendant(
+          of: healthy, matching: find.byIcon(Icons.check_circle_outline)),
+      findsNWidgets(3),
+    );
+    expect(find.descendant(of: healthy, matching: find.text('GBS-1A')),
+        findsOneWidget);
+    // The Office 365 column is per *class*: both sub-groups of `2F` name the one
+    // group they share instead of each looking like a class missing its own.
+    expect(find.text('deelgroep van 2F'), findsNWidgets(2));
+
+    // The rows that need work are highlighted; the one that does not is not.
+    final BuildContext context = tester.element(find.byType(ClassGroupsScreen));
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    Color borderOf(String klas) {
+      final Container box =
+          tester.widget<Container>(find.byKey(ValueKey('class-row-$klas')));
+      return ((box.decoration! as BoxDecoration).border! as Border).top.color;
+    }
+
+    expect(borderOf('2F ECO'), colors.primary);
+    expect(
+      borderOf('1A'),
+      isNot(colors.primary),
+      reason: 'a class that is in order must not read as one that needs work',
+    );
+
+    // The filter mirrors the Acties switch but starts **off** — the full
+    // picture is this tab's job (#226/#227).
+    final filter = find.byKey(const ValueKey('class-groups-only-attention'));
+    expect(tester.widget<Switch>(filter).value, isFalse);
+    await tester.ensureVisible(filter);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(healthy, findsNothing);
+    expect(needsWork, findsOneWidget);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(healthy, findsOneWidget);
+
+    // And the same list is not maintained in two places: the Klasgroepen node
+    // has left the Acties drill-down.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       "a student's Office 365 class group is reported on their own account "
       'end-to-end, pointing at the one class-level write (#245)',
       (WidgetTester tester) async {
@@ -1945,15 +2046,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
-    await tester.tap(find.text('Actions'));
-    await tester.pumpAndSettle();
-
     // The class rows still carry the single applyable write, on both classes.
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
-    // (Both classes raise the same kind of action, so the list also renders a
-    // "same situation" header carrying the first one's summary — hence
+    await openKlasgroepen(tester);
+    // (Both classes raise the same kind of action, so the tab also renders a
+    // "same situation" bulk header carrying the first one's summary — hence
     // findsWidgets rather than findsOneWidget.)
     expect(
       find.textContaining('Werk het ledenbestand van GBS-1A bij '
@@ -1964,7 +2060,8 @@ void main() {
       find.textContaining('Werk het ledenbestand van GBS-1B bij (1 toevoegen'),
       findsWidgets,
     );
-    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
 
     // Nothing applyable hangs off either class's *students*, so the work list
@@ -2401,7 +2498,6 @@ void main() {
 
     final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
     final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
-    final klasgroepen = find.byKey(const ValueKey('rollup-groups'));
 
     // Sam's stale Office 365 name is the only student work: 3C carries it,
     // badged 1, and the class groups carry four writes of their own.
@@ -2410,8 +2506,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
         find.descendant(of: klas3C, matching: find.text('1')), findsOneWidget);
-    expect(find.descendant(of: klasgroepen, matching: find.text('4')),
-        findsOneWidget);
+    expect(harness.controller.groupRollup!.pendingCount, 4);
 
     // Drill into 3C and apply that one entry, confirmation dialog and all.
     await tester.ensureVisible(klas3C);
@@ -2439,8 +2534,7 @@ void main() {
     expect(jaar3, findsNothing);
     // …while the work nobody touched is untouched: a re-derivation of what
     // changed, not a blanket reset.
-    expect(find.descendant(of: klasgroepen, matching: find.text('4')),
-        findsOneWidget);
+    expect(harness.controller.groupRollup!.pendingCount, 4);
 
     // Off the filter, the class is back in the inventory — now ticked off
     // rather than badged, with no sync between.
@@ -3273,16 +3367,16 @@ void main() {
     await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
 
-    // The class-group node is part of the shared overview on the Actions tab,
-    // straight from the store — no Synchronise tapped.
+    // The account overview is there, straight from the store — no Synchronise
+    // tapped.
     expect(find.text('Overzicht'), findsOneWidget);
-    expect(find.text('Klasgroepen'), findsWidgets);
 
-    // Drilling into it lists the orphan Smartschool classes with their notice.
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
+    // And so is the class inventory, on its own tab, listing the orphan
+    // Smartschool classes with their notice (#227).
+    await openKlasgroepen(tester);
 
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-2B')), findsOneWidget);
     expect(
         find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
     // …all without a single connector pull or link().
@@ -3331,14 +3425,15 @@ void main() {
     expect(readOnly, findsNothing,
         reason: 'the browsable overview is not the read-only surface');
 
-    // The Klasgroepen tree: static tiles, and now they say so.
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
-    expect(readOnly, findsOneWidget);
+    // The Klasgroepen tab: static rows, and they say so — the same
+    // announcement, keyed per view since #227 put the two on different tabs.
+    await openKlasgroepen(tester);
+    final klasgroepenReadOnly =
+        find.byKey(const ValueKey('class-groups-read-only'));
+    expect(klasgroepenReadOnly, findsOneWidget);
     expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
     expect(pendingTiles, findsNothing);
-    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    await tester.tap(find.text('Actions'));
     await tester.pumpAndSettle();
 
     // The classroom tree: the same announcement, and the cards themselves carry

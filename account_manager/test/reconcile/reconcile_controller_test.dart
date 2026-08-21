@@ -576,8 +576,12 @@ void main() {
       );
       expect(klas3C(h.controller).pendingCount, 1,
           reason: "the refused write left Sam's name as it was");
-      expect(h.controller.groupRollup, isNull,
+      // The node itself stays: since #227 it aggregates the class *inventory*,
+      // so the classes are still there — with nothing left to do on them.
+      expect(h.controller.groupRollup!.pendingCount, 0,
           reason: 'the class-group work that did land is gone');
+      expect(h.controller.groupRollup!.accountCount, greaterThan(0),
+          reason: 'the classes themselves did not disappear with their work');
     });
 
     test(
@@ -1238,9 +1242,8 @@ void main() {
       expect(h.controller.groupRollup!.accountCount, groups.length);
     });
 
-    test(
-        'a passive session opens the Klasgroepen drill-down with no pull or '
-        'link()', () async {
+    test('a passive session reads the class inventory with no pull or link()',
+        () async {
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
 
@@ -1258,20 +1261,33 @@ void main() {
 
       expect(s2.controller.groupRollup, isNotNull,
           reason: 'the group rollup came from the shared store');
+      expect(s2.controller.groupDocs, isNull,
+          reason: 'the inventory is read when the Klasgroepen tab asks for it');
 
-      await s2.controller.openGroups();
+      await s2.controller.loadGroups();
 
-      expect(s2.controller.showingGroups, isTrue);
       expect(s2.controller.groupDocs, isNotEmpty);
       // No connector pull and no linked view derived this session.
       expect(s2.wisaSyncs, 0);
       expect(s2.ssSyncs, 0);
       expect(s2.azSyncs, 0);
       expect(s2.controller.linked, isNull);
+    });
 
-      s2.controller.closeGroups();
-      expect(s2.controller.showingGroups, isFalse);
-      expect(s2.controller.groupDocs, isNull);
+    test('a sync drops the cached inventory so the tab re-reads it (#227)',
+        () async {
+      final h = ReconcileHarness();
+      // The tab is open before anything has been materialized: an empty
+      // inventory, read from an empty store.
+      await h.controller.loadGroups();
+      expect(h.controller.groupDocs, isEmpty);
+
+      await h.controller.sync();
+
+      expect(h.controller.groupDocs, isNull,
+          reason: 'the pre-sync inventory must not linger on screen');
+      await h.controller.loadGroups();
+      expect(h.controller.groupDocs, isNotEmpty);
     });
   });
 

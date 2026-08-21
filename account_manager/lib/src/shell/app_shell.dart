@@ -3,6 +3,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../reconcile/reconcile_bootstrap.dart';
 import '../screens/actions_screen.dart';
+import '../screens/class_groups_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
@@ -63,6 +64,14 @@ class _AppShellState extends State<AppShell> {
       label: 'Actions',
       icon: Icons.checklist_outlined,
       builder: (_) => ActionsScreen(bootstrap: widget.reconcileBootstrap),
+    ),
+    // The class inventory (#227). A destination of its own rather than a node
+    // inside Acties: it lists *every* class, so it answers "is this right?",
+    // which the action list structurally cannot.
+    ShellDestination(
+      label: 'Klasgroepen',
+      icon: Icons.groups_outlined,
+      builder: (_) => ClassGroupsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
       label: 'Passwords',

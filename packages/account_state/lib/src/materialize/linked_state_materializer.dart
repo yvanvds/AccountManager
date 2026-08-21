@@ -13,12 +13,13 @@ import 'materialized_state.dart';
 /// drill-down.
 ///
 /// Pure — no I/O. The sync process calls this after `link()`, then hands the
-/// result (with decisions merged in) to the `LinkedStore`. Group actions target
-/// a `LinkedGroup`, not an account, so they do not fit the per-account/classroom
-/// shape: each targeted group becomes its own [MaterializedGroup] in the
-/// [groupsPartition], and a single group [Rollup] ("Klasgroepen") surfaces them
-/// in the drill-down beside the school tree (#119). The account, staff, and
-/// group families — everything the drill-down renders — are covered.
+/// result (with decisions merged in) to the `LinkedStore`. A class group is a
+/// `LinkedGroup`, not an account, so it does not fit the per-account/classroom
+/// shape: every linked class becomes its own [MaterializedGroup] in the
+/// [groupsPartition] — one document per class since #227, not one per class with
+/// work — and a single group [Rollup] ("Klasgroepen") aggregates them for the
+/// Klasgroepen tab (#119). The account, staff, and group families — everything
+/// the views render — are covered.
 ///
 /// [schoolLabels] maps a WISA school id to its human label — the long name
 /// with its short code, built by [wisaSchoolLabels] from the operator's
@@ -122,7 +123,8 @@ MaterializedView materialize(
     ));
   }
 
-  final groups = _materializeGroups(linked.groupActions);
+  final groups =
+      _materializeGroups(linked.snapshot.groups, linked.groupActions);
 
   final rollups = buildRollups(accounts);
   final groupsRollup = _buildGroupsRollup(groups);
@@ -136,15 +138,30 @@ MaterializedView materialize(
   );
 }
 
-/// Turns the dispatched group actions into one [MaterializedGroup] per targeted
-/// class group, in first-seen (snapshot) order. Each targeted group carries the
-/// candidate actions raised against it — including the informational ones
-/// (`canApply == false`), which surface an orphan/empty-class notice.
+/// Turns the **linked class groups** into one [MaterializedGroup] each, in
+/// snapshot order, with the dispatched group actions joined on.
+///
+/// The input used to be the actions alone (#119), so a class with nothing wrong
+/// had no document at all: the persisted group partition held "the classes with
+/// work", never the class inventory. That is what #227 needed — an operator
+/// cannot tell a correct proposal from a wrong one without seeing what is
+/// already in place — so the linked group list drives it now and the actions are
+/// joined on by key. A class with no candidates is the healthy, normal case.
+///
+/// Each group still carries every candidate raised against it, including the
+/// informational ones (`canApply == false`) that surface an orphan/empty-class
+/// notice or a class Smartschool already has (#225/#250).
+///
+/// An action whose target is somehow not in [groups] still gets a document, so a
+/// dispatched action can never be dropped on the floor by the join.
 List<MaterializedGroup> _materializeGroups(
+  List<core.LinkedGroup> groups,
   List<actions.GroupAction> groupActions,
 ) {
   final byGroup = <String, List<CandidateAction>>{};
-  final targets = <String, core.LinkedGroup>{};
+  final targets = <String, core.LinkedGroup>{
+    for (final g in groups) _groupKey(g): g,
+  };
   for (final a in groupActions) {
     final key = _groupKey(a.target);
     (byGroup[key] ??= <CandidateAction>[]).add(_candidate(
@@ -166,16 +183,22 @@ List<MaterializedGroup> _materializeGroups(
         inWisa: entry.value.wisa != null,
         inSmartschool: entry.value.smartschool != null,
         inAzure: entry.value.azure != null,
-        candidates: byGroup[entry.key]!,
+        description: _groupDescription(entry.value),
+        className: entry.value.className,
+        // The Office 365 group is per *class*, so every sub-group record of a
+        // split class names the one group its parent owns (#228).
+        azureGroupName: entry.value.azure?.displayName,
+        candidates: byGroup[entry.key] ?? const [],
       ),
   ];
 }
 
 /// The single "Klasgroepen" [Rollup] over every [MaterializedGroup], or `null`
-/// when no group has a pending action (nothing to drill into). [accountCount] is
-/// the number of group docs, [pendingCount] the **decisions** they carry
-/// ([pendingDecisionCount], #251) — since #244 every new class of the school
-/// year is one create-or-ignore either/or, which counted as two.
+/// when there is no class at all. Since #227 [accountCount] is the size of the
+/// whole class inventory (it used to be "classes with work"); [pendingCount] is
+/// the **decisions** they carry ([pendingDecisionCount], #251) — since #244
+/// every new class of the school year is one create-or-ignore either/or, which
+/// counted as two.
 Rollup? _buildGroupsRollup(List<MaterializedGroup> groups) {
   if (groups.isEmpty) return null;
   var pending = 0;
@@ -402,6 +425,13 @@ String _groupKey(core.LinkedGroup g) => 'group|${_groupName(g) ?? '?'}';
 
 /// Display label for a group — its WISA / Smartschool / Azure name.
 String _groupLabel(core.LinkedGroup g) => _groupName(g) ?? '(groep)';
+
+/// The class's human description — WISA's wording first (it is the system of
+/// record for a class), Smartschool's as a fallback for an orphan (#227).
+String _groupDescription(core.LinkedGroup g) =>
+    _nonEmpty(g.wisa?.description ?? '') ??
+    _nonEmpty(g.smartschool?.description ?? '') ??
+    '';
 
 String? _groupName(core.LinkedGroup g) =>
     _nonEmpty(g.wisa?.name ?? '') ??

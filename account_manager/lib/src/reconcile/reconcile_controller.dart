@@ -499,7 +499,6 @@ class ReconcileController extends ChangeNotifier {
   List<String> _expandedPath = const <String>[];
   List<MaterializedAccount>? _classroomAccounts;
   bool _loadingClassroom = false;
-  bool _showingGroups = false;
   List<MaterializedGroup>? _groupDocs;
   bool _loadingGroups = false;
   SyncLease? _lock;
@@ -1329,7 +1328,9 @@ class ReconcileController extends ChangeNotifier {
   }
 
   /// The class-groups category summary (#163): the single "Klasgroepen" rollup
-  /// node, or [CategorySummary.empty] when no group carries an action to surface.
+  /// node, or [CategorySummary.empty] when the view holds no class at all. Its
+  /// total is the whole class inventory since #227 (it used to be the number of
+  /// classes with work), which is what the Klasgroepen tab lists.
   CategorySummary get groupSummary {
     final r = groupRollup;
     return r == null
@@ -1337,8 +1338,9 @@ class ReconcileController extends ChangeNotifier {
         : CategorySummary(total: r.accountCount, pending: r.pendingCount);
   }
 
-  /// The single "Klasgroepen" rollup node (#119), or `null` when no group has a
-  /// pending action to drill into.
+  /// The single "Klasgroepen" rollup node (#119), or `null` when the shared view
+  /// holds no class at all. Since #227 it aggregates the whole class inventory
+  /// ([Rollup.accountCount] is every class), not only the ones with work.
   Rollup? get groupRollup {
     for (final r in _rollups) {
       if (r.level == RollupLevel.groups) return r;
@@ -1346,14 +1348,12 @@ class ReconcileController extends ChangeNotifier {
     return null;
   }
 
-  /// Whether the group ("Klasgroepen") drill-down is currently open.
-  bool get showingGroups => _showingGroups;
-
-  /// The per-group docs of the open group drill-down, lazily loaded from the
-  /// store; `null` until the "Klasgroepen" node is opened (#119).
+  /// The class inventory as stored documents — every linked class since #227,
+  /// not only those with work. `null` until [loadGroups] has read them, and
+  /// again after a sync rewrote the view (the Klasgroepen tab re-reads).
   List<MaterializedGroup>? get groupDocs => _groupDocs;
 
-  /// Whether a group drill-down read is in flight.
+  /// Whether a class-inventory read is in flight.
   bool get loadingGroups => _loadingGroups;
 
   /// How many pending actions an apply pass would actually write — the
@@ -1596,7 +1596,7 @@ class ReconcileController extends ChangeNotifier {
         log.addError(core.Origin.all, 'Kon ${open.label} niet vernieuwen: $e');
       }
     }
-    if (_showingGroups) {
+    if (_groupDocs != null) {
       try {
         _groupDocs = await store.readGroups();
       } on Object catch (e) {
@@ -1634,14 +1634,18 @@ class ReconcileController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Opens the "Klasgroepen" drill-down (#119), lazily reading the per-group
-  /// docs from the store (no pull, no `link()`) — the group-family counterpart
-  /// of [openClassroom].
-  Future<void> openGroups() async {
-    _showingGroups = true;
-    _selectedClassroom = null;
-    _classroomAccounts = null;
-    _groupDocs = null;
+  /// Reads the **class inventory** — every stored class document — from the
+  /// store (no pull, no `link()`). One partition read; there are a few hundred
+  /// classes at most.
+  ///
+  /// The group-family counterpart of [openClassroom], except that it is not a
+  /// drill-down any more: since #227 Klasgroepen is a top-level tab that lists
+  /// every class rather than a node listing the ones with work, so the read is
+  /// "load the inventory" and there is nothing to close. A second call while a
+  /// read is in flight is a no-op; a sync drops [groupDocs] so the tab re-reads
+  /// the generation it just wrote.
+  Future<void> loadGroups() async {
+    if (_loadingGroups) return;
     _loadingGroups = true;
     notifyListeners();
     try {
@@ -1653,13 +1657,6 @@ class ReconcileController extends ChangeNotifier {
       _loadingGroups = false;
       notifyListeners();
     }
-  }
-
-  /// Closes the group drill-down, back to the overview.
-  void closeGroups() {
-    _showingGroups = false;
-    _groupDocs = null;
-    notifyListeners();
   }
 
   /// Dry-runs the chosen resolution of **every** pending entry (PAIN-3): the
@@ -2011,7 +2008,8 @@ class ReconcileController extends ChangeNotifier {
       _selectedClassroom = null;
       _expandedPath = const <String>[];
       _classroomAccounts = null;
-      _showingGroups = false;
+      // The class inventory goes with it: the Klasgroepen tab re-reads the
+      // generation this pass just wrote (#227).
       _groupDocs = null;
     } on TimeoutException {
       log.addError(

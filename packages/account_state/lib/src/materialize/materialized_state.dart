@@ -393,12 +393,19 @@ const String unassignedPartition = 'unassigned';
 /// One linked **class group** as a stored document (#119).
 ///
 /// The group-family counterpart of [MaterializedAccount]: where a per-account
-/// doc drills down through school / grade-year / classroom, a group action
-/// targets a `LinkedGroup` (an orphan Smartschool class, a WISA class that needs
-/// creating downstream, a class whose data drifted), which does not fit that
-/// per-account shape. So the materializer emits these as their own documents in
-/// the [groupsPartition], surfaced by the passive drill-down under a single
-/// "Klasgroepen" node rather than inside a classroom.
+/// doc drills down through school / grade-year / classroom, a group record is a
+/// `LinkedGroup` (a WISA class, an orphan Smartschool class, an Azure group left
+/// behind by a class that is gone), which does not fit that per-account shape.
+/// So the materializer emits these as their own documents in the
+/// [groupsPartition], surfaced by the Klasgroepen tab rather than inside a
+/// classroom.
+///
+/// Since #227 there is **one document per linked class**, not one per class with
+/// work: the docs used to be derived from the dispatched actions, so a class with
+/// nothing wrong had no document at all and could not be verified — which is
+/// exactly how a wrong proposal (#225's `2G`) passed unnoticed in a list where
+/// every row was a change. A class with no [candidates] is the normal, healthy
+/// case now.
 ///
 /// Like [MaterializedAccount] it is rewritten wholesale every sync, carries the
 /// per-system presence and the computed [candidates], and re-attaches the
@@ -411,6 +418,9 @@ class MaterializedGroup {
     required this.inWisa,
     required this.inSmartschool,
     required this.inAzure,
+    this.description = '',
+    this.className,
+    this.azureGroupName,
     this.candidates = const [],
     this.decisions = const [],
   });
@@ -428,6 +438,26 @@ class MaterializedGroup {
   final bool inSmartschool;
   final bool inAzure;
 
+  /// The class's description as WISA (or Smartschool) spells it — the human
+  /// line beside the bare name in the inventory (#227). Empty when neither
+  /// system carries one.
+  final String description;
+
+  /// The **bare** class name this record belongs to (`2F` for `2F ECO`), copied
+  /// off `LinkedGroup.className` (#228); `null` for a record with no WISA class
+  /// behind it (a Smartschool-only orphan).
+  ///
+  /// The Office 365 column is per *class*, not per linked group: the sub-groups
+  /// `2F ECO` / `2F MAW` / `2F MOW` / `2F STEMW` all map to the one group
+  /// `<PREFIX>-2F`. Carrying the bare name lets the inventory say so, instead of
+  /// showing four rows that each look like they own a group.
+  final String? className;
+
+  /// The display name of the Office 365 group this class is served by, when one
+  /// exists (`GBS-2F` for every sub-group of `2F`); `null` when the class has no
+  /// group yet. Not 1:1 with the row — see [className].
+  final String? azureGroupName;
+
   /// The computed candidate group actions (e.g. an orphan-class notice, a
   /// create/modify). Some are informational (`canApply == false`).
   final List<CandidateAction> candidates;
@@ -444,6 +474,16 @@ class MaterializedGroup {
   /// has not switched to.
   bool get hasPending => pendingDecisionCount(candidates) > 0;
 
+  /// Whether this class asks anything of the operator at all (#227) — the
+  /// predicate the Klasgroepen filter and the row highlight use.
+  ///
+  /// Deliberately **wider** than [hasPending]: a class can carry an
+  /// informational-only notice (`ClassExistsAsSmartschoolGroup` and friends,
+  /// #225/#250), which is real manual work with no automated write, so it adds
+  /// nothing to the pending count. Filtering on the pending count alone would
+  /// bury exactly the notices those issues exist to surface.
+  bool get needsAttention => candidates.isNotEmpty;
+
   MaterializedGroup withDecisions(List<AccountDecision> decisions) =>
       MaterializedGroup(
         id: id,
@@ -452,6 +492,9 @@ class MaterializedGroup {
         inWisa: inWisa,
         inSmartschool: inSmartschool,
         inAzure: inAzure,
+        description: description,
+        className: className,
+        azureGroupName: azureGroupName,
         candidates: candidates,
         decisions: decisions,
       );
@@ -464,6 +507,9 @@ class MaterializedGroup {
         'inWisa': inWisa,
         'inSmartschool': inSmartschool,
         'inAzure': inAzure,
+        if (description.isNotEmpty) 'description': description,
+        if (className != null) 'className': className,
+        if (azureGroupName != null) 'azureGroupName': azureGroupName,
         if (candidates.isNotEmpty)
           'candidates': [for (final c in candidates) c.toJson()],
         if (decisions.isNotEmpty)
@@ -478,6 +524,9 @@ class MaterializedGroup {
         inWisa: json['inWisa'] as bool? ?? false,
         inSmartschool: json['inSmartschool'] as bool? ?? false,
         inAzure: json['inAzure'] as bool? ?? false,
+        description: json['description'] as String? ?? '',
+        className: json['className'] as String?,
+        azureGroupName: json['azureGroupName'] as String?,
         candidates: [
           for (final c in (json['candidates'] as List? ?? const []))
             CandidateAction.fromJson(c as Map<String, dynamic>),
