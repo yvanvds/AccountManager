@@ -721,7 +721,12 @@ class _ActionsHeader extends StatelessWidget {
               key: const ValueKey('actions-dry-run'),
               onPressed: controller.busy || controller.applyableCount == 0
                   ? null
-                  : controller.dryRun,
+                  : () => _runWithProgress(
+                        context,
+                        controller: controller,
+                        dry: true,
+                        run: controller.dryRun,
+                      ),
               icon: const Icon(Icons.visibility_outlined),
               label: const Text('Dry-run alles'),
             ),
@@ -731,6 +736,7 @@ class _ActionsHeader extends StatelessWidget {
                   ? null
                   : () => _confirmAndApply(
                         context,
+                        controller: controller,
                         title: 'Openstaande acties toepassen?',
                         scope: controller.applyScope(controller.pendingEntries),
                         apply: controller.applyAll,
@@ -742,7 +748,13 @@ class _ActionsHeader extends StatelessWidget {
         ),
         if (controller.busy) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s4),
-          const LinearProgressIndicator(),
+          // Determinate, like the Reconcile header's (#176/#243): the value
+          // exists on the very same controller, and an indeterminate sweep here
+          // was a motionless bar that read as a hung app.
+          LinearProgressIndicator(
+            key: const ValueKey('actions-progress'),
+            value: controller.progress,
+          ),
         ],
       ],
     );
@@ -1019,14 +1031,16 @@ String applyConfirmationMessage(ApplyScope scope) {
       'bekijken.';
 }
 
-/// Shows the apply-confirmation dialog and, on confirm, runs [apply] (#110).
-/// Shared by the global, per-situation, and per-entry apply affordances so a
-/// write is always one deliberate confirmation.
+/// Shows the apply-confirmation dialog and, on confirm, runs [apply] behind the
+/// modal progress dialog (#110/#243). Shared by the global, per-situation, and
+/// per-entry apply affordances so a write is always one deliberate confirmation
+/// followed by one visible pass.
 ///
 /// [scope] is what that particular confirmation covers (#234) — the systems the
 /// pass will really reach, not a fixed pair.
 Future<void> _confirmAndApply(
   BuildContext context, {
+  required ReconcileController controller,
   required String title,
   required ApplyScope scope,
   required Future<void> Function() apply,
@@ -1049,8 +1063,145 @@ Future<void> _confirmAndApply(
       ],
     ),
   );
-  if (confirmed ?? false) await apply();
+  if (!(confirmed ?? false)) return;
+  if (!context.mounted) return;
+  await _runWithProgress(
+    context,
+    controller: controller,
+    dry: false,
+    run: apply,
+  );
 }
+
+/// Runs one dry-run/apply pass behind a **modal** progress dialog (#243).
+///
+/// An "Apply to all" over the September "zonder klas" bucket is sequential, one
+/// connector round-trip per action, and runs for minutes. Its only feedback used
+/// to be greyed-out buttons and an indeterminate bar in a page header the
+/// operator had usually scrolled past — so the app looked hung, and nothing
+/// stopped them scrolling, switching family tab, or navigating away mid-write.
+///
+/// Every affordance goes through here — global, per-situation, per-entry, and
+/// dry-run as well as apply — so the pass behaves the same wherever it is
+/// started. A dry-run over hundreds of accounts is exactly as slow and was
+/// exactly as silent.
+///
+/// The dialog's lifetime is bound to [run]'s future rather than to any observed
+/// controller state: it is dismissed in a `finally`, so a pass that fails — or
+/// one that returns immediately because another is already running — can never
+/// strand the operator behind a modal barrier.
+Future<void> _runWithProgress(
+  BuildContext context, {
+  required ReconcileController controller,
+  required bool dry,
+  required Future<void> Function() run,
+}) async {
+  final NavigatorState navigator = Navigator.of(context, rootNavigator: true);
+  unawaited(showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) =>
+        _ApplyProgressDialog(controller: controller, dry: dry),
+  ));
+  try {
+    await run();
+  } finally {
+    if (navigator.mounted) navigator.pop();
+  }
+}
+
+/// The modal dialog a pass runs behind (#243): how far along it is, and the
+/// account and action in flight right now.
+///
+/// Rebuilt from [ReconcileController.applyStep], which the pass publishes before
+/// each action off the very list the confirmation dialog was built from, so the
+/// count here and the change count the operator just agreed to are the same
+/// resolution of the work.
+class _ApplyProgressDialog extends StatelessWidget {
+  const _ApplyProgressDialog({required this.controller, required this.dry});
+
+  final ReconcileController controller;
+
+  /// Whether this pass writes nothing, which is the one thing the operator most
+  /// wants confirmed while staring at a progress dialog for two minutes.
+  final bool dry;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    // Non-dismissible: the pass is a sequence of live writes, so there is
+    // nothing useful to do behind it and plenty of harm in navigating away.
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        key: const ValueKey('actions-progress-dialog'),
+        title: Text(dry ? 'Dry-run bezig…' : 'Acties toepassen…'),
+        content: SizedBox(
+          // A [LinearProgressIndicator] demands all the width it is offered, so
+          // without a bound the dialog stretches across a desktop window. Fixed
+          // at a readable measure, clamped so a narrow window cannot overflow.
+          width: (MediaQuery.sizeOf(context).width - 112).clamp(240.0, 400.0),
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              final ApplyStep? step = controller.applyStep;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  // Always determinate — an indeterminate sweep is what #176
+                  // replaced on Reconcile, and is what this dialog exists to
+                  // stop showing.
+                  LinearProgressIndicator(
+                    key: const ValueKey('actions-progress-bar'),
+                    value: step == null ? 0.0 : (step.index - 1) / step.total,
+                  ),
+                  const SizedBox(height: PlinkSpacing.s4),
+                  Text(
+                    key: const ValueKey('actions-progress-count'),
+                    step == null
+                        ? 'Bezig…'
+                        : 'Actie ${step.index} van ${step.total}',
+                    style: text.titleSmall,
+                  ),
+                  if (step != null) ...<Widget>[
+                    const SizedBox(height: PlinkSpacing.s1),
+                    Text(
+                      key: const ValueKey('actions-progress-step'),
+                      '${step.target} — ${step.summary}',
+                      style: text.bodyMedium,
+                    ),
+                  ],
+                  if (step != null && step.followUps > 0) ...<Widget>[
+                    const SizedBox(height: PlinkSpacing.s2),
+                    Text(
+                      key: const ValueKey('actions-progress-followups'),
+                      // Named, never folded into the count: a follow-up is not
+                      // in the pending list, so it cannot be part of the total
+                      // the operator was shown (#230/#240/#245).
+                      '+ ${_followUpCount(step.followUps)} gestart door een '
+                      'eerdere actie.',
+                      style: text.bodySmall,
+                    ),
+                  ],
+                  const SizedBox(height: PlinkSpacing.s3),
+                  Text(
+                    dry
+                        ? 'Er wordt niets geschreven.'
+                        : 'Sluit het venster niet tot de reeks klaar is.',
+                    style: text.bodySmall,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _followUpCount(int n) => n == 1 ? '1 vervolgactie' : '$n vervolgacties';
 
 /// The stable widget key of one rollup node, by level — so a test (and the
 /// element tree) names a node the same way wherever it is rendered.
@@ -1543,7 +1694,12 @@ class _SituationHeader extends StatelessWidget {
             key: ValueKey('situation-dry-run-$key'),
             onPressed: controller.busy || applyable == 0
                 ? null
-                : () => controller.dryRunSituation(key),
+                : () => _runWithProgress(
+                      context,
+                      controller: controller,
+                      dry: true,
+                      run: () => controller.dryRunSituation(key),
+                    ),
             child: const Text('Dry-run alles'),
           ),
           const SizedBox(width: PlinkSpacing.s2),
@@ -1553,6 +1709,7 @@ class _SituationHeader extends StatelessWidget {
                 ? null
                 : () => _confirmAndApply(
                       context,
+                      controller: controller,
                       title: 'Toepassen op ${entries.length} accounts?',
                       // Scoped exactly as [ReconcileController.applySituation]
                       // scopes the pass — every entry in this situation, not
@@ -1636,7 +1793,12 @@ class _PendingEntryTile extends StatelessWidget {
                 key: ValueKey('entry-dry-run-${entry.targetId}'),
                 onPressed: controller.busy || !entry.canApply
                     ? null
-                    : () => controller.dryRunEntry(entry),
+                    : () => _runWithProgress(
+                          context,
+                          controller: controller,
+                          dry: true,
+                          run: () => controller.dryRunEntry(entry),
+                        ),
                 child: const Text('Dry-run'),
               ),
               const SizedBox(width: PlinkSpacing.s2),
@@ -1646,6 +1808,7 @@ class _PendingEntryTile extends StatelessWidget {
                     ? null
                     : () => _confirmAndApply(
                           context,
+                          controller: controller,
                           title: 'Toepassen voor ${entry.target}?',
                           scope: controller.applyScope(<PendingAccountEntry>[
                             entry,

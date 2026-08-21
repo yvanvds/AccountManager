@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:account_actions/account_actions.dart' show ActionOutcome;
 import 'package:account_core/account_core.dart' show Address, Origin;
 import 'package:account_manager/src/reconcile/reconcile_controller.dart'
     show ApplyScope;
@@ -5,6 +8,7 @@ import 'package:account_manager/src/screens/actions_screen.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smartschool_api/smartschool_api.dart' show SmartschoolAccount;
 
 import '../reconcile/reconcile_fakes.dart';
 
@@ -1159,5 +1163,244 @@ void main() {
     expect(tester.widget<FilledButton>(readOnlySync).onPressed, isNull);
     expect(find.textContaining('mieke@school'), findsOneWidget,
         reason: 'a dead button needs its reason on screen too');
+  });
+
+  group('a pass runs behind a modal progress dialog (#243)', () {
+    // An "Apply to all" over a September situation group writes hundreds of
+    // accounts, one connector round-trip at a time, for minutes. Its only
+    // feedback used to be greyed-out buttons plus an indeterminate bar in a
+    // page header the operator had long scrolled past — so a running pass was
+    // indistinguishable from a hung app, nothing named the account being
+    // written, and nothing stopped them scrolling away mid-write.
+
+    /// Two departed Smartschool-only students with **different names**, so an
+    /// assertion that the dialog names the account in flight is a real one.
+    ReconcileHarness twoDeparted({Future<void> Function()? gate}) =>
+        ReconcileHarness(
+          applyGate: gate,
+          wisa: wisaSnap(students: const []),
+          smartschool: ssSnap(
+            groups: const [],
+            accounts: <SmartschoolAccount>[
+              ssAccount(
+                uid: 'user0',
+                accountId: '0',
+                mail: 'user0@student.school.example',
+                givenName: 'Jan',
+                surname: 'Peeters',
+              ),
+              ssAccount(
+                uid: 'user1',
+                accountId: '1',
+                mail: 'user1@student.school.example',
+                givenName: 'Sofie',
+                surname: 'Claes',
+              ),
+            ],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+        );
+
+    /// The text of one line of the progress dialog.
+    String line(WidgetTester tester, String key) =>
+        tester.widget<Text>(find.byKey(ValueKey(key))).data!;
+
+    final Finder dialog = find.byKey(const ValueKey('actions-progress-dialog'));
+
+    testWidgets(
+        'an apply holds the operator in a non-dismissible dialog that names '
+        'each account and action as it goes, and closes itself when the pass '
+        'ends', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      // One fresh gate per action, so the pass can be walked step by step and
+      // the text observed on each — the bug is precisely that nobody could see
+      // which account was being written.
+      final gates = <Completer<void>>[];
+      final harness = twoDeparted(gate: () async {
+        final gate = Completer<void>();
+        gates.add(gate);
+        await gate.future;
+      });
+      await harness.controller.sync();
+      await tester
+          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      // Idle: no dialog.
+      expect(dialog, findsNothing);
+
+      await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+      await tester.tap(find.byKey(const ValueKey('actions-apply')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+
+      // Parked on the first action: the dialog is up, headed as an apply, and
+      // says how far along it is and on whom.
+      expect(dialog, findsOneWidget);
+      expect(gates, hasLength(1));
+      expect(find.text('Acties toepassen…'), findsOneWidget);
+      expect(line(tester, 'actions-progress-count'), 'Actie 1 van 2');
+      expect(
+          line(tester, 'actions-progress-step'), startsWith('Jan Peeters —'));
+      expect(line(tester, 'actions-progress-step'), contains('Smartschool'));
+
+      // Determinate, and it is a real bar — the motionless indeterminate sweep
+      // is exactly what this replaces (#176).
+      final bar = tester.widget<LinearProgressIndicator>(
+        find.byKey(const ValueKey('actions-progress-bar')),
+      );
+      expect(bar.value, 0.0);
+
+      // Modal: tapping the barrier does not get rid of it.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+
+      // The second action: the text follows the pass to the next account.
+      gates[0].complete();
+      await tester.pumpAndSettle();
+      expect(gates, hasLength(2));
+      expect(dialog, findsOneWidget);
+      expect(line(tester, 'actions-progress-count'), 'Actie 2 van 2');
+      expect(
+          line(tester, 'actions-progress-step'), startsWith('Sofie Claes —'));
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byKey(const ValueKey('actions-progress-bar')),
+            )
+            .value,
+        0.5,
+      );
+
+      // The pass ends: the dialog closes by itself, leaving the results.
+      gates[1].complete();
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(find.text('Apply result'), findsOneWidget);
+      expect(harness.controller.applyResults, hasLength(2));
+      expect(harness.soap.soapActions, isNotEmpty);
+    });
+
+    testWidgets(
+        'a dry-run gets the same dialog — just as slow, and it used to be just '
+        'as silent', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final gate = Completer<void>();
+      final harness = twoDeparted(gate: () => gate.future);
+      await harness.controller.sync();
+      await tester
+          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      // A dry-run needs no confirmation, so it goes straight into the pass.
+      await tester.ensureVisible(find.byKey(const ValueKey('actions-dry-run')));
+      await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
+      await tester.pumpAndSettle();
+
+      expect(dialog, findsOneWidget);
+      expect(find.text('Dry-run bezig…'), findsOneWidget);
+      expect(find.text('Er wordt niets geschreven.'), findsOneWidget);
+      expect(line(tester, 'actions-progress-count'), 'Actie 1 van 2');
+      expect(
+          line(tester, 'actions-progress-step'), startsWith('Jan Peeters —'));
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(find.text('Dry-run result'), findsOneWidget);
+      expect(harness.soap.soapActions, isEmpty);
+    });
+
+    testWidgets('a pass whose writes fail still clears the dialog',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      // The worst case for a modal: the pass blows up. Leaving the dialog up
+      // would lock the operator out of the app entirely, so its lifetime is
+      // bound to the pass's future, not to anything observed about the results.
+      final gate = Completer<void>();
+      final harness = twoDeparted(gate: () async {
+        await gate.future;
+        throw StateError('Smartschool weigerde de schrijfactie');
+      });
+      await harness.controller.sync();
+      await tester
+          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+      await tester.tap(find.byKey(const ValueKey('actions-apply')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(dialog, findsNothing,
+          reason: 'a failed pass must not trap anyone');
+      expect(find.text('Apply result'), findsOneWidget);
+      expect(
+        harness.controller.applyResults!.map((r) => r.outcome),
+        everyElement(ActionOutcome.failed),
+      );
+      expect(
+        find.textContaining('Smartschool weigerde de schrijfactie'),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('the per-situation and per-entry affordances run behind it too',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      var gate = Completer<void>();
+      final harness = twoDeparted(gate: () => gate.future);
+      await harness.controller.sync();
+      await tester
+          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
+
+      // The same-situation bulk dry-run.
+      final key = harness.controller.pendingEntries
+          .firstWhere((e) => e.family == 'student')
+          .situationKey;
+      final bulkDryRun = find.byKey(ValueKey('situation-dry-run-$key'));
+      await tester.ensureVisible(bulkDryRun);
+      await tester.tap(bulkDryRun);
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+      expect(find.text('Dry-run bezig…'), findsOneWidget);
+      expect(line(tester, 'actions-progress-count'), 'Actie 1 van 2');
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+
+      // The per-entry apply, which is a pass of exactly one.
+      gate = Completer<void>();
+      final entry = harness.controller.pendingEntries
+          .firstWhere((e) => e.target == 'Sofie Claes');
+      final id = entry.targetId;
+      await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+      await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(dialog, findsOneWidget);
+      expect(line(tester, 'actions-progress-count'), 'Actie 1 van 1');
+      expect(
+          line(tester, 'actions-progress-step'), startsWith('Sofie Claes —'));
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(find.text('Apply result'), findsOneWidget);
+    });
   });
 }

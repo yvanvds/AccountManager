@@ -1881,6 +1881,67 @@ CosmosLinkedStore cosmosLinkedStoreOver(
 // The harness: the real State layer over scripted syncers.
 // ---------------------------------------------------------------------------
 
+/// The real [StateApplier] with one seam: an optional [gate] awaited before
+/// every action a pass runs (#243).
+///
+/// A dry-run touches no connector and a scripted apply answers on the microtask
+/// queue, so an entire pass otherwise completes inside a single `tester.pump()`
+/// — leaving no frame in which the modal progress dialog exists to be asserted
+/// on. Parking on the gate freezes the pass exactly where the operator sees it:
+/// mid-flight, on a named account and a named action.
+///
+/// With no gate wired this is the plain applier, so the harness builds it
+/// unconditionally rather than duplicating the (long) construction twice.
+class GatedApplier extends StateApplier {
+  GatedApplier({
+    required this.gate,
+    required super.app,
+    required super.connectors,
+    required super.resolver,
+    required super.wisaRules,
+    required super.studentConfig,
+    required super.staffConfig,
+    super.classTree,
+    super.passwordQueue,
+    super.ourSchoolIds,
+  });
+
+  /// Awaited before each action; `null` for the ordinary harness.
+  final Future<void> Function()? gate;
+
+  Future<void> _park() async {
+    final g = gate;
+    if (g != null) await g();
+  }
+
+  @override
+  Future<ApplyResult> applyStudent(
+    actions.StudentAction action, {
+    actions.ApplyOptions options = const actions.ApplyOptions(),
+  }) async {
+    await _park();
+    return super.applyStudent(action, options: options);
+  }
+
+  @override
+  Future<ApplyResult> applyStaff(
+    actions.StaffAction action, {
+    actions.ApplyOptions options = const actions.ApplyOptions(),
+  }) async {
+    await _park();
+    return super.applyStaff(action, options: options);
+  }
+
+  @override
+  Future<ApplyResult> applyGroup(
+    actions.GroupAction action, {
+    actions.ApplyOptions options = const actions.ApplyOptions(),
+  }) async {
+    await _park();
+    return super.applyGroup(action, options: options);
+  }
+}
+
 /// One assembled reconcile stack against fakes: scripted per-system syncers
 /// (with call counters), a [StateApplier] wired to recording connectors, and
 /// the [ReconcileController] under test.
@@ -1900,6 +1961,7 @@ class ReconcileHarness {
     ss.SmartschoolSnapshot? ssInitial,
     az.AzureSnapshot? azureInitial,
     this.azureGate,
+    this.applyGate,
     this.azureTransport,
     this.smartschoolTransport,
     this.smartschoolRules = const <ss.SmartschoolImportRule>[],
@@ -2084,7 +2146,10 @@ class ReconcileHarness {
       ),
     );
 
-    applier = StateApplier(
+    applier = GatedApplier(
+      // Null unless a test wants the pass frozen mid-flight (#243); with no
+      // gate this is the plain StateApplier the app wires.
+      gate: applyGate,
       app: app,
       connectors: actions.Connectors(
         smartschool: ss.SmartschoolConnector.fromParts(
@@ -2186,6 +2251,12 @@ class ReconcileHarness {
   /// it — a seam to freeze a sync mid-pass (WISA + Smartschool already pulled)
   /// so a widget test can observe the busy progress bar (#176).
   final Completer<void>? azureGate;
+
+  /// When set, every action of a dry-run/apply pass parks here before it runs —
+  /// the seam that freezes a pass mid-flight so a test can observe the modal
+  /// progress dialog naming the account and action in flight (#243). Unlike
+  /// [azureGate] it covers dry-runs too, which touch no connector at all.
+  final Future<void> Function()? applyGate;
 
   /// When set, the Azure pull is the **production** one — a real
   /// [az.AzureConnector] + [azureSyncer] over this transport — instead of the

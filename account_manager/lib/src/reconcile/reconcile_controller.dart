@@ -156,6 +156,53 @@ class ApplyScope {
       ApplyScope(systems: <core.Origin>[], chained: <core.Origin>{});
 }
 
+/// The action a running dry-run/apply pass is on **right now** (#243) — what the
+/// modal progress dialog names while the operator waits.
+///
+/// Published by [ReconcileController._run] straight off the list it is walking:
+/// the selected, applyable option of each choice, which is the very same
+/// resolution [ReconcileController.applyScope] summarised for the confirmation
+/// dialog a moment earlier. The progress dialog therefore counts exactly the
+/// actions the operator just agreed to, rather than resolving the work a second
+/// way that could disagree with what they were shown.
+class ApplyStep {
+  const ApplyStep({
+    required this.dry,
+    required this.index,
+    required this.total,
+    required this.target,
+    required this.summary,
+    this.followUps = 0,
+  });
+
+  /// Whether this pass is a dry-run (nothing is written) rather than an apply.
+  final bool dry;
+
+  /// 1-based position of the action in flight within the planned list.
+  final int index;
+
+  /// How many actions the pass set out to run.
+  ///
+  /// The *planned* actions only, and deliberately so. A chained follow-up
+  /// (#230/#240/#245) is not in the pending list at all: dispatch is a pure
+  /// function of the record as it stands, so the second link only exists once
+  /// the first write has landed and relinked, and its own `evaluate` decides
+  /// then whether it runs. It can never be counted up front — so it is reported
+  /// separately in [followUps] instead of quietly inflating a total the operator
+  /// was already shown.
+  final int total;
+
+  /// Human label of the record this action targets ("Jan Peeters").
+  final String target;
+
+  /// The action's one-line change summary ("Maak een nieuw Office 365 account").
+  final String summary;
+
+  /// Extra writes that chained off already-finished steps of this pass — the
+  /// follow-ups [total] structurally cannot include.
+  final int followUps;
+}
+
 /// One decision point within a [PendingAccountEntry]: either a lone action or a
 /// set of mutually-exclusive alternatives, exactly one of which is [selected].
 ///
@@ -418,6 +465,7 @@ class ReconcileController extends ChangeNotifier {
 
   ReconcilePhase _phase = ReconcilePhase.idle;
   double _progress = 0.0;
+  ApplyStep? _applyStep;
   LinkedState? _linked;
   bool _noChangesNeeded = false;
   String? _error;
@@ -483,6 +531,24 @@ class ReconcileController extends ChangeNotifier {
     final next = value.clamp(0.0, 1.0);
     if (next <= _progress) return;
     _progress = next;
+    notifyListeners();
+  }
+
+  /// The action the running dry-run/apply pass is on, or `null` when no pass is
+  /// walking actions (#243). Drives the modal progress dialog's text, so a pass
+  /// that writes hundreds of accounts says which account and which action it is
+  /// on instead of leaving the operator with greyed-out buttons for minutes.
+  ApplyStep? get applyStep => _applyStep;
+
+  /// Publishes the pass's current step and repaints.
+  ///
+  /// Its own notification rather than something riding along with
+  /// [_setProgress]: that one ignores any value not greater than the current
+  /// one, so a step published through it would be dropped exactly when the bar
+  /// does not move — the first action of every pass, and every action of a pass
+  /// of one.
+  void _setApplyStep(ApplyStep step) {
+    _applyStep = step;
     notifyListeners();
   }
 
@@ -1561,6 +1627,18 @@ class ReconcileController extends ChangeNotifier {
 
     try {
       for (final (index, option) in selected.indexed) {
+        // Name the action *before* it runs, so the modal progress dialog says
+        // what is in flight rather than what just finished (#243). `results`
+        // already holds one row per write performed, so anything in it beyond
+        // the [index] steps that completed is a chained follow-up.
+        _setApplyStep(ApplyStep(
+          dry: dry,
+          index: index + 1,
+          total: selected.length,
+          target: option.target,
+          summary: option.changes.summary,
+          followUps: results.length - index,
+        ));
         results.addAll(await _applyOne(
           () => _applyAny(option.action, options),
           option.target,
@@ -1584,6 +1662,7 @@ class ReconcileController extends ChangeNotifier {
         _applyResults = results;
         _dryRunResults = null;
       }
+      _applyStep = null;
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       // _applyOne swallows per-action failures; reaching here means the pass
@@ -1593,6 +1672,8 @@ class ReconcileController extends ChangeNotifier {
       } else {
         _applyResults = results;
       }
+      // Nothing is in flight any more, however the pass ended (#243).
+      _applyStep = null;
       _fail(e);
     }
   }
@@ -1848,6 +1929,7 @@ class ReconcileController extends ChangeNotifier {
   void _begin(ReconcilePhase phase) {
     _phase = phase;
     _progress = 0.0;
+    _applyStep = null;
     _error = null;
     _noChangesNeeded = false;
     _dryRunResults = null;

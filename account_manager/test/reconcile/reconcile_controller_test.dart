@@ -9,6 +9,19 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'reconcile_fakes.dart';
 
+/// Collects every distinct [ApplyStep] [controller] publishes from now on — the
+/// sequence the modal progress dialog renders as a pass walks its actions
+/// (#243). A step is notified separately from the progress value, so listening
+/// is the only way to see the ones a pass passed through.
+List<ApplyStep> recordSteps(ReconcileController controller) {
+  final steps = <ApplyStep>[];
+  controller.addListener(() {
+    final step = controller.applyStep;
+    if (step != null && !identical(steps.lastOrNull, step)) steps.add(step);
+  });
+  return steps;
+}
+
 /// A [SignalPublisher] whose every publish throws — to prove a broadcast
 /// failure is swallowed and never fails the pass that triggered it (#116).
 class _ThrowingPublisher implements SignalPublisher {
@@ -591,6 +604,62 @@ void main() {
       );
       expect(h.graph.createdUsers, isEmpty);
       expect(h.soap.soapActions, isEmpty);
+    });
+
+    test(
+        'the published step counts planned actions and reports the chained '
+        'write apart from them (#243)', () async {
+      // The progress dialog's total can only ever be the *planned* actions:
+      // dispatch is a pure function of the record as it stands, so the
+      // Smartschool create does not exist until the Azure create has landed and
+      // relinked. Folding it into the total would mean promising a number
+      // nobody could know — so it is reported as a follow-up instead.
+      final h = newIntakeHarness();
+      await h.controller.sync();
+
+      final steps = recordSteps(h.controller);
+      await h.controller.applyAll();
+
+      expect(steps.map((s) => s.total).toSet(), <int>{steps.length},
+          reason: 'the planned total never moves mid-pass');
+      expect(
+          steps.map((s) => s.index), List.generate(steps.length, (i) => i + 1));
+      expect(steps.first.summary, 'Maak een nieuw Office 365 account');
+      expect(steps.first.followUps, 0);
+      expect(steps.first.dry, isFalse);
+      // The Azure create pulled the Smartschool create in behind it, so the
+      // pass performed one write more than it planned actions.
+      expect(h.controller.applyResults!.length, steps.length + 1);
+      expect(steps.skip(1).map((s) => s.followUps), everyElement(1));
+      // Nothing is in flight once the pass is over.
+      expect(h.controller.applyStep, isNull);
+    });
+  });
+
+  group('the pass publishes the step it is on (#243)', () {
+    test('a dry-run names each action before it runs, and clears at the end',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      final steps = recordSteps(h.controller);
+      await h.controller.dryRun();
+
+      expect(steps, isNotEmpty);
+      expect(steps.map((s) => s.dry), everyElement(isTrue));
+      expect(steps.map((s) => s.target), everyElement(isNotEmpty));
+      expect(steps.map((s) => s.summary), everyElement(isNotEmpty));
+      expect(steps.last.index, steps.last.total);
+      expect(h.controller.applyStep, isNull);
+    });
+
+    test('a sync publishes no step — it walks no actions', () async {
+      final h = ReconcileHarness();
+      final steps = recordSteps(h.controller);
+      await h.controller.sync();
+
+      expect(steps, isEmpty);
+      expect(h.controller.applyStep, isNull);
     });
   });
 

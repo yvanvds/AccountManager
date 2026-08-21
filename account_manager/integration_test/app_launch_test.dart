@@ -291,6 +291,172 @@ void main() {
     expect(harness.controller.busy, isFalse);
   });
 
+  /// Two departed Smartschool-only students with different names, each raising
+  /// the unregister/delete choice — a two-action pass whose steps are told
+  /// apart by the account they name. [gate] parks every action so the pass can
+  /// be observed frozen exactly where the operator waits (#243).
+  ReconcileHarness twoDepartedHarness(Future<void> Function() gate) =>
+      ReconcileHarness(
+        applyGate: gate,
+        wisa: wisaSnap(students: const []),
+        smartschool: ssSnap(
+          groups: const [],
+          accounts: [
+            ssAccount(
+              uid: 'user0',
+              accountId: '0',
+              mail: 'user0@student.school.example',
+              givenName: 'Jan',
+              surname: 'Peeters',
+            ),
+            ssAccount(
+              uid: 'user1',
+              accountId: '1',
+              mail: 'user1@student.school.example',
+              givenName: 'Sofie',
+              surname: 'Claes',
+            ),
+          ],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+      );
+
+  /// Syncs on Reconcile and lands on the Actions tab, the way the operator gets
+  /// to the apply affordances.
+  Future<void> syncThenOpenActions(WidgetTester tester) async {
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+  }
+
+  /// The text of one line of the modal progress dialog.
+  String progressLine(WidgetTester tester, String key) =>
+      tester.widget<Text>(find.byKey(ValueKey(key))).data!;
+
+  final Finder progressDialog =
+      find.byKey(const ValueKey('actions-progress-dialog'));
+
+  testWidgets(
+      'an apply pass holds the operator in a modal progress dialog naming the '
+      'account and action in flight, and clears when the pass ends (#243)',
+      (WidgetTester tester) async {
+    // The real app over the offline harness, with the pass parked one action at
+    // a time. An "Apply to all" over a September situation group writes
+    // hundreds of accounts sequentially and runs for minutes; its only feedback
+    // used to be greyed-out buttons and an indeterminate bar in a page header
+    // the operator had scrolled past, and nothing stopped them navigating away
+    // mid-write. Composition is the point here: the dialog has to sit over the
+    // real shell, in the real font, above a page that is still scrollable.
+    useTallWindow(tester);
+    final gates = <Completer<void>>[];
+    final harness = twoDepartedHarness(() async {
+      final gate = Completer<void>();
+      gates.add(gate);
+      await gate.future;
+    });
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    // Idle: no dialog.
+    expect(progressDialog, findsNothing);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Parked on the first action: the dialog names how far along the pass is
+    // and whose account is being written right now.
+    expect(progressDialog, findsOneWidget);
+    expect(gates, hasLength(1));
+    expect(find.text('Acties toepassen…'), findsOneWidget);
+    expect(progressLine(tester, 'actions-progress-count'), 'Actie 1 van 2');
+    expect(progressLine(tester, 'actions-progress-step'),
+        startsWith('Jan Peeters —'));
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const ValueKey('actions-progress-bar')),
+          )
+          .value,
+      isNotNull,
+      reason: 'determinate, not the motionless sweep this replaces',
+    );
+
+    // Modal: the barrier is there and a tap outside does not dismiss it, so the
+    // operator cannot scroll or navigate away mid-write.
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(progressDialog, findsOneWidget);
+
+    // The text follows the pass onto the second account.
+    gates[0].complete();
+    await tester.pumpAndSettle();
+    expect(progressLine(tester, 'actions-progress-count'), 'Actie 2 van 2');
+    expect(progressLine(tester, 'actions-progress-step'),
+        startsWith('Sofie Claes —'));
+
+    // The pass finishes: the dialog closes by itself, leaving the results.
+    gates[1].complete();
+    await tester.pumpAndSettle();
+    expect(progressDialog, findsNothing);
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(harness.soap.soapActions, isNotEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a pass whose writes fail still clears the progress dialog (#243)',
+      (WidgetTester tester) async {
+    // The worst case for a modal: leaving it up after a failed pass would lock
+    // the operator out of the whole app, so its lifetime is bound to the pass's
+    // future rather than to anything observed about the results.
+    useTallWindow(tester);
+    final gate = Completer<void>();
+    final harness = twoDepartedHarness(() async {
+      await gate.future;
+      throw StateError('Smartschool weigerde de schrijfactie');
+    });
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(progressDialog, findsOneWidget);
+
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(progressDialog, findsNothing);
+    expect(find.text('Apply result'), findsOneWidget);
+    expect(
+      find.textContaining('Smartschool weigerde de schrijfactie'),
+      findsWidgets,
+      reason: 'the failure is reported on the page, not behind a stuck modal',
+    );
+    // The app is usable again: the affordances are live and reachable.
+    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
       'a completed sync logs a terminal "Sync complete … Ready." line and the '
       'last-sync box renders a row per system end-to-end (#162/#188)',
