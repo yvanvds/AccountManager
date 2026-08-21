@@ -311,6 +311,57 @@ void main() {
       expect(recovery, contains('DeltaLink older than 30 days'));
     });
 
+    test(
+        'a pass that recovered logs no error at all, and never prints the dead '
+        'token (#229)', () async {
+      // The recovery of #213 worked, but the transport still logged the raw
+      // Graph failure with `addError` — carrying the whole ~2.5 KB
+      // `$deltatoken` in the URL — so a pass that fully recovered read as a
+      // broken one in the operator's log.
+      const dead = 'DEADTOKEN-2exa-dDwCZX0Ak-7duGZuSQD3Pc';
+      final transport = FakeGraphTransport(rejectingRoute(graphError(
+        400,
+        'Request_UnsupportedQuery',
+        'DeltaLink older than 30 days is not supported.',
+      )));
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: transport,
+        log: log,
+      );
+
+      final snapshot = await connector.sync(
+        deltaToken: dead,
+        previous: previousAt(DateTime.now().subtract(const Duration(days: 46))),
+      );
+
+      // The pass really did recover.
+      expect(snapshot.deltaToken, 'PRIMEDTOKEN123');
+      expect(snapshot.users, hasLength(3));
+
+      // Nothing red: a failure the connector handles is not logged at the same
+      // severity as one it does not.
+      expect(log.errors, isEmpty);
+
+      // …and the resume token is nowhere in the log, at any severity.
+      for (final line in [...log.messages, ...log.errors]) {
+        expect(line, isNot(contains(dead)));
+      }
+      // The transport line is still there as a detail — the operator can see
+      // what Graph actually said.
+      expect(
+        log.messages,
+        contains(contains('DeltaLink older than 30 days')),
+      );
+      // And so is the connector's own explanation, with the token's age.
+      expect(
+        log.messages,
+        contains(contains('Graph rejected the stored delta token')),
+      );
+    });
+
     test('Graph\'s documented 410 resyncRequired recovers the same way',
         () async {
       final transport = FakeGraphTransport(rejectingRoute(

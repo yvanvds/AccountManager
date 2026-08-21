@@ -45,6 +45,16 @@ becoming a dead end:
   Request_UnsupportedQuery` that is *not* about the delta token (a malformed
   query) still throws, so a real bug stays loud instead of degrading into an
   expensive full read on every pass.
+- **A recovered failure is never logged as an error.** `GraphClient` logs every
+  non-2xx reply, and on its own cannot tell a rejection the caller handles from a
+  fatal one — so a pass that fully recovered used to read as a broken one.
+  `UserManager.delta` therefore hands the client the failure shape it expects
+  (`GraphFailurePredicate`); a match is logged as an ordinary detail beside the
+  connector's own explanation, everything else stays an error. Logged URLs also
+  have their `$deltatoken` / `$skiptoken` values replaced with `<redacted>` at
+  every severity — a resume token is kilobytes of live tenant state, and log
+  lines end up pasted into issues. `$deltatoken=latest` is Graph's own sentinel,
+  not a secret, and stays readable.
 
 ### Server-side filter, and where it falls back
 

@@ -243,13 +243,28 @@ class UserManager {
 
   /// Incremental delta read: resumes from a token returned by a previous
   /// [deltaInitial]/[delta] call. Only changed and removed users come back.
+  ///
+  /// This is the one read whose caller (`AzureConnector.sync`) comes prepared
+  /// for a refusal: a token Graph no longer accepts is recovered from with a
+  /// full read (#213). The transport is told so, so it logs that reply as a
+  /// detail rather than as an error the operator should act on (#229). Every
+  /// other failure — including a resume that fails for any other reason — stays
+  /// an error.
   Future<UserDelta> delta(String deltaToken, String schoolPrefix) {
     final url = _graph.uri('users/delta', query: {r'$deltatoken': deltaToken});
-    return _walkDelta(url, schoolPrefix);
+    return _walkDelta(
+      url,
+      schoolPrefix,
+      expected: (e) => e.isRejectedDeltaToken,
+    );
   }
 
-  Future<UserDelta> _walkDelta(Uri url, String schoolPrefix) async {
-    final result = await _graph.getDelta(url);
+  Future<UserDelta> _walkDelta(
+    Uri url,
+    String schoolPrefix, {
+    GraphFailurePredicate? expected,
+  }) async {
+    final result = await _graph.getDelta(url, expected: expected);
     final changed = <AzureUser>[];
     final removedIds = <String>[];
     for (final row in result.values) {

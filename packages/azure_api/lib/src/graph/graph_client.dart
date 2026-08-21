@@ -17,6 +17,12 @@ class DeltaResult {
   const DeltaResult({required this.values, this.deltaToken});
 }
 
+/// Tests a non-2xx Graph reply for "this is the failure I came prepared for".
+///
+/// Handed to [GraphClient] by a caller that recovers from a specific shape, so
+/// the transport can log that reply as a detail instead of an error (#229).
+typedef GraphFailurePredicate = bool Function(GraphException failure);
+
 /// Authenticated, paging-aware Microsoft Graph client.
 ///
 /// Sits above the swappable [GraphTransport]: resolves a bearer token from the
@@ -56,11 +62,14 @@ class GraphClient {
 
   /// GET a single resource (or the first page of a collection) and return the
   /// decoded JSON object.
+  ///
+  /// [expected] declares a failure shape the caller recovers from; see [_send].
   Future<Map<String, dynamic>> getJson(
     Uri url, {
     Map<String, String>? headers,
+    GraphFailurePredicate? expected,
   }) async {
-    final resp = await _send('GET', url, headers: headers);
+    final resp = await _send('GET', url, headers: headers, expected: expected);
     return resp.json;
   }
 
@@ -90,12 +99,18 @@ class GraphClient {
   /// Walk a delta collection: follows `@odata.nextLink` to gather all changed
   /// resources, then captures the `$deltatoken` from the terminal
   /// `@odata.deltaLink` for the next incremental sync.
-  Future<DeltaResult> getDelta(Uri url, {Map<String, String>? headers}) async {
+  ///
+  /// [expected] declares a failure shape the caller recovers from; see [_send].
+  Future<DeltaResult> getDelta(
+    Uri url, {
+    Map<String, String>? headers,
+    GraphFailurePredicate? expected,
+  }) async {
     final items = <Map<String, dynamic>>[];
     String? deltaToken;
     Uri? next = url;
     while (next != null) {
-      final body = await getJson(next, headers: headers);
+      final body = await getJson(next, headers: headers, expected: expected);
       items.addAll(_values(body));
       next = _nextLink(body);
       final deltaLink = body['@odata.deltaLink'] as String?;
@@ -139,11 +154,20 @@ class GraphClient {
     await _send('DELETE', url, headers: headers);
   }
 
+  /// Issues one request and turns a non-2xx reply into a [GraphException].
+  ///
+  /// The exception is always thrown; [expected] only decides how loudly the
+  /// reply is logged. Without it the transport cannot know whether the caller
+  /// recovers, so every failure is an error — which is how a delta-token
+  /// rejection the connector fully recovers from still painted the operator's
+  /// log red (#229). A caller that comes prepared for a shape says so, and that
+  /// reply is logged as an ordinary detail beside the caller's own explanation.
   Future<GraphResponse> _send(
     String method,
     Uri url, {
     String? body,
     Map<String, String>? headers,
+    GraphFailurePredicate? expected,
   }) async {
     final token = await _auth.getAccessToken();
     final request = GraphRequest(
@@ -159,10 +183,69 @@ class GraphClient {
     final resp = await _transport.send(request);
     if (!resp.isSuccess) {
       final ex = GraphException(resp.statusCode, resp.body);
-      _log?.addError(core.Origin.azure, '$method $url → $ex');
+      final line = '$method ${redactUrl(url)} → $ex';
+      if (expected != null && expected(ex)) {
+        _log?.addMessage(
+          core.Origin.azure,
+          '$line (handled — the sync recovers from this)',
+        );
+      } else {
+        _log?.addError(core.Origin.azure, line);
+      }
       throw ex;
     }
     return resp;
+  }
+
+  /// Query parameters whose values are opaque resume tokens.
+  ///
+  /// A Graph delta token runs to kilobytes, means nothing to a human, and is
+  /// live state for the tenant — and the operator pastes log lines into issues.
+  /// It is stripped from every logged URL at every severity (#229).
+  static const Set<String> _opaqueTokenParams = {
+    r'$deltatoken',
+    r'$skiptoken',
+  };
+
+  /// What replaces an opaque token in a logged URL.
+  static const String _redactedToken = '<redacted>';
+
+  /// Graph's own sentinel for "mint me a token for right now" — a literal, not
+  /// a secret, and the one thing that tells a primed full read apart from a
+  /// resume in the log. Kept readable.
+  static const String _latestToken = 'latest';
+
+  /// [url] as it should appear in a log line: every opaque resume token
+  /// replaced by [_redactedToken], everything else byte-for-byte unchanged.
+  static String redactUrl(Uri url) {
+    final query = url.query;
+    if (query.isEmpty) return url.toString();
+    final redacted = _redactQuery(query);
+    if (redacted == query) return url.toString();
+    // Pure string surgery on the rendered URL: rebuilding through [Uri] would
+    // re-encode the placeholder (and re-encode the untouched parts besides).
+    final full = url.toString();
+    final start = full.indexOf('?') + 1;
+    final end = url.hasFragment ? full.indexOf('#', start) : full.length;
+    return full.replaceRange(start, end, redacted);
+  }
+
+  static String _redactQuery(String query) {
+    final pairs = <String>[];
+    for (final pair in query.split('&')) {
+      final eq = pair.indexOf('=');
+      if (eq < 0) {
+        pairs.add(pair);
+        continue;
+      }
+      final name = pair.substring(0, eq);
+      final value = pair.substring(eq + 1);
+      final redact = _opaqueTokenParams
+              .contains(Uri.decodeComponent(name).toLowerCase()) &&
+          Uri.decodeComponent(value) != _latestToken;
+      pairs.add(redact ? '$name=$_redactedToken' : pair);
+    }
+    return pairs.join('&');
   }
 
   List<Map<String, dynamic>> _values(Map<String, dynamic> body) {

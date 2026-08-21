@@ -81,6 +81,9 @@ class AzureConnector {
   /// the rejection is logged with the token's age, and the pass falls back to a
   /// full read that primes a fresh token. The operator gets a complete snapshot
   /// instead of an aborted pass that would re-send the same dead token forever.
+  /// Because the recovery is complete, nothing about it is logged as an error —
+  /// [UserManager.delta] tells the transport this refusal is expected, so a pass
+  /// that recovered does not read as a broken one (#229).
   ///
   /// **Token invariant:** the token on the returned snapshot is always one
   /// minted during *this* sync — from this pass's delta walk, or from
@@ -108,7 +111,7 @@ class AzureConnector {
     try {
       delta = await users.delta(deltaToken, credentials.schoolPrefix);
     } on GraphException catch (e) {
-      if (!_isRejectedDeltaToken(e)) rethrow;
+      if (!e.isRejectedDeltaToken) rethrow;
       _log?.addMessage(
         core.Origin.azure,
         'Azure: Graph rejected the stored delta token '
@@ -226,28 +229,6 @@ class AzureConnector {
       'school filter does not match (transferred students).',
     );
     return byId.values.toList();
-  }
-
-  /// Whether [e] means "this delta token is no longer usable", the one Graph
-  /// failure [sync] recovers from by re-reading in full (#213).
-  ///
-  /// Two shapes, both of them Graph's own:
-  /// - `410 Gone` — the documented `resyncRequired` / `syncStateNotFound`
-  ///   "start over" signal for a delta query.
-  /// - `400 Bad Request` with `Request_UnsupportedQuery` **and** a message
-  ///   naming the delta link, e.g. *"DeltaLink older than 30 days is not
-  ///   supported."* The code alone is deliberately not enough: Graph also
-  ///   returns it for a genuinely malformed query, which must stay loud rather
-  ///   than silently degrade into an expensive full read on every pass.
-  static bool _isRejectedDeltaToken(GraphException e) {
-    if (e.statusCode == 410) return true;
-    if (e.statusCode != 400) return false;
-    if (e.code?.toLowerCase() != 'request_unsupportedquery') return false;
-    final detail = (e.message ?? e.body).toLowerCase();
-    return detail.contains('deltalink') ||
-        detail.contains('delta link') ||
-        detail.contains('deltatoken') ||
-        detail.contains('delta token');
   }
 
   /// How old the token Graph just rejected was, for the log line — the

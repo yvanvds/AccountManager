@@ -3368,7 +3368,8 @@ void main() {
 
   testWidgets(
       'a Check for drift whose stored Azure delta token Graph refuses still '
-      'finishes, on a full re-read that leaves a usable token behind (#213)',
+      'finishes, on a full re-read that leaves a usable token behind, and '
+      'reads as the clean pass it was (#213/#229)',
       (WidgetTester tester) async {
     // The real app over the *production* Azure pull — a real AzureConnector
     // behind the real azureSyncer — with Graph answering a resume from the
@@ -3439,6 +3440,32 @@ void main() {
     expect(find.textContaining('Graph rejected the stored delta token'),
         findsOneWidget);
     expect(find.textContaining('stored 15h'), findsOneWidget);
+
+    // …and that is *all* the operator sees about it (#229). The recovery
+    // worked, so nothing in the panel is red: the transport used to log the raw
+    // Graph failure with addError right below the explanation, which made a
+    // pass that fully recovered read as a broken one.
+    expect(
+      harness.log.entries.where((e) => e.isError).map((e) => e.message),
+      isEmpty,
+    );
+    // Nor does any line — at any severity, on screen or in the buffer — carry
+    // the resume token itself, which the operator pastes into issues.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      everyElement(isNot(contains('DEADTOKEN'))),
+    );
+    expect(find.textContaining('DEADTOKEN'), findsNothing);
+    // The transport line survives as an ordinary detail rather than being
+    // dropped, so what Graph actually answered is still there to read.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains(allOf(
+        contains('users/delta'),
+        contains('DeltaLink older than 30 days'),
+        contains('handled'),
+      )),
+    );
 
     // A second drift check resumes from that fresh token: the recovery restored
     // incremental syncing rather than condemning the app to full reads.

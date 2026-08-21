@@ -70,6 +70,35 @@ class GraphException implements Exception {
   /// Graph's `error.message`, when present.
   String? get message => _errorField('message');
 
+  /// Whether this is Graph's way of saying *"the delta token you resumed from
+  /// is no longer usable"* — the one Graph failure the Azure connector recovers
+  /// from, by discarding the token and re-reading in full (#213).
+  ///
+  /// Two shapes, both of them Graph's own:
+  /// - `410 Gone` — the documented `resyncRequired` / `syncStateNotFound`
+  ///   "start over" signal for a delta query.
+  /// - `400 Bad Request` with `Request_UnsupportedQuery` **and** a message
+  ///   naming the delta link, e.g. *"DeltaLink older than 30 days is not
+  ///   supported."* The code alone is deliberately not enough: Graph also
+  ///   returns it for a genuinely malformed query, which must stay loud rather
+  ///   than silently degrade into an expensive full read on every pass.
+  ///
+  /// The classification lives on the reply rather than on the connector because
+  /// two layers need it: `UserManager.delta` hands it to `GraphClient` as the
+  /// failure shape it expects — so the transport logs it as a detail instead of
+  /// an error nobody should act on (#229) — and `AzureConnector.sync` uses it to
+  /// decide to fall back to a full read.
+  bool get isRejectedDeltaToken {
+    if (statusCode == 410) return true;
+    if (statusCode != 400) return false;
+    if (code?.toLowerCase() != 'request_unsupportedquery') return false;
+    final detail = (message ?? body).toLowerCase();
+    return detail.contains('deltalink') ||
+        detail.contains('delta link') ||
+        detail.contains('deltatoken') ||
+        detail.contains('delta token');
+  }
+
   String? _errorField(String field) {
     try {
       final decoded = jsonDecode(body);

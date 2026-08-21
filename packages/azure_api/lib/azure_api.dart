@@ -28,7 +28,8 @@ export 'src/config/live_config.dart' show AzureLiveConfig;
 export 'src/connector.dart' show AzureConnector;
 export 'src/graph/graph_batch.dart'
     show BatchRequest, BatchResponse, GraphBatch;
-export 'src/graph/graph_client.dart' show DeltaResult, GraphClient;
+export 'src/graph/graph_client.dart'
+    show DeltaResult, GraphClient, GraphFailurePredicate;
 export 'src/graph/graph_request.dart'
     show GraphException, GraphRequest, GraphResponse;
 export 'src/graph/graph_transport.dart' show GraphTransport, HttpGraphTransport;
