@@ -719,6 +719,45 @@ ReconcileHarness virtualClassGroupHarness() => ReconcileHarness(
       ourSchoolIds: const {1, 99},
     );
 
+/// A harness for the cross-school `containsStudents` pool (#222). Our school 1
+/// has an **empty** `1A`; the sibling school 2 — which we do not manage, but
+/// whose rows the shared WISA credentials pull anyway — has its own `1A` with a
+/// student in it, and its class arrives *first* in the pull.
+///
+/// Only our own `1A` is linked (#205), so the Klasgroepen list holds exactly one
+/// class. It must carry the informational "this WISA class has no students yet"
+/// notice: before the fix the sibling school's student was pooled under the bare
+/// name `1A`, so our empty class read as populated and was offered as the
+/// applyable "Voeg deze klas toe aan Smartschool" — the action that also enrols
+/// students into the class it creates.
+ReconcileHarness siblingPopulatedClassHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '2', classGroup: '1A', schoolId: 2)],
+        schools: [wisaSchool(1), wisaSchool(2)],
+        classGroups: [
+          wisaClassGroup(
+            '1A',
+            description: 'Klas van een andere school',
+            schoolCode: '222',
+            schoolId: 2,
+          ),
+          wisaClassGroup(
+            '1A',
+            description: 'Onze lege eerste klas',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the `00` sub-group sentinel (#221). Two managed schools that
 /// each have their own `1C`, and each of those is a **single-group** class: one
 /// `SyncKlas` row with `KLASGROEP = 00` and — because `ADMINGROEP` is only

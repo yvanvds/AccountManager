@@ -1157,6 +1157,66 @@ void main() {
   });
 
   testWidgets(
+      'an empty class beside a sibling school\'s populated namesake stays the '
+      'read-only empty notice end-to-end (#222)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Our school 1 has an empty
+    // `1A`; the sibling school 2 we do not manage has its own populated `1A`,
+    // pulled by the same shared WISA credentials. Only ours is linked (#205), so
+    // exactly one class reaches the Klasgroepen list — and it is empty.
+    //
+    // Before the fix the tally behind `containsStudents` pooled every school's
+    // students under the bare class name, so the sibling's student made our
+    // empty class read as populated: the list offered "Voeg deze klas toe aan
+    // Smartschool", the applyable action that also enrols students into the
+    // class it creates. This is the layer that sees it — the misclassification
+    // needs two schools in one snapshot, which no single-resolver assertion
+    // composes, and the flip is what the operator reads off the tile.
+    useTallWindow(tester);
+    final harness = siblingPopulatedClassHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // Our 1A is the only class on the list, and it reads as the empty one.
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('entry-group-1A')), findsOneWidget);
+    expect(find.textContaining('bevat nog geen leerlingen'), findsOneWidget);
+    expect(
+        find.textContaining('Voeg deze klas toe aan Smartschool'), findsNothing,
+        reason: 'nobody of ours is in 1A — creating + enrolling is not due');
+
+    // The notice is marked manual — there is nothing to write for an empty
+    // class — while the only applyable line stays the "ignore this class"
+    // opt-out every WISA-only class carries.
+    expect(find.textContaining('(manueel)'), findsOneWidget);
+    expect(find.textContaining('Negeer deze klas bij het importeren uit WISA'),
+        findsOneWidget);
+
+    // And the pass itself never constructed the create-and-enrol action for it.
+    final kinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(kinds, contains('CreateInSmartschool'));
+    expect(kinds, isNot(contains('AddToSmartschool')));
+  });
+
+  testWidgets(
       'the Acties drill-down opens on grade-years merged across the managed '
       'schools end-to-end, with no school level to guess at (#210)',
       (WidgetTester tester) async {

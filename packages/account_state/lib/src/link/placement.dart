@@ -83,12 +83,24 @@ class SmartschoolClassTree {
 ///
 /// Keeping the walk here preserves `account_actions`' pure-function boundary:
 /// an action reads the placement it is handed, it never touches a snapshot.
+///
+/// `ourSchoolIds` is the set of WISA school ids the operator manages, the same
+/// Settings-derived set `LinkedState` threads into `link()` (#178/#205). The
+/// snapshots pool every school the shared WISA credentials reach, so the
+/// resolver needs it to keep a sibling school's rows from answering questions
+/// about *our* classes (#221/#222). When omitted it falls back to the
+/// snapshot's own `WisaSchool.isOurs` flags, exactly like `link()`.
 class PlacementResolver {
   PlacementResolver({
     required wapi.WisaSnapshot wisa,
     required ss.SmartschoolSnapshot smartschool,
     this.classTree = const SmartschoolClassTree(),
-  }) {
+    Set<int>? ourSchoolIds,
+  }) : _ourSchoolIds = ourSchoolIds ??
+            <int>{
+              for (final school in wisa.schools)
+                if (school.isOurs) school.id,
+            } {
     // Index the Smartschool tree by name (for resolveClass) and by code (for
     // the current-class and logical-parent lookups). First wins on a
     // collision, keeping the result a deterministic function of snapshot order.
@@ -119,13 +131,25 @@ class PlacementResolver {
     // only carries the `wisaId` linking key. Also collect the class names that
     // currently hold a student — legacy `WisaClassGroup.ContainsStudents`
     // (`student.ClassGroup == Name`).
+    //
+    // Only students of a school we manage are tallied (#222). The snapshot
+    // pools every school the shared WISA credentials reach, so a sibling
+    // school's populated `1A` used to make *our* empty `1A` read as populated —
+    // and [groupPlacementFor] then raised `AddToSmartschool` (which also enrols
+    // students) instead of the informational `CreateInSmartschool`. Filtering at
+    // the tally rather than at the lookup is deliberate: a [LinkedGroup] carries
+    // no school, so [groupPlacementFor] has nothing to scope by (see there).
+    // The index itself stays unfiltered — a `groupOnly` student still gets their
+    // own class placement.
     for (final student in wisa.students) {
       final wisaId = _norm(student.wisaId.value);
       if (wisaId != null) {
         _wisaStudentByWisaId.putIfAbsent(wisaId, () => student);
       }
       final classGroup = _norm(student.classGroup);
-      if (classGroup != null) _classGroupsWithStudents.add(classGroup);
+      if (classGroup != null && _isOurSchool(student.schoolId)) {
+        _classGroupsWithStudents.add(classGroup);
+      }
     }
 
     // Classes that use sub-groups: legacy `ClassGroupManager.UseSubGroups` —
@@ -162,6 +186,18 @@ class PlacementResolver {
   /// The class-tree config driving [GroupPlacement.parent] resolution.
   final SmartschoolClassTree classTree;
 
+  /// The WISA school ids the operator actually manages (#222), from the
+  /// persisted Settings ownership flags the State layer threads in — the same
+  /// set the linker scopes group seeding by (#205). When the caller passes
+  /// none it is derived from the snapshot's own `WisaSchool.isOurs` flags,
+  /// exactly as `link()` derives its own fallback, so the two layers always
+  /// agree on which classes exist and which students populate them.
+  ///
+  /// An **empty** set means ownership is unconfigured, in which case every
+  /// school counts as ours — mirroring the linker's `_isOurWisaSchool` and
+  /// preserving the pre-#222 pooled behaviour for an unconfigured install.
+  final Set<int> _ourSchoolIds;
+
   final Map<String, Group> _groupsByName = {};
   final Map<String, Group> _groupsByCode = {};
   final Map<String, Group> _currentClassByUid = {};
@@ -172,7 +208,16 @@ class PlacementResolver {
   /// sub-groups, within the one school that says so.
   final Set<(int, String)> _subGroupClasses = {};
   final Map<String, wapi.WisaClassGroup> _wisaByFullName = {};
+
+  /// Normalized class names that hold at least one student **of a school we
+  /// manage** (#222) — legacy `WisaClassGroup.ContainsStudents`, scoped.
   final Set<String> _classGroupsWithStudents = {};
+
+  /// Whether [schoolId] is one of the schools we manage. Mirrors the linker's
+  /// `_isOurWisaSchool`: an empty [_ourSchoolIds] means ownership is
+  /// unconfigured, so every school counts as ours.
+  bool _isOurSchool(int schoolId) =>
+      _ourSchoolIds.isEmpty || _ourSchoolIds.contains(schoolId);
 
   /// Builds the [ClassPlacement] for one student (the dispatcher only calls
   /// this for `account.wisa != null` records; a WISA-less lifecycle account
@@ -230,7 +275,11 @@ class PlacementResolver {
   ///
   /// - [GroupPlacement.containsStudents] is whether the WISA class currently
   ///   holds students (legacy `WisaClassGroup.ContainsStudents`), which selects
-  ///   `AddToSmartschool` (populated) over `CreateInSmartschool` (empty).
+  ///   `AddToSmartschool` (populated) over `CreateInSmartschool` (empty). Only
+  ///   students of a school we manage count (#222): a [LinkedGroup] is only ever
+  ///   seeded from a managed school's class (#205), so a sibling school's
+  ///   same-named class must not decide ours. The scoping happens where the
+  ///   tally is built, not here — see the constructor.
   /// - [GroupPlacement.parent] is the resolved Smartschool parent group
   ///   (legacy `GetLogicalParent` → `Root.FindByCode`), or `null` when the
   ///   class year is out of range or the parent node is absent from the tree.
