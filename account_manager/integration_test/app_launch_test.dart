@@ -4010,6 +4010,71 @@ void main() {
   });
 
   testWidgets(
+      'a Synchroniseer says in the Log panel which werkdatum it pulled, and '
+      'names the virtuele werkdatum where a virtual school used it (#239)',
+      (WidgetTester tester) async {
+    // The operator's actual predicament: Acties is empty for the new intake and
+    // nothing anywhere in the app names the school year the view describes, so
+    // a pull that landed on last year's roster is indistinguishable from a class
+    // that went missing. The pass now says what it asked WISA for, in the same
+    // panel the skipped namesakes (#225), the skipped students (#230) and the
+    // unmatched import rules (#241) report into — and this drives the real app
+    // over the *production* WISA pull, so the line is checked against what
+    // actually went out on the wire.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+        virtualWorkDate:
+            WorkDateSetting(isNow: false, date: DateTime(2025, 10, 1)),
+      ),
+      wisaSchools: const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+          schoolId: 99,
+          code: 'V',
+          name: 'Virtuele school',
+          virtual: true,
+        ),
+      ],
+    );
+    final wire = RecordingWisaSoap(schools: const <(int, String, String)>[
+      (1, 'School 1', 'S1'),
+      (99, 'Virtuele school', 'V'),
+    ]);
+    final harness = ReconcileHarness(
+      wisaTransport: wire,
+      liveSettings: LiveSettings(stored),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Both dates really went out — the ordinary school on the werkdatum, the
+    // virtual one on the virtuele werkdatum.
+    expect(wire.werkdatums, <String>['01/09/2025', '01/10/2025']);
+    // …and the Log panel names them, in the wire's own dd/MM/yyyy, beside the
+    // school that used the second one.
+    expect(find.byKey(const ValueKey('reconcile-log-panel')), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Pulling WISA with werkdatum 01/09/2025; virtuele werkdatum '
+        '01/10/2025 for V.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
       'a Check for drift whose stored Azure delta token Graph refuses still '
       'finishes, on a full re-read that leaves a usable token behind, and '
       'reads as the clean pass it was (#213/#229)',

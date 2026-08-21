@@ -182,6 +182,107 @@ void main() {
     });
   });
 
+  group('a WISA pull names the werkdatum it asked for (#239)', () {
+    test('names the resolved werkdatum, exactly as it went on the wire',
+        () async {
+      final live =
+          LiveSettings(_settings(workDate: _pinned(DateTime(2025, 9, 1))));
+      final wire = RecordingWisaSoap();
+      final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+
+      // The date the operator can read matches the date WISA was asked for —
+      // the point of the line, and the only way an empty Acties can be told
+      // apart from a pull that landed on last year's roster.
+      expect(wire.werkdatums, <String>['01/09/2025']);
+      expect(
+        harness.log.entries.map((e) => e.message),
+        contains('Pulling WISA with werkdatum 01/09/2025.'),
+      );
+    });
+
+    test('names the date a "volg de huidige datum" werkdatum resolved to',
+        () async {
+      // The default setting, and the one that produces the reported symptom: a
+      // pass run before the school-year rollover silently pulls the previous
+      // year. The line has to name the *resolved* date, not "vandaag".
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: LiveSettings(_settings()),
+      );
+
+      await harness.controller.sync();
+
+      expect(
+        harness.log.entries.map((e) => e.message),
+        // The harness clock is fixed at kFixtureDate (2026-07-01).
+        contains('Pulling WISA with werkdatum 01/07/2026.'),
+      );
+    });
+
+    test('names the virtuele werkdatum, and the school that used it', () async {
+      final live = LiveSettings(_settings(
+        workDate: _pinned(DateTime(2026, 9, 1)),
+        virtualWorkDate: _pinned(DateTime(2026, 10, 1)),
+        schools: const <WisaSchoolProfile>[
+          WisaSchoolProfile(
+              schoolId: 99, code: 'V', name: 'Virtuele school', virtual: true),
+        ],
+      ));
+      final wire = RecordingWisaSoap(schools: const <(int, String, String)>[
+        (1, 'School 1', 'S1'),
+        (99, 'Virtuele school', 'V'),
+      ]);
+      final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+
+      expect(wire.werkdatums, <String>['01/09/2026', '01/10/2026']);
+      expect(
+        harness.log.entries.map((e) => e.message),
+        contains('Pulling WISA with werkdatum 01/09/2026; virtuele werkdatum '
+            '01/10/2026 for V.'),
+      );
+    });
+
+    test('leaves the virtuele werkdatum unmentioned when no school used it',
+        () async {
+      // A second date no query carried would read as if some of the roster came
+      // from it. The pull says only what it asked.
+      final live = LiveSettings(_settings(
+        workDate: _pinned(DateTime(2026, 9, 1)),
+        virtualWorkDate: _pinned(DateTime(2026, 10, 1)),
+      ));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+
+      await harness.controller.sync();
+
+      final messages = harness.log.entries.map((e) => e.message);
+      expect(messages, contains('Pulling WISA with werkdatum 01/09/2026.'));
+      expect(messages.where((m) => m.contains('virtuele werkdatum')), isEmpty);
+    });
+
+    test('falls back to the long name when a school carries no code', () {
+      expect(
+        wisaPullMessage(
+          schools: const <wapi.WisaSchool>[
+            wapi.WisaSchool(
+                id: 7, name: 'Virtuele school', code: '  ', isVirtual: true),
+            wapi.WisaSchool(id: 8, name: '', code: '', isVirtual: true),
+          ],
+          workDate: DateTime(2026, 9, 1),
+          virtualWorkDate: DateTime(2026, 10, 1),
+        ),
+        'Pulling WISA with werkdatum 01/09/2026; virtuele werkdatum '
+        '01/10/2026 for Virtuele school, school 8.',
+      );
+    });
+  });
+
   group('wisaSyncer', () {
     test('reads the rules live too, so a DontImportFromWisa apply lands (#72)',
         () async {

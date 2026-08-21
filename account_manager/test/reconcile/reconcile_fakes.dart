@@ -1856,6 +1856,10 @@ class ReconcileHarness {
         ),
         settings: this.liveSettings,
         rules: wisaRules,
+        // The same LogBuffer the connector writes into, so the werkdatum line
+        // the pass announces (#239) lands in the harness log beside the
+        // per-school lines — and beside what `RecordingWisaSoap` saw go out.
+        log: log,
         clock: () => kFixtureDate,
       );
       wisaSync = (previous) async {

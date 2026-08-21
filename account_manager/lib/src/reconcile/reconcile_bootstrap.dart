@@ -388,6 +388,7 @@ Future<ReconcileServices> bootstrapReconcile({
           wisaConnector,
           settings: live,
           rules: wisaRules,
+          log: logBuffer,
           clock: now,
         ),
       ),
@@ -563,10 +564,16 @@ String smartschoolSiteFrom(String uri) {
 /// Schools are re-read per sync so a WISA-side school change is picked up;
 /// `MarkAsVirtual` rules and the operator's virtual marks are applied to them
 /// before the row pulls, the other rules at snapshot construction.
+///
+/// Because this is the one place a pass's work dates are resolved, it is also
+/// the one place that can say what they were: [log] gets a single
+/// [wisaPullMessage] line naming them, written before the row queries go out so
+/// even a pull that then fails has said what it asked for (#239).
 Syncer<wapi.WisaSnapshot> wisaSyncer(
   wapi.WisaConnector connector, {
   required LiveSettings settings,
   required WisaImportRules rules,
+  core.ILog? log,
   DateTime Function() clock = DateTime.now,
 }) =>
     (_) async {
@@ -582,13 +589,63 @@ Syncer<wapi.WisaSnapshot> wisaSyncer(
         current.virtualWisaSchoolIds,
       );
       final at = clock();
+      final workDate = current.wisa.workDate.resolve(at);
+      final virtualWorkDate = current.wisa.virtualWorkDate.resolve(at);
+      log?.addMessage(
+        core.Origin.wisa,
+        wisaPullMessage(
+          schools: schools,
+          workDate: workDate,
+          virtualWorkDate: virtualWorkDate,
+        ),
+      );
       return connector.sync(
         schools: schools,
-        workDate: current.wisa.workDate.resolve(at),
-        virtualWorkDate: current.wisa.virtualWorkDate.resolve(at),
+        workDate: workDate,
+        virtualWorkDate: virtualWorkDate,
         rules: importRules,
       );
     };
+
+/// The single line a WISA pull writes to name the dates it asked WISA for
+/// (#239).
+///
+/// The werkdatum is a per-pass input the whole materialized view depends on:
+/// WISA returns enrolments *as of* that date, so a pass run on the wrong side of
+/// the school-year rollover simply has none of the new intake in it — which on
+/// the Acties screen reads exactly like a class that went missing. Nothing else
+/// in the app names the school year the current view describes, so an operator
+/// could only tell the two apart by opening Instellingen and reasoning about the
+/// boundary themselves.
+///
+/// Both dates are rendered with the connector's own [wapi.formatWerkdatum], so
+/// the line reads exactly as the `Werkdatum` SOAP parameter went out. The
+/// virtuele werkdatum is named only when a school in *this* pull actually used
+/// it — reporting a second date no query carried would be its own kind of lie.
+String wisaPullMessage({
+  required Iterable<wapi.WisaSchool> schools,
+  required DateTime workDate,
+  required DateTime virtualWorkDate,
+}) {
+  final virtual = <String>[
+    for (final s in schools)
+      if (s.isVirtual) _schoolLabel(s),
+  ];
+  final head = 'Pulling WISA with werkdatum ${wapi.formatWerkdatum(workDate)}';
+  if (virtual.isEmpty) return '$head.';
+  return '$head; virtuele werkdatum '
+      '${wapi.formatWerkdatum(virtualWorkDate)} for ${virtual.join(', ')}.';
+}
+
+/// How a school is named in the pull line: the short code the rest of the WISA
+/// sync log uses ("Loading classgroups from ISMAA succeeded."), falling back to
+/// the long name and finally the id, so a school whose `SMAGetInst` row carries
+/// no DESCRIPTION is still identifiable rather than an empty gap.
+String _schoolLabel(wapi.WisaSchool school) {
+  if (school.code.trim().isNotEmpty) return school.code.trim();
+  if (school.name.trim().isNotEmpty) return school.name.trim();
+  return 'school ${school.id}';
+}
 
 /// Flags the operator's virtual WISA schools on a freshly loaded school list.
 ///

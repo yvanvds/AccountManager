@@ -12,6 +12,10 @@ library;
 export 'src/config/live_config.dart' show WisaLiveConfig;
 export 'src/connector.dart' show WisaConnector, WisaQuery;
 export 'src/csv/csv_parser.dart' show CsvHeaderMismatch, CsvRowParseException;
+// The `Werkdatum` SOAP parameter's own formatter. Exported so an operator-facing
+// message can name the date exactly as it went on the wire, instead of
+// re-deriving a format that could drift from it (#239).
+export 'src/csv/date_format.dart' show formatWerkdatum;
 // The canonical `SMAGetInst` row decoder — the one place that untangles WISA's
 // inverted NAME/DESCRIPTION columns. Exported so the convention can be pinned
 // against the real CSV from outside this package (#208).
