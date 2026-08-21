@@ -47,6 +47,10 @@ class _FakeAzureGroup implements AzureGroup {
   final String id;
   @override
   final String displayName;
+  @override
+  String? get mail => null;
+  @override
+  String? get mailNickname => null;
   const _FakeAzureGroup(this.id, this.displayName);
 }
 

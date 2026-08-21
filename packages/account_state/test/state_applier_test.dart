@@ -79,6 +79,16 @@ class _RecordingGraph implements az.GraphTransport {
       );
       return _ok({...body, 'id': 'az-created-${++_created}'}, 201);
     }
+    if (request.method == 'POST' && request.url.path.endsWith('/groups')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      return _ok({
+        ...body,
+        'id': 'az-group-${++_created}',
+        'mail': '${body['mailNickname']}@student.school.example',
+      }, 201);
+    }
     return const az.GraphResponse(statusCode: 204);
   }
 
@@ -193,12 +203,13 @@ az.AzureUser _azUser({
 wapi.WisaSnapshot _wSnap({
   List<wapi.WisaStudent> students = const [],
   List<wapi.WisaStaff> staff = const [],
+  List<wapi.WisaClassGroup> classGroups = const [],
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: _d,
       students: students,
       staff: staff,
-      classGroups: const [],
+      classGroups: classGroups,
       schools: const [],
     );
 
@@ -211,8 +222,11 @@ ss.SmartschoolSnapshot _sSnap(
       memberships: const [],
     );
 
-az.AzureSnapshot _aSnap({List<az.AzureUser> users = const []}) =>
-    az.AzureSnapshot(fetchedAt: _d, users: users, groups: const []);
+az.AzureSnapshot _aSnap({
+  List<az.AzureUser> users = const [],
+  List<az.AzureGroup> groups = const [],
+}) =>
+    az.AzureSnapshot(fetchedAt: _d, users: users, groups: groups);
 
 core.LinkedAccount _linkedStudent({
   wapi.WisaStudent? wisa,
@@ -576,6 +590,162 @@ void main() {
     });
   });
 
+  group('provisioning a new staff member is one chain, not two passes (#240)',
+      () {
+    /// A staff member who exists only in WISA — a new hire with neither a
+    /// Smartschool nor an Office 365 account. The dispatch can only offer the
+    /// Azure create: `AddStaffToSmartschool` builds its account with the Azure
+    /// UPN as the `mail`, so it evaluates false until that account exists.
+    _Harness newHire({int soapResultCode = 0}) => _Harness(
+          wisa: _wSnap(staff: [_wStaff(code: 'SMIT', wisaId: '42')]),
+          wisaBaseStaff: [_wStaff(code: 'SMIT', wisaId: '42')],
+          soapResultCode: soapResultCode,
+        );
+
+    test('the Azure create chains the Smartschool create it unlocked',
+        () async {
+      final harness = newHire();
+      final before = await harness.applier.link();
+      final create = before.staffActions.whereType<AddStaffToAzure>().single;
+
+      final applied = await harness.applier.applyStaff(create);
+
+      // Both writes happened, off one apply.
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.result.system, core.Origin.azure);
+      expect(applied.followUps.map((r) => r.changes.summary),
+          ['Maak een nieuw Smartschool account']);
+      expect(applied.followUps.single.outcome, ActionOutcome.applied);
+
+      // And both records are in the snapshots the pass left behind.
+      final azure = harness.app.azure.snapshot!.users.single;
+      expect(azure.employeeId, '42');
+      final smartschool = harness.app.smartschool.snapshot!.accounts.single;
+      expect(smartschool.accountId, 'SMIT',
+          reason: 'staff bridge to Smartschool by their WISA code, not wisaId');
+      expect(smartschool.mail, azure.upn,
+          reason: 'the follow-up read the UPN that actually landed, not the '
+              'projected one');
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the chain rides the incremental refresh — no re-sync');
+    });
+
+    test('the chained account is what the linker now sees', () async {
+      final harness = newHire();
+      final create = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied = await harness.applier.applyStaff(create);
+
+      final linked = applied.linked!.snapshot.staff.single;
+      expect(linked.wisa, isNotNull);
+      expect(linked.azure, isNotNull);
+      expect(linked.smartschool, isNotNull,
+          reason: 'the returned view is the one the *last* link produced');
+      expect(
+          applied.linked!.staffActions.whereType<AddStaffToAzure>(), isEmpty);
+      expect(applied.linked!.staffActions.whereType<AddStaffToSmartschool>(),
+          isEmpty);
+    });
+
+    test('a dry run projects the first write and chains nothing', () async {
+      final harness = newHire();
+      final create = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied =
+          await harness.applier.applyStaff(create, options: ApplyOptions.dry);
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(applied.followUps, isEmpty,
+          reason: 'nothing was written, so nothing was unlocked');
+      expect(harness.soap.soapActions, isEmpty);
+      expect(harness.graph.requests.where((r) => r.method == 'POST'), isEmpty);
+      expect(harness.app.smartschool.snapshot!.accounts, isEmpty);
+    });
+
+    test('a failing follow-up stops the chain and is reported', () async {
+      // Smartschool refuses the create (non-zero return code); the Azure
+      // account it followed still exists and must stay in the snapshot, so the
+      // next pass offers exactly the one create that is still missing.
+      final harness = newHire(soapResultCode: 1);
+      final create = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied = await harness.applier.applyStaff(create);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.followUps.single.outcome, ActionOutcome.failed);
+      expect(applied.linked, isNotNull,
+          reason: 'the successful Azure write is still reflected');
+      expect(harness.app.azure.snapshot!.users, hasLength(1));
+      expect(harness.app.smartschool.snapshot!.accounts, isEmpty);
+      expect(
+        applied.linked!.staffActions.whereType<AddStaffToSmartschool>(),
+        hasLength(1),
+      );
+    });
+
+    test('an unrelated staff action chains nothing', () async {
+      // The chain is opt-in per action: applying the copy-code repair on a
+      // complete record must stay one write.
+      final staff = _linkedStaff(
+        wisa: _wStaff(code: 'SMIT', wisaId: '42'),
+        smartschool: _ssAccount(
+          uid: 'anna.smit',
+          accountId: 'SMIT',
+          mail: 'anna.smit@school.example',
+          role: core.PersonRole.teacher,
+        ),
+        azure: _azUser(id: 'az-9', upn: 'anna.smit@school.example'),
+      );
+      final harness = _Harness(
+        wisa: _wSnap(staff: [_wStaff(code: 'SMIT', wisaId: '42')]),
+        smartschool:
+            _sSnap(accounts: [staff.smartschool! as ss.SmartschoolAccount]),
+        azure: _aSnap(users: [staff.azure! as az.AzureUser]),
+      );
+      final action = SetStaffCopyCode(staff, harness.applier.staffConfig);
+
+      final applied = await harness.applier.applyStaff(action);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.followUps, isEmpty);
+    });
+
+    test('both minted passwords land on one password sheet (#105)', () async {
+      final queue = InMemoryPasswordQueueStore();
+      final harness = newHire();
+      final applier = StateApplier(
+        app: harness.app,
+        connectors: Connectors(
+          smartschool: _ssConn(harness.soap),
+          azure: _azConn(harness.graph),
+        ),
+        resolver: _SeqResolver(),
+        wisaRules: harness.rules,
+        studentConfig: _studentConfig(),
+        staffConfig: _staffConfig(),
+        passwordQueue: queue,
+      );
+
+      await applier.applyStaff(
+        (await applier.link()).staffActions.whereType<AddStaffToAzure>().single,
+      );
+
+      final entry = (await queue.load()).single;
+      expect(entry.azurePassword, isNotNull);
+      expect(entry.smartschoolPassword, isNotNull,
+          reason: 'the chained create merges onto the entry the first left');
+    });
+  });
+
   group('Smartschool uid uniqueness for created accounts (#72)', () {
     test(
         'suffixes a colliding login and stays unique across sequential creates',
@@ -609,6 +779,212 @@ void main() {
         harness.app.smartschool.snapshot!.accounts.map((a) => a.uid),
         containsAll(['jan.peeters', 'jan.peeters1', 'jan.peeters2']),
       );
+    });
+  });
+
+  group('Office 365 class groups (#228)', () {
+    /// A WISA class with one enrolled student who already has an Office 365
+    /// account — the state that raises the class-group create.
+    _Harness classHarness({List<az.AzureGroup> groups = const []}) => _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1', classGroup: '2A')],
+            classGroups: [
+              const wapi.WisaClassGroup(
+                name: '2A',
+                groupName: '00',
+                description: 'Klas 2A',
+                adminCode: '',
+                schoolCode: '123',
+                schoolId: 1,
+              ),
+            ],
+          ),
+          azure: _aSnap(
+            users: [_azUser(id: 'az-1', employeeId: 'W1')],
+            groups: groups,
+          ),
+        );
+
+    test('a create patches the Azure snapshot, so the relink sees the group',
+        () async {
+      final harness = classHarness();
+      final before = await harness.applier.link();
+      final create = before.groupActions.whereType<CreateAzureClassGroup>();
+      expect(create, hasLength(1),
+          reason: 'the class has students and no Office 365 group yet');
+
+      final applied = await harness.applier.applyGroup(create.single);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.refreshed, isTrue);
+      expect(
+        harness.app.azure.snapshot!.groups.map((g) => g.displayName),
+        ['SSM-2A'],
+        reason: 'no re-sync — the created group is spliced in (#72)',
+      );
+      expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
+      // The relinked view no longer offers the create; the class is provisioned.
+      expect(applied.linked!.groupActions.whereType<CreateAzureClassGroup>(),
+          isEmpty);
+    });
+
+    test('a membership sync patches the members in place', () async {
+      final harness = classHarness(groups: [
+        az.AzureGroup(
+          id: 'az-2A',
+          displayName: 'SSM-2A',
+          mail: 'SSM-2A@student.school.example',
+          mailNickname: 'SSM-2A',
+        ),
+      ]);
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<SyncAzureClassGroupMembers>().single;
+      expect(sync.plan.membersToAdd, ['az-1']);
+
+      final applied = await harness.applier.applyGroup(sync);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(
+        (harness.app.azure.snapshot!.groups.single).memberIds,
+        ['az-1'],
+      );
+      expect(
+        applied.linked!.groupActions.whereType<SyncAzureClassGroupMembers>(),
+        isEmpty,
+        reason: 'the class reads as in sync straight after the write',
+      );
+    });
+
+    test('a dry run writes nothing and patches nothing', () async {
+      final harness = classHarness();
+      final before = await harness.applier.link();
+      final create =
+          before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+      final applied = await harness.applier.applyGroup(
+        create,
+        options: const ApplyOptions(dryRun: true),
+      );
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(applied.refreshed, isFalse);
+      expect(harness.app.azure.snapshot!.groups, isEmpty);
+      expect(
+        harness.graph.requests.where((r) => r.method == 'POST'),
+        isEmpty,
+      );
+    });
+
+    group('provisioning a class group is one apply, not two (#245)', () {
+      test('the create chains the roster sync it unlocked', () async {
+        // Graph creates a group empty, so #228 left `SSM-2A` with nobody in it
+        // and the enrolment waited for the operator's second click. The chain
+        // runs the roster against the **relinked** record — the only place the
+        // id Graph just minted exists.
+        final harness = classHarness();
+        final before = await harness.applier.link();
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(create);
+
+        expect(applied.result.outcome, ActionOutcome.applied);
+        expect(applied.followUps, hasLength(1));
+        expect(applied.followUps.single.outcome, ActionOutcome.applied);
+        expect(
+          applied.followUps.single.changes.summary,
+          contains('Werk het ledenbestand van SSM-2A bij'),
+        );
+        expect(
+          harness.app.azure.snapshot!.groups.single.memberIds,
+          ['az-1'],
+          reason: 'the created group holds the class straight away',
+        );
+        expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
+        expect(
+          applied.linked!.groupActions.whereType<CreateAzureClassGroup>(),
+          isEmpty,
+        );
+        expect(
+          applied.linked!.groupActions.whereType<SyncAzureClassGroupMembers>(),
+          isEmpty,
+          reason: 'the class is provisioned and in sync after the one apply',
+        );
+      });
+
+      test('a dry run projects the create and chains nothing', () async {
+        final harness = classHarness();
+        final before = await harness.applier.link();
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(
+          create,
+          options: const ApplyOptions(dryRun: true),
+        );
+
+        expect(applied.result.outcome, ActionOutcome.dryRun);
+        expect(applied.followUps, isEmpty,
+            reason: 'nothing was written, so nothing was unlocked');
+      });
+
+      test('a class whose students have no Office 365 account chains nothing',
+          () async {
+        // The follow-up's own evaluate() still decides: there is no roster to
+        // add, so the created group is simply left empty.
+        final harness = _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1', classGroup: '2A')],
+            classGroups: [
+              const wapi.WisaClassGroup(
+                name: '2A',
+                groupName: '00',
+                description: 'Klas 2A',
+                adminCode: '',
+                schoolCode: '123',
+                schoolId: 1,
+              ),
+            ],
+          ),
+        );
+        final before = await harness.applier.link();
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(create);
+
+        expect(applied.result.outcome, ActionOutcome.applied);
+        expect(applied.followUps, isEmpty);
+        expect(harness.app.azure.snapshot!.groups.single.memberIds, isEmpty);
+      });
+
+      test('an informational group action is never chained', () async {
+        // The orphan notice throws on apply; the walk must skip it whatever a
+        // future `unlocks` declaration says.
+        final harness = classHarness(groups: [
+          az.AzureGroup(
+            id: 'az-9Z',
+            displayName: 'SSM-9Z',
+            mail: 'SSM-9Z@student.school.example',
+            mailNickname: 'SSM-9Z',
+          ),
+        ]);
+        final before = await harness.applier.link();
+        expect(
+          before.groupActions.whereType<AzureClassGroupWithoutClass>(),
+          hasLength(1),
+        );
+        final create =
+            before.groupActions.whereType<CreateAzureClassGroup>().single;
+
+        final applied = await harness.applier.applyGroup(create);
+
+        expect(
+          applied.followUps.map((r) => r.changes.summary),
+          everyElement(contains('ledenbestand')),
+        );
+      });
     });
   });
 }

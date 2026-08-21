@@ -1,5 +1,6 @@
 import 'package:account_core/account_core.dart';
 
+import 'azure_class_placement.dart';
 import 'class_placement.dart';
 import 'student_action.dart';
 import 'student_action_config.dart';
@@ -23,13 +24,25 @@ import 'student_action_config.dart';
 /// `account.wisa != null` records (the placement's target class comes from the
 /// WISA record); WISA-less lifecycle accounts never need it.
 ///
+/// [azurePlacementFor] wires the **Office 365 class-group** view of the same
+/// student (#245), the per-account half of #228. Like [placementFor] it is only
+/// called for `account.isInOurWisa` records — the target group is named after
+/// their WISA class — and it feeds a single action, [AzureClassGroupMembership],
+/// in the modify branch beside [MoveToSmartschoolClassGroup]: the two answer the
+/// same question ("is this student in the right class group?") for the two
+/// systems that have one, so they belong in the same branch. When omitted, the
+/// dispatch is exactly as it shipped before #245, because a [LinkedAccount]
+/// carries neither the group's membership nor the roster it should equal.
+///
 /// Each candidate is constructed bound to [account] and kept only when its
 /// pure [StudentAction.evaluate] returns true. Pure and deterministic
-/// (INV-40): same account + same [config] (+ same [placementFor]) ⇒ same list.
+/// (INV-40): same account + same [config] (+ same [placementFor] /
+/// [azurePlacementFor]) ⇒ same list.
 List<StudentAction> studentActionsFor(
   LinkedAccount account,
   StudentActionConfig config, {
   ClassPlacement Function(LinkedAccount account)? placementFor,
+  AzureClassPlacement Function(LinkedAccount account)? azurePlacementFor,
 }) {
   // "Complete" (modify branch) requires presence in *our* WISA, not merely
   // anywhere in the group (#134): a student who moved to a sibling group school
@@ -41,6 +54,9 @@ List<StudentAction> studentActionsFor(
 
   final placement = (placementFor != null && account.isInOurWisa)
       ? placementFor(account)
+      : null;
+  final azurePlacement = (azurePlacementFor != null && account.isInOurWisa)
+      ? azurePlacementFor(account)
       : null;
 
   final candidates = complete
@@ -54,6 +70,8 @@ List<StudentAction> studentActionsFor(
           ModifySmartschoolBirthPlace(account, config),
           if (placement != null)
             MoveToSmartschoolClassGroup(account, config, placement),
+          if (azurePlacement != null)
+            AzureClassGroupMembership(account, config, azurePlacement),
           ModifySmartschoolStudentEmail(account, config),
           ModifySmartschoolName(account, config),
         ]
@@ -80,8 +98,14 @@ List<StudentAction> studentActions(
   LinkedSnapshot snapshot,
   StudentActionConfig config, {
   ClassPlacement Function(LinkedAccount account)? placementFor,
+  AzureClassPlacement Function(LinkedAccount account)? azurePlacementFor,
 }) =>
     [
       for (final account in snapshot.accounts)
-        ...studentActionsFor(account, config, placementFor: placementFor),
+        ...studentActionsFor(
+          account,
+          config,
+          placementFor: placementFor,
+          azurePlacementFor: azurePlacementFor,
+        ),
     ];

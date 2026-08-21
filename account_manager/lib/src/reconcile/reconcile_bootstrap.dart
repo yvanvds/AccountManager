@@ -85,6 +85,7 @@ class StoreEndpoints {
 class ReconcileServices {
   const ReconcileServices({
     required this.settings,
+    required this.liveSettings,
     required this.app,
     required this.applier,
     required this.controller,
@@ -95,7 +96,16 @@ class ReconcileServices {
     this.passwordFileOpener = openPasswordExport,
   });
 
+  /// The settings document as it stood when the stack was assembled. A
+  /// point-in-time copy: what the WISA pull actually uses lives in
+  /// [liveSettings] (#238).
   final AppSettings settings;
+
+  /// The shared settings holder the WISA syncer reads at pull time and the
+  /// Settings view publishes into, so a saved werkdatum reaches the next
+  /// Synchroniseer without relaunching the app (#238).
+  final LiveSettings liveSettings;
+
   final ApplicationState app;
   final StateApplier applier;
   final ReconcileController controller;
@@ -141,15 +151,22 @@ class ReconcileConfigException implements Exception {
 /// connectors (Graph calls carry the session token from #98), and assembles
 /// `ApplicationState` → `StateApplier` → [ReconcileController].
 ///
+/// [liveSettings] is the process-wide settings holder the Settings view
+/// publishes into (#238). The WISA pull reads its werkdatum pair and virtual
+/// marks from it at pull time, so a save reaches the next Synchroniseer without
+/// a relaunch. Production wires the same instance into [bootstrapSettings];
+/// omitting it gives this stack a private holder that only bootstrap writes.
+///
 /// The optional parameters are test seams; production callers pass only
-/// [session] and [aad]. The Cosmos containers are provisioned out of band (see
-/// `docs/port-plan.md`); bootstrap additionally runs an idempotent
-/// [ensureContainers] preflight (a metadata read that creates nothing on the
-/// provisioned account) so a never-stood-up container surfaces at startup rather
-/// than as a silent item-write 404 mid-session (#150).
+/// [session], [aad] and [liveSettings]. The Cosmos containers are provisioned
+/// out of band (see `docs/port-plan.md`); bootstrap additionally runs an
+/// idempotent [ensureContainers] preflight (a metadata read that creates nothing
+/// on the provisioned account) so a never-stood-up container surfaces at startup
+/// rather than as a silent item-write 404 mid-session (#150).
 Future<ReconcileServices> bootstrapReconcile({
   required SignInSession session,
   required AadAppConfig aad,
+  LiveSettings? liveSettings,
   StoreEndpoints? endpoints,
   SettingsStore? settingsStore,
   SecretProvider? secretProvider,
@@ -200,6 +217,12 @@ Future<ReconcileServices> bootstrapReconcile({
 
   final store = settingsStore ?? CosmosSettingsStore(client);
   final settings = await store.load();
+  // Adopt what we just loaded as the live document (#238). Everything that has
+  // to honour a later save — the WISA pull's werkdatum pair and virtual marks,
+  // and the drift gate that refuses to reconcile against a roster the change
+  // never reached — reads `live.current`, never this local.
+  final live = liveSettings ?? LiveSettings();
+  live.publish(settings);
 
   // The cold snapshot store (#107): a fresh session seeds its SystemStates from
   // here instead of pulling, and every successful sync writes the fresh
@@ -352,34 +375,22 @@ Future<ReconcileServices> bootstrapReconcile({
     wisa: SystemState<wapi.WisaSnapshot>(
       system: core.Origin.wisa,
       initial: wisaSeed,
-      // Schools are re-read per sync so a WISA-side school change is picked
-      // up; MarkAsVirtual rules and the operator's per-school virtual marks
-      // (#203) are applied to them before the row pulls, the other rules at
-      // snapshot construction. Rules are read live from the shared holder so a
-      // DontImportFromWisa apply affects the re-sync (#72).
-      // The pull is wrapped so each fresh snapshot is persisted (#107).
+      // The pull is wrapped so each fresh snapshot is persisted (#107); what it
+      // asks WISA for is composed by [wisaSyncer], which reads the settings and
+      // the rules live.
       syncer: persistingSyncer<wapi.WisaSnapshot>(
         system: core.Origin.wisa,
         store: snapshots,
         syncedBy: syncedBy,
         payloadOf: (s) => s.toJson(),
         onError: (e) => logSnapshotIssue(core.Origin.wisa, e),
-        inner: (_) async {
-          final schools = markVirtualSchools(
-            wapi.WisaConnector.applySchoolRules(
-              await wisaConnector.loadSchools(),
-              wisaRules.rules,
-            ),
-            settings.virtualWisaSchoolIds,
-          );
-          final at = now();
-          return wisaConnector.sync(
-            schools: schools,
-            workDate: settings.wisa.workDate.resolve(at),
-            virtualWorkDate: settings.wisa.virtualWorkDate.resolve(at),
-            rules: wisaRules.rules,
-          );
-        },
+        inner: wisaSyncer(
+          wisaConnector,
+          settings: live,
+          rules: wisaRules,
+          log: logBuffer,
+          clock: now,
+        ),
       ),
     ),
     smartschool: SystemState<ss.SmartschoolSnapshot>(
@@ -482,6 +493,9 @@ Future<ReconcileServices> bootstrapReconcile({
     // (#207), so a profile stored before the two halves existed stops rendering
     // as "School 25" in the Settings grid, which consults no snapshot.
     settingsStore: store,
+    // The live document, so the drift gate can tell that the WISA pull inputs
+    // moved since the installed snapshot was pulled (#238).
+    liveSettings: live,
     publisher: signalPublisher,
     subscriber: signalSubscriber,
     clock: now,
@@ -489,6 +503,7 @@ Future<ReconcileServices> bootstrapReconcile({
 
   return ReconcileServices(
     settings: settings,
+    liveSettings: live,
     app: app,
     applier: applier,
     controller: controller,
@@ -530,6 +545,106 @@ String smartschoolSiteFrom(String uri) {
   }
   if (host.isNotEmpty) return host.split('.').first;
   return trimmed;
+}
+
+/// The WISA pull, composed the way the app runs it — the counterpart of
+/// `account_state`'s [azureSyncer], so a test can drive the *production* pull
+/// over a fake SOAP transport instead of re-deriving it.
+///
+/// Two things are read **live**, at pull time, rather than captured when the
+/// stack is wired:
+///
+/// - the import [rules], so a `DontImportFromWisa` apply reaches the re-sync it
+///   triggers (#72);
+/// - the operator's [settings] — the werkdatum, the virtuele werkdatum, and the
+///   per-school virtual marks (#203). Before #238 these were closed over as an
+///   immutable `AppSettings` read once at bootstrap, so saving a new werkdatum
+///   in Instellingen changed nothing until the app was relaunched.
+///
+/// Schools are re-read per sync so a WISA-side school change is picked up;
+/// `MarkAsVirtual` rules and the operator's virtual marks are applied to them
+/// before the row pulls, the other rules at snapshot construction.
+///
+/// Because this is the one place a pass's work dates are resolved, it is also
+/// the one place that can say what they were: [log] gets a single
+/// [wisaPullMessage] line naming them, written before the row queries go out so
+/// even a pull that then fails has said what it asked for (#239).
+Syncer<wapi.WisaSnapshot> wisaSyncer(
+  wapi.WisaConnector connector, {
+  required LiveSettings settings,
+  required WisaImportRules rules,
+  core.ILog? log,
+  DateTime Function() clock = DateTime.now,
+}) =>
+    (_) async {
+      // One consistent read for the whole pull: a save landing mid-pull must not
+      // split the school list and the work dates across two documents.
+      final current = settings.current;
+      final importRules = rules.rules;
+      final schools = markVirtualSchools(
+        wapi.WisaConnector.applySchoolRules(
+          await connector.loadSchools(),
+          importRules,
+        ),
+        current.virtualWisaSchoolIds,
+      );
+      final at = clock();
+      final workDate = current.wisa.workDate.resolve(at);
+      final virtualWorkDate = current.wisa.virtualWorkDate.resolve(at);
+      log?.addMessage(
+        core.Origin.wisa,
+        wisaPullMessage(
+          schools: schools,
+          workDate: workDate,
+          virtualWorkDate: virtualWorkDate,
+        ),
+      );
+      return connector.sync(
+        schools: schools,
+        workDate: workDate,
+        virtualWorkDate: virtualWorkDate,
+        rules: importRules,
+      );
+    };
+
+/// The single line a WISA pull writes to name the dates it asked WISA for
+/// (#239).
+///
+/// The werkdatum is a per-pass input the whole materialized view depends on:
+/// WISA returns enrolments *as of* that date, so a pass run on the wrong side of
+/// the school-year rollover simply has none of the new intake in it — which on
+/// the Acties screen reads exactly like a class that went missing. Nothing else
+/// in the app names the school year the current view describes, so an operator
+/// could only tell the two apart by opening Instellingen and reasoning about the
+/// boundary themselves.
+///
+/// Both dates are rendered with the connector's own [wapi.formatWerkdatum], so
+/// the line reads exactly as the `Werkdatum` SOAP parameter went out. The
+/// virtuele werkdatum is named only when a school in *this* pull actually used
+/// it — reporting a second date no query carried would be its own kind of lie.
+String wisaPullMessage({
+  required Iterable<wapi.WisaSchool> schools,
+  required DateTime workDate,
+  required DateTime virtualWorkDate,
+}) {
+  final virtual = <String>[
+    for (final s in schools)
+      if (s.isVirtual) _schoolLabel(s),
+  ];
+  final head = 'Pulling WISA with werkdatum ${wapi.formatWerkdatum(workDate)}';
+  if (virtual.isEmpty) return '$head.';
+  return '$head; virtuele werkdatum '
+      '${wapi.formatWerkdatum(virtualWorkDate)} for ${virtual.join(', ')}.';
+}
+
+/// How a school is named in the pull line: the short code the rest of the WISA
+/// sync log uses ("Loading classgroups from ISMAA succeeded."), falling back to
+/// the long name and finally the id, so a school whose `SMAGetInst` row carries
+/// no DESCRIPTION is still identifiable rather than an empty gap.
+String _schoolLabel(wapi.WisaSchool school) {
+  if (school.code.trim().isNotEmpty) return school.code.trim();
+  if (school.name.trim().isNotEmpty) return school.name.trim();
+  return 'school ${school.id}';
 }
 
 /// Flags the operator's virtual WISA schools on a freshly loaded school list.

@@ -24,6 +24,18 @@ class AzureGroup implements core.AzureGroup {
   /// legacy `SecurityEnabled` flag used by `FindGroupByName`.
   final bool securityEnabled;
 
+  /// The group's SMTP address, e.g. `GBS-2A@student.school.example`. Only a
+  /// mail-enabled ("unified", Microsoft 365) group carries one; `null` for a
+  /// plain security group such as the legacy staff groups (#228).
+  @override
+  final String? mail;
+
+  /// The group's mail alias — the local part of [mail]. Carried beside
+  /// [displayName] so a class group can be told apart from a same-named group
+  /// answering on a different address (#228).
+  @override
+  final String? mailNickname;
+
   /// Azure object ids of the group's members.
   final UnmodifiableListView<String> memberIds;
 
@@ -31,6 +43,8 @@ class AzureGroup implements core.AzureGroup {
     required this.id,
     required this.displayName,
     this.securityEnabled = false,
+    this.mail,
+    this.mailNickname,
     List<String> memberIds = const [],
   }) : memberIds = UnmodifiableListView(List.of(memberIds));
 
@@ -39,7 +53,15 @@ class AzureGroup implements core.AzureGroup {
     'id',
     'displayName',
     'securityEnabled',
+    'mail',
+    'mailNickname',
   ];
+
+  /// Whether this group is a mail-enabled Microsoft 365 ("unified") group —
+  /// the shape a class group must have to be mailed and attached to a Team
+  /// (#228). Read off the two fields Graph gives us: a security group is not
+  /// mail-enabled and carries no address.
+  bool get isUnified => !securityEnabled && (mail ?? '').trim().isNotEmpty;
 
   /// Whether [userId] is a member, by Azure object id.
   bool hasMember(String userId) => memberIds.contains(userId);
@@ -54,6 +76,8 @@ class AzureGroup implements core.AzureGroup {
         id: (json['id'] as String?) ?? '',
         displayName: (json['displayName'] as String?) ?? '',
         securityEnabled: (json['securityEnabled'] as bool?) ?? false,
+        mail: json['mail'] as String?,
+        mailNickname: json['mailNickname'] as String?,
         memberIds: members,
       );
 
@@ -63,6 +87,8 @@ class AzureGroup implements core.AzureGroup {
         id: id,
         displayName: displayName,
         securityEnabled: securityEnabled,
+        mail: mail,
+        mailNickname: mailNickname,
         memberIds: members,
       );
 
@@ -70,6 +96,8 @@ class AzureGroup implements core.AzureGroup {
         'id': id,
         'displayName': displayName,
         'securityEnabled': securityEnabled,
+        if (mail != null) 'mail': mail,
+        if (mailNickname != null) 'mailNickname': mailNickname,
         'memberIds': memberIds.toList(),
       };
 
@@ -77,6 +105,8 @@ class AzureGroup implements core.AzureGroup {
         id: json['id'] as String,
         displayName: (json['displayName'] as String?) ?? '',
         securityEnabled: (json['securityEnabled'] as bool?) ?? false,
+        mail: json['mail'] as String?,
+        mailNickname: json['mailNickname'] as String?,
         memberIds:
             ((json['memberIds'] as List<dynamic>?) ?? const []).cast<String>(),
       );
@@ -87,6 +117,8 @@ class AzureGroup implements core.AzureGroup {
       other.id == id &&
       other.displayName == displayName &&
       other.securityEnabled == securityEnabled &&
+      other.mail == mail &&
+      other.mailNickname == mailNickname &&
       _listEquals(other.memberIds, memberIds);
 
   @override
@@ -94,6 +126,8 @@ class AzureGroup implements core.AzureGroup {
         id,
         displayName,
         securityEnabled,
+        mail,
+        mailNickname,
         Object.hashAll(memberIds),
       );
 

@@ -158,6 +158,21 @@ class Membership {                // first-class many-to-many
 
 This fixes [PAIN-1](#8-pain-points-to-fix-during-the-port). See INV-30, INV-31.
 
+**Naming rule — the Office 365 class group (#228).** A class is addressable in
+Office 365 as a **unified** (Microsoft 365) group named `<PREFIX>-<KLAS>`, whose
+address is therefore `<PREFIX>-<KLAS>@<studentdomein>` (e.g.
+`SSM-2A@student.arcadiascholen.be`), reusing the school prefix and student
+domain the action config already carries. `<KLAS>` is the **bare** class name
+(`WisaClassGroup.name`), never the sub-grouped `fullName`: **sub-groups get no
+group of their own**, so `2F ECO` / `2F MAW` / `2F MOW` / `2F STEMW` all belong
+to `SSM-2F`, and the group's membership is the union of their rosters. Bare
+class names carry no spaces, so the name is used verbatim as the `mailNickname`
+— a name that would not survive as one yields no proposal rather than a mangled
+slug. Because `LinkedGroup` is keyed on the `fullName`, the bare name is carried
+alongside it as `LinkedGroup.className`, which is also what the Azure side of
+the group link matches on after stripping the prefix. Groups are never deleted
+automatically; a class that vanished leaves an informational notice.
+
 ### 3.8 `Snapshot`
 
 A per-system, **immutable** result of one sync.

@@ -1,9 +1,11 @@
 import 'package:account_core/account_core.dart';
+import 'package:azure_api/azure_api.dart' as az;
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'action_result.dart';
 import 'apply_options.dart';
+import 'azure_class_group.dart';
 import 'change_set.dart';
 import 'connectors.dart';
 import 'group_placement.dart';
@@ -22,17 +24,21 @@ import 'group_placement.dart';
 /// [group] or its snapshot records.
 ///
 /// **Group vs account families.** Three differences shape this family:
-/// - **No config.** Unlike [StudentAction]/[StaffAction], the shippable group
-///   actions derive everything from the WISA/Smartschool group pair — there is
-///   no domain, password, or uid to inject — so there is no `GroupActionConfig`.
-/// - **No Azure and no date.** Legacy has no Azure group action, and the group
-///   `Apply` takes no date; [LinkedGroup.azure] is ignored here.
+/// - **No config.** Unlike [StudentAction]/[StaffAction], the group actions
+///   derive everything from the linked record plus an injected placement —
+///   there is no domain, password, or uid to inject — so there is no
+///   `GroupActionConfig`. The Office 365 naming (`<PREFIX>-<KLAS>@<domein>`)
+///   that *would* need one arrives fully resolved on [AzureClassGroupPlan].
+/// - **No date.** The group `Apply` takes no date.
 /// - **Group record, not account.** A written group flows back through
-///   [ActionResult.group] (a [Group]), not [ActionResult.smartschool] (a
+///   [ActionResult.group] (a Smartschool [Group]) or [ActionResult.azureGroup]
+///   (an Azure group), not [ActionResult.smartschool] (a
 ///   `SmartschoolAccount`).
 ///
-/// **Scope.** The whole family ships here, plus one action legacy never had:
-/// [ClassExistsAsSmartschoolGroup] (informational, #225). [DoNotImportFromWisa],
+/// **Scope.** The whole legacy family ships here, plus the actions legacy never
+/// had: [ClassExistsAsSmartschoolGroup] (informational, #225) and the Office 365
+/// class-group trio [CreateAzureClassGroup] / [SyncAzureClassGroupMembers] /
+/// [AzureClassGroupWithoutClass] (#228). [DoNotImportFromWisa],
 /// [DoNotImportFromSmartschool] (informational), and [ModifySmartschoolData]
 /// derive everything from the WISA/Smartschool group pair (#54). The remaining
 /// three — [AddToSmartschool], [CreateInSmartschool] (informational), and
@@ -74,6 +80,28 @@ sealed class GroupAction {
   /// [alternativeGroup]. Ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
 
+  /// The action types this one **unlocks** on the same target (#245) — the
+  /// group family's half of the chaining [StudentAction.unlocks] introduced for
+  /// students (#230), and deliberately the same mechanism rather than a second
+  /// one.
+  ///
+  /// Provisioning a class group is a chain, not a single action:
+  /// [CreateAzureClassGroup] leaves an **empty** group, because Graph creates
+  /// the group and its membership in separate writes, so the roster only lands
+  /// once [SyncAzureClassGroupMembers] runs. The dispatch (§6.3) is a pure
+  /// function of the *current* record and can only offer the first link, which
+  /// is why creating `SSM-2F` used to need the operator's second click.
+  ///
+  /// Declaring the follow-up here lets the State layer run it immediately
+  /// against the **relinked** record — the created group with the id Graph
+  /// minted, spliced into the snapshot — and never against a projection.
+  ///
+  /// Pure and constant: it names what *may* follow, never what must. The
+  /// follow-up's own [evaluate] still decides (a class whose students have no
+  /// Office 365 account yet has nothing to add), and an informational follow-up
+  /// is never run.
+  Set<Type> get unlocks => const {};
+
   /// Performs the change on the target system. Impure. With
   /// [ApplyOptions.dryRun] set, performs **no** writes and returns the
   /// projected [ActionResult] (PAIN-3). Throws [UnsupportedError] when
@@ -88,6 +116,10 @@ sealed class GroupAction {
   ss.SmartschoolConnector _requireSmartschool(Connectors c) =>
       c.smartschool ??
       (throw StateError('$runtimeType.apply needs a Smartschool connector'));
+
+  az.AzureConnector _requireAzure(Connectors c) =>
+      c.azure ??
+      (throw StateError('$runtimeType.apply needs an Azure connector'));
 
   ActionResult _failed(ChangeSet changes, Origin system, Object error) =>
       ActionResult(
@@ -537,4 +569,277 @@ class ModifySmartschoolData extends GroupAction {
       return _failed(changes, Origin.smartschool, e);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Office 365 class groups (#228). Named `<PREFIX>-<KLAS>` after the **bare**
+// class name, so one group serves a class and all of its sub-groups. Everything
+// a [LinkedGroup] cannot answer — the bare name, which record owns the class's
+// proposals, and the roster diff — arrives on the injected
+// [AzureClassGroupPlan].
+// ---------------------------------------------------------------------------
+
+/// Create the Office 365 group for a class: `<PREFIX>-<KLAS>`, addressable at
+/// `<PREFIX>-<KLAS>@<studentdomein>` (#228).
+///
+/// Genuinely new — legacy never created a class group, only the handful of named
+/// staff groups. It is raised **once per distinct class**, on the record the
+/// plan marks as [AzureClassGroupPlan.owner], so a class split into sub-groups
+/// yields one proposal rather than one per sub-group.
+///
+/// Two guards keep it from proposing something that cannot land:
+/// - the class must currently hold students, mirroring how an empty WISA class
+///   is not created in Smartschool either ([CreateInSmartschool]);
+/// - a class name that would not survive as a Graph `mailNickname` yields no
+///   plan at all, so no create is offered rather than one Graph rejects.
+///
+/// [apply] re-asks Graph for the nickname before writing — the same "guard
+/// before create" the Azure account creates gained in #224. Graph does not
+/// reject a duplicate display name, so without the guard a stale snapshot (or a
+/// second operator) silently produces a second group.
+class CreateAzureClassGroup extends GroupAction {
+  /// The Office 365 naming + roster context, injected by the dispatch.
+  final AzureClassGroupPlan plan;
+
+  const CreateAzureClassGroup(super.group, this.plan);
+
+  @override
+  bool evaluate() =>
+      plan.owner &&
+      group.wisa != null &&
+      group.azure == null &&
+      plan.containsStudents;
+
+  /// Creating the group unlocks the roster write that fills it (#245): Graph
+  /// creates a group empty, so without the chain the operator's click left an
+  /// `SSM-2F` with nobody in it and the enrolment waited for a second click.
+  @override
+  Set<Type> get unlocks => const {SyncAzureClassGroupMembers};
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'Maak de Office 365-groep ${plan.displayName} '
+            'voor klas ${plan.className}',
+        fields: [
+          FieldChange('displayName', after: plan.displayName),
+          FieldChange('mailNickname', after: plan.mailNickname),
+          FieldChange('mail', after: plan.mail),
+          const FieldChange('groupTypes', after: 'Unified'),
+        ],
+      );
+
+  /// The group as it will exist once created. Members are added by
+  /// [SyncAzureClassGroupMembers] on the next pass, so the projection is empty.
+  az.AzureGroup _created() => az.AzureGroup(
+        id: '',
+        displayName: plan.displayName,
+        mailNickname: plan.mailNickname,
+        mail: plan.mail,
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.azure,
+        azureGroup: _created(),
+      );
+    }
+
+    try {
+      final groups = _requireAzure(connectors).groups;
+      // Guard before create (#224's rule, applied to groups): the nickname is
+      // what makes the address unique, and Graph creates a second group under
+      // the same display name without complaint.
+      final existing = await groups.findByMailNickname(plan.mailNickname);
+      if (existing != null) {
+        return _failed(
+          changes,
+          Origin.azure,
+          StateError(
+            'Office 365 already has a group with mailNickname '
+            '${plan.mailNickname} (${existing.displayName}). Sync Azure again '
+            'so the existing group is linked instead of creating a duplicate.',
+          ),
+        );
+      }
+      final created = await groups.createGroup(
+        displayName: plan.displayName,
+        mailNickname: plan.mailNickname,
+        description: _wisa.description,
+      );
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.azure,
+        azureGroup: created,
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.azure, e);
+    }
+  }
+}
+
+/// Bring an existing class group's membership in line with the class roster
+/// (#228): every student of the class is a member, and a student who left it is
+/// removed.
+///
+/// The diff arrives precomputed on the [AzureClassGroupPlan] because it is the
+/// union of the class's sub-group rosters expressed as Azure object ids —
+/// neither the roster nor the id mapping is on a [LinkedGroup]. The evaluation
+/// itself is offline: `listGroups` already loaded the members onto
+/// [LinkedGroup.azure], so no extra Graph read is needed to know a class is out
+/// of sync.
+///
+/// **Removals are limited to our own students.** Staff and titular membership of
+/// class groups are out of scope, so a member this app cannot account for as one
+/// of its students is never touched — see
+/// [AzureClassGroupPlan.membersToRemove].
+class SyncAzureClassGroupMembers extends GroupAction {
+  /// The Office 365 naming + roster context, injected by the dispatch.
+  final AzureClassGroupPlan plan;
+
+  const SyncAzureClassGroupMembers(super.group, this.plan);
+
+  az.AzureGroup get _azure => group.azure! as az.AzureGroup;
+
+  @override
+  bool evaluate() =>
+      plan.owner && group.azure != null && plan.membershipDiffers;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'Werk het ledenbestand van ${plan.displayName} bij '
+            '(${plan.membersToAdd.length} toevoegen, '
+            '${plan.membersToRemove.length} verwijderen)',
+        fields: [
+          if (plan.membersToAdd.isNotEmpty)
+            FieldChange('leden toevoegen',
+                after: '${plan.membersToAdd.length}'),
+          if (plan.membersToRemove.isNotEmpty)
+            FieldChange('leden verwijderen',
+                after: '${plan.membersToRemove.length}'),
+        ],
+      );
+
+  /// The group record as it will read once both writes have landed — what the
+  /// State layer splices into its Azure snapshot so the next relink sees the
+  /// class in sync without a re-pull.
+  az.AzureGroup _synced() {
+    final removed = plan.membersToRemove.toSet();
+    return _azure.withMembers(<String>[
+      for (final id in _azure.memberIds)
+        if (!removed.contains(id)) id,
+      ...plan.membersToAdd,
+    ]);
+  }
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.azure,
+        azureGroup: _synced(),
+      );
+    }
+
+    try {
+      final groups = _requireAzure(connectors).groups;
+      final results = <az.BatchResponse>[
+        ...await groups.addMembers(_azure.id, plan.membersToAdd),
+        ...await groups.removeMembers(_azure.id, plan.membersToRemove),
+      ];
+      final failures = results.where((r) => !r.isSuccess).length;
+      if (failures > 0) {
+        return _failed(
+          changes,
+          Origin.azure,
+          StateError(
+            '$failures of ${results.length} membership change(s) on '
+            '${plan.displayName} failed',
+          ),
+        );
+      }
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.azure,
+        azureGroup: _synced(),
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.azure, e);
+    }
+  }
+}
+
+/// An Office 365 class group whose class no longer exists in WISA or
+/// Smartschool (#228). **Informational only** (`canApply == false`): groups are
+/// never deleted automatically — the mailbox and whatever is shared with it
+/// outlive the class — so this is the Azure analogue of the Smartschool orphan
+/// notice [DoNotImportFromSmartschool], and the cleanup stays a hand decision.
+///
+/// It is deliberately narrow. An unmatched Azure group is only reported when it
+/// is shaped exactly like one this app creates: inside the school's `<PREFIX>-`
+/// namespace, a mail-enabled Microsoft 365 group, and answering on a nickname
+/// equal to its display name. A security group, a hand-made Team, or anything
+/// outside the namespace is left unmentioned rather than filling the Klasgroepen
+/// list with rows nobody will act on (the clutter #209/#225 fixed).
+class AzureClassGroupWithoutClass extends GroupAction {
+  const AzureClassGroupWithoutClass(super.group);
+
+  az.AzureGroup? get _azure => group.azure as az.AzureGroup?;
+
+  @override
+  bool evaluate() {
+    final azure = _azure;
+    return group.wisa == null &&
+        group.smartschool == null &&
+        azure != null &&
+        group.className != null &&
+        azure.isUnified &&
+        _sameName(azure.mailNickname, azure.displayName);
+  }
+
+  @override
+  bool get canApply => false;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'De klas ${group.className} bestaat niet meer, maar de '
+            'Office 365-groep ${_azure?.displayName} nog wel. Verwijder ze '
+            'manueel als ze niet meer nodig is.',
+        fields: [
+          FieldChange('mail', before: _azure?.mail ?? ''),
+          FieldChange('leden', before: '${_azure?.memberIds.length ?? 0}'),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      throw UnsupportedError(
+        'AzureClassGroupWithoutClass is informational and cannot be applied '
+        '(canApply is false)',
+      );
+
+  static bool _sameName(String? a, String? b) =>
+      a != null &&
+      b != null &&
+      a.trim().toLowerCase() == b.trim().toLowerCase();
 }

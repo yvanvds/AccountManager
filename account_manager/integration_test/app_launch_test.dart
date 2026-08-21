@@ -22,6 +22,7 @@ import 'package:account_state/account_state.dart'
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
         InMemorySignalHub,
+        LiveSettings,
         MaterializedAccount,
         SecretRef,
         SignalRConfig,
@@ -35,6 +36,7 @@ import 'package:account_state/account_state.dart'
         WisaConnection,
         WisaSchoolProfile,
         WisaSchoolProfileLabel,
+        WorkDateSetting,
         signalRRecordSeparator;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
@@ -1286,6 +1288,220 @@ void main() {
     final lines = harness.log.entries.map((e) => e.message).join('\n');
     expect(lines, contains('Klas "2G" niet gekoppeld'));
     expect(lines, contains('G2G'));
+  });
+
+  testWidgets(
+      'a class without an Office 365 group is proposed once — named after the '
+      'parent class — and applying it creates a unified group end-to-end '
+      '(#228)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Graph write
+    // path. Our school runs `1A` (already provisioned as GBS-1A, with its
+    // student in it) and the sub-grouped `2F` (`2F ECO` + `2F MAW`), which has
+    // no group at all. Four linked class records, one missing group.
+    //
+    // This is the layer that sees the two things that matter: that the operator
+    // gets **one** proposal rather than one per sub-group — the bare class name
+    // is gone by the time an action sees a record, so a naive implementation
+    // offers `GBS-2F ECO` and `GBS-2F MAW` — and that the write Graph receives
+    // is a mail-enabled Microsoft 365 group, not the security group legacy made
+    // for staff.
+    useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+
+    // One proposal, named after the parent class `2F` — not `2F ECO`.
+    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
+    expect(
+      find.text('Maak de Office 365-groep GBS-2F voor klas 2F'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('GBS-2F ECO'), findsNothing,
+        reason: 'sub-groups get no group of their own');
+    expect(find.byKey(const ValueKey('entry-group-1A')), findsNothing,
+        reason: 'GBS-1A exists and holds its student — nothing to propose');
+
+    // The group of a class that no longer exists is reported, never deleted.
+    expect(
+      find.textContaining('De klas 9Z bestaat niet meer'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets);
+
+    // Expand the class's row and apply just it.
+    const entry = ValueKey('entry-group-2F ECO');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    const row = ValueKey('entry-apply-2F ECO');
+    await tester.ensureVisible(find.byKey(row));
+    await tester.tap(find.byKey(row));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+
+    // Graph was asked for exactly one group, and for the right kind of group.
+    expect(harness.graph.createdGroups, hasLength(1));
+    final body = harness.graph.createdGroups.single;
+    expect(body['displayName'], 'GBS-2F');
+    expect(body['mailNickname'], 'GBS-2F');
+    expect(body['groupTypes'], ['Unified']);
+    expect(body['mailEnabled'], isTrue);
+    expect(body['securityEnabled'], isFalse);
+
+    // The one click also filled the group (#245). Graph creates a group empty,
+    // so the create used to land an `GBS-2F` with nobody in it and the roster
+    // waited for a second click; the applier now chains the membership write
+    // against the relinked record — the only place the id Graph just minted
+    // exists — and both sub-groups' students land in the one parent group.
+    expect(
+      harness.graph.batchedWrites,
+      hasLength(2),
+      reason: "both sub-groups' students belong to the one parent group",
+    );
+    expect(
+      harness.graph.batchedWrites,
+      everyElement(startsWith('POST /groups/az-group-1/members')),
+    );
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-2F bij (2 toevoegen'),
+      findsOneWidget,
+      reason: 'the chained write is reported beside the create, not hidden',
+    );
+
+    // …so nothing about this class is left pending: no create, and no roster.
+    final kinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(kinds, isNot(contains('CreateAzureClassGroup')));
+    expect(kinds, isNot(contains('SyncAzureClassGroupMembers')));
+  });
+
+  testWidgets(
+      "a student's Office 365 class group is reported on their own account "
+      'end-to-end, pointing at the one class-level write (#245)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Both classes already have
+    // their group and are in sync with Smartschool, so the Azure roster is the
+    // only work: Jane is missing from her own GBS-1A, and Sam — who moved to
+    // 1B — is missing from GBS-1B while still sitting in GBS-1A.
+    //
+    // This is the layer that sees what the issue is actually about: whether an
+    // operator who opens *one* student finds their class-group placement there
+    // at all. The Klasgroepen row and the account row are two projections of the
+    // same dispatch, composed by different screens, and only a full-app run
+    // shows both and proves the write is offered exactly once.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+
+    // The class rows still carry the single applyable write, on both classes.
+    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
+    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
+    await tester.pumpAndSettle();
+    // (Both classes raise the same kind of action, so the list also renders a
+    // "same situation" header carrying the first one's summary — hence
+    // findsWidgets rather than findsOneWidget.)
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-1A bij '
+          '(1 toevoegen, 1 verwijderen)'),
+      findsWidgets,
+    );
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-1B bij (1 toevoegen'),
+      findsWidgets,
+    );
+    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
+    await tester.pumpAndSettle();
+
+    // Nothing applyable hangs off either class's *students*, so the work list
+    // hides them — the switch is what turns the view into the inventory an
+    // operator answering a phone call browses (#226).
+    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing);
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    // Closing a classroom rebuilds — and so collapses — the tree, so the year
+    // is re-opened for each of the two students.
+    Future<void> openYear() async {
+      final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+      await tester.ensureVisible(yearNode);
+      await tester.tap(yearNode);
+      await tester.pumpAndSettle();
+    }
+
+    // Sam, in 1B: one line, naming both groups, and marked as a manual fix.
+    await openYear();
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
+    await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sam Sels'), findsOneWidget);
+    expect(
+      find.textContaining(
+          'Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats van '
+          'GBS-1B'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets,
+        reason: 'the class row performs the write, so this one diagnoses');
+
+    // Jane, in 1A: the plain "missing from her own group" reading.
+    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    await tester.pumpAndSettle();
+    await openYear();
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
+    await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
+    await tester.pumpAndSettle();
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(
+      find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
+      findsOneWidget,
+    );
+
+    // And the account view offers no second write for the same fact: only the
+    // two class-level syncs are applyable anywhere.
+    final applyable = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .where((a) => a.canApply)
+        .map((a) => a.kind)
+        .toList();
+    expect(applyable,
+        ['SyncAzureClassGroupMembers', 'SyncAzureClassGroupMembers']);
   });
 
   testWidgets(
@@ -3618,6 +3834,247 @@ void main() {
   });
 
   testWidgets(
+      'a Smartschool import rule fires however the operator spelled it, and a '
+      'rule that matches nothing says so in the log (#241)',
+      (WidgetTester tester) async {
+    // The whole loop the operator lives: author the rules in Instellingen, then
+    // Synchronise and read the Log panel. The rules used to be matched against
+    // the group tree with a raw `==`, so a rule typed in lower case — or one
+    // carrying the spacing of a name pasted out of Smartschool — quietly did
+    // nothing at all, and looked exactly like a rule that had matched a subtree
+    // which was already empty. Both halves are checked end-to-end here: the
+    // differently-spelled rules really prune the pull, and the third rule
+    // (a typo) is named in the panel instead of vanishing.
+    useTallWindow(tester);
+    final settings = SettingsHarness();
+    final wire = _GroupTreeSoap();
+    // The next session's reconcile stack, whose Smartschool pull is the
+    // production connector over that wire; its rules are picked up from the
+    // settings document below, as bootstrapReconcile picks them up on open.
+    final harness = ReconcileHarness(smartschoolTransport: wire);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+
+    // Smartschool spells them `Organisatie` and `Klassen`; the operator does
+    // not, and never had a reason to think it mattered. The third rule names a
+    // group Smartschool does not carry at all.
+    await addSmartschoolRule(tester, 'discardGroup', 'organisatie');
+    await addSmartschoolRule(tester, 'noSubgroups', 'KLASSEN');
+    await addSmartschoolRule(tester, 'discardGroup', 'Sportclub');
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await settings.store.load();
+    expect(saved.smartschoolRules, hasLength(3));
+    harness.smartschoolRules = saved.smartschoolRules;
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The pull really was pruned by rules spelled nothing like the tree:
+    // "Organisatie" and its subtree are gone, "Klassen" survives as a leaf, and
+    // the connector never even asked Smartschool about the removed groups.
+    expect(
+      harness.app.smartschool.snapshot?.groups.map((g) => g.id.value).toList(),
+      <String>['SCH', 'KLA'],
+    );
+    expect(wire.accountCodes, <String>['SCH', 'KLA']);
+
+    // …and the rule that matched nothing is named in the Log panel, so the
+    // typo is visible rather than silent.
+    expect(
+      find.textContaining(
+        'Import rule "Sportclub" matched no Smartschool group in this pull',
+      ),
+      findsOneWidget,
+    );
+    // The two that did fire are not reported — that is the distinction the
+    // operator could not make before.
+    expect(find.textContaining('Import rule "organisatie"'), findsNothing);
+    expect(find.textContaining('Import rule "KLASSEN"'), findsNothing);
+  });
+
+  testWidgets(
+      'a werkdatum saved in Instellingen reaches the very next Synchroniseer, '
+      'and Check for drift refuses until it has (#238)',
+      (WidgetTester tester) async {
+    // The whole loop the operator lives, end-to-end in the real app: sync,
+    // change the werkdatum in Instellingen, save, sync again — and read back
+    // which date WISA was actually asked for. Both bootstraps share **one**
+    // LiveSettings, exactly as `main()` wires them; before #238 they each held
+    // their own frozen copy, so a saved werkdatum reached the connector only
+    // after a relaunch and nothing on screen said so.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer pulls WISA with the stored werkdatum.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(wire.werkdatums, <String>['01/09/2025']);
+
+    // Now the operator moves the werkdatum, the way they do: Instellingen →
+    // Algemeen → Kies datum → Opslaan.
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    final pick = find.byKey(const ValueKey('settings-workdate-pick'));
+    await tester.ensureVisible(pick);
+    await tester.pumpAndSettle();
+    await tester.tap(pick);
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('15'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect(
+      (await settings.store.load()).wisa.workDate.date,
+      DateTime(2025, 9, 15),
+    );
+
+    // Back on Reconcile the change is *visible*: Check for drift is disabled
+    // and says why. A drift pass never re-reads WISA, so running one now would
+    // relink against the roster the change never reached and publish that to
+    // every other operator.
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('reconcile-drift-blocked')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('WISA-instellingen gewijzigd — synchroniseer eerst.'),
+      findsOneWidget,
+    );
+    final OutlinedButton drift = tester.widget<OutlinedButton>(
+      find.byKey(const ValueKey('reconcile-drift')),
+    );
+    expect(drift.onPressed, isNull);
+    // Synchroniseer stays available — it is the way out.
+    final FilledButton syncButton = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('reconcile-sync')),
+    );
+    expect(syncButton.onPressed, isNotNull);
+
+    // Pressing it pulls WISA with the werkdatum just saved — no relaunch — and
+    // the drift check is offered again.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(wire.werkdatums, <String>['01/09/2025', '15/09/2025']);
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets(
+      'a Synchroniseer says in the Log panel which werkdatum it pulled, and '
+      'names the virtuele werkdatum where a virtual school used it (#239)',
+      (WidgetTester tester) async {
+    // The operator's actual predicament: Acties is empty for the new intake and
+    // nothing anywhere in the app names the school year the view describes, so
+    // a pull that landed on last year's roster is indistinguishable from a class
+    // that went missing. The pass now says what it asked WISA for, in the same
+    // panel the skipped namesakes (#225), the skipped students (#230) and the
+    // unmatched import rules (#241) report into — and this drives the real app
+    // over the *production* WISA pull, so the line is checked against what
+    // actually went out on the wire.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+        virtualWorkDate:
+            WorkDateSetting(isNow: false, date: DateTime(2025, 10, 1)),
+      ),
+      wisaSchools: const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+          schoolId: 99,
+          code: 'V',
+          name: 'Virtuele school',
+          virtual: true,
+        ),
+      ],
+    );
+    final wire = RecordingWisaSoap(schools: const <(int, String, String)>[
+      (1, 'School 1', 'S1'),
+      (99, 'Virtuele school', 'V'),
+    ]);
+    final harness = ReconcileHarness(
+      wisaTransport: wire,
+      liveSettings: LiveSettings(stored),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Both dates really went out — the ordinary school on the werkdatum, the
+    // virtual one on the virtuele werkdatum.
+    expect(wire.werkdatums, <String>['01/09/2025', '01/10/2025']);
+    // …and the Log panel names them, in the wire's own dd/MM/yyyy, beside the
+    // school that used the second one.
+    expect(find.byKey(const ValueKey('reconcile-log-panel')), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Pulling WISA with werkdatum 01/09/2025; virtuele werkdatum '
+        '01/10/2025 for V.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
       'a Check for drift whose stored Azure delta token Graph refuses still '
       'finishes, on a full re-read that leaves a usable token behind, and '
       'reads as the clean pass it was (#213/#229)',
@@ -4129,6 +4586,119 @@ void main() {
     final linked = harness.controller.linked!.snapshot.accounts.single;
     expect(linked.azure, isNotNull);
     expect(linked.smartschool?.mail, linked.azure?.upn);
+
+    // And both writes are in the log the operator reads.
+    final messages = harness.log.entries.map((e) => e.message);
+    expect(messages, contains(contains('Maak een nieuw Office 365 account')));
+    expect(messages, contains(contains('Maak een nieuw Smartschool account')));
+  });
+
+  testWidgets(
+      'a WISA-only staff member is provisioned by one apply in Acties → '
+      'Personeel (#240)', (WidgetTester tester) async {
+    // The staff twin of the #230 student case, and the same two-pass friction:
+    // AddStaffToSmartschool builds its account with the Azure UPN as the `mail`,
+    // so it evaluates false until the Office 365 account exists, and the
+    // dispatch — a pure function of the record as it stands — can only ever
+    // offer the first link. The operator had to apply, notice the relink, and
+    // apply again; Acties → Personeel never showed the full provisioning intent.
+    //
+    // Only a run of the real app covers the whole path: the staff member has to
+    // reach the synthetic "Personeel" tree at all, the tile has to offer the
+    // create, and the follow-up has to run against the record the *relink*
+    // produced — `createPrincipalName` suffixes on a UPN collision, so the
+    // Smartschool account must carry the UPN that landed, not the projection.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Reconcile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Browse Acties → Personeel: the staff member is under the synthetic staff
+    // school, with the first link of the chain offered and only that one.
+    await tester.tap(find.text('Actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    expect(find.text('Anna Smit'), findsWidgets,
+        reason: 'a staff member with no downstream account is still listed');
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    expect(find.text('Maak een nieuw Smartschool account'), findsNothing,
+        reason: 'the dispatch can only see the first link of the chain');
+
+    // Apply that one row.
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'staff');
+    final id = entry.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-staff-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-staff-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Apply result'), findsOneWidget);
+
+    // Both accounts exist now, off that single click, and both writes are
+    // reported — the second is a real write the operator must see, not a silent
+    // extra. The third row is the entry's *other* pending item, the WISA ignore
+    // rule this family also offers for a staff member with no Smartschool
+    // account; it is not part of the chain (tracked as #248).
+    expect(
+      harness.controller.applyResults!.map((r) => r.changes.summary),
+      <String>[
+        'Maak een nieuw Office 365 account',
+        'Maak een nieuw Smartschool account',
+        'Negeer dit account bij het importeren uit WISA',
+      ],
+    );
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
+    expect(harness.graph.createdUsers.single['employeeId'], '42',
+        reason: 'the staff Azure bridge is wisaId, never the staff code');
+    expect(harness.soap.soapActions.any((a) => a.contains('saveUser')), isTrue);
+
+    // The Smartschool account carries the UPN that actually landed, and the
+    // WISA staff `code` as its accountId (the staff Smartschool bridge).
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.azure, isNotNull);
+    expect(linked.smartschool?.mail, linked.azure?.upn);
+    expect(linked.smartschool?.accountId, 'SMIT');
 
     // And both writes are in the log the operator reads.
     final messages = harness.log.entries.map((e) => e.message);

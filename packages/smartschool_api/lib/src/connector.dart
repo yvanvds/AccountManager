@@ -100,11 +100,14 @@ class SmartschoolConnector {
   /// surviving group.
   ///
   /// [rules] are applied to the group tree at construction time
-  /// ([DiscardSmartschoolGroup], [NoSmartschoolSubgroups]). Disabled
-  /// (`uitgeschakeld`) accounts are dropped. One [SmartschoolMembership] is
-  /// emitted per (account, group) pair, so an account appearing in several
-  /// subtrees produces several membership rows (PAIN-1); the account record
-  /// itself is deduplicated by `uid`.
+  /// ([DiscardSmartschoolGroup], [NoSmartschoolSubgroups]), matching a group by
+  /// its normalized name and naming in the log any rule that matched nothing at
+  /// all (#241).
+  ///
+  /// Disabled (`uitgeschakeld`) accounts are dropped. One
+  /// [SmartschoolMembership] is emitted per (account, group) pair, so an
+  /// account appearing in several subtrees produces several membership rows
+  /// (PAIN-1); the account record itself is deduplicated by `uid`.
   ///
   /// Smartschool's internal group ids are backfilled onto the projected
   /// groups from the `groups` arrays the account payloads carry (#138) — the
@@ -120,7 +123,9 @@ class SmartschoolConnector {
       [_access],
     );
     final payload = decodeReturn(treeXml).text;
-    final forest = applyImportRules(parseGroupTree(payload), rules);
+    final parsed = parseGroupTree(payload);
+    _reportUnmatchedRules(parsed, rules);
+    final forest = applyImportRules(parsed, rules);
 
     final visited = <SmartschoolGroup>[];
     final accountsByUid = <String, SmartschoolAccount>{};
@@ -147,6 +152,32 @@ class SmartschoolConnector {
       accounts: accountsByUid.values.toList(),
       memberships: memberships,
     );
+  }
+
+  /// Names every import rule that matched no group in this pull (#241).
+  ///
+  /// A rule is matched on the normalized group name now, so case and stray
+  /// whitespace no longer decide whether it fires; what is left when a rule
+  /// still matches nothing is a name Smartschool does not carry — a typo, or a
+  /// group renamed since the rule was written. That was indistinguishable from
+  /// a rule that matched an already-empty subtree, and both looked like the
+  /// rule simply having no effect, so each unmatched rule gets a line of its
+  /// own. Reported before the tree is pruned, because pruning rebuilds it.
+  void _reportUnmatchedRules(
+    List<SmartschoolGroup> forest,
+    Iterable<SmartschoolImportRule> rules,
+  ) {
+    for (final rule in unmatchedImportRules(forest, rules)) {
+      final effect = switch (rule) {
+        DiscardSmartschoolGroup() => 'nothing was discarded',
+        NoSmartschoolSubgroups() => 'no subgroups were pruned',
+      };
+      _log?.addMessage(
+        core.Origin.smartschool,
+        'Import rule "${rule.groupName}" matched no Smartschool group in this '
+        'pull — $effect. Check the group name.',
+      );
+    }
   }
 
   /// Depth-first walk over [nodes], collecting the visited nodes in tree order

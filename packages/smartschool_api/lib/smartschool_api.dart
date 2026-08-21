@@ -46,7 +46,8 @@ export 'src/rules/import_rules.dart'
         DiscardSmartschoolGroup,
         NoSmartschoolSubgroups,
         SmartschoolImportRule,
-        applyImportRules;
+        applyImportRules,
+        unmatchedImportRules;
 export 'src/snapshot.dart' show SmartschoolSnapshot;
 export 'src/soap/credentials.dart' show SmartschoolCredentials, SoapArg;
 export 'src/soap/soap_envelope.dart'

@@ -42,4 +42,16 @@ abstract interface class AzureUser {
 abstract interface class AzureGroup {
   String get id;
   String get displayName;
+
+  /// The group's SMTP address, e.g. `SSM-2A@student.arcadiascholen.be`. Only a
+  /// mail-enabled (Microsoft 365 "unified") group has one; `null` for a plain
+  /// security group, and `null` on a record read back from a snapshot written
+  /// before the field was selected (#228).
+  String? get mail;
+
+  /// The group's mail alias — the local part [mail] is built from. Carried
+  /// beside [displayName] because two groups may share a display name while
+  /// addressing different mailboxes, and the class group is identified by the
+  /// address it answers on (#228).
+  String? get mailNickname;
 }

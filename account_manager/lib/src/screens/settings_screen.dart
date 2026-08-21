@@ -24,7 +24,10 @@ import '../settings/settings_bootstrap.dart';
 ///   secret; typing one replaces it via [SecretProvider.write].
 /// - **No restart needed.** A reload affordance re-reads the document from the
 ///   store into the form, so a settings change another operator made (or the
-///   operator's own save) can be pulled back without relaunching.
+///   operator's own save) can be pulled back without relaunching — and every
+///   document this view loads or saves is published into the shared
+///   [LiveSettings] holder, so the reconcile stack's WISA pull honours it on the
+///   very next Synchroniseer rather than on the next app launch (#238).
 ///
 /// The **Smartschool** import rules are authored here (#202): add / edit /
 /// remove the two rules the legacy app offers (`DiscardSmartschoolGroup`,
@@ -146,6 +149,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final services = _services ?? await make();
       final settings = await services.store.load();
+      services.liveSettings?.publish(settings);
       if (!mounted) return;
       setState(() {
         _services = services;
@@ -171,6 +175,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
     try {
       final settings = await services.store.load();
+      // A reload can pull in another operator's save; the reconcile stack must
+      // see the same document this form now shows (#238).
+      services.liveSettings?.publish(settings);
       if (!mounted) return;
       setState(() => _loaded = settings);
       _populate(settings);
@@ -410,6 +417,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final next = _collect(base);
       await services.store.save(next);
+      // Hand the saved document to the running reconcile stack (#238). Without
+      // this the WISA pull kept using the werkdatum read at bootstrap, so the
+      // save only took effect after a relaunch — and said so nowhere.
+      services.liveSettings?.publish(next);
 
       // Secrets are write-only: a non-empty field replaces the stored value; a
       // blank one leaves it untouched. The value is never read back into the UI.

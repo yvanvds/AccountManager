@@ -6,6 +6,7 @@ import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import '../sync/application_state.dart';
+import 'azure_class_groups.dart';
 import 'placement.dart';
 
 /// The State layer's **derived** view of one link+dispatch pass: the pure
@@ -99,17 +100,30 @@ class LinkedState {
       ourSchoolIds: ourSchoolIds,
     );
 
+    // The Office 365 class-group plans are derived from the *linked* view, not
+    // the raw snapshots (#228): the roster is expressed as Azure object ids, and
+    // the `wisaId ≡ employeeId` bridge that produces them is the linker's. The
+    // same resolver feeds the per-student view of that membership (#245), so
+    // the class row and the account row read one set of facts.
+    final azureClassGroups = AzureClassGroupResolver(
+      linked: snapshot,
+      schoolPrefix: studentConfig.schoolPrefix,
+      studentDomain: studentConfig.studentDomain,
+    );
+
     return LinkedState(
       snapshot: snapshot,
       studentActions: actions.studentActions(
         snapshot,
         studentConfig,
         placementFor: placements.classPlacementFor,
+        azurePlacementFor: azureClassGroups.placementFor,
       ),
       staffActions: actions.staffActions(snapshot, staffConfig),
       groupActions: actions.groupActions(
         snapshot,
         placementFor: placements.groupPlacementFor,
+        azurePlanFor: azureClassGroups.planFor,
       ),
     );
   }

@@ -83,7 +83,26 @@ the operator's one apply provisions the student end to end. It must be the
 relinked record and never a projection — `createPrincipalName` resolves a UPN
 collision by suffixing, so the UPN that landed can differ from the one
 `describeChanges()` projected, and the Smartschool account would carry the wrong
-`mail`. The staff family has the same two-pass shape and is tracked as #240.
+`mail`.
+
+`GroupAction.unlocks` is the same mechanism for the group family (#245), not a
+second one: `CreateAzureClassGroup.unlocks == {SyncAzureClassGroupMembers}`,
+because Graph creates a group **empty** — the roster is a separate write — so
+creating `SSM-2F` used to leave a class group with nobody in it until the
+operator clicked again. `StateApplier.applyGroup` chains it against the relinked
+record, which is the only place the id Graph just minted exists. The walk skips
+an informational follow-up, so a `canApply == false` action is never applied.
+
+`StaffAction.unlocks` completes the set (#240): the staff family has the very
+same two-pass shape as the student one — `AddStaffToSmartschool` builds its
+account with the Azure UPN as the `mail` — so
+`AddStaffToAzure.unlocks == {AddStaffToSmartschool}` and
+`StateApplier.applyStaff` chains it exactly as `applyStudent` does. The applier
+runs **one** walk for all three families, parameterized by the typed dispatch it
+reads and the target identity; the bounds are therefore identical everywhere:
+nothing chains off a dry run or a failed write, each action type runs at most
+once per chain, an informational action is never run, and a failed link stops
+the chain.
 
 `staffActions(snapshot, config)` does the same over the snapshot's staff
 records. The legacy staff parser writes the modify branch as `if (OK)` rather
@@ -99,7 +118,10 @@ numeric `wisaId` becomes the copy-code.
 
 `groupActions(snapshot)` walks the snapshot's class groups, ported from the
 legacy `GroupActionParser`. The split is on the WISA/Smartschool **pair** rather
-than all three systems (there is no Azure group action):
+than all three systems; the Office 365 class-group actions added in #228
+(`CreateAzureClassGroup`, `SyncAzureClassGroupMembers`,
+`AzureClassGroupWithoutClass`) are orthogonal to a class's Smartschool state and
+ride alongside **both** branches:
 
 - **Missing from WISA or Smartschool** → the lifecycle-style actions, in legacy
   parser order: `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass`
@@ -174,6 +196,31 @@ placement guard the target the way legacy `MoveUserToClass` does — only an
 **official** class node is a valid destination (the ported `moveUserToClass`
 connector leaves that guard to the caller), so an ANS/BNS student whose
 "Leerlingen" target is non-official is correctly not moved.
+
+## Office 365 class placement (#245)
+
+`AzureClassGroupMembership` is the Azure counterpart of
+`MoveToSmartschoolClassGroup`: it reports, **on the student's own account**, that
+they are missing from their class's `<PREFIX>-<KLAS>` group, or still sitting in
+the group of a class they left — the per-account half of #228, which reported the
+roster diff only on the class row. It reads an injected `AzureClassPlacement`
+(target class, its group's display name, whether the group exists, whether they
+are in it, and which of our class groups they are in but should not be), wired
+through the opt-in `azurePlacementFor` callback of `studentActions` /
+`studentActionsFor`. Without the callback the dispatch is exactly as it was
+before #245.
+
+It is **informational** (`canApply == false`) — the first student action that is.
+Class-group membership is a class-level fact with exactly one automated remedy,
+`SyncAzureClassGroupMembers`, which rewrites the whole roster in one batched
+write; a per-account write would ask Graph to add the same member twice whenever
+an "apply all" pass ran both, and would count one unit of work twice. So the
+account row diagnoses and names the class, and the class row applies. Both are
+derived from the same `AzureClassGroupResolver` indexes in `account_state`, so
+they cannot disagree — and a class whose group does not exist yet, or a group
+whose class has vanished, is deliberately silent per student: neither has a
+per-student remedy (`CreateAzureClassGroup` and `AzureClassGroupWithoutClass`
+own those).
 
 ## Deferred (documented divergences)
 

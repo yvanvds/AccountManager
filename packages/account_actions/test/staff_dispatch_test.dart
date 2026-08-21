@@ -1,4 +1,5 @@
 import 'package:account_actions/account_actions.dart';
+import 'package:account_core/account_core.dart';
 import 'package:test/test.dart';
 
 import 'support/fixtures.dart';
@@ -159,6 +160,72 @@ void main() {
       expect(actions.whereType<AddStaffToAzure>(), isEmpty);
       expect(actions.whereType<RemoveStaffFromSmartschool>(), isEmpty);
       expect(actions.whereType<DontImportStaffFromWisa>(), isEmpty);
+    });
+  });
+
+  group('unlocked follow-ups (#240)', () {
+    test('the WISA-only create declares its Smartschool follow-up', () {
+      // Provisioning a new staff member is a chain the dispatcher cannot
+      // express: AddStaffToSmartschool needs the Azure UPN as the new account's
+      // mail, so it evaluates false until the Azure account exists. Naming the
+      // follow-up here is what lets the State layer run it straight after the
+      // create, against the relinked record — one click, both accounts.
+      final actions = staffActionsFor(linkedStaff(wisa: wisaStaff()), cfg);
+      final create = actions.whereType<AddStaffToAzure>().single;
+      expect(create.unlocks, <Type>{AddStaffToSmartschool});
+    });
+
+    test('the Smartschool create ends the chain', () {
+      // Nothing follows it: the record is complete afterwards, so the next pass
+      // is the ordinary modify branch, not another link of this chain.
+      final actions = staffActionsFor(
+        linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
+        cfg,
+      );
+      expect(
+          actions.whereType<AddStaffToSmartschool>().single.unlocks, isEmpty);
+    });
+
+    test('every other staff action unlocks nothing', () {
+      // The chain is opt-in per action; a stray declaration would make the
+      // applier write beyond what the operator selected.
+      for (final staff in <LinkedStaff>[
+        linkedStaff(wisa: wisaStaff()),
+        linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
+        linkedStaff(smartschool: ssStaff()),
+        linkedStaff(azure: azureStaff()),
+        linkedStaff(
+          wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
+          smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
+          azure: azureStaff(department: 'OTHER - Wiskunde'),
+        ),
+      ]) {
+        for (final action in staffActionsFor(staff, cfg)) {
+          if (action is AddStaffToAzure) continue;
+          expect(action.unlocks, isEmpty, reason: '${action.runtimeType}');
+        }
+      }
+    });
+
+    test('every staff action is applyable, and says so on the action', () {
+      // The walk skips a `canApply == false` follow-up. No staff action is
+      // informational today; the flag is read off the action rather than
+      // assumed, so adding one cannot silently make the applier run it.
+      for (final staff in <LinkedStaff>[
+        linkedStaff(wisa: wisaStaff()),
+        linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
+        linkedStaff(smartschool: ssStaff()),
+        linkedStaff(azure: azureStaff()),
+        linkedStaff(
+          wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
+          smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
+          azure: azureStaff(department: 'OTHER - Wiskunde'),
+        ),
+      ]) {
+        for (final action in staffActionsFor(staff, cfg)) {
+          expect(action.canApply, isTrue, reason: '${action.runtimeType}');
+        }
+      }
     });
   });
 }

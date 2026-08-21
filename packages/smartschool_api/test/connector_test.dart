@@ -300,6 +300,54 @@ void main() {
           .toList();
       expect(codes, isNot(contains('GSPORT')));
     });
+
+    test('applies a rule whose name differs in case and whitespace (#241)',
+        () async {
+      // The tree names the group `Sport`; the operator typed ` sport `. It is
+      // the same group, so the same subtree goes.
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      final snap = await _connector(t, log: log).sync(
+        rules: const [DiscardSmartschoolGroup(' sport ')],
+      );
+      expect(snap.groups.map((g) => g.id.value), ['SCH', 'C1A', 'C1B']);
+      // A rule that matched must not be reported as doing nothing.
+      expect(
+        log.messages,
+        isNot(contains(contains('matched no Smartschool group'))),
+      );
+    });
+
+    test('names an import rule that matched no group in this pull (#241)',
+        () async {
+      // A typo (or a group renamed in Smartschool since the rule was written).
+      // The pull is unpruned — as before — but no longer silently so.
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      final snap = await _connector(t, log: log).sync(
+        rules: const [
+          DiscardSmartschoolGroup('Sprot'),
+          NoSmartschoolSubgroups('Sport'),
+        ],
+      );
+      expect(
+        snap.groups.map((g) => g.id.value),
+        ['SCH', 'C1A', 'C1B', 'GSPORT'],
+      );
+      expect(
+        log.messages,
+        contains(
+          'Import rule "Sprot" matched no Smartschool group in this pull — '
+          'nothing was discarded. Check the group name.',
+        ),
+      );
+      // The rule that did match is not named, even though pruning an empty
+      // subtree changed nothing either — that is the distinction #241 is about.
+      expect(
+        log.messages.where((m) => m.contains('matched no Smartschool group')),
+        hasLength(1),
+      );
+    });
   });
 
   group('saveAccount', () {

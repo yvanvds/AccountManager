@@ -140,6 +140,7 @@ LinkedSnapshot link(
     azureSnapshot,
     effectiveOurSchoolIds,
     virtualSchoolIds,
+    schoolPrefix,
     warnings,
   );
 
@@ -446,9 +447,20 @@ List<_StaffRecord> _buildStaffRecords(
 /// whitespace-insensitive [groupNameFingerprint], so a hand-typed `2 G` is
 /// recognised as the existing `2G` even though it is too loose a key to link on.
 ///
+/// The Azure side of the match is **prefix-aware** (#228). The Office 365 group
+/// of a class is named `<PREFIX>-<KLAS>` after the **bare** class name — `2F`,
+/// never the sub-grouped `2F ECO` — so `displayName` is stripped of the school
+/// prefix ([azureClassNameOf]) and matched against [LinkedGroup.className]
+/// rather than against the WISA `fullName`. Without that, `GBS-2A` would match
+/// no class at all and seed a spurious orphan *while* leaving `2A` reading as
+/// having no group; with it, one `GBS-2F` attaches to every one of that class's
+/// sub-group records, which is exactly what "sub-groups get no group of their
+/// own" means. The pre-#228 exact-`displayName` match is kept as a fallback so a
+/// hand-made, unprefixed group still links the way it used to.
+///
 /// Azure carries no `official`-style signal — [az.AzureGroup] is just
-/// `{id, displayName, securityEnabled}` — so an unmatched Azure group is kept
-/// as an orphan *unless* its name looks administrative (see
+/// `{id, displayName, securityEnabled, mail, mailNickname}` — so an unmatched
+/// Azure group is kept as an orphan *unless* its name looks administrative (see
 /// [_looksLikeClassGroup]); staff/directorate/secretariat groups are excluded
 /// by name rather than included by one, since there is no positive
 /// class-group signal to include by.
@@ -464,11 +476,17 @@ List<LinkedGroup> _linkGroups(
   az.AzureSnapshot azureSnapshot,
   Set<int> ourSchoolIds,
   Set<int> virtualSchoolIds,
+  String schoolPrefix,
   List<LinkWarning> warnings,
 ) {
   final records = <_GroupRecord>[];
   // Normalized fullName/name/displayName -> the record indexed under it.
   final byName = <String, _GroupRecord>{};
+  // Normalized **bare** class name -> every record of that class, in seed
+  // order (#228). A class split into sub-groups seeds one record per sub-group
+  // and they all share one Office 365 group, so this is a one-to-many index
+  // where [byName] is one-to-one.
+  final byClassName = <String, List<_GroupRecord>>{};
 
   // Every Smartschool group by name, official or not (#225) — the index the
   // "does this class already exist downstream?" guard consults after the link
@@ -502,6 +520,12 @@ List<LinkedGroup> _linkGroups(
     final rec = _GroupRecord(wisa: group);
     records.add(rec);
     byName[key] = rec;
+    // Index the same record under its bare class name for the prefix-aware
+    // Azure match (#228). `fullName == name` for a class without sub-groups, so
+    // the two indexes coincide there; a sub-grouped class contributes several
+    // records to the one bare name.
+    final bare = normalizeGroupName(group.name);
+    if (bare != null) (byClassName[bare] ??= <_GroupRecord>[]).add(rec);
   }
 
   // 2. Attach official Smartschool class groups by name; non-official
@@ -551,17 +575,35 @@ List<LinkedGroup> _linkGroups(
     );
   }
 
-  // 3. Attach Azure groups by displayName. An Azure group matching no
-  //    existing record becomes an orphan too (#52), but only when it looks
-  //    like a stale class rather than a staff/administrative group.
+  // 3. Attach Azure groups, prefix-aware (#228): `GBS-2F` is the Office 365
+  //    group of class `2F`, so the prefix is stripped and the remainder matched
+  //    against the **bare** class name — attaching to every sub-group record of
+  //    that class, since they share the one group. A group whose name is not in
+  //    our `<PREFIX>-` namespace falls back to the pre-#228 exact-`displayName`
+  //    match, so an unprefixed group somebody made by hand still links.
+  //
+  //    An Azure group matching no existing record becomes an orphan too (#52),
+  //    but only when it looks like a stale class rather than a
+  //    staff/administrative group.
   for (final group in azureSnapshot.groups) {
     final key = normalizeGroupName(group.displayName);
     if (key == null) continue;
+    final bare = azureClassNameOf(group.displayName, schoolPrefix);
+    final ofClass = bare == null ? null : byClassName[normalizeGroupName(bare)];
+    if (ofClass != null && ofClass.isNotEmpty) {
+      for (final rec in ofClass) {
+        rec.azure ??= group;
+      }
+      continue;
+    }
     final existing = byName[key];
     if (existing != null) {
       existing.azure ??= group;
     } else if (_looksLikeClassGroup(group.displayName)) {
-      final rec = _GroupRecord(azure: group);
+      // The denylist is checked against the *full* display name on purpose:
+      // `GBS-Personeel` only ends in a staff suffix before the prefix is
+      // stripped.
+      final rec = _GroupRecord(azure: group, className: bare);
       records.add(rec);
       byName[key] = rec;
     }
@@ -575,6 +617,7 @@ List<LinkedGroup> _linkGroups(
         smartschool: rec.smartschool,
         smartschoolNamesake: rec.smartschoolNamesake,
         azure: rec.azure,
+        className: rec.wisa?.name ?? rec.className,
         confidence:
             rec.wisa != null && rec.smartschool != null && rec.azure != null
                 ? LinkConfidence.high
@@ -668,7 +711,12 @@ class _GroupRecord {
   /// pass could not adopt (#225). See [LinkedGroup.smartschoolNamesake].
   Group? smartschoolNamesake;
 
-  _GroupRecord({this.wisa, this.smartschool, this.azure});
+  /// The bare class name for a record with **no** WISA anchor — recovered from
+  /// an orphan Azure group's `<PREFIX>-` display name (#228). A WISA-seeded
+  /// record reads its bare name off [wisa] instead.
+  final String? className;
+
+  _GroupRecord({this.wisa, this.smartschool, this.azure, this.className});
 }
 
 /// Whether a Smartschool [role] marks the account as staff (teacher or

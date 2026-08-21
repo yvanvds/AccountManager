@@ -64,6 +64,15 @@ class RecordingGraph implements az.GraphTransport {
   /// accounts a create action actually asked Graph to make (#230).
   final List<Map<String, dynamic>> createdUsers = <Map<String, dynamic>>[];
 
+  /// The bodies of every `POST /groups` this transport accepted, in order — the
+  /// Office 365 class groups a create action actually asked Graph to make
+  /// (#228).
+  final List<Map<String, dynamic>> createdGroups = <Map<String, dynamic>>[];
+
+  /// Every `$batch` sub-request this transport accepted, as `<METHOD> <url>` —
+  /// the membership writes a class-group roster sync performs (#228/#245).
+  final List<String> batchedWrites = <String>[];
+
   int _created = 0;
 
   /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
@@ -98,6 +107,43 @@ class RecordingGraph implements az.GraphTransport {
       return _ok(
         <String, dynamic>{...body, 'id': 'az-created-${++_created}'},
         statusCode: 201,
+      );
+    }
+    // An Office 365 class group create (#228). Like the user create it reads
+    // first — `mailNickname eq …` to prove no group answers on that address —
+    // which the collection branch above already answers empty.
+    if (request.method == 'POST' && request.url.path.endsWith('/groups')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      createdGroups.add(body);
+      return _ok(
+        <String, dynamic>{
+          ...body,
+          'id': 'az-group-${++_created}',
+          'mail': '${body['mailNickname']}@student.school.example',
+        },
+        statusCode: 201,
+      );
+    }
+    // The membership writes ride in a `$batch`, and Graph answers with a
+    // per-sub-request status list rather than a bare 204 (#228/#245).
+    if (request.method == 'POST' && request.url.path.endsWith(r'/$batch')) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      final subs = (body['requests'] as List).cast<Map<String, dynamic>>();
+      for (final sub in subs) {
+        batchedWrites.add('${sub['method']} ${sub['url']}');
+      }
+      return _ok(
+        <String, dynamic>{
+          'responses': <Map<String, dynamic>>[
+            for (final sub in subs)
+              <String, dynamic>{'id': sub['id'], 'status': 204},
+          ],
+        },
+        statusCode: 200,
       );
     }
     return const az.GraphResponse(statusCode: 204);
@@ -313,6 +359,86 @@ class TransferredAccountGraph implements az.GraphTransport {
       );
 }
 
+/// A [wapi.WisaSoapTransport] serving a tiny, complete WISA export for one
+/// school, so the **production** WISA pull (a real [wapi.WisaConnector] behind
+/// the real `wisaSyncer`) runs offline.
+///
+/// Every query is answered with a well-formed CSV blob in the base64
+/// `GetCSVDataResponse` envelope the connector decodes, and each request's
+/// `QueryCode` + `Werkdatum` are recorded — which is the whole point: the
+/// werkdatum an operator saves in Instellingen is only observable on the wire,
+/// as the `Werkdatum` parameter of the row queries (#238).
+///
+/// Wire it into [ReconcileHarness.wisaTransport].
+class RecordingWisaSoap implements wapi.WisaSoapTransport {
+  RecordingWisaSoap({
+    this.schools = const <(int, String, String)>[(1, 'School 1', 'S1')],
+  });
+
+  /// The schools `SMAGetInst` reports, as `(id, name, code)`.
+  final List<(int, String, String)> schools;
+
+  /// Every query issued, as `(queryCode, schoolId, werkdatum)` — the werkdatum
+  /// exactly as it went on the wire (`dd/MM/yyyy`).
+  final List<(String, String, String)> queries = <(String, String, String)>[];
+
+  /// The distinct werkdatums the row queries (class groups / students / staff)
+  /// were issued with, in order of first use. `SMAGetInst` carries none.
+  List<String> get werkdatums => <String>{
+        for (final q in queries)
+          if (q.$3.isNotEmpty) q.$3,
+      }.toList();
+
+  @override
+  Future<String> send({
+    required Uri endpoint,
+    required String soapAction,
+    required String envelope,
+  }) async {
+    final query = _tag.firstMatch(envelope)?.group(1) ?? '';
+    final params = <String, String>{
+      for (final m in _param.allMatches(envelope))
+        m.group(1)!: m.group(2) ?? '',
+    };
+    queries.add((query, params['IS_ID'] ?? '', params['Werkdatum'] ?? ''));
+    return _envelope(_csvFor(query));
+  }
+
+  String _csvFor(String query) => switch (query) {
+        wapi.WisaQuery.getSchools => <String>[
+            'ID,NAME,DESCRIPTION',
+            for (final (id, name, code) in schools) '$id,$name,$code',
+          ].join('\n'),
+        wapi.WisaQuery.syncClassGroups =>
+          'KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER\n'
+              '3C,00,Derde jaar C,a1,111',
+        wapi.WisaQuery.syncStudents =>
+          'KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,'
+              'STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,'
+              'NATIONALITEIT,STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,'
+              'KLASWIJZIGING\n'
+              '3C,,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,'
+              '1/9/2025',
+        wapi.WisaQuery.syncStaff => 'CODE,WISAID,FAMILIENAAM,VOORNAAM',
+        _ => '',
+      };
+
+  static String _envelope(String csv) {
+    final encoded = base64.encode(latin1.encode(csv));
+    return '<?xml version="1.0" encoding="utf-8"?>'
+        '<SOAP-ENV:Envelope '
+        'xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<SOAP-ENV:Body><NS1:GetCSVDataResponse '
+        'xmlns:NS1="urn:WisaAPIService-WisaAPIService">'
+        '<Result>$encoded</Result>'
+        '</NS1:GetCSVDataResponse></SOAP-ENV:Body></SOAP-ENV:Envelope>';
+  }
+
+  static final RegExp _tag = RegExp(r'<QueryCode[^>]*>([^<]*)</QueryCode>');
+  static final RegExp _param =
+      RegExp(r'<Name>([^<]*)</Name><Value[^>]*>([^<]*)</Value>');
+}
+
 /// A [az.GraphTransport] answering the way the tenant answered in #216: the
 /// user lookup succeeds, and the `passwordProfile` PATCH that follows is
 /// refused with `403 Authorization_RequestDenied`, because the app
@@ -425,13 +551,18 @@ wapi.WisaStudent wisaStudent({
   String classSubGroup = '',
   int schoolId = 1,
   core.Address address = _addr,
+  // Most fixtures browse the tree by node rather than by person, so every
+  // student is "Jane Doe" by default; a fixture that has to tell two students
+  // apart on screen (#245) names them.
+  String firstName = 'Jane',
+  String name = 'Doe',
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
       classGroup: classGroup,
       classSubGroup: classSubGroup,
-      name: 'Doe',
-      firstName: 'Jane',
+      name: name,
+      firstName: firstName,
       preferredName: '',
       birthDate: kFixtureDate,
       stemId: '',
@@ -581,13 +712,21 @@ core.Group ssGroup(
   String? code,
   bool official = true,
   core.GroupType type = core.GroupType.classGroup,
+  String description = '',
+  String? instituteNumber,
+  String? untis,
 }) =>
     core.Group(
       id: core.GroupId(code ?? name),
       name: name,
-      description: '',
+      description: description,
       type: type,
       official: official,
+      instituteNumber: instituteNumber,
+      // Untis defaults to blank — which reads as drift against the class name,
+      // so most fixtures get a `ModifySmartschoolData` for free. Pass the name
+      // to build a class that is genuinely in sync with WISA.
+      untis: untis ?? '',
       origin: core.Origin.smartschool,
     );
 
@@ -861,6 +1000,173 @@ ReconcileHarness foreignClassGroupHarness() => ReconcileHarness(
         memberships: const [],
       ),
       azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the Office 365 class groups of #228. Our school 1 runs a
+/// sub-grouped class `2F` (`2F ECO` + `2F MAW`, the shape of a 1ste-graad class)
+/// and a plain class `1A`, all fully provisioned in Smartschool so the only work
+/// left is on the Azure side.
+///
+/// Azure already holds `GBS-1A` with its student, so `1A` is done; `2F` has no
+/// group at all. Four linked class-group records, **one** missing Office 365
+/// group, so exactly one create proposal must reach the operator — named after
+/// the parent class, never after a sub-group.
+///
+/// [withStaleGroup] adds `GBS-9Z`, the group of a class that no longer exists,
+/// which must be reported for manual cleanup and never deleted.
+ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
+    ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(wisaId: '2', classGroup: '2F', classSubGroup: 'ECO'),
+          wisaStudent(wisaId: '3', classGroup: '2F', classSubGroup: 'MAW'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('1A', description: 'Eerste jaar A'),
+          wisaClassGroup('2F',
+              groupName: 'ECO', adminCode: 'a', description: 'Tweede jaar F'),
+          wisaClassGroup('2F',
+              groupName: 'MAW', adminCode: 'b', description: 'Tweede jaar F'),
+        ],
+      ),
+      smartschool: ssSnap(
+        // In sync with their WISA counterparts, so the only work this fixture
+        // raises is on the Office 365 side.
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+          ssGroup('2F ECO',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F ECO'),
+          ssGroup('2F MAW',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F MAW'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+          ssAccount(
+              uid: 'joe', accountId: '2', mail: 'a2@student.school.example'),
+          ssAccount(
+              uid: 'jim', accountId: '3', mail: 'a3@student.school.example'),
+        ],
+        memberships: [
+          member('jane', '1A'),
+          member('joe', '2F ECO'),
+          member('jim', '2F MAW'),
+        ],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+          azUser(
+              id: 'az2',
+              upn: 'a2@student.school.example',
+              employeeId: '2',
+              displayName: 'Jane Doe'),
+          azUser(
+              id: 'az3',
+              upn: 'a3@student.school.example',
+              employeeId: '3',
+              displayName: 'Jane Doe'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1']),
+          if (withStaleGroup) azClassGroup('9Z'),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the **per-student** view of Office 365 class-group membership
+/// (#245). Both classes already have their group, and both classes are in sync
+/// between WISA and Smartschool, so the only work anywhere is the Azure roster:
+///
+/// - Jane's class is `1A` and `GBS-1A` exists, but she is not in it;
+/// - Sam moved to `1B`, so he is missing from `GBS-1B` **and** still sitting in
+///   `GBS-1A` — the "wrong class group" shape.
+///
+/// The class rows in Klasgroepen therefore carry the two applyable roster syncs,
+/// and each student's own card carries the informational reading of the same
+/// fact.
+ReconcileHarness azureClassMembershipHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '1B',
+            firstName: 'Sam',
+            name: 'Sels',
+          ),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('1A', description: 'Eerste jaar A'),
+          wisaClassGroup('1B', description: 'Eerste jaar B'),
+        ],
+      ),
+      smartschool: ssSnap(
+        // In sync with WISA, so no class raises Smartschool work of its own.
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+          ssGroup('1B',
+              description: 'Eerste jaar B',
+              instituteNumber: '123',
+              untis: '1B'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane',
+              accountId: '1',
+              mail: 'jane.doe@student.school.example'),
+          ssAccount(
+            uid: 'sam',
+            accountId: '2',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+        ],
+        // Smartschool already has both students in their WISA class, so no
+        // `MoveToSmartschoolClassGroup` competes with the Azure reading.
+        memberships: [member('jane', '1A'), member('sam', '1B')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+            id: 'az1',
+            upn: 'jane.doe@student.school.example',
+            employeeId: '1',
+            displayName: 'Jane Doe',
+          ),
+          azUser(
+            id: 'az2',
+            upn: 'sam.sels@student.school.example',
+            employeeId: '2',
+            displayName: 'Sam Sels',
+          ),
+        ],
+        groups: [
+          // Sam is in Jane's group; Jane is in nobody's.
+          azClassGroup('1A', memberIds: const ['az2']),
+          azClassGroup('1B'),
+        ],
+      ),
       ourSchoolIds: const {1},
     );
 
@@ -1166,13 +1472,28 @@ Future<InMemoryLinkedStore> seededLinkedStore(
 az.AzureSnapshot azSnap({
   DateTime? fetchedAt,
   List<az.AzureUser>? users,
+  List<az.AzureGroup> groups = const [],
   String? deltaToken,
 }) =>
     az.AzureSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
       deltaToken: deltaToken,
       users: users ?? [azUser()],
-      groups: const [],
+      groups: groups,
+    );
+
+/// An Office 365 **class** group as this app creates one (#228): a mail-enabled
+/// unified group whose display name and mail nickname are both `GBS-<class>`.
+az.AzureGroup azClassGroup(
+  String className, {
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: 'az-GBS-$className',
+      displayName: 'GBS-$className',
+      mail: 'GBS-$className@student.school.example',
+      mailNickname: 'GBS-$className',
+      memberIds: memberIds,
     );
 
 /// Deterministic in-memory resolver (mirrors the linker's test fixture).
@@ -1493,14 +1814,19 @@ class ReconcileHarness {
     az.AzureSnapshot? azureInitial,
     this.azureGate,
     this.azureTransport,
+    this.smartschoolTransport,
+    this.smartschoolRules = const <ss.SmartschoolImportRule>[],
+    this.wisaTransport,
     this.passwordGraph,
     this.syncedBy = 'operator@school.example',
     Set<int>? ourSchoolIds,
     List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
     this.settingsStore,
+    LiveSettings? liveSettings,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
+        liveSettings = liveSettings ?? LiveSettings(),
         linkedStore = linkedStore ?? InMemoryLinkedStore() {
     log = LogBuffer(clock: () => kFixtureDate);
     final wisaRules = WisaImportRules();
@@ -1508,16 +1834,75 @@ class ReconcileHarness {
     // The scripted per-system pulls (with call counters). When a [store] is
     // wired, each is wrapped so a successful pull persists — mirroring how
     // bootstrap composes persistence over the real syncers (#107).
-    Syncer<wapi.WisaSnapshot> wisaSync = (_) async {
-      wisaSyncs++;
-      final error = wisaError;
-      if (error != null) throw error;
-      return wisaResult;
-    };
-    Syncer<ss.SmartschoolSnapshot> ssSync = (_) async {
-      ssSyncs++;
-      return ssResult;
-    };
+    //
+    // The WISA pull. Scripted by default; wiring a [wisaTransport] swaps in the
+    // *production* pull instead — a real [wapi.WisaConnector] behind the real
+    // [wisaSyncer], reading the werkdatum pair and virtual marks live from
+    // [liveSettings] exactly as `bootstrapReconcile` composes them. That is the
+    // only way a test can save a werkdatum in Instellingen and then see which
+    // one the next Synchroniseer actually asked WISA for (#238).
+    final wisaWire = wisaTransport;
+    Syncer<wapi.WisaSnapshot> wisaSync;
+    if (wisaWire != null) {
+      final inner = wisaSyncer(
+        wapi.WisaConnector.fromParts(
+          server: 'wisa.example',
+          port: 9000,
+          database: 'wisadb',
+          username: 'operator',
+          password: 'geheim',
+          transport: wisaWire,
+          log: log,
+        ),
+        settings: this.liveSettings,
+        rules: wisaRules,
+        // The same LogBuffer the connector writes into, so the werkdatum line
+        // the pass announces (#239) lands in the harness log beside the
+        // per-school lines — and beside what `RecordingWisaSoap` saw go out.
+        log: log,
+        clock: () => kFixtureDate,
+      );
+      wisaSync = (previous) async {
+        wisaSyncs++;
+        final error = wisaError;
+        if (error != null) throw error;
+        return inner(previous);
+      };
+    } else {
+      wisaSync = (_) async {
+        wisaSyncs++;
+        final error = wisaError;
+        if (error != null) throw error;
+        return wisaResult;
+      };
+    }
+    // The Smartschool pull. Scripted by default; wiring a
+    // [smartschoolTransport] swaps in the *production* pull instead — a real
+    // [ss.SmartschoolConnector] over that SOAP wire, applying
+    // [smartschoolRules] and logging into this harness's LogBuffer exactly as
+    // `bootstrapReconcile` composes it (`ssConnector.sync(rules:
+    // settings.smartschoolRules)`). That is the only way a test can drive the
+    // operator's own import rules through the pass they trigger, and see what
+    // the Log panel then tells them (#241).
+    final ssTransport = smartschoolTransport;
+    Syncer<ss.SmartschoolSnapshot> ssSync;
+    if (ssTransport != null) {
+      final connector = ss.SmartschoolConnector.fromParts(
+        site: 'demo',
+        accessCode: 'secret',
+        transport: ssTransport,
+        log: log,
+      );
+      ssSync = (_) async {
+        ssSyncs++;
+        return connector.sync(rules: smartschoolRules);
+      };
+    } else {
+      ssSync = (_) async {
+        ssSyncs++;
+        return ssResult;
+      };
+    }
     // The Azure pull. By default it is scripted like the other two; wiring an
     // [azureTransport] swaps in the *production* pull instead — a real
     // [az.AzureConnector] behind the real [azureSyncer], logging into this
@@ -1659,6 +2044,9 @@ class ReconcileHarness {
       // so a pull can fill their names back in (#207).
       schoolProfiles: schoolProfiles,
       settingsStore: settingsStore,
+      // The same holder the WISA pull reads, so the drift gate sees a save the
+      // moment Instellingen publishes it (#238).
+      liveSettings: this.liveSettings,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),
@@ -1712,6 +2100,36 @@ class ReconcileHarness {
   /// scripted [azResult]. Lets a test answer as Graph does (e.g. rejecting a
   /// stored delta token, #213) and drive the result through the real pass.
   final az.GraphTransport? azureTransport;
+
+  /// When set, the Smartschool pull is the **production** one — a real
+  /// [ss.SmartschoolConnector] over this SOAP wire — instead of the scripted
+  /// [ssResult]. The counterpart of [azureTransport], and the only way a test
+  /// can answer as Smartschool's group tree does and see what the operator's
+  /// own [smartschoolRules] then do to the pull (#241).
+  final ss.SmartschoolSoapTransport? smartschoolTransport;
+
+  /// When set, the WISA pull is the **production** one — a real
+  /// [wapi.WisaConnector] behind the real [wisaSyncer] — instead of the scripted
+  /// [wisaResult]. The third of the connector seams, and the only way a test can
+  /// read back which `Werkdatum` a pass actually asked WISA for after the
+  /// operator changed it in Instellingen (#238).
+  final wapi.WisaSoapTransport? wisaTransport;
+
+  /// The live settings document (#238): what the production WISA pull reads its
+  /// werkdatum pair and virtual-school marks from at pull time, and what the
+  /// controller's drift gate compares against. Publish into it to model the
+  /// operator saving in Instellingen mid-session — the real Settings view does
+  /// exactly that, into the very same holder.
+  final LiveSettings liveSettings;
+
+  /// The operator's Smartschool import rules, applied by the production pull
+  /// [smartschoolTransport] enables — the settings document's
+  /// `smartschoolRules`, as `bootstrapReconcile` hands them to the connector.
+  /// Ignored by the scripted pull, which returns [ssResult] whole.
+  ///
+  /// Read at sync time, like [ssResult]: assign between passes to model the
+  /// session that bootstraps on rules the operator has just saved in Settings.
+  List<ss.SmartschoolImportRule> smartschoolRules;
 
   /// When set, the Passwords screen writes through the **production**
   /// [ConnectorPasswordBackends] over this transport instead of the recording
@@ -1828,6 +2246,7 @@ class ReconcileHarness {
   /// The bundle the screen's bootstrap seam expects.
   ReconcileServices get services => ReconcileServices(
         settings: const AppSettings(),
+        liveSettings: liveSettings,
         app: app,
         applier: applier,
         controller: controller,

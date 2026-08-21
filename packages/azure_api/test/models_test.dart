@@ -131,5 +131,45 @@ void main() {
       );
       expect(AzureGroup.fromJson(group.toJson()), group);
     });
+
+    test('carries the address a class group is identified by (#228)', () {
+      final group = AzureGroup.fromGraphJson(const <String, dynamic>{
+        'id': 'g1',
+        'displayName': 'GBS-2A',
+        'securityEnabled': false,
+        'mail': 'GBS-2A@student.school.example',
+        'mailNickname': 'GBS-2A',
+      });
+      expect(group.mail, 'GBS-2A@student.school.example');
+      expect(group.mailNickname, 'GBS-2A');
+      expect(group.isUnified, isTrue);
+      expect(AzureGroup.fromJson(group.toJson()), group);
+      expect(group.withMembers(const ['m1']).mail, group.mail);
+    });
+
+    test('a security group is not unified, whatever it is named (#228)', () {
+      final group = AzureGroup(
+        id: 'g',
+        displayName: 'GBS-Personeel',
+        securityEnabled: true,
+      );
+      expect(group.isUnified, isFalse);
+      // Nor is a mail-less group that merely is not security-enabled.
+      expect(AzureGroup(id: 'g2', displayName: 'GBS-2A').isUnified, isFalse);
+    });
+
+    test('two groups differing only in address are not equal (#228)', () {
+      final a = AzureGroup(
+        id: 'g',
+        displayName: 'GBS-2A',
+        mail: 'GBS-2A@student.school.example',
+      );
+      final b = AzureGroup(
+        id: 'g',
+        displayName: 'GBS-2A',
+        mail: 'GBS-2A@other.example',
+      );
+      expect(a, isNot(b));
+    });
   });
 }
