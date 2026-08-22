@@ -909,6 +909,233 @@ void main() {
     });
   });
 
+  group('Synchroniseer re-links when a link input moved (#264)', () {
+    /// A new intake: one WISA student of a managed school with no Azure account
+    /// yet, so the pass proposes creating one — and the proposed UPN is built
+    /// from the Azure domain, a setting **no** pull ever asks about.
+    ReconcileHarness intakeFrom(LiveSettings live) => ReconcileHarness(
+          wisa: wisaSnap(
+            students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+            schools: [wisaSchool(1, ours: true)],
+          ),
+          smartschool: ssSnap(
+            groups: [ssGroup('3C', code: '3C_ss')],
+            accounts: const [],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+          ourSchoolIds: const {1},
+          liveSettings: live,
+        );
+
+    /// The `userPrincipalName` the pending "create an Office 365 account"
+    /// proposes for the student — what the operator reads off the tile.
+    String proposedUpn(ReconcileHarness h) => h.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .choices
+        .expand((c) => c.selected.changes.fields)
+        .firstWhere((f) => f.field == 'userPrincipalName')
+        .after!;
+
+    test('a saved Azure domain reaches the very next Synchroniseer', () async {
+      // The reported bug. Every input of the pull was unchanged, so #99's smart
+      // sync returned before `_relink()` — and the domain, which only the link
+      // consumes, was adopted by **Check for drift** alone while Synchroniseer
+      // reported "geen accountwijzigingen nodig" over the save.
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+
+      await harness.controller.sync();
+      expect(proposedUpn(harness), 'jane.doe@student.school.example');
+
+      live.publish(_settings()
+          .copyWith(azure: const AzureConnection(domain: 'nieuw.example')));
+      expect(
+        harness.controller.pendingSettingsReason,
+        'Instellingen voor de koppeling gewijzigd — '
+        'synchroniseer om ze toe te passen.',
+      );
+
+      await harness.controller.sync();
+
+      expect(proposedUpn(harness), 'jane.doe@student.nieuw.example',
+          reason: 'the pass the operator reached for adopted the save');
+      // …and it did not claim there was nothing to do, which is the
+      // user-visible half of the bug.
+      expect(harness.controller.noChangesNeeded, isFalse);
+      expect(
+        harness.log.entries
+            .map((e) => e.message)
+            .where((m) => m.contains('geen accountwijzigingen nodig')),
+        isEmpty,
+      );
+      // The re-link says why it happened, in the panel the operator reads…
+      expect(
+        harness.log.entries.map((e) => e.message),
+        contains('Koppelingsinstellingen gewijzigd — de koppeling wordt '
+            'opnieuw berekend.'),
+      );
+      // …the notice is gone, because the pass applied it…
+      expect(harness.controller.pendingSettingsReason, isNull);
+      // …and it cost no network at all: this is a re-link, not a re-pull.
+      expect((harness.ssSyncs, harness.azSyncs), (1, 1));
+    });
+
+    test('a saved Smartschool class tree is adopted too', () async {
+      // The second of the two link-only inputs: the tree decides where a newly
+      // created class hangs, and the parent it resolves to is on the tile.
+      final tree = _settings().copyWith(
+        smartschool: SmartschoolConnection(studentGroup: 'LLN'),
+      );
+      final live = LiveSettings(tree);
+      final harness = ReconcileHarness(
+        wisa: wisaSnap(
+          students: [wisaStudent(classGroup: '3C')],
+          schools: [wisaSchool(1, ours: true)],
+          classGroups: [wisaClassGroup('3C')],
+        ),
+        smartschool: ssSnap(
+          groups: [
+            ssGroup('Leerlingen',
+                code: 'LLN', official: false, type: core.GroupType.group),
+            ssGroup('School',
+                code: 'SCH', official: false, type: core.GroupType.group),
+          ],
+          accounts: const [],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+        ourSchoolIds: const {1},
+        liveSettings: live,
+      );
+
+      String parentOf(ReconcileHarness h) => h.controller.pendingEntries
+          .firstWhere((e) => e.family == 'group')
+          .choices
+          .expand((c) => c.selected.changes.fields)
+          .firstWhere((f) => f.field == 'parent')
+          .after!;
+
+      await harness.controller.sync();
+      expect(parentOf(harness), 'LLN');
+
+      live.publish(tree.copyWith(
+        smartschool: SmartschoolConnection(studentGroup: 'SCH'),
+      ));
+      await harness.controller.sync();
+
+      expect(parentOf(harness), 'SCH');
+      expect((harness.ssSyncs, harness.azSyncs), (1, 1),
+          reason: 'the tree is a link input, not a pull input');
+    });
+
+    test('the smart sync still says nothing to do when no link input moved',
+        () async {
+      // The behaviour #99 exists for has to survive: a save that touches
+      // nothing any pass depends on is still "nothing to do".
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+      await harness.controller.sync();
+
+      final base = _settings();
+      live.publish(base.copyWith(
+        smartschool: base.smartschool.copyWith(testUser: 'proefaccount'),
+      ));
+
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      await harness.controller.sync();
+      expect(harness.controller.noChangesNeeded, isTrue);
+    });
+
+    test('a drift check adopts it too, so no sync re-links for it twice',
+        () async {
+      // Drift re-links unconditionally, so it really has applied the save; the
+      // stamp has to record that or the next Synchroniseer would fall through
+      // for a change already adopted.
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+      await harness.controller.sync();
+
+      live.publish(_settings()
+          .copyWith(azure: const AzureConnection(domain: 'nieuw.example')));
+      expect(harness.controller.linkAwaitingSettings, isTrue);
+
+      await harness.controller.checkDrift();
+      expect(proposedUpn(harness), 'jane.doe@student.nieuw.example');
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      expect(harness.controller.pendingSettingsReason, isNull);
+
+      await harness.controller.sync();
+      expect(harness.controller.noChangesNeeded, isTrue,
+          reason: 'the drift pass already applied it');
+    });
+
+    test('the screen names the link beside the systems waiting', () async {
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+      await harness.controller.sync();
+
+      live.publish(_settings().copyWith(
+        schoolPrefix: 'SSM',
+        azure: const AzureConnection(domain: 'nieuw.example'),
+        smartschoolRules: const <ss.SmartschoolImportRule>[
+          ss.DiscardSmartschoolGroup('Organisatie'),
+        ],
+      ));
+
+      expect(
+        harness.controller.pendingSettingsReason,
+        'Instellingen voor Smartschool, Azure AD en de koppeling gewijzigd — '
+        'synchroniseer om ze toe te passen.',
+      );
+      // Nothing is refused meanwhile — the next pass adopts them by itself.
+      expect(harness.controller.canCheckDrift, isTrue);
+    });
+
+    test('a save landing before the link is adopted by that very link',
+        () async {
+      // The fingerprint is read where `applier.link()` samples the document,
+      // not when the pass started, so a save that lands while the pass is still
+      // pulling is applied by it — and stamped, rather than left pending over a
+      // link that honoured it.
+      final live = LiveSettings(_settings());
+      final gate = Completer<void>();
+      final harness = ReconcileHarness(
+        wisa: wisaSnap(
+          students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+          schools: [wisaSchool(1, ours: true)],
+        ),
+        smartschool: ssSnap(
+          groups: [ssGroup('3C', code: '3C_ss')],
+          accounts: const [],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+        ourSchoolIds: const {1},
+        liveSettings: live,
+        azureGate: gate,
+      );
+
+      final pass = harness.controller.sync();
+      await Future<void>.delayed(Duration.zero);
+      live.publish(_settings()
+          .copyWith(azure: const AzureConnection(domain: 'nieuw.example')));
+      gate.complete();
+      await pass;
+
+      expect(proposedUpn(harness), 'jane.doe@student.nieuw.example');
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+    });
+
+    test('a harness with no settings holder never arms it', () async {
+      final harness = ReconcileHarness();
+      await harness.controller.sync();
+
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      expect(harness.controller.pendingSettingsReason, isNull);
+    });
+  });
+
   group('a connection profile the session cannot adopt says so (#246)', () {
     test('stays silent while only live-adoptable values move', () async {
       final live = LiveSettings(_settings());

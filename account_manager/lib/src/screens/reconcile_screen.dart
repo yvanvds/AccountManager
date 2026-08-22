@@ -197,8 +197,10 @@ class _Header extends StatelessWidget {
     // connection profiles the connectors were constructed from (#246).
     final String? relaunch = controller.relaunchRequiredReason;
     // Saved Smartschool / Azure pull inputs the next pass will adopt but no
-    // pass has yet (#259) — the gap in which Synchroniseer used to report
-    // "geen accountwijzigingen nodig" over a save it had skipped.
+    // pass has yet (#259), and since #264 the ones only the link consumes (the
+    // Azure domain, the Smartschool class tree) — the gap in which
+    // Synchroniseer used to report "geen accountwijzigingen nodig" over a save
+    // it had skipped.
     final String? pendingSettings = controller.pendingSettingsReason;
 
     return Column(

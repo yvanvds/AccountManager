@@ -130,6 +130,50 @@ String azurePullFingerprint(AppSettings settings) {
       'beheerdeScholen=${managed.join(',')}';
 }
 
+/// A stable identity for the settings only the **link** consumes — the ones no
+/// pull asks anything about (#264).
+///
+/// The third fingerprint beside the three pull ones, and the reason it exists is
+/// that [wisaPullFingerprint], [smartschoolPullFingerprint] and
+/// [azurePullFingerprint] together do *not* cover everything a saved document
+/// changes. `ApplierSettings` — sampled on every `link()` — carries two values
+/// that reach no connector at all:
+///
+/// - the Azure domain, which every proposed UPN is built from
+///   (`StudentActionConfig.azureDomain`, and the `student.<domain>` sub-domain
+///   derived from it, plus `StaffActionConfig.azureDomain`);
+/// - the Smartschool class tree — the year or grade group codes, whichever the
+///   school uses, with the student-group root as the flat fallback — which
+///   decides where a newly created class hangs.
+///
+/// Saving either used to be adopted by **Check for drift** and not by the
+/// Synchroniseer the operator reaches for: that pass re-links unconditionally,
+/// while a sync over an unchanged WISA returns before `_relink()`. A moved
+/// fingerprint is what tells the smart sync to fall through to the link — and
+/// only to the link, since nothing here needs the network.
+///
+/// The other two `ApplierSettings` inputs are deliberately absent: the school
+/// prefix and the managed-school set are already in [azurePullFingerprint],
+/// because they scope the Azure pull itself, so a save that moves either forces
+/// a re-pull *and* the re-link behind it.
+///
+/// Order-sensitive on the year/grade codes — they are positional, one per school
+/// year — and the flags are honoured exactly as `classTreeFrom` honours them, so
+/// editing a year label while the school runs on grades is not a changed tree.
+String linkFingerprint(AppSettings settings) {
+  final smartschool = settings.smartschool;
+  final years = smartschool.useYears ? smartschool.years : const <String>[];
+  final grades = smartschool.useGrades ? smartschool.grades : const <String>[];
+  // The student-group path is fingerprinted untrimmed on purpose: it goes into
+  // the tree exactly as stored, so a trailing space really is a different
+  // lookup. The domain is trimmed because bootstrap trims it before the
+  // connector and the action configs ever see it.
+  return 'azureDomein=${settings.azure.domain.trim()};'
+      'jaren=${jsonEncode(years)};'
+      'graden=${jsonEncode(grades)};'
+      'pad=${jsonEncode(smartschool.studentGroup)}';
+}
+
 /// A stable identity for the settings a running session **cannot** adopt: the
 /// endpoints and credential refs the three connectors were constructed from
 /// (#246).

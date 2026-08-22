@@ -296,6 +296,121 @@ void main() {
     });
   });
 
+  group('linkFingerprint (#264)', () {
+    test('changes when the Azure domain moves', () {
+      // Every proposed UPN is built from it — and no pull asks Azure anything
+      // about it, so nothing but this can make a sync adopt the save.
+      expect(
+        linkFingerprint(_settings()
+            .copyWith(azure: const AzureConnection(domain: 'nieuw.example'))),
+        isNot(linkFingerprint(_settings()
+            .copyWith(azure: const AzureConnection(domain: 'oud.example')))),
+      );
+    });
+
+    test('changes when the student-group root moves', () {
+      final base = _settings();
+      expect(
+        linkFingerprint(base.copyWith(
+          smartschool: base.smartschool.copyWith(studentGroup: 'LEERLINGEN'),
+        )),
+        isNot(linkFingerprint(base.copyWith(
+          smartschool: base.smartschool.copyWith(studentGroup: 'SCHOOL'),
+        ))),
+      );
+    });
+
+    test('changes when a year code moves on a school that uses years', () {
+      final base = _settings();
+      SmartschoolConnection tree(List<String> years) => base.smartschool
+          .copyWith(useYears: true, years: years, studentGroup: 'SCHOOL');
+      expect(
+        linkFingerprint(base.copyWith(
+          smartschool: tree(const ['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7']),
+        )),
+        isNot(linkFingerprint(base.copyWith(
+          smartschool: tree(const ['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'X7']),
+        ))),
+      );
+    });
+
+    test('ignores a year code the school does not use', () {
+      // `classTreeFrom` honours the UseYears/UseGrades flags, so a label edited
+      // on the scheme the school has switched off changes no placement — and
+      // must not cost a re-link.
+      final base = _settings();
+      expect(
+        linkFingerprint(base.copyWith(
+          smartschool: base.smartschool.copyWith(
+            years: const ['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7'],
+          ),
+        )),
+        linkFingerprint(base),
+      );
+    });
+
+    test('changes when the school switches from years to grades', () {
+      final base = _settings();
+      final years = base.smartschool.copyWith(
+        useYears: true,
+        years: const ['J1', 'J2', 'J3', 'J4', 'J5', 'J6', 'J7'],
+        grades: const ['G1', 'G2', 'G3'],
+      );
+      expect(
+        linkFingerprint(base.copyWith(smartschool: years)),
+        isNot(linkFingerprint(base.copyWith(
+          smartschool: years.copyWith(useYears: false, useGrades: true),
+        ))),
+      );
+    });
+
+    test('ignores the settings the three pull fingerprints already own', () {
+      // The point of the split: a werkdatum, a prefix, a beheerd mark or an
+      // import rule already forces the pull that adopts it, and the re-link
+      // behind it. Only what *no* pull sees belongs here.
+      final base = _settings();
+      expect(
+        linkFingerprint(base.copyWith(
+          schoolPrefix: 'GBS',
+          smartschoolRules: const [DiscardSmartschoolGroup('Organisatie')],
+          wisaRules: const <WisaImportRule>[DontImportClass('3C')],
+          wisaSchools: const [
+            WisaSchoolProfile(schoolId: 1, code: 'A', name: 'A', ours: true),
+          ],
+          wisa: base.wisa.copyWith(
+            workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9)),
+          ),
+        )),
+        linkFingerprint(base),
+      );
+    });
+
+    test('is insensitive to whitespace an operator typed around the domain',
+        () {
+      // Bootstrap trims it before the action configs ever see it.
+      expect(
+        linkFingerprint(_settings().copyWith(
+          azure: const AzureConnection(domain: '  school.example  '),
+        )),
+        linkFingerprint(_settings().copyWith(
+          azure: const AzureConnection(domain: 'school.example'),
+        )),
+      );
+    });
+
+    test('is stable across two reads of the same document', () {
+      final settings = _settings().copyWith(
+        azure: const AzureConnection(domain: 'school.example'),
+        smartschool: SmartschoolConnection(
+          studentGroup: 'SCHOOL',
+          useGrades: true,
+          grades: const ['G1', 'G2', 'G3'],
+        ),
+      );
+      expect(linkFingerprint(settings), linkFingerprint(settings));
+    });
+  });
+
   group('connectionFingerprint (#246)', () {
     test('moves for every endpoint half a connector is built from', () {
       final base = _settings();

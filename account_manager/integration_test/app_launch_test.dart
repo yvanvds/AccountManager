@@ -19,6 +19,7 @@ import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
     show
         AppSettings,
+        AzureConnection,
         ChangeSignal,
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
@@ -5493,6 +5494,143 @@ void main() {
           .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
           .onPressed,
       isNotNull,
+    );
+  });
+
+  testWidgets(
+      'an Azure domain saved in Instellingen re-links the very next '
+      'Synchroniseer, with no pull behind it (#264)',
+      (WidgetTester tester) async {
+    // The reported bug, driven the way the operator lives it. #259 gave the two
+    // pulls their own settings fingerprints; the domain has no pull at all —
+    // only `link()` reads it, through `ApplierSettings.studentConfig` — so with
+    // WISA unchanged the smart sync returned before `_relink()` and the saved
+    // domain was adopted by **Check for drift** alone, while Synchroniseer
+    // reported "geen accountwijzigingen nodig" over it.
+    //
+    // Only this layer sees the whole thing: the save is made in Instellingen,
+    // the two bootstraps share one LiveSettings exactly as `main()` wires them,
+    // and what has to change is a UPN the operator reads off an Acties tile.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
+      azure: const AzureConnection(domain: 'oud.example'),
+      wisaSchools: const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
+      ],
+    );
+    final live = LiveSettings(stored);
+    // A new intake: one WISA student with no Office 365 account yet, so the
+    // pass proposes creating one — and names the UPN it would create.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        schools: [wisaSchool(1, ours: true)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      liveSettings: live,
+    );
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    /// Opens Acties → Jaar 3 → 3C and expands the student's pending row, which
+    /// is where the proposed `userPrincipalName` is written out.
+    Future<void> openStudentRow() async {
+      await tester.tap(find.text('Acties'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Jaar 3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('3C'));
+      await tester.pumpAndSettle();
+      final id = harness.controller.pendingEntries
+          .firstWhere((e) => e.family == 'student')
+          .targetId;
+      final row = find.byKey(ValueKey('entry-student-$id'));
+      await tester.ensureVisible(row);
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+    }
+
+    // A first Synchroniseer, on the domain as it stands.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await openStudentRow();
+    expect(
+      find.textContaining(
+          'userPrincipalName: ∅ → jane.doe@student.oud.example'),
+      findsOneWidget,
+    );
+
+    // Instellingen → Azure → the school moves to its new domain → Opslaan.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-azure');
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-az-domain')),
+      'nieuw.example',
+    );
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).azure.domain, 'nieuw.example');
+
+    // Back on Reconcile the screen names the save that is still waiting — and
+    // names it as the *link*, because no pull is involved. Nothing is refused:
+    // the domain is not a WISA pull input, so #238's drift gate stays open.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Instellingen voor de koppeling gewijzigd'),
+      findsOneWidget,
+    );
+
+    // The operator presses **Synchroniseer**, the pass they reach for. WISA
+    // comes back unchanged, which is exactly the case that used to end here.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('geen accountwijzigingen nodig'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Koppelingsinstellingen gewijzigd — de koppeling '
+          'wordt opnieuw berekend.'),
+      findsOneWidget,
+    );
+
+    // …and the account the pass would create now carries the saved domain, with
+    // no drift check, no hand-off and no relaunch anywhere in this test.
+    await openStudentRow();
+    expect(
+      find.textContaining(
+          'userPrincipalName: ∅ → jane.doe@student.nieuw.example'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('jane.doe@student.oud.example'),
+      findsNothing,
     );
   });
 
