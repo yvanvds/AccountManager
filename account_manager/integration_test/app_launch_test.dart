@@ -3128,10 +3128,10 @@ void main() {
       linkedStore: linkedStore,
     ).controller.sync();
 
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Deliberately holding no seeded snapshot: since #287 a session that does
+    // adopts the shared state and gets the interactive tiles instead, and this
+    // scenario is about the passive card.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -3565,11 +3565,10 @@ void main() {
     );
     await operatorA.controller.sync();
 
-    final operatorB = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-      hub: hub,
-    );
+    // Deliberately holding no seeded snapshot: since #287 a session that does
+    // adopts the shared state, and this scenario is about what a session with
+    // *only* the shared documents keeps being offered.
+    final operatorB = ReconcileHarness(linkedStore: linkedStore, hub: hub);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4336,11 +4335,10 @@ void main() {
         .controller
         .sync();
 
-    // Session 2 is the real app over the same stores. It never syncs.
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Session 2 is the real app over the same stores. It never syncs, and holds
+    // no seeded snapshot to adopt from either (#287) — so this stays the purely
+    // passive read #115 is about.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4391,11 +4389,10 @@ void main() {
         .controller
         .sync();
 
-    // Session 2 is the real app over the same stores. It never syncs.
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Session 2 is the real app over the same stores. It never syncs, and holds
+    // no seeded snapshot to adopt from either (#287) — so this stays the purely
+    // passive read #163 is about.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4436,11 +4433,10 @@ void main() {
         .controller
         .sync();
 
-    // Session 2 is the real app over the same stores. It never syncs.
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Session 2 is the real app over the same stores. It never syncs, and holds
+    // no seeded snapshot to adopt from either (#287) — so this stays the purely
+    // passive read #119 is about.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4481,16 +4477,14 @@ void main() {
     // handler and say nothing about it, which reads as an interactive screen
     // whose taps stopped working rather than as a view of the shared state.
     useTallWindow(tester);
-    final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
-    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
-        .controller
-        .sync();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
 
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Deliberately holding no seeded snapshot: since #287 a session that does
+    // adopts the shared state and its tiles are interactive from the first
+    // frame (covered by its own scenario below). This is the session that has
+    // nothing to build a view from.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4528,7 +4522,12 @@ void main() {
     await tester.tap(find.text('3C'));
     await tester.pumpAndSettle();
     expect(readOnly, findsOneWidget);
-    expect(find.textContaining('nog niet gesynchroniseerd'), findsOneWidget);
+    // Since #287 the notice names what is missing rather than reporting the
+    // absence of a sync: there is no snapshot here to build a view from.
+    expect(
+      find.textContaining('Geen opgeslagen momentopname'),
+      findsOneWidget,
+    );
     expect(find.byIcon(Icons.lock_outline), findsWidgets);
     expect(pendingTiles, findsNothing,
         reason: 'nothing in this class is actionable — that is the point');
@@ -4553,6 +4552,87 @@ void main() {
     expect(readOnly, findsNothing);
     expect(find.byIcon(Icons.lock_outline), findsNothing);
     expect(pendingTiles, findsWidgets);
+  });
+
+  testWidgets(
+      'the second operator of the day starts from the shared synced state: '
+      'Acties, Klasgroepen and Synchronisatie are all usable without pulling '
+      'anything (#287)', (WidgetTester tester) async {
+    // The everyday case this issue is about. Operator A syncs — minutes of WISA
+    // SOAP per school, the Smartschool group walk and the Azure read. Operator B
+    // launches the real app five minutes later onto the same shared stores.
+    //
+    // This is the layer that sees it: the seeding happens in the screens'
+    // bootstrap, the notice replaces a different widget on each of three tabs,
+    // and only a full-app run puts an operator in front of the result. Before
+    // #287 B was read-only everywhere until they repeated A's whole pull.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(
+      store: snapshots,
+      linkedStore: linkedStore,
+      syncedBy: 'jan@school.example',
+    ).controller.sync();
+
+    final operatorB = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: operatorB.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Synchronisatie says whose pull this session is working from — and both
+    // passes stay available for an operator who wants something fresher.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-adopted')), findsOneWidget);
+    expect(find.textContaining('jan@school.example'), findsWidgets);
+    expect(find.byKey(const ValueKey('reconcile-seed-refused')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
+
+    // Klasgroepen: the inventory is live, not a wall of static rows, and it
+    // says where the view came from.
+    await openKlasgroepen(tester);
+    expect(find.byKey(const ValueKey('class-groups-read-only')), findsNothing);
+    expect(find.byKey(const ValueKey('class-groups-shared-state')),
+        findsOneWidget);
+    expect(find.text('Gedeelde synchronisatie'), findsOneWidget);
+
+    // Acties: drill into a class and the tiles are the interactive ones —
+    // choices, dry-run, apply — with the same notice above them.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('actions-read-only')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-shared-state')), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+    final pendingTiles = find.byWidgetPredicate((w) =>
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('entry-'));
+    expect(pendingTiles, findsWidgets);
+
+    // The whole of it without one connector round-trip, and without touching
+    // the shared view: no generation bump, so no client is asked to refetch.
+    expect(operatorB.wisaSyncs, 0);
+    expect(operatorB.ssSyncs, 0);
+    expect(operatorB.azSyncs, 0);
+    expect((await linkedStore.readSyncState()).generation, 1);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

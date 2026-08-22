@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
+import '../format/timestamps.dart';
 import '../settings/wisa_rule_labels.dart';
 import 'log_buffer.dart';
 
@@ -568,6 +569,28 @@ class ReconcileController extends ChangeNotifier {
   double _progress = 0.0;
   ApplyStep? _applyStep;
   LinkedState? _linked;
+
+  /// The shared WISA stamp the linked view in hand was **adopted** from (#287),
+  /// or `null` when the view is this session's own — built by its [sync] or
+  /// [checkDrift] — or when there is no view at all.
+  ///
+  /// What lets the screens say *whose* pull this session is acting on, in place
+  /// of the "deze sessie heeft nog niet gesynchroniseerd" they used to show a
+  /// session that had every snapshot it needed sitting in memory.
+  SystemSyncMeta? _adoptedFrom;
+
+  /// Why [adoptStoredState] refused to build a view from the cold seed, or
+  /// `null` when it has not refused (#287). Sticky until a link succeeds: a
+  /// session that stays read-only owes the operator the reason for as long as
+  /// it stays that way.
+  String? _seedRefusedReason;
+
+  /// Whether adoption has already been tried this session. Each screen opens
+  /// with [openSession], and a `link()` over the whole roster is not something
+  /// to pay for three times — nor can the answer change without a pass that
+  /// links anyway.
+  bool _adoptAttempted = false;
+
   bool _noChangesNeeded = false;
   String? _error;
   List<ActionOutcomeEntry>? _dryRunResults;
@@ -655,6 +678,19 @@ class ReconcileController extends ChangeNotifier {
 
   /// The current derived view, or `null` before the first successful sync.
   LinkedState? get linked => _linked;
+
+  /// Whose shared sync the view in hand was built from, when this session
+  /// **adopted** it rather than pulling for itself (#287); `null` for a view
+  /// this session's own [sync] / [checkDrift] produced, and for no view at all.
+  ///
+  /// The screens read it to say when the state they are offering was pulled and
+  /// by whom, instead of demanding a sync the shared store already paid for.
+  SystemSyncMeta? get adoptedFrom => _adoptedFrom;
+
+  /// Why this session could not adopt the shared state and stays read-only, or
+  /// `null` when it did adopt (or has not tried) — the one blocking notice a
+  /// refused session owes the operator (#287).
+  String? get seedRefusedReason => _seedRefusedReason;
 
   /// True when the last [sync] found WISA unchanged — the "no account changes
   /// needed" banner.
@@ -1757,6 +1793,13 @@ class ReconcileController extends ChangeNotifier {
           !linkStale &&
           wisaSnapshotUnchanged(previous, fresh)) {
         _noChangesNeeded = true;
+        // This pass pulled WISA and found the roster the view was built from
+        // still current, so the view stops being somebody else's to attribute
+        // even though no re-link was needed (#287). Without this an adopted
+        // session would keep the shared-state notice up after taking the very
+        // sync it offered — the one path out of adoption that never reaches
+        // [_relink].
+        _adoptedFrom = null;
         log.addMessage(
           core.Origin.wisa,
           'WISA is ongewijzigd sinds de vorige synchronisatie — '
@@ -1919,6 +1962,159 @@ class ReconcileController extends ChangeNotifier {
     } on Object catch (e) {
       log.addError(core.Origin.all, 'Kon het overzicht niet laden: $e');
     }
+  }
+
+  /// A screen's opening read (#287): the shared overview, and then — when the
+  /// cold seed allows it — the linked view built from that same shared state.
+  ///
+  /// The two halves are kept apart on purpose. [loadOverview] is the passive
+  /// read it has always been (#115) and stays callable on its own;
+  /// [adoptStoredState] is the step that makes the session *usable* without a
+  /// pull. Every screen opens with this one call, and the adoption inside it
+  /// runs at most once however many screens the operator visits.
+  Future<void> openSession() async {
+    await loadOverview();
+    await adoptStoredState();
+  }
+
+  /// Builds this session's linked view from the snapshots bootstrap seeded from
+  /// the cold store, so an operator who opens the app five minutes after a
+  /// colleague synced can choose, dry-run and apply straight away (#287).
+  ///
+  /// Pulls nothing, and — the crux — persists nothing. [_persist] rewrites the
+  /// whole ~9.6k-document materialized view, bumps the generation and broadcasts
+  /// `viewChanged`; a startup link that persisted would have every launching
+  /// client rewrite the shared view for no reason at all. This runs the link
+  /// half of [_relink] alone, leaving the store exactly as it found it.
+  ///
+  /// The phase stays [ReconcilePhase.idle] for the same reason a passive read
+  /// does (#275): adopting is not a pass, and the Synchronisatie screen's
+  /// explainer must still be the first thing the operator reads.
+  ///
+  /// Refuses — leaving the session read-only with [seedRefusedReason] on screen
+  /// — when there is nothing honest to adopt: see [_seedRefusal]. Tried once per
+  /// session; the answer cannot change without a pass that links for itself.
+  ///
+  /// An apply on an adopted view is deliberately held to **exactly** the bar an
+  /// apply on a freshly-synced one is: no lease, no targeted re-pull first. The
+  /// difference between the two is one of degree, not of kind — a session that
+  /// did sync is also writing against snapshots that are minutes old, and every
+  /// action re-checks the record it is about to write through its own
+  /// `evaluate`. Raising the bar here and not there would buy nothing and would
+  /// re-introduce the per-session pull this exists to remove.
+  Future<void> adoptStoredState() async {
+    if (busy || _linked != null || _adoptAttempted) return;
+    _adoptAttempted = true;
+
+    final refusal = _seedRefusal();
+    if (refusal != null) {
+      // Reported on screen, not in the Log panel: nothing ran, and a session
+      // that has done nothing yet should still open on an empty log.
+      _seedRefusedReason = refusal;
+      notifyListeners();
+      return;
+    }
+
+    final from = _syncState.systems[core.Origin.wisa];
+    try {
+      await _link();
+      _adoptedFrom = from;
+      final by =
+          from == null || from.syncedBy.isEmpty ? '' : ' door ${from.syncedBy}';
+      final when = from == null ? '' : ' van ${formatFreshnessStamp(from.at)}';
+      log.addMessage(
+        core.Origin.all,
+        'Gedeelde staat$when$by overgenomen — geen ophaalactie nodig. '
+        'Synchroniseer wanneer je iets recenters wil.',
+      );
+      notifyListeners();
+    } on Object catch (e) {
+      // A failed adoption must leave the session exactly as read-only as it was
+      // — never half-linked — and must not read as a failed *pass*: nothing was
+      // pulled and nothing was written, so [error] (which the screens render as
+      // "de laatste sync is mislukt") stays untouched.
+      _linked = null;
+      _seedRefusedReason =
+          'Kon de gedeelde staat niet overnemen — synchroniseer om verder te '
+          'gaan.';
+      log.addError(core.Origin.all, 'Kon de gedeelde staat niet overnemen: $e');
+      notifyListeners();
+    }
+  }
+
+  /// Why the cold seed cannot honestly be adopted, or `null` when it can (#287).
+  ///
+  /// One reason, not a list: a refused session shows a single blocking notice,
+  /// and the first thing standing in the way is the thing the operator has to
+  /// deal with. In order of how fundamental they are:
+  ///
+  /// * a system with no seeded snapshot — there is simply no view to build;
+  /// * no shared WISA stamp at all — nobody has ever synced, so there is no
+  ///   colleague's pull to inherit;
+  /// * a saved setting that has moved since this session was constructed
+  ///   ([pendingSettingsReason] / [driftBlockedReason]) — adopting would act on
+  ///   a view built without it, which is the whole of what #238/#259/#264 refuse
+  ///   elsewhere;
+  /// * a werkdatum mismatch — the stored roster is *as of* a date today's
+  ///   settings no longer resolve to, so it may describe another school year.
+  ///
+  /// A stamp carrying **no** werkdatum is not a mismatch and does not refuse:
+  /// the field is null on a WISA pull from before #247 recorded it, and treating
+  /// an absence as a contradiction would strand every install whose shared view
+  /// predates that on a sync it does not need.
+  String? _seedRefusal() {
+    final missing = <String>[
+      if (app.wisa.snapshot == null) 'WISA',
+      if (app.smartschool.snapshot == null) 'Smartschool',
+      if (app.azure.snapshot == null) 'Azure AD',
+    ];
+    if (missing.isNotEmpty) {
+      return 'Geen opgeslagen momentopname voor ${_andList(missing)} — '
+          'synchroniseer om te beginnen.';
+    }
+    if (_syncState.systems[core.Origin.wisa] == null) {
+      return 'Er is nog geen gedeelde synchronisatie om over te nemen — '
+          'synchroniseer om te beginnen.';
+    }
+    final settings = pendingSettingsReason;
+    if (settings != null) return settings;
+    final drift = driftBlockedReason;
+    if (drift != null) return drift;
+    return _staleWorkDateReason();
+  }
+
+  /// Why the shared roster's **werkdatum** disqualifies it for this session, or
+  /// `null` when it is the one today's settings resolve to (#287/#247).
+  ///
+  /// WISA returns enrolments *as of* a work date, so a roster pulled on the
+  /// other side of the school-year rollover simply has none of the new intake in
+  /// it — which on the Acties screen reads exactly like a class that went
+  /// missing. That is the one freshness question this session cannot leave to
+  /// the operator's judgement, so it is the one it asks.
+  ///
+  /// Silent when no [liveSettings] holder is wired, exactly as every other gate
+  /// in this class is: there is then no document to resolve today's werkdatum
+  /// from, and inventing one would refuse every harness that models no settings.
+  String? _staleWorkDateReason() {
+    final live = liveSettings;
+    if (live == null) return null;
+    final stored = _syncState.systems[core.Origin.wisa]?.workDate;
+    if (stored == null) return null;
+    final today = live.current.wisa.workDate.resolve(_now());
+    if (_sameWorkDay(stored, today)) return null;
+    return 'De gedeelde momentopname is van werkdatum '
+        '${wapi.formatWerkdatum(stored)}; vandaag geldt '
+        '${wapi.formatWerkdatum(today)} — synchroniseer eerst.';
+  }
+
+  /// Whether two werkdatums name the same day on the operator's own calendar.
+  /// Compared as local calendar days, not as instants: the stored stamp is an
+  /// ISO timestamp and the resolved one is "now", so they are never equal to the
+  /// second even when they mean the same day.
+  static bool _sameWorkDay(DateTime a, DateTime b) {
+    final x = a.toLocal();
+    final y = b.toLocal();
+    return x.year == y.year && x.month == y.month && x.day == y.day;
   }
 
   /// Reacts to another operator's sync bumping the stored generation past this
@@ -2298,16 +2494,22 @@ class ReconcileController extends ChangeNotifier {
     );
   }
 
-  Future<void> _relink() async {
-    _phase = ReconcilePhase.linking;
-    _setProgress(0.75);
-    notifyListeners();
+  /// Recomputes the linked view from the snapshots in hand and reports what came
+  /// out — the **link half**, which writes nothing anywhere.
+  ///
+  /// Split out of [_relink] for #287: a session adopting the shared cold seed
+  /// needs exactly this and must not run the persist half behind it, or every
+  /// client would rewrite the whole materialized view on launch.
+  Future<void> _link() async {
     // Read before the link, stamped after it: `applier.link()` samples the very
     // same document, so this names exactly the settings the view about to be
     // built was linked with (#264).
     final linkedWith = _currentLinkFingerprint();
     _linked = await applier.link();
     _stampLink(linkedWith);
+    // A view now exists, so whatever kept this session read-only no longer
+    // does.
+    _seedRefusedReason = null;
     final s = _linked!.snapshot;
     log.addMessage(
       core.Origin.all,
@@ -2317,6 +2519,16 @@ class ReconcileController extends ChangeNotifier {
       '${s.warnings.length} waarschuwing(en).',
     );
     _logSkippedNamesakes(s.warnings);
+  }
+
+  Future<void> _relink() async {
+    _phase = ReconcilePhase.linking;
+    _setProgress(0.75);
+    notifyListeners();
+    await _link();
+    // This pass pulled and linked for itself, so the view is no longer somebody
+    // else's to attribute (#287).
+    _adoptedFrom = null;
     _setProgress(0.9);
     await _persist(_linked!);
   }

@@ -221,6 +221,75 @@ void main() {
   });
 
   testWidgets(
+      'a session that adopted the shared state says so, and one that could not '
+      'says why (#287)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    // The seeded launch: it inherits the colleague's pull and says whose.
+    final adopting = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: adopting.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-adopted')), findsOneWidget);
+    expect(
+      find.textContaining('werkt met de gedeelde synchronisatie'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('operator@school.example'), findsWidgets);
+    expect(find.byKey(const ValueKey('reconcile-seed-refused')), findsNothing);
+    expect(adopting.wisaSyncs, 0);
+    // Both buttons stay exactly as available as they were.
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets(
+      'a session that could not adopt the shared state surfaces one blocking '
+      'reason (#287)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+    // The launch with nothing seeded: the shared overview is readable, but
+    // there is no snapshot to build a view from.
+    final refused = ReconcileHarness(linkedStore: linkedStore);
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: refused.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-adopted')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('reconcile-seed-refused')), findsOneWidget);
+    expect(
+      find.textContaining('Geen opgeslagen momentopname'),
+      findsOneWidget,
+      reason: 'a refused session owes the operator exactly one reason',
+    );
+    expect(refused.wisaSyncs, 0);
+  });
+
+  testWidgets(
       'while a sync runs the header shows a determinate progress bar that has '
       'advanced past the start (#176)', (WidgetTester tester) async {
     final gate = Completer<void>();

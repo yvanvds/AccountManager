@@ -526,16 +526,13 @@ void main() {
       'a passive session says it is read-only and renders static rows (#214)',
       (WidgetTester tester) async {
     _useTallWindow(tester);
-    final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
-    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
-        .controller
-        .sync();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
 
-    final s2 = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Deliberately *not* a seeded session: since #287 one of those adopts the
+    // shared state and its rows really are interactive (covered below). This is
+    // the session holding no snapshot to build a view from at all.
+    final s2 = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(_wrap(ClassGroupsScreen(bootstrap: s2.bootstrap)));
     await tester.pumpAndSettle();
 
@@ -551,6 +548,41 @@ void main() {
     expect(find.textContaining('(manueel)'), findsWidgets);
     // Nothing interactive: a passive session has nothing to apply.
     expect(find.byKey(const ValueKey('entry-group-2B')), findsNothing);
+  });
+
+  testWidgets(
+      'a seeded session works from the shared sync instead, and says so (#287)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // The same two operators, except this one launched onto a cold store a
+    // colleague had already filled — which is the everyday case.
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ClassGroupsScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The inventory is live rather than static, and the notice says where the
+    // view came from instead of demanding a sync for it.
+    expect(s2.controller.linked, isNotNull);
+    expect(_readOnly, findsNothing);
+    expect(find.byKey(const ValueKey('class-groups-shared-state')),
+        findsOneWidget);
+    expect(find.text('Gedeelde synchronisatie'), findsOneWidget);
+    expect(find.textContaining('operator@school.example'), findsWidgets);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+    expect(find.byKey(const ValueKey('entry-group-2B')), findsOneWidget);
+    // And not one connector was asked for anything.
+    expect(s2.wisaSyncs, 0);
+    expect(s2.ssSyncs, 0);
+    expect(s2.azSyncs, 0);
   });
 
   testWidgets(

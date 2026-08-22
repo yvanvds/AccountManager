@@ -64,7 +64,7 @@ class StudentRow {
 /// immediately (they are never queued), mirroring the legacy app.
 class PasswordController extends ChangeNotifier {
   PasswordController({
-    required ss.SmartschoolSnapshot? snapshot,
+    required ss.SmartschoolSnapshot? Function() snapshot,
     required PasswordQueueStore queue,
     required PasswordBackends backends,
     PasswordFileWriter writer = writePasswordExport,
@@ -73,20 +73,33 @@ class PasswordController extends ChangeNotifier {
     String studentGroupName = 'Leerlingen',
     String staffGroupName = 'Personeel',
     core.ILog? log,
-  })  : _snapshot = snapshot,
+  })  : _snapshotOf = snapshot,
+        _studentGroupName = studentGroupName,
+        _staffGroupName = staffGroupName,
         _queue = queue,
         _backends = backends,
         _writer = writer,
         _opener = opener,
         _generate = generatePassword,
         _log = log {
-    _indexTree();
-    studentRoot = _findGroupByName(studentGroupName);
-    _staffRoot = _findGroupByName(staffGroupName);
-    _loadStaff();
+    _reindex();
   }
 
-  final ss.SmartschoolSnapshot? _snapshot;
+  /// Where the Smartschool group tree comes from, read **live** rather than
+  /// captured (#287).
+  ///
+  /// The screen hands over `() => app.smartschool.snapshot`. Capturing the value
+  /// at bootstrap froze this screen on whatever the session held the instant it
+  /// was first opened — which, in a session that seeded from the cold store and
+  /// then synced, is the *older* of the two trees.
+  final ss.SmartschoolSnapshot? Function() _snapshotOf;
+
+  /// The snapshot the index below was built from, so [refresh] can tell a real
+  /// change from a repaint and cost nothing on the latter.
+  ss.SmartschoolSnapshot? _indexed;
+
+  final String _studentGroupName;
+  final String _staffGroupName;
   final PasswordQueueStore _queue;
   final PasswordBackends _backends;
   final PasswordFileWriter _writer;
@@ -94,38 +107,87 @@ class PasswordController extends ChangeNotifier {
   final String Function() _generate;
   final core.ILog? _log;
 
-  // --- Group-tree index (built once from the snapshot) -----------------------
+  // --- Group-tree index (rebuilt whenever the snapshot moves) ----------------
 
   final Map<String, List<core.Group>> _childrenByParent =
       <String, List<core.Group>>{};
   final Map<String, ss.SmartschoolAccount> _accountByUid =
       <String, ss.SmartschoolAccount>{};
   final Map<String, List<String>> _uidsByGroup = <String, List<String>>{};
+  final Map<String, core.Group> _groupsById = <String, core.Group>{};
 
   /// The "Leerlingen" root of the student class tree, or `null` when the last
   /// sync carried no such group (or there was no sync this session).
   core.Group? studentRoot;
   core.Group? _staffRoot;
 
-  void _indexTree() {
-    final snap = _snapshot;
-    if (snap == null) return;
-    for (final account in snap.accounts) {
-      _accountByUid[account.uid] = account;
-    }
-    for (final group in snap.groups) {
-      final parent = group.parentId?.value;
-      if (parent != null) {
-        _childrenByParent.putIfAbsent(parent, () => <core.Group>[]).add(group);
+  /// Rebuilds every index from the snapshot the provider answers with now.
+  void _reindex() {
+    final snap = _snapshotOf();
+    _indexed = snap;
+    _childrenByParent.clear();
+    _accountByUid.clear();
+    _uidsByGroup.clear();
+    _groupsById.clear();
+    _allStaff.clear();
+    if (snap != null) {
+      for (final account in snap.accounts) {
+        _accountByUid[account.uid] = account;
+      }
+      for (final group in snap.groups) {
+        _groupsById[group.id.value] = group;
+        final parent = group.parentId?.value;
+        if (parent != null) {
+          _childrenByParent
+              .putIfAbsent(parent, () => <core.Group>[])
+              .add(group);
+        }
+      }
+      for (final m in snap.memberships) {
+        _uidsByGroup.putIfAbsent(m.groupId.value, () => <String>[]).add(m.uid);
       }
     }
-    for (final m in snap.memberships) {
-      _uidsByGroup.putIfAbsent(m.groupId.value, () => <String>[]).add(m.uid);
-    }
+    studentRoot = _findGroupByName(_studentGroupName, snap);
+    _staffRoot = _findGroupByName(_staffGroupName, snap);
+    _loadStaff();
+    // `_loadStaff` returns early when there is no staff root, which would leave
+    // the previous tree's filtered list standing; re-filter unconditionally.
+    _applyStaffFilter();
   }
 
-  core.Group? _findGroupByName(String name) {
-    for (final group in _snapshot?.groups ?? const <core.Group>[]) {
+  /// Adopts a Smartschool snapshot that arrived after this screen opened — a
+  /// sync, a drift check, or an apply that patched the tree (#287).
+  ///
+  /// A no-op while the live snapshot is the one already indexed, so a listener
+  /// may call it on every repaint. When it does rebuild, the operator's place is
+  /// kept wherever it still exists: the open class is re-resolved by id and its
+  /// rows keep the targets already ticked, so a colleague's sync landing
+  /// mid-selection does not silently discard the work.
+  void refresh() {
+    if (identical(_snapshotOf(), _indexed)) return;
+    final String? openClassId = _selectedClass?.id.value;
+    final String? openStaffUid = _selectedStaff?.uid;
+    final ticked = <String, Set<PasswordTarget>>{
+      for (final row in _rows) row.username: <PasswordTarget>{...row.selected},
+    };
+
+    _reindex();
+
+    _selectedStaff = openStaffUid == null ? null : _accountByUid[openStaffUid];
+    final core.Group? again =
+        openClassId == null ? null : _groupsById[openClassId];
+    _selectedClass = again;
+    _rows.clear();
+    if (again != null) {
+      _rows.addAll(_directAccounts(again).map(
+        (a) => StudentRow(a)..selected.addAll(ticked[a.uid] ?? _bulk),
+      ));
+    }
+    notifyListeners();
+  }
+
+  core.Group? _findGroupByName(String name, ss.SmartschoolSnapshot? snap) {
+    for (final group in snap?.groups ?? const <core.Group>[]) {
       if (group.name == name) return group;
     }
     return null;

@@ -83,6 +83,31 @@ void main() {
   });
 
   testWidgets(
+      'the class tree tracks a sync that lands after this tab was opened '
+      '(#287)', (WidgetTester tester) async {
+    // The screen used to capture `app.smartschool.snapshot` once, at bootstrap.
+    // A session that opened Wachtwoorden before its first sync — or before it
+    // adopted the shared state — therefore stayed on that empty tree for the
+    // rest of its life, however many syncs landed behind it.
+    final harness = ReconcileHarness(smartschool: _snap());
+    await tester
+        .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    final class3c = find.byKey(const ValueKey('password-class-3C'));
+    expect(class3c, findsNothing, reason: 'nothing synced yet');
+
+    // A pass on another tab brings the group tree in.
+    await harness.controller.sync();
+    await tester.pumpAndSettle();
+
+    expect(class3c, findsOneWidget);
+    await tester.tap(class3c);
+    await tester.pumpAndSettle();
+    expect(find.text('jane'), findsOneWidget);
+  });
+
+  testWidgets(
       'Leerlingen: select a class, check a target, generate → confirm pushes '
       'live and reports success (#180)', (WidgetTester tester) async {
     final harness = ReconcileHarness(ssInitial: _snap());

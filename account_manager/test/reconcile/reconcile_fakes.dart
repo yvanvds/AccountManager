@@ -1144,6 +1144,7 @@ wapi.WisaSnapshot wisaSnap({
   List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaSchool> schools = const [],
   List<wapi.WisaClassGroup> classGroups = const [],
+  DateTime? workDate,
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
@@ -1151,6 +1152,11 @@ wapi.WisaSnapshot wisaSnap({
       staff: staff,
       classGroups: classGroups,
       schools: schools,
+      // The date the roster is *as of* (#247). Left unstamped by default, as a
+      // hand-built fixture is; a test about which school year the shared state
+      // describes (#287) sets it, and the controller then folds it into the
+      // per-system freshness the next session reads back.
+      workDate: workDate,
     );
 
 ss.SmartschoolSnapshot ssSnap({

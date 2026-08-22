@@ -2170,6 +2170,233 @@ void main() {
     });
   });
 
+  group('adopting the shared synced state (#287)', () {
+    /// Session 1 syncs, leaving cold snapshots and a materialized view behind;
+    /// session 2 is the fresh launch that seeds from them.
+    Future<(ReconcileHarness, InMemorySnapshotStore, InMemoryLinkedStore)>
+        sharedState({wapi.WisaSnapshot? wisa}) async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final s1 = ReconcileHarness(
+        wisa: wisa,
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s1.controller.sync();
+      return (s1, snapshots, linkedStore);
+    }
+
+    test(
+        'a seeded session links from the shared state without pulling or '
+        'persisting', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final generationBefore = (await linkedStore.readSyncState()).generation;
+      final hub = InMemorySignalHub();
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        hub: hub,
+      );
+      expect(s2.controller.linked, isNull, reason: 'nothing linked on open');
+
+      await s2.controller.openSession();
+
+      // The whole point: a usable view, and not one connector was touched.
+      expect(s2.controller.linked, isNotNull);
+      expect(s2.wisaSyncs, 0);
+      expect(s2.ssSyncs, 0);
+      expect(s2.azSyncs, 0);
+      // It says whose pull it is working from.
+      expect(s2.controller.adoptedFrom?.syncedBy, 'operator@school.example');
+      expect(s2.controller.seedRefusedReason, isNull);
+      // And the shared store is exactly as it was: no generation bump, no
+      // rewrite of the ~9.6k documents, no nudge to every other operator.
+      expect((await linkedStore.readSyncState()).generation, generationBefore);
+      expect(hub.published, isEmpty);
+      // Reading the store is still not a pass (#275).
+      expect(s2.controller.phase, ReconcilePhase.idle);
+    });
+
+    test('the adopted view carries every account, school-wide', () async {
+      final (s1, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+
+      await s2.controller.openSession();
+
+      // The same pending work the syncing session derived — without an open
+      // classroom, which is what a flat school-wide list needs (#295).
+      expect(s2.controller.selectedClassroom, isNull);
+      expect(
+        s2.controller.pendingEntries.map((e) => e.targetId),
+        s1.controller.pendingEntries.map((e) => e.targetId),
+      );
+      expect(s2.controller.pendingEntries, isNotEmpty);
+    });
+
+    test('adoption runs once however many screens open the session', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+
+      await s2.controller.openSession();
+      final first = s2.controller.linked;
+      // The Acties and Klasgroepen tabs open the same controller.
+      await s2.controller.openSession();
+      await s2.controller.openSession();
+
+      expect(identical(s2.controller.linked, first), isTrue,
+          reason: 'a link over the whole roster is not paid for three times');
+    });
+
+    test('a session with no seeded snapshot refuses, and says which', () async {
+      final linkedStore = InMemoryLinkedStore();
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+      // The everyday first launch on a machine whose cold store is empty.
+      final fresh = ReconcileHarness(linkedStore: linkedStore);
+      await fresh.controller.openSession();
+
+      expect(fresh.controller.linked, isNull);
+      expect(fresh.controller.adoptedFrom, isNull);
+      expect(
+        fresh.controller.seedRefusedReason,
+        contains('Geen opgeslagen momentopname voor WISA, Smartschool en '
+            'Azure AD'),
+      );
+      expect(fresh.wisaSyncs, 0);
+    });
+
+    test('a store nobody has ever synced has nothing to adopt', () async {
+      final snapshots = InMemorySnapshotStore();
+      // Seeds without a shared sync record: a cold store written by a pass
+      // whose materialize never landed.
+      await ReconcileHarness(store: snapshots).controller.sync();
+
+      final s2 = await ReconcileHarness.resume(store: snapshots);
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNull);
+      expect(
+        s2.controller.seedRefusedReason,
+        contains('nog geen gedeelde synchronisatie'),
+      );
+    });
+
+    test('a werkdatum today no longer resolves to refuses, naming both dates',
+        () async {
+      // The shared roster was pulled three days ago and is *as of* that date;
+      // this session's settings track "now", which is the fixture date.
+      final stale = kFixtureDate.subtract(const Duration(days: 3));
+      final (_, snapshots, linkedStore) = await sharedState(
+        wisa: wisaSnap(workDate: stale),
+      );
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNull);
+      expect(s2.controller.seedRefusedReason,
+          contains(wapi.formatWerkdatum(stale)));
+      expect(s2.controller.seedRefusedReason,
+          contains(wapi.formatWerkdatum(kFixtureDate)));
+    });
+
+    test('a werkdatum that still matches today is adopted', () async {
+      final (_, snapshots, linkedStore) = await sharedState(
+        wisa: wisaSnap(workDate: kFixtureDate),
+      );
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNotNull);
+      expect(s2.controller.adoptedFrom?.workDate, kFixtureDate);
+    });
+
+    test('a saved setting the seed predates refuses until a sync', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      // The operator changes an Azure pull input in Instellingen before the
+      // first screen finishes opening. The seeded snapshot was pulled without
+      // it, so adopting would act on a view the save never reached.
+      s2.liveSettings.publish(
+        s2.liveSettings.current.copyWith(schoolPrefix: 'NIEUW'),
+      );
+
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNull);
+      expect(s2.controller.seedRefusedReason, contains('Instellingen'));
+    });
+
+    test('a real sync takes the view over from the adopted one', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+      expect(s2.controller.adoptedFrom, isNotNull);
+
+      // The operator decides they want something fresher after all.
+      s2.wisaResult = wisaSnap(
+        fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await s2.controller.sync();
+
+      expect(s2.wisaSyncs, 1);
+      expect(s2.controller.linked, isNotNull);
+      expect(s2.controller.adoptedFrom, isNull,
+          reason: 'this view is this session\'s own now');
+      expect((await linkedStore.readSyncState()).generation, 2);
+    });
+
+    test('a refusal clears once a sync has produced a view', () async {
+      final linkedStore = InMemoryLinkedStore();
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+      final fresh = ReconcileHarness(linkedStore: linkedStore);
+      await fresh.controller.openSession();
+      expect(fresh.controller.seedRefusedReason, isNotNull);
+
+      await fresh.controller.sync();
+
+      expect(fresh.controller.seedRefusedReason, isNull);
+      expect(fresh.controller.linked, isNotNull);
+    });
+
+    test('an adopted session can dry-run and apply without syncing first',
+        () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+
+      await s2.controller.dryRun();
+
+      expect(s2.controller.dryRunResults, isNotNull);
+      expect(s2.controller.dryRunResults, isNotEmpty);
+      expect(s2.wisaSyncs, 0, reason: 'still no pull anywhere in this session');
+    });
+  });
+
   group('realtime signals (#116)', () {
     test('a sync publishes syncStarted → viewChanged → syncEnded', () async {
       final hub = InMemorySignalHub();
