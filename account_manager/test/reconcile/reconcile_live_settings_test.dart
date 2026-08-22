@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
 import 'package:account_state/account_state.dart';
@@ -200,7 +202,7 @@ void main() {
       expect(wire.werkdatums, <String>['01/09/2025']);
       expect(
         harness.log.entries.map((e) => e.message),
-        contains('Pulling WISA with werkdatum 01/09/2025.'),
+        contains('WISA ophalen met werkdatum 01/09/2025.'),
       );
     });
 
@@ -219,7 +221,7 @@ void main() {
       expect(
         harness.log.entries.map((e) => e.message),
         // The harness clock is fixed at kFixtureDate (2026-07-01).
-        contains('Pulling WISA with werkdatum 01/07/2026.'),
+        contains('WISA ophalen met werkdatum 01/07/2026.'),
       );
     });
 
@@ -243,8 +245,8 @@ void main() {
       expect(wire.werkdatums, <String>['01/09/2026', '01/10/2026']);
       expect(
         harness.log.entries.map((e) => e.message),
-        contains('Pulling WISA with werkdatum 01/09/2026; virtuele werkdatum '
-            '01/10/2026 for V.'),
+        contains('WISA ophalen met werkdatum 01/09/2026; virtuele werkdatum '
+            '01/10/2026 voor V.'),
       );
     });
 
@@ -264,7 +266,7 @@ void main() {
       await harness.controller.sync();
 
       final messages = harness.log.entries.map((e) => e.message);
-      expect(messages, contains('Pulling WISA with werkdatum 01/09/2026.'));
+      expect(messages, contains('WISA ophalen met werkdatum 01/09/2026.'));
       expect(messages.where((m) => m.contains('virtuele werkdatum')), isEmpty);
     });
 
@@ -279,8 +281,8 @@ void main() {
           workDate: DateTime(2026, 9, 1),
           virtualWorkDate: DateTime(2026, 10, 1),
         ),
-        'Pulling WISA with werkdatum 01/09/2026; virtuele werkdatum '
-        '01/10/2026 for Virtuele school, school 8.',
+        'WISA ophalen met werkdatum 01/09/2026; virtuele werkdatum '
+        '01/10/2026 voor Virtuele school, school 8.',
       );
     });
   });
@@ -524,10 +526,10 @@ void main() {
     test('the Smartschool import rules are read at pull time', () async {
       // #241 authored them; before #246 the pull closed over the bootstrap
       // document, so a rule saved in Instellingen pruned nothing until the next
-      // launch. The pass that adopts it is **Check for drift** — the one that
-      // re-reads Smartschool at all (#99's smart sync leaves it alone once this
-      // session has it) — and a rule change never arms #238's WISA gate, so
-      // drift is offered.
+      // launch. Check for drift re-reads Smartschool unconditionally, so it is
+      // one of the two passes that adopt a rule — and a rule change never arms
+      // #238's WISA gate, so drift is offered. (Since #259 Synchroniseer adopts
+      // it too; that is the group below.)
       final wire = GroupTreeSoap();
       final live = LiveSettings(_settings());
       final harness =
@@ -593,6 +595,184 @@ void main() {
       ]));
 
       expect(harness.controller.schoolProfiles.single.code, 'ISMAA');
+    });
+  });
+
+  group('Synchroniseer re-pulls a system whose settings moved (#259)', () {
+    test('a saved import rule prunes the very next Synchroniseer', () async {
+      // The reported bug. #99's smart sync leaves a system this session already
+      // holds alone, so the operator saved a `DiscardSmartschoolGroup`, pressed
+      // Synchroniseer, and got "geen accountwijzigingen nodig" — over the very
+      // save it had skipped. Only Check for drift adopted it, and nothing said
+      // so.
+      final wire = GroupTreeSoap();
+      final live = LiveSettings(_settings());
+      final harness =
+          ReconcileHarness(smartschoolTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+      expect(harness.ssSyncs, 1);
+      expect(
+        harness.app.smartschool.snapshot?.groups.map((g) => g.id.value),
+        <String>['SCH', 'ORG', 'HID', 'KLA', 'C1A'],
+      );
+
+      live.publish(_settings().copyWith(
+        smartschoolRules: const <ss.SmartschoolImportRule>[
+          ss.DiscardSmartschoolGroup('Organisatie'),
+        ],
+      ));
+      await harness.controller.sync();
+
+      expect(
+        harness.app.smartschool.snapshot?.groups.map((g) => g.id.value),
+        <String>['SCH', 'KLA', 'C1A'],
+        reason: 'the pass the operator reached for applied the saved rule',
+      );
+      expect(harness.ssSyncs, 2);
+      // …and it did not claim there was nothing to do, which is the
+      // user-visible half of the bug.
+      expect(harness.controller.noChangesNeeded, isFalse);
+      expect(
+        harness.log.entries
+            .map((e) => e.message)
+            .where((m) => m.contains('geen accountwijzigingen nodig')),
+        isEmpty,
+      );
+      // The re-pull says why it happened, in the panel the operator reads.
+      expect(
+        harness.log.entries.map((e) => e.message),
+        contains('Smartschool-instellingen gewijzigd — Smartschool wordt '
+            'opnieuw opgehaald.'),
+      );
+    });
+
+    test('a saved school prefix re-scopes the very next Synchroniseer',
+        () async {
+      final wire = RecordingGraph();
+      final live = LiveSettings(_settings());
+      final harness =
+          ReconcileHarness(azureTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+      expect(_userFilters(wire).last, contains('GBS'));
+
+      live.publish(_settings().copyWith(schoolPrefix: 'SSM'));
+      await harness.controller.sync();
+
+      expect(_userFilters(wire).last, contains('SSM'),
+          reason: 'no drift check needed, and no relaunch');
+      expect(harness.azSyncs, 2);
+      expect(harness.controller.noChangesNeeded, isFalse);
+    });
+
+    test('the smart sync still skips a system nothing asked for', () async {
+      // The behaviour #99 exists for has to survive: an unchanged WISA and an
+      // untouched settings document is still "nothing to do", with no re-pull
+      // of the two systems this session already holds.
+      final harness = ReconcileHarness(liveSettings: LiveSettings(_settings()));
+      await harness.controller.sync();
+      expect((harness.ssSyncs, harness.azSyncs), (1, 1));
+
+      await harness.controller.sync();
+
+      expect((harness.ssSyncs, harness.azSyncs), (1, 1));
+      expect(harness.controller.noChangesNeeded, isTrue);
+    });
+
+    test('a WISA-only save leaves Smartschool and Azure alone', () async {
+      // The fingerprints are per system on purpose: a werkdatum is a WISA pull
+      // input and must not cost a Smartschool read or a full tenant re-read.
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(liveSettings: live);
+      await harness.controller.sync();
+
+      live.publish(_settings(workDate: _pinned(DateTime(2026, 9, 1))));
+
+      expect(harness.controller.systemsAwaitingSettings, isEmpty);
+      expect(harness.controller.pendingSettingsReason, isNull);
+      await harness.controller.sync();
+      expect((harness.ssSyncs, harness.azSyncs), (1, 1));
+    });
+
+    test('the screen names the systems waiting, until a pass applies them',
+        () async {
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(liveSettings: live);
+      await harness.controller.sync();
+      expect(harness.controller.pendingSettingsReason, isNull);
+
+      live.publish(_settings().copyWith(
+        schoolPrefix: 'SSM',
+        smartschoolRules: const <ss.SmartschoolImportRule>[
+          ss.DiscardSmartschoolGroup('Organisatie'),
+        ],
+      ));
+
+      expect(
+        harness.controller.systemsAwaitingSettings,
+        <core.Origin>{core.Origin.smartschool, core.Origin.azure},
+      );
+      expect(
+        harness.controller.pendingSettingsReason,
+        'Instellingen voor Smartschool en Azure AD gewijzigd — '
+        'synchroniseer om ze toe te passen.',
+      );
+      // Nothing is refused meanwhile — the next pass adopts them by itself.
+      expect(harness.controller.canCheckDrift, isTrue);
+
+      await harness.controller.sync();
+      expect(harness.controller.pendingSettingsReason, isNull);
+    });
+
+    test('a drift check clears it too, so no sync re-pulls for it twice',
+        () async {
+      // Drift re-reads both systems unconditionally, so it really has adopted
+      // the save; the stamp has to record that or the next Synchroniseer would
+      // pay for a change already applied.
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(liveSettings: live);
+      await harness.controller.sync();
+
+      live.publish(_settings().copyWith(schoolPrefix: 'SSM'));
+      expect(harness.controller.pendingSettingsReason, isNotNull);
+
+      await harness.controller.checkDrift();
+      expect(harness.controller.pendingSettingsReason, isNull);
+      expect(harness.azSyncs, 2);
+
+      await harness.controller.sync();
+      expect(harness.azSyncs, 2, reason: 'the drift pass already applied it');
+    });
+
+    test('a save landing mid-pull stays pending rather than being credited',
+        () async {
+      // The stamp names the settings the pull *started* with, exactly as #238's
+      // WISA one does — a document published while Smartschool was on the wire
+      // was never asked for.
+      final live = LiveSettings(_settings());
+      final gate = Completer<void>();
+      final harness = ReconcileHarness(liveSettings: live, azureGate: gate);
+
+      final pass = harness.controller.sync();
+      await Future<void>.delayed(Duration.zero);
+      live.publish(_settings().copyWith(schoolPrefix: 'SSM'));
+      gate.complete();
+      await pass;
+
+      expect(
+        harness.controller.systemsAwaitingSettings,
+        contains(core.Origin.azure),
+        reason: 'the pull that was already in flight never saw the save',
+      );
+    });
+
+    test('a harness with no settings holder never arms it', () async {
+      final harness = ReconcileHarness();
+      await harness.controller.sync();
+
+      expect(harness.controller.systemsAwaitingSettings, isEmpty);
+      expect(harness.controller.pendingSettingsReason, isNull);
     });
   });
 

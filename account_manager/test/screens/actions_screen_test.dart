@@ -572,10 +572,12 @@ void main() {
       harness.controller.totalPendingCount,
     );
 
-    // Default tab = Leerlingen: the merged grade-year is the drill root (#210)
-    // and the class-groups node shows; the staff ("Personeel") node does not.
+    // Default tab = Leerlingen: the merged grade-year is the drill root (#210);
+    // the staff ("Personeel") node does not show. Neither does a class-groups
+    // node — since #227 the classes are a top-level tab of their own, so this
+    // tree carries accounts only.
     expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
-    expect(find.byKey(const ValueKey('rollup-groups')), findsWidgets);
+    expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
     expect(
         find.byKey(const ValueKey('rollup-school-school|staff')), findsNothing);
 
@@ -1174,75 +1176,6 @@ void main() {
   });
 
   testWidgets(
-      'the Klasgroepen drill-down proposes only classes of the schools we '
-      'manage, and describes ours rather than the sibling class that shares '
-      'its name (#205)', (WidgetTester tester) async {
-    _useTallWindow(tester);
-    final harness = foreignClassGroupHarness();
-    await harness.controller.sync();
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
-
-    // Our own populated class is the one and only proposal… and it reads as
-    // the create side of the either/or choice #244 collapsed it into.
-    expect(find.text('1A'), findsOneWidget);
-    expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
-        findsOneWidget);
-    // …and the sibling school's class is never offered: applying it would
-    // create another school's class in our Smartschool.
-    expect(find.text('9Z'), findsNothing);
-
-    // Expanding it shows *our* class's data — the sibling `1A` used to arrive
-    // first and shadow ours, so the proposal described the wrong class.
-    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Onze eerste klas'), findsOneWidget);
-    expect(find.textContaining('Klas van een andere school'), findsNothing);
-  });
-
-  testWidgets(
-      'a passive session surfaces the Klasgroepen node and opens the group '
-      'detail (#119/#154)', (WidgetTester tester) async {
-    // Tall, like its siblings: the top-level filter switch #226 added above the
-    // family tab bar costs the group tiles their place on an 800×600 fold, and
-    // this test is about which node opened, not about where the fold falls.
-    _useTallWindow(tester);
-    final snapshots = InMemorySnapshotStore();
-    final linkedStore = InMemoryLinkedStore();
-    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
-        .controller
-        .sync();
-
-    final s2 = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('rollup-groups')), findsOneWidget);
-    expect(find.text('Klasgroepen'), findsWidgets);
-
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
-    expect(find.text('2B'), findsWidgets);
-    expect(
-        find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
-    expect(s2.controller.linked, isNull);
-
-    await tester.tap(find.byKey(const ValueKey('actions-groups-back')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('rollup-groups')), findsOneWidget);
-  });
-
-  testWidgets(
       'a read-only session badges an either/or once and lists it as the one '
       'choice it is (#251)', (WidgetTester tester) async {
     // A passive session over a departed student's stored doc: it carries the
@@ -1537,34 +1470,6 @@ void main() {
       Theme.of(tester.element(readOnly)).disabledColor,
       reason: 'a summary nobody can act on is not rendered as live body text',
     );
-  });
-
-  testWidgets(
-      'the passive Klasgroepen drill-down carries the same read-only '
-      'announcement (#214)', (WidgetTester tester) async {
-    _useTallWindow(tester);
-    final snapshots = InMemorySnapshotStore();
-    final linkedStore = InMemoryLinkedStore();
-    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
-        .controller
-        .sync();
-
-    final s2 = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
-    await tester.pumpAndSettle();
-
-    await tester.ensureVisible(find.byKey(const ValueKey('rollup-groups')));
-    await tester.tap(find.byKey(const ValueKey('rollup-groups')));
-    await tester.pumpAndSettle();
-
-    expect(s2.controller.linked, isNull);
-    expect(find.byKey(const ValueKey('actions-groups-back')), findsOneWidget);
-    expect(readOnly, findsOneWidget,
-        reason: 'the group drill-down falls back to the same static tiles');
-    expect(find.byIcon(Icons.lock_outline), findsWidgets);
   });
 
   testWidgets(

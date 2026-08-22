@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:account_core/account_core.dart' as core;
 import 'package:crypto/crypto.dart';
 
+import '../materialize/linked_state_materializer.dart';
 import '../materialize/linked_store.dart';
 import '../materialize/materialized_state.dart';
 import 'cosmos_client.dart';
@@ -82,6 +83,13 @@ void _writeCanonical(StringBuffer out, Object? value) {
 /// bump — which stays unconditional — is what #116 uses to detect a
 /// mid-flight change); the sync/drift lease (#108) serializes writers so two
 /// rewrites never interleave.
+///
+/// [writeApplied] (#254) is the other write path: an apply's handful of touched
+/// documents plus the rollup nodes above them, run **unleased** and concurrently
+/// with every other operator's apply. It is safe there precisely because it does
+/// none of the above — it stands down for a live sync lease, moves counts by
+/// delta rather than by replacement, and conditions every write on the ETag of
+/// the version it replaces.
 class CosmosLinkedStore implements LinkedStore {
   /// [governor] is the shared throttling state (#196): pass the *same* instance
   /// that was wired into the [CosmosClient], so the fan-out narrows in response
@@ -238,6 +246,241 @@ class CosmosLinkedStore implements LinkedStore {
         ).toJson(),
       },
     );
+  }
+
+  @override
+  Future<AppliedWrite> writeApplied(
+    AppliedPatch patch, {
+    required String appliedBy,
+    required DateTime at,
+  }) async {
+    // Rule 1: stand down for a sync. That pass republishes the whole view from a
+    // fresher link than ours, so a narrow patch must not land on top of it — nor
+    // bump the generation past it (#254).
+    final lease = await readLease(at);
+    if (lease != null && lease.owner != appliedBy) {
+      return AppliedWrite.deferred(lease);
+    }
+    if (patch.isEmpty) return const AppliedWrite.unchanged();
+
+    // Rule 3: every document write is conditioned on the version it replaces, and
+    // that very version is what the delta below is computed against — so a
+    // concurrent writer can never split the pair.
+    final storedAccounts = <MaterializedAccount>[];
+    for (final fresh in patch.accounts) {
+      final before = await _replaceDocument(
+        container: linkedAccountsContainer,
+        id: fresh.id.value,
+        partitionKey: fresh.school,
+        body: fresh.toJson(),
+      );
+      if (before != null) {
+        storedAccounts.add(MaterializedAccount.fromJson(before));
+      }
+    }
+    for (final id in patch.removedAccountIds) {
+      // No partition key to point at: the document is gone from the fresh view,
+      // so where it used to sit is only knowable from the store itself.
+      final before = await _removeDocument(
+        container: linkedAccountsContainer,
+        id: id,
+      );
+      if (before != null) {
+        storedAccounts.add(MaterializedAccount.fromJson(before));
+      }
+    }
+
+    final storedGroups = <MaterializedGroup>[];
+    for (final fresh in patch.groups) {
+      final before = await _replaceDocument(
+        container: linkedGroupsContainer,
+        id: fresh.id.value,
+        partitionKey: groupsPartition,
+        body: fresh.toJson(),
+      );
+      if (before != null) storedGroups.add(MaterializedGroup.fromJson(before));
+    }
+    for (final id in patch.removedGroupIds) {
+      final before = await _removeDocument(
+        container: linkedGroupsContainer,
+        id: id,
+        partitionKey: groupsPartition,
+      );
+      if (before != null) storedGroups.add(MaterializedGroup.fromJson(before));
+    }
+
+    // Rule 2: the rollups move by delta, so two operators clearing different
+    // work in the same class compose instead of overwriting each other.
+    for (final change in rollupChangesFor(
+      storedAccounts: storedAccounts,
+      freshAccounts: patch.accounts,
+      storedGroups: storedGroups,
+      freshGroups: patch.groups,
+    )) {
+      await _adjustRollup(change);
+    }
+
+    // Last, as in [writeMaterialized]: a reader that sees the new generation
+    // also sees the patched documents.
+    return AppliedWrite.written(await _bumpGeneration(appliedBy, at));
+  }
+
+  /// Creates-or-replaces one derived document, returning the document it
+  /// replaced (or `null` when there was none).
+  ///
+  /// Conditioned throughout: an absent document is claimed with an atomic
+  /// create, a present one with an `If-Match` on the ETag just read. A loser
+  /// re-reads and retries — every iteration means some writer committed, so it
+  /// converges, exactly as [putDecision] does. The returned "before" is what the
+  /// caller's rollup delta must be computed against, which is why this returns
+  /// it rather than the caller reading it separately.
+  Future<Map<String, dynamic>?> _replaceDocument({
+    required String container,
+    required String id,
+    required String partitionKey,
+    required Map<String, dynamic> body,
+  }) async {
+    final document = {...body, contentHashField: materializedContentHash(body)};
+    while (true) {
+      final existing = await _client.readDocument(
+        container: container,
+        id: id,
+        partitionKey: partitionKey,
+      );
+      if (existing == null) {
+        final created = await _client.createDocument(
+          container: container,
+          partitionKey: partitionKey,
+          document: document,
+        );
+        if (created) return null;
+        continue; // another writer created it first — condition on theirs
+      }
+      final outcome = await _client.upsertDocument(
+        container: container,
+        partitionKey: partitionKey,
+        document: document,
+        ifMatch: existing['_etag'] as String?,
+      );
+      if (outcome.applied) return existing;
+    }
+  }
+
+  /// Deletes one derived document, returning what it held (or `null` when it was
+  /// already gone). With no [partitionKey] the document is located by a
+  /// cross-partition read on its id — the case where the fresh view no longer
+  /// says where it used to sit.
+  Future<Map<String, dynamic>?> _removeDocument({
+    required String container,
+    required String id,
+    String? partitionKey,
+  }) async {
+    Map<String, dynamic>? existing;
+    if (partitionKey != null) {
+      existing = await _client.readDocument(
+        container: container,
+        id: id,
+        partitionKey: partitionKey,
+      );
+    } else {
+      final found = await _client.queryDocuments(
+        container: container,
+        query: 'SELECT * FROM c WHERE c.id = @id',
+        parameters: {'@id': id},
+      );
+      existing = found.isEmpty ? null : found.first;
+    }
+    if (existing == null) return null;
+    await _client.deleteDocument(
+      container: container,
+      id: id,
+      partitionKey: partitionKey ?? (existing['pk'] as String?) ?? id,
+    );
+    return existing;
+  }
+
+  /// Folds one [RollupChange] into the node the store currently holds, under the
+  /// same ETag discipline as the documents beneath it: a losing write re-reads
+  /// the winner's node and adds its delta on top, so concurrent applies to one
+  /// class accumulate rather than clobber. A node left with no documents is
+  /// deleted — the sync path would not emit it either.
+  Future<void> _adjustRollup(RollupChange change) async {
+    while (true) {
+      final existing = await _client.readDocument(
+        container: rollupsContainer,
+        id: change.key,
+        partitionKey: change.school,
+      );
+      final next =
+          change.applyTo(existing == null ? null : Rollup.fromJson(existing));
+      if (next == null) {
+        if (existing != null) {
+          await _client.deleteDocument(
+            container: rollupsContainer,
+            id: change.key,
+            partitionKey: change.school,
+          );
+        }
+        return;
+      }
+      final body = next.toJson();
+      final document = {
+        ...body,
+        contentHashField: materializedContentHash(body),
+      };
+      if (existing == null) {
+        final created = await _client.createDocument(
+          container: rollupsContainer,
+          partitionKey: change.school,
+          document: document,
+        );
+        if (created) return;
+        continue;
+      }
+      final outcome = await _client.upsertDocument(
+        container: rollupsContainer,
+        partitionKey: change.school,
+        document: document,
+        ifMatch: existing['_etag'] as String?,
+      );
+      if (outcome.applied) return;
+    }
+  }
+
+  /// Bumps the shared generation for an apply and returns what it wrote.
+  ///
+  /// Conditioned, unlike the sync path's unconditional stamp: two applies
+  /// finishing together must produce two distinct generations, or the second
+  /// would broadcast a number a receiver has already seen and gate its own
+  /// refetch out.
+  Future<int> _bumpGeneration(String appliedBy, DateTime at) async {
+    while (true) {
+      final existing = await _client.readDocument(
+        container: syncStateContainer,
+        id: syncStateDocumentId,
+        partitionKey: syncStateDocumentId,
+      );
+      final next =
+          (existing == null ? SyncState.initial : SyncState.fromJson(existing))
+              .bumped(at: at, by: appliedBy);
+      final document = {'id': syncStateDocumentId, ...next.toJson()};
+      if (existing == null) {
+        final created = await _client.createDocument(
+          container: syncStateContainer,
+          partitionKey: syncStateDocumentId,
+          document: document,
+        );
+        if (created) return next.generation;
+        continue;
+      }
+      final outcome = await _client.upsertDocument(
+        container: syncStateContainer,
+        partitionKey: syncStateDocumentId,
+        document: document,
+        ifMatch: existing['_etag'] as String?,
+      );
+      if (outcome.applied) return next.generation;
+    }
   }
 
   @override

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'app_settings.dart';
+import 'import_rule_codec.dart';
 import 'work_date.dart';
 
 /// A mutable holder for the operator's [AppSettings], shared between the
@@ -72,6 +74,46 @@ String wisaPullFingerprint(AppSettings settings) {
 
 String _workDateKey(WorkDateSetting setting) =>
     setting.isNow ? 'now' : (setting.date?.toIso8601String() ?? 'unset');
+
+/// A stable identity for the settings a **Smartschool** pull depends on: the
+/// operator's import rules (#259).
+///
+/// The counterpart of [wisaPullFingerprint] for the second connector. #99's
+/// smart sync re-pulls Smartschool only when this session does not hold a
+/// snapshot yet, so a `DiscardSmartschoolGroup` authored in Instellingen used
+/// to be adopted by **Check for drift** and not by the Synchroniseer the
+/// operator reaches for — which meanwhile reported "geen accountwijzigingen
+/// nodig" over the save it had not applied. A moved fingerprint is what tells
+/// the smart sync that leaving the held snapshot alone is no longer valid.
+///
+/// Order-sensitive on purpose: the rules are applied in sequence, so two
+/// permutations of the same set are two different pulls.
+String smartschoolPullFingerprint(AppSettings settings) =>
+    'regels=${jsonEncode(<Map<String, dynamic>>[
+          for (final rule in settings.smartschoolRules)
+            encodeSmartschoolRule(rule),
+        ])}';
+
+/// A stable identity for the settings an **Azure** pull depends on: the school
+/// prefix the whole read is scoped by, and the managed-school set the
+/// transferred-account back-fill derives its expected `employeeId`s from
+/// (#259).
+///
+/// Both are genuine inputs to the pull rather than to the link that follows it.
+/// The prefix scopes the `/users` `$filter` and — since #246 — drops the delta
+/// token when it moves, because `/users/delta` filters client-side and an
+/// incremental pass would keep the previous school's users under the new
+/// prefix. The managed-school set decides which WISA ids the `employeeId in (…)`
+/// lookups (#224/#231) ask about, so a school flipped **beheerd** changes what
+/// the pull can see even when Azure itself has not moved.
+///
+/// The ids are sorted, so a settings document that merely reorders its school
+/// rows does not read as a changed pull.
+String azurePullFingerprint(AppSettings settings) {
+  final managed = settings.managedWisaSchoolIds.toList()..sort();
+  return 'schoolPrefix=${settings.schoolPrefix.trim()};'
+      'beheerdeScholen=${managed.join(',')}';
+}
 
 /// A stable identity for the settings a running session **cannot** adopt: the
 /// endpoints and credential refs the three connectors were constructed from

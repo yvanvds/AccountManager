@@ -63,7 +63,7 @@ void main() {
     await tester.pumpWidget(_wrap(const PasswordsScreen(bootstrap: null)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Not configured'), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
     expect(
         find.byKey(const ValueKey('passwords-tab-leerlingen')), findsNothing);
   });

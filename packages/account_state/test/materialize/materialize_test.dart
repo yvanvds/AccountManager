@@ -76,12 +76,21 @@ az.AzureUser _azUser({String id = 'az1', String? employeeId = '1'}) =>
       companyName: 'GBS',
     );
 
-core.Group _ssGroup(String name, {String? code}) => core.Group(
+core.Group _ssGroup(
+  String name, {
+  String? code,
+  String description = '',
+  String? instituteNumber,
+  String untis = '',
+}) =>
+    core.Group(
       id: core.GroupId(code ?? name),
       name: name,
-      description: '',
+      description: description,
       type: core.GroupType.classGroup,
       official: true,
+      instituteNumber: instituteNumber,
+      untis: untis,
       origin: core.Origin.smartschool,
     );
 
@@ -151,6 +160,62 @@ LinkedState _modifyPendingLinked() => LinkedState.recompute(
         memberships: const [],
       ),
       azure: az.AzureSnapshot(fetchedAt: _d, users: const [], groups: const []),
+      resolver: _SeqResolver(),
+      studentConfig: _studentConfig,
+      staffConfig: _staffConfig,
+    );
+
+/// A class that is **entirely in order**: present in WISA, in Smartschool with
+/// matching institute number / untis / description, and in Office 365 as
+/// `GBS-3C` with its one student already in it. So the group dispatch raises
+/// nothing at all for it — the shape that used to have no document whatsoever
+/// (#227), which is why the class inventory could not be verified.
+LinkedState _cleanClassLinked() => LinkedState.recompute(
+      wisa: wapi.WisaSnapshot(
+        fetchedAt: _d,
+        students: [_wStudent()],
+        staff: const [],
+        classGroups: [
+          const wapi.WisaClassGroup(
+            name: '3C',
+            groupName: '00',
+            description: 'Derde jaar C',
+            adminCode: '',
+            schoolCode: '123',
+            schoolId: 1,
+          ),
+        ],
+        schools: const [],
+      ),
+      smartschool: ss.SmartschoolSnapshot(
+        fetchedAt: _d,
+        groups: [
+          _ssGroup(
+            '3C',
+            code: '3C_ss',
+            description: 'Derde jaar C',
+            instituteNumber: '123',
+            untis: '3C',
+          ),
+        ],
+        accounts: [_ssAccount()],
+        memberships: const [
+          ss.SmartschoolMembership(uid: 'jane', groupId: core.GroupId('3C_ss')),
+        ],
+      ),
+      azure: az.AzureSnapshot(
+        fetchedAt: _d,
+        users: [_azUser()],
+        groups: [
+          az.AzureGroup(
+            id: 'az-GBS-3C',
+            displayName: 'GBS-3C',
+            mail: 'GBS-3C@school.example',
+            mailNickname: 'GBS-3C',
+            memberIds: const ['az1'],
+          ),
+        ],
+      ),
       resolver: _SeqResolver(),
       studentConfig: _studentConfig,
       staffConfig: _staffConfig,
@@ -383,7 +448,7 @@ void main() {
       expect(rollup.pendingCount, greaterThan(0));
     });
 
-    test('no group actions → no group docs and no group rollup', () {
+    test('no class groups at all → no group docs and no group rollup', () {
       final view = materialize(_noGroupsLinked(), generation: 1);
       expect(view.groups, isEmpty);
       expect(view.rollups.where((r) => r.level == RollupLevel.groups), isEmpty);
@@ -397,6 +462,60 @@ void main() {
       expect(restored.label, group.label);
       expect(restored.inSmartschool, isTrue);
       expect(restored.candidates, hasLength(group.candidates.length));
+    });
+  });
+
+  group('the class inventory covers every class (#227)', () {
+    test('a class with nothing wrong still gets a document', () {
+      // The whole point of the tab: the documents come from the linked class
+      // list, not from the dispatched actions, so a healthy class is on the
+      // inventory — with a tick in all three columns and no candidate at all.
+      final view = materialize(_cleanClassLinked(), generation: 1);
+
+      expect(view.groups, hasLength(1));
+      final group = view.groups.single;
+      expect(group.label, '3C');
+      expect(group.candidates, isEmpty,
+          reason: 'nothing is wrong with this class');
+      expect(group.hasPending, isFalse);
+      expect(group.needsAttention, isFalse);
+      expect(group.inWisa, isTrue);
+      expect(group.inSmartschool, isTrue);
+      expect(group.inAzure, isTrue);
+    });
+
+    test('the row carries its description, bare class name and O365 group', () {
+      final group =
+          materialize(_cleanClassLinked(), generation: 1).groups.single;
+      expect(group.description, 'Derde jaar C');
+      expect(group.className, '3C');
+      expect(group.azureGroupName, 'GBS-3C',
+          reason: 'the Office 365 column names the group, not just a tick');
+
+      final restored = MaterializedGroup.fromJson(group.toJson());
+      expect(restored.description, 'Derde jaar C');
+      expect(restored.className, '3C');
+      expect(restored.azureGroupName, 'GBS-3C');
+    });
+
+    test('the Klasgroepen rollup counts every class, pending only the work',
+        () {
+      // accountCount used to mean "classes with work"; it is the inventory size
+      // now, while pendingCount still counts decisions (#251).
+      final view = materialize(_cleanClassLinked(), generation: 1);
+      final rollup =
+          view.rollups.firstWhere((r) => r.level == RollupLevel.groups);
+      expect(rollup.accountCount, 1);
+      expect(rollup.pendingCount, 0);
+    });
+
+    test('an informational-only notice is attention, not pending work', () {
+      // #225/#250: a class Smartschool already holds carries manual work with no
+      // automated write, so it must not be filtered away with the pending count.
+      final group =
+          materialize(_movePendingLinked(), generation: 1).groups.single;
+      expect(group.hasPending, isFalse);
+      expect(group.needsAttention, isTrue);
     });
   });
 
@@ -861,6 +980,199 @@ void main() {
         ],
       );
       expect(dropped.dropped, hasLength(1));
+    });
+  });
+
+  group('rollupChangesFor — the post-apply deltas (#254)', () {
+    MaterializedGroup mGroup(
+      String name, {
+      List<CandidateAction> candidates = const [],
+    }) =>
+        MaterializedGroup(
+          id: core.LinkedAccountId(materializedGroupId(name)),
+          label: name,
+          confidence: core.LinkConfidence.high,
+          inWisa: true,
+          inSmartschool: true,
+          inAzure: true,
+          candidates: candidates,
+        );
+
+    RollupChange changeAt(List<RollupChange> changes, String key) =>
+        changes.singleWhere((c) => c.key == key);
+
+    test('a cleared candidate subtracts one from the class, grade and school',
+        () {
+      // The whole point of a delta: it says "one fewer pending here", not "here
+      // is my session's picture of this class".
+      final changes = rollupChangesFor(
+        storedAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+        freshAccounts: [_account()],
+      );
+
+      expect(changes.map((c) => c.key), <String>{
+        'school|1',
+        'grade|1|3',
+        'class|1|3|3C',
+      });
+      for (final change in changes) {
+        expect(change.pendingDelta, -1);
+        expect(change.accountDelta, 0,
+            reason: 'the account is still there — only its work is gone');
+      }
+    });
+
+    test('an account that stayed exactly as it was moves nothing', () {
+      // A refused write leaves the document identical, and a node nothing
+      // changed at must not be written at all.
+      final changes = rollupChangesFor(
+        storedAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+        freshAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+      );
+      expect(changes, isEmpty);
+    });
+
+    test('a document that vanished takes its account count with it', () {
+      final changes = rollupChangesFor(
+        storedAccounts: [
+          _account(candidates: const [_moveCandidate])
+        ],
+      );
+
+      final klas = changeAt(changes, 'class|1|3|3C');
+      expect(klas.accountDelta, -1);
+      expect(klas.pendingDelta, -1);
+    });
+
+    test('applyTo folds the delta into whatever the store currently holds', () {
+      // Two operators clearing different work in the same class: each subtracts
+      // only its own, and the second folds onto the first's result rather than
+      // replacing it.
+      final change = changeAt(
+        rollupChangesFor(
+          storedAccounts: [
+            _account(candidates: const [_moveCandidate])
+          ],
+          freshAccounts: [_account()],
+        ),
+        'class|1|3|3C',
+      );
+      const stored = Rollup(
+        level: RollupLevel.classroom,
+        key: 'class|1|3|3C',
+        parentKey: 'grade|1|3',
+        school: '1',
+        label: '3C',
+        gradeYear: '3',
+        classroom: '3C',
+        accountCount: 20,
+        pendingCount: 5,
+      );
+
+      final next = change.applyTo(stored)!;
+      expect(next.pendingCount, 4);
+      expect(next.accountCount, 20);
+      expect(next.label, '3C');
+    });
+
+    test('applyTo deletes a node its last document just left', () {
+      final change = changeAt(
+        rollupChangesFor(storedAccounts: [_account()]),
+        'class|1|3|3C',
+      );
+      const stored = Rollup(
+        level: RollupLevel.classroom,
+        key: 'class|1|3|3C',
+        parentKey: 'grade|1|3',
+        school: '1',
+        label: '3C',
+        gradeYear: '3',
+        classroom: '3C',
+        accountCount: 1,
+        pendingCount: 0,
+      );
+
+      expect(change.applyTo(stored), isNull,
+          reason: 'an empty node is one the sync path would not emit either');
+    });
+
+    test('applyTo never advertises a negative badge', () {
+      // The one way the arithmetic can drift: another operator already cleared
+      // this work and wrote it, so our subtraction lands on a count that no
+      // longer carries it. Under-counting is survivable; a negative badge is not.
+      final change = changeAt(
+        rollupChangesFor(
+          storedAccounts: [
+            _account(candidates: const [_moveCandidate])
+          ],
+          freshAccounts: [_account()],
+        ),
+        'class|1|3|3C',
+      );
+      const alreadyCleared = Rollup(
+        level: RollupLevel.classroom,
+        key: 'class|1|3|3C',
+        parentKey: 'grade|1|3',
+        school: '1',
+        label: '3C',
+        gradeYear: '3',
+        classroom: '3C',
+        accountCount: 3,
+        pendingCount: 0,
+      );
+
+      expect(change.applyTo(alreadyCleared)!.pendingCount, 0);
+    });
+
+    test('a node the store has never seen is created from the fresh document',
+        () {
+      final change = changeAt(
+        rollupChangesFor(
+          freshAccounts: [
+            _account(candidates: const [_moveCandidate])
+          ],
+        ),
+        'class|1|3|3C',
+      );
+
+      final created = change.applyTo(null)!;
+      expect(created.level, RollupLevel.classroom);
+      expect(created.parentKey, 'grade|1|3');
+      expect(created.school, '1');
+      expect(created.label, '3C');
+      expect(created.accountCount, 1);
+      expect(created.pendingCount, 1);
+    });
+
+    test("a class group's cleared work moves only the Klasgroepen node", () {
+      // Since #227 the group half of the view is one document per *class*, not
+      // per class with work — so applying a class's work leaves the inventory
+      // size alone and only the pending total moves.
+      const modify = CandidateAction(
+        family: 'group',
+        kind: 'ModifySmartschoolData',
+        system: core.Origin.smartschool,
+        summary: 'Fix the class data',
+      );
+      final changes = rollupChangesFor(
+        storedGroups: [
+          mGroup('3C', candidates: const [modify])
+        ],
+        freshGroups: [mGroup('3C')],
+      );
+
+      final node = changes.single;
+      expect(node.key, groupsPartition);
+      expect(node.level, RollupLevel.groups);
+      expect(node.pendingDelta, -1);
+      expect(node.accountDelta, 0,
+          reason: 'the class is still on the inventory (#227)');
     });
   });
 

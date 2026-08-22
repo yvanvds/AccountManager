@@ -3,6 +3,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../reconcile/reconcile_bootstrap.dart';
 import '../screens/actions_screen.dart';
+import '../screens/class_groups_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
@@ -49,28 +50,39 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   late final List<ShellDestination> _destinations = <ShellDestination>[
+    // Every label is the operator's language and the name of the page behind
+    // it (#257): the rail is read together with the heading it leads to, so a
+    // rail saying "Actions" over a page titled "Acties" reads as two apps.
     ShellDestination(
-      label: 'Home',
+      label: 'Start',
       icon: Icons.home_outlined,
       builder: (_) => const HomeScreen(),
     ),
     ShellDestination(
-      label: 'Reconcile',
+      label: 'Synchronisatie',
       icon: Icons.sync_alt_outlined,
       builder: (_) => ReconcileScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
-      label: 'Actions',
+      label: 'Acties',
       icon: Icons.checklist_outlined,
       builder: (_) => ActionsScreen(bootstrap: widget.reconcileBootstrap),
     ),
+    // The class inventory (#227). A destination of its own rather than a node
+    // inside Acties: it lists *every* class, so it answers "is this right?",
+    // which the action list structurally cannot.
     ShellDestination(
-      label: 'Passwords',
+      label: 'Klasgroepen',
+      icon: Icons.groups_outlined,
+      builder: (_) => ClassGroupsScreen(bootstrap: widget.reconcileBootstrap),
+    ),
+    ShellDestination(
+      label: 'Wachtwoorden',
       icon: Icons.password_outlined,
       builder: (_) => PasswordsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
-      label: 'Settings',
+      label: 'Instellingen',
       icon: Icons.settings_outlined,
       builder: (_) => SettingsScreen(bootstrap: widget.settingsBootstrap),
     ),

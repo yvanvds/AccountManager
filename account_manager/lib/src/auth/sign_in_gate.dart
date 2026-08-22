@@ -64,7 +64,8 @@ class _SignInGateState extends State<SignInGate> {
       if (mounted) {
         setState(() {
           _phase = _Phase.failed;
-          _error = e.isUserCancelled ? 'Sign-in was cancelled.' : e.message;
+          _error =
+              e.isUserCancelled ? 'Het aanmelden is geannuleerd.' : e.message;
         });
       }
     } catch (e) {
@@ -92,7 +93,7 @@ class _SignInGateState extends State<SignInGate> {
         return _SignInScaffold(
           key: const ValueKey('sign-in-failed'),
           child: _SignInFailedPanel(
-              message: _error ?? 'Sign-in failed.', onRetry: _signIn),
+              message: _error ?? 'Het aanmelden is mislukt.', onRetry: _signIn),
         );
     }
   }
@@ -139,11 +140,12 @@ class _SigningInPanel extends StatelessWidget {
       children: <Widget>[
         Eyebrow('Arcadia · office 365', onInk: ink),
         const SizedBox(height: PlinkSpacing.s4),
-        Text('Signing in…', style: text.headlineSmall),
+        Text('Aanmelden…', style: text.headlineSmall),
         const SizedBox(height: PlinkSpacing.s4),
         Text(
-          'Connecting to Azure AD with your school account. A browser window '
-          'may open for sign-in — complete it there and return here.',
+          'Verbinden met Azure AD via je schoolaccount. Mogelijk opent er een '
+          'browservenster om je aan te melden — rond het daar af en kom hier '
+          'terug.',
           style: text.bodyMedium,
         ),
         const SizedBox(height: PlinkSpacing.s5),
@@ -167,9 +169,9 @@ class _SignInFailedPanel extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Eyebrow('Arcadia · sign-in failed', onInk: ink),
+        Eyebrow('Arcadia · aanmelden mislukt', onInk: ink),
         const SizedBox(height: PlinkSpacing.s4),
-        Text('Could not sign in', style: text.headlineSmall),
+        Text('Kon je niet aanmelden', style: text.headlineSmall),
         const SizedBox(height: PlinkSpacing.s4),
         Text(message, style: text.bodyMedium),
         const SizedBox(height: PlinkSpacing.s5),
@@ -177,7 +179,7 @@ class _SignInFailedPanel extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: FilledButton(
             onPressed: onRetry,
-            child: const Text('Try again'),
+            child: const Text('Probeer opnieuw'),
           ),
         ),
       ],

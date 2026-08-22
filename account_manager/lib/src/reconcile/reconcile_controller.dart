@@ -348,10 +348,12 @@ class CategorySummary {
 /// The smart-sync behaviour is the product-direction piece: [sync] retains the
 /// previous WISA snapshot (via [ApplicationState]'s [SystemState]) and diffs
 /// the fresh pull against it. When WISA is unchanged and a linked view already
-/// exists, it reports "no account changes needed" and stops — no re-link, no
+/// exists, it reports "geen accountwijzigingen nodig" and stops — no re-link, no
 /// action churn. Smartschool / Azure are pulled only when still missing this
-/// session; re-reading them is the explicit [checkDrift] action (someone
-/// edited via another tool), not the default.
+/// session **or when their own settings inputs have moved** ([
+/// systemsAwaitingSettings], #259); re-reading them for drift somebody else
+/// introduced through another tool is the explicit [checkDrift] action, not the
+/// default.
 class ReconcileController extends ChangeNotifier {
   ReconcileController({
     required this.app,
@@ -373,6 +375,12 @@ class ReconcileController extends ChangeNotifier {
     // The snapshot this session starts with — seeded from the cold store, or
     // pulled later — belongs to the settings as they stand right now (#238).
     _wisaPullFingerprint = _wisaFingerprint();
+    // The same claim for the other two systems (#259). A cold seed was pulled
+    // by some other session whose settings this one cannot know, so — exactly
+    // as for WISA — it is credited to the document in hand, and only a save
+    // made *from here on* asks for a re-pull.
+    _smartschoolPullFingerprint = _settingsFingerprint(core.Origin.smartschool);
+    _azurePullFingerprint = _settingsFingerprint(core.Origin.azure);
     // The endpoints and credential refs the connectors in hand were built from
     // (#246). Unlike everything else, a later change to these cannot be adopted
     // — see [relaunchRequiredReason].
@@ -484,6 +492,13 @@ class ReconcileController extends ChangeNotifier {
   /// against the live document to arm [driftBlockedReason].
   late String _wisaPullFingerprint;
 
+  /// The [smartschoolPullFingerprint] / [azurePullFingerprint] of the settings
+  /// the snapshot this session holds for that system was pulled with (#259).
+  /// Re-stamped on every pull of that system; compared against the live
+  /// document to arm [systemsAwaitingSettings].
+  late String _smartschoolPullFingerprint;
+  late String _azurePullFingerprint;
+
   ReconcilePhase _phase = ReconcilePhase.idle;
   double _progress = 0.0;
   ApplyStep? _applyStep;
@@ -499,7 +514,6 @@ class ReconcileController extends ChangeNotifier {
   List<String> _expandedPath = const <String>[];
   List<MaterializedAccount>? _classroomAccounts;
   bool _loadingClassroom = false;
-  bool _showingGroups = false;
   List<MaterializedGroup>? _groupDocs;
   bool _loadingGroups = false;
   SyncLease? _lock;
@@ -1074,8 +1088,67 @@ class ReconcileController extends ChangeNotifier {
   /// Whether **Check for drift** can be started right now: no pass running, no
   /// other operator holding the lease, and the WISA settings unchanged since
   /// this session's roster was pulled (#238).
+  ///
+  /// Deliberately *not* gated on [systemsAwaitingSettings]: a drift pass
+  /// unconditionally re-reads Smartschool and Azure, so it is one of the two
+  /// passes that adopt a saved rule or prefix rather than a pass that would
+  /// reconcile around it.
   bool get canCheckDrift =>
       !busy && !syncLockedByOther && driftBlockedReason == null;
+
+  /// The pull-input fingerprint of [system] as the live document stands right
+  /// now, or the empty sentinel when no [liveSettings] holder is wired — which
+  /// makes every comparison equal and leaves [systemsAwaitingSettings] empty
+  /// for the harnesses that model no settings at all.
+  String _settingsFingerprint(core.Origin system) {
+    final live = liveSettings;
+    if (live == null) return '';
+    return switch (system) {
+      core.Origin.smartschool => smartschoolPullFingerprint(live.current),
+      core.Origin.azure => azurePullFingerprint(live.current),
+      _ => '',
+    };
+  }
+
+  /// The systems whose *own* pull inputs have been changed in Instellingen
+  /// since the snapshot this session holds for them was pulled (#259).
+  ///
+  /// #99's smart sync re-pulls Smartschool and Azure only when this session
+  /// does not hold them yet, which is right when the question is "did somebody
+  /// edit those systems behind our back" (that is [checkDrift]'s job) and wrong
+  /// when the operator has just changed what the pull itself asks for. A saved
+  /// `DiscardSmartschoolGroup` or a new school prefix then reached the running
+  /// stack (#246) but no pass applied it, while [sync] reported "geen
+  /// accountwijzigingen nodig" over the very save it had skipped.
+  ///
+  /// So this is the targeted equivalent of the `snapshot == null` condition:
+  /// non-empty means the next [sync] re-pulls those systems, and
+  /// [pendingSettingsReason] says so on screen until it has.
+  Set<core.Origin> get systemsAwaitingSettings => <core.Origin>{
+        if (_settingsFingerprint(core.Origin.smartschool) !=
+            _smartschoolPullFingerprint)
+          core.Origin.smartschool,
+        if (_settingsFingerprint(core.Origin.azure) != _azurePullFingerprint)
+          core.Origin.azure,
+      };
+
+  /// Which saved settings are waiting for a Synchroniseer to be applied, or
+  /// `null` when none are (#259).
+  ///
+  /// Nothing is refused — the next [sync] adopts them by itself, and so does a
+  /// [checkDrift]. This only ends the silence between the save and that pass,
+  /// the way [driftBlockedReason] and [relaunchRequiredReason] name their own
+  /// situations.
+  String? get pendingSettingsReason {
+    final systems = systemsAwaitingSettings;
+    if (systems.isEmpty) return null;
+    final names = <String>[
+      if (systems.contains(core.Origin.smartschool)) 'Smartschool',
+      if (systems.contains(core.Origin.azure)) 'Azure AD',
+    ];
+    return 'Instellingen voor ${names.join(' en ')} gewijzigd — '
+        'synchroniseer om ze toe te passen.';
+  }
 
   /// Why this session must be relaunched before it can honour the settings as
   /// they now stand, or `null` when it can honour all of them (#246).
@@ -1110,6 +1183,17 @@ class ReconcileController extends ChangeNotifier {
   /// mid-pull stays pending rather than being credited to a pull that never saw
   /// it (#238).
   void _stampWisaPull(String fingerprint) => _wisaPullFingerprint = fingerprint;
+
+  /// The same record for Smartschool / Azure (#259): [fingerprint] is read
+  /// *before* the pull goes out, so a save landing mid-pull stays pending
+  /// rather than being credited to a pull that never saw it.
+  void _stampPull(core.Origin system, String fingerprint) {
+    if (system == core.Origin.smartschool) {
+      _smartschoolPullFingerprint = fingerprint;
+    } else if (system == core.Origin.azure) {
+      _azurePullFingerprint = fingerprint;
+    }
+  }
 
   /// Whether the store holds a materialized overview (rollups) to drill into —
   /// true after any session has synced, even without a pull this session.
@@ -1329,7 +1413,9 @@ class ReconcileController extends ChangeNotifier {
   }
 
   /// The class-groups category summary (#163): the single "Klasgroepen" rollup
-  /// node, or [CategorySummary.empty] when no group carries an action to surface.
+  /// node, or [CategorySummary.empty] when the view holds no class at all. Its
+  /// total is the whole class inventory since #227 (it used to be the number of
+  /// classes with work), which is what the Klasgroepen tab lists.
   CategorySummary get groupSummary {
     final r = groupRollup;
     return r == null
@@ -1337,8 +1423,9 @@ class ReconcileController extends ChangeNotifier {
         : CategorySummary(total: r.accountCount, pending: r.pendingCount);
   }
 
-  /// The single "Klasgroepen" rollup node (#119), or `null` when no group has a
-  /// pending action to drill into.
+  /// The single "Klasgroepen" rollup node (#119), or `null` when the shared view
+  /// holds no class at all. Since #227 it aggregates the whole class inventory
+  /// ([Rollup.accountCount] is every class), not only the ones with work.
   Rollup? get groupRollup {
     for (final r in _rollups) {
       if (r.level == RollupLevel.groups) return r;
@@ -1346,14 +1433,12 @@ class ReconcileController extends ChangeNotifier {
     return null;
   }
 
-  /// Whether the group ("Klasgroepen") drill-down is currently open.
-  bool get showingGroups => _showingGroups;
-
-  /// The per-group docs of the open group drill-down, lazily loaded from the
-  /// store; `null` until the "Klasgroepen" node is opened (#119).
+  /// The class inventory as stored documents — every linked class since #227,
+  /// not only those with work. `null` until [loadGroups] has read them, and
+  /// again after a sync rewrote the view (the Klasgroepen tab re-reads).
   List<MaterializedGroup>? get groupDocs => _groupDocs;
 
-  /// Whether a group drill-down read is in flight.
+  /// Whether a class-inventory read is in flight.
   bool get loadingGroups => _loadingGroups;
 
   /// How many pending actions an apply pass would actually write — the
@@ -1412,15 +1497,23 @@ class ReconcileController extends ChangeNotifier {
       // same document, so this names exactly the settings WISA was asked with
       // (#238).
       final pulledWith = _wisaFingerprint();
-      log.addMessage(core.Origin.wisa, 'Syncing WISA…');
+      // Which held system's own pull inputs moved since it was pulled (#259),
+      // sampled before anything goes out for the same reason [pulledWith] is:
+      // a save landing mid-pass belongs to the next one. Read here rather than
+      // after the WISA pull so the school-profile back-fill below — which
+      // publishes a repaired document of its own (#207) — can never be mistaken
+      // for the operator changing something.
+      final stale = systemsAwaitingSettings;
+      log.addMessage(core.Origin.wisa, 'WISA ophalen…');
       final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
       _stampWisaPull(pulledWith);
       _recordPull(core.Origin.wisa, fresh);
       _setProgress(0.25);
       log.addMessage(
         core.Origin.wisa,
-        'WISA sync done: ${fresh.students.length} students, '
-        '${fresh.staff.length} staff, ${fresh.classGroups.length} classes.',
+        'WISA opgehaald: ${fresh.students.length} leerling(en), '
+        '${fresh.staff.length} personeelsleden, '
+        '${fresh.classGroups.length} klassen.',
       );
       // Repair the operator's stored school profiles from this pull (#207).
       // Runs before the unchanged-since-last-sync shortcut below, so a session
@@ -1428,14 +1521,19 @@ class ReconcileController extends ChangeNotifier {
       // schools have no names.
       await _backfillSchoolProfiles(fresh.schools);
 
+      // "Nothing to do" is only honest while every input is the one the view in
+      // hand was built from. A saved import rule or school prefix (#259) is a
+      // change this pass has to apply, so it falls through to the re-pull below
+      // instead of reporting "geen accountwijzigingen nodig" over it.
       if (previous != null &&
           _linked != null &&
+          stale.isEmpty &&
           wisaSnapshotUnchanged(previous, fresh)) {
         _noChangesNeeded = true;
         log.addMessage(
           core.Origin.wisa,
-          'WISA is unchanged since the previous sync — '
-          'no account changes needed.',
+          'WISA is ongewijzigd sinds de vorige synchronisatie — '
+          'geen accountwijzigingen nodig.',
         );
         await _persistSystemMeta();
         _logSyncComplete();
@@ -1444,17 +1542,41 @@ class ReconcileController extends ChangeNotifier {
       }
 
       // First pass of the session: the linked view needs all three systems.
-      if (app.smartschool.snapshot == null) {
+      // And since #259, so does a pass whose own settings inputs moved — the
+      // targeted equivalent of that condition, keyed on the per-system
+      // fingerprint rather than on "do we hold anything at all".
+      final ssStale = stale.contains(core.Origin.smartschool);
+      if (app.smartschool.snapshot == null || ssStale) {
         await _renewLock();
-        log.addMessage(core.Origin.smartschool, 'Syncing Smartschool…');
+        if (ssStale) {
+          log.addMessage(
+            core.Origin.smartschool,
+            'Smartschool-instellingen gewijzigd — Smartschool wordt opnieuw '
+            'opgehaald.',
+          );
+        }
+        log.addMessage(core.Origin.smartschool, 'Smartschool ophalen…');
+        final ssPulledWith = _settingsFingerprint(core.Origin.smartschool);
         _recordPull(
             core.Origin.smartschool, await app.sync(core.Origin.smartschool));
+        _stampPull(core.Origin.smartschool, ssPulledWith);
       }
       _setProgress(0.45);
-      if (app.azure.snapshot == null) {
+      final azStale = stale.contains(core.Origin.azure);
+      if (app.azure.snapshot == null || azStale) {
         await _renewLock();
-        log.addMessage(core.Origin.azure, 'Syncing Azure AD…');
+        if (azStale) {
+          // Worth naming: a moved prefix also drops the delta token (#246), so
+          // this one is a full tenant read rather than an incremental pass.
+          log.addMessage(
+            core.Origin.azure,
+            'Azure-instellingen gewijzigd — Azure AD wordt opnieuw opgehaald.',
+          );
+        }
+        log.addMessage(core.Origin.azure, 'Azure AD ophalen…');
+        final azPulledWith = _settingsFingerprint(core.Origin.azure);
         _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
+        _stampPull(core.Origin.azure, azPulledWith);
       }
       _setProgress(0.65);
 
@@ -1503,20 +1625,28 @@ class ReconcileController extends ChangeNotifier {
     try {
       log.addMessage(
         core.Origin.smartschool,
-        'Checking Smartschool for drift…',
+        'Smartschool controleren op drift…',
       );
+      // A drift pass re-reads both systems unconditionally, so it adopts a
+      // saved import rule or school prefix as surely as a sync does — and must
+      // stamp that, or the next Synchroniseer would re-pull for a change this
+      // pass already applied (#259).
+      final ssPulledWith = _settingsFingerprint(core.Origin.smartschool);
       _recordPull(
           core.Origin.smartschool, await app.sync(core.Origin.smartschool));
+      _stampPull(core.Origin.smartschool, ssPulledWith);
       _setProgress(0.35);
       await _renewLock();
-      log.addMessage(core.Origin.azure, 'Checking Azure AD for drift…');
+      log.addMessage(core.Origin.azure, 'Azure AD controleren op drift…');
+      final azPulledWith = _settingsFingerprint(core.Origin.azure);
       _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
+      _stampPull(core.Origin.azure, azPulledWith);
       _setProgress(0.6);
 
       if (app.wisa.snapshot == null) {
         await _renewLock();
         final pulledWith = _wisaFingerprint();
-        log.addMessage(core.Origin.wisa, 'Syncing WISA…');
+        log.addMessage(core.Origin.wisa, 'WISA ophalen…');
         _recordPull(core.Origin.wisa, await app.sync(core.Origin.wisa));
         _stampWisaPull(pulledWith);
       }
@@ -1554,9 +1684,13 @@ class ReconcileController extends ChangeNotifier {
   /// realtime transport (#116) drives this from a SignalR change notification;
   /// until then it is exercised directly. A stale-or-equal [generation] is a
   /// no-op, so a duplicate notification does no work.
-  Future<void> onStoreChanged(int generation) async {
+  ///
+  /// [shard], when the signal named one (#254), says which part of the view
+  /// moved, so a drill-down the change provably cannot have touched is left
+  /// alone instead of re-read. A missing shard means "assume the whole view".
+  Future<void> onStoreChanged(int generation, {ShardRef? shard}) async {
     if (busy || generation <= _syncState.generation) return;
-    await _refetchFromStore();
+    await _refetchFromStore(shard: shard);
   }
 
   /// Catches this session up from the shared store after the realtime client
@@ -1580,13 +1714,26 @@ class ReconcileController extends ChangeNotifier {
   /// Re-reads the shared overview (sync state, rollups, lease) and any open
   /// drill-down from the store — the refetch [onStoreChanged] and
   /// [resyncFromStore] share (no pull, no `link()`).
-  Future<void> _refetchFromStore() async {
+  ///
+  /// The overview itself is always re-read: the rollups are the counts the nudge
+  /// was about, and they are small. The *drill-downs* are what [shard] narrows
+  /// (#254) — a one-classroom apply elsewhere in the school has nothing to say
+  /// about the class this session has open, or about the Klasgroepen inventory,
+  /// so those reads are skipped rather than paid for. A null shard (a sync's
+  /// whole-view rewrite, or a reconnect that cannot know what it missed) re-reads
+  /// everything, exactly as before.
+  Future<void> _refetchFromStore({ShardRef? shard}) async {
     _syncState = await store.readSyncState();
     _rollups = await store.readRollups();
     _decisions = await store.readDecisions();
     await _refreshLock();
     final open = _selectedClassroom;
-    if (open != null) {
+    if (open != null &&
+        (shard == null ||
+            shard.touchesClassroom(
+              school: open.school,
+              classroom: open.classroom,
+            ))) {
       try {
         _classroomAccounts = await store.readClassroom(
           school: open.school,
@@ -1596,7 +1743,8 @@ class ReconcileController extends ChangeNotifier {
         log.addError(core.Origin.all, 'Kon ${open.label} niet vernieuwen: $e');
       }
     }
-    if (_showingGroups) {
+    if (_groupDocs != null &&
+        (shard == null || shard.touchesPartition(groupsPartition))) {
       try {
         _groupDocs = await store.readGroups();
       } on Object catch (e) {
@@ -1634,14 +1782,18 @@ class ReconcileController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Opens the "Klasgroepen" drill-down (#119), lazily reading the per-group
-  /// docs from the store (no pull, no `link()`) — the group-family counterpart
-  /// of [openClassroom].
-  Future<void> openGroups() async {
-    _showingGroups = true;
-    _selectedClassroom = null;
-    _classroomAccounts = null;
-    _groupDocs = null;
+  /// Reads the **class inventory** — every stored class document — from the
+  /// store (no pull, no `link()`). One partition read; there are a few hundred
+  /// classes at most.
+  ///
+  /// The group-family counterpart of [openClassroom], except that it is not a
+  /// drill-down any more: since #227 Klasgroepen is a top-level tab that lists
+  /// every class rather than a node listing the ones with work, so the read is
+  /// "load the inventory" and there is nothing to close. A second call while a
+  /// read is in flight is a no-op; a sync drops [groupDocs] so the tab re-reads
+  /// the generation it just wrote.
+  Future<void> loadGroups() async {
+    if (_loadingGroups) return;
     _loadingGroups = true;
     notifyListeners();
     try {
@@ -1655,23 +1807,16 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
-  /// Closes the group drill-down, back to the overview.
-  void closeGroups() {
-    _showingGroups = false;
-    _groupDocs = null;
-    notifyListeners();
-  }
-
   /// Dry-runs the chosen resolution of **every** pending entry (PAIN-3): the
   /// full apply path, zero writes. Results land in [dryRunResults].
-  Future<void> dryRun() => _run(_selectedActions(pendingEntries), dry: true);
+  Future<void> dryRun() => _run(pendingEntries, dry: true);
 
   /// Applies the chosen resolution of every pending entry for real, refreshing
   /// the linked view from the State layer's incremental patches as it goes.
   /// Only the **selected** alternative of each choice runs — a departed student
   /// is unregistered *or* deleted, never both (#110). Results land in
   /// [applyResults].
-  Future<void> applyAll() => _run(_selectedActions(pendingEntries), dry: false);
+  Future<void> applyAll() => _run(pendingEntries, dry: false);
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>
@@ -1698,32 +1843,46 @@ class ReconcileController extends ChangeNotifier {
   /// impossible: label, confirmation scope ([applyScope]) and write are one
   /// list.
   Future<void> applyEntries(Iterable<PendingAccountEntry> entries) =>
-      _run(_selectedActions(entries), dry: false);
+      _run(entries, dry: false);
 
   /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes.
   Future<void> dryRunEntries(Iterable<PendingAccountEntry> entries) =>
-      _run(_selectedActions(entries), dry: true);
+      _run(entries, dry: true);
 
-  /// Runs [selected] — the pre-resolved, applyable options — through the apply
-  /// path (dry or real). Shared by the global, per-entry, and per-situation
-  /// affordances so all three behave identically (#110). Each option is bound to
-  /// its own target; on a real write the applier patches the snapshot and
-  /// returns a fresh linked view we adopt as the pass proceeds.
+  /// Runs the selected, applyable option of every choice in [entries] through
+  /// the apply path (dry or real). Shared by the global, per-entry, and
+  /// per-situation affordances so all three behave identically (#110). Each
+  /// option is bound to its own target; on a real write the applier patches the
+  /// snapshot and returns a fresh linked view we adopt as the pass proceeds.
+  ///
+  /// It takes the *entries* rather than the resolved options because a real pass
+  /// owes the shared store a patch afterwards (#254), and the entries are what
+  /// name the targets it touched — an option carries only a display label.
   Future<void> _run(
-    List<PendingActionOption> selected, {
+    Iterable<PendingAccountEntry> entries, {
     required bool dry,
   }) async {
     if (busy || _linked == null) return;
+    final selected = _selectedActions(entries);
+    // The targets this pass writes to, captured before it starts: the entries
+    // are derived from the pre-apply linked view, which the pass replaces.
+    final touched = <PendingAccountEntry>[
+      for (final e in entries)
+        if (e.choices.any((c) => c.selected.canApply)) e,
+    ];
     _begin(ReconcilePhase.applying);
 
     final options =
         dry ? actions.ApplyOptions.dry : const actions.ApplyOptions();
     final results = <ActionOutcomeEntry>[];
-    final label = dry ? 'Dry-run' : 'Apply';
+    // "Dry-run" is the term the Acties buttons already use ("Dry-run alles"),
+    // so it stays; its counterpart is the "Alles toepassen" of those same
+    // buttons rather than a second word for the same thing.
+    final label = dry ? 'Dry-run' : 'Toepassen';
     log.addMessage(
       core.Origin.all,
-      '$label started for ${selected.length} of ${pendingActions.length} '
-      'pending action(s).',
+      '$label gestart voor ${selected.length} van ${pendingActions.length} '
+      'openstaande actie(s).',
     );
 
     try {
@@ -1754,15 +1913,15 @@ class ReconcileController extends ChangeNotifier {
           results.where((r) => r.outcome == actions.ActionOutcome.failed);
       log.addMessage(
         core.Origin.all,
-        '$label finished: ${results.length - failed.length} ok, '
-        '${failed.length} failed.',
+        '$label klaar: ${results.length - failed.length} gelukt, '
+        '${failed.length} mislukt.',
       );
       if (dry) {
         _dryRunResults = results;
       } else {
         _applyResults = results;
         _dryRunResults = null;
-        _refreshRollups();
+        await _shareApplied(_refreshRollups(), touched);
       }
       _applyStep = null;
       _finish(ReconcilePhase.ready);
@@ -1774,8 +1933,9 @@ class ReconcileController extends ChangeNotifier {
       } else {
         _applyResults = results;
         // A pass that broke halfway still wrote whatever it got through, so the
-        // overview owes the operator those counts too (#236).
-        _refreshRollups();
+        // overview owes the operator those counts too (#236) — and so do the
+        // other operators (#254).
+        await _shareApplied(_refreshRollups(), touched);
       }
       // Nothing is in flight any more, however the pass ended (#243).
       _applyStep = null;
@@ -1862,9 +2022,10 @@ class ReconcileController extends ChangeNotifier {
     final s = _linked!.snapshot;
     log.addMessage(
       core.Origin.all,
-      'Linked: ${s.accounts.length} students, ${s.staff.length} staff, '
-      '${s.groups.length} groups; ${pendingActions.length} pending '
-      'action(s), ${s.warnings.length} warning(s).',
+      'Gekoppeld: ${s.accounts.length} leerling(en), '
+      '${s.staff.length} personeelsleden, ${s.groups.length} klasgroepen; '
+      '${pendingActions.length} openstaande actie(s), '
+      '${s.warnings.length} waarschuwing(en).',
     );
     _logSkippedNamesakes(s.warnings);
     _setProgress(0.9);
@@ -1907,27 +2068,30 @@ class ReconcileController extends ChangeNotifier {
   /// aggregates from a [LinkedState], so the correction is the same computation
   /// the sync path runs, minus the store write.
   ///
-  /// Deliberately **local-only**. Nothing is written back and the generation is
-  /// not bumped, for three reasons: the stored view is ~9.6k documents and
-  /// rewriting it per apply is not affordable ([LinkedStore.writeMaterialized]
-  /// is the sync path's tool, not an apply's); this session's generation must
-  /// stay behind the store's so a later [onStoreChanged] still wins over this
-  /// correction rather than being gated out as stale; and there is no narrow
-  /// per-account write seam to do it properly. So other operators keep the
-  /// pre-apply counts until someone syncs — the shared half of the bug, filed
-  /// separately (#254) because it needs that seam plus a [ChangeSignal] shard.
+  /// This is the **local** half. It writes nothing and does not bump the
+  /// generation: a session must never be ahead of the store on its own say-so,
+  /// or the [onStoreChanged] that should overrule it would be gated out as
+  /// stale. The shared half is [_shareApplied] (#254), which hands the same
+  /// derivation to [LinkedStore.writeApplied] and then adopts what the store
+  /// makes of it — so if the two ever disagree, the shared view wins.
+  ///
+  /// Returns the view it derived, so the shared half re-uses this one
+  /// computation rather than materializing the whole thing twice; `null` when
+  /// there is nothing to derive from or the derivation failed.
   ///
   /// Never called from the dry-run path: a projection writes nothing, so it must
   /// leave every count exactly as it found it.
-  void _refreshRollups() {
+  MaterializedView? _refreshRollups() {
     final linked = _linked;
-    if (linked == null) return;
+    if (linked == null) return null;
     try {
-      _rollups = materialize(
+      final view = materialize(
         linked,
         generation: _syncState.generation,
         schoolLabels: _schoolLabels(),
-      ).rollups;
+      );
+      _rollups = view.rollups;
+      return view;
     } on Object catch (e) {
       // A correction that fails must not turn a successful apply into a failed
       // pass; the counts then simply stay as stale as they were before.
@@ -1935,7 +2099,165 @@ class ReconcileController extends ChangeNotifier {
           core.Origin.all,
           'Kon de tellingen in het overzicht niet '
           'vernieuwen: $e');
+      return null;
     }
+  }
+
+  /// Writes the documents a **real** apply changed back to the shared store, so
+  /// every *other* operator stops being offered work this session already
+  /// applied (#254) — the half #236 deliberately left open.
+  ///
+  /// [view] is the refreshed derivation [_refreshRollups] just made; [touched]
+  /// the entries the pass actually wrote to. Together they give the patch its
+  /// exact scope: for each touched target, the document it has now — or its id
+  /// alone when the refreshed link no longer produces one (the account's last
+  /// system record was just deleted). Nothing else in the ~9.6k-document view is
+  /// read, written or even looked at.
+  ///
+  /// Three things follow the write, in this order and for a reason:
+  ///
+  /// - the session adopts the generation it just wrote, so it is *current*
+  ///   rather than ahead — a later sync bumps past it and [onStoreChanged] still
+  ///   fires;
+  /// - the rollups are re-read **from the store**, not kept from the local
+  ///   derivation, so another operator's concurrent correction outranks this
+  ///   session's picture of the same nodes rather than the other way round;
+  /// - a [ChangeSignal.viewChanged] naming the changed shard goes out, so
+  ///   passive sessions refetch that much and not the whole view.
+  ///
+  /// A write that is deferred (someone is mid-sync) or that fails leaves all
+  /// three undone: the local correction from #236 still stands for this session,
+  /// the shared view catches up on the next sync, and the operator is told which
+  /// it was. A failure here must never turn a successful apply into a failed
+  /// pass — the writes to Smartschool and Office 365 really happened.
+  Future<void> _shareApplied(
+    MaterializedView? view,
+    List<PendingAccountEntry> touched,
+  ) async {
+    if (view == null || touched.isEmpty) return;
+    final accounts = <String, MaterializedAccount>{
+      for (final a in view.accounts) a.id.value: a,
+    };
+    final groups = <String, MaterializedGroup>{
+      for (final g in view.groups) g.id.value: g,
+    };
+    final freshAccounts = <MaterializedAccount>[];
+    final freshGroups = <MaterializedGroup>[];
+    final removedAccountIds = <String>[];
+    final removedGroupIds = <String>[];
+    for (final entry in touched) {
+      if (entry.family == 'group') {
+        // A group entry is keyed by the display name the operator sees; the
+        // stored document is keyed by the materializer's namespaced form.
+        final id = materializedGroupId(entry.targetId);
+        final doc = groups[id];
+        if (doc == null) {
+          removedGroupIds.add(id);
+        } else {
+          freshGroups.add(doc);
+        }
+      } else {
+        final doc = accounts[entry.targetId];
+        if (doc == null) {
+          removedAccountIds.add(entry.targetId);
+        } else {
+          freshAccounts.add(doc);
+        }
+      }
+    }
+    // Re-attach the operator decisions the store holds for these targets, the
+    // way [_persist] does for the whole view: the derivation above carries none,
+    // and writing it raw would silently strip an accepted duplicate or a chosen
+    // alternative off exactly the documents this pass touched. Only the
+    // re-attachment is taken — `dropped` is meaningless over a subset, since
+    // every decision belonging to an untouched account would be in it.
+    final merged = mergeDecisions(
+      accounts: freshAccounts,
+      groups: freshGroups,
+      existing: _decisions,
+    );
+    final patch = AppliedPatch(
+      accounts: merged.accounts,
+      groups: merged.groups,
+      removedAccountIds: removedAccountIds,
+      removedGroupIds: removedGroupIds,
+    );
+    if (patch.isEmpty) return;
+
+    try {
+      final at = _now();
+      final written = await store
+          .writeApplied(patch, appliedBy: syncedBy, at: at)
+          .timeout(persistTimeout);
+      final generation = written.generation;
+      if (generation == null) {
+        final holder = written.deferredTo;
+        if (holder != null) {
+          log.addMessage(
+            core.Origin.all,
+            'Het gedeelde overzicht is niet bijgewerkt: ${holder.owner} '
+            'synchroniseert. De toegepaste wijzigingen komen erin zodra die '
+            'synchronisatie klaar is.',
+          );
+        }
+        return;
+      }
+      _syncState = SyncState(
+        generation: generation,
+        updatedAt: at,
+        updatedBy: syncedBy,
+        systems: _syncState.systems,
+      );
+      _rollups = await store.readRollups();
+      await _publish(ChangeSignal.viewChanged(
+        generation: generation,
+        shard: _appliedShard(patch),
+      ));
+    } on TimeoutException {
+      log.addError(
+        core.Origin.all,
+        'Het bijwerken van het gedeelde overzicht duurde langer dan '
+        '${persistTimeout.inSeconds}s — de wijzigingen zijn wel toegepast, maar '
+        'andere gebruikers zien ze pas na de volgende synchronisatie.',
+      );
+    } on Object catch (e) {
+      log.addError(
+        core.Origin.all,
+        'Kon het gedeelde overzicht niet bijwerken: $e',
+      );
+    }
+  }
+
+  /// The narrowest [ShardRef] that provably covers everything [patch] changed,
+  /// or `null` for "assume the whole view" (#254).
+  ///
+  /// Only ever narrows on what this session can vouch for, widening a level at a
+  /// time: one classroom, else one school, else the whole view. A removal's
+  /// document is gone, so where it sat is no longer knowable here, and a patch
+  /// touching accounts *and* class groups spans two partitions — in both the
+  /// honest answer is the whole view. A shard that under-claims would have
+  /// receivers skip a re-read they needed, which is far worse than one that
+  /// costs them a read they did not.
+  ShardRef? _appliedShard(AppliedPatch patch) {
+    if (patch.removedAccountIds.isNotEmpty ||
+        patch.removedGroupIds.isNotEmpty) {
+      return null;
+    }
+    final touchedGroups = patch.groups.isNotEmpty;
+    if (patch.accounts.isEmpty) {
+      return touchedGroups ? const ShardRef(school: groupsPartition) : null;
+    }
+    if (touchedGroups) return null;
+    final schools = <String>{for (final a in patch.accounts) a.school};
+    if (schools.length != 1) return null;
+    final classrooms = <String>{for (final a in patch.accounts) a.classroom};
+    if (classrooms.length != 1) return ShardRef(school: schools.single);
+    return ShardRef(
+      school: schools.single,
+      classroom: classrooms.single,
+      accountId:
+          patch.accounts.length == 1 ? patch.accounts.single.id.value : null,
+    );
   }
 
   /// Materializes the fresh linked view and writes it to the shared store
@@ -2011,17 +2333,21 @@ class ReconcileController extends ChangeNotifier {
       _selectedClassroom = null;
       _expandedPath = const <String>[];
       _classroomAccounts = null;
-      _showingGroups = false;
+      // The class inventory goes with it: the Klasgroepen tab re-reads the
+      // generation this pass just wrote (#227).
       _groupDocs = null;
     } on TimeoutException {
       log.addError(
         core.Origin.all,
-        'Persisting the linked view timed out after '
-        '${persistTimeout.inSeconds}s — the linked view is usable this session '
-        'but was not saved to the shared store.',
+        'Het opslaan van het gedeelde overzicht duurde langer dan '
+        '${persistTimeout.inSeconds}s — deze sessie kan ermee verder, maar '
+        'andere gebruikers zien het pas na de volgende synchronisatie.',
       );
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not persist the linked view: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon het gedeelde overzicht niet opslaan: $e',
+      );
     }
   }
 
@@ -2077,13 +2403,13 @@ class ReconcileController extends ChangeNotifier {
       liveSettings?.publish(saved);
       log.addMessage(
         core.Origin.wisa,
-        'Updated the name and code of ${healed.length} WISA school(s) in the '
-        'settings (id ${healed.join(', ')}).',
+        'Naam en code van ${healed.length} WISA-school(en) bijgewerkt in de '
+        'instellingen (id ${healed.join(', ')}).',
       );
     } on Object catch (e) {
       log.addError(
         core.Origin.wisa,
-        'Could not update the WISA school names in the settings: $e',
+        'Kon de WISA-schoolnamen niet bijwerken in de instellingen: $e',
       );
     }
   }
@@ -2131,7 +2457,10 @@ class ReconcileController extends ChangeNotifier {
         systems: {..._syncState.systems, ..._pulled},
       );
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not record sync metadata: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de synchronisatiegegevens niet opslaan: $e',
+      );
     }
   }
 
@@ -2158,7 +2487,10 @@ class ReconcileController extends ChangeNotifier {
       notifyListeners();
       return false;
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not take the sync lock: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de sync-vergrendeling niet nemen: $e',
+      );
       return true;
     }
   }
@@ -2178,7 +2510,10 @@ class ReconcileController extends ChangeNotifier {
         );
       }
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not renew the sync lock: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de sync-vergrendeling niet verlengen: $e',
+      );
     }
   }
 
@@ -2190,7 +2525,10 @@ class ReconcileController extends ChangeNotifier {
       // Only after the lease is actually gone — nudge others to re-enable.
       await _publish(ChangeSignal.syncEnded(owner: syncedBy));
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not release the sync lock: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de sync-vergrendeling niet vrijgeven: $e',
+      );
     }
   }
 
@@ -2217,7 +2555,9 @@ class ReconcileController extends ChangeNotifier {
     switch (signal.kind) {
       case ChangeSignalKind.viewChanged:
         final generation = signal.generation;
-        if (generation != null) await onStoreChanged(generation);
+        if (generation != null) {
+          await onStoreChanged(generation, shard: signal.shard);
+        }
       case ChangeSignalKind.syncStarted:
       case ChangeSignalKind.syncEnded:
         // While this session runs its own pass it owns the lease; ignore the
@@ -2238,7 +2578,10 @@ class ReconcileController extends ChangeNotifier {
     try {
       await p.publish(signal);
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not publish a change signal: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon geen wijzigingssignaal versturen: $e',
+      );
     }
   }
 

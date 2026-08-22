@@ -48,7 +48,7 @@ void main() {
     await tester.pumpWidget(host(SignInSession(stuck), resource: graph));
     await tester.pump();
 
-    expect(find.text('Signing in…'), findsOneWidget);
+    expect(find.text('Aanmelden…'), findsOneWidget);
     expect(find.text('APP CONTENT'), findsNothing);
   });
 
@@ -68,11 +68,11 @@ void main() {
     await tester.pumpWidget(host(SignInSession(broker), resource: graph));
     await tester.pumpAndSettle();
 
-    expect(find.text('Could not sign in'), findsOneWidget);
+    expect(find.text('Kon je niet aanmelden'), findsOneWidget);
     expect(find.text('network down'), findsOneWidget);
     expect(find.text('APP CONTENT'), findsNothing);
 
-    await tester.tap(find.text('Try again'));
+    await tester.tap(find.text('Probeer opnieuw'));
     await tester.pumpAndSettle();
 
     expect(find.text('APP CONTENT'), findsOneWidget);
@@ -91,7 +91,7 @@ void main() {
     await tester.pumpWidget(host(SignInSession(broker), resource: graph));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sign-in was cancelled.'), findsOneWidget);
+    expect(find.text('Het aanmelden is geannuleerd.'), findsOneWidget);
   });
 
   testWidgets('reveals the app directly when AAD is not configured',

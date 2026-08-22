@@ -18,11 +18,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The shell and its single Home destination are present.
+    // The shell and its single Home destination are present, the rail naming
+    // it in the operator's language (#257).
     expect(find.byType(AppShell), findsOneWidget);
     expect(find.byType(HomeScreen), findsOneWidget);
     expect(find.byType(NavigationRail), findsOneWidget);
-    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('Start'), findsOneWidget);
 
     // The per-product accent is layered on the Plink foundations.
     final BuildContext context = tester.element(find.byType(HomeScreen));

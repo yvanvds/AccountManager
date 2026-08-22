@@ -15,12 +15,19 @@ Map<String, dynamic> _projection(Map<String, dynamic> doc, String query) => {
     };
 
 /// A small in-memory [CosmosClient] covering the query shapes
-/// [CosmosLinkedStore] issues: `SELECT * FROM c`, the classroom filter, and the
-/// `SELECT c.id, c.pk, c.contentHash FROM c` projection — honouring
+/// [CosmosLinkedStore] issues: `SELECT * FROM c`, the classroom filter, the
+/// cross-partition `WHERE c.id = @id` lookup a post-apply removal uses (#254),
+/// and the `SELECT c.id, c.pk, c.contentHash FROM c` projection — honouring
 /// [partitionKey] scoping via each document's `pk` field.
 class _FakeClient implements CosmosClient {
   final Map<String, Map<String, Map<String, dynamic>>> _store = {};
   int deletes = 0;
+
+  /// Runs once, before the first upsert into [beforeUpsertIn] (any container
+  /// when that is null), so a test can slip another operator's whole write in
+  /// between this store's read and its conditioned write.
+  Future<void> Function()? beforeUpsert;
+  String? beforeUpsertIn;
 
   /// Upserts per container, so a test can assert what a re-sync actually wrote
   /// (#200) rather than only what the container ended up holding.
@@ -74,6 +81,12 @@ class _FakeClient implements CosmosClient {
     required String partitionKey,
     String? ifMatch,
   }) async {
+    final hook = beforeUpsert;
+    if (hook != null &&
+        (beforeUpsertIn == null || beforeUpsertIn == container)) {
+      beforeUpsert = null;
+      await hook();
+    }
     final id = document['id'] as String;
     if (ifMatch != null && _c(container)[id]?['_etag'] != ifMatch) {
       staleWrites++;
@@ -107,6 +120,13 @@ class _FakeClient implements CosmosClient {
       rows = [
         for (final d in rows)
           if (d['classroom'] == want) d
+      ];
+    }
+    if (query.contains('c.id = @id')) {
+      final want = parameters['@id'];
+      rows = [
+        for (final d in rows)
+          if (d['id'] == want) d
       ];
     }
     if (query.contains('SELECT c.id, c.pk')) {
@@ -469,8 +489,20 @@ Future<void> _settle() async {
 
 final DateTime _d = DateTime.utc(2026, 7, 1);
 
-MaterializedAccount _account(String id,
-        {String school = '1', String classroom = '3C', String? schoolLabel}) =>
+const CandidateAction _move = CandidateAction(
+  family: 'student',
+  kind: 'MoveToSmartschoolClassGroup',
+  system: core.Origin.smartschool,
+  summary: 'Move',
+);
+
+MaterializedAccount _account(
+  String id, {
+  String school = '1',
+  String classroom = '3C',
+  String? schoolLabel,
+  List<CandidateAction> candidates = const [_move],
+}) =>
     MaterializedAccount(
       id: core.LinkedAccountId(id),
       school: school,
@@ -484,14 +516,7 @@ MaterializedAccount _account(String id,
       inWisa: true,
       inSmartschool: true,
       inAzure: true,
-      candidates: const [
-        CandidateAction(
-          family: 'student',
-          kind: 'MoveToSmartschoolClassGroup',
-          system: core.Origin.smartschool,
-          summary: 'Move',
-        ),
-      ],
+      candidates: candidates,
     );
 
 MaterializedGroup _group(String name) => MaterializedGroup(
@@ -1021,6 +1046,176 @@ void main() {
       expect(state.generation, 1, reason: 'metadata touch is not a view write');
       expect(state.systems[core.Origin.wisa]?.syncedBy, 'jan@school');
       expect(state.systems[core.Origin.azure]?.syncedBy, 'mieke@school');
+    });
+  });
+
+  group('CosmosLinkedStore writeApplied — the narrow post-apply write (#254)',
+      () {
+    /// A store already holding a small view: three students in 3C and one in
+    /// 3D, each with one pending decision.
+    Future<({_FakeClient client, CosmosLinkedStore store})> seeded() async {
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+      await store.writeMaterialized(
+        _view([
+          _account('p0'),
+          _account('p1'),
+          _account('p2'),
+          _account('p3', classroom: '3D'),
+        ]),
+        syncedBy: 'jan@school',
+        at: _d,
+      );
+      return (client: client, store: store);
+    }
+
+    Future<Rollup?> node(CosmosLinkedStore store, String key) async {
+      for (final r in await store.readRollups()) {
+        if (r.key == key) return r;
+      }
+      return null;
+    }
+
+    test('writes the one touched document, not the container', () async {
+      // The affordability argument the whole seam rests on: a one-row apply must
+      // not cost what a re-sync costs.
+      final s = await seeded();
+      final accountWrites = s.client.upsertsTo(linkedAccountsContainer);
+      final rollupWrites = s.client.upsertsTo(rollupsContainer);
+
+      final write = await s.store.writeApplied(
+        AppliedPatch(accounts: [_account('p0', candidates: const [])]),
+        appliedBy: 'jan@school',
+        at: _d,
+      );
+
+      expect(write.generation, 2);
+      expect(s.client.upsertsTo(linkedAccountsContainer), accountWrites + 1,
+          reason: 'exactly one account document');
+      expect(s.client.upsertsTo(rollupsContainer), rollupWrites + 3,
+          reason: 'its classroom, its grade-year and its school — no more');
+      expect(s.client.deletes, 0);
+      expect((await node(s.store, 'class|1|3|3C'))!.pendingCount, 2);
+      expect((await node(s.store, 'class|1|3|3D'))!.pendingCount, 1,
+          reason: 'a class this pass never touched is not rewritten at all');
+      expect((await node(s.store, 'school|1'))!.pendingCount, 3);
+    });
+
+    test(
+        'the patched document carries a content hash, so the next sync skips '
+        'it (#200)', () async {
+      final s = await seeded();
+      await s.store.writeApplied(
+        AppliedPatch(accounts: [_account('p0', candidates: const [])]),
+        appliedBy: 'jan@school',
+        at: _d,
+      );
+      final before = s.client.upsertsTo(linkedAccountsContainer);
+
+      // The next full sync agrees with what the apply left behind.
+      await s.store.writeMaterialized(
+        _view([
+          _account('p0', candidates: const []),
+          _account('p1'),
+          _account('p2'),
+          _account('p3', classroom: '3D'),
+        ], generation: 3),
+        syncedBy: 'jan@school',
+        at: _d,
+      );
+
+      expect(s.client.upsertsTo(linkedAccountsContainer), before,
+          reason: 'not one document was rewritten — the hashes all match');
+    });
+
+    test('stands down for another operator\'s sync lease', () async {
+      final s = await seeded();
+      await s.store.acquireLease(owner: 'mieke@school', now: _d);
+
+      final write = await s.store.writeApplied(
+        AppliedPatch(accounts: [_account('p0', candidates: const [])]),
+        appliedBy: 'jan@school',
+        at: _d,
+      );
+
+      expect(write.written, isFalse);
+      expect(write.deferredTo?.owner, 'mieke@school');
+      expect((await s.store.readSyncState()).generation, 1);
+      expect((await node(s.store, 'class|1|3|3C'))!.pendingCount, 3);
+    });
+
+    test('a rollup another operator moved mid-write is folded onto, not over',
+        () async {
+      // The race the ETag loop exists for: between this store's read of the 3C
+      // node and its conditioned write, a second operator's apply commits its
+      // own subtraction. A blind write would put that operator's cleared work
+      // straight back.
+      final s = await seeded();
+      final other = CosmosLinkedStore(s.client);
+      s.client.beforeUpsertIn = rollupsContainer;
+      s.client.beforeUpsert = () async {
+        await other.writeApplied(
+          AppliedPatch(accounts: [_account('p1', candidates: const [])]),
+          appliedBy: 'mieke@school',
+          at: _d,
+        );
+      };
+
+      await s.store.writeApplied(
+        AppliedPatch(accounts: [_account('p0', candidates: const [])]),
+        appliedBy: 'jan@school',
+        at: _d,
+      );
+
+      expect(s.client.staleWrites, greaterThanOrEqualTo(1),
+          reason: 'the two writers really did collide on a document');
+      expect((await node(s.store, 'class|1|3|3C'))!.pendingCount, 1,
+          reason: 'both subtractions landed: 3 − 1 − 1');
+      expect((await node(s.store, 'school|1'))!.pendingCount, 2);
+      expect((await s.store.readSyncState()).generation, 3,
+          reason: 'each apply broadcast a generation of its own');
+    });
+
+    test(
+        'a removed account is found across partitions, deleted, and its node '
+        'emptied with it', () async {
+      // The fresh view no longer has a document, so it cannot say which school
+      // partition the stored one sat in — only the store can.
+      final s = await seeded();
+
+      await s.store.writeApplied(
+        const AppliedPatch(removedAccountIds: ['p3']),
+        appliedBy: 'jan@school',
+        at: _d,
+      );
+
+      expect(
+          await s.store.readClassroom(school: '1', classroom: '3D'), isEmpty);
+      expect(await node(s.store, 'class|1|3|3D'), isNull);
+      expect((await node(s.store, 'school|1'))!.accountCount, 3);
+      expect(s.client.deletes, 2,
+          reason: 'the account document and the class node it emptied');
+    });
+
+    test('an id the store never had is written as a fresh document', () async {
+      // A first apply against a view this account was not part of: the create
+      // path, and the rollup node built from the document itself.
+      final client = _FakeClient();
+      final store = CosmosLinkedStore(client);
+
+      final write = await store.writeApplied(
+        AppliedPatch(accounts: [_account('p9')]),
+        appliedBy: 'jan@school',
+        at: _d,
+      );
+
+      expect(write.generation, 1, reason: 'from the initial generation 0');
+      expect(await store.readClassroom(school: '1', classroom: '3C'),
+          hasLength(1));
+      final klas = (await store.readRollups())
+          .singleWhere((r) => r.level == RollupLevel.classroom);
+      expect(klas.accountCount, 1);
+      expect(klas.pendingCount, 1);
     });
   });
 

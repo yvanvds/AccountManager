@@ -13,12 +13,13 @@ import 'materialized_state.dart';
 /// drill-down.
 ///
 /// Pure — no I/O. The sync process calls this after `link()`, then hands the
-/// result (with decisions merged in) to the `LinkedStore`. Group actions target
-/// a `LinkedGroup`, not an account, so they do not fit the per-account/classroom
-/// shape: each targeted group becomes its own [MaterializedGroup] in the
-/// [groupsPartition], and a single group [Rollup] ("Klasgroepen") surfaces them
-/// in the drill-down beside the school tree (#119). The account, staff, and
-/// group families — everything the drill-down renders — are covered.
+/// result (with decisions merged in) to the `LinkedStore`. A class group is a
+/// `LinkedGroup`, not an account, so it does not fit the per-account/classroom
+/// shape: every linked class becomes its own [MaterializedGroup] in the
+/// [groupsPartition] — one document per class since #227, not one per class with
+/// work — and a single group [Rollup] ("Klasgroepen") aggregates them for the
+/// Klasgroepen tab (#119). The account, staff, and group families — everything
+/// the views render — are covered.
 ///
 /// [schoolLabels] maps a WISA school id to its human label — the long name
 /// with its short code, built by [wisaSchoolLabels] from the operator's
@@ -122,7 +123,8 @@ MaterializedView materialize(
     ));
   }
 
-  final groups = _materializeGroups(linked.groupActions);
+  final groups =
+      _materializeGroups(linked.snapshot.groups, linked.groupActions);
 
   final rollups = buildRollups(accounts);
   final groupsRollup = _buildGroupsRollup(groups);
@@ -136,15 +138,30 @@ MaterializedView materialize(
   );
 }
 
-/// Turns the dispatched group actions into one [MaterializedGroup] per targeted
-/// class group, in first-seen (snapshot) order. Each targeted group carries the
-/// candidate actions raised against it — including the informational ones
-/// (`canApply == false`), which surface an orphan/empty-class notice.
+/// Turns the **linked class groups** into one [MaterializedGroup] each, in
+/// snapshot order, with the dispatched group actions joined on.
+///
+/// The input used to be the actions alone (#119), so a class with nothing wrong
+/// had no document at all: the persisted group partition held "the classes with
+/// work", never the class inventory. That is what #227 needed — an operator
+/// cannot tell a correct proposal from a wrong one without seeing what is
+/// already in place — so the linked group list drives it now and the actions are
+/// joined on by key. A class with no candidates is the healthy, normal case.
+///
+/// Each group still carries every candidate raised against it, including the
+/// informational ones (`canApply == false`) that surface an orphan/empty-class
+/// notice or a class Smartschool already has (#225/#250).
+///
+/// An action whose target is somehow not in [groups] still gets a document, so a
+/// dispatched action can never be dropped on the floor by the join.
 List<MaterializedGroup> _materializeGroups(
+  List<core.LinkedGroup> groups,
   List<actions.GroupAction> groupActions,
 ) {
   final byGroup = <String, List<CandidateAction>>{};
-  final targets = <String, core.LinkedGroup>{};
+  final targets = <String, core.LinkedGroup>{
+    for (final g in groups) _groupKey(g): g,
+  };
   for (final a in groupActions) {
     final key = _groupKey(a.target);
     (byGroup[key] ??= <CandidateAction>[]).add(_candidate(
@@ -166,16 +183,22 @@ List<MaterializedGroup> _materializeGroups(
         inWisa: entry.value.wisa != null,
         inSmartschool: entry.value.smartschool != null,
         inAzure: entry.value.azure != null,
-        candidates: byGroup[entry.key]!,
+        description: _groupDescription(entry.value),
+        className: entry.value.className,
+        // The Office 365 group is per *class*, so every sub-group record of a
+        // split class names the one group its parent owns (#228).
+        azureGroupName: entry.value.azure?.displayName,
+        candidates: byGroup[entry.key] ?? const [],
       ),
   ];
 }
 
 /// The single "Klasgroepen" [Rollup] over every [MaterializedGroup], or `null`
-/// when no group has a pending action (nothing to drill into). [accountCount] is
-/// the number of group docs, [pendingCount] the **decisions** they carry
-/// ([pendingDecisionCount], #251) — since #244 every new class of the school
-/// year is one create-or-ignore either/or, which counted as two.
+/// when there is no class at all. Since #227 [accountCount] is the size of the
+/// whole class inventory (it used to be "classes with work"); [pendingCount] is
+/// the **decisions** they carry ([pendingDecisionCount], #251) — since #244
+/// every new class of the school year is one create-or-ignore either/or, which
+/// counted as two.
 Rollup? _buildGroupsRollup(List<MaterializedGroup> groups) {
   if (groups.isEmpty) return null;
   var pending = 0;
@@ -247,6 +270,178 @@ List<Rollup> buildRollups(List<MaterializedAccount> accounts) {
     for (final a in schools.values) a.toRollup(),
     for (final a in grades.values) a.toRollup(),
     for (final a in classrooms.values) a.toRollup(),
+  ];
+}
+
+/// One rollup node's share of what a **real apply** changed, expressed as a
+/// *delta* rather than as a recomputed count (#254).
+///
+/// An apply's session only ever holds its own link, which is a snapshot of the
+/// three systems as they stood when it last synced. Writing rollups derived from
+/// that snapshot back into the shared view would publish this session's whole
+/// picture of a node — resurrecting the work another operator applied and wrote
+/// in the meantime. A delta cannot: two operators each subtract only what their
+/// own pass cleared, and the store folds both into whatever it currently holds.
+///
+/// [applyTo] is the fold, so the arithmetic lives in one place and both the
+/// in-memory and the Cosmos store run exactly the same rule.
+class RollupChange {
+  RollupChange._({
+    required this.level,
+    required this.key,
+    required this.parentKey,
+    required this.school,
+    required this.label,
+    required this.gradeYear,
+    required this.classroom,
+  });
+
+  final RollupLevel level;
+
+  /// The node's stable key — the [Rollup.key] this change applies to.
+  final String key;
+  final String? parentKey;
+  final String school;
+
+  /// The label to give the node when the store has none yet; an existing node
+  /// keeps the label the sync path gave it (see [applyTo]).
+  final String label;
+
+  final String gradeYear;
+  final String classroom;
+
+  int _accounts = 0;
+  int _pending = 0;
+
+  /// How many documents this node gained (positive) or lost (negative).
+  int get accountDelta => _accounts;
+
+  /// How far this node's pending-decision total moved.
+  int get pendingDelta => _pending;
+
+  void _add({required int accounts, required int pending}) {
+    _accounts += accounts;
+    _pending += pending;
+  }
+
+  /// This node as it must be stored once the delta is folded into [current] —
+  /// the node the store holds right now, or `null` when it has none yet — or
+  /// `null` when the node is left with no documents at all and its record should
+  /// be deleted (an empty node is one the sync path would not emit either).
+  ///
+  /// The label, not being a count, is **not** ours to move: an apply changes who
+  /// is pending, never what a school is called, so an existing node keeps the
+  /// label the last materialize gave it.
+  Rollup? applyTo(Rollup? current) {
+    final accounts = (current?.accountCount ?? 0) + _accounts;
+    if (accounts <= 0) return null;
+    final pending = (current?.pendingCount ?? 0) + _pending;
+    return Rollup(
+      level: level,
+      key: key,
+      parentKey: parentKey,
+      school: school,
+      label: current?.label ?? label,
+      gradeYear: gradeYear,
+      classroom: classroom,
+      accountCount: accounts,
+      // A delta computed against a document another writer had already
+      // corrected can only ever over-subtract; never advertise a negative badge.
+      pendingCount: pending < 0 ? 0 : pending,
+    );
+  }
+}
+
+/// The rollup-node deltas one real apply makes, from the documents the **store**
+/// held for the ids the pass touched ([storedAccounts] / [storedGroups]) and the
+/// ones the refreshed link produced for them ([freshAccounts] / [freshGroups]).
+///
+/// Pure and total: a document present only in the stored set counts as removed,
+/// one present only in the fresh set as added, and one in both contributes the
+/// difference of its [pendingDecisionCount]. Every node above a touched document
+/// — its classroom, its grade-year and its school, or the single Klasgroepen
+/// node for a class group — gets its share, so the badges above a drill-down
+/// stay the sum of what is under them.
+///
+/// Nodes whose counts do not move at all are left out, so a pass that wrote
+/// nothing of consequence touches no rollup document.
+List<RollupChange> rollupChangesFor({
+  Iterable<MaterializedAccount> storedAccounts = const [],
+  Iterable<MaterializedAccount> freshAccounts = const [],
+  Iterable<MaterializedGroup> storedGroups = const [],
+  Iterable<MaterializedGroup> freshGroups = const [],
+}) {
+  final changes = <String, RollupChange>{};
+
+  void foldAccount(MaterializedAccount a, int sign) {
+    final pending = pendingDecisionCount(a.candidates) * sign;
+    final schoolKey = _schoolKey(a.school);
+    final gradeKey = _gradeKey(a.school, a.gradeYear);
+    final classKey = _classroomKey(a.school, a.gradeYear, a.classroom);
+    (changes[schoolKey] ??= RollupChange._(
+      level: RollupLevel.school,
+      key: schoolKey,
+      parentKey: null,
+      school: a.school,
+      label: a.schoolLabel,
+      gradeYear: '',
+      classroom: '',
+    ))
+        ._add(accounts: sign, pending: pending);
+    (changes[gradeKey] ??= RollupChange._(
+      level: RollupLevel.gradeYear,
+      key: gradeKey,
+      parentKey: schoolKey,
+      school: a.school,
+      label: a.gradeYear,
+      gradeYear: a.gradeYear,
+      classroom: '',
+    ))
+        ._add(accounts: sign, pending: pending);
+    (changes[classKey] ??= RollupChange._(
+      level: RollupLevel.classroom,
+      key: classKey,
+      parentKey: gradeKey,
+      school: a.school,
+      label: a.classroom,
+      gradeYear: a.gradeYear,
+      classroom: a.classroom,
+    ))
+        ._add(accounts: sign, pending: pending);
+  }
+
+  void foldGroup(MaterializedGroup g, int sign) {
+    (changes[groupsPartition] ??= RollupChange._(
+      level: RollupLevel.groups,
+      key: groupsPartition,
+      parentKey: null,
+      school: groupsPartition,
+      label: _groupsLabel,
+      gradeYear: '',
+      classroom: '',
+    ))
+        ._add(
+      accounts: sign,
+      pending: pendingDecisionCount(g.candidates) * sign,
+    );
+  }
+
+  for (final a in storedAccounts) {
+    foldAccount(a, -1);
+  }
+  for (final a in freshAccounts) {
+    foldAccount(a, 1);
+  }
+  for (final g in storedGroups) {
+    foldGroup(g, -1);
+  }
+  for (final g in freshGroups) {
+    foldGroup(g, 1);
+  }
+
+  return [
+    for (final c in changes.values)
+      if (c.accountDelta != 0 || c.pendingDelta != 0) c,
   ];
 }
 
@@ -398,10 +593,27 @@ String _staffMemberLabel(core.LinkedStaff s) {
 /// The stable cross-system key for a group document (#119): its name (the
 /// linker's cross-system match key), namespaced so it never collides with an
 /// account id. A group always carries at least one system record.
-String _groupKey(core.LinkedGroup g) => 'group|${_groupName(g) ?? '?'}';
+String _groupKey(core.LinkedGroup g) =>
+    materializedGroupId(_groupName(g) ?? '?');
+
+/// The [MaterializedGroup.id] of the class group displayed as [name].
+///
+/// Exposed because the reconcile controller keys its pending group entries by
+/// the group's *display name* (that is what the operator sees and what the
+/// widget keys use), while the stored document is keyed by this namespaced form
+/// — so a post-apply write-back (#254) has to cross from one to the other, and
+/// must do it through the very expression the materializer itself uses.
+String materializedGroupId(String name) => 'group|$name';
 
 /// Display label for a group — its WISA / Smartschool / Azure name.
 String _groupLabel(core.LinkedGroup g) => _groupName(g) ?? '(groep)';
+
+/// The class's human description — WISA's wording first (it is the system of
+/// record for a class), Smartschool's as a fallback for an orphan (#227).
+String _groupDescription(core.LinkedGroup g) =>
+    _nonEmpty(g.wisa?.description ?? '') ??
+    _nonEmpty(g.smartschool?.description ?? '') ??
+    '';
 
 String? _groupName(core.LinkedGroup g) =>
     _nonEmpty(g.wisa?.name ?? '') ??

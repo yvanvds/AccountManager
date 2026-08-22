@@ -97,15 +97,15 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
     if (widget.bootstrap == null) {
       return const _MessagePanel(
         eyebrow: 'Arcadia · wachtwoorden',
-        title: 'Not configured',
-        message: 'Azure AD is not configured for this build, so the connectors '
-            'and the shared password queue cannot be reached. Provide the AAD '
-            '--dart-define values and restart.',
+        title: 'Niet geconfigureerd',
+        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
+            'connectoren en de gedeelde wachtwoordwachtrij zijn onbereikbaar. '
+            'Geef de AAD --dart-define-waarden mee en start opnieuw op.',
       );
     }
     final error = _error;
     if (error != null && _controller == null) {
-      final retryNote = _attempts > 1 ? '\n\n(Attempt $_attempts failed.)' : '';
+      final retryNote = _attempts > 1 ? '\n\n(Poging $_attempts mislukt.)' : '';
       return _MessagePanel(
         eyebrow: 'Arcadia · wachtwoorden',
         title: 'Kon het wachtwoordscherm niet laden',
@@ -258,7 +258,7 @@ class _LeerlingenTab extends StatelessWidget {
                   padding: const EdgeInsets.all(PlinkSpacing.s6),
                   child: Text(
                     'Geen "Leerlingen"-groep gevonden. Synchroniseer eerst op '
-                    'het Reconcile-scherm zodat de klasboom geladen is.',
+                    'het tabblad Synchronisatie zodat de klasboom geladen is.',
                     key: const ValueKey('passwords-no-leerlingen'),
                     style: text.bodyMedium,
                   ),
@@ -528,8 +528,8 @@ class _PersoneelTab extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.all(PlinkSpacing.s6),
         child: Text(
-          'Geen personeel gevonden. Synchroniseer eerst op het Reconcile-scherm '
-          'zodat de "Personeel"-groep geladen is.',
+          'Geen personeel gevonden. Synchroniseer eerst op het tabblad '
+          'Synchronisatie zodat de "Personeel"-groep geladen is.',
           key: const ValueKey('passwords-no-personeel'),
           style: text.bodyMedium,
         ),

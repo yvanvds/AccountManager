@@ -41,7 +41,7 @@ const List<CosmosContainerSpec> linkedStoreContainers = [
 /// A separate seam from the materialized-view [linkedStoreContainers], but it
 /// shared their 404-on-first-write gap: a never-provisioned snapshots container
 /// surfaced only when the sync tried to persist a fresh snapshot mid-run —
-/// `[smartschool] Snapshot store: CosmosException(404 NotFound)` (#151), the
+/// `[smartschool] Snapshotopslag: CosmosException(404 NotFound)` (#151), the
 /// same failure #150 hit on the operator `decisions` container.
 const List<CosmosContainerSpec> snapshotStoreContainers = [
   CosmosContainerSpec(snapshotsContainer, '/id'),

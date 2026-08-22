@@ -973,11 +973,23 @@ ReconcileHarness twoSchoolHarness() => ReconcileHarness(
 ///
 /// [applyGate] is awaited before every action, as everywhere else — a test that
 /// needs one write refused throws from it on the call it picks.
+///
+/// [store] / [linkedStore] / [hub] are forwarded so a second session can be
+/// resumed over the same shared state and the same realtime fan-out — what the
+/// post-apply write-back is *for* (#254).
 ReconcileHarness appliedClassWorkHarness({
   Future<void> Function()? applyGate,
+  SnapshotStore? store,
+  InMemoryLinkedStore? linkedStore,
+  InMemorySignalHub? hub,
+  String syncedBy = 'operator@school.example',
 }) =>
     ReconcileHarness(
       applyGate: applyGate,
+      store: store,
+      linkedStore: linkedStore,
+      hub: hub,
+      syncedBy: syncedBy,
       wisa: wisaSnap(
         students: [
           wisaStudent(
@@ -1928,20 +1940,24 @@ class InMemorySnapshotStore implements SnapshotStore {
   }
 }
 
-/// A [LinkedStore] whose [writeMaterialized] never completes (a hung Cosmos
-/// write) or throws, while every read delegates to an inner [InMemoryLinkedStore]
-/// — the persist-stall the reconcile controller must survive (#168).
+/// A [LinkedStore] whose **writes** never complete (a hung Cosmos write) or
+/// throw, while every read delegates to an inner [InMemoryLinkedStore] — the
+/// persist-stall the reconcile controller must survive (#168), and since #254
+/// the same for the narrow post-apply write-back.
 class StallingLinkedStore implements LinkedStore {
   StallingLinkedStore({InMemoryLinkedStore? inner, this.failWith})
       : _in = inner ?? InMemoryLinkedStore();
 
   final InMemoryLinkedStore _in;
 
-  /// When set, [writeMaterialized] throws this instead of hanging.
+  /// When set, a write throws this instead of hanging.
   final Object? failWith;
 
   /// True once a write was attempted — proves the controller reached persist.
   bool writeAttempted = false;
+
+  /// True once the post-apply write-back was attempted (#254).
+  bool appliedWriteAttempted = false;
 
   @override
   Future<void> writeMaterialized(
@@ -1953,10 +1969,24 @@ class StallingLinkedStore implements LinkedStore {
     void Function(String message)? onProgress,
   }) {
     writeAttempted = true;
+    return _stall<void>();
+  }
+
+  @override
+  Future<AppliedWrite> writeApplied(
+    AppliedPatch patch, {
+    required String appliedBy,
+    required DateTime at,
+  }) {
+    appliedWriteAttempted = true;
+    return _stall<AppliedWrite>();
+  }
+
+  Future<T> _stall<T>() {
     final fail = failWith;
-    if (fail != null) return Future<void>.error(fail);
+    if (fail != null) return Future<T>.error(fail);
     // Never completes: models a wedged store write the controller must time out.
-    return Completer<void>().future;
+    return Completer<T>().future;
   }
 
   @override
