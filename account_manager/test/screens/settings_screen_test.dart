@@ -808,7 +808,7 @@ void main() {
       initial: AppSettings(
         wisaRules: <WisaImportRule>[
           const DontImportClass('OKAN'),
-          const MarkAsVirtual('VIRT'),
+          const DontImportUserFromWisa('VIRT'),
         ],
       ),
     );
@@ -1109,9 +1109,8 @@ void main() {
   });
 
   testWidgets(
-      'Toevoegen offers the three rules with no other surface, and not the one '
-      'the WISA-scholen grid already marks (#273)',
-      (WidgetTester tester) async {
+      'Toevoegen offers the three rules with no other surface, and neither '
+      'school-marking rule (#273)', (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness();
     await tester
@@ -1130,9 +1129,9 @@ void main() {
       expect(
           find.byKey(ValueKey('settings-wisa-rule-add-$kind')), findsOneWidget);
     }
-    // `MarkAsVirtual` duplicates the grid's per-school mark, so it is not
-    // offered as a new rule. Its `beheerd` counterpart is not a rule kind at all
-    // any more (#286), so there is nothing to offer.
+    // Neither school-marking rule is a rule kind any more — `MarkAsOurs` went
+    // in #286 and `MarkAsVirtual` in #277 — so there is nothing to offer and
+    // nothing that could be authored to contradict the grid.
     expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsVirtual')),
         findsNothing);
     expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsOurs')),
@@ -1314,36 +1313,6 @@ void main() {
   });
 
   testWidgets(
-      'a school-marking rule stays editable and removable even though '
-      'Toevoegen does not offer it (#273)', (WidgetTester tester) async {
-    _useTallWindow(tester);
-    final harness = SettingsHarness(
-      initial: AppSettings(
-        wisaRules: <WisaImportRule>[const MarkAsVirtual('ISMAA')],
-      ),
-    );
-    await tester
-        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
-    await _openTab(tester, 'settings-tab-wisa');
-    // Editable: the prompt opens on the rule's own kind and value.
-    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-edit')));
-    await tester.pumpAndSettle();
-    expect(find.text('Markeer als virtueel'), findsOneWidget);
-    expect(find.text('ISMAA'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-cancel')));
-    await tester.pumpAndSettle();
-
-    // …and removable, so a legacy rule that contradicts the grid can go.
-    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-remove')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('settings-save')));
-    await tester.pumpAndSettle();
-    expect((await harness.store.load()).wisaRules, isEmpty);
-  });
-
-  testWidgets(
       'a persisted MarkAsOurs is ignored, so the list shows only live rules '
       '(#286)', (WidgetTester tester) async {
     _useTallWindow(tester);
@@ -1379,17 +1348,29 @@ void main() {
   });
 
   testWidgets(
-      'a MarkAsVirtual rule shows on the school it marks instead of '
-      'contradicting the grid (#273)', (WidgetTester tester) async {
+      'a persisted MarkAsVirtual becomes the grid\'s own checkbox, unlocked '
+      '(#277)', (WidgetTester tester) async {
     _useTallWindow(tester);
+    // A document another operator (or an older build) wrote. The rule kind is
+    // gone, so it can only be introduced as raw JSON — which is exactly the
+    // shape Cosmos hands back.
     final harness = SettingsHarness(
-      initial: AppSettings(
-        wisaRules: <WisaImportRule>[const MarkAsVirtual('ISMV')],
-        wisaSchools: const <WisaSchoolProfile>[
-          WisaSchoolProfile(schoolId: 1, code: 'ISMV', name: 'Virtuele school'),
-          WisaSchoolProfile(schoolId: 2, code: 'ISMAA', name: 'Sint-Maarten'),
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisaRules': <dynamic>[
+          <String, dynamic>{'type': 'markAsVirtual', 'schoolCode': 'ISMV'},
         ],
-      ),
+        'wisaSchools': <dynamic>[
+          const WisaSchoolProfile(
+                  schoolId: 1,
+                  code: 'ISMV',
+                  name: 'Virtuele school',
+                  ours: true)
+              .toJson(),
+          const WisaSchoolProfile(
+                  schoolId: 2, code: 'ISMAA', name: 'Sint-Maarten', ours: true)
+              .toJson(),
+        ],
+      }),
     );
     await tester
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
@@ -1397,22 +1378,33 @@ void main() {
 
     await _openTab(tester, 'settings-tab-wisa');
 
-    // The rule-marked school reads as virtual and says where that came from;
-    // its checkbox is locked, because the pull unions both surfaces and
-    // unticking it would not stick.
+    // The mark survived, on the grid this time: ticked and editable, with no
+    // "(importregel)" caveat, because nothing can contradict the checkbox now.
     final marked = tester.widget<CheckboxListTile>(
       find.byKey(const ValueKey('settings-wisa-school-1-virtual')),
     );
     expect(marked.value, isTrue);
-    expect(marked.onChanged, isNull);
-    expect(find.text('virtueel (importregel)'), findsOneWidget);
+    expect(marked.onChanged, isNotNull);
+    expect(find.text('virtueel (importregel)'), findsNothing);
 
-    // The school no rule names is untouched: unticked and still editable.
+    // The school the rule never named is untouched.
     final plain = tester.widget<CheckboxListTile>(
       find.byKey(const ValueKey('settings-wisa-school-2-virtual')),
     );
     expect(plain.value, isFalse);
     expect(plain.onChanged, isNotNull);
+
+    // The rules list has nothing left to show, and unticking now sticks.
+    expect(find.byKey(const ValueKey('settings-wisa-rules-empty')),
+        findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey('settings-wisa-school-1-virtual')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await harness.store.load();
+    expect(saved.virtualWisaSchoolIds, isEmpty);
+    expect(saved.wisaRules, isEmpty);
   });
 
   testWidgets(

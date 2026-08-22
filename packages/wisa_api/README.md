@@ -28,8 +28,11 @@ small SOAP envelope builder.
 - `WisaSnapshot` — immutable, includes `students`, `staff`, `classGroups`,
   `schools`, `fetchedAt`.
 - `WisaImportRule` sealed hierarchy: `ReplaceInstitute`, `DontImportClass`,
-  `DontImportUserFromWisa`, `MarkAsVirtual`. Rules are applied at snapshot
-  construction, not at link time.
+  `DontImportUserFromWisa`. Rules are applied at snapshot construction, not at
+  link time. Neither legacy school-marking rule is ported: `MarkAsVirtual`
+  (#277) and `MarkAsOurs` (#286) are the operator's WISA-scholen list in the
+  app, keyed by school id — `WisaSchool.isVirtual` is stamped on from there
+  before `sync`.
 
 Spec: [`docs/domain-model.md`](../../docs/domain-model.md) §3.3, §3.4,
 §3.11. Legacy reference: [`legacy-wpf/AccountApi/Wisa/`](../../legacy-wpf/AccountApi/Wisa/).

@@ -20,7 +20,6 @@ String describeWisaRule(WisaImportRule rule) => switch (rule) {
         'Gebruiker niet importeren uit WISA: $userCode',
       ReplaceInstitute(:final original, :final replacement) =>
         'Vervang instituut: $original → $replacement',
-      MarkAsVirtual(:final schoolCode) => 'Markeer als virtueel: $schoolCode',
     };
 
 /// What a provenance field reads as when the document records nothing for it

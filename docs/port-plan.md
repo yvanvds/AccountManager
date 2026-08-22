@@ -78,9 +78,11 @@ one immutable value:
     **label vocabulary**.
   - `AzureConnection` — clientId / tenantId / domain.
 - **Import-rule sets** — the WISA (`ReplaceInstitute`, `DontImportClass`,
-  `MarkAsVirtual`, `DontImportUserFromWisa`) and Smartschool
-  (`DiscardSmartschoolGroup`, `NoSmartschoolSubgroups`) rules, round-tripped
-  through `SettingsStore` via the tagged-JSON codecs.
+  `DontImportUserFromWisa`) and Smartschool (`DiscardSmartschoolGroup`,
+  `NoSmartschoolSubgroups`) rules, round-tripped through `SettingsStore` via the
+  tagged-JSON codecs. The legacy school-marking rules are not among them:
+  `MarkAsVirtual` (#277) and `MarkAsOurs` (#286) are the per-school
+  `WisaSchoolProfile` flags in the same document, keyed by school id.
 
 Two seams keep the model clean:
 

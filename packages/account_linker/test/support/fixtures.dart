@@ -40,8 +40,9 @@ wapi.WisaStudent wisaStudent(String wisaId, {int schoolId = 1}) =>
       schoolId: schoolId,
     );
 
-/// A WISA school, optionally flagged [virtual] (the `MarkAsVirtual` / settings
-/// flag whose class groups the linker refuses to seed, #209).
+/// A WISA school, optionally flagged [virtual] (the operator's per-school mark,
+/// stamped on before the pull, whose class groups the linker refuses to seed —
+/// #209; the rule that once set the same flag went in #277).
 ///
 /// Ownership is not a snapshot flag (#286): the managed set reaches `link()`
 /// only as its `ourSchoolIds` argument.

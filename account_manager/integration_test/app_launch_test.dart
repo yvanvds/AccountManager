@@ -6507,6 +6507,120 @@ void main() {
   });
 
   testWidgets(
+      'a settings document carrying the retired MarkAsVirtual rule migrates its '
+      'mark to the WISA-scholen grid, and the virtuele werkdatum still reaches '
+      'the pull (#277)', (WidgetTester tester) async {
+    // The risk this issue names: the mark is live configuration, and losing it
+    // is seasonally invisible — the school simply pulls with the ordinary
+    // werkdatum and fails to produce next year's students months later. So the
+    // proof runs end-to-end over the *production* WISA pull: the migrated mark
+    // has to put the virtuele werkdatum on the wire for that school, show up as
+    // the grid's own (unlocked) checkbox, and survive the next save with no rule
+    // left behind.
+    //
+    // The document can only be introduced as raw JSON now that the type is gone
+    // — which is exactly how it comes back from Cosmos.
+    useTallWindow(tester);
+    final stored = AppSettings.fromJson(<String, dynamic>{
+      'wisaRules': <dynamic>[
+        <String, dynamic>{'type': 'markAsVirtual', 'schoolCode': 'V'},
+        <String, dynamic>{'type': 'dontImportClass', 'className': 'OKAN'},
+      ],
+      'wisaSchools': <dynamic>[
+        const WisaSchoolProfile(schoolId: 1, code: 'S1', name: 'School 1')
+            .toJson(),
+        const WisaSchoolProfile(
+          schoolId: 99,
+          code: 'V',
+          name: 'Virtuele school',
+          ours: true,
+        ).toJson(),
+      ],
+    }).copyWith(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+        virtualWorkDate:
+            WorkDateSetting(isNow: false, date: DateTime(2025, 10, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap(schools: const <(int, String, String)>[
+      (1, 'School 1', 'S1'),
+      (99, 'Virtuele school', 'V'),
+    ]);
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The capability is untouched: school 99 still went out on the virtuele
+    // werkdatum, the ordinary school on the ordinary one — and the Log panel
+    // names both, exactly as it did while the rule existed.
+    expect(wire.werkdatums, <String>['01/09/2025', '01/10/2025']);
+    expect(
+      find.textContaining(
+        'WISA ophalen met werkdatum 01/09/2025; virtuele werkdatum '
+        '01/10/2025 voor V.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa: the mark now lives on the grid's own checkbox, and
+    // that checkbox is editable — the #273 lock existed only because a rule
+    // could contradict it.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final virtualBox =
+        find.byKey(const ValueKey('settings-wisa-school-99-virtual'));
+    await tester.ensureVisible(virtualBox);
+    await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(virtualBox).value, isTrue);
+    expect(tester.widget<CheckboxListTile>(virtualBox).onChanged, isNotNull);
+    expect(find.text('virtueel (importregel)'), findsNothing);
+
+    // The rules list keeps the rule that does something and says nothing about
+    // virtueel; Toevoegen cannot author one either.
+    expect(find.text('Klas niet importeren uit WISA: OKAN'), findsOneWidget);
+    expect(find.textContaining('Markeer als virtueel'), findsNothing);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsVirtual')),
+        findsNothing);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    // Saving writes the mark where the grid keeps it and drops the rule for
+    // good, so the migration runs once and the next operator sees one surface.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await settings.store.load();
+    expect(saved.virtualWisaSchoolIds, <int>{99});
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect(
+      (saved.toJson()['wisaRules'] as List<dynamic>)
+          .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+      <String>['dontImportClass'],
+    );
+  });
+
+  testWidgets(
       'a DontImportFromWisa apply writes its rule to the shared settings '
       'document, where it outlives the session and is removable (#276)',
       (WidgetTester tester) async {

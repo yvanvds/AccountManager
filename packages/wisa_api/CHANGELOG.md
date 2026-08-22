@@ -11,9 +11,10 @@ Initial WISA SOAP connector for the Arcadia Account Manager port (issue #20).
 - `WisaSnapshot` — immutable per-sync result, implements
   `account_core.Snapshot`.
 - Import rules applied at snapshot construction:
-  `ReplaceInstitute`, `DontImportClass`, `DontImportUserFromWisa`,
-  `MarkAsVirtual`.
-- Dual workdate support (real + virtual) for schools marked virtual.
+  `ReplaceInstitute`, `DontImportClass`, `DontImportUserFromWisa`.
+- Dual workdate support (real + virtual) for schools marked virtual. Which
+  schools those are is the app's per-school setting, not an import rule — the
+  `MarkAsVirtual` rule was retired in #277 (as `MarkAsOurs` was in #286).
 - CSV parser with Belgian date format support and quoted-field handling.
 - Pluggable SOAP transport for headless record-and-replay tests.
 - Record-and-replay fixtures derived from real production data via the

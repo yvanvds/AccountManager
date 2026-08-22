@@ -2,8 +2,8 @@
 ///
 /// Spec: `docs/domain-model.md` §3.11. Rules are applied **at snapshot
 /// construction time** — by the time a [WisaSnapshot] reaches the linker,
-/// every dropped class group, dropped staff member, rewritten institute
-/// number, and virtual-school flag has already been resolved.
+/// every dropped class group, dropped staff member and rewritten institute
+/// number has already been resolved.
 ///
 /// Legacy reference: `legacy-wpf/AccountApi/Rules/`. Each legacy rule's
 /// behaviour is preserved verbatim; only the shape changes (sealed
@@ -11,18 +11,26 @@
 library;
 
 import '../models/wisa_class_group.dart';
-import '../models/wisa_school.dart';
 import '../models/wisa_staff.dart';
 
-/// Base sealed type for the four WISA import rules. Each subtype knows
+/// Base sealed type for the three WISA import rules. Each subtype knows
 /// only how to test and modify its own target model — no `instanceof`
 /// dispatch on a generic `object`, unlike the legacy `IRule`.
 ///
-/// Legacy `WI_MarkAsOurs` has **no** port (#286). It flipped a
-/// `WisaSchool.isOurs` flag nothing read: the managed-school set comes from the
-/// operator's WISA-scholen grid in Instellingen (#178), which is authoritative
-/// the moment it holds a single school — so the rule could be saved and then
-/// silently do nothing.
+/// Neither legacy school-marking rule is ported any more, and for the same
+/// reason: the operator's WISA-scholen grid in Instellingen marks a school by
+/// **id** and a rule could only match its short code, so the two surfaces could
+/// disagree about one flag.
+///
+/// - `WI_MarkAsOurs` was dropped in #286. It flipped a `WisaSchool.isOurs` flag
+///   nothing read, the managed-school set coming from the grid (#178).
+/// - `WI_MarkAsVirtual` was dropped in #277. It flipped `WisaSchool.isVirtual`,
+///   which *is* read — the connector pulls a virtual school with the separate
+///   virtual werkdatum — but the grid sets the same flag through
+///   `AppSettings.virtualWisaSchoolIds`, and that mark is ticked in spring and
+///   cleared in autumn, which is a checkbox next to a school's name rather than
+///   an entry in a rules list. A persisted rule is migrated onto the grid's
+///   per-school flag when the settings document loads.
 sealed class WisaImportRule {
   const WisaImportRule();
 }
@@ -58,20 +66,6 @@ class ReplaceInstitute extends WisaImportRule {
       matches(g) ? g.copyWith(schoolCode: replacement) : g;
 }
 
-/// Flags schools whose [WisaSchool.code] equals [schoolCode] as virtual.
-/// The connector then syncs those schools with the virtual workdate
-/// instead of the real one. Mirrors legacy `MarkAsVirtual`
-/// (`RuleAction.WorkDate`).
-///
-/// Matches on the **short code** (`ISMV`), as it always did — before #208 that
-/// half was misfiled on `WisaSchool.name`, so this read `s.name`.
-class MarkAsVirtual extends WisaImportRule {
-  final String schoolCode;
-  const MarkAsVirtual(this.schoolCode);
-
-  bool matches(WisaSchool s) => s.code == schoolCode;
-}
-
 /// Applies all rules in [rules] to [groups], in order. Returns a new list;
 /// the input is not mutated.
 ///
@@ -97,7 +91,6 @@ List<WisaClassGroup> applyRulesToClassGroups(
         case ReplaceInstitute():
           g = r.apply(g);
         case DontImportUserFromWisa():
-        case MarkAsVirtual():
           break;
       }
     }
@@ -121,24 +114,4 @@ List<WisaStaff> applyRulesToStaff(
     result.add(s);
   }
   return result;
-}
-
-/// Applies the school-marking rule [MarkAsVirtual] in [rules] to [schools].
-/// Returns a new list with `isVirtual` flipped on matching schools; the input
-/// is not mutated.
-///
-/// The pass is additive — a school already flagged stays flagged — so unioning
-/// the operator's per-school virtual marks in (`markVirtualSchools`) can never
-/// un-virtualise a school a rule covers.
-List<WisaSchool> applyRulesToSchools(
-  Iterable<WisaSchool> schools,
-  Iterable<WisaImportRule> rules,
-) {
-  return [
-    for (final s in schools)
-      s.copyWith(
-        isVirtual:
-            s.isVirtual || rules.any((r) => r is MarkAsVirtual && r.matches(s)),
-      ),
-  ];
 }

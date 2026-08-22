@@ -31,13 +31,13 @@ void main() {
       final merged = mergeEarnedWisaRules(
         stored: const AppSettings(wisaRules: <WisaImportRule>[
           ReplaceInstitute(original: '111', replacement: '222'),
-          MarkAsVirtual('V1'),
+          DontImportUserFromWisa('SMIT'),
         ]),
         earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
       );
 
       expect(merged!.settings.wisaRules.map((r) => r.runtimeType).toList(),
-          <Type>[ReplaceInstitute, MarkAsVirtual, DontImportClass]);
+          <Type>[ReplaceInstitute, DontImportUserFromWisa, DontImportClass]);
     });
 
     test('leaves every other field of the document untouched', () {
@@ -239,15 +239,24 @@ void main() {
       );
       final merged = mergeEarnedWisaRules(
         stored: AppSettings(
-          wisaRules: const <WisaImportRule>[MarkAsVirtual('V1')],
-          wisaRuleProvenance: <String, RuleProvenance>{'virtual:V1': standing},
+          wisaRules: const <WisaImportRule>[
+            ReplaceInstitute(original: '111', replacement: '222'),
+          ],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'institute:111': standing,
+          },
         ),
         earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
         addedBy: 'bob@school.example',
         addedAt: at,
       )!;
 
-      expect(merged.settings.provenanceOf(const MarkAsVirtual('V1')), standing);
+      expect(
+        merged.settings.provenanceOf(
+          const ReplaceInstitute(original: '111', replacement: '222'),
+        ),
+        standing,
+      );
     });
 
     test('survives the round-trip the store writes and #263 reads back', () {

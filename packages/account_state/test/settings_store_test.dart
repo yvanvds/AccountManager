@@ -40,7 +40,6 @@ AppSettings _sampleSettings() => AppSettings(
         DontImportClass('1A'),
         DontImportUserFromWisa('U42'),
         ReplaceInstitute(original: '001', replacement: '002'),
-        MarkAsVirtual('VIRT'),
       ],
       smartschoolRules: const [
         DiscardSmartschoolGroup('Archief'),
@@ -125,6 +124,110 @@ void main() {
         }),
         throwsFormatException,
       );
+    });
+
+    group('a persisted markAsVirtual rule migrates to the grid (#277)', () {
+      Map<String, dynamic> document({
+        required String ruleCode,
+        required List<WisaSchoolProfile> schools,
+      }) =>
+          <String, dynamic>{
+            'wisaRules': <dynamic>[
+              <String, dynamic>{
+                'type': 'markAsVirtual',
+                'schoolCode': ruleCode,
+                'addedBy': 'jan@school.example',
+              },
+              <String, dynamic>{'type': 'dontImportClass', 'className': '3C'},
+            ],
+            'wisaSchools': <dynamic>[for (final s in schools) s.toJson()],
+          };
+
+      test('onto the matching school we manage, keyed code → id', () {
+        // The rule marked by short code, the grid marks by id — the migration
+        // is the join between them. Losing it would be seasonally invisible:
+        // the school pulls with the ordinary werkdatum and simply fails to
+        // produce next year's students in spring.
+        final settings = AppSettings.fromJson(document(
+          ruleCode: 'ISMV',
+          schools: const <WisaSchoolProfile>[
+            WisaSchoolProfile(schoolId: 25, code: 'ISMAA', ours: true),
+            WisaSchoolProfile(schoolId: 99, code: 'ISMV', ours: true),
+          ],
+        ));
+
+        expect(settings.virtualWisaSchoolIds, <int>{99});
+        // The rule itself is gone — from the model and from the next save.
+        expect(settings.wisaRules.single, isA<DontImportClass>());
+        expect(settings.wisaRuleProvenance.keys, isEmpty);
+        expect(
+          (settings.toJson()['wisaRules'] as List<dynamic>)
+              .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+          <String>['dontImportClass'],
+        );
+        // …and the migrated flag is what the next save writes instead.
+        final saved = AppSettings.fromJson(settings.toJson());
+        expect(saved.virtualWisaSchoolIds, <int>{99});
+      });
+
+      test('but is dropped on a school that is not ours', () {
+        // Per the operator: a virtual school exists to create *our* next-year
+        // students early. A sibling school's students turn up in an ordinary
+        // school anyway, just later, so the delay does not matter.
+        final settings = AppSettings.fromJson(document(
+          ruleCode: 'ISMV',
+          schools: const <WisaSchoolProfile>[
+            WisaSchoolProfile(schoolId: 99, code: 'ISMV'),
+          ],
+        ));
+
+        expect(settings.virtualWisaSchoolIds, isEmpty);
+        expect(settings.wisaSchools.single.virtual, isFalse);
+        expect(settings.wisaRules.single, isA<DontImportClass>());
+      });
+
+      test('and dropped when its code matches no school at all', () {
+        // It flagged nothing before either: a school can only be marked
+        // beheerd after **Scholen ophalen** gave it a row here.
+        final settings = AppSettings.fromJson(document(
+          ruleCode: 'GONE',
+          schools: const <WisaSchoolProfile>[
+            WisaSchoolProfile(schoolId: 25, code: 'ISMAA', ours: true),
+          ],
+        ));
+
+        expect(settings.virtualWisaSchoolIds, isEmpty);
+        expect(settings.wisaRules.single, isA<DontImportClass>());
+      });
+
+      test('leaves a school the grid already marks virtual alone', () {
+        final settings = AppSettings.fromJson(document(
+          ruleCode: 'ISMV',
+          schools: const <WisaSchoolProfile>[
+            WisaSchoolProfile(
+                schoolId: 99, code: 'ISMV', ours: true, virtual: true),
+          ],
+        ));
+
+        expect(settings.virtualWisaSchoolIds, <int>{99});
+      });
+
+      test('a document with no retired rule is untouched', () {
+        // The migration runs on every load, so it has to be a no-op once the
+        // document has been saved back without the rule.
+        const original = AppSettings(
+          wisaRules: <WisaImportRule>[DontImportClass('3C')],
+          wisaSchools: <WisaSchoolProfile>[
+            WisaSchoolProfile(schoolId: 25, code: 'ISMAA', ours: true),
+            WisaSchoolProfile(schoolId: 99, code: 'ISMV', ours: true),
+          ],
+        );
+
+        final restored = AppSettings.fromJson(original.toJson());
+
+        expect(restored.wisaSchools, original.wisaSchools);
+        expect(restored.virtualWisaSchoolIds, isEmpty);
+      });
     });
 
     test('models secrets as refs, never as values in the blob', () {

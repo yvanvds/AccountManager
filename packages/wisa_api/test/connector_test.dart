@@ -223,12 +223,8 @@ void main() {
       final c = buildConnector(t);
       final schools = await c.loadSchools();
       final ismaa = schools.firstWhere((s) => s.id == 25);
-      final markedVirtual = WisaConnector.applySchoolRules(
-        [ismaa],
-        const [MarkAsVirtual('ISMAA')],
-      );
       await c.sync(
-        schools: markedVirtual,
+        schools: [ismaa.copyWith(isVirtual: true)],
         workDate: DateTime(2024, 9, 1),
         virtualWorkDate: DateTime(2025, 9, 1),
       );

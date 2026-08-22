@@ -453,10 +453,12 @@ void main() {
     });
 
     test("unions the persisted rules with the session's own (#263)", () async {
-      // Both halves reach one pull: the `MarkAsVirtual` this session earned and
-      // the `DontImportClass` the operator saved a moment ago.
+      // Both halves reach one pull, and in the documented order: the operator's
+      // persisted rule rewrites institute 111 → 888, and the one this session
+      // holds then rewrites 888 → 999. Only a real union produces 999.
       final wire = RecordingWisaSoap();
-      final rules = WisaImportRules()..add(const wapi.MarkAsVirtual('S1'));
+      final rules = WisaImportRules()
+        ..add(const wapi.ReplaceInstitute(original: '888', replacement: '999'));
       final live = LiveSettings(_settings());
       final syncer = wisaSyncer(
         wapi.WisaConnector.fromParts(
@@ -472,19 +474,18 @@ void main() {
       );
 
       final first = await syncer(null);
-      expect(first.schools.single.isVirtual, isTrue,
-          reason: 'the session rule already marks the school virtual');
-      expect(first.classGroups, hasLength(1));
+      expect(first.classGroups.single.schoolCode, '111',
+          reason: 'nothing matches yet — the session rule keys off 888');
 
       live.publish(_settings().copyWith(
-        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+        wisaRules: const <wapi.WisaImportRule>[
+          wapi.ReplaceInstitute(original: '111', replacement: '888'),
+        ],
       ));
 
-      final pruned = await syncer(null);
-      expect(pruned.classGroups, isEmpty,
-          reason: 'the saved rule reached the pull');
-      expect(pruned.schools.single.isVirtual, isTrue,
-          reason: 'and the session rule was not lost composing it');
+      final merged = await syncer(null);
+      expect(merged.classGroups.single.schoolCode, '999',
+          reason: 'the saved rule ran first and the session rule after it');
     });
   });
 

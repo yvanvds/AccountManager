@@ -9,9 +9,13 @@
 /// [code] always the short code, so no reader has to remember a swap —
 /// `parseSchoolRow` is the single place that untangles the CSV.
 ///
-/// [isVirtual] is set at snapshot construction time by the
-/// `MarkAsVirtual` import rule; it tells the connector that this school
-/// should be synced using the virtual workdate instead of the real one.
+/// [isVirtual] tells the connector that this school should be synced using the
+/// virtual workdate instead of the real one. It is stamped on just before the
+/// pull from the operator's per-school virtual marks in Instellingen
+/// (`AppSettings.virtualWisaSchoolIds`, keyed by school id, #203). A
+/// snapshot-time `MarkAsVirtual` import rule set the same flag by short code
+/// until #277 retired it: two surfaces for one flag could disagree, and the id
+/// the grid keys by survives a rename or a recode where a code does not.
 ///
 /// There is no ownership flag here (#286). Which schools we **manage** — as
 /// opposed to the sibling schools the shared credentials also reach — is the
@@ -29,8 +33,8 @@ class WisaSchool {
   final String name;
 
   /// The short code operators use day to day (`ISMAA`). Parsed from the
-  /// `SMAGetInst` CSV's `DESCRIPTION` column, and what the school-marking
-  /// import rule (`MarkAsVirtual`) matches on.
+  /// `SMAGetInst` CSV's `DESCRIPTION` column, and what the WISA-scholen grid
+  /// shows beneath each school's long name.
   final String code;
   final bool isVirtual;
 

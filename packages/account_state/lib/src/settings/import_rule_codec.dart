@@ -47,7 +47,6 @@ Map<String, dynamic> encodeWisaRule(
         'original': rule.original,
         'replacement': rule.replacement,
       },
-    MarkAsVirtual() => {'type': 'markAsVirtual', 'schoolCode': rule.schoolCode},
   };
   final Map<String, dynamic> extra = provenance?.toJson() ?? const {};
   if (extra.isEmpty) return encoded;
@@ -65,12 +64,17 @@ RuleProvenance? decodeWisaRuleProvenance(Map<String, dynamic> json) =>
 
 /// Decodes a tagged-JSON map produced by [encodeWisaRule].
 ///
-/// Returns `null` for a **retired** tag — a rule kind this app no longer has, so
-/// far the `markAsOurs` dropped by #286. A document another operator (or an
-/// older build) wrote still loads; the entry is simply ignored and disappears
-/// from the document the next time it is saved. That is safe precisely because
-/// the rule already did nothing: ownership comes from the WISA-scholen list in
-/// Settings, which wins over any snapshot flag.
+/// Returns `null` for a **retired** tag — a rule kind this app no longer has:
+/// the `markAsOurs` dropped by #286 and the `markAsVirtual` dropped by #277. A
+/// document another operator (or an older build) wrote still loads; the entry is
+/// simply ignored and disappears from the document the next time it is saved.
+/// Both school-marking rules duplicated the WISA-scholen grid in Settings, which
+/// marks by school **id** and is now the only surface for either flag.
+///
+/// `markAsOurs` can be dropped outright, the rule having done nothing for years.
+/// `markAsVirtual` was live, so it is not merely dropped: [retiredVirtualCodeOf]
+/// reads its school code back out of the same object, and `AppSettings.fromJson`
+/// carries the mark over to the grid's per-school flag (#277).
 ///
 /// Throws [FormatException] on an unknown or missing `type` tag so a corrupt
 /// config surfaces loudly rather than silently dropping rules.
@@ -87,12 +91,30 @@ WisaImportRule? decodeWisaRule(Map<String, dynamic> json) {
         replacement: json['replacement'] as String,
       );
     case 'markAsVirtual':
-      return MarkAsVirtual(json['schoolCode'] as String);
     case 'markAsOurs':
       return null;
     default:
       throw FormatException('Unknown WisaImportRule type: $type');
   }
+}
+
+/// The school code a persisted, now-retired `markAsVirtual` entry marked — or
+/// `null` for every other entry, retired or live (#277).
+///
+/// Exists because [decodeWisaRule] deliberately answers `null` for the retired
+/// tag and so cannot hand the code back: the mark is real configuration, not
+/// dead weight, and it has to reach the WISA-scholen grid's per-school `virtual`
+/// flag before the entry is dropped. Kept here with the rest of the wire shape
+/// so no reader outside this file has to know the tag's spelling.
+///
+/// A malformed entry (no `schoolCode`, or a non-string one) answers `null`
+/// rather than throwing: it marked no school when it was live either, and a
+/// settings document must not fail to load over a rule kind that no longer
+/// exists.
+String? retiredVirtualCodeOf(Map<String, dynamic> json) {
+  if (json['type'] != 'markAsVirtual') return null;
+  final code = json['schoolCode'];
+  return code is String ? code : null;
 }
 
 /// Encodes a [SmartschoolImportRule] to its tagged-JSON map.

@@ -651,9 +651,9 @@ String smartschoolSiteFrom(String uri) {
 /// document holds what the operator persisted, and only reading both at call
 /// time lets either move under a running session.
 ///
-/// Schools are re-read per sync so a WISA-side school change is picked up;
-/// `MarkAsVirtual` rules and the operator's virtual marks are applied to them
-/// before the row pulls, the other rules at snapshot construction.
+/// Schools are re-read per sync so a WISA-side school change is picked up; the
+/// operator's virtual marks are stamped onto them before the row pulls (no rule
+/// touches a school since #277), the rest at snapshot construction.
 ///
 /// Because this is the one place a pass's work dates are resolved, it is also
 /// the one place that can say what they were: [log] gets a single
@@ -672,10 +672,7 @@ Syncer<wapi.WisaSnapshot> wisaSyncer(
       final current = settings.current;
       final importRules = rules.unionWith(current.wisaRules);
       final schools = markVirtualSchools(
-        wapi.WisaConnector.applySchoolRules(
-          await connector.loadSchools(),
-          importRules,
-        ),
+        await connector.loadSchools(),
         current.virtualWisaSchoolIds,
       );
       final at = clock();
@@ -740,24 +737,26 @@ String _schoolLabel(wapi.WisaSchool school) {
 /// Flags the operator's virtual WISA schools on a freshly loaded school list.
 ///
 /// The virtual marks live in the settings document keyed by school **id**
-/// ([AppSettings.virtualWisaSchoolIds], #203), while the snapshot-time
-/// `MarkAsVirtual` import rule matches by school **code**. Setting
-/// `WisaSchool.isVirtual` straight from settings is the same move ownership
-/// made: the operator-editable record is authoritative and no rule has to be
-/// synthesised for it — which for ownership went all the way, the rule being
-/// deleted outright in #286.
+/// ([AppSettings.virtualWisaSchoolIds], #203), and since #277 this is the only
+/// thing that ever sets `WisaSchool.isVirtual`: the snapshot-time `MarkAsVirtual`
+/// import rule matched by school **code** and fed the same flag, so the pull had
+/// to union two surfaces that could disagree. Ownership made the same move one
+/// issue earlier (#286) — the operator-editable record is authoritative and no
+/// rule has to be synthesised for it.
 ///
-/// The pass is additive — a school the rules already flagged stays flagged even
-/// when it is not in [virtualIds] — so wiring settings in can never silently
-/// un-virtualise a school an existing `MarkAsVirtual` rule covers. Returns a new
-/// list; the input is not mutated.
+/// [virtualIds] is therefore the whole answer, and this pass *sets* the flag
+/// rather than only adding to it: a school outside the set pulls with the
+/// ordinary werkdatum, full stop. Until #277 it was deliberately additive, so
+/// that wiring the grid in could not silently un-virtualise a school a rule
+/// covered; with no rule left to defer to, that additive step could only keep a
+/// stale flag alive against what the grid says. Returns a new list; the input is
+/// not mutated.
 List<wapi.WisaSchool> markVirtualSchools(
   Iterable<wapi.WisaSchool> schools,
   Set<int> virtualIds,
 ) =>
     <wapi.WisaSchool>[
-      for (final s in schools)
-        virtualIds.contains(s.id) ? s.copyWith(isVirtual: true) : s,
+      for (final s in schools) s.copyWith(isVirtual: virtualIds.contains(s.id)),
     ];
 
 String _firstNonEmpty(String preferred, String fallback) =>

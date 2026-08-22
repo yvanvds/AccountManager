@@ -168,6 +168,15 @@ class AppSettings {
   /// Missing keys fall back to the constructor defaults so an older or
   /// partial config still loads. Throws [FormatException] (via the rule
   /// codecs) if a rule carries an unknown `type` tag.
+  ///
+  /// This is also where the one-shot #277 migration runs: a persisted
+  /// `markAsVirtual` rule becomes the matching school's
+  /// [WisaSchoolProfile.virtual] flag. It lives here rather than in the app
+  /// because both halves — the rules and the school rows — are in this one
+  /// document, so no fetch has to complete first and every operator's session
+  /// reaches the same answer. It rewrites nothing by itself: the migrated flag
+  /// is simply what the document means from now on, and the next ordinary save
+  /// writes it back without the rule.
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     final wisa = (json['wisaRules'] as List<dynamic>?) ?? const [];
     final smartschool =
@@ -182,10 +191,19 @@ class AppSettings {
     //
     // A retired rule kind decodes as null and is dropped, provenance and all
     // (#286): the document loads, and the entry is gone from the next save.
+    //
+    // `markAsVirtual` (#277) is retired the same way but not merely dropped —
+    // it was live configuration. Its school code is collected here and handed to
+    // `adoptRetiredVirtualMarks` below, which sets the WISA-scholen grid's own
+    // per-school `virtual` flag instead. Provenance goes with the rule: the mark
+    // now belongs to a school row, which records none.
     final wisaRules = <WisaImportRule>[];
     final wisaRuleProvenance = <String, RuleProvenance>{};
+    final retiredVirtualCodes = <String>{};
     for (final r in wisa) {
       final encoded = r as Map<String, dynamic>;
+      final retiredVirtual = retiredVirtualCodeOf(encoded);
+      if (retiredVirtual != null) retiredVirtualCodes.add(retiredVirtual);
       final rule = decodeWisaRule(encoded);
       if (rule == null) continue;
       wisaRules.add(rule);
@@ -212,10 +230,13 @@ class AppSettings {
         for (final r in smartschool)
           decodeSmartschoolRule(r as Map<String, dynamic>),
       ],
-      wisaSchools: [
-        for (final p in wisaSchools)
-          WisaSchoolProfile.fromJson(p as Map<String, dynamic>),
-      ],
+      wisaSchools: adoptRetiredVirtualMarks(
+        <WisaSchoolProfile>[
+          for (final p in wisaSchools)
+            WisaSchoolProfile.fromJson(p as Map<String, dynamic>),
+        ],
+        retiredVirtualCodes,
+      ),
     );
   }
 }

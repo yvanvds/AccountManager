@@ -7,12 +7,12 @@ void main() {
     test('keeps insertion order and drops structural duplicates', () {
       final rules = WisaImportRules();
       expect(rules.add(const DontImportClass('3C')), isTrue);
-      expect(rules.add(const MarkAsVirtual('S1')), isTrue);
+      expect(rules.add(const DontImportUserFromWisa('AAAAA')), isTrue);
       expect(rules.add(const DontImportClass('3C')), isFalse);
 
       expect(rules.rules, hasLength(2));
       expect(rules.rules.first, isA<DontImportClass>());
-      expect(rules.rules.last, isA<MarkAsVirtual>());
+      expect(rules.rules.last, isA<DontImportUserFromWisa>());
     });
   });
 
@@ -24,12 +24,12 @@ void main() {
 
       final merged = rules.unionWith(const <WisaImportRule>[
         DontImportClass('3C'),
-        MarkAsVirtual('V'),
+        ReplaceInstitute(original: '111', replacement: '222'),
       ]);
 
       expect(merged.map((r) => r.runtimeType).toList(), <Type>[
         DontImportClass,
-        MarkAsVirtual,
+        ReplaceInstitute,
         DontImportUserFromWisa,
       ]);
     });
@@ -66,7 +66,7 @@ void main() {
 
       rules.add(const DontImportClass('3C'));
       expect(
-        rules.unionWith(const <WisaImportRule>[MarkAsVirtual('S1')]),
+        rules.unionWith(const <WisaImportRule>[DontImportUserFromWisa('u1')]),
         hasLength(2),
       );
     });
