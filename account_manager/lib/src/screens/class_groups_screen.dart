@@ -408,31 +408,37 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
   /// every new class of the year"), so they sit here, each acting on exactly the
   /// classes it names.
   ///
-  /// [shown] is the set of class names the search left standing, and a subset is
+  /// [shown] is the set of class names the search left standing, and a cohort is
   /// narrowed to it: a button that acts on "exactly the classes it names" must
   /// not quietly write to classes the operator filtered off the screen, and a
-  /// subset left with one class is no longer a bulk affordance at all — its one
+  /// cohort left with one class is no longer a bulk affordance at all — its one
   /// row carries the same action.
+  ///
+  /// Since #292 a cohort is one *decision* rather than one combination of them,
+  /// so a class new to Smartschool that also lacks an Office 365 group appears
+  /// under both headers, and pressing either writes only what that header names.
   List<Widget> _bulkSlivers(bool active, Set<String> shown) {
     if (!active) return const <Widget>[];
-    final subsets = <List<PendingAccountEntry>>[];
-    for (final subset in controller.groupPendingSituations) {
-      final kept = <PendingAccountEntry>[
-        for (final e in subset)
-          if (shown.contains(e.targetId)) e,
+    final cohorts = <SituationCohort>[];
+    for (final cohort in controller.groupPendingSituations) {
+      final kept = <PendingDecision>[
+        for (final d in cohort.decisions)
+          if (shown.contains(d.entry.targetId)) d,
       ];
-      if (kept.length > 1) subsets.add(kept);
+      if (kept.length > 1) {
+        cohorts.add(SituationCohort(key: cohort.key, decisions: kept));
+      }
     }
-    if (subsets.isEmpty) return const <Widget>[];
+    if (cohorts.isEmpty) return const <Widget>[];
     return <Widget>[
       _section(const _SectionTitle('Klassen in dezelfde situatie')),
       SliverPadding(
         padding: _hPad,
         sliver: SliverList.builder(
-          itemCount: subsets.length,
+          itemCount: cohorts.length,
           itemBuilder: (context, index) => SituationHeader(
             controller: controller,
-            entries: subsets[index],
+            cohort: cohorts[index],
             noun: 'klassen',
           ),
         ),

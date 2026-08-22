@@ -381,9 +381,7 @@ void main() {
 
     expect(
         find.textContaining('accounts in dezelfde situatie'), findsOneWidget);
-    final key = harness.controller.pendingEntries
-        .firstWhere((e) => e.family == 'student')
-        .situationKey;
+    final key = harness.controller.classroomPendingSituations.single.key;
     final bulkApply = ValueKey('situation-apply-$key');
     expect(find.byKey(bulkApply), findsOneWidget);
 
@@ -433,10 +431,12 @@ void main() {
 
     final inClass = harness.controller.classroomPendingEntries;
     expect(inClass, hasLength(2), reason: '3C holds Sam and Sara');
-    final key = inClass.first.situationKey;
+    final key = harness.controller.classroomPendingSituations.single.key;
     expect(
-      harness.controller.pendingEntries.where((e) => e.situationKey == key),
-      hasLength(3),
+      harness.controller.pendingSituations
+          .firstWhere((c) => c.key == key)
+          .length,
+      3,
       reason: "Tom's 3D entry is the very same situation, group-wide",
     );
 
@@ -470,8 +470,10 @@ void main() {
         reason: 'the operator never opened 3D — it must not be written');
     // …and Tom's work is still pending, waiting for someone to open his class.
     expect(
-      harness.controller.pendingEntries.where((e) => e.situationKey == key),
-      hasLength(1),
+      harness.controller.pendingSituations
+          .firstWhere((c) => c.key == key)
+          .length,
+      1,
     );
   });
 
@@ -1820,9 +1822,7 @@ void main() {
       await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
 
       // The same-situation bulk dry-run.
-      final key = harness.controller.pendingEntries
-          .firstWhere((e) => e.family == 'student')
-          .situationKey;
+      final key = harness.controller.classroomPendingSituations.single.key;
       final bulkDryRun = find.byKey(ValueKey('situation-dry-run-$key'));
       await tester.ensureVisible(bulkDryRun);
       await tester.tap(bulkDryRun);

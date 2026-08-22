@@ -1849,9 +1849,10 @@ void main() {
         findsNothing);
 
     // The bulk header offers the one resolution for both classes.
-    final key = harness.controller.groupPendingEntries
-        .firstWhere((e) => e.targetId == '1A')
-        .situationKey;
+    final key = harness.controller.groupPendingSituations
+        .firstWhere((c) => c.label.startsWith('Voeg deze klas toe aan '
+            'Smartschool'))
+        .key;
     final bulk = find.byKey(ValueKey('situation-apply-$key'));
     await tester.ensureVisible(bulk);
     expect(
@@ -1936,15 +1937,18 @@ void main() {
         reason: 'the opt-out is an alternative to pick, never a to-do that '
             'also runs');
 
-    // The namesake classes form a bulk subset of their own. Pooling them with
+    // The namesake classes form a bulk cohort of their own. Pooling them with
     // the new classes would have filed them under a header offering to create
     // classes that already exist.
-    final namesakeKey = harness.controller.groupPendingEntries
-        .firstWhere((e) => e.targetId == '2G')
-        .situationKey;
-    final newKey = harness.controller.groupPendingEntries
-        .firstWhere((e) => e.targetId == '1A')
-        .situationKey;
+    final cohorts = harness.controller.groupPendingSituations;
+    final namesakeKey = cohorts
+        .firstWhere((c) => c.label.startsWith('Deze klas bestaat in '
+            'Smartschool'))
+        .key;
+    final newKey = cohorts
+        .firstWhere((c) => c.label.startsWith('Voeg deze klas toe aan '
+            'Smartschool'))
+        .key;
     expect(namesakeKey, isNot(newKey));
 
     final namesakeBulk = find.byKey(ValueKey('situation-apply-$namesakeKey'));
@@ -1956,27 +1960,25 @@ void main() {
       reason: 'the header names one either/or led by the hand-fix notice',
     );
 
-    // Run that whole subset. It is not a no-op — each class still needs its
-    // Office 365 group (#228), which is a decision of its own — but nothing it
-    // writes touches the class's import: no Smartschool class is created, and
-    // no DontImportClass rule is written.
+    // And it offers nothing to run, out loud. Since #292 the cohort is that one
+    // decision rather than the whole card, and that decision's pre-selected
+    // resolution is a hand repair the app cannot perform — so the button counts
+    // zero and is dead. Under the old grouping it was live, because the classes
+    // also need an Office 365 group (#228): pressing a header that said "this
+    // class is already there" wrote something else entirely.
     final pulls = harness.wisaSyncs;
-    await tester.tap(namesakeBulk);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-
     expect(
-      harness.controller.applyResults!.map((r) => r.changes.summary),
-      isNot(contains('Negeer deze klas bij het importeren uit WISA')),
-      reason: 'the rule would drop the classes the app just said to repair',
+      find.descendant(
+          of: namesakeBulk,
+          matching: find.text('Alles toepassen '
+              '(0)')),
+      findsOneWidget,
     );
+    expect(tester.widget<FilledButton>(namesakeBulk).onPressed, isNull,
+        reason: 'nothing to write means nothing to press');
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
         isEmpty,
         reason: 'Smartschool already holds 2G and 2H');
-    // A DontImportClass rule re-pulls WISA, so an untouched pull count is the
-    // proof that none was written.
-    expect(harness.wisaSyncs, pulls);
 
     // The two classes are still on the list, still asking for the hand repair.
     for (final id in const ['2G', '2H']) {
@@ -1990,7 +1992,7 @@ void main() {
       );
     }
 
-    // And the fix did not simply silence the list: the other subset still
+    // And the fix did not simply silence the list: the other cohort still
     // creates the genuinely new classes, and blacklists neither.
     final newBulk = find.byKey(ValueKey('situation-apply-$newKey'));
     await tester.ensureVisible(newBulk);
@@ -2000,11 +2002,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
-        hasLength(2));
+        hasLength(2),
+        reason: '1A and 1B are created; 2G and 2H are not touched');
     expect(
       harness.controller.applyResults!.map((r) => r.changes.summary),
       isNot(contains('Negeer deze klas bij het importeren uit WISA')),
+      reason: 'the rule would drop the classes the app just said to repair',
     );
+    // A DontImportClass rule re-pulls WISA, so an untouched pull count is the
+    // proof that none was written.
     expect(harness.wisaSyncs, pulls);
     expect(tester.takeException(), isNull);
   });
@@ -3761,7 +3767,7 @@ void main() {
     expect(find.text('Tom Tas'), findsNothing,
         reason: 'the operator is looking at 3C — Tom is not on this page');
 
-    final key = harness.controller.classroomPendingEntries.first.situationKey;
+    final key = harness.controller.classroomPendingSituations.single.key;
     final bulk = find.byKey(ValueKey('situation-apply-$key'));
     await tester.ensureVisible(bulk);
     // The header line the count sits on is Dutch, like the rest of the screen
@@ -3806,6 +3812,100 @@ void main() {
     expect(klas3C, findsNothing, reason: 'the class the operator cleared');
     expect(
         find.descendant(of: klas3D, matching: find.text('1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a bulk apply covers one decision everywhere it occurs, and writes '
+      'nothing else on the cards it touches end-to-end (#292)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Smartschool and
+    // Graph write paths. The September rollover in miniature: three students
+    // moved up into `4A` while Smartschool still has all three in last year's
+    // `3C`, so every one of them needs the same class change — and one of them,
+    // Sam, also has a stale Office 365 display name.
+    //
+    // Both halves of the defect are only visible here. The header's cohort is
+    // built by the controller, rendered by the shared tile library and scoped by
+    // the drill-down, and what the button behind it writes is decided a fourth
+    // place again: the old grouping keyed on the family plus the sorted set of
+    // *every* decision on a card, so Sam fell into a subset of his own and the
+    // operator read "2 accounts in dezelfde situatie" for work that three
+    // students needed. Pressing the other header then wrote Sam's Office 365
+    // rename along with his class change, under a label that named neither.
+    useTallWindow(tester);
+    final harness = rolloverHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Drill into 4A, where all three students now belong.
+    final jaar4 = find.byKey(const ValueKey('rollup-grade-grades|4'));
+    await tester.ensureVisible(jaar4);
+    await tester.tap(jaar4);
+    await tester.pumpAndSettle();
+    final klas4A = find.byKey(const ValueKey('rollup-class-class|1|4|4A'));
+    await tester.ensureVisible(klas4A);
+    await tester.tap(klas4A);
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom?.classroom, '4A');
+
+    // One header for the class change, and it counts all three — Sam included,
+    // whatever else his card carries.
+    expect(
+      find.text('Wijzig de klas in Smartschool — 3 accounts in dezelfde '
+          'situatie'),
+      findsOneWidget,
+    );
+    final moveKey = harness.controller.classroomPendingSituations
+        .firstWhere((c) => c.label == 'Wijzig de klas in Smartschool')
+        .key;
+    final moveBulk = find.byKey(ValueKey('situation-apply-$moveKey'));
+    await tester.ensureVisible(moveBulk);
+    expect(
+      find.descendant(of: moveBulk, matching: find.text('Alles toepassen (3)')),
+      findsOneWidget,
+    );
+    // Sam's second decision is on his card, and gets no bulk header of its own:
+    // he is the only student who needs it.
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
+    expect(find.textContaining('Wijzig de naam in Azure — '), findsNothing);
+
+    // The confirmation names the one decision: three Smartschool writes, and no
+    // claim on Office 365.
+    await tester.tap(moveBulk);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('3 wijzigingen'), findsOneWidget);
+    expect(find.textContaining('Office 365'), findsNothing,
+        reason: "summing every decision on every card would quote Sam's "
+            'rename and then not write it');
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Three class moves in Smartschool…
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+      hasLength(3),
+      reason: 'one pass covered the whole class, Sam included',
+    );
+    expect(
+      harness.controller.applyResults!.map((r) => r.changes.summary),
+      everyElement('Wijzig de klas in Smartschool'),
+    );
+    // …and not a single Office 365 write. Sam's rename is a decision the
+    // operator never pressed.
+    expect(
+      harness.graph.requests.where((r) => r.method == 'PATCH'),
+      isEmpty,
+      reason: 'the bulk pass wrote the decision on the header and no other',
+    );
+    // It is still his to make, still on the screen.
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -8648,7 +8748,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The bulk header offers the one resolution for both hires.
-    final key = entries.first.situationKey;
+    final key = harness.controller.classroomPendingSituations.single.key;
     final bulk = find.byKey(ValueKey('situation-apply-$key'));
     await tester.ensureVisible(bulk);
     expect(

@@ -388,24 +388,23 @@ class _ActionsBodyState extends State<_ActionsBody>
     ];
   }
 
-  /// The active-session pending situations narrowed by the name search. The
-  /// "only with actions" toggle is a no-op here — every pending entry already
-  /// carries an action — so only the search filters, dropping any subset left
-  /// empty so the same-situation headers stay in sync (#187).
-  List<List<PendingAccountEntry>> _filterSituations(
-    List<List<PendingAccountEntry>> situations,
+  /// The active-session pending entries narrowed by the name search. The "only
+  /// with actions" toggle is a no-op here — every pending entry already carries
+  /// an action — so only the search filters (#187).
+  ///
+  /// The cohorts are grouped *from this result* rather than filtered afterwards
+  /// (#292), so a bulk header can only ever cover accounts the search left on
+  /// screen: label, confirmation scope and write come from one list, which is
+  /// the standing rule since #252.
+  List<PendingAccountEntry> _filterEntries(
+    List<PendingAccountEntry> entries,
   ) {
     final query = _query;
-    if (query.isEmpty) return situations;
-    final out = <List<PendingAccountEntry>>[];
-    for (final subset in situations) {
-      final kept = <PendingAccountEntry>[
-        for (final e in subset)
-          if (query.matches(e.target)) e,
-      ];
-      if (kept.isNotEmpty) out.add(kept);
-    }
-    return out;
+    if (query.isEmpty) return entries;
+    return <PendingAccountEntry>[
+      for (final e in entries)
+        if (query.matches(e.target)) e,
+    ];
   }
 
   /// Rebuilds the sliver content for the newly-selected family, and — when the
@@ -625,13 +624,15 @@ class _ActionsBodyState extends State<_ActionsBody>
         : const <Widget>[];
 
     if (controller.linked != null) {
-      final situations = controller.classroomPendingSituations;
-      if (situations.isEmpty) {
+      final all = controller.classroomPendingEntries;
+      if (all.isEmpty) {
         return slivers
           ..add(_section(const EmptyLine('Geen openstaande acties in deze '
               'klas.')));
       }
-      final rows = pendingRows(_filterSituations(situations));
+      final shown = _filterEntries(all);
+      final rows =
+          pendingRows(ReconcileController.situationCohorts(shown), shown);
       slivers
         ..addAll(searchSlivers)
         ..add(rows.isEmpty
@@ -694,8 +695,8 @@ class _ActionsBodyState extends State<_ActionsBody>
           itemBuilder: (context, index) {
             final row = rows[index];
             return switch (row) {
-              SituationHeaderRow(:final entries) =>
-                SituationHeader(controller: controller, entries: entries),
+              SituationHeaderRow(:final cohort) =>
+                SituationHeader(controller: controller, cohort: cohort),
               EntryRow(:final entry) =>
                 PendingEntryTile(controller: controller, entry: entry),
             };

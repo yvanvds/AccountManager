@@ -36,17 +36,17 @@ import '../reconcile/reconcile_controller.dart';
 // ---------------------------------------------------------------------------
 
 /// One row of a per-classroom (or per-group) pending list: a same-situation
-/// bulk header or a single account entry. Flattening the situation → entries
-/// tree into a linear list lets a lazy [SliverList] build only the on-screen
-/// rows (#111/#154).
+/// bulk header or a single account entry. Flattening the cohorts → entries tree
+/// into a linear list lets a lazy [SliverList] build only the on-screen rows
+/// (#111/#154).
 sealed class PendingRow {
   const PendingRow();
 }
 
 class SituationHeaderRow extends PendingRow {
-  const SituationHeaderRow(this.entries);
+  const SituationHeaderRow(this.cohort);
 
-  final List<PendingAccountEntry> entries;
+  final SituationCohort cohort;
 }
 
 class EntryRow extends PendingRow {
@@ -55,19 +55,26 @@ class EntryRow extends PendingRow {
   final PendingAccountEntry entry;
 }
 
-/// Flattens same-situation [situations] into the linear [PendingRow] list a
-/// lazy sliver builds from: a bulk header only where more than one account
-/// shares the situation, then that subset's entries.
-List<PendingRow> pendingRows(List<List<PendingAccountEntry>> situations) {
-  final rows = <PendingRow>[];
-  for (final subset in situations) {
-    if (subset.length > 1) rows.add(SituationHeaderRow(subset));
-    for (final entry in subset) {
-      rows.add(EntryRow(entry));
-    }
-  }
-  return rows;
-}
+/// Flattens [cohorts] and [entries] into the linear [PendingRow] list a lazy
+/// sliver builds from: the bulk headers, then one tile per account.
+///
+/// The headers lead rather than each sitting above its own run of rows, and
+/// since #292 they have to. A cohort is one decision, so an account with three
+/// decisions belongs to three of them; interleaving would mean rendering its
+/// card three times, once under each. Klasgroepen already collects its bulk
+/// affordances above the inventory for the same reason (its rows are sorted by
+/// class name, so a cohort was never contiguous there either), and this is that
+/// shape. Both lists therefore read the same way: what can be done in bulk on
+/// top, the accounts themselves below, each exactly once.
+List<PendingRow> pendingRows(
+  List<SituationCohort> cohorts,
+  List<PendingAccountEntry> entries,
+) =>
+    <PendingRow>[
+      for (final cohort in cohorts)
+        if (cohort.length > 1) SituationHeaderRow(cohort),
+      for (final entry in entries) EntryRow(entry),
+    ];
 
 // ---------------------------------------------------------------------------
 // Wording.
@@ -691,39 +698,46 @@ class MessagePanel extends StatelessWidget {
 // Interactive tiles.
 // ---------------------------------------------------------------------------
 
-/// The bulk header of one "same situation" subset (#110): the "apply this
-/// resolution to all" affordance that honours each entry's own chosen
-/// alternative. Rendered as its own row in the lazy list, only when more than
-/// one account shares the situation.
+/// The bulk header of one [SituationCohort] (#110/#292): the "apply this one
+/// decision to every account that needs it" affordance, honouring each
+/// account's own chosen alternative. Rendered as its own row in the lazy list,
+/// only when more than one account raises the decision.
 ///
-/// Every affordance here acts on [entries] — the exact subset this header was
-/// built over and counts (#252). That list is already scoped by whatever list
-/// rendered it: the open classroom's pending entries, or the class inventory's,
-/// narrowed further by the search box. The bulk pass used to re-resolve the
-/// situation key against the *whole* linked view instead, so a header reading
-/// "Alles toepassen (1)" inside one class wrote every account group-wide in the
-/// same situation. The label, the confirmation scope and the write are now one
-/// list, so they cannot drift apart again.
+/// Every affordance here acts on [cohort]'s decisions — the exact members this
+/// header was built over and counts (#252). That list is already scoped by
+/// whatever list rendered it: the open classroom's pending entries, or the class
+/// inventory's, narrowed further by the search box. The bulk pass used to
+/// re-resolve the situation key against the *whole* linked view instead, so a
+/// header reading "Alles toepassen (1)" inside one class wrote every account
+/// group-wide in the same situation. The label, the confirmation scope and the
+/// write are one list, so they cannot drift apart again.
+///
+/// Since #292 that list is one decision deep as well as scoped. The header names
+/// a single decision, so the pass behind it writes a single decision: pressing
+/// "Wijzig Klas in Smartschool" on fourteen students no longer also writes the
+/// email fix one of them happens to need. That is what makes the claim on the
+/// button verifiable at all — the operator can read one action's description and
+/// know what the button does to everyone in the cohort.
 class SituationHeader extends StatelessWidget {
   const SituationHeader({
     super.key,
     required this.controller,
-    required this.entries,
+    required this.cohort,
     this.noun = 'accounts',
   });
 
   final ReconcileController controller;
-  final List<PendingAccountEntry> entries;
+  final SituationCohort cohort;
 
-  /// What this subset is a subset *of*, in Dutch — "accounts" in a classroom,
+  /// What this cohort is a cohort *of*, in Dutch — "accounts" in a classroom,
   /// "klassen" in the class inventory (#227).
   final String noun;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final key = entries.first.situationKey;
-    final applyable = entries.where((e) => e.canApply).length;
+    final String key = cohort.key;
+    final int applyable = cohort.applyableCount;
 
     return Padding(
       padding: const EdgeInsets.only(
@@ -734,7 +748,7 @@ class SituationHeader extends StatelessWidget {
         children: <Widget>[
           Expanded(
             child: Text(
-              '${entries.first.situationLabel} — ${entries.length} '
+              '${cohort.label} — ${cohort.length} '
               '$noun in dezelfde situatie',
               style: text.titleSmall,
             ),
@@ -748,7 +762,7 @@ class SituationHeader extends StatelessWidget {
                       context,
                       controller: controller,
                       dry: true,
-                      run: () => controller.dryRunEntries(entries),
+                      run: () => controller.dryRunDecisions(cohort.decisions),
                     ),
             child: const Text('Dry-run alles'),
           ),
@@ -760,11 +774,13 @@ class SituationHeader extends StatelessWidget {
                 : () => confirmAndApply(
                       context,
                       controller: controller,
-                      title: 'Toepassen op ${entries.length} $noun?',
-                      // The dialog is scoped to the very entries the pass below
-                      // runs over — the ones this header counted (#234/#252).
-                      scope: controller.applyScope(entries),
-                      apply: () => controller.applyEntries(entries),
+                      title: 'Toepassen op ${cohort.length} $noun?',
+                      // The dialog is scoped to the very decisions the pass
+                      // below runs — the ones this header counted (#234/#252),
+                      // and only those (#292).
+                      scope:
+                          controller.applyScopeForDecisions(cohort.decisions),
+                      apply: () => controller.applyDecisions(cohort.decisions),
                     ),
             child: Text('Alles toepassen ($applyable)'),
           ),

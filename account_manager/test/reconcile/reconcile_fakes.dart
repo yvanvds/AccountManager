@@ -1531,7 +1531,7 @@ ReconcileHarness appliedClassWorkHarness({
 /// A harness for the classroom-scoped bulk apply (#252). One managed school,
 /// two third-year classes, and the **same** student situation in both: every
 /// student's Office 365 display name is stale, so each raises a lone
-/// `ModifyAzureName` and they all share one `situationKey`.
+/// `ModifyAzureName` and they all fall into one decision cohort.
 ///
 /// 3C holds two of them (Sam and Sara) — enough for the same-situation bulk
 /// header to render at all, since it only appears above a subset of more than
@@ -1621,6 +1621,102 @@ ReconcileHarness crossClassSituationHarness() => ReconcileHarness(
 const String kSam3C = 'az-sam-3c';
 const String kSara3C = 'az-sara-3c';
 const String kTom3D = 'az-tom-3d';
+
+/// A harness for the September rollover (#292). Three students moved up into
+/// `4A` while Smartschool still has all three sitting in last year's `3C`, so
+/// every one of them raises the very same decision — `MoveToSmartschoolClassGroup`.
+///
+/// One of them, Sam, *also* has a stale Office 365 display name. That is the
+/// whole fixture: a second, unrelated decision on one of the three cards.
+/// Grouping on the family plus the sorted set of every decision on a card put
+/// Sam in a subset of his own, so the bulk header for the class change covered
+/// two students instead of three — and the one it did cover, it covered together
+/// with whatever else was on their cards.
+///
+/// The rollover is when this matters. Every student in the school changes class
+/// at once, alongside whatever else drifted on their record over the summer, so
+/// the operation the app most needs to do in one pass is the one the old
+/// grouping fragmented hardest.
+ReconcileHarness rolloverHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '1', classGroup: '4A', firstName: 'Sam', name: 'Sels'),
+          wisaStudent(
+              wisaId: '2', classGroup: '4A', firstName: 'Sara', name: 'Segers'),
+          wisaStudent(
+              wisaId: '3', classGroup: '4A', firstName: 'Tom', name: 'Tas'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('4A', adminCode: 'a4', schoolCode: '111'),
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('4A', code: '4A_ss', untis: '4A'),
+          ssGroup('3C', code: '3C_ss', untis: '3C'),
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'sam',
+            accountId: '1',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'sara',
+            accountId: '2',
+            mail: 'sara.segers@student.school.example',
+            givenName: 'Sara',
+            surname: 'Segers',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '3',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        // Still in last year's class — the move every one of them needs.
+        memberships: [
+          member('sam', '3C_ss'),
+          member('sara', '3C_ss'),
+          member('tom', '3C_ss'),
+        ],
+      ),
+      // Only Sam's display name is stale, so only Sam carries a second decision.
+      azure: azSnap(users: [
+        azUser(
+          id: kSamRollover,
+          upn: 'sam.sels@student.school.example',
+          employeeId: '1',
+        ),
+        azUser(
+          id: kSaraRollover,
+          upn: 'sara.segers@student.school.example',
+          employeeId: '2',
+          displayName: 'Sara Segers',
+        ),
+        azUser(
+          id: kTomRollover,
+          upn: 'tom.tas@student.school.example',
+          employeeId: '3',
+          displayName: 'Tom Tas',
+        ),
+      ]),
+      ourSchoolIds: const {1},
+    );
+
+/// The Azure object ids of [rolloverHarness]'s three students. A test proves a
+/// per-decision bulk apply left the *other* decisions alone by finding no Graph
+/// write against [kSamRollover].
+const String kSamRollover = 'az-sam-4a';
+const String kSaraRollover = 'az-sara-4a';
+const String kTomRollover = 'az-tom-4a';
 
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
