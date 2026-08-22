@@ -13,12 +13,14 @@
 /// `MarkAsVirtual` import rule; it tells the connector that this school
 /// should be synced using the virtual workdate instead of the real one.
 ///
-/// [isOurs] marks a school we actually **manage** (as opposed to one that
-/// is merely group-visible through the shared credentials). It is set at
-/// snapshot construction time by the `MarkAsOurs` import rule, paralleling
-/// [isVirtual]. Group-wide leave detection (#113) needs it to tell a student
-/// who left *our* school but stayed in the group from one who left the group
-/// entirely; this slice only carries the flag — it changes no action yet.
+/// There is no ownership flag here (#286). Which schools we **manage** — as
+/// opposed to the sibling schools the shared credentials also reach — is the
+/// operator's WISA-scholen list in Instellingen, keyed by school id
+/// (`AppSettings.managedWisaSchoolIds`, #178). A snapshot-time `isOurs` flag
+/// existed alongside it until #286 and nothing read it: the settings list wins
+/// as soon as it holds a single school, which is every install that has ever
+/// pressed **Scholen ophalen**. An `isOurs` key in a cold snapshot written
+/// before #286 is ignored by [WisaSchool.fromJson].
 class WisaSchool {
   final int id;
 
@@ -28,17 +30,15 @@ class WisaSchool {
 
   /// The short code operators use day to day (`ISMAA`). Parsed from the
   /// `SMAGetInst` CSV's `DESCRIPTION` column, and what the school-marking
-  /// import rules (`MarkAsOurs`, `MarkAsVirtual`) match on.
+  /// import rule (`MarkAsVirtual`) matches on.
   final String code;
   final bool isVirtual;
-  final bool isOurs;
 
   const WisaSchool({
     required this.id,
     required this.name,
     required this.code,
     this.isVirtual = false,
-    this.isOurs = false,
   });
 
   /// Serializes to the connector's own snapshot shape. Round-trips with
@@ -48,7 +48,6 @@ class WisaSchool {
         'name': name,
         'code': code,
         'isVirtual': isVirtual,
-        'isOurs': isOurs,
       };
 
   /// Reads a snapshot school, migrating documents written before #208.
@@ -58,6 +57,10 @@ class WisaSchool {
   /// key is read back swapped. Nothing else distinguishes the two shapes, and
   /// the `code` key is written unconditionally, so the test is exact rather
   /// than a guess about the values.
+  ///
+  /// An `isOurs` key from a document written before #286 is ignored: the flag
+  /// is gone and the managed-school set comes from Settings (see the class
+  /// doc).
   factory WisaSchool.fromJson(Map<String, dynamic> json) {
     final legacy = !json.containsKey('code') && json.containsKey('description');
     return WisaSchool(
@@ -65,16 +68,14 @@ class WisaSchool {
       name: (legacy ? json['description'] : json['name']) as String,
       code: (legacy ? json['name'] : json['code']) as String,
       isVirtual: (json['isVirtual'] as bool?) ?? false,
-      isOurs: (json['isOurs'] as bool?) ?? false,
     );
   }
 
-  WisaSchool copyWith({bool? isVirtual, bool? isOurs}) => WisaSchool(
+  WisaSchool copyWith({bool? isVirtual}) => WisaSchool(
         id: id,
         name: name,
         code: code,
         isVirtual: isVirtual ?? this.isVirtual,
-        isOurs: isOurs ?? this.isOurs,
       );
 
   @override
@@ -84,13 +85,12 @@ class WisaSchool {
           id == other.id &&
           name == other.name &&
           code == other.code &&
-          isVirtual == other.isVirtual &&
-          isOurs == other.isOurs;
+          isVirtual == other.isVirtual;
 
   @override
-  int get hashCode => Object.hash(id, name, code, isVirtual, isOurs);
+  int get hashCode => Object.hash(id, name, code, isVirtual);
 
   @override
-  String toString() => 'WisaSchool(id: $id, name: $name, code: $code, '
-      'isVirtual: $isVirtual, isOurs: $isOurs)';
+  String toString() =>
+      'WisaSchool(id: $id, name: $name, code: $code, isVirtual: $isVirtual)';
 }

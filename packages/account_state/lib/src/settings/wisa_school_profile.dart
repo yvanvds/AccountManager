@@ -3,11 +3,11 @@
 /// The shared credentials pull *every* WISA school the group can see, but we
 /// only **manage** some of them. This profile records, per school id, whether
 /// it is [ours] (managed) and an optional per-school [prefix] override for the
-/// Azure-orphan scoping the linker does (INV-22). It is the persistent, keyed
-/// counterpart of the snapshot-time `MarkAsOurs` import rule: the rule flips
-/// `WisaSchool.isOurs` at pull time by school *name*, while this list is the
-/// operator-editable ownership record keyed by school *id* that survives in the
-/// settings blob.
+/// Azure-orphan scoping the linker does (INV-22). Since #286 this list is the
+/// **only** ownership record: the snapshot-time `MarkAsOurs` import rule that
+/// once flagged a school by code is gone, because this operator-editable list —
+/// keyed by school *id* and persisted in the settings document — won over it
+/// everywhere it was read.
 ///
 /// The shape (`{ schemaVersion, schoolId, code, name, ours, virtual, prefix }`)
 /// is the
@@ -47,7 +47,8 @@ class WisaSchoolProfile {
   /// Whether this school is a *virtual* school, i.e. one WISA must be queried
   /// with [AppSettings.wisa]'s separate virtual workdate instead of the ordinary
   /// one (#203). The persistent, id-keyed counterpart of the snapshot-time
-  /// `MarkAsVirtual` import rule, exactly as [ours] is for `MarkAsOurs`.
+  /// `MarkAsVirtual` import rule, which still exists — the pull unions both
+  /// surfaces, unlike [ours], whose rule was dropped in #286.
   /// Defaults to `false`, so a settings document written before this field
   /// existed loads with every school non-virtual.
   final bool virtual;

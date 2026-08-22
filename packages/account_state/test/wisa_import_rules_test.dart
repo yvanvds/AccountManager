@@ -7,12 +7,12 @@ void main() {
     test('keeps insertion order and drops structural duplicates', () {
       final rules = WisaImportRules();
       expect(rules.add(const DontImportClass('3C')), isTrue);
-      expect(rules.add(const MarkAsOurs('S1')), isTrue);
+      expect(rules.add(const MarkAsVirtual('S1')), isTrue);
       expect(rules.add(const DontImportClass('3C')), isFalse);
 
       expect(rules.rules, hasLength(2));
       expect(rules.rules.first, isA<DontImportClass>());
-      expect(rules.rules.last, isA<MarkAsOurs>());
+      expect(rules.rules.last, isA<MarkAsVirtual>());
     });
   });
 
@@ -66,7 +66,7 @@ void main() {
 
       rules.add(const DontImportClass('3C'));
       expect(
-        rules.unionWith(const <WisaImportRule>[MarkAsOurs('S1')]),
+        rules.unionWith(const <WisaImportRule>[MarkAsVirtual('S1')]),
         hasLength(2),
       );
     });

@@ -1185,7 +1185,7 @@ void main() {
     ReconcileHarness newIntakeHarness() => ReconcileHarness(
           wisa: wisaSnap(
             students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-            schools: [wisaSchool(1, ours: true)],
+            schools: [wisaSchool(1)],
           ),
           smartschool: ssSnap(
             groups: [ssGroup('3C', code: '3C_ss')],
@@ -1516,7 +1516,6 @@ void main() {
               id: 25,
               name: 'Instituut Sancta Maria-A',
               code: 'ISMAA',
-              isOurs: true,
             ),
           ],
         ),

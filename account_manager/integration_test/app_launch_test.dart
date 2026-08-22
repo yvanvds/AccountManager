@@ -1387,8 +1387,8 @@ void main() {
       'Settings, re-bucketing its student to the leaver group (#178)',
       (WidgetTester tester) async {
     // A student enrolled in school 2, fully present in our Smartschool + Azure.
-    // The WISA schools carry no MarkAsOurs flag, so ownership comes solely from
-    // the Settings-derived managed set the applier is wired with — the exact
+    // A WISA snapshot carries no ownership at all (#286), so it comes solely
+    // from the Settings-derived managed set the applier is wired with — the
     // "persisted but never consumed" wiring #178 closes. Here only school 1 is
     // managed, so the school-2 student is groupOnly.
     useTallWindow(tester);
@@ -1428,8 +1428,8 @@ void main() {
       'the Actions drill-down end-to-end (#178)', (WidgetTester tester) async {
     // The very same school-2 student, but now school 2 is one of ours: their
     // class must be browsable instead of sitting in the leaver bucket. Proves
-    // the managed set from Settings — not the snapshot MarkAsOurs flags —
-    // drives which students show. The school itself is no longer a node (#210),
+    // the managed set from Settings drives which students show. The school
+    // itself is no longer a node (#210),
     // so the proof is that the student's own class is reachable.
     useTallWindow(tester);
     final harness = managedSchoolsHarness(ourSchoolIds: const {1, 2});
@@ -6038,7 +6038,7 @@ void main() {
     );
     final live = LiveSettings(stored);
     // One student, enrolled in school 2 and fully present in our Smartschool +
-    // Azure. The WISA schools carry no `MarkAsOurs` flag, so who is managed can
+    // Azure. A WISA snapshot carries no ownership (#286), so who is managed can
     // only come from the settings document — the #178 wiring, now live.
     final harness = ReconcileHarness(
       wisa: wisaSnap(
@@ -6423,6 +6423,90 @@ void main() {
   });
 
   testWidgets(
+      'a settings document carrying the retired MarkAsOurs rule still loads, '
+      'and the dead rule is gone from the view and the next save (#286)',
+      (WidgetTester tester) async {
+    // `MarkAsOurs` was a rule an operator could author and that then silently
+    // did nothing — ownership comes from the WISA-scholen list, which wins as
+    // soon as it holds one school. #286 deleted it. The shared settings document
+    // is what every operator and every older build writes into, so one that
+    // still carries the tag has to load rather than take the app down; the entry
+    // is ignored, and the rules that *do* something are untouched.
+    //
+    // The document can only be introduced as raw JSON now that the type is gone
+    // — which is exactly how it comes back from Cosmos.
+    useTallWindow(tester);
+    final stored = AppSettings.fromJson(<String, dynamic>{
+      'wisaRules': <dynamic>[
+        <String, dynamic>{'type': 'markAsOurs', 'schoolCode': 'ISMAA'},
+        <String, dynamic>{'type': 'dontImportClass', 'className': '3C'},
+      ],
+    }).copyWith(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // The production WISA pull runs on the document as stored: the surviving
+    // rule still prunes 3C, and the retired one changes nothing (as it never
+    // did).
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa lists the live rule and nothing about "beheerd" —
+    // there is no rule kind left to render, and no dead row to puzzle over.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+    expect(find.textContaining('Markeer als beheerd'), findsNothing);
+    // Toevoegen cannot author one either.
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsOurs')),
+        findsNothing);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    // Saving rewrites the document without it, so the next operator to open it
+    // never sees the dead entry again.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await settings.store.load();
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect(
+      (saved.toJson()['wisaRules'] as List<dynamic>)
+          .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+      <String>['dontImportClass'],
+    );
+  });
+
+  testWidgets(
       'a DontImportFromWisa apply writes its rule to the shared settings '
       'document, where it outlives the session and is removable (#276)',
       (WidgetTester tester) async {
@@ -6736,7 +6820,7 @@ void main() {
     final harness = ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-        schools: [wisaSchool(1, ours: true)],
+        schools: [wisaSchool(1)],
       ),
       smartschool: ssSnap(
         groups: [ssGroup('3C', code: '3C_ss')],
@@ -7237,7 +7321,7 @@ void main() {
     final harness = ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-        schools: [wisaSchool(1, ours: true)],
+        schools: [wisaSchool(1)],
       ),
       smartschool: ssSnap(
         groups: [ssGroup('3C', code: '3C_ss')],
@@ -7810,7 +7894,7 @@ void main() {
     final harness = ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-        schools: [wisaSchool(1, ours: true)],
+        schools: [wisaSchool(1)],
       ),
       smartschool: ssSnap(
         groups: [ssGroup('3C', code: '3C_ss')],

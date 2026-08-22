@@ -94,44 +94,23 @@ void main() {
           applyRulesToSchools(schools, const [MarkAsVirtual('Sint Maria')]);
       expect(out.single.isVirtual, isFalse);
     });
-  });
-
-  group('MarkAsOurs', () {
-    test('flips isOurs on the matching short school code only', () {
-      const schools = [
-        WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA'),
-        WisaSchool(id: 2, name: 'Sint Dimphna', code: 'SDK'),
-      ];
-      final out = applyRulesToSchools(schools, const [MarkAsOurs('SMA')]);
-      expect(out[0].isOurs, isTrue);
-      expect(out[1].isOurs, isFalse);
-      // No cross-contamination with the virtual marker.
-      expect(out[0].isVirtual, isFalse);
-    });
-
-    test('does not match on the long school name', () {
-      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
-      final out =
-          applyRulesToSchools(schools, const [MarkAsOurs('Sint Maria')]);
-      expect(out.single.isOurs, isFalse);
-    });
-
-    test('MarkAsVirtual and MarkAsOurs flag independently on one school', () {
-      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
-      final out = applyRulesToSchools(
-        schools,
-        const [MarkAsVirtual('SMA'), MarkAsOurs('SMA')],
-      );
-      expect(out.single.isVirtual, isTrue);
-      expect(out.single.isOurs, isTrue);
-    });
 
     test('is a no-op for class groups and staff', () {
       final groups = [_g('1A')];
-      expect(
-          applyRulesToClassGroups(groups, const [MarkAsOurs('SMA')]), groups);
+      expect(applyRulesToClassGroups(groups, const [MarkAsVirtual('SMA')]),
+          groups);
       final staff = [_s('AAAAA')];
-      expect(applyRulesToStaff(staff, const [MarkAsOurs('SMA')]), staff);
+      expect(applyRulesToStaff(staff, const [MarkAsVirtual('SMA')]), staff);
+    });
+
+    test('leaves a school an earlier rule already flagged alone', () {
+      // The pass is additive, so unioning the operator's per-school virtual
+      // marks in afterwards can never un-virtualise a rule-marked school.
+      const schools = [
+        WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA', isVirtual: true),
+      ];
+      final out = applyRulesToSchools(schools, const [MarkAsVirtual('SDK')]);
+      expect(out.single.isVirtual, isTrue);
     });
   });
 

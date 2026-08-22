@@ -767,7 +767,7 @@ void main() {
 
   group('link — class groups are scoped to the schools we manage (#205)', () {
     /// Links [classGroups] alone (no people), with the managed-school set
-    /// pinned by [ourSchoolIds] (the Settings path) or derived from [schools].
+    /// pinned by [ourSchoolIds] (the Settings path, and the only one).
     LinkedSnapshot linkClasses(
       List<wapi.WisaClassGroup> classGroups, {
       Set<int>? ourSchoolIds,
@@ -822,25 +822,30 @@ void main() {
       expect(snapshot.groups.single.wisa!.instituteNumber, '111');
     });
 
-    test('the managed set falls back to WisaSchool.isOurs when unset', () {
+    test('ownership unconfigured → every class still links', () {
+      // No explicit set: the pre-#205 behaviour is preserved for a group that
+      // has not marked its schools yet. Since #286 the snapshot has no say in
+      // this — a school list carrying both schools changes nothing.
       final snapshot = linkClasses(
         [
           wisaClassGroup('5A', schoolId: 1),
           wisaClassGroup('9Z', schoolId: 2),
         ],
-        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
+        schools: [wisaSchool(1), wisaSchool(2)],
       );
 
-      expect([for (final g in snapshot.groups) g.wisa!.name], ['5A']);
+      expect([for (final g in snapshot.groups) g.wisa!.name], ['5A', '9Z']);
     });
 
-    test('ownership unconfigured → every class still links', () {
-      // No explicit set and no isOurs flags anywhere: the pre-#205 behaviour is
-      // preserved for a group that has not marked its schools yet.
-      final snapshot = linkClasses([
-        wisaClassGroup('5A', schoolId: 1),
-        wisaClassGroup('9Z', schoolId: 2),
-      ]);
+    test('an empty managed set reads as unconfigured, not as "none is ours"',
+        () {
+      final snapshot = linkClasses(
+        [
+          wisaClassGroup('5A', schoolId: 1),
+          wisaClassGroup('9Z', schoolId: 2),
+        ],
+        ourSchoolIds: const <int>{},
+      );
 
       expect([for (final g in snapshot.groups) g.wisa!.name], ['5A', '9Z']);
     });
@@ -865,8 +870,8 @@ void main() {
   group('link — class groups of a virtual school are never imported (#209)',
       () {
     /// Links [classGroups] (and optionally [students]) with the schools list
-    /// carrying the virtual/ours flags the linker derives its two group filters
-    /// from. [ourSchoolIds] pins the managed set the Settings path supplies.
+    /// carrying the virtual flags one of the linker's two group filters reads.
+    /// [ourSchoolIds] pins the managed set the Settings path supplies.
     LinkedSnapshot linkVirtual(
       List<wapi.WisaClassGroup> classGroups, {
       List<wapi.WisaSchool> schools = const [],
@@ -889,7 +894,7 @@ void main() {
       // exclusion keeps its classes out.
       final snapshot = linkVirtual(
         [wisaClassGroup('1V', schoolId: 99)],
-        schools: [wisaSchool(99, ours: true, virtual: true)],
+        schools: [wisaSchool(99, virtual: true)],
         ourSchoolIds: const {1, 99},
       );
 
@@ -902,7 +907,7 @@ void main() {
           wisaClassGroup('3B', schoolCode: '111', schoolId: 1),
           wisaClassGroup('1V', schoolId: 99),
         ],
-        schools: [wisaSchool(1, ours: true), wisaSchool(99, virtual: true)],
+        schools: [wisaSchool(1), wisaSchool(99, virtual: true)],
         ourSchoolIds: const {1, 99},
       );
 
@@ -932,10 +937,7 @@ void main() {
           wisaClassGroup('1A', schoolCode: '999', schoolId: 99),
           wisaClassGroup('1A', schoolCode: '111', schoolId: 1),
         ],
-        schools: [
-          wisaSchool(1, ours: true),
-          wisaSchool(99, ours: true, virtual: true)
-        ],
+        schools: [wisaSchool(1), wisaSchool(99, virtual: true)],
         ourSchoolIds: const {1, 99},
       );
 
@@ -949,10 +951,7 @@ void main() {
       // `classGroup` string, so dropping the records moves nobody.
       final snapshot = linkVirtual(
         [wisaClassGroup('1V', schoolId: 99)],
-        schools: [
-          wisaSchool(1, ours: true),
-          wisaSchool(99, ours: true, virtual: true)
-        ],
+        schools: [wisaSchool(1), wisaSchool(99, virtual: true)],
         ourSchoolIds: const {1, 99},
         students: [wisaStudent('W9', schoolId: 99)],
       );
@@ -969,7 +968,7 @@ void main() {
         'orphan', () {
       final snapshot = linkVirtual(
         [wisaClassGroup('1V', schoolId: 99)],
-        schools: [wisaSchool(99, ours: true, virtual: true)],
+        schools: [wisaSchool(99, virtual: true)],
         ourSchoolIds: const {99},
         ssGroups: [ssGroup('1V')],
       );
@@ -1254,8 +1253,8 @@ void main() {
 
   group('link — WISA-school membership + ours-vs-group (#134)', () {
     /// A student fully linked across the three systems whose WISA row sits in
-    /// [schoolId]. [schools] carries the managed-school flags the linker derives
-    /// its ownership set from; [ourSchoolIds] overrides that derivation.
+    /// [schoolId]. [schools] is the snapshot's school list (no ownership in it
+    /// since #286); [ourSchoolIds] is the managed set, from Settings.
     LinkedSnapshot linkStudentIn(
       int schoolId, {
       List<wapi.WisaSchool> schools = const [],
@@ -1307,25 +1306,28 @@ void main() {
       expect(a.hasLeftGroup, isFalse);
     });
 
-    test('the managed-school set is derived from WisaSchool.isOurs by default',
-        () {
-      // No explicit ourSchoolIds: the snapshot's own isOurs flags decide.
-      final ours = linkStudentIn(
-        1,
-        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
-      ).accounts.single;
-      expect(ours.wisaPresence, WisaPresence.ours);
-
+    test('the snapshot never decides ownership on its own (#286)', () {
+      // The school list is not a source of ownership — only the Settings-derived
+      // `ourSchoolIds` is. Without one, a sibling school's student is ours, the
+      // same as any other, rather than being classified by a snapshot flag.
       final sibling = linkStudentIn(
         2,
-        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
+        schools: [wisaSchool(1), wisaSchool(2)],
       ).accounts.single;
-      expect(sibling.wisaPresence, WisaPresence.groupOnly);
+      expect(sibling.wisaPresence, WisaPresence.ours);
+
+      // Naming the managed set is what separates the two.
+      final pinned = linkStudentIn(
+        2,
+        schools: [wisaSchool(1), wisaSchool(2)],
+        ourSchoolIds: {1},
+      ).accounts.single;
+      expect(pinned.wisaPresence, WisaPresence.groupOnly);
     });
 
     test('a WISA-absent (Azure-only) record is classified absent', () {
       final snapshot = link(
-        wisaSnap(const [], schools: [wisaSchool(1, ours: true)]),
+        wisaSnap(const [], schools: [wisaSchool(1)]),
         ssSnap(const []),
         azSnap([azureUser(id: 'az-9', upn: 'gone@s.be', companyName: _prefix)]),
         SeqResolver(),

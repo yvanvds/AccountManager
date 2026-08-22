@@ -645,11 +645,10 @@ void main() {
       expect(managed.rollups.any((r) => r.school == '2'), isTrue);
     });
 
-    test(
-        'with no managed set the snapshot MarkAsOurs flags still classify '
-        '(fallback preserved)', () {
-      // ourSchoolIds null → link() derives ownership from the snapshot schools.
-      // Here school 1 is flagged ours, so a school-1 student is placed normally.
+    test('with no managed set every school is ours, so nobody is re-bucketed',
+        () {
+      // ourSchoolIds null → ownership is unconfigured (#286), which counts every
+      // school, so a school-1 student is placed normally.
       final linked = LinkedState.recompute(
         wisa: wapi.WisaSnapshot(
           fetchedAt: _d,
@@ -657,7 +656,7 @@ void main() {
           staff: const [],
           classGroups: const [],
           schools: const [
-            wapi.WisaSchool(id: 1, name: 'One', code: '', isOurs: true),
+            wapi.WisaSchool(id: 1, name: 'One', code: ''),
           ],
         ),
         smartschool: ss.SmartschoolSnapshot(

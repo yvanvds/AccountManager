@@ -1109,7 +1109,7 @@ void main() {
   });
 
   testWidgets(
-      'Toevoegen offers the three rules with no other surface, and not the two '
+      'Toevoegen offers the three rules with no other surface, and not the one '
       'the WISA-scholen grid already marks (#273)',
       (WidgetTester tester) async {
     _useTallWindow(tester);
@@ -1130,14 +1130,14 @@ void main() {
       expect(
           find.byKey(ValueKey('settings-wisa-rule-add-$kind')), findsOneWidget);
     }
-    // `MarkAsOurs` is dead once the grid holds a school (managedSchoolIdsOf
-    // stops reading the snapshot's flags), and `MarkAsVirtual` duplicates the
-    // grid's per-school mark — neither is offered as a new rule.
+    // `MarkAsVirtual` duplicates the grid's per-school mark, so it is not
+    // offered as a new rule. Its `beheerd` counterpart is not a rule kind at all
+    // any more (#286), so there is nothing to offer.
     expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsVirtual')),
         findsNothing);
     expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsOurs')),
         findsNothing);
-    // …and the section says where those two live instead.
+    // …and the section says where the school marks live instead.
     expect(find.byKey(const ValueKey('settings-wisa-rules-school-note')),
         findsOneWidget);
   });
@@ -1319,7 +1319,7 @@ void main() {
     _useTallWindow(tester);
     final harness = SettingsHarness(
       initial: AppSettings(
-        wisaRules: <WisaImportRule>[const MarkAsOurs('ISMAA')],
+        wisaRules: <WisaImportRule>[const MarkAsVirtual('ISMAA')],
       ),
     );
     await tester
@@ -1330,7 +1330,7 @@ void main() {
     // Editable: the prompt opens on the rule's own kind and value.
     await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-edit')));
     await tester.pumpAndSettle();
-    expect(find.text('Markeer als beheerd'), findsOneWidget);
+    expect(find.text('Markeer als virtueel'), findsOneWidget);
     expect(find.text('ISMAA'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-cancel')));
     await tester.pumpAndSettle();
@@ -1341,6 +1341,41 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
     expect((await harness.store.load()).wisaRules, isEmpty);
+  });
+
+  testWidgets(
+      'a persisted MarkAsOurs is ignored, so the list shows only live rules '
+      '(#286)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // A document another operator (or an older build) wrote. The rule kind is
+    // gone, so it can only be introduced as raw JSON — which is exactly the
+    // shape Cosmos hands back.
+    final harness = SettingsHarness(
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisaRules': <dynamic>[
+          <String, dynamic>{'type': 'markAsOurs', 'schoolCode': 'ISMAA'},
+          <String, dynamic>{'type': 'dontImportClass', 'className': 'OKAN'},
+        ],
+      }),
+    );
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-wisa');
+    expect(find.text('Klas niet importeren uit WISA: OKAN'), findsOneWidget);
+    expect(find.textContaining('Markeer als beheerd'), findsNothing);
+
+    // …and saving drops it from the document for good.
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await harness.store.load();
+    expect(saved.wisaRules, hasLength(1));
+    expect(
+      (saved.toJson()['wisaRules'] as List<dynamic>)
+          .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+      <String>['dontImportClass'],
+    );
   });
 
   testWidgets(

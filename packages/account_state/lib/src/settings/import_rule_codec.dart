@@ -48,7 +48,6 @@ Map<String, dynamic> encodeWisaRule(
         'replacement': rule.replacement,
       },
     MarkAsVirtual() => {'type': 'markAsVirtual', 'schoolCode': rule.schoolCode},
-    MarkAsOurs() => {'type': 'markAsOurs', 'schoolCode': rule.schoolCode},
   };
   final Map<String, dynamic> extra = provenance?.toJson() ?? const {};
   if (extra.isEmpty) return encoded;
@@ -66,9 +65,16 @@ RuleProvenance? decodeWisaRuleProvenance(Map<String, dynamic> json) =>
 
 /// Decodes a tagged-JSON map produced by [encodeWisaRule].
 ///
+/// Returns `null` for a **retired** tag — a rule kind this app no longer has, so
+/// far the `markAsOurs` dropped by #286. A document another operator (or an
+/// older build) wrote still loads; the entry is simply ignored and disappears
+/// from the document the next time it is saved. That is safe precisely because
+/// the rule already did nothing: ownership comes from the WISA-scholen list in
+/// Settings, which wins over any snapshot flag.
+///
 /// Throws [FormatException] on an unknown or missing `type` tag so a corrupt
 /// config surfaces loudly rather than silently dropping rules.
-WisaImportRule decodeWisaRule(Map<String, dynamic> json) {
+WisaImportRule? decodeWisaRule(Map<String, dynamic> json) {
   final type = json['type'];
   switch (type) {
     case 'dontImportClass':
@@ -83,7 +89,7 @@ WisaImportRule decodeWisaRule(Map<String, dynamic> json) {
     case 'markAsVirtual':
       return MarkAsVirtual(json['schoolCode'] as String);
     case 'markAsOurs':
-      return MarkAsOurs(json['schoolCode'] as String);
+      return null;
     default:
       throw FormatException('Unknown WisaImportRule type: $type');
   }

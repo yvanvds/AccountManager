@@ -593,8 +593,8 @@ void main() {
   group('the rest of the reconcile stack reads settings live too (#246)', () {
     /// The #178 fixture, but with ownership coming from the settings document
     /// rather than a constructor argument: one student enrolled in school 2 and
-    /// fully present in our Smartschool + Azure, and no `MarkAsOurs` flag on the
-    /// WISA schools — so who is managed is decided solely by [live].
+    /// fully present in our Smartschool + Azure, and no ownership anywhere on
+    /// the WISA snapshot — so who is managed is decided solely by [live].
     ReconcileHarness managedFrom(LiveSettings live) => ReconcileHarness(
           wisa: wisaSnap(
             students: [wisaStudent(schoolId: 2)],
@@ -925,7 +925,7 @@ void main() {
     ReconcileHarness intakeFrom(LiveSettings live) => ReconcileHarness(
           wisa: wisaSnap(
             students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-            schools: [wisaSchool(1, ours: true)],
+            schools: [wisaSchool(1)],
           ),
           smartschool: ssSnap(
             groups: [ssGroup('3C', code: '3C_ss')],
@@ -1000,7 +1000,7 @@ void main() {
       final harness = ReconcileHarness(
         wisa: wisaSnap(
           students: [wisaStudent(classGroup: '3C')],
-          schools: [wisaSchool(1, ours: true)],
+          schools: [wisaSchool(1)],
           classGroups: [wisaClassGroup('3C')],
         ),
         smartschool: ssSnap(
@@ -1112,7 +1112,7 @@ void main() {
       final harness = ReconcileHarness(
         wisa: wisaSnap(
           students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-          schools: [wisaSchool(1, ours: true)],
+          schools: [wisaSchool(1)],
         ),
         smartschool: ssSnap(
           groups: [ssGroup('3C', code: '3C_ss')],

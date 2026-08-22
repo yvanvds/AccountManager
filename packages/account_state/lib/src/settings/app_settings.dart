@@ -90,16 +90,18 @@ class AppSettings {
   /// Smartschool import rules applied at snapshot construction (spec §3.11).
   final List<SmartschoolImportRule> smartschoolRules;
 
-  /// Per-WISA-school ownership entries (the `MarkAsOurs` counterpart persisted
-  /// by school id). Empty means no school has been marked managed yet — the
-  /// group-membership plumbing #113 slice 2 reads, but no action fires here.
+  /// Per-WISA-school ownership entries, keyed by school id. Empty means no
+  /// school has been marked managed yet — the group-membership plumbing #113
+  /// slice 2 reads, but no action fires here.
   final List<WisaSchoolProfile> wisaSchools;
 
   /// The set of WISA school ids the operator manages — the `ours`-flagged
   /// entries of [wisaSchools] (#178). This is what the linker joins student
-  /// membership against so `wisaPresence` is authoritative from Settings; empty
-  /// when no school is flagged (the caller then falls back to the snapshot's
-  /// `MarkAsOurs` flags rather than passing an empty managed set).
+  /// membership against so `wisaPresence` is authoritative from Settings, and
+  /// since #286 it is the *only* source of ownership. Empty means ownership is
+  /// unconfigured, which every reader treats as "every school counts" rather
+  /// than "no school is ours" — the honest answer for an install that has not
+  /// filled the WISA-scholen list in yet.
   Set<int> get managedWisaSchoolIds => <int>{
         for (final p in wisaSchools)
           if (p.ours) p.schoolId,
@@ -177,15 +179,20 @@ class AppSettings {
     // The rule and its provenance share one object on the wire (#285) and are
     // two values in memory, so they are split in one pass rather than by
     // decoding the list twice.
+    //
+    // A retired rule kind decodes as null and is dropped, provenance and all
+    // (#286): the document loads, and the entry is gone from the next save.
     final wisaRules = <WisaImportRule>[];
     final wisaRuleProvenance = <String, RuleProvenance>{};
     for (final r in wisa) {
       final encoded = r as Map<String, dynamic>;
       final rule = decodeWisaRule(encoded);
+      if (rule == null) continue;
       wisaRules.add(rule);
       final provenance = decodeWisaRuleProvenance(encoded);
-      if (provenance != null)
+      if (provenance != null) {
         wisaRuleProvenance[wisaRuleKey(rule)] = provenance;
+      }
     }
     return AppSettings(
       schoolPrefix: (json['schoolPrefix'] as String?) ?? '',

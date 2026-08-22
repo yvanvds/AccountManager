@@ -530,8 +530,8 @@ void main() {
     });
 
     test('with ownership unconfigured every school still counts', () {
-      // Mirrors the linker's `_isOurWisaSchool` fallback: no managed set and no
-      // `isOurs` flags means ownership is unconfigured, not "nothing is ours".
+      // Mirrors the linker's `_isOurWisaSchool` fallback: no managed set means
+      // ownership is unconfigured, not "nothing is ours".
       final resolver = PlacementResolver(
         wisa: _wSnap(
           students: [_wStudent(wisaId: '1', classGroup: '1A', schoolId: 2)],
@@ -546,16 +546,16 @@ void main() {
       );
     });
 
-    test('the managed set falls back to the snapshot\'s isOurs flags', () {
-      // No caller-supplied set, but the snapshot says which school is ours —
-      // the same derivation `link()` applies, so the two layers agree.
+    test('the snapshot\'s school list never decides ownership (#286)', () {
+      // A school list on the snapshot carries no ownership, so it cannot narrow
+      // the tally on its own — exactly as `link()` no longer derives one, which
+      // is what keeps the two layers agreeing.
       final resolver = PlacementResolver(
         wisa: _wSnap(
           students: [_wStudent(wisaId: '1', classGroup: '1A', schoolId: 2)],
           classGroups: [_wClass('1A', adminCode: 'a1', schoolId: 1)],
           schools: const [
-            wapi.WisaSchool(
-                id: 1, name: 'Onze school', code: 'ISM', isOurs: true),
+            wapi.WisaSchool(id: 1, name: 'Onze school', code: 'ISM'),
             wapi.WisaSchool(id: 2, name: 'Andere school', code: 'AND'),
           ],
         ),
@@ -564,6 +564,21 @@ void main() {
 
       expect(
         resolver.groupPlacementFor(_linkedWisaGroup('1A')).containsStudents,
+        isTrue,
+      );
+
+      // Naming the managed set is what scopes it.
+      final scoped = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '1A', schoolId: 2)],
+          classGroups: [_wClass('1A', adminCode: 'a1', schoolId: 1)],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      expect(
+        scoped.groupPlacementFor(_linkedWisaGroup('1A')).containsStudents,
         isFalse,
       );
     });
@@ -855,7 +870,6 @@ void main() {
             id: 99,
             name: 'Virtuele school',
             code: 'ISMV',
-            isOurs: true,
             isVirtual: true,
           ),
         ],
@@ -879,7 +893,6 @@ void main() {
             id: 99,
             name: 'Virtuele school',
             code: 'ISMV',
-            isOurs: true,
             isVirtual: true,
           ),
         ],

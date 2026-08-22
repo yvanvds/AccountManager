@@ -121,23 +121,21 @@ void main() {
       expect(a.copyWith().isVirtual, isFalse);
     });
 
-    test('isOurs participates in equality and copyWith and round-trips', () {
-      const a = WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA');
-      const managed = WisaSchool(
-        id: 1,
-        name: 'Sint-Maria',
-        code: 'SMA',
-        isOurs: true,
-      );
-      expect(a, isNot(managed));
-      expect(a.copyWith(isOurs: true).isOurs, isTrue);
-      expect(a.copyWith().isOurs, isFalse);
-      expect(WisaSchool.fromJson(managed.toJson()), managed);
-      // Old snapshots without the key default to not-ours.
+    test('an isOurs key from a snapshot written before #286 is ignored', () {
+      // The flag is gone: ownership is the operator's WISA-scholen list in
+      // Settings. A cold snapshot that still carries the key must load, and read
+      // back equal to the same school without it, rather than throwing.
+      const school = WisaSchool(id: 1, name: 'Sint-Maria', code: 'SMA');
+      expect(school.toJson().containsKey('isOurs'), isFalse);
       expect(
-        WisaSchool.fromJson(
-            const {'id': 1, 'name': 'Sint-Maria', 'code': 'SMA'}).isOurs,
-        isFalse,
+        WisaSchool.fromJson(const {
+          'id': 1,
+          'name': 'Sint-Maria',
+          'code': 'SMA',
+          'isVirtual': false,
+          'isOurs': true,
+        }),
+        school,
       );
     });
 
@@ -149,13 +147,12 @@ void main() {
         'id': 25,
         'name': 'ISMAA',
         'description': 'Instituut Sancta Maria-A',
-        'isVirtual': false,
-        'isOurs': true,
+        'isVirtual': true,
       };
       final migrated = WisaSchool.fromJson(legacy);
       expect(migrated.name, 'Instituut Sancta Maria-A');
       expect(migrated.code, 'ISMAA');
-      expect(migrated.isOurs, isTrue);
+      expect(migrated.isVirtual, isTrue);
     });
 
     test('toString includes id, name, code, and virtual flag', () {

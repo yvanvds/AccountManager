@@ -393,14 +393,14 @@ Future<ReconcileServices> bootstrapReconcile({
 
   // The operator's managed-school set from Settings, shared by the linker
   // (#178) and by the Azure back-fill below (#224) so both scope to the same
-  // schools. Null when no school is flagged, so a not-yet-configured group
-  // falls back to the snapshot's own `MarkAsOurs` flags.
+  // schools. Empty when no school is flagged, which every reader treats as
+  // "ownership unconfigured" and counts every school.
   //
   // Read from the live document at every use (#246) — flipping a school's
   // **beheerd** mark in Instellingen must reach the next relink, not the next
   // launch. Both readers below call this, so the linker and the Azure back-fill
   // can never end up scoping to different school sets.
-  Set<int>? ourSchoolIdsNow() => managedSchoolIdsOf(live.current);
+  Set<int> ourSchoolIdsNow() => managedSchoolIdsOf(live.current);
 
   // Assigned immediately below; the Azure syncer closes over it so it can read
   // the WISA snapshot *this* pass just pulled (WISA always syncs first).
@@ -587,17 +587,22 @@ Future<ReconcileServices> bootstrapReconcile({
 }
 
 /// The WISA school ids the operator manages, as the linker and the Azure
-/// back-fill both want them: the `ours`-flagged ids of [settings], or `null`
-/// when the operator has curated no school at all.
+/// back-fill both want them: the `ours`-flagged ids of the WISA-scholen grid in
+/// Instellingen (#178/#246).
 ///
-/// The null is load-bearing and is why this is a named function rather than an
-/// inline read (#178/#246). An **empty set** means "ownership is configured and
-/// nothing is ours"; `null` means "not configured", which makes `link()` and
-/// [PlacementResolver] fall back to the snapshot's own `MarkAsOurs` flags. A
-/// group that has never filled the WISA-scholen grid in must get the second, not
-/// the first.
-Set<int>? managedSchoolIdsOf(AppSettings settings) =>
-    settings.wisaSchools.isEmpty ? null : settings.managedWisaSchoolIds;
+/// This is the whole of ownership since #286. It used to answer `null` for an
+/// install whose grid was empty, so `link()` and [PlacementResolver] would fall
+/// back to the snapshot's own `MarkAsOurs` flags — a fallback no install ever
+/// reached once **Scholen ophalen** had been pressed, and which the rule that
+/// fed it has now been deleted with.
+///
+/// An **empty** set is therefore the answer for a not-yet-configured install,
+/// and it is the right one: every reader treats an empty managed set as
+/// "ownership unconfigured" and counts every school, never as "no school is
+/// ours". It stays a named function so both readers below share one definition
+/// and can never scope to different school sets.
+Set<int> managedSchoolIdsOf(AppSettings settings) =>
+    settings.managedWisaSchoolIds;
 
 /// The Smartschool class-tree live-config, derived from the persisted
 /// connection profile: the year or grade group codes (whichever the school
@@ -736,10 +741,11 @@ String _schoolLabel(wapi.WisaSchool school) {
 ///
 /// The virtual marks live in the settings document keyed by school **id**
 /// ([AppSettings.virtualWisaSchoolIds], #203), while the snapshot-time
-/// `MarkAsVirtual` import rule matches by school **name**. Setting
-/// `WisaSchool.isVirtual` straight from settings mirrors how `ourSchoolIds`
-/// bypasses `MarkAsOurs`: the operator-editable record is authoritative and no
-/// rule has to be synthesised for it.
+/// `MarkAsVirtual` import rule matches by school **code**. Setting
+/// `WisaSchool.isVirtual` straight from settings is the same move ownership
+/// made: the operator-editable record is authoritative and no rule has to be
+/// synthesised for it — which for ownership went all the way, the rule being
+/// deleted outright in #286.
 ///
 /// The pass is additive — a school the rules already flagged stays flagged even
 /// when it is not in [virtualIds] — so wiring settings in can never silently

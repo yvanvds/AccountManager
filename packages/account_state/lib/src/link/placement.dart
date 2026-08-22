@@ -88,19 +88,15 @@ class SmartschoolClassTree {
 /// Settings-derived set `LinkedState` threads into `link()` (#178/#205). The
 /// snapshots pool every school the shared WISA credentials reach, so the
 /// resolver needs it to keep a sibling school's rows from answering questions
-/// about *our* classes (#221/#222). When omitted it falls back to the
-/// snapshot's own `WisaSchool.isOurs` flags, exactly like `link()`.
+/// about *our* classes (#221/#222). When omitted, ownership counts as
+/// unconfigured and every school answers — exactly like `link()`.
 class PlacementResolver {
   PlacementResolver({
     required wapi.WisaSnapshot wisa,
     required ss.SmartschoolSnapshot smartschool,
     this.classTree = const SmartschoolClassTree(),
     Set<int>? ourSchoolIds,
-  }) : _ourSchoolIds = ourSchoolIds ??
-            <int>{
-              for (final school in wisa.schools)
-                if (school.isOurs) school.id,
-            } {
+  }) : _ourSchoolIds = ourSchoolIds ?? const <int>{} {
     // Index the Smartschool tree by name (for resolveClass) and by code (for
     // the current-class and logical-parent lookups). First wins on a
     // collision, keeping the result a deterministic function of snapshot order.
@@ -189,9 +185,9 @@ class PlacementResolver {
   /// The WISA school ids the operator actually manages (#222), from the
   /// persisted Settings ownership flags the State layer threads in — the same
   /// set the linker scopes group seeding by (#205). When the caller passes
-  /// none it is derived from the snapshot's own `WisaSchool.isOurs` flags,
-  /// exactly as `link()` derives its own fallback, so the two layers always
-  /// agree on which classes exist and which students populate them.
+  /// none it is empty, exactly as `link()` treats its own omitted set, so the
+  /// two layers always agree on which classes exist and which students
+  /// populate them.
   ///
   /// An **empty** set means ownership is unconfigured, in which case every
   /// school counts as ours — mirroring the linker's `_isOurWisaSchool` and

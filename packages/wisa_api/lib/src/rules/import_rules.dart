@@ -17,6 +17,12 @@ import '../models/wisa_staff.dart';
 /// Base sealed type for the four WISA import rules. Each subtype knows
 /// only how to test and modify its own target model — no `instanceof`
 /// dispatch on a generic `object`, unlike the legacy `IRule`.
+///
+/// Legacy `WI_MarkAsOurs` has **no** port (#286). It flipped a
+/// `WisaSchool.isOurs` flag nothing read: the managed-school set comes from the
+/// operator's WISA-scholen grid in Instellingen (#178), which is authoritative
+/// the moment it holds a single school — so the rule could be saved and then
+/// silently do nothing.
 sealed class WisaImportRule {
   const WisaImportRule();
 }
@@ -66,18 +72,6 @@ class MarkAsVirtual extends WisaImportRule {
   bool matches(WisaSchool s) => s.code == schoolCode;
 }
 
-/// Flags schools whose [WisaSchool.code] equals [schoolCode] as *ours*
-/// (managed). Group-wide leave detection (#113) uses the flag to tell a
-/// student gone from *our* school but still in the group from one gone from
-/// the whole group. Mirrors [MarkAsVirtual] — a snapshot-time school marker
-/// keyed by the short WISA school code.
-class MarkAsOurs extends WisaImportRule {
-  final String schoolCode;
-  const MarkAsOurs(this.schoolCode);
-
-  bool matches(WisaSchool s) => s.code == schoolCode;
-}
-
 /// Applies all rules in [rules] to [groups], in order. Returns a new list;
 /// the input is not mutated.
 ///
@@ -104,7 +98,6 @@ List<WisaClassGroup> applyRulesToClassGroups(
           g = r.apply(g);
         case DontImportUserFromWisa():
         case MarkAsVirtual():
-        case MarkAsOurs():
           break;
       }
     }
@@ -130,10 +123,13 @@ List<WisaStaff> applyRulesToStaff(
   return result;
 }
 
-/// Applies the school-marking rules ([MarkAsVirtual], [MarkAsOurs]) in
-/// [rules] to [schools]. Returns a new list with `isVirtual` / `isOurs`
-/// flipped on matching schools; the input is not mutated. A school can be
-/// flagged by both rules independently.
+/// Applies the school-marking rule [MarkAsVirtual] in [rules] to [schools].
+/// Returns a new list with `isVirtual` flipped on matching schools; the input
+/// is not mutated.
+///
+/// The pass is additive — a school already flagged stays flagged — so unioning
+/// the operator's per-school virtual marks in (`markVirtualSchools`) can never
+/// un-virtualise a school a rule covers.
 List<WisaSchool> applyRulesToSchools(
   Iterable<WisaSchool> schools,
   Iterable<WisaImportRule> rules,
@@ -143,7 +139,6 @@ List<WisaSchool> applyRulesToSchools(
       s.copyWith(
         isVirtual:
             s.isVirtual || rules.any((r) => r is MarkAsVirtual && r.matches(s)),
-        isOurs: s.isOurs || rules.any((r) => r is MarkAsOurs && r.matches(s)),
       ),
   ];
 }

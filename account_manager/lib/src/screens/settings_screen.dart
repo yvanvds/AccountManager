@@ -36,13 +36,14 @@ import '../settings/wisa_rule_labels.dart';
 /// - **Smartschool** (#202): the two rules the legacy app offers
 ///   (`DiscardSmartschoolGroup`, `NoSmartschoolSubgroups`).
 /// - **WISA** (#273): the three rules with no other surface —
-///   `DontImportClass`, `DontImportUserFromWisa` and `ReplaceInstitute`. The two
-///   school-marking rules (`MarkAsVirtual`, `MarkAsOurs`) stay editable and
-///   removable but are *not* offered under **Toevoegen**: the WISA-scholen grid
-///   above already marks a school virtual/beheerd per school **id**, and for
-///   `beheerd` that grid is authoritative (`managedSchoolIdsOf` ignores the
-///   snapshot's `MarkAsOurs` flags as soon as the grid holds one school), so a
-///   rule authored here would be a control that silently does nothing.
+///   `DontImportClass`, `DontImportUserFromWisa` and `ReplaceInstitute`. The
+///   school-marking `MarkAsVirtual` stays editable and removable but is *not*
+///   offered under **Toevoegen**: the WISA-scholen grid above already marks a
+///   school virtueel per school **id**, so a rule authored here would duplicate
+///   a control that is already there. Its `beheerd` counterpart went further and
+///   was deleted (#286) — the grid was authoritative for ownership, so the rule
+///   could be saved and then silently do nothing; a document that still carries
+///   one is ignored when it loads.
 ///
 /// The WISA list shows the **persisted** rules — the operator's standing
 /// configuration, which is what a pull unions with whatever this session earned.
@@ -1108,7 +1109,7 @@ class _WorkDateField extends StatelessWidget {
 
 /// The value(s) a WISA rule matches on, in the field order [_WisaRuleKind]
 /// declares — what the edit prompt opens on. The sealed base type carries no
-/// shared field, so a switch over the five cases is where they meet.
+/// shared field, so a switch over the four cases is where they meet.
 List<String> _wisaRuleValues(WisaImportRule rule) => switch (rule) {
       DontImportClass(:final className) => <String>[className],
       DontImportUserFromWisa(:final userCode) => <String>[userCode],
@@ -1117,20 +1118,17 @@ List<String> _wisaRuleValues(WisaImportRule rule) => switch (rule) {
           replacement,
         ],
       MarkAsVirtual(:final schoolCode) => <String>[schoolCode],
-      MarkAsOurs(:final schoolCode) => <String>[schoolCode],
     };
 
-/// The five WISA import rules, with the Dutch labels and the field prompts the
+/// The four WISA import rules, with the Dutch labels and the field prompts the
 /// editor authors them through (#273). Calling a kind builds its rule from the
 /// values the prompt collected, in [fields] order.
 ///
-/// [authorable] is what **Toevoegen** offers. The two school-marking rules are
-/// deliberately not on that menu: the WISA-scholen grid above already marks a
-/// school virtueel/beheerd per school **id**, and for `beheerd` that grid wins
-/// outright — `managedSchoolIdsOf` stops consulting the snapshot's `MarkAsOurs`
-/// flags the moment the grid holds a single school, so a rule authored here
-/// would persist and then do nothing. They stay editable and removable, so a
-/// document that already carries one can be corrected or cleaned up.
+/// [authorable] is what **Toevoegen** offers. `MarkAsVirtual` is deliberately
+/// not on that menu: the WISA-scholen grid above already marks a school virtueel
+/// per school **id**, so a rule authored here would duplicate it. It stays
+/// editable and removable, so a document that already carries one can be
+/// corrected or cleaned up.
 enum _WisaRuleKind {
   dontImportClass(
     label: 'Klas niet importeren',
@@ -1155,13 +1153,6 @@ enum _WisaRuleKind {
     label: 'Markeer als virtueel',
     explanation: 'De school met deze code wordt met de virtuele werkdatum '
         'opgehaald.',
-    fields: <String>['Schoolcode'],
-    hints: <String>['De korte WISA-code van de school'],
-    authorable: false,
-  ),
-  markAsOurs(
-    label: 'Markeer als beheerd',
-    explanation: 'De school met deze code telt als een school die wij beheren.',
     fields: <String>['Schoolcode'],
     hints: <String>['De korte WISA-code van de school'],
     authorable: false,
@@ -1204,7 +1195,6 @@ enum _WisaRuleKind {
             replacement: values[1],
           ),
         _WisaRuleKind.markAsVirtual => MarkAsVirtual(values[0]),
-        _WisaRuleKind.markAsOurs => MarkAsOurs(values[0]),
       };
 
   static _WisaRuleKind of(WisaImportRule rule) => switch (rule) {
@@ -1212,7 +1202,6 @@ enum _WisaRuleKind {
         DontImportUserFromWisa() => _WisaRuleKind.dontImportUser,
         ReplaceInstitute() => _WisaRuleKind.replaceInstitute,
         MarkAsVirtual() => _WisaRuleKind.markAsVirtual,
-        MarkAsOurs() => _WisaRuleKind.markAsOurs,
       };
 }
 
@@ -1292,8 +1281,7 @@ class _WisaRulesEditor extends StatelessWidget {
         const SizedBox(height: PlinkSpacing.s3),
         Text(
           'Virtueel en beheerd markeer je per school hierboven bij '
-          '"WISA-scholen", niet met een regel: die lijst gaat per school en is '
-          'voor "beheerd" doorslaggevend.',
+          '"WISA-scholen", niet met een regel.',
           key: const ValueKey('settings-wisa-rules-school-note'),
           style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
         ),

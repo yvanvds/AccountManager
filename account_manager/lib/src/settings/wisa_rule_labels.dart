@@ -21,7 +21,6 @@ String describeWisaRule(WisaImportRule rule) => switch (rule) {
       ReplaceInstitute(:final original, :final replacement) =>
         'Vervang instituut: $original → $replacement',
       MarkAsVirtual(:final schoolCode) => 'Markeer als virtueel: $schoolCode',
-      MarkAsOurs(:final schoolCode) => 'Markeer als beheerd: $schoolCode',
     };
 
 /// What a provenance field reads as when the document records nothing for it

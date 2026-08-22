@@ -561,17 +561,20 @@ void main() {
       expect(ids, {'W1'});
     });
 
-    test('falls back to the snapshot\'s own isOurs flags', () {
+    test('the snapshot\'s school list never narrows the scope (#286)', () {
+      // Ownership lives in Settings alone; a school list on the snapshot says
+      // nothing about which schools are ours, so an unnamed managed set still
+      // means every student counts.
       final ids = managedStudentEmployeeIds(
         snap(
           [student('W1'), student('W2', schoolId: 2)],
-          schools: [
-            const WisaSchool(id: 1, name: '', code: '', isOurs: false),
-            const WisaSchool(id: 2, name: '', code: '', isOurs: true),
+          schools: const [
+            WisaSchool(id: 1, name: '', code: ''),
+            WisaSchool(id: 2, name: '', code: ''),
           ],
         ),
       );
-      expect(ids, {'W2'});
+      expect(ids, {'W1', 'W2'});
     });
 
     test('an unconfigured ownership set means every student counts', () {
@@ -657,19 +660,19 @@ void main() {
       );
     });
 
-    test('falls back to the snapshot\'s own isOurs flags', () {
+    test('the snapshot\'s school list never narrows the scope (#286)', () {
       expect(
         managedClassGroupMailNicknames(
           snap(
             [student('W1'), student('W2', classGroup: '9Z', schoolId: 2)],
-            schools: [
-              const WisaSchool(id: 1, name: '', code: '', isOurs: false),
-              const WisaSchool(id: 2, name: '', code: '', isOurs: true),
+            schools: const [
+              WisaSchool(id: 1, name: '', code: ''),
+              WisaSchool(id: 2, name: '', code: ''),
             ],
           ),
           schoolPrefix: 'GBS',
         ),
-        {'GBS-9Z'},
+        {'GBS-1A', 'GBS-9Z'},
       );
     });
 

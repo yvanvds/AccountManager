@@ -41,7 +41,6 @@ AppSettings _sampleSettings() => AppSettings(
         DontImportUserFromWisa('U42'),
         ReplaceInstitute(original: '001', replacement: '002'),
         MarkAsVirtual('VIRT'),
-        MarkAsOurs('SMA'),
       ],
       smartschoolRules: const [
         DiscardSmartschoolGroup('Archief'),
@@ -88,6 +87,44 @@ void main() {
       expect(settings.wisa, const WisaConnection());
       expect(settings.smartschool, SmartschoolConnection());
       expect(settings.azure, const AzureConnection());
+    });
+
+    test('a persisted markAsOurs rule loads and is dropped (#286)', () {
+      // The rule kind is gone, and a document that still carries one has to keep
+      // loading — it is shared, and an older build (or another operator) may
+      // have written it. It already did nothing, so there is nothing to migrate.
+      final settings = AppSettings.fromJson(<String, dynamic>{
+        'wisaRules': <dynamic>[
+          <String, dynamic>{
+            'type': 'markAsOurs',
+            'schoolCode': 'SMA',
+            'addedBy': 'jan@school.example',
+          },
+          <String, dynamic>{'type': 'dontImportClass', 'className': '3C'},
+        ],
+      });
+
+      expect(settings.wisaRules, hasLength(1));
+      expect(settings.wisaRules.single, isA<DontImportClass>());
+      // Its provenance goes with it rather than lingering as an orphan key.
+      expect(settings.wisaRuleProvenance.keys, isEmpty);
+      // …and the next save writes the document without it.
+      expect(
+        (settings.toJson()['wisaRules'] as List<dynamic>)
+            .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+        <String>['dontImportClass'],
+      );
+    });
+
+    test('an unknown rule tag still throws, unlike a retired one (#286)', () {
+      expect(
+        () => AppSettings.fromJson(<String, dynamic>{
+          'wisaRules': <dynamic>[
+            <String, dynamic>{'type': 'markAsPurple', 'schoolCode': 'SMA'},
+          ],
+        }),
+        throwsFormatException,
+      );
     });
 
     test('models secrets as refs, never as values in the blob', () {

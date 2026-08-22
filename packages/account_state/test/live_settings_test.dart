@@ -173,7 +173,7 @@ void main() {
       final settings = _settings().copyWith(
         wisaRules: const <WisaImportRule>[
           DontImportClass('3C'),
-          MarkAsOurs('S1'),
+          MarkAsVirtual('S1'),
         ],
       );
       expect(wisaPullFingerprint(settings), wisaPullFingerprint(settings));
