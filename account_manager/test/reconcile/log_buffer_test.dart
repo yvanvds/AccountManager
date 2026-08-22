@@ -12,11 +12,11 @@ void main() {
     final entry = LogEntry(
       time: DateTime(2026, 7, 1, 9, 4, 7),
       origin: Origin.wisa,
-      message: 'Syncing WISA...',
+      message: 'WISA ophalen...',
       isError: false,
     );
 
-    expect(entry.line, '09:04:07  [wisa]  Syncing WISA...');
+    expect(entry.line, '09:04:07  [wisa]  WISA ophalen...');
   });
 
   test('an empty buffer copies as the empty string', () {

@@ -286,7 +286,7 @@ Future<ReconcileServices> bootstrapReconcile({
 
   final syncedBy = session.account ?? '';
   void logSnapshotIssue(core.Origin system, Object error) =>
-      logBuffer.addError(system, 'Snapshot store: $error');
+      logBuffer.addError(system, 'Snapshotopslag: $error');
 
   final secrets = secretProvider ??
       KeyVaultSecretProvider(
@@ -692,10 +692,10 @@ String wisaPullMessage({
     for (final s in schools)
       if (s.isVirtual) _schoolLabel(s),
   ];
-  final head = 'Pulling WISA with werkdatum ${wapi.formatWerkdatum(workDate)}';
+  final head = 'WISA ophalen met werkdatum ${wapi.formatWerkdatum(workDate)}';
   if (virtual.isEmpty) return '$head.';
   return '$head; virtuele werkdatum '
-      '${wapi.formatWerkdatum(virtualWorkDate)} for ${virtual.join(', ')}.';
+      '${wapi.formatWerkdatum(virtualWorkDate)} voor ${virtual.join(', ')}.';
 }
 
 /// How a school is named in the pull line: the short code the rest of the WISA

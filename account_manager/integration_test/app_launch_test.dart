@@ -269,9 +269,52 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('no account changes needed'), findsWidgets);
+    // The on-screen banner is #265's to translate; the Log *line* beside it is
+    // Dutch since #258.
+    expect(find.textContaining('no account changes needed'), findsOneWidget);
     expect(harness.ssSyncs, 1);
     expect(harness.azSyncs, 1);
+
+    // The Log panel is one running account of everything this session did —
+    // three pulls, a link, a dry-run, an apply, a second pass — and it reads in
+    // one language from top to bottom (#258). Before this it switched halfway:
+    // English pull/link/apply lines under the Dutch terminal line #253 wrote.
+    expect(find.byKey(const ValueKey('reconcile-log-panel')), findsOneWidget);
+    for (final String line in <String>[
+      'WISA ophalen…',
+      'Smartschool ophalen…',
+      'Azure AD ophalen…',
+      'WISA is ongewijzigd sinds de vorige synchronisatie — '
+          'geen accountwijzigingen nodig.',
+      'Gekoppeld: ',
+      'Dry-run gestart voor ',
+      'Dry-run klaar: ',
+      'Toepassen gestart voor ',
+      'Toepassen klaar: ',
+      'Sync voltooid — ',
+    ]) {
+      expect(find.textContaining(line), findsWidgets, reason: line);
+    }
+    // …and not one entry the pass wrote is still the English it used to be.
+    final List<String> logged =
+        harness.log.entries.map((e) => e.message).toList();
+    for (final String english in <String>[
+      'Syncing ',
+      'WISA sync done',
+      'WISA is unchanged',
+      'Checking ',
+      'Linked: ',
+      'Apply started',
+      'Apply finished',
+      'Dry-run started',
+      'Dry-run finished',
+    ]) {
+      expect(
+        logged.where((String m) => m.startsWith(english)),
+        isEmpty,
+        reason: english,
+      );
+    }
   });
 
   testWidgets(
@@ -812,7 +855,12 @@ void main() {
       isNotNull,
     );
     // The operator sees the timeout in the log panel, not silence.
-    expect(find.textContaining('timed out'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Het opslaan van het gedeelde overzicht duurde langer dan',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -822,7 +870,7 @@ void main() {
     // The real app, driven the way the operator drives it, over the *production*
     // Cosmos write path — a real HttpCosmosClient and CosmosLinkedStore — with
     // the account answering the middle of the write burst with 429s. Before the
-    // fix this ended the pass with "Could not persist the linked view:
+    // fix this ended the pass with "Kon het gedeelde overzicht niet opslaan:
     // CosmosException(429 …)" and left the shared containers holding this sync's
     // accounts next to the previous sync's groups and rollups.
     useTallWindow(tester);
@@ -865,7 +913,10 @@ void main() {
     // The pass finished normally: nothing failed, and the operator's log panel
     // carries the terminal ready line rather than a Cosmos error.
     expect(harness.controller.busy, isFalse);
-    expect(find.textContaining('Could not persist'), findsNothing);
+    expect(
+      find.textContaining('Kon het gedeelde overzicht niet opslaan'),
+      findsNothing,
+    );
     expect(
       harness.log.entries.where((e) => e.isError).map((e) => e.message),
       isEmpty,
@@ -5294,8 +5345,8 @@ void main() {
     expect(find.byKey(const ValueKey('reconcile-log-panel')), findsOneWidget);
     expect(
       find.textContaining(
-        'Pulling WISA with werkdatum 01/09/2025; virtuele werkdatum '
-        '01/10/2025 for V.',
+        'WISA ophalen met werkdatum 01/09/2025; virtuele werkdatum '
+        '01/10/2025 voor V.',
       ),
       findsOneWidget,
     );

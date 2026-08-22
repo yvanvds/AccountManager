@@ -103,7 +103,8 @@ void main() {
           reason: 'the existing linked view is kept, no re-link');
       expect(
         h.log.entries.map((e) => e.message),
-        contains(contains('no account changes needed')),
+        contains('WISA is ongewijzigd sinds de vorige synchronisatie — '
+            'geen accountwijzigingen nodig.'),
       );
     });
 
@@ -182,6 +183,77 @@ void main() {
     });
   });
 
+  group('the pass reports itself in Dutch (#258)', () {
+    // The Log panel is one running account of one pass, so it cannot change
+    // language halfway through it: the terminal line #253 translated used to
+    // land under a stack of English pull/link lines. Every step the operator
+    // reads is pinned here, exactly as the panel renders it.
+    test('a sync names each system it pulls and what it linked', () async {
+      final h = ReconcileHarness();
+
+      await h.controller.sync();
+
+      final messages = h.log.entries.map((e) => e.message).toList();
+      expect(
+        messages,
+        containsAllInOrder(<String>[
+          'WISA ophalen…',
+          'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+          'Smartschool ophalen…',
+          'Azure AD ophalen…',
+        ]),
+      );
+      expect(messages, contains(startsWith('Gekoppeld: ')));
+      // Not one line of the pass fell back to the English it used to log.
+      expect(messages.where((m) => m.startsWith('Syncing ')), isEmpty);
+      expect(messages.where((m) => m.startsWith('Linked: ')), isEmpty);
+    });
+
+    test('a drift check names both systems it re-reads', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      h.log.clear();
+
+      await h.controller.checkDrift();
+
+      expect(
+        h.log.entries.map((e) => e.message),
+        containsAllInOrder(<String>[
+          'Smartschool controleren op drift…',
+          'Azure AD controleren op drift…',
+        ]),
+      );
+    });
+
+    test('a dry-run keeps the "Dry-run" of the Acties buttons', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      h.log.clear();
+
+      await h.controller.dryRun();
+
+      final messages = h.log.entries.map((e) => e.message).toList();
+      expect(messages.first, startsWith('Dry-run gestart voor '));
+      expect(messages.last, startsWith('Dry-run klaar: '));
+      expect(messages.last, contains(' gelukt, '));
+      expect(messages.last, endsWith(' mislukt.'));
+    });
+
+    test('an apply says "Toepassen", the verb those same buttons use',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      h.log.clear();
+
+      await h.controller.applyAll();
+
+      final messages = h.log.entries.map((e) => e.message).toList();
+      expect(messages.first, startsWith('Toepassen gestart voor '));
+      expect(messages, contains(startsWith('Toepassen klaar: ')));
+      expect(messages.where((m) => m.startsWith('Apply ')), isEmpty);
+    });
+  });
+
   group('persist resilience (#168)', () {
     test(
         'a stalled writeMaterialized times out, logs it, and returns the pass '
@@ -203,7 +275,9 @@ void main() {
       // The operator sees the timeout, not silence.
       expect(
         h.log.entries.where((e) => e.isError).map((e) => e.message),
-        contains(contains('timed out')),
+        contains(contains(
+          'Het opslaan van het gedeelde overzicht duurde langer dan',
+        )),
       );
       // The in-memory linked view is still usable this session.
       expect(h.controller.linked, isNotNull);
@@ -223,7 +297,7 @@ void main() {
       expect(h.controller.phase, ReconcilePhase.ready);
       expect(
         h.log.entries.where((e) => e.isError).map((e) => e.message),
-        contains(contains('Could not persist the linked view')),
+        contains(contains('Kon het gedeelde overzicht niet opslaan')),
       );
       expect(h.controller.linked, isNotNull);
     });
@@ -280,6 +354,12 @@ void main() {
           reason: 'the managed mark is the operator\'s, never rewritten');
       expect(saved.wisaSchools.last.virtual, isTrue);
       expect(h.log.entries.where((e) => e.isError), isEmpty);
+      // And the repair says so in the operator's own language (#258).
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains('Naam en code van 2 WISA-school(en) bijgewerkt in de '
+            'instellingen (id 25, 27).'),
+      );
     });
 
     test('the unchanged-WISA shortcut still repairs the document', () async {
@@ -336,7 +416,10 @@ void main() {
       expect(h.controller.linked, isNotNull);
       expect(
         h.log.entries.where((e) => e.isError).map((e) => e.message),
-        contains(contains('cosmos 503')),
+        contains(
+          'Kon de WISA-schoolnamen niet bijwerken in de instellingen: '
+          'Bad state: cosmos 503',
+        ),
       );
     });
   });
@@ -1882,7 +1965,7 @@ void main() {
       expect(h.controller.linked, isNotNull);
       expect(
         h.log.entries.map((e) => e.message),
-        contains(contains('Could not publish a change signal')),
+        contains(contains('Kon geen wijzigingssignaal versturen')),
       );
     });
   });

@@ -498,7 +498,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('Syncing WISA', skipOffstage: false),
+      find.textContaining('WISA ophalen', skipOffstage: false),
       findsOneWidget,
     );
 

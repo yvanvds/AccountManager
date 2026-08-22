@@ -348,7 +348,7 @@ class CategorySummary {
 /// The smart-sync behaviour is the product-direction piece: [sync] retains the
 /// previous WISA snapshot (via [ApplicationState]'s [SystemState]) and diffs
 /// the fresh pull against it. When WISA is unchanged and a linked view already
-/// exists, it reports "no account changes needed" and stops — no re-link, no
+/// exists, it reports "geen accountwijzigingen nodig" and stops — no re-link, no
 /// action churn. Smartschool / Azure are pulled only when still missing this
 /// session **or when their own settings inputs have moved** ([
 /// systemsAwaitingSettings], #259); re-reading them for drift somebody else
@@ -1504,15 +1504,16 @@ class ReconcileController extends ChangeNotifier {
       // publishes a repaired document of its own (#207) — can never be mistaken
       // for the operator changing something.
       final stale = systemsAwaitingSettings;
-      log.addMessage(core.Origin.wisa, 'Syncing WISA…');
+      log.addMessage(core.Origin.wisa, 'WISA ophalen…');
       final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
       _stampWisaPull(pulledWith);
       _recordPull(core.Origin.wisa, fresh);
       _setProgress(0.25);
       log.addMessage(
         core.Origin.wisa,
-        'WISA sync done: ${fresh.students.length} students, '
-        '${fresh.staff.length} staff, ${fresh.classGroups.length} classes.',
+        'WISA opgehaald: ${fresh.students.length} leerling(en), '
+        '${fresh.staff.length} personeelsleden, '
+        '${fresh.classGroups.length} klassen.',
       );
       // Repair the operator's stored school profiles from this pull (#207).
       // Runs before the unchanged-since-last-sync shortcut below, so a session
@@ -1531,8 +1532,8 @@ class ReconcileController extends ChangeNotifier {
         _noChangesNeeded = true;
         log.addMessage(
           core.Origin.wisa,
-          'WISA is unchanged since the previous sync — '
-          'no account changes needed.',
+          'WISA is ongewijzigd sinds de vorige synchronisatie — '
+          'geen accountwijzigingen nodig.',
         );
         await _persistSystemMeta();
         _logSyncComplete();
@@ -1554,7 +1555,7 @@ class ReconcileController extends ChangeNotifier {
             'opgehaald.',
           );
         }
-        log.addMessage(core.Origin.smartschool, 'Syncing Smartschool…');
+        log.addMessage(core.Origin.smartschool, 'Smartschool ophalen…');
         final ssPulledWith = _settingsFingerprint(core.Origin.smartschool);
         _recordPull(
             core.Origin.smartschool, await app.sync(core.Origin.smartschool));
@@ -1572,7 +1573,7 @@ class ReconcileController extends ChangeNotifier {
             'Azure-instellingen gewijzigd — Azure AD wordt opnieuw opgehaald.',
           );
         }
-        log.addMessage(core.Origin.azure, 'Syncing Azure AD…');
+        log.addMessage(core.Origin.azure, 'Azure AD ophalen…');
         final azPulledWith = _settingsFingerprint(core.Origin.azure);
         _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
         _stampPull(core.Origin.azure, azPulledWith);
@@ -1624,7 +1625,7 @@ class ReconcileController extends ChangeNotifier {
     try {
       log.addMessage(
         core.Origin.smartschool,
-        'Checking Smartschool for drift…',
+        'Smartschool controleren op drift…',
       );
       // A drift pass re-reads both systems unconditionally, so it adopts a
       // saved import rule or school prefix as surely as a sync does — and must
@@ -1636,7 +1637,7 @@ class ReconcileController extends ChangeNotifier {
       _stampPull(core.Origin.smartschool, ssPulledWith);
       _setProgress(0.35);
       await _renewLock();
-      log.addMessage(core.Origin.azure, 'Checking Azure AD for drift…');
+      log.addMessage(core.Origin.azure, 'Azure AD controleren op drift…');
       final azPulledWith = _settingsFingerprint(core.Origin.azure);
       _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
       _stampPull(core.Origin.azure, azPulledWith);
@@ -1645,7 +1646,7 @@ class ReconcileController extends ChangeNotifier {
       if (app.wisa.snapshot == null) {
         await _renewLock();
         final pulledWith = _wisaFingerprint();
-        log.addMessage(core.Origin.wisa, 'Syncing WISA…');
+        log.addMessage(core.Origin.wisa, 'WISA ophalen…');
         _recordPull(core.Origin.wisa, await app.sync(core.Origin.wisa));
         _stampWisaPull(pulledWith);
       }
@@ -1874,11 +1875,14 @@ class ReconcileController extends ChangeNotifier {
     final options =
         dry ? actions.ApplyOptions.dry : const actions.ApplyOptions();
     final results = <ActionOutcomeEntry>[];
-    final label = dry ? 'Dry-run' : 'Apply';
+    // "Dry-run" is the term the Acties buttons already use ("Dry-run alles"),
+    // so it stays; its counterpart is the "Alles toepassen" of those same
+    // buttons rather than a second word for the same thing.
+    final label = dry ? 'Dry-run' : 'Toepassen';
     log.addMessage(
       core.Origin.all,
-      '$label started for ${selected.length} of ${pendingActions.length} '
-      'pending action(s).',
+      '$label gestart voor ${selected.length} van ${pendingActions.length} '
+      'openstaande actie(s).',
     );
 
     try {
@@ -1909,8 +1913,8 @@ class ReconcileController extends ChangeNotifier {
           results.where((r) => r.outcome == actions.ActionOutcome.failed);
       log.addMessage(
         core.Origin.all,
-        '$label finished: ${results.length - failed.length} ok, '
-        '${failed.length} failed.',
+        '$label klaar: ${results.length - failed.length} gelukt, '
+        '${failed.length} mislukt.',
       );
       if (dry) {
         _dryRunResults = results;
@@ -2018,9 +2022,10 @@ class ReconcileController extends ChangeNotifier {
     final s = _linked!.snapshot;
     log.addMessage(
       core.Origin.all,
-      'Linked: ${s.accounts.length} students, ${s.staff.length} staff, '
-      '${s.groups.length} groups; ${pendingActions.length} pending '
-      'action(s), ${s.warnings.length} warning(s).',
+      'Gekoppeld: ${s.accounts.length} leerling(en), '
+      '${s.staff.length} personeelsleden, ${s.groups.length} klasgroepen; '
+      '${pendingActions.length} openstaande actie(s), '
+      '${s.warnings.length} waarschuwing(en).',
     );
     _logSkippedNamesakes(s.warnings);
     _setProgress(0.9);
@@ -2334,12 +2339,15 @@ class ReconcileController extends ChangeNotifier {
     } on TimeoutException {
       log.addError(
         core.Origin.all,
-        'Persisting the linked view timed out after '
-        '${persistTimeout.inSeconds}s — the linked view is usable this session '
-        'but was not saved to the shared store.',
+        'Het opslaan van het gedeelde overzicht duurde langer dan '
+        '${persistTimeout.inSeconds}s — deze sessie kan ermee verder, maar '
+        'andere gebruikers zien het pas na de volgende synchronisatie.',
       );
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not persist the linked view: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon het gedeelde overzicht niet opslaan: $e',
+      );
     }
   }
 
@@ -2395,13 +2403,13 @@ class ReconcileController extends ChangeNotifier {
       liveSettings?.publish(saved);
       log.addMessage(
         core.Origin.wisa,
-        'Updated the name and code of ${healed.length} WISA school(s) in the '
-        'settings (id ${healed.join(', ')}).',
+        'Naam en code van ${healed.length} WISA-school(en) bijgewerkt in de '
+        'instellingen (id ${healed.join(', ')}).',
       );
     } on Object catch (e) {
       log.addError(
         core.Origin.wisa,
-        'Could not update the WISA school names in the settings: $e',
+        'Kon de WISA-schoolnamen niet bijwerken in de instellingen: $e',
       );
     }
   }
@@ -2449,7 +2457,10 @@ class ReconcileController extends ChangeNotifier {
         systems: {..._syncState.systems, ..._pulled},
       );
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not record sync metadata: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de synchronisatiegegevens niet opslaan: $e',
+      );
     }
   }
 
@@ -2476,7 +2487,10 @@ class ReconcileController extends ChangeNotifier {
       notifyListeners();
       return false;
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not take the sync lock: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de sync-vergrendeling niet nemen: $e',
+      );
       return true;
     }
   }
@@ -2496,7 +2510,10 @@ class ReconcileController extends ChangeNotifier {
         );
       }
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not renew the sync lock: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de sync-vergrendeling niet verlengen: $e',
+      );
     }
   }
 
@@ -2508,7 +2525,10 @@ class ReconcileController extends ChangeNotifier {
       // Only after the lease is actually gone — nudge others to re-enable.
       await _publish(ChangeSignal.syncEnded(owner: syncedBy));
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not release the sync lock: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon de sync-vergrendeling niet vrijgeven: $e',
+      );
     }
   }
 
@@ -2558,7 +2578,10 @@ class ReconcileController extends ChangeNotifier {
     try {
       await p.publish(signal);
     } on Object catch (e) {
-      log.addError(core.Origin.all, 'Could not publish a change signal: $e');
+      log.addError(
+        core.Origin.all,
+        'Kon geen wijzigingssignaal versturen: $e',
+      );
     }
   }
 

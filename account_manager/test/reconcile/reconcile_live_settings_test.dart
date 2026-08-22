@@ -202,7 +202,7 @@ void main() {
       expect(wire.werkdatums, <String>['01/09/2025']);
       expect(
         harness.log.entries.map((e) => e.message),
-        contains('Pulling WISA with werkdatum 01/09/2025.'),
+        contains('WISA ophalen met werkdatum 01/09/2025.'),
       );
     });
 
@@ -221,7 +221,7 @@ void main() {
       expect(
         harness.log.entries.map((e) => e.message),
         // The harness clock is fixed at kFixtureDate (2026-07-01).
-        contains('Pulling WISA with werkdatum 01/07/2026.'),
+        contains('WISA ophalen met werkdatum 01/07/2026.'),
       );
     });
 
@@ -245,8 +245,8 @@ void main() {
       expect(wire.werkdatums, <String>['01/09/2026', '01/10/2026']);
       expect(
         harness.log.entries.map((e) => e.message),
-        contains('Pulling WISA with werkdatum 01/09/2026; virtuele werkdatum '
-            '01/10/2026 for V.'),
+        contains('WISA ophalen met werkdatum 01/09/2026; virtuele werkdatum '
+            '01/10/2026 voor V.'),
       );
     });
 
@@ -266,7 +266,7 @@ void main() {
       await harness.controller.sync();
 
       final messages = harness.log.entries.map((e) => e.message);
-      expect(messages, contains('Pulling WISA with werkdatum 01/09/2026.'));
+      expect(messages, contains('WISA ophalen met werkdatum 01/09/2026.'));
       expect(messages.where((m) => m.contains('virtuele werkdatum')), isEmpty);
     });
 
@@ -281,8 +281,8 @@ void main() {
           workDate: DateTime(2026, 9, 1),
           virtualWorkDate: DateTime(2026, 10, 1),
         ),
-        'Pulling WISA with werkdatum 01/09/2026; virtuele werkdatum '
-        '01/10/2026 for Virtuele school, school 8.',
+        'WISA ophalen met werkdatum 01/09/2026; virtuele werkdatum '
+        '01/10/2026 voor Virtuele school, school 8.',
       );
     });
   });
