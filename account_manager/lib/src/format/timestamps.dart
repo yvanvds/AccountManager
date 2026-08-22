@@ -40,3 +40,25 @@ String formatFreshnessStamp(DateTime at, {DateTime? now}) {
   final String date = t.year == n.year ? dm : '$dm/${t.year}';
   return '$date $hhmm';
 }
+
+/// Renders [at] as the stamp on a **standing decision** — when a persisted
+/// import rule was added (#285).
+///
+/// Absolute and complete, unlike [formatFreshnessStamp], because the two stamps
+/// answer different questions. A freshness stamp is read minutes after the event
+/// and optimizes for the common "today" case; a rule's stamp is read months or
+/// years later by whoever inherited the configuration, and with no free-text
+/// reason on the record the date is what lets them reconstruct the context
+/// ("that was the June retirement round"). "gisteren", or a date whose year is
+/// only implied, would be worth nothing by then — so the year is always there.
+///
+/// Converted to local time: the document stores UTC, and operators read their
+/// own clock.
+String formatRuleStamp(DateTime at) {
+  final DateTime t = at.toLocal();
+  return '${t.day.toString().padLeft(2, '0')}/'
+      '${t.month.toString().padLeft(2, '0')}/'
+      '${t.year} '
+      '${t.hour.toString().padLeft(2, '0')}:'
+      '${t.minute.toString().padLeft(2, '0')}';
+}

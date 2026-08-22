@@ -1173,8 +1173,19 @@ void main() {
 
     final saved = await harness.store.load();
     expect(saved.wisaRules, hasLength(3));
-    // …on the wire shape the codec already defined — no new tags (#273).
-    expect(saved.toJson()['wisaRules'], <Map<String, dynamic>>[
+    // …on the rule tags the codec already defined — no new ones (#273). The
+    // provenance keys #285 writes beside them are asserted separately below;
+    // stripping them here keeps this test about the rule half of the object.
+    final encoded = (saved.toJson()['wisaRules'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .map((Map<String, dynamic> rule) => <String, dynamic>{
+              for (final MapEntry<String, dynamic> e in rule.entries)
+                if (!const <String>{'subject', 'addedBy', 'addedAt'}
+                    .contains(e.key))
+                  e.key: e.value,
+            })
+        .toList();
+    expect(encoded, <Map<String, dynamic>>[
       {'type': 'dontImportClass', 'className': 'OKAN'},
       {'type': 'dontImportUserFromWisa', 'userCode': 'ABC'},
       {
@@ -1390,5 +1401,220 @@ void main() {
     // is what blocks a stale drift pass.
     expect(live.current.wisaRules, hasLength(1));
     expect(wisaPullFingerprint(live.current), isNot(before));
+  });
+
+  group('a persisted WISA rule says who added it, when, and for whom (#285)',
+      () {
+    testWidgets('renders the three fields, each in its own column',
+        (WidgetTester tester) async {
+      // The shared settings document is the point (#276), and it only works if a
+      // rule a colleague added last month is legible to whoever opens the panel
+      // next: a bare `DontImportUserFromWisa` shows an opaque WISA code, and the
+      // staff these rules are about eventually vanish from WISA altogether, so
+      // the name cannot be resolved later.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: AppSettings(
+          wisaRules: const <WisaImportRule>[DontImportUserFromWisa('SMIT')],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'user:SMIT': RuleProvenance(
+              subject: 'Jan Smit',
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 6, 30, 14, 5),
+            ),
+          },
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+
+      expect(
+        find.byKey(const ValueKey('settings-wisa-rules-header')),
+        findsOneWidget,
+      );
+      expect(find.text('Toegevoegd op'), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(
+                find.byKey(const ValueKey('settings-wisa-rule-0-subject')))
+            .data,
+        'Jan Smit',
+      );
+      expect(
+        tester
+            .widget<Text>(
+                find.byKey(const ValueKey('settings-wisa-rule-0-added-by')))
+            .data,
+        'ann@school.example',
+      );
+      // A full, absolute stamp: read months later, "gisteren" or a year-less
+      // date would tell the reader nothing.
+      final stamp = tester
+          .widget<Text>(
+              find.byKey(const ValueKey('settings-wisa-rule-0-added-at')))
+          .data!;
+      expect(stamp, contains('30/06/2026'));
+    });
+
+    testWidgets('a rule stored before #285 reads as onbekend, not as a blank',
+        (WidgetTester tester) async {
+      // An empty cell reads like nobody did it. "onbekend" says the record is
+      // missing — the true statement, and the one that tells the reader to ask.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: AppSettings(
+          wisaRules: <WisaImportRule>[const DontImportClass('OKAN')],
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+
+      for (final String cell in <String>['subject', 'added-at', 'added-by']) {
+        expect(
+          tester
+              .widget<Text>(find.byKey(ValueKey('settings-wisa-rule-0-$cell')))
+              .data,
+          'onbekend',
+          reason: 'the $cell cell of a pre-#285 rule',
+        );
+      }
+    });
+
+    testWidgets('a rule typed by hand is stamped the same way an apply is',
+        (WidgetTester tester) async {
+      // #273's editor is the other authoring surface, and a rule typed there is
+      // just as much a standing decision the rest of the group inherits.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(operatorName: 'ann@school.example');
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+      await _addWisaRule(tester, 'dontImportClass', <String>['OKAN']);
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      final provenance = saved.provenanceOf(const DontImportClass('OKAN'))!;
+      expect(provenance.addedBy, 'ann@school.example');
+      expect(provenance.addedAt, isNotNull);
+      // No subject: this view holds no WISA snapshot to resolve a name against
+      // (the same reason #273's prompts are free text), so it records nothing
+      // rather than passing the typed code off as a name.
+      expect(provenance.subject, isEmpty);
+    });
+
+    testWidgets('removing a rule takes its provenance with it',
+        (WidgetTester tester) async {
+      // Otherwise a later, unrelated rule keying the same way would inherit a
+      // stamp naming an operator who never decided it.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: AppSettings(
+          wisaRules: const <WisaImportRule>[DontImportClass('OKAN')],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'class:OKAN': RuleProvenance(
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 1, 1),
+            ),
+          },
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+      await tester
+          .tap(find.byKey(const ValueKey('settings-wisa-rule-0-remove')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      expect(saved.wisaRules, isEmpty);
+      expect(saved.wisaRuleProvenance, isEmpty);
+    });
+
+    testWidgets('editing a rule re-attributes it to whoever edited it',
+        (WidgetTester tester) async {
+      // Changing what a rule matches makes it a different standing decision;
+      // leaving the previous operator's name on it would be a lie about a record
+      // whose whole purpose is saying who to ask.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        operatorName: 'bob@school.example',
+        initial: AppSettings(
+          wisaRules: const <WisaImportRule>[DontImportClass('OKAN')],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'class:OKAN': RuleProvenance(
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 1, 1),
+            ),
+          },
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+      await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-wisa-rule-value-0')),
+        'ONTHAAL',
+      );
+      await tester.pump();
+      await tester
+          .tap(find.byKey(const ValueKey('settings-wisa-rule-confirm')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      expect(saved.wisaRuleProvenance.keys, <String>['class:ONTHAAL']);
+      expect(
+        saved.provenanceOf(const DontImportClass('ONTHAAL'))!.addedBy,
+        'bob@school.example',
+      );
+    });
+
+    testWidgets('a stamp on its own does not arm the drift gate',
+        (WidgetTester tester) async {
+      // `wisaPullFingerprint` covers the persisted rules (#238/#263), and
+      // provenance must stay out of it: who typed a rule changes nothing about
+      // what WISA returns, and #276's post-apply re-credit depends on that.
+      _useTallWindow(tester);
+      const rules = <WisaImportRule>[DontImportClass('OKAN')];
+      final live = LiveSettings(const AppSettings(wisaRules: rules));
+      final harness = SettingsHarness(
+        operatorName: 'ann@school.example',
+        initial: const AppSettings(wisaRules: rules),
+        liveSettings: live,
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      final before = wisaPullFingerprint(live.current);
+      await _openTab(tester, 'settings-tab-wisa');
+      await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-edit')));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const ValueKey('settings-wisa-rule-confirm')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      // Re-confirming the same values re-stamps the rule but changes no match.
+      expect(
+        live.current.provenanceOf(const DontImportClass('OKAN'))!.addedBy,
+        'ann@school.example',
+      );
+      expect(wisaPullFingerprint(live.current), before);
+    });
   });
 }

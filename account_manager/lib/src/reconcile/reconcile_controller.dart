@@ -2121,7 +2121,7 @@ class ReconcileController extends ChangeNotifier {
     // The WISA import rules this pass earned (#276). Collected across the whole
     // pass and written once at the end rather than per action, so blacklisting
     // thirty departed teachers is one settings write, not thirty.
-    final earnedRules = <wapi.WisaImportRule>[];
+    final earnedRules = <EarnedWisaRule>[];
     // "Dry-run" is the term the Acties buttons already use ("Dry-run alles"),
     // so it stays; its counterpart is the "Alles toepassen" of those same
     // buttons rather than a second word for the same thing.
@@ -2218,10 +2218,16 @@ class ReconcileController extends ChangeNotifier {
   /// the way past, for the pass to persist when it ends (#276) — the follow-ups
   /// included, since a chained write is as much this click's doing as the option
   /// the operator picked.
+  ///
+  /// Each rule is carried with [PendingActionOption.target] as its subject
+  /// (#285): the label this option is acting on *is* the name of the person or
+  /// class the rule is about, and here is the only moment the app still has it —
+  /// the rule itself keeps nothing but an opaque WISA code, and the staff these
+  /// rules concern are the ones who later disappear from WISA entirely.
   Future<List<ActionOutcomeEntry>> _applyOne(
     Future<ApplyResult> Function() run,
     PendingActionOption option,
-    List<wapi.WisaImportRule> earnedRules,
+    List<EarnedWisaRule> earnedRules,
   ) async {
     final changes = option.changes;
     try {
@@ -2232,7 +2238,9 @@ class ReconcileController extends ChangeNotifier {
         final rule = r.wisaRule;
         // A dry run projects the rule without earning it, and a failed action
         // earned nothing at all — neither may reach the shared document.
-        if (rule != null && r.wrote) earnedRules.add(rule);
+        if (rule != null && r.wrote) {
+          earnedRules.add(EarnedWisaRule(rule, subject: option.target));
+        }
       }
       return <ActionOutcomeEntry>[
         _record(option, changes, result),
@@ -2738,15 +2746,25 @@ class ReconcileController extends ChangeNotifier {
   /// these rules. Anything else another operator slipped in — a werkdatum, a
   /// virtual-school mark — arms the gate as it should.
   ///
+  /// **Each rule is stamped with its provenance** (#285): the operator running
+  /// the pass, the instant it ended, and the name of the record it was earned
+  /// about. The shared document is only legible if a rule someone else added
+  /// last month says who to ask about it — and a rule that collapses into one
+  /// the document already carries keeps the *first* operator's stamp, because
+  /// that is the decision the document has been standing on.
+  ///
   /// A failing settings store must never fail the pass: the writes it performed
   /// are done and reported, so the problem is logged and the operator can
   /// re-apply (or type the rule in Instellingen) rather than lose the results.
   Future<void> _persistEarnedWisaRules(
-    List<wapi.WisaImportRule> earned,
+    List<EarnedWisaRule> earned,
   ) async {
     final store = settingsStore;
     if (store == null || earned.isEmpty) return;
     final live = liveSettings;
+    // One instant for the whole pass, sampled once: thirty rules earned by one
+    // click are one decision and read as one.
+    final addedAt = _now();
     // Sampled before the write: whether the WISA snapshot in hand is credited
     // to the document this session holds, and what that document plus these
     // rules would fingerprint as.
@@ -2754,11 +2772,19 @@ class ReconcileController extends ChangeNotifier {
     final inSync = _wisaFingerprint() == _wisaPullFingerprint;
     try {
       final stored = await store.load();
-      final merged = mergeEarnedWisaRules(stored: stored, earned: earned);
+      final merged = mergeEarnedWisaRules(
+        stored: stored,
+        earned: earned,
+        addedBy: syncedBy,
+        addedAt: addedAt,
+      );
       if (merged == null) return;
       await store.save(merged.settings);
       live?.publish(merged.settings);
       if (inSync && held != null) {
+        // Provenance is deliberately absent from the fingerprint — who typed a
+        // rule changes nothing about what WISA returns — so this re-credit is
+        // unaffected by the stamps just written.
         final credited = wisaPullFingerprint(
           mergeEarnedWisaRules(stored: held, earned: earned)?.settings ?? held,
         );

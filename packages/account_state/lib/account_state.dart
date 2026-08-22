@@ -98,6 +98,7 @@ export 'src/settings/app_settings.dart';
 export 'src/settings/connection.dart';
 export 'src/settings/import_rule_codec.dart';
 export 'src/settings/live_settings.dart';
+export 'src/settings/rule_provenance.dart';
 export 'src/settings/secret_provider.dart';
 export 'src/settings/settings_store.dart';
 export 'src/settings/wisa_rule_merge.dart';

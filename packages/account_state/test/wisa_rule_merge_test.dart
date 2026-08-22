@@ -11,7 +11,9 @@ void main() {
       // only in the process-lifetime holder and vanished on relaunch.
       final merged = mergeEarnedWisaRules(
         stored: const AppSettings(),
-        earned: const <WisaImportRule>[DontImportUserFromWisa('SMIT')],
+        earned: const <EarnedWisaRule>[
+          EarnedWisaRule(DontImportUserFromWisa('SMIT')),
+        ],
       );
 
       expect(merged, isNotNull);
@@ -31,7 +33,7 @@ void main() {
           ReplaceInstitute(original: '111', replacement: '222'),
           MarkAsVirtual('V1'),
         ]),
-        earned: const <WisaImportRule>[DontImportClass('3C')],
+        earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
       );
 
       expect(merged!.settings.wisaRules.map((r) => r.runtimeType).toList(),
@@ -55,7 +57,7 @@ void main() {
 
       final merged = mergeEarnedWisaRules(
         stored: stored,
-        earned: const <WisaImportRule>[DontImportClass('3C')],
+        earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
       )!;
 
       expect(merged.settings.schoolPrefix, 'SMA');
@@ -73,7 +75,7 @@ void main() {
           stored: const AppSettings(
             wisaRules: <WisaImportRule>[DontImportClass('3C')],
           ),
-          earned: const <WisaImportRule>[DontImportClass('3C')],
+          earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
         ),
         isNull,
       );
@@ -89,9 +91,9 @@ void main() {
         stored: const AppSettings(
           wisaRules: <WisaImportRule>[DontImportClass('3C')],
         ),
-        earned: <WisaImportRule>[
-          DontImportClass(sameClass),
-          const DontImportUserFromWisa('SMIT'),
+        earned: <EarnedWisaRule>[
+          EarnedWisaRule(DontImportClass(sameClass)),
+          const EarnedWisaRule(DontImportUserFromWisa('SMIT')),
         ],
       );
 
@@ -104,9 +106,9 @@ void main() {
       // document must still grow by one.
       final merged = mergeEarnedWisaRules(
         stored: const AppSettings(),
-        earned: const <WisaImportRule>[
-          DontImportClass('3C'),
-          DontImportClass('3C'),
+        earned: const <EarnedWisaRule>[
+          EarnedWisaRule(DontImportClass('3C')),
+          EarnedWisaRule(DontImportClass('3C')),
         ],
       );
 
@@ -118,7 +120,7 @@ void main() {
       expect(
         mergeEarnedWisaRules(
           stored: const AppSettings(),
-          earned: const <WisaImportRule>[],
+          earned: const <EarnedWisaRule>[],
         ),
         isNull,
       );
@@ -129,7 +131,9 @@ void main() {
       // to survive the wire shape #263's pull reads back.
       final merged = mergeEarnedWisaRules(
         stored: const AppSettings(),
-        earned: const <WisaImportRule>[DontImportUserFromWisa('SMIT')],
+        earned: const <EarnedWisaRule>[
+          EarnedWisaRule(DontImportUserFromWisa('SMIT')),
+        ],
       )!;
 
       final restored = AppSettings.fromJson(merged.settings.toJson());
@@ -138,6 +142,151 @@ void main() {
         (restored.wisaRules.single as DontImportUserFromWisa).userCode,
         'SMIT',
       );
+    });
+  });
+
+  group('provenance on an earned rule (#285)', () {
+    final at = DateTime.utc(2026, 6, 30, 14, 5);
+
+    test('stamps who added it, when, and for whom', () {
+      // The whole point of the record: a `DontImportUserFromWisa` stores a bare
+      // WISA code, so without this a colleague opening Instellingen next month
+      // sees an opaque string and cannot tell what removing it would undo.
+      final merged = mergeEarnedWisaRules(
+        stored: const AppSettings(),
+        earned: const <EarnedWisaRule>[
+          EarnedWisaRule(DontImportUserFromWisa('SMIT'), subject: 'Jan Smit'),
+        ],
+        addedBy: 'ann@school.example',
+        addedAt: at,
+      )!;
+
+      final provenance =
+          merged.settings.provenanceOf(const DontImportUserFromWisa('SMIT'));
+      expect(provenance, isNotNull);
+      expect(provenance!.subject, 'Jan Smit');
+      expect(provenance.addedBy, 'ann@school.example');
+      expect(provenance.addedAt, at);
+    });
+
+    test('records what it knows when the subject name is unknown', () {
+      // "By whom" is the load-bearing field — the record is a pointer to the
+      // person who remembers — so a missing name must not cost the stamp.
+      final merged = mergeEarnedWisaRules(
+        stored: const AppSettings(),
+        earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
+        addedBy: 'ann@school.example',
+        addedAt: at,
+      )!;
+
+      final provenance =
+          merged.settings.provenanceOf(const DontImportClass('3C'));
+      expect(provenance!.subject, isEmpty);
+      expect(provenance.addedBy, 'ann@school.example');
+      expect(provenance.addedAt, at);
+    });
+
+    test('writes no provenance at all when the pass knows nothing', () {
+      // An empty record is not the same as an absent one: the view reads absent
+      // as "onbekend", and storing three empty strings would be a document
+      // claiming to record something it does not.
+      final merged = mergeEarnedWisaRules(
+        stored: const AppSettings(),
+        earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
+      )!;
+
+      expect(merged.settings.wisaRuleProvenance, isEmpty);
+      expect(merged.settings.provenanceOf(const DontImportClass('3C')), isNull);
+    });
+
+    test('keeps the first operator\'s stamp when two decisions collapse', () {
+      // The union puts persisted rules first (#263) and the dedup key ignores
+      // provenance, so two operators earning the same rule collapse to one. The
+      // standing decision — the one the document has been running on — keeps its
+      // author. Deliberate, not incidental.
+      final first = RuleProvenance(
+        subject: 'Jan Smit',
+        addedBy: 'ann@school.example',
+        addedAt: DateTime.utc(2026, 1, 1),
+      );
+      final merged = mergeEarnedWisaRules(
+        stored: AppSettings(
+          wisaRules: const <WisaImportRule>[DontImportUserFromWisa('SMIT')],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'user:SMIT': first,
+          },
+        ),
+        earned: const <EarnedWisaRule>[
+          EarnedWisaRule(DontImportUserFromWisa('SMIT'), subject: 'J. Smit'),
+          EarnedWisaRule(DontImportClass('3C'), subject: '3C'),
+        ],
+        addedBy: 'bob@school.example',
+        addedAt: at,
+      )!;
+
+      expect(merged.settings.provenanceOf(const DontImportUserFromWisa('SMIT')),
+          first);
+      expect(
+        merged.settings.provenanceOf(const DontImportClass('3C'))!.addedBy,
+        'bob@school.example',
+      );
+    });
+
+    test('leaves the provenance of untouched rules alone', () {
+      final standing = RuleProvenance(
+        addedBy: 'ann@school.example',
+        addedAt: DateTime.utc(2025, 9, 1),
+      );
+      final merged = mergeEarnedWisaRules(
+        stored: AppSettings(
+          wisaRules: const <WisaImportRule>[MarkAsVirtual('V1')],
+          wisaRuleProvenance: <String, RuleProvenance>{'virtual:V1': standing},
+        ),
+        earned: const <EarnedWisaRule>[EarnedWisaRule(DontImportClass('3C'))],
+        addedBy: 'bob@school.example',
+        addedAt: at,
+      )!;
+
+      expect(merged.settings.provenanceOf(const MarkAsVirtual('V1')), standing);
+    });
+
+    test('survives the round-trip the store writes and #263 reads back', () {
+      final merged = mergeEarnedWisaRules(
+        stored: const AppSettings(),
+        earned: const <EarnedWisaRule>[
+          EarnedWisaRule(DontImportUserFromWisa('SMIT'), subject: 'Jan Smit'),
+        ],
+        addedBy: 'ann@school.example',
+        addedAt: at,
+      )!;
+
+      final restored = AppSettings.fromJson(merged.settings.toJson());
+      final provenance =
+          restored.provenanceOf(const DontImportUserFromWisa('SMIT'))!;
+
+      expect(provenance.subject, 'Jan Smit');
+      expect(provenance.addedBy, 'ann@school.example');
+      expect(provenance.addedAt, at);
+    });
+
+    test('does not move the WISA pull fingerprint', () {
+      // Who typed a rule changes nothing about what WISA returns, so a
+      // re-stamped document must not arm #238's drift gate — and the apply
+      // path's own re-credit (#276) depends on that staying true.
+      const stored = AppSettings(
+        wisaRules: <WisaImportRule>[DontImportClass('3C')],
+      );
+      final stamped = stored.copyWith(
+        wisaRuleProvenance: <String, RuleProvenance>{
+          'class:3C': RuleProvenance(
+            subject: '3C',
+            addedBy: 'ann@school.example',
+            addedAt: at,
+          ),
+        },
+      );
+
+      expect(wisaPullFingerprint(stamped), wisaPullFingerprint(stored));
     });
   });
 }

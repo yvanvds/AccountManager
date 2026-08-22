@@ -115,6 +115,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // so authoring one here reaches the very next Synchroniseer.
   List<WisaImportRule> _wisaRules = const <WisaImportRule>[];
 
+  // Who added each of those rules, when, and for whom (#285), keyed by
+  // `wisaRuleKey` exactly as the document keys it. Edited alongside `_wisaRules`
+  // and pruned to them on save, so removing a rule takes its provenance with it
+  // rather than leaving a stamp that a later, unrelated rule with the same key
+  // would inherit.
+  Map<String, RuleProvenance> _wisaRuleProvenance =
+      const <String, RuleProvenance>{};
+
   // Azure profile.
   final _azClientId = TextEditingController();
   final _azTenantId = TextEditingController();
@@ -243,6 +251,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     _ssRules = List<SmartschoolImportRule>.of(s.smartschoolRules);
     _wisaRules = List<WisaImportRule>.of(s.wisaRules);
+    _wisaRuleProvenance = Map<String, RuleProvenance>.of(s.wisaRuleProvenance);
 
     _azClientId.text = s.azure.clientId;
     _azTenantId.text = s.azure.tenantId;
@@ -326,12 +335,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _addWisaRule(_WisaRuleKind kind) async {
     final values = await _promptWisaRule(kind: kind);
     if (values == null || !mounted) return;
-    toggle(() => _wisaRules = <WisaImportRule>[..._wisaRules, kind(values)]);
+    final rule = kind(values);
+    toggle(() {
+      _wisaRules = <WisaImportRule>[..._wisaRules, rule];
+      _stampWisaRule(rule);
+    });
   }
 
   /// Re-prompts for the field(s) of the rule at [index], keeping its kind. Every
   /// kind is editable, including the two school-marking ones **Toevoegen** does
   /// not offer — a document that already carries one must stay correctable.
+  ///
+  /// The edited rule is re-stamped (#285): changing what a rule matches makes it
+  /// a different standing decision, and attributing it to whoever wrote the
+  /// *previous* one would be a lie about a record whose whole purpose is saying
+  /// who to ask.
   Future<void> _editWisaRule(int index) async {
     final rule = _wisaRules[index];
     final kind = _WisaRuleKind.of(rule);
@@ -340,16 +358,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
       initial: _wisaRuleValues(rule),
     );
     if (values == null || !mounted) return;
+    final edited = kind(values);
     toggle(() {
-      _wisaRules = List<WisaImportRule>.of(_wisaRules)..[index] = kind(values);
+      _wisaRules = List<WisaImportRule>.of(_wisaRules)..[index] = edited;
+      _pruneWisaProvenance();
+      _stampWisaRule(edited);
     });
   }
 
-  /// Drops the WISA rule at [index] from the working list.
+  /// Drops the WISA rule at [index] from the working list, and its provenance
+  /// with it (#285).
   void _removeWisaRule(int index) {
     toggle(() {
       _wisaRules = List<WisaImportRule>.of(_wisaRules)..removeAt(index);
+      _pruneWisaProvenance();
     });
+  }
+
+  /// Records this session as the author of [rule] (#285).
+  ///
+  /// No subject: this view holds no WISA snapshot to resolve a code against —
+  /// the same reason #273's prompts are free text — so the name genuinely is
+  /// unknown here and is recorded as such rather than guessed from the code the
+  /// operator typed. The two fields that *are* known are the two the issue calls
+  /// load-bearing: who, and when.
+  void _stampWisaRule(WisaImportRule rule) {
+    _wisaRuleProvenance = <String, RuleProvenance>{
+      ..._wisaRuleProvenance,
+      wisaRuleKey(rule): RuleProvenance(
+        addedBy: _services?.operatorName ?? '',
+        addedAt: DateTime.now(),
+      ),
+    };
+  }
+
+  /// Drops every provenance entry no rule in the working list claims any more.
+  void _pruneWisaProvenance() {
+    _wisaRuleProvenance = _prunedWisaProvenance(_wisaRules);
+  }
+
+  Map<String, RuleProvenance> _prunedWisaProvenance(
+    List<WisaImportRule> rules,
+  ) {
+    return <String, RuleProvenance>{
+      for (final rule in rules)
+        if (_wisaRuleProvenance[wisaRuleKey(rule)] case final RuleProvenance p)
+          wisaRuleKey(rule): p,
+    };
   }
 
   /// Asks for the one or two values a WISA rule matches on. Returns the trimmed
@@ -480,6 +535,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       smartschoolRules: List<SmartschoolImportRule>.of(_ssRules),
       wisaRules: List<WisaImportRule>.of(_wisaRules),
+      wisaRuleProvenance: _prunedWisaProvenance(_wisaRules),
       wisaSchools: List<WisaSchoolProfile>.of(_wisaSchools),
     );
   }
@@ -1193,15 +1249,29 @@ class _WisaRulesEditor extends StatelessWidget {
             key: const ValueKey('settings-wisa-rules-empty'),
             style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
           )
-        else
+        else ...<Widget>[
+          const _WisaRuleColumnHeader(),
           for (var i = 0; i < rules.length; i++)
             _RuleRow(
               keyPrefix: 'settings-wisa-rule',
               index: i,
               description: describeWisaRule(rules[i]),
+              // Who decided this, when, and about whom (#285). The document is
+              // shared, so without these a colleague's rule reads as a bare
+              // WISA code nobody dares remove.
+              subject: describeRuleSubject(
+                state._wisaRuleProvenance[wisaRuleKey(rules[i])],
+              ),
+              addedAt: describeRuleAddedAt(
+                state._wisaRuleProvenance[wisaRuleKey(rules[i])],
+              ),
+              addedBy: describeRuleAddedBy(
+                state._wisaRuleProvenance[wisaRuleKey(rules[i])],
+              ),
               onEdit: () => state._editWisaRule(i),
               onRemove: () => state._removeWisaRule(i),
             ),
+        ],
         const SizedBox(height: PlinkSpacing.s4),
         MenuAnchor(
           menuChildren: <Widget>[
@@ -1439,6 +1509,9 @@ class _RuleRow extends StatelessWidget {
     required this.description,
     required this.onEdit,
     required this.onRemove,
+    this.subject,
+    this.addedAt,
+    this.addedBy,
   });
 
   final String keyPrefix;
@@ -1447,20 +1520,61 @@ class _RuleRow extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onRemove;
 
+  /// The three provenance cells (#285), already resolved to display strings —
+  /// `onbekend` where the document records nothing. All three are null for the
+  /// Smartschool list, which carries no provenance and renders as it always did.
+  final String? subject;
+  final String? addedAt;
+  final String? addedBy;
+
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final TextStyle? meta =
+        text.bodySmall?.copyWith(color: colors.onSurfaceVariant);
     return Padding(
       padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
           Expanded(
+            flex: _RuleColumns.rule,
             child: Text(
               description,
               key: ValueKey('$keyPrefix-$index'),
               style: text.bodyMedium,
             ),
           ),
+          if (subject != null) ...<Widget>[
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              flex: _RuleColumns.subject,
+              child: Text(
+                subject!,
+                key: ValueKey('$keyPrefix-$index-subject'),
+                style: meta,
+              ),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              flex: _RuleColumns.addedAt,
+              child: Text(
+                addedAt!,
+                key: ValueKey('$keyPrefix-$index-added-at'),
+                style: meta,
+              ),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              flex: _RuleColumns.addedBy,
+              child: Text(
+                addedBy!,
+                key: ValueKey('$keyPrefix-$index-added-by'),
+                style: meta,
+              ),
+            ),
+          ],
           IconButton(
             key: ValueKey('$keyPrefix-$index-edit'),
             tooltip: 'Bewerken',
@@ -1473,6 +1587,63 @@ class _RuleRow extends StatelessWidget {
             icon: const Icon(Icons.delete_outline),
             onPressed: onRemove,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The flexes the WISA rule list and its header share, so the two stay in one
+/// grid rather than drifting apart the first time either is edited.
+abstract final class _RuleColumns {
+  static const int rule = 5;
+  static const int subject = 3;
+  static const int addedAt = 3;
+  static const int addedBy = 3;
+
+  /// The width of the two trailing icon buttons, which the header has to leave
+  /// empty to line its labels up with the cells beneath them.
+  static const double actions = 96;
+}
+
+/// Names the provenance columns of the WISA rule list (#285).
+///
+/// The timestamp gets a column of its own rather than a tooltip on purpose:
+/// with no free-text reason on the record, *when* is what lets someone
+/// reconstruct why ("that was the June retirement round"), so it has to be
+/// readable at a glance beside the rule instead of hidden behind a hover.
+class _WisaRuleColumnHeader extends StatelessWidget {
+  const _WisaRuleColumnHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final TextStyle? style = text.labelSmall?.copyWith(
+      color: colors.onSurfaceVariant,
+    );
+    return Padding(
+      key: const ValueKey('settings-wisa-rules-header'),
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+      child: Row(
+        children: <Widget>[
+          Expanded(flex: _RuleColumns.rule, child: Text('Regel', style: style)),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            flex: _RuleColumns.subject,
+            child: Text('Voor', style: style),
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            flex: _RuleColumns.addedAt,
+            child: Text('Toegevoegd op', style: style),
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            flex: _RuleColumns.addedBy,
+            child: Text('Door', style: style),
+          ),
+          const SizedBox(width: _RuleColumns.actions),
         ],
       ),
     );

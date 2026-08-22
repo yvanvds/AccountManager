@@ -99,11 +99,27 @@ class WisaImportRules {
     return true;
   }
 
-  static String _keyOf(WisaImportRule rule) => switch (rule) {
-        DontImportClass(:final className) => 'class:$className',
-        DontImportUserFromWisa(:final userCode) => 'user:$userCode',
-        ReplaceInstitute(:final original) => 'institute:$original',
-        MarkAsVirtual(:final schoolCode) => 'virtual:$schoolCode',
-        MarkAsOurs(:final schoolCode) => 'ours:$schoolCode',
-      };
+  static String _keyOf(WisaImportRule rule) => wisaRuleKey(rule);
 }
+
+/// The identity two WISA import rules are the *same rule* by: the fields that
+/// decide what the rule matches, and nothing else.
+///
+/// [WisaImportRules] de-duplicates on this, and so does everything that has to
+/// agree with it about what a duplicate is — the settings document's per-rule
+/// provenance is keyed by it (#285), so metadata attaches to the decision rather
+/// than to one particular object, and a rule the document already carries keeps
+/// the provenance of whoever decided it first.
+///
+/// Derived from the identifying fields rather than the whole record on purpose:
+/// that is what lets provenance ride along without changing what a duplicate is.
+/// Note [ReplaceInstitute] keys on [ReplaceInstitute.original] alone — two rules
+/// rewriting the same institute to different targets are one decision, correctly
+/// stated once.
+String wisaRuleKey(WisaImportRule rule) => switch (rule) {
+      DontImportClass(:final className) => 'class:$className',
+      DontImportUserFromWisa(:final userCode) => 'user:$userCode',
+      ReplaceInstitute(:final original) => 'institute:$original',
+      MarkAsVirtual(:final schoolCode) => 'virtual:$schoolCode',
+      MarkAsOurs(:final schoolCode) => 'ours:$schoolCode',
+    };

@@ -9,30 +9,60 @@
 /// The wire shape is a tagged object: `{ "type": "<tag>", ... }`. Tags are
 /// stable strings (not enum indices) so reordering the sealed hierarchy never
 /// changes a persisted config.
+///
+/// A WISA rule's object also carries its [RuleProvenance] — who added it, when,
+/// and for whom (#285) — beside the rule's own fields rather than in a parallel
+/// structure, so the two can never come apart on the wire.
 library;
 
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
-/// Encodes a [WisaImportRule] to its tagged-JSON map.
-Map<String, dynamic> encodeWisaRule(WisaImportRule rule) {
-  switch (rule) {
-    case DontImportClass():
-      return {'type': 'dontImportClass', 'className': rule.className};
-    case DontImportUserFromWisa():
-      return {'type': 'dontImportUserFromWisa', 'userCode': rule.userCode};
-    case ReplaceInstitute():
-      return {
+import 'rule_provenance.dart';
+
+/// Encodes a [WisaImportRule] to its tagged-JSON map, with [provenance] — when
+/// known — merged in beside the rule's own fields (#285).
+///
+/// The provenance keys (`subject`, `addedBy`, `addedAt`) are disjoint from every
+/// rule's own, and omitting them yields exactly the object every version before
+/// #285 wrote. That matters beyond backward compatibility: `wisaPullFingerprint`
+/// encodes the rules **without** provenance, because who typed a rule changes
+/// nothing about what the pull returns, and a re-stamped rule must not arm
+/// #238's drift gate.
+Map<String, dynamic> encodeWisaRule(
+  WisaImportRule rule, {
+  RuleProvenance? provenance,
+}) {
+  final Map<String, dynamic> encoded = switch (rule) {
+    DontImportClass() => {
+        'type': 'dontImportClass',
+        'className': rule.className
+      },
+    DontImportUserFromWisa() => {
+        'type': 'dontImportUserFromWisa',
+        'userCode': rule.userCode,
+      },
+    ReplaceInstitute() => {
         'type': 'replaceInstitute',
         'original': rule.original,
         'replacement': rule.replacement,
-      };
-    case MarkAsVirtual():
-      return {'type': 'markAsVirtual', 'schoolCode': rule.schoolCode};
-    case MarkAsOurs():
-      return {'type': 'markAsOurs', 'schoolCode': rule.schoolCode};
-  }
+      },
+    MarkAsVirtual() => {'type': 'markAsVirtual', 'schoolCode': rule.schoolCode},
+    MarkAsOurs() => {'type': 'markAsOurs', 'schoolCode': rule.schoolCode},
+  };
+  final Map<String, dynamic> extra = provenance?.toJson() ?? const {};
+  if (extra.isEmpty) return encoded;
+  return <String, dynamic>{...encoded, ...extra};
 }
+
+/// Reads the [RuleProvenance] out of a map produced by [encodeWisaRule], or
+/// `null` when it carries none — which is every rule persisted before #285.
+///
+/// Split from [decodeWisaRule] rather than folded into it because the rule types
+/// are `wisa_api`'s and must stay free of it: the rule and its provenance travel
+/// in one object but are two values, and only this package holds both.
+RuleProvenance? decodeWisaRuleProvenance(Map<String, dynamic> json) =>
+    RuleProvenance.fromJson(json);
 
 /// Decodes a tagged-JSON map produced by [encodeWisaRule].
 ///

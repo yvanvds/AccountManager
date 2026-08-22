@@ -46,7 +46,12 @@ import 'package:azure_api/azure_api.dart'
 import 'package:smartschool_api/smartschool_api.dart'
     show DiscardSmartschoolGroup, SmartschoolConnector;
 import 'package:wisa_api/wisa_api.dart'
-    show DontImportClass, WisaImportRule, WisaSchool, parseSchoolRow;
+    show
+        DontImportClass,
+        DontImportUserFromWisa,
+        WisaImportRule,
+        WisaSchool,
+        parseSchoolRow;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6558,6 +6563,148 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
     expect((await settings.store.load()).wisaRules, isEmpty);
+  });
+
+  testWidgets(
+      'a persisted WISA import rule says who added it, when, and for whom '
+      '(#285)', (WidgetTester tester) async {
+    // The settings document is shared across operators on purpose (#276), and
+    // that only works if a rule somebody else added last month is legible to
+    // whoever opens the panel next. A `DontImportUserFromWisa` stores a bare
+    // WISA code and a `DontImportClass` a bare class name, so a colleague's rule
+    // used to appear as a string with no indication of who added it, when, or
+    // which human it refers to — mechanically removable (#273), but with no way
+    // to tell what you would be undoing. Worse, the people these rules are about
+    // eventually disappear from WISA entirely, so resolving the code against the
+    // current roster for display would give a blank exactly when the name is
+    // needed most.
+    //
+    // Driven end-to-end because the payoff is a rendering: the three fields have
+    // to survive an apply, a store round-trip, a **Herladen**, and the real
+    // Instellingen layout — and the same columns have to serve a rule that
+    // predates #285, which must read "onbekend" rather than blank.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+      // A rule from before #285: on the document, with no provenance at all.
+      // It matches no staff member in the fixture, so it changes no pull.
+      wisaRules: const <WisaImportRule>[DontImportUserFromWisa('OUD')],
+    );
+    final live = LiveSettings(stored);
+    final settings = SettingsHarness(
+      initial: stored,
+      liveSettings: live,
+      operatorName: 'operator@school.example',
+    );
+    final harness = ReconcileHarness(
+      wisaTransport: RecordingWisaSoap(),
+      liveSettings: live,
+      settingsStore: settings.store,
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The operator opts class 3C out of the import — the apply that earns a rule.
+    await openKlasgroepen(tester);
+    final entry = find.byKey(const ValueKey('entry-group-3C'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('alt-3C-DoNotImportFromWisa')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.tap(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Read it back off the *stored* document — what a relaunch, and every other
+    // operator, gets.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+
+    String cell(int index, String field) => tester
+        .widget<Text>(find.byKey(ValueKey('settings-wisa-rule-$index-$field')))
+        .data!;
+
+    // The columns are named, with the timestamp getting one of its own rather
+    // than hiding in a tooltip: with no free-text reason on the record, *when*
+    // is what lets someone reconstruct the context later.
+    expect(
+      find.byKey(const ValueKey('settings-wisa-rules-header')),
+      findsOneWidget,
+    );
+    expect(find.text('Toegevoegd op'), findsOneWidget);
+
+    // Rule 1 is the one the apply just earned: the class it was about, the
+    // instant, and the operator who decided it.
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+    expect(cell(1, 'subject'), '3C');
+    expect(cell(1, 'added-by'), 'operator@school.example');
+    expect(cell(1, 'added-at'), contains('${DateTime.now().year}'));
+
+    // Rule 0 predates #285 and says so, in all three columns. A blank would read
+    // like nobody did it; "onbekend" says the record is missing.
+    expect(cell(0, 'subject'), 'onbekend');
+    expect(cell(0, 'added-at'), 'onbekend');
+    expect(cell(0, 'added-by'), 'onbekend');
+
+    // A rule typed by hand in #273's editor is stamped the same way. The name is
+    // the one field this surface cannot know — it holds no WISA snapshot to
+    // resolve a code against — so it records nothing rather than guessing.
+    await addWisaRule(tester, 'dontImportClass', <String>['OKAN']);
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect(cell(2, 'added-by'), 'operator@school.example');
+    expect(cell(2, 'added-at'), contains('${DateTime.now().year}'));
+    expect(cell(2, 'subject'), 'onbekend');
+
+    // …and all of it is on the shared document, not just on this screen.
+    final saved = await settings.store.load();
+    final earned = saved.provenanceOf(const DontImportClass('3C'))!;
+    expect(earned.subject, '3C');
+    expect(earned.addedBy, 'operator@school.example');
+    expect(earned.addedAt, isNotNull);
+    expect(saved.provenanceOf(const DontImportUserFromWisa('OUD')), isNull);
+    expect(
+      saved.provenanceOf(const DontImportClass('OKAN'))!.addedBy,
+      'operator@school.example',
+    );
   });
 
   testWidgets(

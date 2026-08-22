@@ -1,8 +1,10 @@
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
+import '../apply/wisa_import_rules.dart';
 import 'connection.dart';
 import 'import_rule_codec.dart';
+import 'rule_provenance.dart';
 import 'wisa_school_profile.dart';
 
 /// The persisted configuration model for the Arcadia Account Manager.
@@ -35,6 +37,7 @@ class AppSettings {
     this.azure = const AzureConnection(),
     SmartschoolConnection? smartschool,
     this.wisaRules = const [],
+    this.wisaRuleProvenance = const <String, RuleProvenance>{},
     this.smartschoolRules = const [],
     this.wisaSchools = const [],
   }) : _smartschool = smartschool;
@@ -63,6 +66,26 @@ class AppSettings {
 
   /// WISA import rules applied at snapshot construction (spec §3.11).
   final List<WisaImportRule> wisaRules;
+
+  /// Provenance for the persisted [wisaRules], keyed by [wisaRuleKey] (#285).
+  ///
+  /// Keyed rather than positional, and separate from the rules themselves,
+  /// because the rule types belong to `wisa_api` and know nothing about
+  /// operators — on the wire the two travel in one object (see
+  /// [encodeWisaRule]), and only here are they two values. A rule with no entry
+  /// is one persisted before #285; [provenanceOf] answers `null` for it and the
+  /// view says `onbekend`.
+  ///
+  /// The key is the same identity [WisaImportRules] de-duplicates on, so two
+  /// operators earning the same rule collapse to one decision carrying the
+  /// **first** one's provenance — deliberately, since that is the decision the
+  /// document has been standing on.
+  final Map<String, RuleProvenance> wisaRuleProvenance;
+
+  /// Who added [rule], when, and for whom — or `null` when the document records
+  /// nothing about it (#285).
+  RuleProvenance? provenanceOf(WisaImportRule rule) =>
+      wisaRuleProvenance[wisaRuleKey(rule)];
 
   /// Smartschool import rules applied at snapshot construction (spec §3.11).
   final List<SmartschoolImportRule> smartschoolRules;
@@ -100,6 +123,7 @@ class AppSettings {
     AzureConnection? azure,
     SmartschoolConnection? smartschool,
     List<WisaImportRule>? wisaRules,
+    Map<String, RuleProvenance>? wisaRuleProvenance,
     List<SmartschoolImportRule>? smartschoolRules,
     List<WisaSchoolProfile>? wisaSchools,
   }) {
@@ -110,6 +134,7 @@ class AppSettings {
       azure: azure ?? this.azure,
       smartschool: smartschool ?? this.smartschool,
       wisaRules: wisaRules ?? this.wisaRules,
+      wisaRuleProvenance: wisaRuleProvenance ?? this.wisaRuleProvenance,
       smartschoolRules: smartschoolRules ?? this.smartschoolRules,
       wisaSchools: wisaSchools ?? this.wisaSchools,
     );
@@ -124,7 +149,13 @@ class AppSettings {
       'wisa': wisa.toJson(),
       'smartschool': smartschool.toJson(),
       'azure': azure.toJson(),
-      'wisaRules': wisaRules.map(encodeWisaRule).toList(),
+      // Each rule's provenance rides inside its own object (#285), so a stored
+      // rule and the record of who decided it can never come apart. A rule the
+      // document knows nothing about encodes exactly as it did before #285.
+      'wisaRules': <Map<String, dynamic>>[
+        for (final rule in wisaRules)
+          encodeWisaRule(rule, provenance: provenanceOf(rule)),
+      ],
       'smartschoolRules': smartschoolRules.map(encodeSmartschoolRule).toList(),
       'wisaSchools': wisaSchools.map((p) => p.toJson()).toList(),
     };
@@ -143,6 +174,19 @@ class AppSettings {
     final smartschoolConn = json['smartschool'] as Map<String, dynamic>?;
     final azureConn = json['azure'] as Map<String, dynamic>?;
     final wisaSchools = (json['wisaSchools'] as List<dynamic>?) ?? const [];
+    // The rule and its provenance share one object on the wire (#285) and are
+    // two values in memory, so they are split in one pass rather than by
+    // decoding the list twice.
+    final wisaRules = <WisaImportRule>[];
+    final wisaRuleProvenance = <String, RuleProvenance>{};
+    for (final r in wisa) {
+      final encoded = r as Map<String, dynamic>;
+      final rule = decodeWisaRule(encoded);
+      wisaRules.add(rule);
+      final provenance = decodeWisaRuleProvenance(encoded);
+      if (provenance != null)
+        wisaRuleProvenance[wisaRuleKey(rule)] = provenance;
+    }
     return AppSettings(
       schoolPrefix: (json['schoolPrefix'] as String?) ?? '',
       debugMode: (json['debugMode'] as bool?) ?? false,
@@ -155,9 +199,8 @@ class AppSettings {
       azure: azureConn == null
           ? const AzureConnection()
           : AzureConnection.fromJson(azureConn),
-      wisaRules: [
-        for (final r in wisa) decodeWisaRule(r as Map<String, dynamic>),
-      ],
+      wisaRules: wisaRules,
+      wisaRuleProvenance: wisaRuleProvenance,
       smartschoolRules: [
         for (final r in smartschool)
           decodeSmartschoolRule(r as Map<String, dynamic>),

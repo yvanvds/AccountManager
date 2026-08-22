@@ -631,6 +631,91 @@ void main() {
         'WISA-instellingen gewijzigd — synchroniseer eerst.',
       );
     });
+
+    group('the persisted rule records who, when, and for whom (#285)', () {
+      test('stamps the operator, the instant, and the subject\'s name',
+          () async {
+        // A `DontImportUserFromWisa` stores nothing but `SMIT`, and the staff
+        // these rules are about are precisely the ones who later disappear from
+        // WISA — so the name has to be captured here, at the decision, or it is
+        // gone. The operator is the load-bearing half: with no reason field on
+        // the record, it is the pointer to the person who remembers.
+        final settings = InMemorySettingsStore(const AppSettings());
+        final h = ignoreStaffHarness(
+          settingsStore: settings,
+          liveSettings: LiveSettings(const AppSettings()),
+        );
+        await h.controller.sync();
+
+        await ignoreTheStaffMember(h);
+
+        final saved = await settings.load();
+        final provenance =
+            saved.provenanceOf(const wapi.DontImportUserFromWisa('SMIT'))!;
+        expect(provenance.subject, 'Anna Smit');
+        expect(provenance.addedBy, 'operator@school.example');
+        // The pass's own clock, sampled once for the whole pass.
+        expect(provenance.addedAt, kFixtureDate);
+      });
+
+      test('re-applying keeps the first operator\'s stamp', () async {
+        // Two operators can reach the same conclusion; the union puts persisted
+        // rules first (#263), so the collapse keeps the decision the document
+        // has been standing on — and its author with it.
+        final settings = InMemorySettingsStore(AppSettings(
+          wisaRules: const <wapi.WisaImportRule>[
+            wapi.DontImportUserFromWisa('SMIT'),
+          ],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'user:SMIT': RuleProvenance(
+              subject: 'Anna Smit',
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 1, 15, 9),
+            ),
+          },
+        ));
+        final h = ignoreStaffHarness(
+          settingsStore: settings,
+          liveSettings: LiveSettings(const AppSettings()),
+        );
+        await h.controller.sync();
+
+        await ignoreTheStaffMember(h);
+
+        final provenance = (await settings.load())
+            .provenanceOf(const wapi.DontImportUserFromWisa('SMIT'))!;
+        expect(provenance.addedBy, 'ann@school.example');
+        expect(provenance.addedAt, DateTime.utc(2026, 1, 15, 9));
+      });
+
+      test('an unsigned-in session still records when, and for whom', () async {
+        // #98's sign-in is what supplies the operator; a session without one
+        // must not lose the other two fields — "onbekend" for the author is the
+        // honest degradation, a lost date is a real loss.
+        final settings = InMemorySettingsStore(const AppSettings());
+        final h = ReconcileHarness(
+          wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+          smartschool: ssSnap(
+            groups: const [],
+            accounts: const [],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+          settingsStore: settings,
+          liveSettings: LiveSettings(const AppSettings()),
+          syncedBy: '',
+        );
+        await h.controller.sync();
+
+        await ignoreTheStaffMember(h);
+
+        final provenance = (await settings.load())
+            .provenanceOf(const wapi.DontImportUserFromWisa('SMIT'))!;
+        expect(provenance.addedBy, isEmpty);
+        expect(provenance.subject, 'Anna Smit');
+        expect(provenance.addedAt, isNotNull);
+      });
+    });
   });
 
   group('cross-session snapshot persistence (#107)', () {

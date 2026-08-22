@@ -114,4 +114,30 @@ void main() {
       '15/08/${today.year - 1} 09:14',
     );
   });
+
+  group('formatRuleStamp — when a standing decision was made (#285)', () {
+    test('is absolute and carries the year, even for today', () {
+      // The counterpart of the freshness stamp, and deliberately not the same
+      // shape: a rule's stamp is read months later by whoever inherited the
+      // configuration, and with no reason field on the record the full date is
+      // what lets them reconstruct the context.
+      expect(formatRuleStamp(DateTime(2026, 6, 30, 14, 5)), '30/06/2026 14:05');
+    });
+
+    test('never says "gisteren"', () {
+      final DateTime yesterday =
+          DateTime.now().subtract(const Duration(days: 1));
+      expect(formatRuleStamp(yesterday), isNot(contains('gisteren')));
+    });
+
+    test('zero-pads day, month, hour and minute', () {
+      expect(formatRuleStamp(DateTime(2026, 1, 5, 9, 3)), '05/01/2026 09:03');
+    });
+
+    test('renders a UTC stamp on the operator\'s own clock', () {
+      // The document stores UTC; nobody reads their rules in UTC.
+      final DateTime local = DateTime(2026, 6, 30, 14, 5);
+      expect(formatRuleStamp(local.toUtc()), '30/06/2026 14:05');
+    });
+  });
 }
