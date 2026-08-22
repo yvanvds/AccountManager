@@ -705,24 +705,34 @@ class PendingEntryTile extends StatelessWidget {
   }
 }
 
-/// The expanded body of one pending entry: the radios (or the lone option's
-/// diff), the verdict of the last pass that touched this entry (#272), and the
-/// per-entry dry-run / apply pair.
+/// The expanded body of one pending entry: one block per decision (#281), the
+/// verdict of the last pass that touched this entry (#272), and the per-entry
+/// dry-run / apply pair.
 ///
 /// Split out of [PendingEntryTile] so the class inventory can put the very same
 /// controls under a row that carries its own presence columns (#227), rather
 /// than nesting one expandable tile inside another.
+///
+/// The blocks are keyed by position rather than by
+/// [PendingChoice.situationId]: an entry groups every action on one target, and
+/// two targets that share a display label share an entry, so a kind is not
+/// guaranteed unique within one card — and a duplicate key among a [Column]'s
+/// children is a build-time crash, not a cosmetic clash.
 List<Widget> entryDetail(
   BuildContext context, {
   required ReconcileController controller,
   required PendingAccountEntry entry,
 }) =>
     <Widget>[
-      for (final choice in entry.choices)
-        if (choice.isChoice)
-          ChoiceControl(controller: controller, entry: entry, choice: choice)
-        else
-          OptionDetail(option: choice.selected),
+      for (final (index, choice) in entry.choices.indexed)
+        EntryChoiceBlock(
+          key:
+              ValueKey('entry-choice-${entry.family}-${entry.targetId}-$index'),
+          controller: controller,
+          entry: entry,
+          choice: choice,
+          leading: index == 0,
+        ),
       EntryOutcomes(controller: controller, entry: entry),
       const SizedBox(height: PlinkSpacing.s3),
       Row(
@@ -757,6 +767,73 @@ List<Widget> entryDetail(
         ],
       ),
     ];
+
+/// The heading one [PendingChoice] leads its block with (#281): the question an
+/// either/or asks the operator, or — for a lone action — what that action does.
+///
+/// Deliberately the bare summary rather than the collapsed [pendingChoiceLine]:
+/// the "(manueel)" marker exists to make an informational action scannable in a
+/// list of many, while inside the block [OptionDetail] already spells the same
+/// thing out in a full sentence.
+String choiceHeading(PendingChoice choice) =>
+    choice.isChoice ? 'Kies één oplossing:' : choice.selected.changes.summary;
+
+/// One decision of a card, as a block of its own (#281): the heading that names
+/// it, then the radios (for an either/or) and the field diff of the resolution
+/// that would actually run.
+///
+/// The reading this exists for: a class that is new to Smartschool **and** has
+/// no Office 365 group raises two independent decisions on one card. The body
+/// used to render every choice's control and diff one after another with nothing
+/// between them, under a subtitle that pooled both summaries at the top — so the
+/// operator read the Office 365 field diff, then "Kies één oplossing:" with its
+/// radios, then the Smartschool diff, and had no way to tell which diff belonged
+/// to which decision, or that "pick one of these two" covered only half of what
+/// was on the card. Under its own heading each diff belongs to something, and a
+/// card with two decisions reads as two.
+class EntryChoiceBlock extends StatelessWidget {
+  const EntryChoiceBlock({
+    super.key,
+    required this.controller,
+    required this.entry,
+    required this.choice,
+    required this.leading,
+  });
+
+  final ReconcileController controller;
+  final PendingAccountEntry entry;
+  final PendingChoice choice;
+
+  /// Whether this is the card's first decision — the one that needs no rule
+  /// above it, because the tile's own header already closes the body at the top.
+  final bool leading;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (!leading) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Divider(height: 1, color: Theme.of(context).dividerColor),
+          const SizedBox(height: PlinkSpacing.s3),
+        ],
+        Text(
+          choiceHeading(choice),
+          style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: PlinkSpacing.s1),
+        if (choice.isChoice)
+          ChoiceControl(controller: controller, entry: entry, choice: choice)
+        else
+          OptionDetail(option: choice.selected),
+      ],
+    );
+  }
+}
 
 /// What the last pass did for **this** entry (#272), rendered on the entry's own
 /// card and nowhere else.
@@ -888,6 +965,10 @@ String applyResultsSubtitle(List<ActionOutcomeEntry> results) {
 
 /// The radio group for a mutually-exclusive choice (#110): the operator picks
 /// exactly one resolution; the selected one is what an apply runs.
+///
+/// The "Kies één oplossing:" heading above it belongs to the enclosing
+/// [EntryChoiceBlock] since #281, so that every decision on a card — either/or
+/// or lone action — is introduced by one and the same rule.
 class ChoiceControl extends StatelessWidget {
   const ChoiceControl({
     super.key,
@@ -908,10 +989,6 @@ class ChoiceControl extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          'Kies één oplossing:',
-          style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
-        ),
         for (final option in choice.alternatives)
           InkWell(
             key: ValueKey('alt-${entry.targetId}-${option.kind}'),

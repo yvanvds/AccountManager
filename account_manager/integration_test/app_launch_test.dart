@@ -2381,6 +2381,100 @@ void main() {
   });
 
   testWidgets(
+      'a card raising two decisions groups each one\'s fields under its own '
+      'heading end-to-end (#281)', (WidgetTester tester) async {
+    // `5WW1` is new to Smartschool *and* has no Office 365 group, so one card
+    // asks the operator two independent questions. The body used to answer them
+    // in one interleaved run: both summaries pooled in the subtitle, then the
+    // Office 365 field diff, then "Kies één oplossing:" with its radios, then
+    // the Smartschool option's diff. Nothing said which diff belonged to which
+    // decision, or that "pick one of these two" covered only half the card.
+    //
+    // Asserted end-to-end rather than on the widget alone: what a decision
+    // block *is* is decided by `entryDetail`, but which decisions a card raises
+    // is decided by the dispatch, the alternative collapse and the inventory
+    // composing — and a heading that groups nothing is exactly the bug.
+    useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+
+    // Two decisions, two blocks — the Office 365 create first, because
+    // `collapseAlternatives` emits the lone actions ahead of the either/ors.
+    final office365 = find.byKey(const ValueKey('entry-choice-group-5WW1-0'));
+    final smartschool = find.byKey(const ValueKey('entry-choice-group-5WW1-1'));
+    expect(office365, findsOneWidget);
+    expect(smartschool, findsOneWidget);
+
+    // The lone action is headed by what it does, and the fields under that
+    // heading are the group it would create.
+    expect(
+      find.descendant(
+        of: office365,
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: office365, matching: find.text('groupTypes: ∅ → Unified')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: office365,
+        matching: find.text('description: ∅ → 5e jaar Wetenschappen-Wiskunde'),
+      ),
+      findsNothing,
+      reason: "the Smartschool class's fields belong to the other decision",
+    );
+    expect(
+      find.descendant(
+          of: office365, matching: find.text('Kies één oplossing:')),
+      findsNothing,
+      reason: 'there is nothing to pick between here',
+    );
+
+    // The either/or is headed by its question, and the diff below the radios is
+    // the Smartschool class the selected half would create.
+    expect(
+      find.descendant(
+          of: smartschool, matching: find.text('Kies één oplossing:')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: smartschool,
+          matching: find.text('Negeer deze klas bij het importeren uit WISA')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: smartschool,
+        matching: find.text('description: ∅ → 5e jaar Wetenschappen-Wiskunde'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: smartschool, matching: find.text('groupTypes: ∅ → Unified')),
+      findsNothing,
+      reason: "the Office 365 group's fields belong to the other decision",
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an Office 365 group Graph already holds under our address is adopted, '
       'and the create stops being offered end-to-end (#280)',
       (WidgetTester tester) async {

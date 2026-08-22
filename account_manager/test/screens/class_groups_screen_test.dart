@@ -298,6 +298,82 @@ void main() {
   });
 
   testWidgets(
+      'a row with two decisions puts each one\'s fields under its own heading '
+      '(#281)', (WidgetTester tester) async {
+    // `5WW1` is new to Smartschool *and* has no Office 365 group, so its row
+    // raises two independent decisions. They used to interleave: both summaries
+    // pooled in the subtitle, then the Office 365 field diff, then "Kies één
+    // oplossing:" with its radios, then the Smartschool diff — so which diff
+    // belonged to which decision was anybody's guess.
+    _useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-5WW1')));
+    await tester.pumpAndSettle();
+
+    // Two decisions, two blocks — the Office 365 create first, because
+    // `collapseAlternatives` emits the lone actions ahead of the either/ors.
+    const office365 = ValueKey('entry-choice-group-5WW1-0');
+    const smartschool = ValueKey('entry-choice-group-5WW1-1');
+
+    // The either/or leads with its question, and the fields under it are the
+    // Smartschool class it would create — never the Office 365 group's.
+    expect(
+      find.descendant(
+          of: find.byKey(smartschool),
+          matching: find.text('Kies één oplossing:')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(smartschool),
+        matching: find.text('description: ∅ → 5e jaar Wetenschappen-Wiskunde'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: find.byKey(smartschool),
+          matching: find.text('groupTypes: ∅ → Unified')),
+      findsNothing,
+    );
+
+    // The lone action leads with what it does, and carries its own diff.
+    expect(
+      find.descendant(
+        of: find.byKey(office365),
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: find.byKey(office365),
+          matching: find.text('groupTypes: ∅ → Unified')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(office365),
+        matching: find.text('description: ∅ → 5e jaar Wetenschappen-Wiskunde'),
+      ),
+      findsNothing,
+    );
+    // "Kies één oplossing:" covers half the card, and says so by sitting in
+    // that half only.
+    expect(
+      find.descendant(
+          of: find.byKey(office365),
+          matching: find.text('Kies één oplossing:')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
       'a passive session says it is read-only and renders static rows (#214)',
       (WidgetTester tester) async {
     _useTallWindow(tester);
