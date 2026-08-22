@@ -116,6 +116,32 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Authors one WISA import rule the way the operator does (#273): the
+  /// **Toevoegen** menu, the rule type keyed [kind], then the field prompt —
+  /// one value per field, in order.
+  Future<void> addWisaRule(
+    WidgetTester tester,
+    String kind,
+    List<String> values,
+  ) async {
+    final add = find.byKey(const ValueKey('settings-wisa-rule-add'));
+    await tester.ensureVisible(add);
+    await tester.pumpAndSettle();
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('settings-wisa-rule-add-$kind')));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < values.length; i++) {
+      await tester.enterText(
+        find.byKey(ValueKey('settings-wisa-rule-value-$i')),
+        values[i],
+      );
+    }
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-confirm')));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('the app launches into the Plink-themed Home shell',
       (WidgetTester tester) async {
     // The real main(): with no --dart-define config, AAD is not configured, so
@@ -5651,7 +5677,7 @@ void main() {
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-wisa');
     expect(
-      find.text('• Klas niet importeren uit WISA: 3C'),
+      find.text('Klas niet importeren uit WISA: 3C'),
       findsOneWidget,
     );
 
@@ -5693,6 +5719,111 @@ void main() {
           .onPressed,
       isNotNull,
     );
+  });
+
+  testWidgets(
+      'a WISA import rule authored in Instellingen prunes the very next '
+      'Synchroniseer (#273)', (WidgetTester tester) async {
+    // #263 wired a *persisted* WISA rule through to the pull, but nothing in the
+    // app could put one there: the Wisa tab's rule list was titled "Importregels
+    // (alleen-lezen)" and `_collect` handed `base.wisaRules` straight back, so
+    // the only authoring surface was the Cosmos settings document itself. #263's
+    // own end-to-end had to write the rule into the shared store behind the UI's
+    // back for exactly that reason.
+    //
+    // Nothing is written behind anyone's back here. Every step is the operator's
+    // own — Instellingen → Wisa → **Toevoegen** → *Klas niet importeren* → 3C →
+    // **Opslaan** → **Synchroniseer** — over the production WISA pull.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer, on the rules as they stand: the whole roster comes
+    // in, class 3C included.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 1 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa: no rule yet, and an editor to author one in.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(
+      find.byKey(const ValueKey('settings-wisa-rules-empty')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('alleen-lezen'), findsNothing);
+
+    // The operator authors the rule that drops 3C, and saves.
+    await addWisaRule(tester, 'dontImportClass', <String>['3C']);
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // It landed on the settings document, on the wire shape #263's pull reads.
+    final saved = await settings.store.load();
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect((saved.wisaRules.single as DontImportClass).className, '3C');
+
+    // Back on Reconcile the save is *visible*: a drift pass never re-reads WISA,
+    // so running one now would relink the roster the rule never reached.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('reconcile-drift-blocked')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('WISA-instellingen gewijzigd — synchroniseer eerst.'),
+      findsOneWidget,
+    );
+
+    // Synchroniseer pulls WISA with the authored rule — no relaunch, no
+    // hand-carried document — and the roster it landed is the pruned one.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+
+    // …and it survives a reload of the document, so the next session (and every
+    // other operator) gets the same pull.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
   });
 
   testWidgets(
