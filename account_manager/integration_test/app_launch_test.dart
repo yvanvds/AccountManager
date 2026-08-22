@@ -2221,6 +2221,158 @@ void main() {
   });
 
   testWidgets(
+      'applying a new class creates the Smartschool class **and** its Office '
+      '365 group end-to-end (#272)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over both real write paths at
+    // once. `5WW1` is in WISA only and has no `GBS-5WW1` group, so its card
+    // carries two selected options — the #244 create-or-ignore either/or with
+    // the create pre-selected, and the Office 365 create standing beside it.
+    //
+    // This is the layer the report needed and nothing had: every per-action
+    // unit test passes while one of an entry's two options quietly does not
+    // land, because "both options ran" is a claim about the *entry* — the
+    // dispatch, the alternative collapse, the card's selection and the apply
+    // loop composed — and only a full run puts all four together.
+    useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    // Two decisions on one card, and the badge counts both.
+    const entry = ValueKey('entry-group-5WW1');
+    expect(
+      find.descendant(
+        of: find.byKey(entry),
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(entry),
+        matching: find.text('Voeg deze klas toe aan Smartschool (keuze)'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    // The confirmation names both systems, because both are written.
+    expect(find.textContaining('Smartschool'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Smartschool got its class…
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1));
+    // …and Graph got the Microsoft 365 group, filled by the roster write the
+    // create chains (#245).
+    expect(harness.graph.createdGroups, hasLength(1));
+    final body = harness.graph.createdGroups.single;
+    expect(body['displayName'], 'GBS-5WW1');
+    expect(body['groupTypes'], ['Unified']);
+    expect(harness.graph.batchedWrites, hasLength(2),
+        reason: "the class's two students belong to the group it just made");
+
+    // So the class owes nothing to anybody any more.
+    final kinds = harness.controller.pendingEntries
+        .where((e) => e.targetId == '5WW1')
+        .expand((e) => e.choices)
+        .map((c) => c.selected.kind)
+        .toList();
+    expect(kinds, isEmpty);
+  });
+
+  testWidgets(
+      'an Office 365 create Graph refuses says so on the class card, and can '
+      'be run again from it end-to-end (#272)', (WidgetTester tester) async {
+    // The reported run. Both options are dispatched; Graph refuses the group
+    // create with the `403 Authorization_RequestDenied` of #216, the Smartschool
+    // half lands, and the operator — who applied one class out of an inventory
+    // — is left believing the Office 365 group "never lands".
+    //
+    // Only a full run shows why: the refusal was recorded twice, and both
+    // records are off screen. The log line is on the Synchronisatie tab, and the
+    // outcome rows are in a page-level section under the whole inventory. The
+    // verdict now sits on the card the operator pressed.
+    useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    harness.graph.refuseGroupCreates = true;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // The Smartschool half still landed — a refused action never aborts the
+    // rest of the pass.
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1));
+    expect(harness.graph.createdGroups, isEmpty);
+
+    // …and the card says exactly what happened to each half, with the reason
+    // Graph gave.
+    final verdict = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Resultaat van de vorige poging')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: verdict,
+          matching: find.textContaining('Authorization_RequestDenied')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: verdict,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsOneWidget,
+    );
+
+    // The create is still offered, and running it again against a tenant that
+    // allows it lands the group.
+    harness.graph.refuseGroupCreates = false;
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.graph.createdGroups, hasLength(1));
+    expect(harness.graph.createdGroups.single['displayName'], 'GBS-5WW1');
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1),
+        reason: 'the Smartschool class was already there — no second create');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Klasgroepen tab is a full class inventory with a presence column '
       'per system, and highlights the classes that need work end-to-end '
       '(#227)', (WidgetTester tester) async {

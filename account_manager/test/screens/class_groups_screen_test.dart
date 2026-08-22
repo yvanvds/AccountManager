@@ -195,6 +195,109 @@ void main() {
   });
 
   testWidgets(
+      'a new class applied from its row lands in Smartschool *and* Office 365 '
+      '(#272)', (WidgetTester tester) async {
+    // `5WW1` is in WISA only and has no Office 365 group, so its row carries
+    // two selected options — one per system. Both must run off the one
+    // **Toepassen**.
+    _useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1));
+    expect(harness.graph.createdGroups, hasLength(1));
+    expect(harness.graph.createdGroups.single['displayName'], 'GBS-5WW1');
+  });
+
+  testWidgets(
+      'a refused Office 365 create says so on the class row itself, and stays '
+      'there to be run again (#272)', (WidgetTester tester) async {
+    // The reported shape: the Smartschool half lands, Graph refuses the group
+    // create, and the operator — who applied one class out of an inventory —
+    // sees nothing about it. The verdict used to live only in a log panel on
+    // another screen and a results section below the whole list.
+    _useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    harness.graph.refuseGroupCreates = true;
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // The row's own verdict, on the row, naming the reason Graph gave.
+    final verdict = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
+    expect(verdict, findsOneWidget);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Resultaat van de vorige poging')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: verdict,
+        matching: find.textContaining('Mislukt — Maak de Office 365-groep '
+            'GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: verdict,
+          matching: find.textContaining('Authorization_RequestDenied')),
+      findsOneWidget,
+    );
+    // …beside the half that did land, so the operator reads one card, not two
+    // halves of the story in two places.
+    expect(
+      find.descendant(
+          of: verdict,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsOneWidget,
+    );
+
+    // The pass summary stops claiming everything was written.
+    expect(
+      find.text('1 gelukt, 1 mislukt. Een mislukte actie schreef niets en '
+          'blijft openstaan.'),
+      findsOneWidget,
+    );
+
+    // And the create is still there to run again.
+    expect(
+      find.descendant(
+        of: find.byKey(entry),
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsWidgets,
+    );
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+  });
+
+  testWidgets(
       'a passive session says it is read-only and renders static rows (#214)',
       (WidgetTester tester) async {
     _useTallWindow(tester);

@@ -713,7 +713,7 @@ class _ActionsBodyState extends State<_ActionsBody>
         ..add(_gap(PlinkSpacing.s5))
         ..addAll(_resultSectionSlivers(
           title: 'Resultaat van het toepassen',
-          subtitle: 'Weggeschreven naar de doelsystemen.',
+          subtitle: applyResultsSubtitle(applied),
           results: applied,
         ));
     }

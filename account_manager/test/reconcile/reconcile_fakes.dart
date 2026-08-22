@@ -78,6 +78,12 @@ class RecordingGraph implements az.GraphTransport {
   /// Deliberately not the member-ref deletes, which end in `/$ref`.
   final List<String> deletedGroups = <String>[];
 
+  /// When set, every `POST /groups` is refused with the
+  /// `403 Authorization_RequestDenied` a tenant answers when the sign-in may
+  /// not create Microsoft 365 groups — the shape #216 hit on a Graph write the
+  /// delegated scopes did not cover, applied to the class-group create (#272).
+  bool refuseGroupCreates = false;
+
   int _created = 0;
 
   /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
@@ -118,6 +124,15 @@ class RecordingGraph implements az.GraphTransport {
     // first — `mailNickname eq …` to prove no group answers on that address —
     // which the collection branch above already answers empty.
     if (request.method == 'POST' && request.url.path.endsWith('/groups')) {
+      if (refuseGroupCreates) {
+        return const az.GraphResponse(
+          statusCode: 403,
+          headers: <String, String>{'content-type': 'application/json'},
+          body: '{"error":{"code":"Authorization_RequestDenied",'
+              '"message":"Insufficient privileges to complete the '
+              'operation."}}',
+        );
+      }
       final body = Map<String, dynamic>.from(
         jsonDecode(request.body ?? '{}') as Map,
       );
@@ -1848,6 +1863,87 @@ ReconcileHarness newClassChoiceHarness() => ReconcileHarness(
         memberships: const [],
       ),
       azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+
+/// A harness for #272: one brand-new WISA class that owes **two** writes.
+///
+/// `5WW1` is the class the report is about. Smartschool does not have it, so it
+/// raises the #244 create-or-ignore either/or with the create pre-selected; and
+/// Office 365 has no `GBS-5WW1` group, so it raises [CreateAzureClassGroup]
+/// beside that pair as a decision of its own. One card, two selected options,
+/// two systems — and applying it must land in both.
+///
+/// Its two students already hold Office 365 accounts, which is what a class
+/// formed out of existing pupils looks like in September and what makes the
+/// create chain its roster write (#245): `CreateAzureClassGroup` leaves an empty
+/// group, so the one click has to perform the membership write too.
+///
+/// Smartschool holds only the `Leerlingen` root the class hangs under, named by
+/// [ReconcileHarness.classTree], so the Smartschool half genuinely lands rather
+/// than failing for want of a parent.
+ReconcileHarness newClassNeedingBothWritesHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '1', classGroup: '5WW1', firstName: 'An', name: 'Aerts'),
+          wisaStudent(
+              wisaId: '2', classGroup: '5WW1', firstName: 'Bo', name: 'Bell'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '5WW1',
+            description: '5e jaar Wetenschappen-Wiskunde',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: core.GroupType.group,
+          ),
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'an.aerts',
+            accountId: '1',
+            mail: 'an.aerts@student.school.example',
+            givenName: 'An',
+            surname: 'Aerts',
+          ),
+          ssAccount(
+            uid: 'bo.bell',
+            accountId: '2',
+            mail: 'bo.bell@student.school.example',
+            givenName: 'Bo',
+            surname: 'Bell',
+          ),
+        ],
+        memberships: const [],
+      ),
+      // Both students already have their Office 365 account, names and all, so
+      // the only Azure work anywhere is the class group and its roster.
+      azure: azSnap(users: [
+        azUser(
+          id: 'az-an',
+          upn: 'an.aerts@student.school.example',
+          employeeId: '1',
+          displayName: 'Aerts An',
+        ),
+        azUser(
+          id: 'az-bo',
+          upn: 'bo.bell@student.school.example',
+          employeeId: '2',
+          displayName: 'Bell Bo',
+        ),
+      ]),
       ourSchoolIds: const {1},
       classTree: const SmartschoolClassTree(path: 'SCHOOL'),
     );
