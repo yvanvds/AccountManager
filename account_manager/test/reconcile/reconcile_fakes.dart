@@ -478,6 +478,78 @@ class SharedDepartmentStaffGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering a resumed `/users/delta` the way Graph
+/// answers it after somebody edited an account **by hand** in the Office 365 /
+/// Entra portal (#288): the row carries the object id and the properties that
+/// changed, and nothing else.
+///
+/// That sparseness is Graph's documented contract for a changed instance, and it
+/// is what made every hand-edit invisible. Read as a whole user, such a row
+/// names no school, so the connector's client-side prefix test threw it away —
+/// permanently, because the walk that dropped it still advanced the token. The
+/// operator pressed **Controleer op drift**, read `0 gewijzigd`, and only a
+/// restart (re-seeding from the shared cold store) ever showed the edit.
+///
+/// The bulk read and the `employeeId` back-fill both answer empty, so a test can
+/// prove the delta walk really was the only leg that could have delivered it.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from and the record the row
+/// edits.
+class HandEditedUserGraph implements az.GraphTransport {
+  HandEditedUserGraph({required this.row, this.freshToken = 'AZ-NEXT'});
+
+  /// The one sparse row the resumed walk reports — `{id, <changed props>}`.
+  final Map<String, dynamic> row;
+
+  /// The token this walk leaves behind for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran — none, on an incremental pass.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value':
+            token == 'latest' ? const <Object>[] : <Map<String, dynamic>>[row],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [az.GraphTransport] answering the way the tenant answers on the pass that
 /// has to notice a staff member **left** WISA (#269).
 ///

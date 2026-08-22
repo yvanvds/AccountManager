@@ -7866,6 +7866,117 @@ void main() {
   });
 
   testWidgets(
+      'an edit made by hand in Office 365 shows up on the very next Controleer '
+      'op drift, with the rest of the account intact (#288)',
+      (WidgetTester tester) async {
+    // The report: an administrator renames someone in the Entra portal, the
+    // operator presses Controleer op drift, and nothing happens — the log says
+    // `0 gewijzigd` and the action list is unchanged. Only restarting the app
+    // (which re-seeds from the shared cold store) ever surfaced the edit, and by
+    // then the delta walk that dropped it had already advanced the token, so the
+    // change was never offered again.
+    //
+    // The cause is one query option: the request that *mints* the token carried
+    // no `$select`, so every resumed row came back as `{id, <what changed>}`.
+    // Read as a whole user such a row names no school, and the connector's
+    // client-side prefix test dropped it.
+    //
+    // Only this layer sees the whole thing: it needs the stored token and the
+    // seeded snapshot to make the pass incremental, the merge to keep the record
+    // whole, the linker to join the merged row, and the dispatch to turn the
+    // drift into the to-do the operator should have been handed.
+    useTallWindow(tester);
+    final azureWire = HandEditedUserGraph(
+      // Exactly what Graph sends for a display-name edit: the object id and the
+      // properties that changed. No UPN, no employeeId, no companyName.
+      row: <String, dynamic>{
+        'id': 'az1',
+        'displayName': 'Janneke Doe',
+        'givenName': 'Janneke',
+      },
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot: her account exactly in step with WISA, and the
+      // token this pass resumes from.
+      azureInitial: azSnap(
+        deltaToken: 'AZ-TOKEN',
+        users: [azUser(displayName: 'Jane Doe')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: the seeded Azure snapshot is reused untouched, its
+    // token unspent, and the student has nothing to do.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+      reason: 'the account starts in step with WISA, so the drift below is '
+          'entirely the hand-edit',
+    );
+
+    // Today: Check for drift, the only route to an Azure read in normal
+    // operation — and incrementally, from the stored token.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass really was the incremental one, so the sparse resumed row really
+    // was the only thing that could have carried the edit: no bulk read ran and
+    // the `employeeId` back-fill asked about nobody.
+    expect(azureWire.resumeTokens, <String>['AZ-TOKEN']);
+    expect(azureWire.bulkReads, 0);
+    expect(azureWire.employeeIdLookups, isEmpty);
+
+    // The edit landed — and nothing else moved. Before the fix this row was
+    // dropped whole; upserted raw it would instead have blanked the UPN and the
+    // `employeeId → wisaId` bridge the linker joins on.
+    expect(
+      harness.app.azure.snapshot!.users.single,
+      azUser(displayName: 'Janneke Doe', givenName: 'Janneke'),
+    );
+
+    // And the operator is handed the one to-do it means: put the WISA name back
+    // on the Office 365 account. Exactly one — a blanked record would have
+    // raised "Wijzig de school in Azure" beside it.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de naam in Azure'],
+    );
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
+  });
+
+  testWidgets(
       'a staff member who left WISA still gets their Office 365 account '
       'proposed for deletion (#269)', (WidgetTester tester) async {
     // The other half of #268, and the worse one. Anna Smit has left the school:

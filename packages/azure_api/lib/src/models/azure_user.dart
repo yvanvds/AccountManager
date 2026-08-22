@@ -93,6 +93,48 @@ class AzureUser implements core.AzureUser {
   static bool isRemoved(Map<String, dynamic> json) =>
       json.containsKey('@removed');
 
+  /// This user with every property [json] actually carries written over it,
+  /// leaving the ones it stays silent about untouched (#288).
+  ///
+  /// The merge [AzureUser.fromGraphJson] cannot do. Graph represents a changed
+  /// instance in a delta walk by its `id` plus *at least* the properties that
+  /// changed, so a resumed row for a hand-edited account is routinely
+  /// `{"id": "…", "displayName": "…"}` and nothing more. Read as a whole user
+  /// that row is a wreck — blank `upn`, blank `displayName`, no `employeeId`,
+  /// which is the `employeeId → wisaId` bridge the linker joins on — and
+  /// upserting it over the previous snapshot destroyed the record it was
+  /// supposed to update.
+  ///
+  /// Presence, not emptiness, decides: a property Graph *sent* wins even when
+  /// it is `null` (that is how a cleared `employeeId` or `companyName` arrives),
+  /// a property Graph omitted keeps its current value. `id` is the one
+  /// exception — an empty incoming id never replaces the one this record is
+  /// keyed by.
+  AzureUser mergeGraphJson(Map<String, dynamic> json) {
+    String str(String key, String current) =>
+        json.containsKey(key) ? ((json[key] as String?) ?? '') : current;
+    String? nullable(String key, String? current) {
+      if (!json.containsKey(key)) return current;
+      final v = json[key] as String?;
+      return (v == null || v.isEmpty) ? null : v;
+    }
+
+    final incomingId = (json['id'] as String?) ?? '';
+    return AzureUser(
+      id: incomingId.isEmpty ? id : incomingId,
+      upn: str('userPrincipalName', upn),
+      employeeId: nullable('employeeId', employeeId),
+      displayName: str('displayName', displayName),
+      givenName: str('givenName', givenName),
+      surname: str('surname', surname),
+      companyName: nullable('companyName', companyName),
+      department: nullable('department', department),
+      accountEnabled: json.containsKey('accountEnabled')
+          ? ((json['accountEnabled'] as bool?) ?? true)
+          : accountEnabled,
+    );
+  }
+
   /// Serializes to the connector's own cache shape (not Graph's). Round-trips
   /// with [AzureUser.fromJson] for the on-disk "last known good" snapshot.
   Map<String, dynamic> toJson() => {
