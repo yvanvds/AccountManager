@@ -58,18 +58,33 @@ class LiveSettings {
 }
 
 /// A stable identity for the settings a WISA pull depends on: the werkdatum
-/// pair and the operator's virtual-school marks (#238).
+/// pair, the operator's virtual-school marks (#238), and the persisted WISA
+/// import rules (#263).
 ///
 /// Fingerprints the **settings**, not the resolved dates: `isNow: true`
 /// resolves to a different instant on every pull and would make two identical
 /// configurations compare unequal, which would leave "Check for drift"
 /// permanently blocked. Two settings documents with the same fingerprint
 /// therefore produce the same WISA query for the same instant.
+///
+/// The import rules belong here for the same reason the werkdatum does: since
+/// #263 the pull reads them from the live document, so a saved rule changes
+/// what the roster contains — and a drift pass, which never re-pulls WISA,
+/// would otherwise relink against the roster the rule never reached. Only the
+/// *persisted* rules count; the ones a `DontImportFromWisa` apply accumulates
+/// in the session's `WisaImportRules` holder trigger their own re-sync and are
+/// not part of any settings document.
+///
+/// Order-sensitive, like [smartschoolPullFingerprint]: the connector applies
+/// the rules in sequence.
 String wisaPullFingerprint(AppSettings settings) {
   final virtualSchools = settings.virtualWisaSchoolIds.toList()..sort();
   return 'werkdatum=${_workDateKey(settings.wisa.workDate)};'
       'virtueleWerkdatum=${_workDateKey(settings.wisa.virtualWorkDate)};'
-      'virtueleScholen=${virtualSchools.join(',')}';
+      'virtueleScholen=${virtualSchools.join(',')};'
+      'regels=${jsonEncode(<Map<String, dynamic>>[
+        for (final rule in settings.wisaRules) encodeWisaRule(rule),
+      ])}';
 }
 
 String _workDateKey(WorkDateSetting setting) =>

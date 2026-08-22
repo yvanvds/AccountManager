@@ -451,8 +451,9 @@ class ReconcileController extends ChangeNotifier {
   /// at pull time and the Settings view publishes into on every load and save.
   ///
   /// The controller uses it for one thing: to tell whether the WISA pull inputs
-  /// (werkdatum, virtuele werkdatum, virtual-school marks) have moved since the
-  /// snapshot this session holds was pulled. A drift pass never re-reads WISA —
+  /// (werkdatum, virtuele werkdatum, virtual-school marks, and since #263 the
+  /// persisted import rules) have moved since the snapshot this session holds
+  /// was pulled. A drift pass never re-reads WISA —
   /// that is what Synchroniseer is for — so once they have, a drift check would
   /// silently relink against a roster built with the old settings and publish
   /// the result to every other operator. [driftBlockedReason] refuses instead.
@@ -1076,7 +1077,8 @@ class ReconcileController extends ChangeNotifier {
   /// A drift pass deliberately re-reads only Smartschool and Azure: the WISA
   /// roster it links them against is whatever this session already holds, cold
   /// seed included. So once the operator saves a werkdatum — or a virtuele
-  /// werkdatum, or a school's virtual mark — that roster is not the one their
+  /// werkdatum, or a school's virtual mark, or a WISA import rule (#263) —
+  /// that roster is not the one their
   /// change asks for, and a drift pass would relink against the old one,
   /// materialize the result, bump the generation and broadcast it to every other
   /// operator. Refusing until a full [sync] has pulled WISA with the new

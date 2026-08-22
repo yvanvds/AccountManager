@@ -446,6 +446,139 @@ void main() {
       rules.add(const wapi.DontImportClass('3C'));
       expect((await syncer(null)).classGroups, isEmpty);
     });
+
+    test("unions the persisted rules with the session's own (#263)", () async {
+      // Both halves reach one pull: the `MarkAsVirtual` this session earned and
+      // the `DontImportClass` the operator saved a moment ago.
+      final wire = RecordingWisaSoap();
+      final rules = WisaImportRules()..add(const wapi.MarkAsVirtual('S1'));
+      final live = LiveSettings(_settings());
+      final syncer = wisaSyncer(
+        wapi.WisaConnector.fromParts(
+          server: 'wisa.example',
+          port: 9000,
+          database: 'db',
+          username: 'u',
+          password: 'p',
+          transport: wire,
+        ),
+        settings: live,
+        rules: rules,
+      );
+
+      final first = await syncer(null);
+      expect(first.schools.single.isVirtual, isTrue,
+          reason: 'the session rule already marks the school virtual');
+      expect(first.classGroups, hasLength(1));
+
+      live.publish(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+
+      final pruned = await syncer(null);
+      expect(pruned.classGroups, isEmpty,
+          reason: 'the saved rule reached the pull');
+      expect(pruned.schools.single.isVirtual, isTrue,
+          reason: 'and the session rule was not lost composing it');
+    });
+  });
+
+  group('a WISA import rule saved in Instellingen reaches the pull (#263)', () {
+    test('the very next pull applies it, with no relaunch', () async {
+      // The reported bug. `bootstrapReconcile` seeded the shared
+      // `WisaImportRules` holder from the document it loaded at startup and
+      // nothing ever published a saved document back into it, so a rule on the
+      // settings document only ever reached the pull of the *next* launch.
+      final wire = RecordingWisaSoap();
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        hasLength(1),
+      );
+
+      live.publish(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+      await harness.controller.sync();
+
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        isEmpty,
+        reason: 'the pass the operator reached for applied the saved rule',
+      );
+    });
+
+    test('a rule dropped from the document stops applying too', () async {
+      // The other half of the freeze: a holder seeded once could never let go
+      // of a rule, so un-ignoring a class needed a relaunch as well.
+      final live = LiveSettings(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+
+      await harness.controller.sync();
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        isEmpty,
+      );
+
+      live.publish(_settings());
+      await harness.controller.sync();
+
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        hasLength(1),
+      );
+    });
+
+    test('blocks Check for drift until a Synchroniseer has pulled with it',
+        () async {
+      // A drift pass never re-reads WISA, so between the save and the sync it
+      // would relink the roster the rule never reached — and publish that to
+      // every other operator.
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+      expect(harness.controller.canCheckDrift, isTrue);
+
+      live.publish(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+
+      expect(
+        harness.controller.driftBlockedReason,
+        'WISA-instellingen gewijzigd — synchroniseer eerst.',
+      );
+      expect(harness.controller.canCheckDrift, isFalse);
+
+      await harness.controller.sync();
+      expect(harness.controller.driftBlockedReason, isNull);
+    });
+
+    test('a rule an apply earned never arms the drift gate', () async {
+      // Session rules are not on any settings document, and the apply that
+      // earns one re-syncs WISA itself — so the gate must stay open.
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+
+      harness.applier.wisaRules.add(const wapi.DontImportClass('3C'));
+
+      expect(harness.controller.driftBlockedReason, isNull);
+      expect(harness.controller.canCheckDrift, isTrue);
+    });
   });
 
   group('the rest of the reconcile stack reads settings live too (#246)', () {

@@ -1,7 +1,7 @@
 import 'package:wisa_api/wisa_api.dart';
 
 /// A mutable, de-duplicating set of [WisaImportRule]s shared between the WISA
-/// [Syncer] and the [StateApplier].
+/// [Syncer] and the [StateApplier] — the rules **this session earned**.
 ///
 /// WISA is read-only, so the `DontImportFromWisa` actions (student/staff
 /// [DontImportUserFromWisa], group [DontImportClass]) cannot write anything;
@@ -13,25 +13,38 @@ import 'package:wisa_api/wisa_api.dart';
 ///
 /// This holder is the seam that lets [StateApplier] re-sync WISA with the
 /// accumulated rules **without** re-wiring the [SystemState]. Build it once,
-/// wire the WISA syncer to read [rules] live, then hand the same instance to
+/// wire the WISA syncer to read the rules live, then hand the same instance to
 /// the applier:
 ///
 /// ```dart
-/// final importRules = WisaImportRules(initial: settings.wisaRules);
+/// final importRules = WisaImportRules();
 /// final wisa = SystemState<WisaSnapshot>(
 ///   system: Origin.wisa,
 ///   syncer: (_) => connector.sync(
 ///     schools: schools,
 ///     workDate: workDate,
-///     rules: importRules.rules, // read live, so a later add() takes effect
+///     // read live, so a later add() — and a later save — takes effect
+///     rules: importRules.unionWith(live.current.wisaRules),
 ///   ),
 /// );
 /// // ... build ApplicationState, then:
 /// final applier = StateApplier(app: app, wisaRules: importRules, ...);
 /// ```
 ///
-/// Because the syncer reads [rules] at call time, `applier` only has to
+/// Because the syncer composes the rules at call time, `applier` only has to
 /// [add] the new rule and trigger `app.sync(Origin.wisa)`.
+///
+/// ## Why the persisted rules are *not* seeded in here (#263)
+///
+/// The obvious wiring — `WisaImportRules(initial: settings.wisaRules)` at
+/// bootstrap — is what this holder used to get, and it froze the operator's
+/// persisted rules for the life of the process: nothing ever published a saved
+/// settings document back into the holder, so a rule the operator (or another
+/// operator, through the shared document) added reached the pull only after a
+/// relaunch, and a rule *removed* from the document could never be dropped at
+/// all. So the two sources stay distinct — persisted rules on the settings
+/// document, read live at pull time through [unionWith]; session-earned rules
+/// here — and the pull unions them.
 class WisaImportRules {
   WisaImportRules({Iterable<WisaImportRule> initial = const []}) {
     for (final rule in initial) {
@@ -42,10 +55,26 @@ class WisaImportRules {
   final List<WisaImportRule> _rules = [];
   final Set<String> _keys = {};
 
-  /// The accumulated rules, in insertion order. Pass this to the WISA
-  /// connector's `sync(rules: ...)` — read live so an [add] between syncs is
-  /// picked up by the next re-sync.
+  /// The rules this session accumulated, in insertion order. A pull wants
+  /// [unionWith] instead — this is only the session's own half.
   List<WisaImportRule> get rules => List.unmodifiable(_rules);
+
+  /// The rules one WISA pull should apply: the operator's [persisted] rules —
+  /// read from the live settings document at pull time — followed by the ones
+  /// this session earned, de-duplicated exactly as [add] de-duplicates (#263).
+  ///
+  /// Persisted first because they are the operator's standing configuration;
+  /// the session's own `DontImportFromWisa` rules are the increment on top. A
+  /// rule present in both collapses to one, so re-applying a `DontImportClass`
+  /// the document already carries changes nothing.
+  List<WisaImportRule> unionWith(Iterable<WisaImportRule> persisted) {
+    final keys = <String>{};
+    final merged = <WisaImportRule>[];
+    for (final rule in <WisaImportRule>[...persisted, ..._rules]) {
+      if (keys.add(_keyOf(rule))) merged.add(rule);
+    }
+    return List.unmodifiable(merged);
+  }
 
   /// Adds [rule] unless a structurally-equal rule is already present. Returns
   /// `true` if the set changed. De-duplication keeps a repeated

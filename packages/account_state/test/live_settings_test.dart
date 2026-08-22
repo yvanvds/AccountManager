@@ -1,6 +1,7 @@
 import 'package:account_state/account_state.dart';
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:test/test.dart';
+import 'package:wisa_api/wisa_api.dart';
 
 AppSettings _settings({
   WorkDateSetting workDate = const WorkDateSetting(),
@@ -123,6 +124,59 @@ void main() {
         wisaPullFingerprint(_settings(schools: const [a, b])),
         wisaPullFingerprint(_settings(schools: const [b, a])),
       );
+    });
+
+    test('changes when a WISA import rule is saved (#263)', () {
+      // The rules are pull inputs since #263 — the pull reads them from the
+      // live document — so a saved rule must arm the drift gate exactly as a
+      // moved werkdatum does, or "Check for drift" would keep relinking the
+      // roster the rule never reached.
+      final before = wisaPullFingerprint(_settings());
+      final after = wisaPullFingerprint(_settings().copyWith(
+        wisaRules: const <WisaImportRule>[DontImportClass('3C')],
+      ));
+      expect(after, isNot(before));
+    });
+
+    test('distinguishes two rules of the same kind (#263)', () {
+      final base = _settings();
+      expect(
+        wisaPullFingerprint(base.copyWith(
+          wisaRules: const <WisaImportRule>[DontImportClass('3C')],
+        )),
+        isNot(wisaPullFingerprint(base.copyWith(
+          wisaRules: const <WisaImportRule>[DontImportClass('4C')],
+        ))),
+      );
+    });
+
+    test('is order-sensitive, because the connector applies rules in sequence',
+        () {
+      final base = _settings();
+      expect(
+        wisaPullFingerprint(base.copyWith(
+          wisaRules: const <WisaImportRule>[
+            DontImportClass('3C'),
+            MarkAsVirtual('V'),
+          ],
+        )),
+        isNot(wisaPullFingerprint(base.copyWith(
+          wisaRules: const <WisaImportRule>[
+            MarkAsVirtual('V'),
+            DontImportClass('3C'),
+          ],
+        ))),
+      );
+    });
+
+    test('is stable across two reads of the same rules (#263)', () {
+      final settings = _settings().copyWith(
+        wisaRules: const <WisaImportRule>[
+          DontImportClass('3C'),
+          MarkAsOurs('S1'),
+        ],
+      );
+      expect(wisaPullFingerprint(settings), wisaPullFingerprint(settings));
     });
   });
 

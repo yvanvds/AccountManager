@@ -360,7 +360,13 @@ Future<ReconcileServices> bootstrapReconcile({
     log: logBuffer,
   );
 
-  final wisaRules = WisaImportRules(initial: settings.wisaRules);
+  // Only the rules *this session* earns — the `DontImportFromWisa` applies.
+  // The operator's persisted rules are deliberately not seeded in here (#263):
+  // nothing ever republished a saved document into this holder, so seeding it
+  // froze `settings.wisaRules` for the life of the process. The pull reads them
+  // from the live document instead, so a rule saved (or removed) in the settings
+  // document reaches the very next pull rather than the next launch.
+  final wisaRules = WisaImportRules();
 
   // Seed each SystemState from the stored cold snapshot so a fresh session
   // trusts the persisted state (#107): WISA seeds the smart-diff baseline,
@@ -617,10 +623,16 @@ String smartschoolSiteFrom(String uri) {
 ///
 /// - the import [rules], so a `DontImportFromWisa` apply reaches the re-sync it
 ///   triggers (#72);
-/// - the operator's [settings] — the werkdatum, the virtuele werkdatum, and the
-///   per-school virtual marks (#203). Before #238 these were closed over as an
-///   immutable `AppSettings` read once at bootstrap, so saving a new werkdatum
-///   in Instellingen changed nothing until the app was relaunched.
+/// - the operator's [settings] — the werkdatum, the virtuele werkdatum, the
+///   per-school virtual marks (#203), and the persisted WISA import rules
+///   (#263). Before #238 these were closed over as an immutable `AppSettings`
+///   read once at bootstrap, so saving a new werkdatum in Instellingen changed
+///   nothing until the app was relaunched.
+///
+/// The two rule sources are unioned here, per pull, rather than merged once at
+/// wiring time (#263): [rules] holds what this session accumulated, the live
+/// document holds what the operator persisted, and only reading both at call
+/// time lets either move under a running session.
 ///
 /// Schools are re-read per sync so a WISA-side school change is picked up;
 /// `MarkAsVirtual` rules and the operator's virtual marks are applied to them
@@ -641,7 +653,7 @@ Syncer<wapi.WisaSnapshot> wisaSyncer(
       // One consistent read for the whole pull: a save landing mid-pull must not
       // split the school list and the work dates across two documents.
       final current = settings.current;
-      final importRules = rules.rules;
+      final importRules = rules.unionWith(current.wisaRules);
       final schools = markVirtualSchools(
         wapi.WisaConnector.applySchoolRules(
           await connector.loadSchools(),

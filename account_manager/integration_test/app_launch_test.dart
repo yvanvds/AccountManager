@@ -43,7 +43,8 @@ import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
     show DiscardSmartschoolGroup, SmartschoolConnector;
-import 'package:wisa_api/wisa_api.dart' show WisaSchool, parseSchoolRow;
+import 'package:wisa_api/wisa_api.dart'
+    show DontImportClass, WisaImportRule, WisaSchool, parseSchoolRow;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5378,6 +5379,120 @@ void main() {
         'opgehaald.',
       ),
       findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'a WISA import rule on the shared settings document prunes the very next '
+      'Synchroniseer, and Check for drift refuses until it has (#263)',
+      (WidgetTester tester) async {
+    // The reported bug, driven end-to-end over the *production* WISA pull.
+    // `bootstrapReconcile` seeded the shared `WisaImportRules` holder from the
+    // document it read at startup and nothing ever published a saved document
+    // back into it, so a WISA import rule on the settings document reached the
+    // pull only after a relaunch — and nothing on screen said so.
+    //
+    // Both bootstraps share one LiveSettings, exactly as `main()` wires them,
+    // and every step after the shared-store write is the operator's own: open
+    // Instellingen, press **Herladen**, read the rule back, press
+    // **Synchroniseer**.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer, on the rules as they stand: the whole roster comes
+    // in, class 3C included.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 1 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa carries no import rule yet.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(
+      find.byKey(const ValueKey('settings-wisa-rules-empty')),
+      findsOneWidget,
+    );
+
+    // Another operator writes one into the shared settings document — the WISA
+    // rules are read-only in this view, so the store is where they arrive.
+    await settings.store.save(stored.copyWith(
+      wisaRules: const <WisaImportRule>[DontImportClass('3C')],
+    ));
+
+    // The operator pulls it into this session with **Herladen**, the affordance
+    // the view offers for exactly that, and reads it back on the Wisa tab.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(
+      find.text('• Klas niet importeren uit WISA: 3C'),
+      findsOneWidget,
+    );
+
+    // Back on Reconcile the change is *visible*: a drift pass never re-reads
+    // WISA, so running one now would relink the roster the rule never reached
+    // and publish that to every other operator.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('reconcile-drift-blocked')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('WISA-instellingen gewijzigd — synchroniseer eerst.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNull,
+    );
+
+    // Pressing Synchroniseer pulls WISA with the rule — no relaunch — and the
+    // roster it landed is the pruned one.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsOneWidget,
+    );
+    // …and the drift check is offered again.
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNotNull,
     );
   });
 
