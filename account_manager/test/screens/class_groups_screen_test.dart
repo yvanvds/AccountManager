@@ -248,17 +248,18 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    // The row's own verdict, on the row, naming the reason Graph gave.
-    final verdict = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
-    expect(verdict, findsOneWidget);
+    // The row's own verdict, on the row, naming the reason Graph gave — under
+    // the decision it is the verdict of, since #283.
+    final refused = find.byKey(const ValueKey('entry-outcomes-group-5WW1-0'));
+    expect(refused, findsOneWidget);
     expect(
       find.descendant(
-          of: verdict, matching: find.text('Resultaat van de vorige poging')),
+          of: refused, matching: find.text('Resultaat van de vorige poging')),
       findsOneWidget,
     );
     expect(
       find.descendant(
-        of: verdict,
+        of: refused,
         matching: find.textContaining('Mislukt — Maak de Office 365-groep '
             'GBS-5WW1 voor klas 5WW1'),
       ),
@@ -266,18 +267,28 @@ void main() {
     );
     expect(
       find.descendant(
-          of: verdict,
+          of: refused,
           matching: find.textContaining('Authorization_RequestDenied')),
       findsOneWidget,
     );
     // …beside the half that did land, so the operator reads one card, not two
-    // halves of the story in two places.
+    // halves of the story in two places. That half settled its own decision, so
+    // the card no longer raises it and its verdict is reported at card level
+    // (#283) — on the same card, on screen at the same time.
+    final settled = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
     expect(
       find.descendant(
-          of: verdict,
+          of: settled,
           matching: find.text('Voeg deze klas toe aan Smartschool')),
       findsOneWidget,
     );
+    for (final block in <Finder>[refused, settled]) {
+      expect(
+        find.descendant(of: find.byKey(entry), matching: block),
+        findsOneWidget,
+        reason: 'both verdicts stay readable together on the one card',
+      );
+    }
 
     // The pass summary stops claiming everything was written.
     expect(
@@ -369,6 +380,144 @@ void main() {
       find.descendant(
           of: find.byKey(office365),
           matching: find.text('Kies één oplossing:')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+      "a row with two decisions puts each one's verdict under its own heading "
+      '(#283)', (WidgetTester tester) async {
+    // A dry-run settles nothing, so both of `5WW1`'s decisions are still on the
+    // row afterwards and each one can be asked what happened to it. The verdict
+    // lines used to pool in one block below both decisions, exactly the way the
+    // field diffs did before #281.
+    _useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-5WW1')));
+    await tester.pumpAndSettle();
+    final dryRun = find.byKey(const ValueKey('entry-dry-run-5WW1'));
+    await tester.ensureVisible(dryRun);
+    await tester.tap(dryRun);
+    await tester.pumpAndSettle();
+
+    final office365 = find.byKey(const ValueKey('entry-outcomes-group-5WW1-0'));
+    final smartschool =
+        find.byKey(const ValueKey('entry-outcomes-group-5WW1-1'));
+
+    // Each decision reports its own write, and only its own.
+    expect(
+      find.descendant(
+          of: office365,
+          matching: find.text('Resultaat van de vorige dry-run')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: office365,
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: office365,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+          of: smartschool,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: smartschool,
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsNothing,
+    );
+
+    // Nothing is left over: both decisions are still on the row, so the
+    // card-level block has nothing to report and does not render at all.
+    expect(
+        find.byKey(const ValueKey('entry-outcomes-group-5WW1')), findsNothing,
+        reason: 'a dry-run settles no decision, so no verdict is orphaned');
+  });
+
+  testWidgets(
+      'a verdict whose decision succeeded is still reported on the row (#283)',
+      (WidgetTester tester) async {
+    // The reported run, read the way #283 asks for it. The Smartschool half
+    // lands — so its decision is gone from the row the relink builds and its
+    // verdict has no block left to sit in — while the Office 365 half is
+    // refused and keeps its decision. Both have to stay readable side by side.
+    _useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    harness.graph.refuseGroupCreates = true;
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // The refusal sits under the decision that still asks the question…
+    final decision = find.byKey(const ValueKey('entry-choice-group-5WW1-0'));
+    expect(
+      find.descendant(
+          of: decision,
+          matching: find.textContaining('Authorization_RequestDenied')),
+      findsOneWidget,
+    );
+    // …and nothing else does. The half that landed is not this decision's
+    // verdict, so it does not appear under its heading.
+    expect(
+      find.descendant(
+          of: decision,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsNothing,
+    );
+
+    // The half that landed keeps its verdict at card level, and the card says
+    // why it has no decision above it.
+    final settled = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
+    expect(
+      find.descendant(
+          of: settled,
+          matching: find.text('Overige resultaten van de vorige poging')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: settled,
+        matching: find.text('Deze acties staan niet meer open op deze kaart.'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: settled,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: settled,
+          matching: find.textContaining('Authorization_RequestDenied')),
       findsNothing,
     );
   });

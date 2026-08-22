@@ -65,6 +65,7 @@ class ActionOutcomeEntry {
     this.error,
     this.family = '',
     this.targetId = '',
+    this.situationId = '',
   });
 
   /// Human label of the record the action targets.
@@ -89,6 +90,21 @@ class ActionOutcomeEntry {
   /// cannot do that: it is a display string, and a class and an account can
   /// read the same.
   final String targetId;
+
+  /// The [PendingChoice.situationId] of the decision this row is the verdict of
+  /// — the option's `group ?? kind` (#283).
+  ///
+  /// [family] + [targetId] name the *card*; a card can raise several
+  /// independent decisions at once (a class new to Smartschool **and** without
+  /// an Office 365 group raises two), so routing a verdict to the decision it
+  /// answers needs this third stamp. A chained follow-up (#230/#240/#245)
+  /// carries the situation of the option that unlocked it, because that is the
+  /// decision the operator took when they started it.
+  ///
+  /// Empty on a row recorded before the stamp existed; such a row belongs to no
+  /// decision and is reported at card level instead (see
+  /// [ReconcileController.unroutedApplyOutcomesFor]).
+  final String situationId;
 
   /// Whether this row is a key for [ReconcileController.applyOutcomesFor] at
   /// all — a row recorded before the entry identity existed carries neither
@@ -155,6 +171,12 @@ class PendingActionOption {
   /// has run and relinked. The confirmation dialog has to name that second
   /// system *before* the write.
   final Set<core.Origin> unlockedSystems;
+
+  /// The decision this option belongs to, by the same rule
+  /// [PendingChoice.situationId] uses (#283) — the alternative group when this
+  /// option is one of several mutually-exclusive resolutions, else its own
+  /// kind. What routes a pass's verdict back to the decision that raised it.
+  String get situationId => group ?? kind;
 }
 
 /// What a confirmed apply of a selection would write, for the confirmation
@@ -254,8 +276,9 @@ class PendingChoice {
 
   /// The situation this choice resolves — the alternative-group key for a real
   /// choice, else the single action kind. Drives the "same situation" grouping
-  /// so two departed students share one bulk-apply subset.
-  String get situationId => alternatives.first.group ?? alternatives.first.kind;
+  /// so two departed students share one bulk-apply subset, and — since #283 —
+  /// routes a pass's verdict back to the decision it is the verdict of.
+  String get situationId => alternatives.first.situationId;
 }
 
 /// The pending actions for **one** linked account, staff member, or class group
@@ -666,6 +689,11 @@ class ReconcileController extends ChangeNotifier {
   ///
   /// Empty when the entry took no part in the last pass — including after a
   /// sync, which clears both result lists.
+  ///
+  /// The whole of it, in dispatch order. The card splits it further:
+  /// [applyOutcomesForChoice] gives the part that answers one decision, and
+  /// [unroutedApplyOutcomesFor] the part no decision on the card can claim
+  /// (#283).
   List<ActionOutcomeEntry> applyOutcomesFor(PendingAccountEntry entry) {
     final results = _applyResults ?? _dryRunResults;
     if (results == null) return const <ActionOutcomeEntry>[];
@@ -676,6 +704,72 @@ class ReconcileController extends ChangeNotifier {
             r.targetId == entry.targetId)
           r,
     ];
+  }
+
+  /// The part of [entry]'s verdict that answers [choice] — the rows stamped
+  /// with that decision's [PendingChoice.situationId] (#283).
+  ///
+  /// A card can raise several independent decisions, so a verdict pooled at
+  /// card level says *what happened* without saying *to which question*. These
+  /// are the rows the decision's own block shows.
+  ///
+  /// Empty when [choice]'s situation does not name exactly one decision on this
+  /// card. An entry groups every action on one target, and two targets that
+  /// share a display label share an entry, so a kind is not guaranteed unique
+  /// within a card (the same reason #281 keys the blocks by position). A row
+  /// that two blocks could equally claim is shown in neither — it falls to
+  /// [unroutedApplyOutcomesFor], which is where it was already being read
+  /// before #283.
+  List<ActionOutcomeEntry> applyOutcomesForChoice(
+    PendingAccountEntry entry,
+    PendingChoice choice,
+  ) {
+    if (!_routableSituations(entry).contains(choice.situationId)) {
+      return const <ActionOutcomeEntry>[];
+    }
+    return <ActionOutcomeEntry>[
+      for (final r in applyOutcomesFor(entry))
+        if (r.situationId == choice.situationId) r,
+    ];
+  }
+
+  /// The part of [entry]'s verdict that no decision on the card can claim
+  /// (#283) — reported at card level, exactly where the whole verdict was
+  /// reported before.
+  ///
+  /// This is not a leftovers bin: it is the normal home of every verdict that
+  /// **succeeded**. A write that lands settles its decision, so the next relink
+  /// does not raise it again and the block it would have sat in no longer
+  /// exists. Dropping those rows would lose exactly what #272 exists to show —
+  /// the reported run has the Smartschool half landing and the Office 365 half
+  /// refused, and both have to stay readable side by side.
+  ///
+  /// Also catches a row from a decision that is no longer offered for any other
+  /// reason (the record changed under the write, so the dispatcher now proposes
+  /// a different kind), one whose situation is ambiguous within the card, and
+  /// one recorded before #283 stamped the situation at all.
+  ///
+  /// Together with [applyOutcomesForChoice] over every choice this partitions
+  /// [applyOutcomesFor] exactly: no row is shown twice, and none goes missing.
+  List<ActionOutcomeEntry> unroutedApplyOutcomesFor(PendingAccountEntry entry) {
+    final routable = _routableSituations(entry);
+    return <ActionOutcomeEntry>[
+      for (final r in applyOutcomesFor(entry))
+        if (!routable.contains(r.situationId)) r,
+    ];
+  }
+
+  /// The situations that name **exactly one** decision on [entry] — the only
+  /// ones a verdict row can be routed by (#283).
+  static Set<String> _routableSituations(PendingAccountEntry entry) {
+    final counts = <String, int>{};
+    for (final c in entry.choices) {
+      counts[c.situationId] = (counts[c.situationId] ?? 0) + 1;
+    }
+    return <String>{
+      for (final e in counts.entries)
+        if (e.value == 1) e.key,
+    };
   }
 
   /// All pending actions of the current linked view, student → staff → group.
@@ -2123,7 +2217,8 @@ class ReconcileController extends ChangeNotifier {
         _record(option, changes, result),
         // A chained follow-up is a write the same click performed on the same
         // target, so it is stamped with the same entry identity and lands on
-        // the same card (#272).
+        // the same card (#272) — and, since #283, with the same *decision*,
+        // because the operator started it by picking this option.
         for (final followUp in applied.followUps)
           _record(option, followUp.changes, followUp),
       ];
@@ -2136,6 +2231,7 @@ class ReconcileController extends ChangeNotifier {
           target: option.target,
           family: option.family,
           targetId: option.targetId,
+          situationId: option.situationId,
           changes: changes,
           outcome: actions.ActionOutcome.failed,
           error: e,
@@ -2146,7 +2242,8 @@ class ReconcileController extends ChangeNotifier {
 
   /// Logs one action's outcome and shapes it as a results-list row, stamped
   /// with the entry [option] came from so the card can show its own verdict
-  /// (#272).
+  /// (#272) and with the decision it answers so that verdict sits under the
+  /// question it belongs to (#283).
   ActionOutcomeEntry _record(
     PendingActionOption option,
     actions.ChangeSet changes,
@@ -2165,6 +2262,7 @@ class ReconcileController extends ChangeNotifier {
       target: target,
       family: option.family,
       targetId: option.targetId,
+      situationId: option.situationId,
       changes: changes,
       outcome: result.outcome,
       error: result.error,

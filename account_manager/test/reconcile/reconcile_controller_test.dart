@@ -2395,6 +2395,134 @@ void main() {
     });
   });
 
+  group("a verdict belongs to the decision it is the verdict of (#283)", () {
+    PendingAccountEntry entryOf(ReconcileHarness h) =>
+        h.controller.groupPendingEntries
+            .firstWhere((e) => e.targetId == '5WW1');
+
+    test('every row is stamped with the decision that produced it', () async {
+      final h = newClassNeedingBothWritesHarness();
+      await h.controller.sync();
+      // Before the apply, so both decisions are still there to be named.
+      expect(entryOf(h).choices.map((c) => c.situationId),
+          ['CreateAzureClassGroup', actions.classImportAlternative]);
+
+      await h.controller.applyEntry(entryOf(h));
+
+      // `family` + `targetId` name the card, never the decision — the whole
+      // reason the verdicts pooled. The situation is the third stamp.
+      expect(
+        h.controller.applyResults!.map((r) => r.situationId).toList(),
+        <String>[
+          // The Office 365 create…
+          'CreateAzureClassGroup',
+          // …and the roster write it chained (#245), which the operator
+          // started by picking that option, so it answers that decision.
+          'CreateAzureClassGroup',
+          actions.classImportAlternative,
+        ],
+      );
+    });
+
+    test('the refused half routes into the decision that is still offered',
+        () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+      await h.controller.applyEntry(entryOf(h));
+
+      final entry = entryOf(h);
+      final choice = entry.choices.single;
+      expect(choice.situationId, 'CreateAzureClassGroup',
+          reason:
+              'the failed write left the record alone, so it is re-offered');
+
+      final routed = h.controller.applyOutcomesForChoice(entry, choice);
+      expect(routed, hasLength(1));
+      expect(routed.single.outcome, actions.ActionOutcome.failed);
+      expect(routed.single.changes.summary,
+          'Maak de Office 365-groep GBS-5WW1 voor klas 5WW1');
+      expect('${routed.single.error}', contains('Authorization_RequestDenied'));
+    });
+
+    test('the half that succeeded is still reported, at card level', () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+      await h.controller.applyEntry(entryOf(h));
+
+      // The Smartschool create landed, so its decision is gone from the entry
+      // the relink built — and its verdict would silently vanish with it.
+      final entry = entryOf(h);
+      expect(entry.choices.map((c) => c.situationId),
+          isNot(contains(actions.classImportAlternative)));
+
+      final unrouted = h.controller.unroutedApplyOutcomesFor(entry);
+      expect(unrouted, hasLength(1));
+      expect(unrouted.single.outcome, actions.ActionOutcome.applied);
+      expect(unrouted.single.changes.summary,
+          'Voeg deze klas toe aan Smartschool');
+    });
+
+    test('the split partitions the verdict — nothing doubled, nothing lost',
+        () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+      await h.controller.applyEntry(entryOf(h));
+
+      final entry = entryOf(h);
+      final shown = <ActionOutcomeEntry>[
+        for (final c in entry.choices)
+          ...h.controller.applyOutcomesForChoice(entry, c),
+        ...h.controller.unroutedApplyOutcomesFor(entry),
+      ];
+      expect(
+        shown.map((r) => r.changes.summary).toList(),
+        h.controller
+            .applyOutcomesFor(entry)
+            .map((r) => r.changes.summary)
+            .toList(),
+      );
+    });
+
+    test("another decision's verdict never lands in this block", () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+      await h.controller.applyEntry(entryOf(h));
+
+      final entry = entryOf(h);
+      final routed = h.controller
+          .applyOutcomesForChoice(entry, entry.choices.single)
+          .map((r) => r.changes.summary);
+      expect(routed, isNot(contains('Voeg deze klas toe aan Smartschool')));
+    });
+
+    test('a dry-run verdict routes the same way as an apply', () async {
+      final h = newClassNeedingBothWritesHarness();
+      await h.controller.sync();
+      // A dry-run settles nothing, so both decisions are still on the card and
+      // each one claims its own row.
+      await h.controller.dryRunEntry(entryOf(h));
+
+      final entry = entryOf(h);
+      expect(
+        <String>[
+          for (final c in entry.choices)
+            ...h.controller
+                .applyOutcomesForChoice(entry, c)
+                .map((r) => r.changes.summary),
+        ],
+        <String>[
+          'Maak de Office 365-groep GBS-5WW1 voor klas 5WW1',
+          'Voeg deze klas toe aan Smartschool',
+        ],
+      );
+      expect(h.controller.unroutedApplyOutcomesFor(entry), isEmpty);
+    });
+  });
+
   group('LogBuffer', () {
     test('caps its entries and reports errors', () {
       final log = LogBuffer(capacity: 3, clock: () => kFixtureDate);
