@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
+import 'package:account_manager/src/reconcile/reconcile_controller.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
@@ -178,7 +179,11 @@ void main() {
               'only a controller notification can disable its drift button');
     });
 
-    test('a harness with no settings holder never arms the gate', () async {
+    // Named for what it is since #274: the harness has always supplied a
+    // holder, so this is an *empty document*, not the null-holder mode. That
+    // mode has its own group at the bottom of this file.
+    test('a harness with an empty settings document never arms the gate',
+        () async {
       final harness = ReconcileHarness();
       await harness.controller.sync();
       expect(harness.controller.driftBlockedReason, isNull);
@@ -445,6 +450,139 @@ void main() {
       expect((await syncer(null)).classGroups, hasLength(1));
       rules.add(const wapi.DontImportClass('3C'));
       expect((await syncer(null)).classGroups, isEmpty);
+    });
+
+    test("unions the persisted rules with the session's own (#263)", () async {
+      // Both halves reach one pull: the `MarkAsVirtual` this session earned and
+      // the `DontImportClass` the operator saved a moment ago.
+      final wire = RecordingWisaSoap();
+      final rules = WisaImportRules()..add(const wapi.MarkAsVirtual('S1'));
+      final live = LiveSettings(_settings());
+      final syncer = wisaSyncer(
+        wapi.WisaConnector.fromParts(
+          server: 'wisa.example',
+          port: 9000,
+          database: 'db',
+          username: 'u',
+          password: 'p',
+          transport: wire,
+        ),
+        settings: live,
+        rules: rules,
+      );
+
+      final first = await syncer(null);
+      expect(first.schools.single.isVirtual, isTrue,
+          reason: 'the session rule already marks the school virtual');
+      expect(first.classGroups, hasLength(1));
+
+      live.publish(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+
+      final pruned = await syncer(null);
+      expect(pruned.classGroups, isEmpty,
+          reason: 'the saved rule reached the pull');
+      expect(pruned.schools.single.isVirtual, isTrue,
+          reason: 'and the session rule was not lost composing it');
+    });
+  });
+
+  group('a WISA import rule saved in Instellingen reaches the pull (#263)', () {
+    test('the very next pull applies it, with no relaunch', () async {
+      // The reported bug. `bootstrapReconcile` seeded the shared
+      // `WisaImportRules` holder from the document it loaded at startup and
+      // nothing ever published a saved document back into it, so a rule on the
+      // settings document only ever reached the pull of the *next* launch.
+      final wire = RecordingWisaSoap();
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+
+      await harness.controller.sync();
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        hasLength(1),
+      );
+
+      live.publish(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+      await harness.controller.sync();
+
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        isEmpty,
+        reason: 'the pass the operator reached for applied the saved rule',
+      );
+    });
+
+    test('a rule dropped from the document stops applying too', () async {
+      // The other half of the freeze: a holder seeded once could never let go
+      // of a rule, so un-ignoring a class needed a relaunch as well.
+      final live = LiveSettings(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+
+      await harness.controller.sync();
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        isEmpty,
+      );
+
+      live.publish(_settings());
+      await harness.controller.sync();
+
+      expect(
+        (harness.app.wisa.snapshot as wapi.WisaSnapshot).classGroups,
+        hasLength(1),
+      );
+    });
+
+    test('blocks Check for drift until a Synchroniseer has pulled with it',
+        () async {
+      // A drift pass never re-reads WISA, so between the save and the sync it
+      // would relink the roster the rule never reached — and publish that to
+      // every other operator.
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+      expect(harness.controller.canCheckDrift, isTrue);
+
+      live.publish(_settings().copyWith(
+        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+      ));
+
+      expect(
+        harness.controller.driftBlockedReason,
+        'WISA-instellingen gewijzigd — synchroniseer eerst.',
+      );
+      expect(harness.controller.canCheckDrift, isFalse);
+
+      await harness.controller.sync();
+      expect(harness.controller.driftBlockedReason, isNull);
+    });
+
+    test('a rule an apply earned never arms the drift gate', () async {
+      // Session rules are not on any settings document, and the apply that
+      // earns one re-syncs WISA itself — so the gate must stay open.
+      final live = LiveSettings(_settings());
+      final harness = ReconcileHarness(
+        wisaTransport: RecordingWisaSoap(),
+        liveSettings: live,
+      );
+      await harness.controller.sync();
+
+      harness.applier.wisaRules.add(const wapi.DontImportClass('3C'));
+
+      expect(harness.controller.driftBlockedReason, isNull);
+      expect(harness.controller.canCheckDrift, isTrue);
     });
   });
 
@@ -767,11 +905,238 @@ void main() {
       );
     });
 
-    test('a harness with no settings holder never arms it', () async {
+    test('a harness with an empty settings document never arms it', () async {
       final harness = ReconcileHarness();
       await harness.controller.sync();
 
       expect(harness.controller.systemsAwaitingSettings, isEmpty);
+      expect(harness.controller.pendingSettingsReason, isNull);
+    });
+  });
+
+  group('Synchroniseer re-links when a link input moved (#264)', () {
+    /// A new intake: one WISA student of a managed school with no Azure account
+    /// yet, so the pass proposes creating one — and the proposed UPN is built
+    /// from the Azure domain, a setting **no** pull ever asks about.
+    ReconcileHarness intakeFrom(LiveSettings live) => ReconcileHarness(
+          wisa: wisaSnap(
+            students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+            schools: [wisaSchool(1, ours: true)],
+          ),
+          smartschool: ssSnap(
+            groups: [ssGroup('3C', code: '3C_ss')],
+            accounts: const [],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+          ourSchoolIds: const {1},
+          liveSettings: live,
+        );
+
+    /// The `userPrincipalName` the pending "create an Office 365 account"
+    /// proposes for the student — what the operator reads off the tile.
+    String proposedUpn(ReconcileHarness h) => h.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .choices
+        .expand((c) => c.selected.changes.fields)
+        .firstWhere((f) => f.field == 'userPrincipalName')
+        .after!;
+
+    test('a saved Azure domain reaches the very next Synchroniseer', () async {
+      // The reported bug. Every input of the pull was unchanged, so #99's smart
+      // sync returned before `_relink()` — and the domain, which only the link
+      // consumes, was adopted by **Check for drift** alone while Synchroniseer
+      // reported "geen accountwijzigingen nodig" over the save.
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+
+      await harness.controller.sync();
+      expect(proposedUpn(harness), 'jane.doe@student.school.example');
+
+      live.publish(_settings()
+          .copyWith(azure: const AzureConnection(domain: 'nieuw.example')));
+      expect(
+        harness.controller.pendingSettingsReason,
+        'Instellingen voor de koppeling gewijzigd — '
+        'synchroniseer om ze toe te passen.',
+      );
+
+      await harness.controller.sync();
+
+      expect(proposedUpn(harness), 'jane.doe@student.nieuw.example',
+          reason: 'the pass the operator reached for adopted the save');
+      // …and it did not claim there was nothing to do, which is the
+      // user-visible half of the bug.
+      expect(harness.controller.noChangesNeeded, isFalse);
+      expect(
+        harness.log.entries
+            .map((e) => e.message)
+            .where((m) => m.contains('geen accountwijzigingen nodig')),
+        isEmpty,
+      );
+      // The re-link says why it happened, in the panel the operator reads…
+      expect(
+        harness.log.entries.map((e) => e.message),
+        contains('Koppelingsinstellingen gewijzigd — de koppeling wordt '
+            'opnieuw berekend.'),
+      );
+      // …the notice is gone, because the pass applied it…
+      expect(harness.controller.pendingSettingsReason, isNull);
+      // …and it cost no network at all: this is a re-link, not a re-pull.
+      expect((harness.ssSyncs, harness.azSyncs), (1, 1));
+    });
+
+    test('a saved Smartschool class tree is adopted too', () async {
+      // The second of the two link-only inputs: the tree decides where a newly
+      // created class hangs, and the parent it resolves to is on the tile.
+      final tree = _settings().copyWith(
+        smartschool: SmartschoolConnection(studentGroup: 'LLN'),
+      );
+      final live = LiveSettings(tree);
+      final harness = ReconcileHarness(
+        wisa: wisaSnap(
+          students: [wisaStudent(classGroup: '3C')],
+          schools: [wisaSchool(1, ours: true)],
+          classGroups: [wisaClassGroup('3C')],
+        ),
+        smartschool: ssSnap(
+          groups: [
+            ssGroup('Leerlingen',
+                code: 'LLN', official: false, type: core.GroupType.group),
+            ssGroup('School',
+                code: 'SCH', official: false, type: core.GroupType.group),
+          ],
+          accounts: const [],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+        ourSchoolIds: const {1},
+        liveSettings: live,
+      );
+
+      String parentOf(ReconcileHarness h) => h.controller.pendingEntries
+          .firstWhere((e) => e.family == 'group')
+          .choices
+          .expand((c) => c.selected.changes.fields)
+          .firstWhere((f) => f.field == 'parent')
+          .after!;
+
+      await harness.controller.sync();
+      expect(parentOf(harness), 'LLN');
+
+      live.publish(tree.copyWith(
+        smartschool: SmartschoolConnection(studentGroup: 'SCH'),
+      ));
+      await harness.controller.sync();
+
+      expect(parentOf(harness), 'SCH');
+      expect((harness.ssSyncs, harness.azSyncs), (1, 1),
+          reason: 'the tree is a link input, not a pull input');
+    });
+
+    test('the smart sync still says nothing to do when no link input moved',
+        () async {
+      // The behaviour #99 exists for has to survive: a save that touches
+      // nothing any pass depends on is still "nothing to do".
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+      await harness.controller.sync();
+
+      final base = _settings();
+      live.publish(base.copyWith(
+        smartschool: base.smartschool.copyWith(testUser: 'proefaccount'),
+      ));
+
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      await harness.controller.sync();
+      expect(harness.controller.noChangesNeeded, isTrue);
+    });
+
+    test('a drift check adopts it too, so no sync re-links for it twice',
+        () async {
+      // Drift re-links unconditionally, so it really has applied the save; the
+      // stamp has to record that or the next Synchroniseer would fall through
+      // for a change already adopted.
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+      await harness.controller.sync();
+
+      live.publish(_settings()
+          .copyWith(azure: const AzureConnection(domain: 'nieuw.example')));
+      expect(harness.controller.linkAwaitingSettings, isTrue);
+
+      await harness.controller.checkDrift();
+      expect(proposedUpn(harness), 'jane.doe@student.nieuw.example');
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      expect(harness.controller.pendingSettingsReason, isNull);
+
+      await harness.controller.sync();
+      expect(harness.controller.noChangesNeeded, isTrue,
+          reason: 'the drift pass already applied it');
+    });
+
+    test('the screen names the link beside the systems waiting', () async {
+      final live = LiveSettings(_settings());
+      final harness = intakeFrom(live);
+      await harness.controller.sync();
+
+      live.publish(_settings().copyWith(
+        schoolPrefix: 'SSM',
+        azure: const AzureConnection(domain: 'nieuw.example'),
+        smartschoolRules: const <ss.SmartschoolImportRule>[
+          ss.DiscardSmartschoolGroup('Organisatie'),
+        ],
+      ));
+
+      expect(
+        harness.controller.pendingSettingsReason,
+        'Instellingen voor Smartschool, Azure AD en de koppeling gewijzigd — '
+        'synchroniseer om ze toe te passen.',
+      );
+      // Nothing is refused meanwhile — the next pass adopts them by itself.
+      expect(harness.controller.canCheckDrift, isTrue);
+    });
+
+    test('a save landing before the link is adopted by that very link',
+        () async {
+      // The fingerprint is read where `applier.link()` samples the document,
+      // not when the pass started, so a save that lands while the pass is still
+      // pulling is applied by it — and stamped, rather than left pending over a
+      // link that honoured it.
+      final live = LiveSettings(_settings());
+      final gate = Completer<void>();
+      final harness = ReconcileHarness(
+        wisa: wisaSnap(
+          students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+          schools: [wisaSchool(1, ours: true)],
+        ),
+        smartschool: ssSnap(
+          groups: [ssGroup('3C', code: '3C_ss')],
+          accounts: const [],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const []),
+        ourSchoolIds: const {1},
+        liveSettings: live,
+        azureGate: gate,
+      );
+
+      final pass = harness.controller.sync();
+      await Future<void>.delayed(Duration.zero);
+      live.publish(_settings()
+          .copyWith(azure: const AzureConnection(domain: 'nieuw.example')));
+      gate.complete();
+      await pass;
+
+      expect(proposedUpn(harness), 'jane.doe@student.nieuw.example');
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+    });
+
+    test('a harness with an empty settings document never arms it', () async {
+      final harness = ReconcileHarness();
+      await harness.controller.sync();
+
+      expect(harness.controller.linkAwaitingSettings, isFalse);
       expect(harness.controller.pendingSettingsReason, isNull);
     });
   });
@@ -817,8 +1182,83 @@ void main() {
       expect(harness.controller.canCheckDrift, isTrue);
     });
 
-    test('a harness with no settings holder never nags', () {
+    test('a harness with an empty settings document never nags', () {
       expect(ReconcileHarness().controller.relaunchRequiredReason, isNull);
+    });
+  });
+
+  group('a controller wired to no settings holder at all (#274)', () {
+    test('can be constructed', () {
+      // The reported crash. `_wisaFingerprint()` fell back to
+      // `_wisaPullFingerprint` — the very `late String` the constructor was
+      // assigning it to — so this construction threw a `LateInitializationError`
+      // before it ever returned, and the mode the doc comment has promised since
+      // #238 could not be entered.
+      //
+      // Built from a harness's parts rather than through the harness, because
+      // the harness has always supplied a holder whether the caller wanted one
+      // or not: that is why every "no settings holder" test in this file has in
+      // fact exercised an *empty document*.
+      final parts = ReconcileHarness();
+      final unwired = ReconcileController(
+        app: parts.app,
+        applier: parts.applier,
+        log: parts.log,
+        store: parts.linkedStore,
+      );
+      addTearDown(unwired.dispose);
+
+      // And with no document to compare against, no gate is armed — the
+      // behaviour the comment describes: "drift behaves exactly as before".
+      expect(unwired.driftBlockedReason, isNull);
+      expect(unwired.canCheckDrift, isTrue);
+      expect(unwired.systemsAwaitingSettings, isEmpty);
+      expect(unwired.linkAwaitingSettings, isFalse);
+      expect(unwired.pendingSettingsReason, isNull);
+      expect(unwired.relaunchRequiredReason, isNull);
+    });
+
+    test('syncs, links and keeps every gate silent afterwards', () async {
+      final harness = ReconcileHarness(modelsSettings: false);
+      await harness.controller.sync();
+
+      expect(harness.controller.linked, isNotNull);
+      // The stamps a pass leaves behind are the sentinel too, so a second pass
+      // cannot decide the settings "moved" between them.
+      expect(harness.controller.driftBlockedReason, isNull);
+      expect(harness.controller.canCheckDrift, isTrue);
+      expect(harness.controller.systemsAwaitingSettings, isEmpty);
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      expect(harness.controller.pendingSettingsReason, isNull);
+    });
+
+    test('a save into a document it was never given arms nothing', () async {
+      // The rest of the stack still reads the document — an embedder that skips
+      // the gate has settings, it just did not hand them to the controller — so
+      // this models a save that moves every one of the four fingerprints at
+      // once. A wired session would refuse the drift and name all three waits.
+      final live = LiveSettings(_settings());
+      final harness =
+          ReconcileHarness(modelsSettings: false, liveSettings: live);
+      await harness.controller.sync();
+
+      live.publish(
+        _settings(workDate: _pinned(DateTime(2026, 9, 1))).copyWith(
+          azure: const AzureConnection(domain: 'nieuw.example'),
+          schoolPrefix: 'XYZ',
+          smartschoolRules: const <ss.SmartschoolImportRule>[
+            ss.DiscardSmartschoolGroup('Archief'),
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.controller.driftBlockedReason, isNull);
+      expect(harness.controller.canCheckDrift, isTrue);
+      expect(harness.controller.systemsAwaitingSettings, isEmpty);
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      expect(harness.controller.pendingSettingsReason, isNull);
+      expect(harness.controller.relaunchRequiredReason, isNull);
     });
   });
 }

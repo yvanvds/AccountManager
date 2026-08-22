@@ -187,7 +187,9 @@ class GraphClient {
       if (expected != null && expected(ex)) {
         _log?.addMessage(
           core.Origin.azure,
-          '$line (handled — the sync recovers from this)',
+          // The Graph body stays exactly as Graph sent it; only the clause this
+          // client appends to it is the operator's language (#266).
+          '$line (afgehandeld — de synchronisatie herstelt hiervan)',
         );
       } else {
         _log?.addError(core.Origin.azure, line);

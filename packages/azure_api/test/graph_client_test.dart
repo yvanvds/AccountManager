@@ -156,7 +156,13 @@ void main() {
       expect(log.errors, isEmpty,
           reason: 'the caller recovers — nothing here for the operator to act '
               'on');
-      expect(log.messages.single, contains('handled'));
+      // The clause this client appends is Dutch since #266; the Graph body it
+      // is appended to is quoted exactly as Graph sent it.
+      expect(
+        log.messages.single,
+        contains('(afgehandeld — de synchronisatie herstelt hiervan)'),
+      );
+      expect(log.messages.single, isNot(contains('handled —')));
       expect(log.messages.single, contains('DeltaLink older than 30 days'));
       expect(log.messages.single, isNot(contains('DEADTOKEN')));
     });

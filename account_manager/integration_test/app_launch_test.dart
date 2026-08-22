@@ -19,6 +19,7 @@ import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
     show
         AppSettings,
+        AzureConnection,
         ChangeSignal,
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
@@ -43,7 +44,8 @@ import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
     show DiscardSmartschoolGroup, SmartschoolConnector;
-import 'package:wisa_api/wisa_api.dart' show WisaSchool, parseSchoolRow;
+import 'package:wisa_api/wisa_api.dart'
+    show DontImportClass, WisaImportRule, WisaSchool, parseSchoolRow;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -114,6 +116,32 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Authors one WISA import rule the way the operator does (#273): the
+  /// **Toevoegen** menu, the rule type keyed [kind], then the field prompt —
+  /// one value per field, in order.
+  Future<void> addWisaRule(
+    WidgetTester tester,
+    String kind,
+    List<String> values,
+  ) async {
+    final add = find.byKey(const ValueKey('settings-wisa-rule-add'));
+    await tester.ensureVisible(add);
+    await tester.pumpAndSettle();
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('settings-wisa-rule-add-$kind')));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < values.length; i++) {
+      await tester.enterText(
+        find.byKey(ValueKey('settings-wisa-rule-value-$i')),
+        values[i],
+      );
+    }
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-confirm')));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('the app launches into the Plink-themed Home shell',
       (WidgetTester tester) async {
     // The real main(): with no --dart-define config, AAD is not configured, so
@@ -145,6 +173,22 @@ void main() {
     final TextStyle? display = Theme.of(context).textTheme.displaySmall;
     expect(display?.fontFamily, contains('Fraunces'));
     expect(find.text('Account Manager'), findsOneWidget);
+
+    // The Start placeholder is the first screen the operator lands on, and it
+    // was the last one left in English (#265) — eyebrow and body both.
+    expect(find.text('ARCADIA · ACCOUNTSYNCHRONISATIE'), findsOneWidget);
+    expect(
+      find.textContaining('Stemt gebruikersaccounts en klasgroepen op elkaar '
+          'af tussen WISA, Smartschool en Azure AD / Office 365.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('te beginnen met aanmelden en het tabblad '
+          'Synchronisatie.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Reconciles user accounts'), findsNothing);
+    expect(find.textContaining('Phase C slice'), findsNothing);
 
     // Every destination on the rail names itself in the operator's language
     // (#257). The rail is read together with the heading it leads to, and it
@@ -186,6 +230,75 @@ void main() {
   });
 
   testWidgets(
+      'the Synchronisatie tab names its own controls in the operator\'s '
+      'language end-to-end, log panel and smart-diff notice included (#265)',
+      (WidgetTester tester) async {
+    // #257 renamed the rail destination and the heading under it, but not the
+    // screen's own controls — so the tab read Dutch and the buttons on it read
+    // English. Driven through the real shell on purpose: these strings are read
+    // together with the rail label that leads to them, which is exactly the
+    // composition a widget test of ReconcileScreen alone cannot see.
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+
+    // The two buttons under the heading. The idle explainer that names them in
+    // prose is translated with them but is not assertable here: `loadOverview`
+    // moves the phase off `idle` before the operator's first frame, so the
+    // paragraph never reaches the screen at all (#275).
+    expect(find.text('Synchroniseer'), findsOneWidget);
+    expect(find.text('Controleer op drift'), findsOneWidget);
+
+    // The log panel's own chrome, empty state included.
+    expect(find.text('Logboek'), findsOneWidget);
+    expect(find.text('Alles kopiëren'), findsOneWidget);
+    expect(find.text('Wissen'), findsOneWidget);
+    expect(find.text('Nog geen berichten.'), findsOneWidget);
+
+    // Not one English label survives on the screen.
+    for (final String english in <String>[
+      'Synchronise',
+      'Check for drift',
+      'Overview',
+      'Log',
+      'Copy all',
+      'Clear',
+      'No messages yet.',
+    ]) {
+      expect(find.text(english), findsNothing,
+          reason: '"$english" is the English label #265 replaced');
+    }
+
+    // A sync heads the counts section the way the Acties tree heads its own.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(find.text('Overzicht'), findsOneWidget);
+    expect(find.text('Overview'), findsNothing);
+
+    // A second pass over unchanged WISA raises the smart-diff notice, which
+    // now says what the Log line beside it says (#258).
+    harness.wisaResult =
+        wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('WISA is ongewijzigd sinds de vorige '
+          'synchronisatie — geen accountwijzigingen nodig.'),
+      findsWidgets,
+    );
+    expect(find.textContaining('no account changes needed'), findsNothing);
+  });
+
+  testWidgets(
       'the reconcile flow runs end-to-end: sign-in → sync → overview on '
       'Reconcile → actions via the Actions tab drill-down → dry-run → apply → '
       'unchanged re-sync (#154)', (WidgetTester tester) async {
@@ -218,7 +331,7 @@ void main() {
     // The per-category overview renders on Reconcile from the rollups (#163):
     // students / staff / class-groups, the one fixture student summed with a
     // pending indicator.
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsOneWidget);
     expect(find.text('2 openstaande acties'), findsOneWidget);
@@ -236,7 +349,16 @@ void main() {
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
-    expect(find.text('Overzicht'), findsOneWidget);
+    // Scoped to this screen: since #265 the Synchronisatie tab heads its own
+    // counts section "Overzicht" too, and the shell keeps a visited screen
+    // alive in the IndexedStack.
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.text('Overzicht'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('3C'));
@@ -269,9 +391,14 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
-    // The on-screen banner is #265's to translate; the Log *line* beside it is
-    // Dutch since #258.
-    expect(find.textContaining('no account changes needed'), findsOneWidget);
+    // The on-screen banner reads word for word the Log line beside it: #265
+    // gave it the Dutch #258 had already written for the log.
+    expect(
+      find.textContaining('WISA is ongewijzigd sinds de vorige '
+          'synchronisatie — geen accountwijzigingen nodig.'),
+      findsWidgets,
+    );
+    expect(find.textContaining('no account changes needed'), findsNothing);
     expect(harness.ssSyncs, 1);
     expect(harness.azSyncs, 1);
 
@@ -311,6 +438,83 @@ void main() {
     ]) {
       expect(
         logged.where((String m) => m.startsWith(english)),
+        isEmpty,
+        reason: english,
+      );
+    }
+  });
+
+  testWidgets(
+      'a Synchroniseer over the production connectors fills the Log panel with '
+      'Dutch to the bottom — the connector packages included (#266)',
+      (WidgetTester tester) async {
+    // #258 made the app layer's lines Dutch, which left the panel switching
+    // language one layer *down*: `packages/wisa_api`, `smartschool_api` and
+    // `azure_api` take an `ILog` at construction and bootstrap hands them this
+    // very LogBuffer, so a single Synchroniseer still produced Dutch app lines
+    // over English connector ones.
+    //
+    // All three pulls here are the **production** ones — a real WisaConnector,
+    // SmartschoolConnector and AzureConnector over scripted wires — so what the
+    // panel renders is what the packages themselves wrote, not a fixture.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisaTransport: RecordingWisaSoap(),
+      smartschoolTransport: GroupTreeSoap(),
+      azureTransport: StaleDeltaTokenGraph(),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-log-panel')), findsOneWidget);
+    final List<String> logged =
+        harness.log.entries.map((e) => e.message).toList();
+
+    // One line from each of the three packages, exactly as it was written.
+    for (final String line in <String>[
+      // wisa_api — the school named by its short code, as since #208.
+      'Klassen opgehaald uit S1.',
+      '1 leerling(en) opgehaald uit S1.',
+      '0 personeelsleden opgehaald uit S1.',
+      // smartschool_api — the wire answers code 19 for every group.
+      'Geen rechtstreekse accounts in School.',
+      // azure_api — both managers, on the full-read path.
+      'Azure: 0 groepen opgehaald voor "GBS".',
+      'Azure: 1 gebruikers opgehaald voor "GBS".',
+    ]) {
+      expect(logged, contains(line), reason: line);
+    }
+
+    // …and they really are on screen, in the panel, under the app's own Dutch.
+    expect(find.textContaining('leerling(en) opgehaald uit S1.'), findsWidgets);
+    expect(find.textContaining('Geen rechtstreekse accounts in'), findsWidgets);
+    expect(find.textContaining('gebruikers opgehaald voor'), findsWidgets);
+    expect(find.textContaining('WISA opgehaald: '), findsWidgets);
+    expect(find.textContaining('Gekoppeld: '), findsWidgets);
+
+    // Not one entry of the pass — at any severity — is still the English the
+    // connectors used to write.
+    for (final String english in <String>[
+      'Loading ',
+      'succeeded.',
+      'No direct accounts',
+      'Added ',
+      'Azure: loaded ',
+      'Azure: delta for',
+      'Connection Succeeded',
+      'empty result',
+    ]) {
+      expect(
+        logged.where((String m) => m.contains(english)),
         isEmpty,
         reason: english,
       );
@@ -923,10 +1127,15 @@ void main() {
     );
     expect(find.textContaining('Sync voltooid'), findsOneWidget);
 
-    // Throttling was reported as progress, not silence (#196.5).
+    // Throttling was reported as progress, not silence (#196.5) — in Dutch
+    // like the rest of the panel since #266.
     expect(
       harness.log.entries.map((e) => e.message),
-      contains(contains('throttling')),
+      contains(contains('Cosmos beperkt het tempo')),
+    );
+    expect(
+      harness.log.entries.map((e) => e.message),
+      isNot(contains(contains('throttling'))),
     );
 
     // …and the shared state is *whole*: every account document landed, plus the
@@ -1004,10 +1213,15 @@ void main() {
       harness.log.entries.where((e) => e.isError).map((e) => e.message),
       isEmpty,
     );
-    // The operator is told the pass was a no-op rather than seeing silence.
+    // The operator is told the pass was a no-op rather than seeing silence —
+    // in Dutch, like the rest of the panel, since #266.
     expect(
       harness.log.entries.map((e) => e.message),
-      contains(contains('120 unchanged')),
+      contains(contains('Opslaan van accounts: 120 ongewijzigd')),
+    );
+    expect(
+      harness.log.entries.map((e) => e.message),
+      isNot(contains(contains('Persisting'))),
     );
   });
 
@@ -1178,7 +1392,15 @@ void main() {
 
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    expect(find.text('Overzicht'), findsOneWidget);
+    // Scoped to this screen — the Synchronisatie tab behind it has an
+    // "Overzicht" heading of its own since #265.
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.text('Overzicht'),
+      ),
+      findsOneWidget,
+    );
     // The non-managed school is not a node in the drill-down…
     expect(find.text('School 2'), findsNothing,
         reason: 'school 2 is not managed → no node in Actions');
@@ -2087,6 +2309,100 @@ void main() {
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Klasgroepen inventory is searchable by class name and description, '
+      'composing with the attention switch end-to-end (#262)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, real rail, real keyboard
+    // input. The search is a filter over the *composed* inventory: the rows
+    // come from the stored documents, the interactive halves and the "same
+    // situation" bulk headers from the live dispatch, and the switch is a
+    // second filter over the same list — a widget test sees the row builder,
+    // not what a needle does to all four of those at once.
+    //
+    // Our school runs `1A` ("Eerste jaar A"), the sub-grouped `2F`
+    // (`2F ECO` + `2F MAW`, both "Tweede jaar F") and the leftover `GBS-9Z`.
+    useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final search = find.byKey(const ValueKey('class-groups-search'));
+    final filter = find.byKey(const ValueKey('class-groups-only-attention'));
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+    Future<void> type(String needle) async {
+      await tester.ensureVisible(search);
+      await tester.enterText(search, needle);
+      await tester.pumpAndSettle();
+    }
+
+    expect(search, findsOneWidget);
+    expect(row('1A'), findsOneWidget);
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('GBS-9Z'), findsOneWidget);
+
+    // By name: one class out of the whole inventory, which is the question the
+    // operator arrived with ("is `1A` right?") and used to answer by scrolling.
+    await type('1a');
+    expect(row('1A'), findsOneWidget);
+    expect(row('2F ECO'), findsNothing);
+    expect(row('2F MAW'), findsNothing);
+    expect(row('GBS-9Z'), findsNothing);
+
+    // By description — "tweede" is in no class *name* at all, and a class is
+    // looked up by what it teaches as often as by its code.
+    await type('tweede');
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('2F MAW'), findsOneWidget);
+    expect(row('1A'), findsNothing);
+
+    // Per-part and order-independent, exactly like the two Personeel searches
+    // (#187/#215/#217), and one needle may span name and description.
+    await type('maw tweede');
+    expect(row('2F MAW'), findsOneWidget);
+    expect(row('2F ECO'), findsNothing);
+
+    // Nothing matched says so — and not in the words of an inventory that was
+    // never synced, nor of a school where everything is in order.
+    await type('1a tweede');
+    expect(
+        find.text('Geen klassen die aan de filter voldoen.'), findsOneWidget);
+    expect(find.textContaining('Nog geen klasinventaris'), findsNothing);
+    expect(find.textContaining('Elke klas staat in orde'), findsNothing);
+
+    // The two filters compose (#262): the switch narrows what the search left.
+    // `2F ECO` carries the missing-group work; `2F MAW` shares that group and
+    // so asks nothing of its own.
+    await type('2f');
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('2F MAW'), findsOneWidget);
+    await tester.ensureVisible(filter);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('2F MAW'), findsNothing);
+    expect(row('GBS-9Z'), findsNothing,
+        reason: 'it needs attention, but the search is still on');
+
+    // Clearing the box restores the inventory the switch still governs.
+    await tester.ensureVisible(search);
+    await tester.tap(find.byKey(const ValueKey('class-groups-search-clear')));
+    await tester.pumpAndSettle();
+    expect(row('GBS-9Z'), findsOneWidget);
+    expect(row('1A'), findsNothing, reason: 'the switch survives the clear');
+    await tester.ensureVisible(filter);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(row('1A'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -3381,7 +3697,7 @@ void main() {
   });
 
   testWidgets(
-      'a resumed session trusts the stored state: Synchronise pulls no '
+      'a resumed session trusts the stored state: Synchroniseer pulls no '
       'Smartschool/Azure (#107)', (WidgetTester tester) async {
     // Session 1 (offline harness over a shared cold-snapshot store): a full
     // sync persists all three connector snapshots.
@@ -3409,7 +3725,7 @@ void main() {
     expect(resumed.wisaSyncs, 1);
     expect(resumed.ssSyncs, 0, reason: 'Smartschool seeded from the store');
     expect(resumed.azSyncs, 0, reason: 'Azure seeded from the store');
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
   });
 
   testWidgets(
@@ -3496,7 +3812,7 @@ void main() {
 
     // The per-category overview renders straight from the stored rollups — no
     // Synchronise tapped, and link() is never called in a passive session.
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsOneWidget);
     expect(
@@ -4700,7 +5016,7 @@ void main() {
 
   testWidgets(
       'the operator drag-selects two log lines and copies them one per line, '
-      'then Copy all takes the whole buffer end-to-end (#193)',
+      'then Alles kopiëren takes the whole buffer end-to-end (#193)',
       (WidgetTester tester) async {
     // The real app composition — real fonts, real window, real text layout —
     // is where a "selectable" log panel drifts: the line metrics a drag is
@@ -4771,7 +5087,8 @@ void main() {
     expect(copied, hasLength(1));
     expect(copied.single, '${onScreen.first}\n${onScreen[1]}');
 
-    // Copy all reaches past what is laid out: the whole buffer, oldest first.
+    // Alles kopiëren reaches past what is laid out: the whole buffer, oldest
+    // first.
     await tester.tap(find.byKey(const ValueKey('reconcile-log-copy-all')));
     await tester.pumpAndSettle();
     expect(copied.last, harness.log.toPlainText());
@@ -4781,8 +5098,8 @@ void main() {
   });
 
   testWidgets(
-      'the operator right-clicks one log line and Copy line puts just that '
-      'message on the clipboard end-to-end (#197)',
+      'the operator right-clicks one log line and Regel kopiëren puts just '
+      'that message on the clipboard end-to-end (#197)',
       (WidgetTester tester) async {
     // Grabbing a single message was already possible after #193 - a
     // triple-click selects one paragraph, which is one entry - but nothing on
@@ -4850,8 +5167,8 @@ void main() {
 
     // The affordance is on screen, and it takes exactly the entry under the
     // pointer: one line, neither neighbour, no trailing newline.
-    expect(find.text('Copy line'), findsOneWidget);
-    await tester.tap(find.text('Copy line'));
+    expect(find.text('Regel kopiëren'), findsOneWidget);
+    await tester.tap(find.text('Regel kopiëren'));
     await tester.pumpAndSettle();
 
     expect(copied, hasLength(1));
@@ -4989,14 +5306,17 @@ void main() {
     // typo is visible rather than silent.
     expect(
       find.textContaining(
-        'Import rule "Sportclub" matched no Smartschool group in this pull',
+        'Importregel "Sportclub" kwam bij deze ophaalbeurt met geen enkele '
+        'Smartschool-groep overeen',
       ),
       findsOneWidget,
     );
+    // …in Dutch, like every other line of the pass around it (#266).
+    expect(find.textContaining('matched no Smartschool group'), findsNothing);
     // The two that did fire are not reported — that is the distinction the
     // operator could not make before.
-    expect(find.textContaining('Import rule "organisatie"'), findsNothing);
-    expect(find.textContaining('Import rule "KLASSEN"'), findsNothing);
+    expect(find.textContaining('Importregel "organisatie"'), findsNothing);
+    expect(find.textContaining('Importregel "KLASSEN"'), findsNothing);
   });
 
   testWidgets(
@@ -5288,6 +5608,448 @@ void main() {
   });
 
   testWidgets(
+      'a WISA import rule on the shared settings document prunes the very next '
+      'Synchroniseer, and Check for drift refuses until it has (#263)',
+      (WidgetTester tester) async {
+    // The reported bug, driven end-to-end over the *production* WISA pull.
+    // `bootstrapReconcile` seeded the shared `WisaImportRules` holder from the
+    // document it read at startup and nothing ever published a saved document
+    // back into it, so a WISA import rule on the settings document reached the
+    // pull only after a relaunch — and nothing on screen said so.
+    //
+    // Both bootstraps share one LiveSettings, exactly as `main()` wires them,
+    // and every step after the shared-store write is the operator's own: open
+    // Instellingen, press **Herladen**, read the rule back, press
+    // **Synchroniseer**.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer, on the rules as they stand: the whole roster comes
+    // in, class 3C included.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 1 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa carries no import rule yet.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(
+      find.byKey(const ValueKey('settings-wisa-rules-empty')),
+      findsOneWidget,
+    );
+
+    // Another operator writes one into the shared settings document — the WISA
+    // rules are read-only in this view, so the store is where they arrive.
+    await settings.store.save(stored.copyWith(
+      wisaRules: const <WisaImportRule>[DontImportClass('3C')],
+    ));
+
+    // The operator pulls it into this session with **Herladen**, the affordance
+    // the view offers for exactly that, and reads it back on the Wisa tab.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(
+      find.text('Klas niet importeren uit WISA: 3C'),
+      findsOneWidget,
+    );
+
+    // Back on Reconcile the change is *visible*: a drift pass never re-reads
+    // WISA, so running one now would relink the roster the rule never reached
+    // and publish that to every other operator.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('reconcile-drift-blocked')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('WISA-instellingen gewijzigd — synchroniseer eerst.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNull,
+    );
+
+    // Pressing Synchroniseer pulls WISA with the rule — no relaunch — and the
+    // roster it landed is the pruned one.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsOneWidget,
+    );
+    // …and the drift check is offered again.
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const ValueKey('reconcile-drift')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets(
+      'a WISA import rule authored in Instellingen prunes the very next '
+      'Synchroniseer (#273)', (WidgetTester tester) async {
+    // #263 wired a *persisted* WISA rule through to the pull, but nothing in the
+    // app could put one there: the Wisa tab's rule list was titled "Importregels
+    // (alleen-lezen)" and `_collect` handed `base.wisaRules` straight back, so
+    // the only authoring surface was the Cosmos settings document itself. #263's
+    // own end-to-end had to write the rule into the shared store behind the UI's
+    // back for exactly that reason.
+    //
+    // Nothing is written behind anyone's back here. Every step is the operator's
+    // own — Instellingen → Wisa → **Toevoegen** → *Klas niet importeren* → 3C →
+    // **Opslaan** → **Synchroniseer** — over the production WISA pull.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer, on the rules as they stand: the whole roster comes
+    // in, class 3C included.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 1 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa: no rule yet, and an editor to author one in.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(
+      find.byKey(const ValueKey('settings-wisa-rules-empty')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('alleen-lezen'), findsNothing);
+
+    // The operator authors the rule that drops 3C, and saves.
+    await addWisaRule(tester, 'dontImportClass', <String>['3C']);
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // It landed on the settings document, on the wire shape #263's pull reads.
+    final saved = await settings.store.load();
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect((saved.wisaRules.single as DontImportClass).className, '3C');
+
+    // Back on Reconcile the save is *visible*: a drift pass never re-reads WISA,
+    // so running one now would relink the roster the rule never reached.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('reconcile-drift-blocked')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('WISA-instellingen gewijzigd — synchroniseer eerst.'),
+      findsOneWidget,
+    );
+
+    // Synchroniseer pulls WISA with the authored rule — no relaunch, no
+    // hand-carried document — and the roster it landed is the pruned one.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+
+    // …and it survives a reload of the document, so the next session (and every
+    // other operator) gets the same pull.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+  });
+
+  testWidgets(
+      'an Azure domain saved in Instellingen re-links the very next '
+      'Synchroniseer, with no pull behind it (#264)',
+      (WidgetTester tester) async {
+    // The reported bug, driven the way the operator lives it. #259 gave the two
+    // pulls their own settings fingerprints; the domain has no pull at all —
+    // only `link()` reads it, through `ApplierSettings.studentConfig` — so with
+    // WISA unchanged the smart sync returned before `_relink()` and the saved
+    // domain was adopted by **Check for drift** alone, while Synchroniseer
+    // reported "geen accountwijzigingen nodig" over it.
+    //
+    // Only this layer sees the whole thing: the save is made in Instellingen,
+    // the two bootstraps share one LiveSettings exactly as `main()` wires them,
+    // and what has to change is a UPN the operator reads off an Acties tile.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
+      azure: const AzureConnection(domain: 'oud.example'),
+      wisaSchools: const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
+      ],
+    );
+    final live = LiveSettings(stored);
+    // A new intake: one WISA student with no Office 365 account yet, so the
+    // pass proposes creating one — and names the UPN it would create.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        schools: [wisaSchool(1, ours: true)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      liveSettings: live,
+    );
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    /// Opens Acties → Jaar 3 → 3C and expands the student's pending row, which
+    /// is where the proposed `userPrincipalName` is written out.
+    Future<void> openStudentRow() async {
+      await tester.tap(find.text('Acties'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Jaar 3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('3C'));
+      await tester.pumpAndSettle();
+      final id = harness.controller.pendingEntries
+          .firstWhere((e) => e.family == 'student')
+          .targetId;
+      final row = find.byKey(ValueKey('entry-student-$id'));
+      await tester.ensureVisible(row);
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+    }
+
+    // A first Synchroniseer, on the domain as it stands.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await openStudentRow();
+    expect(
+      find.textContaining(
+          'userPrincipalName: ∅ → jane.doe@student.oud.example'),
+      findsOneWidget,
+    );
+
+    // Instellingen → Azure → the school moves to its new domain → Opslaan.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-azure');
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-az-domain')),
+      'nieuw.example',
+    );
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).azure.domain, 'nieuw.example');
+
+    // Back on Reconcile the screen names the save that is still waiting — and
+    // names it as the *link*, because no pull is involved. Nothing is refused:
+    // the domain is not a WISA pull input, so #238's drift gate stays open.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Instellingen voor de koppeling gewijzigd'),
+      findsOneWidget,
+    );
+
+    // The operator presses **Synchroniseer**, the pass they reach for. WISA
+    // comes back unchanged, which is exactly the case that used to end here.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('geen accountwijzigingen nodig'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Koppelingsinstellingen gewijzigd — de koppeling '
+          'wordt opnieuw berekend.'),
+      findsOneWidget,
+    );
+
+    // …and the account the pass would create now carries the saved domain, with
+    // no drift check, no hand-off and no relaunch anywhere in this test.
+    await openStudentRow();
+    expect(
+      find.textContaining(
+          'userPrincipalName: ∅ → jane.doe@student.nieuw.example'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('jane.doe@student.oud.example'),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+      'a reconcile stack assembled with no settings holder still launches, '
+      'syncs and drifts, and arms none of the settings gates (#274)',
+      (WidgetTester tester) async {
+    // `ReconcileController` has documented a null [liveSettings] since #238 —
+    // "the harnesses that do not model settings at all; the gate is then never
+    // armed and drift behaves exactly as before" — and #274 found that mode had
+    // never once been entered: the constructor stamped its WISA fingerprint from
+    // a helper that fell back to the very `late` field being assigned, so an
+    // unwired controller threw `LateInitializationError` and the app never
+    // reached its first frame.
+    //
+    // Only this layer proves the mode is real end to end: the app is launched
+    // over a stack built without the holder, the operator saves in Instellingen
+    // and comes back, and the two passes are pressed for real.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
+      azure: const AzureConnection(domain: 'oud.example'),
+      wisaSchools: const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
+      ],
+    );
+    final live = LiveSettings(stored);
+    // The whole point: the pulls and the applier read `live`, the controller is
+    // handed nothing. Constructing this harness is what used to throw.
+    final harness = ReconcileHarness(modelsSettings: false, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // The app is up and the screen the controller drives renders.
+    expect(find.byType(AccountManagerApp), findsOneWidget);
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ReconcileScreen), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Sync voltooid'), findsOneWidget);
+
+    // Instellingen: the operator moves the school to a new Azure domain and
+    // saves — a change that arms the link gate for a *wired* session (#264).
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-azure');
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-az-domain')),
+      'nieuw.example',
+    );
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).azure.domain, 'nieuw.example');
+
+    // Back on Synchronisatie nothing nags and nothing is refused: a controller
+    // with no document to compare against holds no opinion about a save.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsNothing,
+    );
+
+    // …and **Check for drift** is genuinely live, not merely un-nagged: the pass
+    // runs and advances the two systems it re-reads.
+    final driftAt = kFixtureDate.add(const Duration(hours: 3));
+    harness.ssResult = ssSnap(fetchedAt: driftAt);
+    harness.azResult = azSnap(fetchedAt: driftAt);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    final systems = harness.controller.syncState.systems;
+    expect(systems[Origin.wisa]?.at, kFixtureDate);
+    expect(systems[Origin.smartschool]?.at, driftAt);
+    expect(systems[Origin.azure]?.at, driftAt);
+  });
+
+  testWidgets(
       'a Synchroniseer says in the Log panel which werkdatum it pulled, and '
       'names the virtuele werkdatum where a virtual school used it (#239)',
       (WidgetTester tester) async {
@@ -5502,7 +6264,7 @@ void main() {
     // overview the operator came for is on screen.
     expect(harness.controller.error, isNull);
     expect(harness.controller.busy, isFalse);
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
 
     // The dead token was tried exactly once and then given up on, and the
     // fallback was the $filter-scoped bulk read (PAIN-2 holds while recovering).
@@ -5525,9 +6287,14 @@ void main() {
     // …and the operator is told why the full read happened, with the rejected
     // token's age — the diagnostic that says whether Graph expired a genuinely
     // old token or the app had stopped advancing it.
-    expect(find.textContaining('Graph rejected the stored delta token'),
+    // …in Dutch since #266, the age in Dutch units with it.
+    expect(find.textContaining('Graph weigerde het bewaarde deltatoken'),
         findsOneWidget);
-    expect(find.textContaining('stored 15h'), findsOneWidget);
+    expect(find.textContaining('bewaard 15u'), findsOneWidget);
+    expect(
+      find.textContaining('Graph rejected the stored delta token'),
+      findsNothing,
+    );
 
     // …and that is *all* the operator sees about it (#229). The recovery
     // worked, so nothing in the panel is red: the transport used to log the raw
@@ -5550,8 +6317,10 @@ void main() {
       harness.log.entries.map((e) => e.message),
       contains(allOf(
         contains('users/delta'),
+        // The Graph body verbatim, with the client's own Dutch clause on it
+        // (#266) rather than the English "(handled — …)" it used to append.
         contains('DeltaLink older than 30 days'),
-        contains('handled'),
+        contains('(afgehandeld — de synchronisatie herstelt hiervan)'),
       )),
     );
 

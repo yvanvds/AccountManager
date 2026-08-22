@@ -353,7 +353,9 @@ class CategorySummary {
 /// session **or when their own settings inputs have moved** ([
 /// systemsAwaitingSettings], #259); re-reading them for drift somebody else
 /// introduced through another tool is the explicit [checkDrift] action, not the
-/// default.
+/// default. The shortcut also stands down when a setting only the link consumes
+/// has moved ([linkAwaitingSettings], #264) — that falls through to the re-link
+/// without pulling anything.
 class ReconcileController extends ChangeNotifier {
   ReconcileController({
     required this.app,
@@ -381,6 +383,10 @@ class ReconcileController extends ChangeNotifier {
     // made *from here on* asks for a re-pull.
     _smartschoolPullFingerprint = _settingsFingerprint(core.Origin.smartschool);
     _azurePullFingerprint = _settingsFingerprint(core.Origin.azure);
+    // …and for the settings only the link consumes (#264), whose "pull" is the
+    // relink itself. Nothing is linked yet at this point, so this merely means
+    // a save made from here on is what arms it.
+    _linkFingerprint = _currentLinkFingerprint();
     // The endpoints and credential refs the connectors in hand were built from
     // (#246). Unlike everything else, a later change to these cannot be adopted
     // — see [relaunchRequiredReason].
@@ -451,8 +457,9 @@ class ReconcileController extends ChangeNotifier {
   /// at pull time and the Settings view publishes into on every load and save.
   ///
   /// The controller uses it for one thing: to tell whether the WISA pull inputs
-  /// (werkdatum, virtuele werkdatum, virtual-school marks) have moved since the
-  /// snapshot this session holds was pulled. A drift pass never re-reads WISA —
+  /// (werkdatum, virtuele werkdatum, virtual-school marks, and since #263 the
+  /// persisted import rules) have moved since the snapshot this session holds
+  /// was pulled. A drift pass never re-reads WISA —
   /// that is what Synchroniseer is for — so once they have, a drift check would
   /// silently relink against a roster built with the old settings and publish
   /// the result to every other operator. [driftBlockedReason] refuses instead.
@@ -498,6 +505,12 @@ class ReconcileController extends ChangeNotifier {
   /// document to arm [systemsAwaitingSettings].
   late String _smartschoolPullFingerprint;
   late String _azurePullFingerprint;
+
+  /// The [linkFingerprint] of the settings the linked view in hand was built
+  /// with (#264). Re-stamped on every [_relink]; compared against the live
+  /// document to arm [linkAwaitingSettings], which is what makes the
+  /// unchanged-WISA shortcut fall through to a re-link.
+  late String _linkFingerprint;
 
   ReconcilePhase _phase = ReconcilePhase.idle;
   double _progress = 0.0;
@@ -1061,13 +1074,21 @@ class ReconcileController extends ChangeNotifier {
   /// The operator (UPN) holding the sync/drift lease, when [syncLockedByOther].
   String? get syncLockOwner => _lock?.owner;
 
-  /// The [wisaPullFingerprint] of the live settings, or the stamped one when no
-  /// [liveSettings] holder is wired (which leaves the gate permanently open).
+  /// The [wisaPullFingerprint] of the live settings, or the empty sentinel when
+  /// no [liveSettings] holder is wired — which makes every comparison equal and
+  /// leaves [driftBlockedReason] silent for the harnesses that model no settings
+  /// at all, exactly as [_settingsFingerprint] (#259) and
+  /// [_currentLinkFingerprint] (#264) do.
+  ///
+  /// The sentinel is what makes that mode reachable at all (#274). This method
+  /// is what the constructor stamps [_wisaPullFingerprint] *from*, so falling
+  /// back to that field read a `late` in the middle of its own initialisation:
+  /// building the controller without a holder threw a `LateInitializationError`
+  /// before it could return. Both answers leave the gate permanently open —
+  /// only this one lets the controller exist.
   String _wisaFingerprint() {
     final live = liveSettings;
-    return live == null
-        ? _wisaPullFingerprint
-        : wisaPullFingerprint(live.current);
+    return live == null ? '' : wisaPullFingerprint(live.current);
   }
 
   /// Why **Check for drift** is unavailable right now, or `null` when it can
@@ -1076,7 +1097,8 @@ class ReconcileController extends ChangeNotifier {
   /// A drift pass deliberately re-reads only Smartschool and Azure: the WISA
   /// roster it links them against is whatever this session already holds, cold
   /// seed included. So once the operator saves a werkdatum — or a virtuele
-  /// werkdatum, or a school's virtual mark — that roster is not the one their
+  /// werkdatum, or a school's virtual mark, or a WISA import rule (#263) —
+  /// that roster is not the one their
   /// change asks for, and a drift pass would relink against the old one,
   /// materialize the result, bump the generation and broadcast it to every other
   /// operator. Refusing until a full [sync] has pulled WISA with the new
@@ -1132,22 +1154,57 @@ class ReconcileController extends ChangeNotifier {
           core.Origin.azure,
       };
 
+  /// The [linkFingerprint] of the live document, or the empty sentinel when no
+  /// [liveSettings] holder is wired — which makes every comparison equal and
+  /// leaves [linkAwaitingSettings] false for the harnesses that model no
+  /// settings at all.
+  String _currentLinkFingerprint() {
+    final live = liveSettings;
+    return live == null ? '' : linkFingerprint(live.current);
+  }
+
+  /// Whether a saved setting that only the **link** consumes has moved since
+  /// the linked view in hand was built (#264).
+  ///
+  /// The link's counterpart of [systemsAwaitingSettings], and the reason it is
+  /// separate: the Azure domain every proposed UPN carries and the Smartschool
+  /// class tree a new class hangs under reach no connector, so no pull
+  /// fingerprint covers them. Saving one used to be adopted by **Check for
+  /// drift** — which re-links unconditionally — and not by the Synchroniseer
+  /// the operator reaches for, because a sync over an unchanged WISA returns
+  /// before [_relink]. True means the next [sync] skips that shortcut and
+  /// re-links, which costs no pull at all.
+  bool get linkAwaitingSettings =>
+      _currentLinkFingerprint() != _linkFingerprint;
+
   /// Which saved settings are waiting for a Synchroniseer to be applied, or
-  /// `null` when none are (#259).
+  /// `null` when none are (#259/#264).
   ///
   /// Nothing is refused — the next [sync] adopts them by itself, and so does a
   /// [checkDrift]. This only ends the silence between the save and that pass,
   /// the way [driftBlockedReason] and [relaunchRequiredReason] name their own
   /// situations.
+  ///
+  /// The link is named beside the two systems rather than as a system of its
+  /// own: it is not a pull, and what waits on it is a recomputation this
+  /// session can do without touching the network.
   String? get pendingSettingsReason {
     final systems = systemsAwaitingSettings;
-    if (systems.isEmpty) return null;
     final names = <String>[
       if (systems.contains(core.Origin.smartschool)) 'Smartschool',
       if (systems.contains(core.Origin.azure)) 'Azure AD',
+      if (linkAwaitingSettings) 'de koppeling',
     ];
-    return 'Instellingen voor ${names.join(' en ')} gewijzigd — '
+    if (names.isEmpty) return null;
+    return 'Instellingen voor ${_andList(names)} gewijzigd — '
         'synchroniseer om ze toe te passen.';
+  }
+
+  /// `a`, `a en b`, `a, b en c` — the Dutch enumeration [pendingSettingsReason]
+  /// names what is waiting with.
+  static String _andList(List<String> names) {
+    if (names.length < 2) return names.join();
+    return '${names.sublist(0, names.length - 1).join(', ')} en ${names.last}';
   }
 
   /// Why this session must be relaunched before it can honour the settings as
@@ -1194,6 +1251,12 @@ class ReconcileController extends ChangeNotifier {
       _azurePullFingerprint = fingerprint;
     }
   }
+
+  /// The same record for the link (#264): [fingerprint] is read *before*
+  /// `applier.link()` samples the settings, so a save landing mid-link stays
+  /// pending. That errs towards one redundant re-link rather than towards a
+  /// save no pass ever adopts, which is the failure this exists to end.
+  void _stampLink(String fingerprint) => _linkFingerprint = fingerprint;
 
   /// Whether the store holds a materialized overview (rollups) to drill into —
   /// true after any session has synced, even without a pull this session.
@@ -1504,6 +1567,9 @@ class ReconcileController extends ChangeNotifier {
       // publishes a repaired document of its own (#207) — can never be mistaken
       // for the operator changing something.
       final stale = systemsAwaitingSettings;
+      // …and whether a setting only the link consumes moved (#264), sampled at
+      // the same instant and for the same reason.
+      final linkStale = linkAwaitingSettings;
       log.addMessage(core.Origin.wisa, 'WISA ophalen…');
       final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
       _stampWisaPull(pulledWith);
@@ -1524,10 +1590,15 @@ class ReconcileController extends ChangeNotifier {
       // "Nothing to do" is only honest while every input is the one the view in
       // hand was built from. A saved import rule or school prefix (#259) is a
       // change this pass has to apply, so it falls through to the re-pull below
-      // instead of reporting "geen accountwijzigingen nodig" over it.
+      // instead of reporting "geen accountwijzigingen nodig" over it — and so
+      // is a saved Azure domain or Smartschool class tree (#264), which no pull
+      // asks about but every link does. That one falls through to [_relink]
+      // alone: it needs no network, and skipping it left the save adopted only
+      // by **Check for drift**, the very asymmetry #259 set out to remove.
       if (previous != null &&
           _linked != null &&
           stale.isEmpty &&
+          !linkStale &&
           wisaSnapshotUnchanged(previous, fresh)) {
         _noChangesNeeded = true;
         log.addMessage(
@@ -1580,6 +1651,16 @@ class ReconcileController extends ChangeNotifier {
       }
       _setProgress(0.65);
 
+      if (linkStale) {
+        // The pass says why it is re-linking, in the panel the operator reads —
+        // the counterpart of the two re-pull lines above, and the only visible
+        // sign that a save with no pull behind it was applied (#264).
+        log.addMessage(
+          core.Origin.all,
+          'Koppelingsinstellingen gewijzigd — de koppeling wordt opnieuw '
+          'berekend.',
+        );
+      }
       await _relink();
       _logSyncComplete();
       _finish(ReconcilePhase.ready);
@@ -2018,7 +2099,12 @@ class ReconcileController extends ChangeNotifier {
     _phase = ReconcilePhase.linking;
     _setProgress(0.75);
     notifyListeners();
+    // Read before the link, stamped after it: `applier.link()` samples the very
+    // same document, so this names exactly the settings the view about to be
+    // built was linked with (#264).
+    final linkedWith = _currentLinkFingerprint();
     _linked = await applier.link();
+    _stampLink(linkedWith);
     final s = _linked!.snapshot;
     log.addMessage(
       core.Origin.all,

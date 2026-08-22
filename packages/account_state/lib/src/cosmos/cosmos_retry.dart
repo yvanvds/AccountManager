@@ -126,17 +126,17 @@ class CosmosThrottleGovernor {
     _limit = halved < minConcurrency ? minConcurrency : halved;
     if (wait == null) {
       _report?.call(
-        'Cosmos is still throttling after $attempt attempts — giving up on '
-        'this request.',
+        'Cosmos beperkt het tempo nog steeds na $attempt pogingen — deze '
+        'aanvraag wordt opgegeven.',
       );
       return;
     }
     // Report the start of a burst, then only every [reportEvery]th event.
     if (wasWide || _throttles % reportEvery == 0) {
       _report?.call(
-        'Cosmos is throttling (429) — retrying in ${wait.inMilliseconds} ms '
-        'and narrowing the write fan-out to $_limit '
-        '(throttled $_throttles time(s) so far).',
+        'Cosmos beperkt het tempo (429) — opnieuw proberen over '
+        '${wait.inMilliseconds} ms en het aantal gelijktijdige schrijfacties '
+        'verlaagd naar $_limit ($_throttles keer beperkt tot nu toe).',
       );
     }
   }
@@ -150,7 +150,8 @@ class CosmosThrottleGovernor {
     _limit++;
     if (!isNarrowed) {
       _report?.call(
-        'Cosmos throttling eased — write fan-out back to $_limit.',
+        'Cosmos beperkt het tempo niet meer — aantal gelijktijdige '
+        'schrijfacties terug op $_limit.',
       );
     }
   }

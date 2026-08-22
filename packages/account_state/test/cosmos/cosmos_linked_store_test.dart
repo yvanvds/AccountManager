@@ -721,10 +721,21 @@ void main() {
       // The long write ticked visibly: interim lines plus a final full count for
       // the big account container.
       expect(progress, isNotEmpty);
-      expect(progress.where((m) => m.startsWith('Persisting accounts:')),
+      expect(progress.where((m) => m.startsWith('Opslaan van accounts:')),
           isNotEmpty);
-      expect(progress, contains('Persisting accounts: 1000/2500…'));
-      expect(progress, contains('Persisting accounts: 2500/2500…'));
+      expect(progress, contains('Opslaan van accounts: 1000/2500…'));
+      expect(progress, contains('Opslaan van accounts: 2500/2500…'));
+      // The line goes straight into the operator's Log panel, so it is Dutch
+      // like every other line of a pass — the container labels included, in the
+      // words the app already uses for them (#266).
+      expect(progress.where((m) => m.startsWith('Persisting')), isEmpty);
+      expect(
+        progress.where((m) => m.startsWith('Opslaan van tellingen:')),
+        isNotEmpty,
+        reason: 'the rollups container is named "tellingen"',
+      );
+      expect(progress.where((m) => m.contains('rollups')), isEmpty);
+      expect(progress.where((m) => m.contains('groups')), isEmpty);
 
       // The whole set round-trips despite the batching.
       expect((await store.readRollups()).isNotEmpty, isTrue);
@@ -845,7 +856,9 @@ void main() {
       expect(client.deletes, 0, reason: 'nothing departed, nothing deleted');
       // The operator is told the pass was a no-op rather than seeing silence.
       expect(
-          progress, contains('Persisting accounts: 50 unchanged, 0 to write…'));
+        progress,
+        contains('Opslaan van accounts: 50 ongewijzigd, 0 te schrijven…'),
+      );
       // …and the view is still whole and still readable.
       expect(await store.readClassroom(school: '1', classroom: 'c0'),
           hasLength(10));

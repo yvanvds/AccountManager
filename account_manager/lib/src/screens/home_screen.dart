@@ -23,15 +23,18 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Eyebrow('Arcadia · account synchronisation', onInk: ink),
+              // The operator's language, like every other screen (#265): Start
+              // is the first thing they land on, so it cannot be the one page
+              // that greets them in English.
+              Eyebrow('Arcadia · accountsynchronisatie', onInk: ink),
               const SizedBox(height: PlinkSpacing.s4),
               Text('Account Manager', style: text.displaySmall),
               const SizedBox(height: PlinkSpacing.s4),
               Text(
-                'Reconciles user accounts and class groups across WISA, '
-                'Smartschool and Azure AD / Office 365. Views are added as '
-                'each Phase C slice lands — starting with sign-in and the '
-                'reconcile screen.',
+                'Stemt gebruikersaccounts en klasgroepen op elkaar af tussen '
+                'WISA, Smartschool en Azure AD / Office 365. De schermen '
+                'worden stap voor stap toegevoegd — te beginnen met aanmelden '
+                'en het tabblad Synchronisatie.',
                 style: text.bodyLarge,
               ),
             ],

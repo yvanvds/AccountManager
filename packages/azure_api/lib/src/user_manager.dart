@@ -158,8 +158,8 @@ class UserManager {
     }
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: looked up ${unique.length} employeeId(s) directly — '
-      '${found.length} existing account(s) found.',
+      'Azure: ${unique.length} employeeId(s) rechtstreeks opgezocht — '
+      '${found.length} bestaand(e) account(s) gevonden.',
     );
     return found.values.toList();
   }
@@ -196,7 +196,7 @@ class UserManager {
     final users = rows.map(AzureUser.fromGraphJson).toList();
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: loaded ${users.length} users for "$schoolPrefix".',
+      'Azure: ${users.length} gebruikers opgehaald voor "$schoolPrefix".',
     );
     return users;
   }
@@ -214,7 +214,7 @@ class UserManager {
         .toList();
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: loaded ${users.length} users (client-filtered) for '
+      'Azure: ${users.length} gebruikers opgehaald (lokaal gefilterd) voor '
       '"$schoolPrefix".',
     );
     return users;
@@ -280,8 +280,8 @@ class UserManager {
     }
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: delta for "$schoolPrefix" — ${changed.length} changed, '
-      '${removedIds.length} removed.',
+      'Azure: delta voor "$schoolPrefix" — ${changed.length} gewijzigd, '
+      '${removedIds.length} verwijderd.',
     );
     return UserDelta(
       changed: changed,
@@ -348,7 +348,7 @@ class UserManager {
     final json = await _graph.postJson(_graph.uri('users'), body);
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: created user $userPrincipalName.',
+      'Azure: gebruiker $userPrincipalName aangemaakt.',
     );
     // The create response echoes the new resource; fall back to the request
     // values for any field Graph omitted from its echo.
@@ -394,13 +394,16 @@ class UserManager {
       _graph.uri('users/${Uri.encodeComponent(id)}'),
       body,
     );
-    _log?.addMessage(core.Origin.azure, 'Azure: updated user $id.');
+    _log?.addMessage(core.Origin.azure, 'Azure: gebruiker $id bijgewerkt.');
   }
 
   /// Deletes a user by object id or UPN. Mirrors legacy `DeleteUser`.
   Future<void> deleteUser(String idOrUpn) async {
     await _graph.delete(_graph.uri('users/${Uri.encodeComponent(idOrUpn)}'));
-    _log?.addMessage(core.Origin.azure, 'Azure: deleted user $idOrUpn.');
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: gebruiker $idOrUpn verwijderd.',
+    );
   }
 
   /// Resets an existing user's password (PATCH `users/{id}` with a
@@ -434,7 +437,10 @@ class UserManager {
       if (e.statusCode != 403) rethrow;
       throw AzurePasswordPermissionException(idOrUpn, e);
     }
-    _log?.addMessage(core.Origin.azure, 'Azure: reset password for $idOrUpn.');
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: wachtwoord van $idOrUpn opnieuw ingesteld.',
+    );
   }
 
   /// Builds a unique UPN from a name, appending a numeric suffix on collision.

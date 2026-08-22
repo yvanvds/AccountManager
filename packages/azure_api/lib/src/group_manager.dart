@@ -58,7 +58,7 @@ class GroupManager {
     }
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: loaded ${groups.length} groups for "$schoolPrefix".',
+      'Azure: ${groups.length} groepen opgehaald voor "$schoolPrefix".',
     );
     return groups;
   }
@@ -121,7 +121,7 @@ class GroupManager {
     final json = await _graph.postJson(_graph.uri('groups'), body);
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: created Microsoft 365 group $displayName ($mailNickname).',
+      'Azure: Microsoft 365-groep $displayName ($mailNickname) aangemaakt.',
     );
     // The create response echoes the new resource; fall back to the request
     // values for anything Graph left out of its echo (as `createUser` does).
@@ -152,7 +152,7 @@ class GroupManager {
     );
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: added $userId to group $groupId.',
+      'Azure: $userId toegevoegd aan groep $groupId.',
     );
   }
 
@@ -166,7 +166,7 @@ class GroupManager {
     );
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: removed $userId from group $groupId.',
+      'Azure: $userId verwijderd uit groep $groupId.',
     );
   }
 
@@ -191,7 +191,7 @@ class GroupManager {
     final results = await _batch.execute(requests);
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: batch-added ${userIds.length} members to group $groupId.',
+      'Azure: ${userIds.length} leden in batch toegevoegd aan groep $groupId.',
     );
     return results;
   }
@@ -213,7 +213,7 @@ class GroupManager {
     final results = await _batch.execute(requests);
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: batch-removed ${userIds.length} members from group $groupId.',
+      'Azure: ${userIds.length} leden in batch verwijderd uit groep $groupId.',
     );
     return results;
   }

@@ -190,15 +190,17 @@ class _Header extends StatelessWidget {
     final bool ink = Theme.of(context).brightness == Brightness.dark;
     final bool hasFreshness = controller.syncState.systems.isNotEmpty;
     final lockedByOther = controller.syncLockedByOther;
-    // Why Check for drift is unavailable, when it is the WISA settings rather
-    // than another operator's lease that blocks it (#238).
+    // Why "Controleer op drift" is unavailable, when it is the WISA settings
+    // rather than another operator's lease that blocks it (#238).
     final String? driftBlocked = controller.driftBlockedReason;
     // The one class of saved setting this running session cannot adopt — the
     // connection profiles the connectors were constructed from (#246).
     final String? relaunch = controller.relaunchRequiredReason;
     // Saved Smartschool / Azure pull inputs the next pass will adopt but no
-    // pass has yet (#259) — the gap in which Synchroniseer used to report
-    // "geen accountwijzigingen nodig" over a save it had skipped.
+    // pass has yet (#259), and since #264 the ones only the link consumes (the
+    // Azure domain, the Smartschool class tree) — the gap in which
+    // Synchroniseer used to report "geen accountwijzigingen nodig" over a save
+    // it had skipped.
     final String? pendingSettings = controller.pendingSettingsReason;
 
     return Column(
@@ -219,7 +221,11 @@ class _Header extends StatelessWidget {
               onPressed:
                   controller.busy || lockedByOther ? null : controller.sync,
               icon: const Icon(Icons.sync),
-              label: const Text('Synchronise'),
+              // The screen's own controls speak the operator's language, like
+              // the rail that leads here and the heading above them (#265).
+              // "Synchroniseer" is what the Acties read-only banner already
+              // calls this very action.
+              label: const Text('Synchroniseer'),
             ),
             OutlinedButton.icon(
               key: const ValueKey('reconcile-drift'),
@@ -229,7 +235,9 @@ class _Header extends StatelessWidget {
               onPressed:
                   controller.canCheckDrift ? controller.checkDrift : null,
               icon: const Icon(Icons.difference_outlined),
-              label: const Text('Check for drift'),
+              // The pass the last-sync box already calls a "driftcontrole",
+              // phrased as the imperative its neighbour is (#265).
+              label: const Text('Controleer op drift'),
             ),
           ],
         ),
@@ -314,18 +322,18 @@ class _Header extends StatelessWidget {
 /// sentence.
 ///
 /// Read from the materialized store so it names *whichever* operator last synced
-/// each system — not just this session (#108). WISA is the Synchronise target;
-/// Smartschool and Azure are refreshed by Check for drift, so a later WISA-only
-/// smart-sync reads as "synced then, drift-checked earlier" per row rather than
-/// an unexplained gap between timestamps (#170). Only rendered once at least one
-/// system has been synced.
+/// each system — not just this session (#108). WISA is what **Synchroniseer**
+/// targets; Smartschool and Azure are refreshed by **Controleer op drift**, so a
+/// later WISA-only smart-sync reads as "synced then, drift-checked earlier" per
+/// row rather than an unexplained gap between timestamps (#170). Only rendered
+/// once at least one system has been synced.
 class _LastSyncBox extends StatelessWidget {
   const _LastSyncBox({required this.controller});
 
   final ReconcileController controller;
 
   /// The systems in display order, each with its label and whether it is
-  /// refreshed by Synchronise (`isSync`) or by Check for drift.
+  /// refreshed by **Synchroniseer** (`isSync`) or by **Controleer op drift**.
   static const List<(core.Origin, String, bool)> _rows =
       <(core.Origin, String, bool)>[
     (core.Origin.wisa, 'WISA', true),
@@ -483,8 +491,11 @@ class _StatusBanner extends StatelessWidget {
             const SizedBox(width: PlinkSpacing.s3),
             Expanded(
               child: Text(
-                'WISA is unchanged since the previous sync — '
-                'no account changes needed.',
+                // Word for word the Log line #258 already writes beside it, so
+                // the banner and the log do not say the same thing twice in
+                // two different phrasings (#265).
+                'WISA is ongewijzigd sinds de vorige synchronisatie — '
+                'geen accountwijzigingen nodig.',
                 style: text.bodyMedium,
               ),
             ),
@@ -494,9 +505,10 @@ class _StatusBanner extends StatelessWidget {
     }
     if (controller.phase == ReconcilePhase.idle) {
       return Text(
-        'Synchronise pulls WISA and diffs it against the previous snapshot; '
-        'Smartschool and Azure are read once per session. Use "Check for '
-        'drift" when accounts were edited through another tool.',
+        'Synchroniseer haalt WISA op en vergelijkt het met de vorige '
+        'momentopname; Smartschool en Azure worden één keer per sessie '
+        'gelezen. Gebruik "Controleer op drift" wanneer accounts via een '
+        'ander programma zijn aangepast.',
         style: text.bodyMedium,
       );
     }
@@ -542,7 +554,9 @@ class _OverviewSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Overview', style: text.titleMedium),
+        // The same word the Acties tree heads itself with (#253), so the two
+        // tabs name the same kind of section the same way (#265).
+        Text('Overzicht', style: text.titleMedium),
         const SizedBox(height: PlinkSpacing.s3),
         Wrap(
           spacing: PlinkSpacing.s4,
@@ -883,8 +897,8 @@ class _LogPanelState extends State<_LogPanel> {
     );
   }
 
-  /// The panel's right-click menu: the framework's own items plus **Copy
-  /// line**, which takes the single entry under the pointer (#197).
+  /// The panel's right-click menu: the framework's own items plus **Regel
+  /// kopiëren**, which takes the single entry under the pointer (#197).
   ///
   /// Grabbing one message was already possible — the entries render as one
   /// paragraph (#193), so a triple-click selects exactly one line — but
@@ -911,7 +925,7 @@ class _LogPanelState extends State<_LogPanel> {
       items.insert(
         0,
         ContextMenuButtonItem(
-          label: 'Copy line',
+          label: 'Regel kopiëren',
           onPressed: () {
             region.hideToolbar();
             _copy(entry.line);
@@ -946,7 +960,7 @@ class _LogPanelState extends State<_LogPanel> {
             ),
             child: Row(
               children: <Widget>[
-                Text('Log', style: text.titleSmall),
+                Text('Logboek', style: text.titleSmall),
                 const Spacer(),
                 ListenableBuilder(
                   listenable: log,
@@ -957,12 +971,12 @@ class _LogPanelState extends State<_LogPanel> {
                         TextButton(
                           key: const ValueKey('reconcile-log-copy-all'),
                           onPressed: empty ? null : _copyAll,
-                          child: const Text('Copy all'),
+                          child: const Text('Alles kopiëren'),
                         ),
                         TextButton(
                           key: const ValueKey('reconcile-log-clear'),
                           onPressed: empty ? null : log.clear,
-                          child: const Text('Clear'),
+                          child: const Text('Wissen'),
                         ),
                       ],
                     );
@@ -981,7 +995,7 @@ class _LogPanelState extends State<_LogPanel> {
                     padding: const EdgeInsets.symmetric(
                       horizontal: PlinkSpacing.s4,
                     ),
-                    child: Text('No messages yet.', style: text.bodySmall),
+                    child: Text('Nog geen berichten.', style: text.bodySmall),
                   );
                 }
                 // Newest first, anchored to the top — reads like a tail.

@@ -390,6 +390,124 @@ void main() {
       expect(await c.testConnection(), isFalse);
     });
   });
+
+  // Everything the connector writes into an [core.ILog] ends up in the app's
+  // Log panel, beside the Dutch the app layer writes there (#253/#257/#258), so
+  // it is Dutch too (#266). The package's API, doc comments and test names are
+  // developer-facing and stay English.
+  group('operator log lines are Dutch (#266)', () {
+    WisaConnector loggingConnector(_FakeTransport t, _RecordingLog log) =>
+        WisaConnector.fromParts(
+          server: 'fake-host',
+          port: 80,
+          database: 'db',
+          username: 'user',
+          password: 'pw',
+          transport: t,
+          log: log,
+        );
+
+    test('a successful connection test says so in Dutch', () async {
+      final log = _RecordingLog();
+      final c = loggingConnector(_FakeTransport(fixtures), log);
+
+      expect(await c.testConnection(), isTrue);
+      expect(log.messages, contains('Verbinding geslaagd.'));
+      expect(log.messages, isNot(contains('Connection Succeeded')));
+    });
+
+    test('an empty connection test reports the failure in Dutch', () async {
+      final log = _RecordingLog();
+      final c = loggingConnector(
+        _FakeTransport({...fixtures, WisaQuery.testConnection: ''}),
+        log,
+      );
+
+      expect(await c.testConnection(), isFalse);
+      expect(
+          log.errors, contains('Verbindingstest leverde geen resultaat op.'));
+      expect(log.errors, isNot(contains(contains('Test Connection'))));
+    });
+
+    test('each per-school pull names what it loaded, in Dutch', () async {
+      final log = _RecordingLog();
+      final t = _FakeTransport(fixtures);
+      final c = loggingConnector(t, log);
+      final schools = await c.loadSchools();
+      await c.sync(
+        schools: [schools.firstWhere((s) => s.id == 25)],
+        workDate: DateTime(2024, 9, 1),
+      );
+
+      // The school is named by its short code, as it has been since #208. The
+      // counts are the connector's own pre-rule, pre-dedupe ones, so they are
+      // matched in shape rather than against the finished snapshot.
+      expect(log.messages, contains('Klassen opgehaald uit ISMAA.'));
+      expect(
+        log.messages,
+        contains(
+            matches(RegExp(r'^\d+ leerling\(en\) opgehaald uit ISMAA\.$'))),
+      );
+      expect(
+        log.messages,
+        contains(
+          matches(RegExp(r'^\d+ personeelsleden opgehaald uit ISMAA\.$')),
+        ),
+      );
+      // …and not one line is still the English it used to be.
+      for (final english in <String>['Loading ', 'succeeded.']) {
+        expect(
+          log.messages.where((m) => m.contains(english)),
+          isEmpty,
+          reason: english,
+        );
+      }
+    });
+
+    test('every empty result is reported in Dutch', () async {
+      final log = _RecordingLog();
+      final t = _FakeTransport({
+        ...fixtures,
+        WisaQuery.syncClassGroups: '',
+        WisaQuery.syncStudents: '',
+        WisaQuery.syncStaff: '',
+      });
+      final c = loggingConnector(t, log);
+      final schools = await c.loadSchools();
+      await c.sync(
+        schools: [schools.firstWhere((s) => s.id == 25)],
+        workDate: DateTime(2024, 9, 1),
+      );
+
+      expect(log.errors, contains('Klassen: leeg resultaat.'));
+      expect(log.errors, contains('Leerlingen: leeg resultaat.'));
+      expect(log.errors, contains('Personeel: leeg resultaat.'));
+      expect(log.errors, isNot(contains(contains('empty result'))));
+    });
+
+    test('an empty school list is reported in Dutch, as "Scholen"', () async {
+      // WISA calls them "instellingen"; Instellingen is this app's settings
+      // screen, and its **Scholen ophalen** button drives this very call.
+      final log = _RecordingLog();
+      final c = loggingConnector(
+        _FakeTransport({...fixtures, WisaQuery.getSchools: ''}),
+        log,
+      );
+
+      expect(await c.loadSchools(), isEmpty);
+      expect(log.errors, contains('Scholen: leeg resultaat.'));
+      expect(log.errors, isNot(contains(contains('Instellingen'))));
+    });
+  });
+}
+
+class _RecordingLog implements core.ILog {
+  final List<String> messages = <String>[];
+  final List<String> errors = <String>[];
+  @override
+  void addMessage(core.Origin origin, String message) => messages.add(message);
+  @override
+  void addError(core.Origin origin, String message) => errors.add(message);
 }
 
 class _FaultingTransport extends _FakeTransport {

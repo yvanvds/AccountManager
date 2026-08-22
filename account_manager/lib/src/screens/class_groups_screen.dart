@@ -8,6 +8,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../reconcile/reconcile_bootstrap.dart';
 import '../reconcile/reconcile_controller.dart';
+import '../search/name_query.dart';
 import 'action_tiles.dart';
 
 /// The **Klasgroepen** tab (#227): the full class inventory.
@@ -30,7 +31,9 @@ import 'action_tiles.dart';
 ///   like they own one.
 /// - **The filter defaults *off*.** Acties has the same switch on by default
 ///   (#226) because it answers "what needs doing?"; this tab answers "is the
-///   inventory right?", which only the full list can.
+///   inventory right?", which only the full list can. The name search (#262) is
+///   what makes those few hundred rows navigable without shortening them, and it
+///   composes with the switch rather than replacing it.
 /// - **Informational notices are not buried.** A class Smartschool already
 ///   holds, or an Office 365 group left behind by a class that is gone, is real
 ///   manual work with no automated write, so it contributes nothing to a pending
@@ -149,6 +152,15 @@ class _ClassRowModel {
   /// informational notice is work too (#225/#250).
   bool attentionIn({required bool active}) =>
       active ? entry != null : group.needsAttention;
+
+  /// What the name search (#262) matches this row against: the class name and
+  /// its description, as one haystack.
+  ///
+  /// Both, because a class is looked up either way — `3TSO-B` by its code, but
+  /// just as often "handel", which only the description carries. Joining them
+  /// rather than testing them separately also lets one needle span the two
+  /// ("2f handel"), which is how an operator who half-remembers both types it.
+  String get searchText => '${group.label} ${group.description}';
 }
 
 class _ClassGroupsBody extends StatefulWidget {
@@ -166,20 +178,40 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
   /// keeps only the classes that ask something of the operator.
   bool _onlyAttention = false;
 
+  /// The class name search (#262). Unlike [_onlyAttention] this is not a mode
+  /// but a lookup *inside* this list: the tab lists every class of the school
+  /// group — a few hundred rows — and the filter that would shorten it is off by
+  /// design, so "is `3TSO-B` right?" is otherwise answered by scrolling.
+  final TextEditingController _search = TextEditingController();
+
   ReconcileController get controller => widget.controller;
 
   @override
   void initState() {
     super.initState();
     controller.addListener(_ensureLoaded);
+    _search.addListener(_onSearchChanged);
     _ensureLoaded();
   }
 
   @override
   void dispose() {
     controller.removeListener(_ensureLoaded);
+    _search
+      ..removeListener(_onSearchChanged)
+      ..dispose();
     super.dispose();
   }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The typed needle, parsed. Matching is per whitespace-separated part and
+  /// order-independent — the same [NameQuery] the two Personeel searches use
+  /// (#187/#215/#217), so the three searches in this app behave identically
+  /// rather than each having its own idea of what a needle means.
+  NameQuery get _query => NameQuery(_search.text);
 
   /// Whether a read is already queued, so a burst of notifications schedules
   /// one.
@@ -254,12 +286,22 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
     final rows = _rows();
     final int attention =
         rows.where((r) => r.attentionIn(active: active)).length;
+    // The two filters compose rather than replace one another (#262): the
+    // search narrows the inventory to the classes the operator is looking for,
+    // and the switch — if they turned it on — keeps the ones asking something.
+    final NameQuery query = _query;
+    final searched = query.isEmpty
+        ? rows
+        : <_ClassRowModel>[
+            for (final r in rows)
+              if (query.matches(r.searchText)) r,
+          ];
     final visible = _onlyAttention
         ? <_ClassRowModel>[
-            for (final r in rows)
+            for (final r in searched)
               if (r.attentionIn(active: active)) r,
           ]
-        : rows;
+        : searched;
 
     final slivers = <Widget>[
       _gap(PlinkSpacing.s6),
@@ -269,6 +311,8 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
         attention: attention,
       )),
       _gap(PlinkSpacing.s4),
+      _section(_ClassSearchBar(searchController: _search)),
+      _gap(PlinkSpacing.s3),
       _section(_AttentionFilterBar(
         onlyAttention: _onlyAttention,
         onChanged: (v) => setState(() => _onlyAttention = v),
@@ -305,11 +349,19 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
         ..add(_gap(PlinkSpacing.s6));
     }
 
-    slivers.addAll(_bulkSlivers(active));
+    slivers.addAll(_bulkSlivers(
+      active,
+      <String>{for (final r in searched) r.group.label},
+    ));
 
     if (visible.isEmpty) {
-      slivers.add(_section(const EmptyLine(
-        'Elke klas staat in orde — er is niets dat aandacht vraagt.',
+      // A search that finds nothing has to say so in its own words (#262). The
+      // line below it — "elke klas staat in orde" — is a statement about the
+      // inventory, and reading it after a typo would be a lie about the school.
+      slivers.add(_section(EmptyLine(
+        query.isEmpty
+            ? 'Elke klas staat in orde — er is niets dat aandacht vraagt.'
+            : _noMatchLabel,
       )));
     } else {
       slivers.add(SliverPadding(
@@ -330,6 +382,13 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
     return slivers;
   }
 
+  /// The line shown when the search (alone or with the switch) hides every class
+  /// of a non-empty inventory (#262) — deliberately not the "nog geen
+  /// klasinventaris" line, which says the sync never ran, nor the "elke klas
+  /// staat in orde" one, which says the school is fine. Worded as Acties words
+  /// the same state one tab away (#187).
+  static const String _noMatchLabel = 'Geen klassen die aan de filter voldoen.';
+
   /// The "same situation" bulk affordances (#110/#252), collected above the
   /// inventory instead of interleaved in it.
   ///
@@ -338,12 +397,22 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
   /// run of rows to put a header on. They are still worth one click ("create
   /// every new class of the year"), so they sit here, each acting on exactly the
   /// classes it names.
-  List<Widget> _bulkSlivers(bool active) {
+  ///
+  /// [shown] is the set of class names the search left standing, and a subset is
+  /// narrowed to it: a button that acts on "exactly the classes it names" must
+  /// not quietly write to classes the operator filtered off the screen, and a
+  /// subset left with one class is no longer a bulk affordance at all — its one
+  /// row carries the same action.
+  List<Widget> _bulkSlivers(bool active, Set<String> shown) {
     if (!active) return const <Widget>[];
-    final subsets = <List<PendingAccountEntry>>[
-      for (final subset in controller.groupPendingSituations)
-        if (subset.length > 1) subset,
-    ];
+    final subsets = <List<PendingAccountEntry>>[];
+    for (final subset in controller.groupPendingSituations) {
+      final kept = <PendingAccountEntry>[
+        for (final e in subset)
+          if (shown.contains(e.targetId)) e,
+      ];
+      if (kept.length > 1) subsets.add(kept);
+    }
     if (subsets.isEmpty) return const <Widget>[];
     return <Widget>[
       _section(const _SectionTitle('Klassen in dezelfde situatie')),
@@ -466,6 +535,45 @@ class _ClassGroupsHeader extends StatelessWidget {
           Text(freshness, style: text.bodySmall),
         ],
       ],
+    );
+  }
+}
+
+/// The class name search above the inventory (#262).
+///
+/// Same box, same wording and same matching as the two Personeel searches one
+/// tab away (#187/#215/#217) — the operator will not remember which list has
+/// which kind of search, so all three must behave identically. It sits *above*
+/// the switch because it is the more common act on this tab: the switch answers
+/// "what needs doing?", the search answers "is this one class right?", which is
+/// the question that brought the operator to a few hundred rows.
+class _ClassSearchBar extends StatelessWidget {
+  const _ClassSearchBar({required this.searchController});
+
+  final TextEditingController searchController;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      key: const ValueKey('class-groups-search'),
+      controller: searchController,
+      decoration: InputDecoration(
+        isDense: true,
+        prefixIcon: const Icon(Icons.search, size: 18),
+        // Names *and* descriptions: a class is looked up by its code as often as
+        // by what it teaches, and a search box that silently ignores half of
+        // what is on the row is worse than none (#215/#217).
+        hintText: 'Zoek op klas of omschrijving…',
+        border: const OutlineInputBorder(),
+        suffixIcon: searchController.text.isEmpty
+            ? null
+            : IconButton(
+                key: const ValueKey('class-groups-search-clear'),
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Wis zoekopdracht',
+                onPressed: searchController.clear,
+              ),
+      ),
     );
   }
 }
