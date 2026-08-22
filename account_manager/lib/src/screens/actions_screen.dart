@@ -58,6 +58,26 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 /// linked — can only show the stored documents, so both drill-downs say so out
 /// loud rather than quietly swapping in static cards (#214).
 ///
+/// Every action line names the system it writes to (#298): one card can raise
+/// work in two systems and the summaries do not always say where they land. The
+/// three-way system indicator that reads *needs work* rather than *exists*
+/// arrives with the flat list of #295; its vocabulary — and the principle it
+/// shares with Klasgroepen — already lives in `system_indicator.dart`.
+///
+/// **Colour by work that can be done on this screen.** Klasgroepen highlights a
+/// row on `MaterializedGroup.needsAttention`, informational notices included
+/// (#225/#250), because there the manual notice *is* the work the operator
+/// does on that screen. Here an informational candidate is a diagnosis of work
+/// that happens elsewhere, so it colours nothing, raises no badge and puts no
+/// row in the work list — `pendingDecisionCount` has counted it zero since
+/// #245/#255, and the indicators apply that same predicate. The case that
+/// forces the rule is `AzureClassGroupMembership`: Office 365 class membership
+/// is a property of the group, so the write is one `SyncAzureClassGroupMembers`
+/// per class on Klasgroepen. Colouring it here would paint ~3000 student rows
+/// orange at the rollover for work this screen structurally cannot do. (#290
+/// proposed the opposite and was closed; the action still declares
+/// `canApply => false`.)
+///
 /// Shares the one memoized [ReconcileServices] (and so the one
 /// [ReconcileController]) with the Reconcile and Passwords screens, so a sync
 /// run on Reconcile populates the actions shown here.
@@ -1258,8 +1278,9 @@ class _AccountTile extends StatelessWidget {
           for (final c in candidateChoices(account.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
-              child: Text(
-                readOnlyCandidateLine(c),
+              child: ActionLine(
+                system: c.selected.system,
+                line: readOnlyCandidateLine(c),
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),

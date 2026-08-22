@@ -15,6 +15,7 @@ import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
+import 'package:account_manager/src/screens/system_indicator.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
     show
@@ -3162,6 +3163,111 @@ void main() {
   });
 
   testWidgets(
+      'a system cell means "work you can do on this screen": the class that '
+      'carries the Office 365 roster write says so, the students it diagnoses '
+      'do not, end-to-end (#298)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, real rail. Same #245 fixture:
+    // every class exists in all three systems and is in sync with Smartschool,
+    // so the *only* work anywhere is the Azure roster — which is exactly the
+    // state that used to render three ticks and say nothing.
+    //
+    // Only a full-app run puts both halves of the rule on screen at once. The
+    // Klasgroepen cells are composed from the stored documents plus the live
+    // dispatch, the Acties cards from a second projection of that same
+    // dispatch, and the rule is that the two must disagree about who owns the
+    // write: the class does, the ~3000 students do not.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+
+    SystemIndicatorState cellOf(String klas, Origin system) => tester
+        .widget<SystemIndicatorCell>(
+          find.byKey(ValueKey('class-cell-$klas-${system.name}')),
+        )
+        .state;
+
+    // `1A` is present in all three systems, so the old reading was three ticks.
+    // Under #298 the Office 365 cell carries the pending roster write while the
+    // other two stay green.
+    expect(cellOf('1A', Origin.wisa), SystemIndicatorState.inOrder);
+    expect(cellOf('1A', Origin.smartschool), SystemIndicatorState.inOrder);
+    expect(cellOf('1A', Origin.azure), SystemIndicatorState.needsWork);
+    expect(cellOf('1B', Origin.azure), SystemIndicatorState.needsWork);
+
+    // The three states are distinguishable without colour too — the icon
+    // changes shape, so a monochrome screenshot still reads.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('class-cell-1A-azure')),
+        matching: find.byIcon(Icons.pending_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('class-cell-1A-wisa')),
+        matching: find.byIcon(Icons.check_circle_outline),
+      ),
+      findsOneWidget,
+    );
+
+    // And the row's own line names the system it writes to, so the cell and the
+    // card agree instead of the operator having to infer it from a group name.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('class-row-1A')),
+        matching: find.text('Office 365 ·'),
+      ),
+      findsOneWidget,
+    );
+
+    // The students the same fact is reported on are informational only, so
+    // nothing over on Acties turns orange for them: their cards still carry the
+    // diagnosis, marked "(manueel)", and raise no applyable work at all.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    await tester.ensureVisible(yearNode);
+    await tester.tap(yearNode);
+    await tester.pumpAndSettle();
+    final classNode = find.byKey(const ValueKey('rollup-class-class|1|1|1A'));
+    await tester.ensureVisible(classNode);
+    await tester.tap(classNode);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(
+      find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets);
+    final studentWork = harness.controller.pendingEntries
+        .where((e) => e.family == 'student')
+        .expand(workSystemsOfEntry)
+        .toList();
+    expect(
+      studentWork,
+      isEmpty,
+      reason: 'Office 365 class membership is a property of the group, so the '
+          'write is one per class on Klasgroepen — colouring it per student '
+          'would paint the whole school orange at the rollover',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a passive session marks the same informational candidate "(manueel)" on '
       'the account card end-to-end (#255)', (WidgetTester tester) async {
     // The same #245 fixture, read the way most operators meet it: session 1
@@ -3930,10 +4036,22 @@ void main() {
     // claim on Office 365.
     await tester.tap(moveBulk);
     await tester.pumpAndSettle();
-    expect(find.textContaining('3 wijzigingen'), findsOneWidget);
-    expect(find.textContaining('Office 365'), findsNothing,
-        reason: "summing every decision on every card would quote Sam's "
-            'rename and then not write it');
+    // Scoped to the dialog: since #298 the cards behind it lead each line with
+    // the system it writes to, so Sam's rename puts "Office 365 ·" on screen —
+    // which is the point of that issue and says nothing about this pass.
+    final confirmation = find.byType(AlertDialog);
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('3 wijzigingen')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('Office 365')),
+      findsNothing,
+      reason: "summing every decision on every card would quote Sam's "
+          'rename and then not write it',
+    );
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 

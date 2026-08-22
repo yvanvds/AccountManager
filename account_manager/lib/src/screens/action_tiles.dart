@@ -30,6 +30,14 @@ import 'package:wisa_api/wisa_api.dart' as wapi show formatWerkdatum;
 
 import '../format/timestamps.dart';
 import '../reconcile/reconcile_controller.dart';
+import 'system_indicator.dart';
+
+// The system vocabulary both action screens speak (#298) — what a coloured
+// WISA / Smartschool / Office 365 cell means, and how an action line names the
+// system it writes to. Re-exported so a screen that already imports the tile
+// library gets it without a second import, exactly as `systemLabel` was reached
+// before it moved there.
+export 'system_indicator.dart';
 
 // ---------------------------------------------------------------------------
 // Rows.
@@ -112,18 +120,6 @@ String? sharedViewFreshness(ReconcileController controller) {
   return 'Generatie ${state.generation}$when$who$asOf';
 }
 
-/// The Dutch name the operator knows a system by — the same names the action
-/// summaries and the rest of the screen use (#234). Azure AD is "Office 365"
-/// throughout this app, so the dialog says that and not the tenant's technical
-/// name.
-String systemLabel(core.Origin system) => switch (system) {
-      core.Origin.azure => 'Office 365',
-      core.Origin.smartschool => 'Smartschool',
-      core.Origin.wisa => 'WISA',
-      core.Origin.all => 'alle systemen',
-      core.Origin.other => 'een ander systeem',
-    };
-
 /// Joins system names the way Dutch reads them: "a", "a en b", "a, b en c".
 String _joinSystems(Iterable<core.Origin> systems) {
   final names = <String>[
@@ -196,10 +192,17 @@ String applyConfirmationMessage(ApplyScope scope) {
 /// The account card used to render a bare bullet for every candidate (#255), so
 /// a student's informational candidate — since #245 the student family has one —
 /// read like due work next to a badge that counted it zero.
+///
+/// The system the action lands in is **not** in the string: [ActionLine] puts
+/// it in front as a tag of its own (#298), so the summary stays the one
+/// addressable string the dialogs and outcome rows also quote. That tag also
+/// took over from the leading bullet these lines used to carry — two leaders on
+/// one line read as a typo, and the interactive tile's lines never had one, so
+/// dropping it is what finally makes the two identical.
 String readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
   final summary = choice.selected.summary;
-  if (choice.isChoice) return '• $summary (keuze)';
-  return choice.selected.canApply ? '• $summary' : '• $summary (manueel)';
+  if (choice.isChoice) return '$summary (keuze)';
+  return choice.selected.canApply ? summary : '$summary (manueel)';
 }
 
 // ---------------------------------------------------------------------------
@@ -793,6 +796,9 @@ class SituationHeader extends StatelessWidget {
 /// The collapsed line one [PendingChoice] reads as: an either/or is marked
 /// "(keuze)" on its pre-selected half, an informational action "(manueel)", and
 /// an ordinary one is its bare summary.
+///
+/// Rendered through [ActionLine], which leads it with the system it writes to
+/// (#298); the system is deliberately not spliced into the string here.
 String pendingChoiceLine(PendingChoice c) {
   final summary = c.selected.changes.summary;
   if (c.isChoice) return '$summary (keuze)';
@@ -833,8 +839,14 @@ class PendingEntryTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
+            // Each line led by the system it writes to (#298): one card can
+            // raise work in two systems and the summaries do not always say
+            // where they land.
             for (final c in entry.choices)
-              Text(pendingChoiceLine(c), style: text.bodySmall),
+              ActionLine(
+                system: c.selected.changes.system,
+                line: pendingChoiceLine(c),
+              ),
           ],
         ),
         childrenPadding: const EdgeInsets.fromLTRB(

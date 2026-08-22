@@ -1242,10 +1242,12 @@ void main() {
     await tester.tap(find.text('3C'));
     await tester.pumpAndSettle();
     expect(harness.controller.linked, isNull, reason: 'passive session');
-    expect(find.text('• Schrijf de leerling uit in Smartschool (keuze)'),
+    expect(find.text('Schrijf de leerling uit in Smartschool (keuze)'),
         findsOneWidget);
-    expect(find.text('• Verwijder dit account uit Smartschool'), findsNothing,
+    expect(find.text('Verwijder dit account uit Smartschool'), findsNothing,
         reason: 'the delete is the alternative, not a second to-do');
+    // And since #298 the line says where the write lands.
+    expect(find.text('Smartschool ·'), findsOneWidget);
   });
 
   testWidgets(
@@ -1283,11 +1285,14 @@ void main() {
     expect(find.text('Sam Sels'), findsOneWidget);
 
     expect(
-      find.text('• Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats '
+      find.text('Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats '
           'van GBS-1B. Werk het ledenbestand van beide klassen bij. (manueel)'),
       findsOneWidget,
       reason: 'the operator must be able to tell manual work from due work',
     );
+    // The line names the system it concerns (#298) — and that tag is the only
+    // marking it gets: an informational candidate colours no indicator.
+    expect(find.text('Office 365 ·'), findsOneWidget);
 
     // …and it stays a "(manueel)" line, never a "(keuze)" one: it stands alone.
     expect(find.textContaining('(keuze)'), findsNothing);
@@ -1307,8 +1312,9 @@ void main() {
     await tester.pumpAndSettle();
 
     await _drill(tester, node: 'Jaar 3', classroom: '3C');
-    expect(find.text('• Wijzig de klas in Smartschool'), findsOneWidget);
+    expect(find.text('Wijzig de klas in Smartschool'), findsOneWidget);
     expect(find.textContaining('(manueel)'), findsNothing);
+    expect(find.text('Smartschool ·'), findsOneWidget);
   });
 
   testWidgets(
@@ -1500,7 +1506,7 @@ void main() {
     expect(find.text('Jane Doe'), findsOneWidget);
     expect(find.byIcon(Icons.lock_outline), findsWidgets);
     final candidate = tester.widget<Text>(
-      find.text('• Wijzig de klas in Smartschool'),
+      find.text('Wijzig de klas in Smartschool'),
     );
     expect(
       candidate.style?.color,

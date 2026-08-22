@@ -1,4 +1,6 @@
+import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/screens/class_groups_screen.dart';
+import 'package:account_manager/src/screens/system_indicator.dart';
 import 'package:account_state/account_state.dart' show InMemoryLinkedStore;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +23,18 @@ final Finder _filter =
 final Finder _search = find.byKey(const ValueKey('class-groups-search'));
 
 Finder _row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+/// What one row's cell says about one system (#298).
+SystemIndicatorState _cell(
+  WidgetTester tester,
+  String klas,
+  core.Origin system,
+) =>
+    tester
+        .widget<SystemIndicatorCell>(
+          find.byKey(ValueKey('class-cell-$klas-${system.name}')),
+        )
+        .state;
 
 /// Types [needle] into the inventory search box and settles.
 Future<void> _type(WidgetTester tester, String needle) async {
@@ -114,6 +128,104 @@ void main() {
         findsOneWidget);
     expect(find.descendant(of: row, matching: find.text('Eerste jaar A')),
         findsOneWidget);
+    for (final system in const <core.Origin>[
+      core.Origin.wisa,
+      core.Origin.smartschool,
+      core.Origin.azure,
+    ]) {
+      expect(_cell(tester, '1A', system), SystemIndicatorState.inOrder);
+    }
+  });
+
+  testWidgets(
+      'a class that is present everywhere but carries a pending Office 365 '
+      'write says so on its Office 365 cell (#298)',
+      (WidgetTester tester) async {
+    // The screenshot in the issue: `1A` exists in WISA, Smartschool and Office
+    // 365 and is carrying an Azure roster write, so it used to render three
+    // ticks with nothing on the card saying the pending work was an Azure one.
+    _useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, '1A', core.Origin.wisa), SystemIndicatorState.inOrder);
+    expect(_cell(tester, '1A', core.Origin.smartschool),
+        SystemIndicatorState.inOrder);
+    expect(
+      _cell(tester, '1A', core.Origin.azure),
+      SystemIndicatorState.needsWork,
+      reason: 'the class is carrying a stale Office 365 roster',
+    );
+
+    // And the line itself names the system it writes to, so the card and the
+    // cell tell the same story.
+    expect(
+      find.descendant(of: _row('1A'), matching: find.text('Office 365 ·')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: _row('1A'),
+        matching: find.textContaining('Werk het ledenbestand van GBS-1A bij'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'a class with no Office 365 group reads missing, not pending '
+      '(#298)', (WidgetTester tester) async {
+    // Missing beats work pending: `2F ECO` is in WISA and Smartschool and has
+    // no group at all, and the create it raises is exactly the work of making
+    // one. The cell must say the group is absent, not that it needs a tweak.
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, '2F ECO', core.Origin.wisa),
+        SystemIndicatorState.inOrder);
+    expect(_cell(tester, '2F ECO', core.Origin.smartschool),
+        SystemIndicatorState.inOrder);
+    expect(_cell(tester, '2F ECO', core.Origin.azure),
+        SystemIndicatorState.missing);
+  });
+
+  testWidgets(
+      'an informational-only class colours no cell, and still lights its row '
+      '(#298)', (WidgetTester tester) async {
+    // `GBS-9Z` is the group of a class that stopped running. Its decision is an
+    // either/or whose default half is the "laat staan" notice (#271), so there
+    // is no write pending and the Office 365 cell stays green — while the row
+    // itself is highlighted, because `needsAttention` counts the notice and on
+    // this screen the notice *is* the work (#225/#250).
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, 'GBS-9Z', core.Origin.azure),
+        SystemIndicatorState.inOrder);
+    expect(_cell(tester, 'GBS-9Z', core.Origin.wisa),
+        SystemIndicatorState.missing);
+    expect(_cell(tester, 'GBS-9Z', core.Origin.smartschool),
+        SystemIndicatorState.missing);
+
+    final ColorScheme colors =
+        Theme.of(tester.element(_row('GBS-9Z'))).colorScheme;
+    final Container box = tester.widget<Container>(_row('GBS-9Z'));
+    expect(
+      ((box.decoration! as BoxDecoration).border! as Border).top.color,
+      colors.primary,
+      reason: 'the row still asks something of the operator',
+    );
   });
 
   testWidgets(
