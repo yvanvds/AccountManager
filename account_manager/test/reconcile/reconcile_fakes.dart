@@ -2378,6 +2378,7 @@ class ReconcileHarness {
     Set<int>? ourSchoolIds,
     List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
     this.settingsStore,
+    this.modelsSettings = true,
     LiveSettings? liveSettings,
   })  : wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
@@ -2649,8 +2650,9 @@ class ReconcileHarness {
       schoolProfiles: schoolProfiles,
       settingsStore: settingsStore,
       // The same holder the WISA pull reads, so the drift gate sees a save the
-      // moment Instellingen publishes it (#238).
-      liveSettings: this.liveSettings,
+      // moment Instellingen publishes it (#238) — unless this harness models no
+      // settings at all (#274), which is the documented null-holder mode.
+      liveSettings: modelsSettings ? this.liveSettings : null,
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),
@@ -2731,6 +2733,21 @@ class ReconcileHarness {
   /// operator saving in Instellingen mid-session — the real Settings view does
   /// exactly that, into the very same holder.
   final LiveSettings liveSettings;
+
+  /// Whether the [ReconcileController] is handed [liveSettings] at all.
+  ///
+  /// False builds it with **no** holder — the mode `ReconcileController` has
+  /// documented since #238 ("null in the harnesses that do not model settings at
+  /// all") and which #274 found had never once been exercised: every harness got
+  /// a holder whether the caller supplied one or not, so the tests that say
+  /// "a harness with no settings holder" only ever proved that an *empty
+  /// document* arms nothing. Constructing the controller for real without one
+  /// threw a `LateInitializationError`.
+  ///
+  /// The rest of the stack keeps reading [liveSettings] — the pulls and the
+  /// applier need a document to derive from, and an embedder that skips the
+  /// controller's gate has one too. Only the gate goes unwired.
+  final bool modelsSettings;
 
   /// The operator's Smartschool import rules, applied by the production pull
   /// [smartschoolTransport] enables — the settings document's

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart';
+import 'package:account_manager/src/reconcile/reconcile_controller.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
@@ -178,7 +179,11 @@ void main() {
               'only a controller notification can disable its drift button');
     });
 
-    test('a harness with no settings holder never arms the gate', () async {
+    // Named for what it is since #274: the harness has always supplied a
+    // holder, so this is an *empty document*, not the null-holder mode. That
+    // mode has its own group at the bottom of this file.
+    test('a harness with an empty settings document never arms the gate',
+        () async {
       final harness = ReconcileHarness();
       await harness.controller.sync();
       expect(harness.controller.driftBlockedReason, isNull);
@@ -900,7 +905,7 @@ void main() {
       );
     });
 
-    test('a harness with no settings holder never arms it', () async {
+    test('a harness with an empty settings document never arms it', () async {
       final harness = ReconcileHarness();
       await harness.controller.sync();
 
@@ -1127,7 +1132,7 @@ void main() {
       expect(harness.controller.linkAwaitingSettings, isFalse);
     });
 
-    test('a harness with no settings holder never arms it', () async {
+    test('a harness with an empty settings document never arms it', () async {
       final harness = ReconcileHarness();
       await harness.controller.sync();
 
@@ -1177,8 +1182,83 @@ void main() {
       expect(harness.controller.canCheckDrift, isTrue);
     });
 
-    test('a harness with no settings holder never nags', () {
+    test('a harness with an empty settings document never nags', () {
       expect(ReconcileHarness().controller.relaunchRequiredReason, isNull);
+    });
+  });
+
+  group('a controller wired to no settings holder at all (#274)', () {
+    test('can be constructed', () {
+      // The reported crash. `_wisaFingerprint()` fell back to
+      // `_wisaPullFingerprint` — the very `late String` the constructor was
+      // assigning it to — so this construction threw a `LateInitializationError`
+      // before it ever returned, and the mode the doc comment has promised since
+      // #238 could not be entered.
+      //
+      // Built from a harness's parts rather than through the harness, because
+      // the harness has always supplied a holder whether the caller wanted one
+      // or not: that is why every "no settings holder" test in this file has in
+      // fact exercised an *empty document*.
+      final parts = ReconcileHarness();
+      final unwired = ReconcileController(
+        app: parts.app,
+        applier: parts.applier,
+        log: parts.log,
+        store: parts.linkedStore,
+      );
+      addTearDown(unwired.dispose);
+
+      // And with no document to compare against, no gate is armed — the
+      // behaviour the comment describes: "drift behaves exactly as before".
+      expect(unwired.driftBlockedReason, isNull);
+      expect(unwired.canCheckDrift, isTrue);
+      expect(unwired.systemsAwaitingSettings, isEmpty);
+      expect(unwired.linkAwaitingSettings, isFalse);
+      expect(unwired.pendingSettingsReason, isNull);
+      expect(unwired.relaunchRequiredReason, isNull);
+    });
+
+    test('syncs, links and keeps every gate silent afterwards', () async {
+      final harness = ReconcileHarness(modelsSettings: false);
+      await harness.controller.sync();
+
+      expect(harness.controller.linked, isNotNull);
+      // The stamps a pass leaves behind are the sentinel too, so a second pass
+      // cannot decide the settings "moved" between them.
+      expect(harness.controller.driftBlockedReason, isNull);
+      expect(harness.controller.canCheckDrift, isTrue);
+      expect(harness.controller.systemsAwaitingSettings, isEmpty);
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      expect(harness.controller.pendingSettingsReason, isNull);
+    });
+
+    test('a save into a document it was never given arms nothing', () async {
+      // The rest of the stack still reads the document — an embedder that skips
+      // the gate has settings, it just did not hand them to the controller — so
+      // this models a save that moves every one of the four fingerprints at
+      // once. A wired session would refuse the drift and name all three waits.
+      final live = LiveSettings(_settings());
+      final harness =
+          ReconcileHarness(modelsSettings: false, liveSettings: live);
+      await harness.controller.sync();
+
+      live.publish(
+        _settings(workDate: _pinned(DateTime(2026, 9, 1))).copyWith(
+          azure: const AzureConnection(domain: 'nieuw.example'),
+          schoolPrefix: 'XYZ',
+          smartschoolRules: const <ss.SmartschoolImportRule>[
+            ss.DiscardSmartschoolGroup('Archief'),
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.controller.driftBlockedReason, isNull);
+      expect(harness.controller.canCheckDrift, isTrue);
+      expect(harness.controller.systemsAwaitingSettings, isEmpty);
+      expect(harness.controller.linkAwaitingSettings, isFalse);
+      expect(harness.controller.pendingSettingsReason, isNull);
+      expect(harness.controller.relaunchRequiredReason, isNull);
     });
   });
 }

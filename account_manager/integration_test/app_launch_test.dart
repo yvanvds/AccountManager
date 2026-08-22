@@ -5635,6 +5635,92 @@ void main() {
   });
 
   testWidgets(
+      'a reconcile stack assembled with no settings holder still launches, '
+      'syncs and drifts, and arms none of the settings gates (#274)',
+      (WidgetTester tester) async {
+    // `ReconcileController` has documented a null [liveSettings] since #238 —
+    // "the harnesses that do not model settings at all; the gate is then never
+    // armed and drift behaves exactly as before" — and #274 found that mode had
+    // never once been entered: the constructor stamped its WISA fingerprint from
+    // a helper that fell back to the very `late` field being assigned, so an
+    // unwired controller threw `LateInitializationError` and the app never
+    // reached its first frame.
+    //
+    // Only this layer proves the mode is real end to end: the app is launched
+    // over a stack built without the holder, the operator saves in Instellingen
+    // and comes back, and the two passes are pressed for real.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
+      azure: const AzureConnection(domain: 'oud.example'),
+      wisaSchools: const <WisaSchoolProfile>[
+        WisaSchoolProfile(
+            schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
+      ],
+    );
+    final live = LiveSettings(stored);
+    // The whole point: the pulls and the applier read `live`, the controller is
+    // handed nothing. Constructing this harness is what used to throw.
+    final harness = ReconcileHarness(modelsSettings: false, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // The app is up and the screen the controller drives renders.
+    expect(find.byType(AccountManagerApp), findsOneWidget);
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ReconcileScreen), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Sync voltooid'), findsOneWidget);
+
+    // Instellingen: the operator moves the school to a new Azure domain and
+    // saves — a change that arms the link gate for a *wired* session (#264).
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-azure');
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-az-domain')),
+      'nieuw.example',
+    );
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).azure.domain, 'nieuw.example');
+
+    // Back on Synchronisatie nothing nags and nothing is refused: a controller
+    // with no document to compare against holds no opinion about a save.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('reconcile-settings-pending')),
+      findsNothing,
+    );
+
+    // …and **Check for drift** is genuinely live, not merely un-nagged: the pass
+    // runs and advances the two systems it re-reads.
+    final driftAt = kFixtureDate.add(const Duration(hours: 3));
+    harness.ssResult = ssSnap(fetchedAt: driftAt);
+    harness.azResult = azSnap(fetchedAt: driftAt);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    final systems = harness.controller.syncState.systems;
+    expect(systems[Origin.wisa]?.at, kFixtureDate);
+    expect(systems[Origin.smartschool]?.at, driftAt);
+    expect(systems[Origin.azure]?.at, driftAt);
+  });
+
+  testWidgets(
       'a Synchroniseer says in the Log panel which werkdatum it pulled, and '
       'names the virtuele werkdatum where a virtual school used it (#239)',
       (WidgetTester tester) async {

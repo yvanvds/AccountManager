@@ -1074,13 +1074,21 @@ class ReconcileController extends ChangeNotifier {
   /// The operator (UPN) holding the sync/drift lease, when [syncLockedByOther].
   String? get syncLockOwner => _lock?.owner;
 
-  /// The [wisaPullFingerprint] of the live settings, or the stamped one when no
-  /// [liveSettings] holder is wired (which leaves the gate permanently open).
+  /// The [wisaPullFingerprint] of the live settings, or the empty sentinel when
+  /// no [liveSettings] holder is wired — which makes every comparison equal and
+  /// leaves [driftBlockedReason] silent for the harnesses that model no settings
+  /// at all, exactly as [_settingsFingerprint] (#259) and
+  /// [_currentLinkFingerprint] (#264) do.
+  ///
+  /// The sentinel is what makes that mode reachable at all (#274). This method
+  /// is what the constructor stamps [_wisaPullFingerprint] *from*, so falling
+  /// back to that field read a `late` in the middle of its own initialisation:
+  /// building the controller without a holder threw a `LateInitializationError`
+  /// before it could return. Both answers leave the gate permanently open —
+  /// only this one lets the controller exist.
   String _wisaFingerprint() {
     final live = liveSettings;
-    return live == null
-        ? _wisaPullFingerprint
-        : wisaPullFingerprint(live.current);
+    return live == null ? '' : wisaPullFingerprint(live.current);
   }
 
   /// Why **Check for drift** is unavailable right now, or `null` when it can
