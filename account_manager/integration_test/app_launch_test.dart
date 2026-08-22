@@ -148,6 +148,22 @@ void main() {
     expect(display?.fontFamily, contains('Fraunces'));
     expect(find.text('Account Manager'), findsOneWidget);
 
+    // The Start placeholder is the first screen the operator lands on, and it
+    // was the last one left in English (#265) — eyebrow and body both.
+    expect(find.text('ARCADIA · ACCOUNTSYNCHRONISATIE'), findsOneWidget);
+    expect(
+      find.textContaining('Stemt gebruikersaccounts en klasgroepen op elkaar '
+          'af tussen WISA, Smartschool en Azure AD / Office 365.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('te beginnen met aanmelden en het tabblad '
+          'Synchronisatie.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Reconciles user accounts'), findsNothing);
+    expect(find.textContaining('Phase C slice'), findsNothing);
+
     // Every destination on the rail names itself in the operator's language
     // (#257). The rail is read together with the heading it leads to, and it
     // used to read Home / Reconcile / Actions over pages titled in Dutch.
@@ -188,6 +204,75 @@ void main() {
   });
 
   testWidgets(
+      'the Synchronisatie tab names its own controls in the operator\'s '
+      'language end-to-end, log panel and smart-diff notice included (#265)',
+      (WidgetTester tester) async {
+    // #257 renamed the rail destination and the heading under it, but not the
+    // screen's own controls — so the tab read Dutch and the buttons on it read
+    // English. Driven through the real shell on purpose: these strings are read
+    // together with the rail label that leads to them, which is exactly the
+    // composition a widget test of ReconcileScreen alone cannot see.
+    useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+
+    // The two buttons under the heading. The idle explainer that names them in
+    // prose is translated with them but is not assertable here: `loadOverview`
+    // moves the phase off `idle` before the operator's first frame, so the
+    // paragraph never reaches the screen at all (#275).
+    expect(find.text('Synchroniseer'), findsOneWidget);
+    expect(find.text('Controleer op drift'), findsOneWidget);
+
+    // The log panel's own chrome, empty state included.
+    expect(find.text('Logboek'), findsOneWidget);
+    expect(find.text('Alles kopiëren'), findsOneWidget);
+    expect(find.text('Wissen'), findsOneWidget);
+    expect(find.text('Nog geen berichten.'), findsOneWidget);
+
+    // Not one English label survives on the screen.
+    for (final String english in <String>[
+      'Synchronise',
+      'Check for drift',
+      'Overview',
+      'Log',
+      'Copy all',
+      'Clear',
+      'No messages yet.',
+    ]) {
+      expect(find.text(english), findsNothing,
+          reason: '"$english" is the English label #265 replaced');
+    }
+
+    // A sync heads the counts section the way the Acties tree heads its own.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(find.text('Overzicht'), findsOneWidget);
+    expect(find.text('Overview'), findsNothing);
+
+    // A second pass over unchanged WISA raises the smart-diff notice, which
+    // now says what the Log line beside it says (#258).
+    harness.wisaResult =
+        wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('WISA is ongewijzigd sinds de vorige '
+          'synchronisatie — geen accountwijzigingen nodig.'),
+      findsWidgets,
+    );
+    expect(find.textContaining('no account changes needed'), findsNothing);
+  });
+
+  testWidgets(
       'the reconcile flow runs end-to-end: sign-in → sync → overview on '
       'Reconcile → actions via the Actions tab drill-down → dry-run → apply → '
       'unchanged re-sync (#154)', (WidgetTester tester) async {
@@ -220,7 +305,7 @@ void main() {
     // The per-category overview renders on Reconcile from the rollups (#163):
     // students / staff / class-groups, the one fixture student summed with a
     // pending indicator.
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsOneWidget);
     expect(find.text('2 openstaande acties'), findsOneWidget);
@@ -238,7 +323,16 @@ void main() {
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
-    expect(find.text('Overzicht'), findsOneWidget);
+    // Scoped to this screen: since #265 the Synchronisatie tab heads its own
+    // counts section "Overzicht" too, and the shell keeps a visited screen
+    // alive in the IndexedStack.
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.text('Overzicht'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('3C'));
@@ -271,9 +365,14 @@ void main() {
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
-    // The on-screen banner is #265's to translate; the Log *line* beside it is
-    // Dutch since #258.
-    expect(find.textContaining('no account changes needed'), findsOneWidget);
+    // The on-screen banner reads word for word the Log line beside it: #265
+    // gave it the Dutch #258 had already written for the log.
+    expect(
+      find.textContaining('WISA is ongewijzigd sinds de vorige '
+          'synchronisatie — geen accountwijzigingen nodig.'),
+      findsWidgets,
+    );
+    expect(find.textContaining('no account changes needed'), findsNothing);
     expect(harness.ssSyncs, 1);
     expect(harness.azSyncs, 1);
 
@@ -1180,7 +1279,15 @@ void main() {
 
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    expect(find.text('Overzicht'), findsOneWidget);
+    // Scoped to this screen — the Synchronisatie tab behind it has an
+    // "Overzicht" heading of its own since #265.
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.text('Overzicht'),
+      ),
+      findsOneWidget,
+    );
     // The non-managed school is not a node in the drill-down…
     expect(find.text('School 2'), findsNothing,
         reason: 'school 2 is not managed → no node in Actions');
@@ -3477,7 +3584,7 @@ void main() {
   });
 
   testWidgets(
-      'a resumed session trusts the stored state: Synchronise pulls no '
+      'a resumed session trusts the stored state: Synchroniseer pulls no '
       'Smartschool/Azure (#107)', (WidgetTester tester) async {
     // Session 1 (offline harness over a shared cold-snapshot store): a full
     // sync persists all three connector snapshots.
@@ -3505,7 +3612,7 @@ void main() {
     expect(resumed.wisaSyncs, 1);
     expect(resumed.ssSyncs, 0, reason: 'Smartschool seeded from the store');
     expect(resumed.azSyncs, 0, reason: 'Azure seeded from the store');
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
   });
 
   testWidgets(
@@ -3592,7 +3699,7 @@ void main() {
 
     // The per-category overview renders straight from the stored rollups — no
     // Synchronise tapped, and link() is never called in a passive session.
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsOneWidget);
     expect(
@@ -4796,7 +4903,7 @@ void main() {
 
   testWidgets(
       'the operator drag-selects two log lines and copies them one per line, '
-      'then Copy all takes the whole buffer end-to-end (#193)',
+      'then Alles kopiëren takes the whole buffer end-to-end (#193)',
       (WidgetTester tester) async {
     // The real app composition — real fonts, real window, real text layout —
     // is where a "selectable" log panel drifts: the line metrics a drag is
@@ -4867,7 +4974,8 @@ void main() {
     expect(copied, hasLength(1));
     expect(copied.single, '${onScreen.first}\n${onScreen[1]}');
 
-    // Copy all reaches past what is laid out: the whole buffer, oldest first.
+    // Alles kopiëren reaches past what is laid out: the whole buffer, oldest
+    // first.
     await tester.tap(find.byKey(const ValueKey('reconcile-log-copy-all')));
     await tester.pumpAndSettle();
     expect(copied.last, harness.log.toPlainText());
@@ -4877,8 +4985,8 @@ void main() {
   });
 
   testWidgets(
-      'the operator right-clicks one log line and Copy line puts just that '
-      'message on the clipboard end-to-end (#197)',
+      'the operator right-clicks one log line and Regel kopiëren puts just '
+      'that message on the clipboard end-to-end (#197)',
       (WidgetTester tester) async {
     // Grabbing a single message was already possible after #193 - a
     // triple-click selects one paragraph, which is one entry - but nothing on
@@ -4946,8 +5054,8 @@ void main() {
 
     // The affordance is on screen, and it takes exactly the entry under the
     // pointer: one line, neither neighbour, no trailing newline.
-    expect(find.text('Copy line'), findsOneWidget);
-    await tester.tap(find.text('Copy line'));
+    expect(find.text('Regel kopiëren'), findsOneWidget);
+    await tester.tap(find.text('Regel kopiëren'));
     await tester.pumpAndSettle();
 
     expect(copied, hasLength(1));
@@ -5935,7 +6043,7 @@ void main() {
     // overview the operator came for is on screen.
     expect(harness.controller.error, isNull);
     expect(harness.controller.busy, isFalse);
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
 
     // The dead token was tried exactly once and then given up on, and the
     // fallback was the $filter-scoped bulk read (PAIN-2 holds while recovering).

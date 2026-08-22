@@ -92,7 +92,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Idle: the explainer is shown, no overview yet.
-    expect(find.text('Overview'), findsNothing);
+    expect(find.text('Overzicht'), findsNothing);
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsNothing);
 
@@ -101,7 +101,7 @@ void main() {
 
     // The per-category overview renders on Reconcile from the rollups (#163):
     // students / staff / class-groups, each with a pending indicator.
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsOneWidget);
     expect(
@@ -130,7 +130,53 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('no account changes needed'), findsWidgets);
+    expect(
+      find.textContaining('geen accountwijzigingen nodig'),
+      findsWidgets,
+    );
+  });
+
+  testWidgets(
+      'the screen names its own controls in the operator\'s language, like the '
+      'rail and heading above them (#265)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    // The two buttons under the heading. (The idle explainer that names them
+    // in prose is translated too but cannot be asserted: `loadOverview` moves
+    // the phase off `idle` before the first frame the operator sees, so the
+    // paragraph never renders — filed as #275, not this issue's to fix.)
+    expect(find.text('Synchroniseer'), findsOneWidget);
+    expect(find.text('Controleer op drift'), findsOneWidget);
+
+    // The log panel's own chrome, empty state included.
+    expect(find.text('Logboek'), findsOneWidget);
+    expect(find.text('Alles kopiëren'), findsOneWidget);
+    expect(find.text('Wissen'), findsOneWidget);
+    expect(find.text('Nog geen berichten.'), findsOneWidget);
+
+    // Nothing English is left on the screen's own chrome.
+    for (final String english in <String>[
+      'Synchronise',
+      'Check for drift',
+      'Overview',
+      'Log',
+      'Copy all',
+      'Clear',
+      'No messages yet.',
+    ]) {
+      expect(find.text(english), findsNothing,
+          reason: '"$english" is the English label #265 replaced');
+    }
+
+    // And the counts heading, once a sync has produced one.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(find.text('Overzicht'), findsOneWidget);
   });
 
   testWidgets(
@@ -352,7 +398,7 @@ void main() {
     expect(passive.controller.linked, isNull,
         reason: 'a passive session never links');
     expect(passive.wisaSyncs, 0, reason: 'a passive session pulls nothing');
-    expect(find.text('Overview'), findsOneWidget);
+    expect(find.text('Overzicht'), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsOneWidget);
     expect(
@@ -502,15 +548,15 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.text('Clear'));
+    await tester.tap(find.text('Wissen'));
     await tester.pumpAndSettle();
 
-    expect(find.text('No messages yet.'), findsOneWidget);
+    expect(find.text('Nog geen berichten.'), findsOneWidget);
   });
 
   testWidgets(
       'the log panel copies a multi-entry selection one line per entry, keeps '
-      'the error colour, and Copy all takes the whole buffer (#193)',
+      'the error colour, and Alles kopiëren takes the whole buffer (#193)',
       (WidgetTester tester) async {
     final List<String> copied = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -591,7 +637,7 @@ void main() {
       '00:00:00  [azure]  gamma\n00:00:00  [smartschool]  beta',
     );
 
-    // Copy all ignores the selection and takes the buffer, oldest first.
+    // Alles kopiëren ignores the selection and takes the buffer, oldest first.
     await tester.tap(find.byKey(const ValueKey('reconcile-log-copy-all')));
     await tester.pumpAndSettle();
     expect(copied, hasLength(2));
@@ -615,8 +661,8 @@ void main() {
   });
 
   testWidgets(
-      'right-clicking a log line offers Copy line and copies exactly that '
-      'entry (#197)', (WidgetTester tester) async {
+      'right-clicking a log line offers Regel kopiëren and copies exactly '
+      'that entry (#197)', (WidgetTester tester) async {
     final List<String> copied = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       SystemChannels.platform,
@@ -655,8 +701,8 @@ void main() {
       Offset(rect.left + 8, rect.top + lineHeight * 1.5),
     );
 
-    expect(find.text('Copy line'), findsOneWidget);
-    await tester.tap(find.text('Copy line'));
+    expect(find.text('Regel kopiëren'), findsOneWidget);
+    await tester.tap(find.text('Regel kopiëren'));
     await tester.pumpAndSettle();
 
     // Exactly the one entry under the pointer — no timestamp of its
@@ -667,11 +713,11 @@ void main() {
     // The empty space under the last line has no entry to copy, so the menu
     // there offers only what the framework itself contributes.
     await _rightClickAt(tester, Offset(rect.left + 8, rect.bottom + 24));
-    expect(find.text('Copy line'), findsNothing);
+    expect(find.text('Regel kopiëren'), findsNothing);
   });
 
   testWidgets(
-      'Copy line takes the whole entry when the message soft-wraps over '
+      'Regel kopiëren takes the whole entry when the message soft-wraps over '
       'several rows (#197)', (WidgetTester tester) async {
     final List<String> copied = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -722,8 +768,8 @@ void main() {
       Offset(rect.left + 8, rect.top + oneRow * 1.5),
     );
 
-    expect(find.text('Copy line'), findsOneWidget);
-    await tester.tap(find.text('Copy line'));
+    expect(find.text('Regel kopiëren'), findsOneWidget);
+    await tester.tap(find.text('Regel kopiëren'));
     await tester.pumpAndSettle();
 
     expect(copied, hasLength(1));

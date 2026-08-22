@@ -73,7 +73,7 @@ class LogBuffer extends ChangeNotifier implements ILog {
   bool get hasErrors => _entries.any((e) => e.isError);
 
   /// The whole buffer as plain text, oldest first, one [LogEntry.line] per
-  /// line — what the panel's **Copy all** writes to the clipboard (#193).
+  /// line — what the panel's **Alles kopiëren** writes to the clipboard (#193).
   ///
   /// Reads the entries rather than the rendered selection on purpose: the
   /// panel only lays out what fits, so a selection can never reach the older

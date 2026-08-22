@@ -25,6 +25,19 @@ void main() {
     expect(find.byType(NavigationRail), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
 
+    // …and the placeholder behind it speaks that language too (#265): the
+    // first screen the operator lands on was the last one left in English.
+    expect(find.text('ARCADIA · ACCOUNTSYNCHRONISATIE'), findsOneWidget);
+    expect(
+      find.textContaining('Stemt gebruikersaccounts en klasgroepen'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('het tabblad Synchronisatie.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Reconciles user accounts'), findsNothing);
+
     // The per-product accent is layered on the Plink foundations.
     final BuildContext context = tester.element(find.byType(HomeScreen));
     final PlinkProductAccent? accent =
