@@ -356,6 +356,56 @@ void main() {
     );
 
     test(
+      'a prefixed group that is not class-shaped is no class orphan (#271)',
+      () {
+        // The Azure read is prefix-scoped, so before #271 the four-suffix
+        // denylist kept every one of these as a class orphan: a Klasgroepen row
+        // each, carrying no action anybody could take. They are subject,
+        // project and council groups, not classes.
+        final snapshot = link(
+          wisaSnap(const []),
+          ssSnap(const []),
+          azSnap(
+            const [],
+            groups: [
+              azureGroup('$_prefix - GOK'),
+              azureGroup('$_prefix-OKAN'),
+              azureGroup('$_prefix - Leerlingenraad'),
+              azureGroup('$_prefix - Frans - 3D'),
+              azureGroup('$_prefix - Draaiboeken verlies en rouw'),
+              azureGroup('$_prefix - Leeratelier vs groeipad'),
+            ],
+          ),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+        );
+        expect(snapshot.groups, isEmpty);
+      },
+    );
+
+    test('a class-shaped prefixed group is still kept as an orphan (#271)', () {
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap(
+          const [],
+          groups: [
+            for (final klas in const ['9Z', '6BW', '5WW1', '1C'])
+              azureClassGroup(_prefix, klas),
+          ],
+        ),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(
+        snapshot.groups.map((g) => g.className),
+        ['9Z', '6BW', '5WW1', '1C'],
+        reason: 'stale old classes are exactly what the operator wants to see',
+      );
+    });
+
+    test(
         'a prefixed Office 365 class group links to the bare class it is '
         'named after (#228)', () {
       final snapshot = link(
@@ -403,6 +453,56 @@ void main() {
         everyElement('$_prefix-2F'),
         reason: 'sub-groups get no group of their own — they share the parent',
       );
+    });
+
+    test(
+        'a class group renamed by hand still links, by the address it answers '
+        'on (#280)', () {
+      // The whole of #280. `listGroups` is `startswith(displayName,…)`, so this
+      // group is invisible to the pull until the connector's nickname back-fill
+      // adopts it — and then the linker has to *recognise* it, or the row is
+      // dropped again and the create it was meant to retire keeps coming back.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5WW1')]),
+        ssSnap(const []),
+        azSnap(const [], groups: [
+          azureGroup(
+            'Klas van juf An',
+            id: 'g-renamed',
+            mail: '$_prefix-5WW1@student.s.be',
+            mailNickname: '$_prefix-5WW1',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.groups, hasLength(1),
+          reason: 'the class carries the group — no spurious orphan beside it');
+      final g = snapshot.groups.single;
+      expect(g.wisa!.name, '5WW1');
+      expect(g.azure!.id, 'g-renamed');
+      expect(g.className, '5WW1');
+    });
+
+    test('the nickname leg never promotes a non-class group to a class (#280)',
+        () {
+      // The address is only ever consulted for the class-name *shape*: a staff
+      // group answering on `<PREFIX>-Personeel` is no more a class than its
+      // display name made it one.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap(const [], groups: [
+          azureGroup(
+            'Personeelsgroep',
+            mailNickname: '$_prefix-Personeel',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      expect(snapshot.groups, isEmpty);
     });
 
     test('a prefixed group whose class is gone stays an Azure orphan (#228)',

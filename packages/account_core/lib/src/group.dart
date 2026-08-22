@@ -197,6 +197,36 @@ String? azureClassNameOf(String? displayName, String? schoolPrefix) {
   return bare.isEmpty ? null : bare;
 }
 
+/// Whether [name] has the shape of a **class** name (#271) — the positive
+/// class-group signal Azure carries nowhere else.
+///
+/// A class of this school group is one or more year digits, then letters, then
+/// optionally a distinguishing digit: `1C`, `2F`, `3D`, `6BW`, `5WW1`. Anything
+/// else the school stamps its prefix on is a subject, project or council group
+/// — `GOK`, `OKAN`, `Leerlingenraad`, `Draaiboeken verlies en rouw` — and is
+/// not a class, however prefixed it is.
+///
+/// This exists because `<PREFIX>-<KLAS>` (#228) made the naming convention a
+/// signal in a way it was not before: the app itself creates class groups under
+/// that name via [azureClassGroupName], so the remainder [azureClassNameOf]
+/// recovers can be *tested* rather than merely assumed to be a class. It
+/// replaces the four-suffix denylist the linker used to keep an Azure orphan
+/// with, which kept every prefixed group that was not one of four named staff
+/// groups and so filled the class inventory with rows nobody could act on.
+///
+/// Judges a **bare** class name (`2F`), never a sub-grouped WISA `fullName`
+/// (`2F ECO`) and never a prefixed display name (`SSM-2F`): the space and the
+/// prefix both fail the shape. Trimmed first, and ASCII-only — a class name is
+/// a code, not prose. A null or blank name is not a class.
+bool looksLikeClassName(String? name) {
+  final value = name?.trim() ?? '';
+  return value.isNotEmpty && _classNameShape.hasMatch(value);
+}
+
+/// The class-name shape [looksLikeClassName] tests: year digits, letters, and
+/// an optional trailing digit.
+final RegExp _classNameShape = RegExp(r'^\d+[A-Za-z]+\d*$');
+
 /// Whether [nickname] is usable verbatim as a Graph `mailNickname` (#228).
 ///
 /// Bare class names carry no spaces, so `<PREFIX>-<KLAS>` needs no slug rule \u2014

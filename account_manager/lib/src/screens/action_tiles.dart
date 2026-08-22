@@ -706,7 +706,8 @@ class PendingEntryTile extends StatelessWidget {
 }
 
 /// The expanded body of one pending entry: the radios (or the lone option's
-/// diff) plus the per-entry dry-run / apply pair.
+/// diff), the verdict of the last pass that touched this entry (#272), and the
+/// per-entry dry-run / apply pair.
 ///
 /// Split out of [PendingEntryTile] so the class inventory can put the very same
 /// controls under a row that carries its own presence columns (#227), rather
@@ -722,6 +723,7 @@ List<Widget> entryDetail(
           ChoiceControl(controller: controller, entry: entry, choice: choice)
         else
           OptionDetail(option: choice.selected),
+      EntryOutcomes(controller: controller, entry: entry),
       const SizedBox(height: PlinkSpacing.s3),
       Row(
         children: <Widget>[
@@ -755,6 +757,134 @@ List<Widget> entryDetail(
         ],
       ),
     ];
+
+/// What the last pass did for **this** entry (#272), rendered on the entry's own
+/// card and nowhere else.
+///
+/// The bug this exists for: applying a WISA-only class runs two writes — create
+/// the class in Smartschool, create its `<PREFIX>-<KLAS>` Office 365 group — and
+/// when Graph refused the second one, the operator had no way to learn it from
+/// the card they pressed **Toepassen** on. The failure *was* recorded, twice:
+/// as a log line on the Reconcile screen, and as a row in a page-level results
+/// section appended below the entire Klasgroepen inventory. Neither is on screen
+/// when one class halfway down a few hundred rows is applied, so a refused write
+/// and a write that never ran read exactly the same — and the report was that
+/// the Office 365 group "never lands".
+///
+/// Deliberately part of [entryDetail] rather than of either screen: both Acties
+/// and Klasgroepen apply entries, and a verdict that only one of them shows is
+/// the same gap again. The page-level sections stay — they report the *pass*,
+/// which is what a bulk apply over hundreds of accounts needs.
+///
+/// Renders nothing when this entry took no part in the last pass, which is the
+/// state after every sync.
+class EntryOutcomes extends StatelessWidget {
+  const EntryOutcomes({
+    super.key,
+    required this.controller,
+    required this.entry,
+  });
+
+  final ReconcileController controller;
+  final PendingAccountEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<ActionOutcomeEntry> outcomes =
+        controller.applyOutcomesFor(entry);
+    if (outcomes.isEmpty) return const SizedBox.shrink();
+
+    final TextTheme text = Theme.of(context).textTheme;
+    // A dry-run pass and an apply pass are never mixed: `_run` clears the other
+    // list before it starts, so the whole block is one or the other.
+    final bool dry =
+        outcomes.every((o) => o.outcome == actions.ActionOutcome.dryRun);
+
+    return Padding(
+      key: ValueKey('entry-outcomes-${entry.family}-${entry.targetId}'),
+      padding: const EdgeInsets.only(top: PlinkSpacing.s3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            // Deliberately not the page-level section's wording ("Resultaat van
+            // het toepassen"): that one reports the pass, this one reports this
+            // record, and an operator who sees both must be able to tell which
+            // is which. "Vorige poging" also says the thing the operator needs
+            // next — a failed write can simply be run again.
+            dry
+                ? 'Resultaat van de vorige dry-run'
+                : 'Resultaat van de vorige poging',
+            style: text.titleSmall,
+          ),
+          const SizedBox(height: PlinkSpacing.s1),
+          for (final outcome in outcomes) EntryOutcomeLine(outcome: outcome),
+        ],
+      ),
+    );
+  }
+}
+
+/// One line of an [EntryOutcomes] block: what the write did, and — when it
+/// failed — why, in the words the system that refused it used.
+///
+/// The reason is the point. "Mislukt" alone sends the operator back to the log
+/// panel on another screen, which is exactly the trip #272 is about; the Graph
+/// `403 Authorization_RequestDenied` or the duplicate-nickname message decides
+/// what they do next.
+class EntryOutcomeLine extends StatelessWidget {
+  const EntryOutcomeLine({super.key, required this.outcome});
+
+  final ActionOutcomeEntry outcome;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool failed = outcome.outcome == actions.ActionOutcome.failed;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            failed ? Icons.close : Icons.check,
+            size: 16,
+            color: failed ? colors.error : colors.primary,
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            child: Text(
+              failed
+                  ? 'Mislukt — ${outcome.changes.summary}: ${outcome.error}'
+                  : outcome.changes.summary,
+              style: text.bodySmall?.copyWith(
+                color: failed ? colors.error : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The subtitle of a page-level **apply** results section (#272).
+///
+/// A pass that wrote nothing but failures used to be announced as "Weggeschreven
+/// naar de doelsystemen." — the one line an operator scanning past the results
+/// reads, and it said the opposite of what happened. The log already words the
+/// tally this way ("N gelukt, M mislukt"), so the screen now says the same thing
+/// the log does.
+String applyResultsSubtitle(List<ActionOutcomeEntry> results) {
+  final int failed =
+      results.where((r) => r.outcome == actions.ActionOutcome.failed).length;
+  if (failed == 0) return 'Weggeschreven naar de doelsystemen.';
+  return '${results.length - failed} gelukt, $failed mislukt. '
+      'Een mislukte actie schreef niets en blijft openstaan.';
+}
 
 /// The radio group for a mutually-exclusive choice (#110): the operator picks
 /// exactly one resolution; the selected one is what an apply runs.

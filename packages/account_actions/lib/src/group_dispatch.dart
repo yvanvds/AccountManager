@@ -61,8 +61,13 @@ import 'group_placement.dart';
 /// dispatch is exactly as it shipped before #228.
 ///
 /// An Azure-only orphan group (`wisa == null && smartschool == null`, #52)
-/// yields only the informational [AzureClassGroupWithoutClass], and only when it
-/// is shaped like a group this app created; anything else still yields nothing.
+/// yields the [staleClassGroupAlternative] pair — the informational
+/// [AzureClassGroupWithoutClass] and the applyable [DeleteAzureClassGroup]
+/// (#271) — and only when it is shaped like a group this app created; anything
+/// else still yields nothing. The notice leads and is the default, so a bulk
+/// apply over stale groups writes nothing at all and a delete (which takes the
+/// group's mailbox, Team and files with it) is only ever the pick the operator
+/// made on that one row.
 ///
 /// Each candidate is constructed bound to [group] and kept only when its pure
 /// [GroupAction.evaluate] returns true. Pure and deterministic (INV-40): same
@@ -100,7 +105,13 @@ List<GroupAction> groupActionsFor(
       CreateAzureClassGroup(group, azurePlan),
       SyncAzureClassGroupMembers(group, azurePlan),
     ],
+    // The stale-group either/or (#271). The notice leads because it is the
+    // default of the pair, exactly as the create leads the blacklist above: the
+    // order is the order the operator reads the radios in, and the fallback the
+    // grouping uses if a default is ever forgotten — so the delete is never
+    // first.
     AzureClassGroupWithoutClass(group),
+    DeleteAzureClassGroup(group),
   ];
 
   return [

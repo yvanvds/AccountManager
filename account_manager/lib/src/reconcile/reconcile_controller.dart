@@ -12,6 +12,10 @@ import 'log_buffer.dart';
 /// What the reconcile screen is doing right now.
 enum ReconcilePhase {
   /// Nothing has run yet this session.
+  ///
+  /// A passive read of the shared store (`loadOverview`) leaves the phase
+  /// here — it is not a pass — so a session that only ever reads stays idle,
+  /// and the screen keeps explaining what its two buttons do (#275).
   idle,
 
   /// A sync (or drift check) is pulling snapshots.
@@ -59,6 +63,8 @@ class ActionOutcomeEntry {
     required this.changes,
     required this.outcome,
     this.error,
+    this.family = '',
+    this.targetId = '',
   });
 
   /// Human label of the record the action targets.
@@ -71,6 +77,23 @@ class ActionOutcomeEntry {
 
   /// The failure cause when [outcome] is [actions.ActionOutcome.failed].
   final Object? error;
+
+  /// Which family the [PendingAccountEntry] this row came from belongs to —
+  /// `student`, `staff` or `group` (#272).
+  final String family;
+
+  /// The [PendingAccountEntry.targetId] this row came from (#272).
+  ///
+  /// Carried beside the human [target] so a pass's verdict can be routed back
+  /// to the very card the operator pressed **Toepassen** on. The label alone
+  /// cannot do that: it is a display string, and a class and an account can
+  /// read the same.
+  final String targetId;
+
+  /// Whether this row is a key for [ReconcileController.applyOutcomesFor] at
+  /// all — a row recorded before the entry identity existed carries neither
+  /// half and belongs to no card.
+  bool get identifiesEntry => family.isNotEmpty && targetId.isNotEmpty;
 }
 
 /// One selectable resolution inside a [PendingAccountEntry] (#110).
@@ -86,6 +109,7 @@ class PendingActionOption {
     required this.group,
     required this.isDefault,
     required this.family,
+    required this.targetId,
     required this.target,
     required this.changes,
     required this.canApply,
@@ -107,6 +131,10 @@ class PendingActionOption {
 
   /// `student`, `staff`, or `group`.
   final String family;
+
+  /// The [PendingAccountEntry.targetId] of the entry this option belongs to —
+  /// what routes a pass's verdict back to the card it was started from (#272).
+  final String targetId;
 
   /// Human label of the target this option acts on (for the result rows).
   final String target;
@@ -618,6 +646,38 @@ class ReconcileController extends ChangeNotifier {
   /// Results of the last apply pass, or `null`.
   List<ActionOutcomeEntry>? get applyResults => _applyResults;
 
+  /// What the last dry-run or apply pass did **for [entry] itself** (#272), in
+  /// the order the writes ran — the entry's own verdict.
+  ///
+  /// The page-level results section reports a whole pass, appended below the
+  /// entire list; an operator who applied one class halfway down the
+  /// Klasgroepen inventory never sees it, so a write Graph refused reads as a
+  /// write that was never attempted. That is the whole of #272: both selected
+  /// options *were* dispatched — the Office 365 create came back failed, and
+  /// the only two places that said so were a section off the bottom of the page
+  /// and a log panel on another screen.
+  ///
+  /// Rows are matched on the entry identity stamped at apply time
+  /// ([ActionOutcomeEntry.family] + [ActionOutcomeEntry.targetId]), never on
+  /// the display label: a class and an account can read the same, and the label
+  /// of a record can change under a write. Chained follow-ups (#230/#240/#245)
+  /// carry the identity of the option that unlocked them, so the roster write a
+  /// class-group create pulled in is reported on the same card.
+  ///
+  /// Empty when the entry took no part in the last pass — including after a
+  /// sync, which clears both result lists.
+  List<ActionOutcomeEntry> applyOutcomesFor(PendingAccountEntry entry) {
+    final results = _applyResults ?? _dryRunResults;
+    if (results == null) return const <ActionOutcomeEntry>[];
+    return <ActionOutcomeEntry>[
+      for (final r in results)
+        if (r.identifiesEntry &&
+            r.family == entry.family &&
+            r.targetId == entry.targetId)
+          r,
+    ];
+  }
+
   /// All pending actions of the current linked view, student → staff → group.
   List<Object> get pendingActions {
     final l = _linked;
@@ -850,6 +910,7 @@ class ReconcileController extends ChangeNotifier {
                   group: group(a),
                   isDefault: isDefault(a),
                   family: family,
+                  targetId: id,
                   target: labels[id]!,
                   changes: changes(a),
                   canApply: canApply(a),
@@ -1752,7 +1813,13 @@ class ReconcileController extends ChangeNotifier {
       _rollups = await store.readRollups();
       _decisions = await store.readDecisions();
       await _refreshLock();
-      if (_phase == ReconcilePhase.idle) _phase = ReconcilePhase.ready;
+      // The phase stays [ReconcilePhase.idle]: reading the shared store is not
+      // a pass. Claiming `ready` here said "the last pass finished and [linked]
+      // is current" over a session that has pulled nothing and linked nothing —
+      // and since the read resolves on the microtask queue, it landed before
+      // the operator's first frame, which is what kept the screen's only
+      // explanation of Synchroniseer / Controleer op drift off the screen
+      // entirely (#275).
       notifyListeners();
     } on Object catch (e) {
       log.addError(core.Origin.all, 'Kon het overzicht niet laden: $e');
@@ -1982,8 +2049,7 @@ class ReconcileController extends ChangeNotifier {
         ));
         results.addAll(await _applyOne(
           () => _applyAny(option.action, options),
-          option.target,
-          option.changes,
+          option,
         ));
         // Advance once per action so a long apply/dry-run pass reads as busy
         // and visibly progressing rather than a motionless bar (#176).
@@ -2046,25 +2112,30 @@ class ReconcileController extends ChangeNotifier {
   /// under-report what the app just did.
   Future<List<ActionOutcomeEntry>> _applyOne(
     Future<ApplyResult> Function() run,
-    String target,
-    actions.ChangeSet changes,
+    PendingActionOption option,
   ) async {
+    final changes = option.changes;
     try {
       final applied = await run();
       if (applied.refreshed) _linked = applied.linked;
       final result = applied.result;
       return <ActionOutcomeEntry>[
-        _record(target, changes, result),
+        _record(option, changes, result),
+        // A chained follow-up is a write the same click performed on the same
+        // target, so it is stamped with the same entry identity and lands on
+        // the same card (#272).
         for (final followUp in applied.followUps)
-          _record(target, followUp.changes, followUp),
+          _record(option, followUp.changes, followUp),
       ];
     } on Object catch (e) {
       // An action that throws (instead of returning failed) must not abort
       // the rest of the pass.
-      log.addError(changes.system, '$target — ${changes.summary}: $e');
+      log.addError(changes.system, '${option.target} — ${changes.summary}: $e');
       return <ActionOutcomeEntry>[
         ActionOutcomeEntry(
-          target: target,
+          target: option.target,
+          family: option.family,
+          targetId: option.targetId,
           changes: changes,
           outcome: actions.ActionOutcome.failed,
           error: e,
@@ -2073,12 +2144,15 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
-  /// Logs one action's outcome and shapes it as a results-list row.
+  /// Logs one action's outcome and shapes it as a results-list row, stamped
+  /// with the entry [option] came from so the card can show its own verdict
+  /// (#272).
   ActionOutcomeEntry _record(
-    String target,
+    PendingActionOption option,
     actions.ChangeSet changes,
     actions.ActionResult result,
   ) {
+    final target = option.target;
     if (result.outcome == actions.ActionOutcome.failed) {
       log.addError(
         changes.system,
@@ -2089,6 +2163,8 @@ class ReconcileController extends ChangeNotifier {
     }
     return ActionOutcomeEntry(
       target: target,
+      family: option.family,
+      targetId: option.targetId,
       changes: changes,
       outcome: result.outcome,
       error: result.error,
@@ -2295,9 +2371,25 @@ class ReconcileController extends ChangeNotifier {
         systems: _syncState.systems,
       );
       _rollups = await store.readRollups();
+      final shard = _appliedShard(patch);
+      // …and so is the class inventory this session is holding (#271). The
+      // rows come from the stored documents, so an apply that **removed** one —
+      // a deleted Office 365 class group — would otherwise leave its row on
+      // screen, still claiming a group that no longer exists, until the next
+      // sync. Same guard the other operators' [_refetchFromStore] uses, so a
+      // pass that touched no class pays for no read.
+      if (_groupDocs != null &&
+          (shard == null || shard.touchesPartition(groupsPartition))) {
+        try {
+          _groupDocs = await store.readGroups();
+        } on Object catch (e) {
+          log.addError(
+              core.Origin.all, 'Kon de klasgroepen niet vernieuwen: $e');
+        }
+      }
       await _publish(ChangeSignal.viewChanged(
         generation: generation,
-        shard: _appliedShard(patch),
+        shard: shard,
       ));
     } on TimeoutException {
       log.addError(

@@ -156,9 +156,11 @@ void main() {
       final found = await groups.findByMailNickname('GBS-2A');
 
       expect(transport.last.url.queryParameters[r'$filter'],
-          "mailNickname eq 'GBS-2A'");
+          "mailNickname in ('GBS-2A')");
       expect(transport.last.headers['ConsistencyLevel'], 'eventual');
       expect(found?.id, 'g-1');
+      expect(transport.requests, hasLength(1),
+          reason: 'the guard needs no member list');
     });
 
     test('findByMailNickname returns null when the tenant has none', () async {
@@ -173,6 +175,142 @@ void main() {
       final groups = GroupManager(clientWith(transport));
       expect(await groups.findByMailNickname('  '), isNull);
       expect(transport.requests, isEmpty);
+    });
+  });
+
+  group('loadByMailNicknames (#280)', () {
+    /// One Graph `/groups` row for a class group somebody renamed by hand: the
+    /// address is still ours, the display name is not — the exact shape
+    /// [GroupManager.listGroups]'s `startswith(displayName,…)` misses.
+    Map<String, dynamic> renamed(String nickname) => <String, dynamic>{
+          'id': 'g-$nickname',
+          'displayName': 'Klas van juf An',
+          'mail': '$nickname@student.school.example',
+          'mailNickname': nickname,
+        };
+
+    test('asks Graph for exactly the nicknames, with the advanced-query header',
+        () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({'value': <Object>[]}),
+      );
+      final groups = GroupManager(clientWith(transport));
+
+      await groups.loadByMailNicknames(['GBS-2A', 'GBS-2B']);
+
+      expect(transport.requests, hasLength(1));
+      final req = transport.last;
+      expect(req.method, 'GET');
+      expect(req.url.path, endsWith('/groups'));
+      expect(
+        req.url.queryParameters[r'$filter'],
+        "mailNickname in ('GBS-2A','GBS-2B')",
+      );
+      expect(req.url.queryParameters[r'$count'], 'true');
+      expect(
+        req.url.queryParameters[r'$select'],
+        'id,displayName,securityEnabled,mail,mailNickname',
+      );
+      expect(req.headers['ConsistencyLevel'], 'eventual');
+    });
+
+    test(
+        'returns the group the prefix-scoped list cannot see, with its members',
+        () async {
+      final transport = FakeGraphTransport((req) {
+        if (req.url.path.contains('/members')) {
+          return jsonOk({
+            'value': [
+              {'id': 'az1'},
+              {'id': 'az2'},
+            ],
+          });
+        }
+        return jsonOk({
+          'value': [renamed('GBS-5WW1')],
+        });
+      });
+      final groups = GroupManager(clientWith(transport));
+
+      final found = await groups.loadByMailNicknames(['GBS-5WW1']);
+
+      expect(found, hasLength(1));
+      expect(found.single.mailNickname, 'GBS-5WW1');
+      expect(found.single.displayName, 'Klas van juf An',
+          reason: 'the display name is what was renamed away from us');
+      expect(found.single.memberIds, ['az1', 'az2'],
+          reason: 'an adopted group must be roster-diffable on the same pass');
+    });
+
+    test('withMembers: false skips the member reads entirely', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          'value': [renamed('GBS-5WW1')],
+        }),
+      );
+      final groups = GroupManager(clientWith(transport));
+
+      final found =
+          await groups.loadByMailNicknames(['GBS-5WW1'], withMembers: false);
+
+      expect(found.single.memberIds, isEmpty);
+      expect(transport.requests, hasLength(1));
+    });
+
+    test('chunks a long nickname list and de-duplicates the result', () async {
+      final nicknames = [for (var i = 0; i < 32; i++) 'GBS-$i'];
+      final transport = FakeGraphTransport((req) {
+        if (req.url.path.contains('/members')) {
+          return jsonOk({'value': const <Object>[]});
+        }
+        // Every chunk answers with the same row, so a naive merge would report
+        // it three times.
+        return jsonOk({
+          'value': [renamed('GBS-7')],
+        });
+      });
+      final groups = GroupManager(clientWith(transport));
+
+      final found = await groups.loadByMailNicknames(nicknames);
+
+      final lookups = transport.requests
+          .where((r) => !r.url.path.contains('/members'))
+          .toList();
+      expect(lookups, hasLength(3), reason: '15 + 15 + 2');
+      expect(
+        lookups.last.url.queryParameters[r'$filter'],
+        "mailNickname in ('GBS-30','GBS-31')",
+      );
+      expect(found, hasLength(1));
+    });
+
+    test('blank and duplicate nicknames never reach Graph', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({'value': <Object>[]}),
+      );
+      final groups = GroupManager(clientWith(transport));
+
+      expect(await groups.loadByMailNicknames(const ['', '  ']), isEmpty);
+      expect(transport.requests, isEmpty);
+
+      await groups.loadByMailNicknames([' GBS-2A ', 'GBS-2A', '']);
+      expect(
+        transport.last.url.queryParameters[r'$filter'],
+        "mailNickname in ('GBS-2A')",
+      );
+    });
+
+    test('escapes a single quote in a nickname', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({'value': <Object>[]}),
+      );
+      final groups = GroupManager(clientWith(transport));
+
+      await groups.loadByMailNicknames(["GBS-O'1"]);
+      expect(
+        transport.last.url.queryParameters[r'$filter'],
+        "mailNickname in ('GBS-O''1')",
+      );
     });
   });
 
@@ -196,6 +334,25 @@ void main() {
       await groups.removeMember('g1', 'u1');
       expect(transport.last.method, 'DELETE');
       expect(transport.last.url.path, endsWith(r'/members/u1/$ref'));
+    });
+  });
+
+  group('group deletion (#271)', () {
+    test('deleteGroup DELETEs the group resource itself, in Dutch', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final log = RecordingLog();
+      await GroupManager(clientWith(transport), log: log).deleteGroup('g1');
+
+      expect(transport.last.method, 'DELETE');
+      expect(transport.last.url.path, endsWith('/groups/g1'),
+          reason: 'the group, not one of its member refs');
+      expect(log.messages, contains('Azure: groep g1 verwijderd.'));
+    });
+
+    test('an id with reserved characters is encoded', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      await GroupManager(clientWith(transport)).deleteGroup('a/b');
+      expect(transport.last.url.path, endsWith('/groups/a%2Fb'));
     });
   });
 

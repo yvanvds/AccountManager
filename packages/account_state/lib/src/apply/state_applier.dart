@@ -325,6 +325,11 @@ class StateApplier {
     return _refresh(
       result,
       removedGroupId: action.target.smartschool?.id,
+      // The Office 365 group `DeleteAzureClassGroup` removes (#271). A delete
+      // carries no record back, so the key comes off the bound target — and it
+      // is a *group* id, which is why it travels separately from the
+      // `removedAzureId` the account families pass (that one is a user).
+      removedAzureGroupId: action.target.azure?.id,
     );
   }
 
@@ -436,6 +441,7 @@ class StateApplier {
     String? removedSmartschoolUid,
     String? removedAzureId,
     core.GroupId? removedGroupId,
+    String? removedAzureGroupId,
   }) async {
     // Dry run or failure: the snapshot is untouched, so there is nothing to
     // re-link — the caller keeps its previous view.
@@ -469,7 +475,13 @@ class StateApplier {
       case core.Origin.azure:
         final current = app.azure.snapshot!;
         if (result.removed) {
-          app.azure.patch(_dropAzureUser(current, removedAzureId));
+          // Only the group family passes a group key (#271), so a student's or
+          // staff member's Azure delete still drops a *user* exactly as before.
+          app.azure.patch(
+            removedAzureGroupId == null
+                ? _dropAzureUser(current, removedAzureId)
+                : _dropAzureGroup(current, removedAzureGroupId),
+          );
         } else if (result.azureGroup != null) {
           // An Office 365 class group was created or had its membership
           // rewritten (#228) — patch the snapshot's group list so the relink
@@ -751,6 +763,24 @@ az.AzureSnapshot _putAzureGroup(
     deltaToken: current.deltaToken,
     users: current.users,
     groups: groups,
+  );
+}
+
+/// Drops a deleted Office 365 group from the snapshot (#271), so the relink
+/// below sees the stale class gone instead of re-raising the very pair the
+/// operator just resolved. The users are untouched: deleting a group removes
+/// nobody's account.
+az.AzureSnapshot _dropAzureGroup(az.AzureSnapshot current, String? id) {
+  return az.AzureSnapshot(
+    fetchedAt: current.fetchedAt,
+    deltaToken: current.deltaToken,
+    users: current.users,
+    groups: id == null
+        ? current.groups
+        : [
+            for (final g in current.groups)
+              if (g.id != id) g,
+          ],
   );
 }
 

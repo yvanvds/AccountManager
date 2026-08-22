@@ -73,6 +73,17 @@ class RecordingGraph implements az.GraphTransport {
   /// the membership writes a class-group roster sync performs (#228/#245).
   final List<String> batchedWrites = <String>[];
 
+  /// The object ids of every `DELETE /groups/<id>` this transport accepted, in
+  /// order — the Office 365 groups a delete action actually removed (#271).
+  /// Deliberately not the member-ref deletes, which end in `/$ref`.
+  final List<String> deletedGroups = <String>[];
+
+  /// When set, every `POST /groups` is refused with the
+  /// `403 Authorization_RequestDenied` a tenant answers when the sign-in may
+  /// not create Microsoft 365 groups — the shape #216 hit on a Graph write the
+  /// delegated scopes did not cover, applied to the class-group create (#272).
+  bool refuseGroupCreates = false;
+
   int _created = 0;
 
   /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
@@ -113,6 +124,15 @@ class RecordingGraph implements az.GraphTransport {
     // first — `mailNickname eq …` to prove no group answers on that address —
     // which the collection branch above already answers empty.
     if (request.method == 'POST' && request.url.path.endsWith('/groups')) {
+      if (refuseGroupCreates) {
+        return const az.GraphResponse(
+          statusCode: 403,
+          headers: <String, String>{'content-type': 'application/json'},
+          body: '{"error":{"code":"Authorization_RequestDenied",'
+              '"message":"Insufficient privileges to complete the '
+              'operation."}}',
+        );
+      }
       final body = Map<String, dynamic>.from(
         jsonDecode(request.body ?? '{}') as Map,
       );
@@ -146,8 +166,17 @@ class RecordingGraph implements az.GraphTransport {
         statusCode: 200,
       );
     }
+    // A group delete (#271): `DELETE /groups/<id>`, as opposed to the
+    // `/groups/<id>/members/<id>/$ref` a membership removal issues.
+    if (request.method == 'DELETE') {
+      final match = _groupPath.firstMatch(request.url.path);
+      if (match != null) deletedGroups.add(match.group(1)!);
+    }
     return const az.GraphResponse(statusCode: 204);
   }
+
+  /// `/v1.0/groups/<id>` — the group resource itself, not a sub-collection.
+  static final RegExp _groupPath = RegExp(r'/groups/([^/]+)$');
 
   /// `/v1.0/users/<id-or-upn>` — a read of one user, as opposed to the
   /// collection reads `/v1.0/users` and `/v1.0/users/delta`.
@@ -345,6 +374,343 @@ class TransferredAccountGraph implements az.GraphTransport {
             'id': u.id,
             'userPrincipalName': u.upn,
             if (u.employeeId != null) 'employeeId': u.employeeId,
+            if (u.companyName != null) 'companyName': u.companyName,
+            'accountEnabled': u.accountEnabled,
+          },
+      ],
+    });
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
+/// A [az.GraphTransport] answering the way the tenant answers for a staff member
+/// whose Azure `department` lists our school **second** (`SSM,GBS`) — the
+/// ordinary state of the comma list other software maintains (#237).
+///
+/// The school-scoped bulk `$filter` cannot see such an account
+/// (`startswith(department, …)`) and Graph has no `contains` to widen it with,
+/// so on an incremental pass the only leg that can carry a change to it into the
+/// app is the **delta** walk, which filters in Dart. This wire resumes from the
+/// stored token and reports exactly one changed user; the bulk read and the
+/// `employeeId` back-fill both answer empty, so a test can prove which leg the
+/// account arrived on.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from.
+class SharedDepartmentStaffGraph implements az.GraphTransport {
+  SharedDepartmentStaffGraph({
+    az.AzureUser? changed,
+    this.freshToken = 'AZ-NEXT',
+  }) : changed = changed ?? azStaffUser();
+
+  /// The user `/users/delta` reports as changed since the stored token.
+  final az.AzureUser changed;
+
+  /// The token this walk leaves behind for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued — empty on a pass
+  /// whose accounts were all accounted for already.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran — none, on an incremental pass.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        // A `$deltatoken=latest` prime carries no data by definition; a resume
+        // carries the one account that changed.
+        'value': token == 'latest'
+            ? const <Object>[]
+            : <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': changed.id,
+                  'userPrincipalName': changed.upn,
+                  if (changed.employeeId != null)
+                    'employeeId': changed.employeeId,
+                  'displayName': changed.displayName,
+                  'givenName': changed.givenName,
+                  'surname': changed.surname,
+                  if (changed.companyName != null)
+                    'companyName': changed.companyName,
+                  if (changed.department != null)
+                    'department': changed.department,
+                  'accountEnabled': changed.accountEnabled,
+                },
+              ],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
+/// A [az.GraphTransport] answering the way the tenant answers on the pass that
+/// has to notice a staff member **left** WISA (#269).
+///
+/// [azStaffUser]'s Office 365 account is still there, with our prefix second in
+/// the comma list other software maintains (`SSM,GBS`, #237). WISA no longer
+/// lists her, so the `employeeId` back-fill's WISA-derived set (#231) no longer
+/// names her either — and this wire is the pass where that used to be fatal:
+///
+/// - the stored delta token is past Graph's 30-day window, so the resume is
+///   **refused** and the pass recovers with a full read (#213). That recovery is
+///   unavoidable — every token expires eventually — and it is what discards the
+///   previous user list;
+/// - the recovered `$filter`-scoped bulk read returns **nothing** for her:
+///   `startswith(department,'GBS')` cannot see a list that leads with `SSM`, and
+///   Graph has no `contains` to widen it with (#268);
+/// - only a targeted `employeeId in (…)` lookup turns her up.
+///
+/// So exactly one leg can carry the account into the snapshot, and a test can
+/// prove it was taken. Wire it into [ReconcileHarness.azureTransport] with an
+/// `azureInitial` holding the dead token and the account as the previous pass
+/// left it — the memory that names the id to ask about.
+class DepartedStaffGraph implements az.GraphTransport {
+  DepartedStaffGraph({
+    az.AzureUser? account,
+    this.freshToken = 'AZ-FRESH',
+  }) : account = account ?? azStaffUser();
+
+  /// The account that outlived the WISA row, exactly as Graph still holds it.
+  final az.AzureUser account;
+
+  /// The token the recovered full read primes for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order — so a test can
+  /// prove the refused one really was sent, and not re-sent afterwards.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued, in order.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token == 'latest') return _deltaLink();
+      resumeTokens.add(token);
+      // A token this transport itself handed out is honoured, so a test can
+      // show the recovery restored incremental syncing rather than pinning the
+      // app to a full read forever.
+      if (token == freshToken) return _deltaLink();
+      return az.GraphResponse(
+        statusCode: 400,
+        body: jsonEncode(<String, dynamic>{
+          'error': <String, dynamic>{
+            'code': 'Request_UnsupportedQuery',
+            'message': 'DeltaLink older than 30 days is not supported.',
+          },
+        }),
+      );
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{
+        'value': filter.contains("'${account.employeeId}'")
+            ? <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': account.id,
+                  'userPrincipalName': account.upn,
+                  if (account.employeeId != null)
+                    'employeeId': account.employeeId,
+                  'displayName': account.displayName,
+                  'givenName': account.givenName,
+                  'surname': account.surname,
+                  if (account.companyName != null)
+                    'companyName': account.companyName,
+                  if (account.department != null)
+                    'department': account.department,
+                  'accountEnabled': account.accountEnabled,
+                },
+              ]
+            : const <Object>[],
+      });
+    }
+    // The school-scoped bulk read, blind to her — the whole problem.
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  /// An empty delta page closed by a deltaLink carrying [freshToken].
+  az.GraphResponse _deltaLink() => _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value': const <Object>[],
+      });
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
+/// A [az.GraphTransport] answering the way the tenant answers for the Office 365
+/// class group of #280: it still holds the address `GBS-<class>` as its
+/// `mailNickname`, but somebody renamed its **display name** by hand, so
+/// `GroupManager.listGroups` — `startswith(displayName,'GBS')` and nothing else
+/// — cannot see it on any pull we make.
+///
+/// That is the whole bug. The linker keeps proposing `CreateAzureClassGroup`,
+/// and every apply dies on the create's own pre-create guard (`mailNickname eq`
+/// finds the group Graph is hiding from the pull), telling the operator to sync
+/// again — which provably cannot help. Only a targeted `mailNickname in (…)`
+/// read finds it, so exactly one leg can carry the group into the snapshot and a
+/// test can prove it was taken.
+///
+/// The students are served from the ordinary school-scoped bulk read: nothing is
+/// wrong with *them*, and the class needs its roster linked for the adoption to
+/// be observable as a membership diff.
+///
+/// Wire it into [ReconcileHarness.azureTransport] to drive the **production**
+/// Azure pull, the only place the back-fill lives.
+class RenamedClassGroupGraph implements az.GraphTransport {
+  RenamedClassGroupGraph({
+    this.className = '5WW1',
+    this.groupId = 'az-renamed',
+    this.renamedTo = 'Klas van juf An',
+    this.deltaToken = 'AZ-TOKEN',
+    this.visibleUsers = const <az.AzureUser>[],
+    this.memberIds = const <String>[],
+  });
+
+  /// The bare class the hidden group belongs to — its address is `GBS-<this>`.
+  final String className;
+  final String groupId;
+
+  /// What somebody renamed the group to. Deliberately outside the `GBS-`
+  /// namespace: that is what makes it invisible to the prefix-scoped list.
+  final String renamedTo;
+  final String deltaToken;
+
+  /// The students the school-scoped bulk read returns, exactly as usual.
+  final List<az.AzureUser> visibleUsers;
+
+  /// The group's members, as Graph holds them.
+  final List<String> memberIds;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every `mailNickname in (…)` filter the connector issued, in order — so a
+  /// test can prove it asked only about the addresses it could not account for.
+  final List<String> nicknameLookups = <String>[];
+
+  /// Every `startswith(displayName,…)` group list the connector issued.
+  int groupListReads = 0;
+
+  /// The bodies of every `POST /groups` — a create that must never happen.
+  final List<Map<String, dynamic>> createdGroups = <Map<String, dynamic>>[];
+
+  String get mailNickname => 'GBS-$className';
+
+  Map<String, dynamic> get _groupRow => <String, dynamic>{
+        'id': groupId,
+        'displayName': renamedTo,
+        'securityEnabled': false,
+        'mail': '$mailNickname@student.school.example',
+        'mailNickname': mailNickname,
+      };
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+
+    if (request.method == 'POST' && path.endsWith('/groups')) {
+      createdGroups.add(
+        Map<String, dynamic>.from(jsonDecode(request.body ?? '{}') as Map),
+      );
+      return _ok(<String, dynamic>{'id': 'az-should-not-happen'});
+    }
+    if (path.contains('/members')) {
+      return _ok(<String, dynamic>{
+        'value': <Map<String, dynamic>>[
+          for (final id in memberIds) <String, dynamic>{'id': id},
+        ],
+      });
+    }
+    if (path.endsWith('/groups')) {
+      if (filter.startsWith('mailNickname in')) {
+        nicknameLookups.add(filter);
+        return _ok(<String, dynamic>{
+          'value': filter.contains("'$mailNickname'")
+              ? <Map<String, dynamic>>[_groupRow]
+              : const <Object>[],
+        });
+      }
+      // The prefix-scoped list — blind to the renamed group, which is the bug.
+      groupListReads++;
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$deltaToken',
+        'value': const <Object>[],
+      });
+    }
+    if (filter.startsWith('employeeId in')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    return _ok(<String, dynamic>{
+      'value': <Map<String, dynamic>>[
+        for (final az.AzureUser u in visibleUsers)
+          <String, dynamic>{
+            'id': u.id,
+            'userPrincipalName': u.upn,
+            if (u.employeeId != null) 'employeeId': u.employeeId,
+            'displayName': u.displayName,
+            'givenName': u.givenName,
+            'surname': u.surname,
             if (u.companyName != null) 'companyName': u.companyName,
             'accountEnabled': u.accountEnabled,
           },
@@ -705,6 +1071,33 @@ az.AzureUser azUser({
       givenName: givenName,
       surname: surname,
       companyName: 'GBS',
+    );
+
+/// An Azure **staff** account. Staff carry no `companyName`; their school lives
+/// in `department`, which other software maintains as the comma-separated list
+/// of every school they are active at (#237) — so the default lists ours
+/// *second*, the ordinary state that the connector's server-side `$filter`
+/// (`startswith`) cannot see (#268).
+///
+/// The defaults line up with [wisaStaff] and [ssStaffAccount], so a record built
+/// from all three is fully in sync and raises no action of its own.
+az.AzureUser azStaffUser({
+  String id = 'az-staff',
+  String upn = 'anna.smit@school.example',
+  String? employeeId = '42',
+  String displayName = 'Smit Anna',
+  String givenName = 'Anna',
+  String surname = 'Smit',
+  String department = 'SSM,GBS',
+}) =>
+    az.AzureUser(
+      id: id,
+      upn: upn,
+      employeeId: employeeId,
+      displayName: displayName,
+      givenName: givenName,
+      surname: surname,
+      department: department,
     );
 
 core.Group ssGroup(
@@ -1193,9 +1586,17 @@ ReconcileHarness foreignClassGroupHarness() => ReconcileHarness(
 /// group, so exactly one create proposal must reach the operator — named after
 /// the parent class, never after a sub-group.
 ///
-/// [withStaleGroup] adds `GBS-9Z`, the group of a class that no longer exists,
-/// which must be reported for manual cleanup and never deleted.
-ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
+/// [withStaleGroup] adds `GBS-9Z`, the group of a class that no longer exists —
+/// the row that carries the "laat staan / verwijder" either/or of #271.
+///
+/// [withNonClassGroups] adds the prefixed groups that are **not** classes and so
+/// belong in no class inventory: `GBS - GOK`, `GBS-OKAN`,
+/// `GBS - Leerlingenraad`, `GBS - Frans - 3D`. Every one of them was a
+/// Klasgroepen row before #271, carrying a ✓ and no action anybody could take.
+ReconcileHarness azureClassGroupHarness({
+  bool withStaleGroup = false,
+  bool withNonClassGroups = false,
+}) =>
     ReconcileHarness(
       wisa: wisaSnap(
         students: [
@@ -1264,6 +1665,64 @@ ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
         groups: [
           azClassGroup('1A', memberIds: const ['az1']),
           if (withStaleGroup) azClassGroup('9Z'),
+          if (withNonClassGroups) ...<az.AzureGroup>[
+            azNonClassGroup('GBS - GOK'),
+            azNonClassGroup('GBS-OKAN'),
+            azNonClassGroup('GBS - Leerlingenraad'),
+            azNonClassGroup('GBS - Frans - 3D'),
+          ],
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the stale Office 365 class groups of #271. Our school 1 runs
+/// exactly one class, `1A`, correct in all three systems — and Office 365 still
+/// holds `GBS-9Z` and `GBS-8Y`, the groups of two classes that stopped running.
+///
+/// Two of them, deliberately: one stale group is a row, **two** are a "same
+/// situation" bulk subset, which is where a destructive action would do its
+/// worst. The notice is the default of the pair, so the header's "Alles
+/// toepassen" counts zero and the delete is only ever the pick an operator made
+/// on one row.
+///
+/// The four prefixed non-class groups are here too — they must not appear in the
+/// inventory at all, let alone in that subset.
+ReconcileHarness staleClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '1A')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+        ],
+        memberships: [member('jane', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1']),
+          azClassGroup('9Z'),
+          azClassGroup('8Y'),
+          azNonClassGroup('GBS - GOK'),
+          azNonClassGroup('GBS-OKAN'),
+          azNonClassGroup('GBS - Leerlingenraad'),
+          azNonClassGroup('GBS - Frans - 3D'),
         ],
       ),
       ourSchoolIds: const {1},
@@ -1540,6 +1999,175 @@ ReconcileHarness newClassChoiceHarness() => ReconcileHarness(
       ourSchoolIds: const {1},
       classTree: const SmartschoolClassTree(path: 'SCHOOL'),
     );
+
+/// A harness for #272: one brand-new WISA class that owes **two** writes.
+///
+/// `5WW1` is the class the report is about. Smartschool does not have it, so it
+/// raises the #244 create-or-ignore either/or with the create pre-selected; and
+/// Office 365 has no `GBS-5WW1` group, so it raises [CreateAzureClassGroup]
+/// beside that pair as a decision of its own. One card, two selected options,
+/// two systems — and applying it must land in both.
+///
+/// Its two students already hold Office 365 accounts, which is what a class
+/// formed out of existing pupils looks like in September and what makes the
+/// create chain its roster write (#245): `CreateAzureClassGroup` leaves an empty
+/// group, so the one click has to perform the membership write too.
+///
+/// Smartschool holds only the `Leerlingen` root the class hangs under, named by
+/// [ReconcileHarness.classTree], so the Smartschool half genuinely lands rather
+/// than failing for want of a parent.
+ReconcileHarness newClassNeedingBothWritesHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '1', classGroup: '5WW1', firstName: 'An', name: 'Aerts'),
+          wisaStudent(
+              wisaId: '2', classGroup: '5WW1', firstName: 'Bo', name: 'Bell'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup(
+            '5WW1',
+            description: '5e jaar Wetenschappen-Wiskunde',
+            schoolCode: '111',
+            schoolId: 1,
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: core.GroupType.group,
+          ),
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'an.aerts',
+            accountId: '1',
+            mail: 'an.aerts@student.school.example',
+            givenName: 'An',
+            surname: 'Aerts',
+          ),
+          ssAccount(
+            uid: 'bo.bell',
+            accountId: '2',
+            mail: 'bo.bell@student.school.example',
+            givenName: 'Bo',
+            surname: 'Bell',
+          ),
+        ],
+        memberships: const [],
+      ),
+      // Both students already have their Office 365 account, names and all, so
+      // the only Azure work anywhere is the class group and its roster.
+      azure: azSnap(users: [
+        azUser(
+          id: 'az-an',
+          upn: 'an.aerts@student.school.example',
+          employeeId: '1',
+          displayName: 'Aerts An',
+        ),
+        azUser(
+          id: 'az-bo',
+          upn: 'bo.bell@student.school.example',
+          employeeId: '2',
+          displayName: 'Bell Bo',
+        ),
+      ]),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+
+/// A harness for the class group Graph hides from us (#280). Our school 1 runs
+/// one class, `5WW1`, with two students — correct in WISA, correct in
+/// Smartschool, and with both Office 365 accounts already in place.
+///
+/// Office 365 also already holds the class's group, answering on
+/// `GBS-5WW1@student.school.example`, but its display name was renamed by hand,
+/// so the prefix-scoped `listGroups` never returns it. The app therefore
+/// proposed creating the group, and every apply died on the create's pre-create
+/// guard with advice ("synchroniseer Azure opnieuw") that could not come true.
+///
+/// The Azure pull runs for real over [RenamedClassGroupGraph], because the
+/// nickname back-fill only exists in the production syncer — a scripted snapshot
+/// would beg the question.
+///
+/// The group holds **one** of the two students, so a successful adoption is
+/// visible as a roster proposal rather than as silence.
+///
+/// Read the wire back as
+/// `harness.azureTransport! as RenamedClassGroupGraph` to assert on what the
+/// pass actually asked Graph.
+ReconcileHarness renamedClassGroupHarness() {
+  final graph = RenamedClassGroupGraph(
+    className: '5WW1',
+    visibleUsers: [
+      azUser(
+        id: 'az-an',
+        upn: 'an.aerts@student.school.example',
+        employeeId: '1',
+        displayName: 'Aerts An',
+      ),
+      azUser(
+        id: 'az-bo',
+        upn: 'bo.bell@student.school.example',
+        employeeId: '2',
+        displayName: 'Bell Bo',
+      ),
+    ],
+    memberIds: const ['az-an'],
+  );
+  return ReconcileHarness(
+    wisa: wisaSnap(
+      students: [
+        wisaStudent(
+            wisaId: '1', classGroup: '5WW1', firstName: 'An', name: 'Aerts'),
+        wisaStudent(
+            wisaId: '2', classGroup: '5WW1', firstName: 'Bo', name: 'Bell'),
+      ],
+      schools: [wisaSchool(1)],
+      classGroups: [
+        wisaClassGroup(
+          '5WW1',
+          description: '5e jaar Wetenschappen-Wiskunde',
+          schoolCode: '111',
+          schoolId: 1,
+        ),
+      ],
+    ),
+    // In sync, so the only work this fixture raises is on the Office 365 side.
+    smartschool: ssSnap(
+      groups: [
+        ssGroup('5WW1',
+            description: '5e jaar Wetenschappen-Wiskunde',
+            instituteNumber: '111',
+            untis: '5WW1'),
+      ],
+      accounts: [
+        ssAccount(
+          uid: 'an.aerts',
+          accountId: '1',
+          mail: 'an.aerts@student.school.example',
+          givenName: 'An',
+          surname: 'Aerts',
+        ),
+        ssAccount(
+          uid: 'bo.bell',
+          accountId: '2',
+          mail: 'bo.bell@student.school.example',
+          givenName: 'Bo',
+          surname: 'Bell',
+        ),
+      ],
+      memberships: [member('an.aerts', '5WW1'), member('bo.bell', '5WW1')],
+    ),
+    azureTransport: graph,
+    ourSchoolIds: const {1},
+  );
+}
 
 /// A harness for the namesake-class either/or (#250) — the shape the #225
 /// notice leaves behind, alongside a genuinely new class so both readings are on
@@ -1897,6 +2525,20 @@ az.AzureGroup azClassGroup(
       mail: 'GBS-$className@student.school.example',
       mailNickname: 'GBS-$className',
       memberIds: memberIds,
+    );
+
+/// A prefixed Office 365 group that is **not** a class (#271): a subject,
+/// project or council group, named exactly as the school names them — with the
+/// spaces around the separator the operator types, which is why a
+/// `<PREFIX>-` strip recovers no class name from most of them.
+///
+/// Shaped like the class groups in every other respect (mail-enabled, nickname
+/// equal to the display name), so nothing but the *name* can tell them apart.
+az.AzureGroup azNonClassGroup(String displayName) => az.AzureGroup(
+      id: 'az-$displayName',
+      displayName: displayName,
+      mail: '${displayName.replaceAll(' ', '')}@student.school.example',
+      mailNickname: displayName,
     );
 
 /// Deterministic in-memory resolver (mirrors the linker's test fixture).
@@ -2511,6 +3153,14 @@ class ReconcileHarness {
           ),
           ...managedStaffEmployeeIds(app.wisa.snapshot),
         },
+        // …and the `<PREFIX>-<KLAS>` addresses it expects class groups on
+        // (#280), exactly as `bootstrapReconcile` composes them.
+        expectedGroupMailNicknames: (prefix) => managedClassGroupMailNicknames(
+          app.wisa.snapshot,
+          schoolPrefix: prefix,
+          ourSchoolIds:
+              managedSchoolIdsOf(this.liveSettings.current) ?? ourSchoolIds,
+        ),
         // The prefix the pull scopes by, read live (#246) — the fixture's 'GBS'
         // until a test saves one in Instellingen.
         schoolPrefix: () {

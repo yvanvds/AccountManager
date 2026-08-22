@@ -503,12 +503,18 @@ class _StatusBanner extends StatelessWidget {
         ),
       );
     }
+    // Until the operator starts their first pass, the banner explains the two
+    // buttons above it instead of reporting on a pass that has not run. It only
+    // reaches the screen because a passive `loadOverview` read no longer claims
+    // the pass phase `ready` (#275) — for most of this screen's life it was
+    // gated on a phase the store read moved off before the first frame.
     if (controller.phase == ReconcilePhase.idle) {
       return Text(
         'Synchroniseer haalt WISA op en vergelijkt het met de vorige '
         'momentopname; Smartschool en Azure worden één keer per sessie '
         'gelezen. Gebruik "Controleer op drift" wanneer accounts via een '
         'ander programma zijn aangepast.',
+        key: const ValueKey('reconcile-explainer'),
         style: text.bodyMedium,
       );
     }

@@ -63,6 +63,86 @@ class GroupManager {
     return groups;
   }
 
+  /// How many `mailNickname`s one [loadByMailNicknames] request asks about.
+  /// Graph caps an `in (…)` list well below the URL length limit, so the lookup
+  /// is chunked rather than sent as one enormous filter — the same bound
+  /// `UserManager.loadByEmployeeIds` uses.
+  static const int _nicknameChunk = 15;
+
+  /// Targeted read of the groups carrying one of [mailNicknames], regardless of
+  /// what their `displayName` says (#280).
+  ///
+  /// The group counterpart of `UserManager.loadByEmployeeIds` (#224/#231), and
+  /// it exists for the same reason. [listGroups] is scoped to
+  /// `startswith(displayName,'<PREFIX>')`, so a class group somebody renamed by
+  /// hand — or one that was never in our namespace — is invisible to every pull
+  /// we make, however firmly it holds the `<PREFIX>-<KLAS>` nickname a create
+  /// would collide with. Without this read the guard in
+  /// `CreateAzureClassGroup.apply` refuses the create forever and the advice it
+  /// gives ("sync again") can never come true.
+  ///
+  /// The **nickname**, not the display name, is the key: it is what makes the
+  /// address unique, it is what a create collides on, and it is the one field on
+  /// such a group that is still ours. The caller passes only the nicknames it
+  /// could **not** account for, so the set stays small and bounded and the
+  /// PAIN-2 property of the bulk read survives.
+  ///
+  /// [withMembers] loads each hit's member ids the way [listGroups] does, so an
+  /// adopted group can be roster-diffed on the very pass it arrives. The
+  /// pre-create guard ([findByMailNickname]) turns it off: it only needs to know
+  /// whether a group answers at all.
+  ///
+  /// Blank nicknames are dropped, duplicates collapse, and the result is
+  /// de-duplicated by Azure object id.
+  Future<List<AzureGroup>> loadByMailNicknames(
+    Iterable<String> mailNicknames, {
+    bool withMembers = true,
+  }) async {
+    // A set literal preserves insertion order, so the chunking (and therefore
+    // the requests a test asserts on) is deterministic.
+    final unique = <String>{
+      for (final raw in mailNicknames)
+        if (raw.trim().isNotEmpty) raw.trim(),
+    }.toList();
+    if (unique.isEmpty) return const <AzureGroup>[];
+
+    final rowsById = <String, Map<String, dynamic>>{};
+    for (var i = 0; i < unique.length; i += _nicknameChunk) {
+      final chunk = unique.sublist(
+        i,
+        (i + _nicknameChunk).clamp(0, unique.length),
+      );
+      final literals = chunk.map((n) => "'${_escapeODataString(n)}'").join(',');
+      final url = _graph.uri(
+        'groups',
+        query: {
+          r'$select': _select,
+          r'$count': 'true',
+          r'$filter': 'mailNickname in ($literals)',
+        },
+      );
+      final rows =
+          await _graph.getCollection(url, headers: _advancedQueryHeaders);
+      for (final row in rows) {
+        rowsById[(row['id'] as String?) ?? ''] = row;
+      }
+    }
+
+    final groups = <AzureGroup>[];
+    for (final entry in rowsById.entries) {
+      groups.add(AzureGroup.fromGraphJson(
+        entry.value,
+        members: withMembers ? await loadMemberIds(entry.key) : const [],
+      ));
+    }
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: ${unique.length} mailNickname(s) rechtstreeks opgezocht — '
+      '${groups.length} bestaande groep(en) gevonden.',
+    );
+    return groups;
+  }
+
   /// The group answering on [mailNickname], or `null` when the tenant has none.
   ///
   /// The pre-create guard for [createGroup], mirroring
@@ -74,22 +154,12 @@ class GroupManager {
   ///
   /// [listGroups] cannot answer this: it is scoped to the school prefix and
   /// matches on `displayName`, so a class group somebody renamed by hand still
-  /// holds the nickname a create would collide with.
+  /// holds the nickname a create would collide with. [loadByMailNicknames] is
+  /// the pull-side answer to that same blindness (#280).
   Future<AzureGroup?> findByMailNickname(String mailNickname) async {
-    final nickname = mailNickname.trim();
-    if (nickname.isEmpty) return null;
-    final url = _graph.uri(
-      'groups',
-      query: {
-        r'$select': _select,
-        r'$count': 'true',
-        r'$filter': "mailNickname eq '${_escapeODataString(nickname)}'",
-      },
-    );
-    final rows =
-        await _graph.getCollection(url, headers: _advancedQueryHeaders);
-    if (rows.isEmpty) return null;
-    return AzureGroup.fromGraphJson(rows.first);
+    final matches =
+        await loadByMailNicknames([mailNickname], withMembers: false);
+    return matches.isEmpty ? null : matches.first;
   }
 
   /// Creates a **unified** (Microsoft 365) group — the shape a class group must
@@ -131,6 +201,22 @@ class GroupManager {
       securityEnabled: (json['securityEnabled'] as bool?) ?? false,
       mail: json['mail'] as String?,
       mailNickname: (json['mailNickname'] as String?) ?? mailNickname,
+    );
+  }
+
+  /// Deletes a group outright (#271) — the write behind
+  /// `DeleteAzureClassGroup`, for the Office 365 group of a class that no
+  /// longer runs anywhere.
+  ///
+  /// Graph deletes the group *and* everything hanging off it: the mailbox and
+  /// its history, the Team, the SharePoint site and the files on it. There is
+  /// no undo beyond the tenant's own 30-day soft-delete window, which is why
+  /// the action that calls this is never the default of a bulk apply.
+  Future<void> deleteGroup(String groupId) async {
+    await _graph.delete(_graph.uri('groups/${Uri.encodeComponent(groupId)}'));
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: groep $groupId verwijderd.',
     );
   }
 

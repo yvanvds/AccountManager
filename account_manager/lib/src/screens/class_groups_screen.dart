@@ -451,7 +451,7 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
         ..add(_gap(PlinkSpacing.s5))
         ..addAll(_resultSection(
           title: 'Resultaat van het toepassen',
-          subtitle: 'Weggeschreven naar de doelsystemen.',
+          subtitle: applyResultsSubtitle(applied),
           results: applied,
         ));
     }

@@ -146,12 +146,16 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The two buttons under the heading. (The idle explainer that names them
-    // in prose is translated too but cannot be asserted: `loadOverview` moves
-    // the phase off `idle` before the first frame the operator sees, so the
-    // paragraph never renders — filed as #275, not this issue's to fix.)
+    // The two buttons under the heading, and the explainer that names them in
+    // prose — which #265 could translate but not assert, because the phase it
+    // was gated on moved off `idle` before the first frame (fixed in #275).
     expect(find.text('Synchroniseer'), findsOneWidget);
     expect(find.text('Controleer op drift'), findsOneWidget);
+    expect(
+      find.textContaining('Synchroniseer haalt WISA op en vergelijkt het met '
+          'de vorige momentopname'),
+      findsOneWidget,
+    );
 
     // The log panel's own chrome, empty state included.
     expect(find.text('Logboek'), findsOneWidget);
@@ -177,6 +181,43 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(find.text('Overzicht'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the screen explains its two buttons until a pass has run — in a passive '
+      'session that only read the shared overview too (#275)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // An overview another operator's sync materialized. Opening the screen
+    // reads it (`loadOverview`) without running anything, which is precisely
+    // the read that used to claim the pass phase `ready` and, because it
+    // resolves on the microtask queue, swallowed the explainer before the
+    // operator's first frame.
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+    final harness = ReconcileHarness(linkedStore: linkedStore);
+    await tester.pumpWidget(
+      _wrap(ReconcileScreen(bootstrap: harness.bootstrap)),
+    );
+    await tester.pumpAndSettle();
+
+    final explainer = find.byKey(const ValueKey('reconcile-explainer'));
+    // The stored overview renders — and so does the only thing on the screen
+    // that says what the two buttons above it do.
+    expect(find.text('Overzicht'), findsOneWidget);
+    expect(explainer, findsOneWidget);
+    expect(
+      find.textContaining('Gebruik "Controleer op drift" wanneer accounts via '
+          'een ander programma zijn aangepast.'),
+      findsOneWidget,
+    );
+
+    // Once this session has actually run a pass, the banner goes back to
+    // reporting on that pass rather than repeating the introduction.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(explainer, findsNothing);
   });
 
   testWidgets(

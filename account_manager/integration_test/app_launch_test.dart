@@ -250,12 +250,18 @@ void main() {
     await tester.tap(find.text('Synchronisatie'));
     await tester.pumpAndSettle();
 
-    // The two buttons under the heading. The idle explainer that names them in
-    // prose is translated with them but is not assertable here: `loadOverview`
-    // moves the phase off `idle` before the operator's first frame, so the
-    // paragraph never reaches the screen at all (#275).
+    // The two buttons under the heading, and the explainer that names them in
+    // prose — which #265 translated but could not assert, because the passive
+    // store read moved the phase off `idle` before the operator's first frame
+    // and the paragraph never reached the screen (fixed in #275).
     expect(find.text('Synchroniseer'), findsOneWidget);
     expect(find.text('Controleer op drift'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-explainer')), findsOneWidget);
+    expect(
+      find.textContaining('Synchroniseer haalt WISA op en vergelijkt het met '
+          'de vorige momentopname'),
+      findsOneWidget,
+    );
 
     // The log panel's own chrome, empty state included.
     expect(find.text('Logboek'), findsOneWidget);
@@ -277,11 +283,13 @@ void main() {
           reason: '"$english" is the English label #265 replaced');
     }
 
-    // A sync heads the counts section the way the Acties tree heads its own.
+    // A sync heads the counts section the way the Acties tree heads its own —
+    // and retires the introduction, the banner now having a pass to report on.
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(find.text('Overzicht'), findsOneWidget);
     expect(find.text('Overview'), findsNothing);
+    expect(find.byKey(const ValueKey('reconcile-explainer')), findsNothing);
 
     // A second pass over unchanged WISA raises the smart-diff notice, which
     // now says what the Log line beside it says (#258).
@@ -2159,12 +2167,14 @@ void main() {
     expect(find.byKey(const ValueKey('class-row-1A')), findsOneWidget);
     expect(find.text('deelgroep van 2F'), findsNWidgets(2));
 
-    // The group of a class that no longer exists is reported, never deleted.
+    // The group of a class that no longer exists reads as the either/or it
+    // became in #271 — leave it standing (the default) or delete it — so the
+    // collapsed line is marked "(keuze)" rather than "(manueel)".
     expect(
-      find.textContaining('De klas 9Z bestaat niet meer'),
-      findsOneWidget,
+      find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+      findsWidgets,
     );
-    expect(find.textContaining('(manueel)'), findsWidgets);
+    expect(find.textContaining('(keuze)'), findsWidgets);
 
     // Expand the class's row and apply just it.
     const entry = ValueKey('entry-group-2F ECO');
@@ -2216,6 +2226,240 @@ void main() {
         .toList();
     expect(kinds, isNot(contains('CreateAzureClassGroup')));
     expect(kinds, isNot(contains('SyncAzureClassGroupMembers')));
+  });
+
+  testWidgets(
+      'applying a new class creates the Smartschool class **and** its Office '
+      '365 group end-to-end (#272)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over both real write paths at
+    // once. `5WW1` is in WISA only and has no `GBS-5WW1` group, so its card
+    // carries two selected options — the #244 create-or-ignore either/or with
+    // the create pre-selected, and the Office 365 create standing beside it.
+    //
+    // This is the layer the report needed and nothing had: every per-action
+    // unit test passes while one of an entry's two options quietly does not
+    // land, because "both options ran" is a claim about the *entry* — the
+    // dispatch, the alternative collapse, the card's selection and the apply
+    // loop composed — and only a full run puts all four together.
+    useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    // Two decisions on one card, and the badge counts both.
+    const entry = ValueKey('entry-group-5WW1');
+    expect(
+      find.descendant(
+        of: find.byKey(entry),
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(entry),
+        matching: find.text('Voeg deze klas toe aan Smartschool (keuze)'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    // The confirmation names both systems, because both are written.
+    expect(find.textContaining('Smartschool'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Smartschool got its class…
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1));
+    // …and Graph got the Microsoft 365 group, filled by the roster write the
+    // create chains (#245).
+    expect(harness.graph.createdGroups, hasLength(1));
+    final body = harness.graph.createdGroups.single;
+    expect(body['displayName'], 'GBS-5WW1');
+    expect(body['groupTypes'], ['Unified']);
+    expect(harness.graph.batchedWrites, hasLength(2),
+        reason: "the class's two students belong to the group it just made");
+
+    // So the class owes nothing to anybody any more.
+    final kinds = harness.controller.pendingEntries
+        .where((e) => e.targetId == '5WW1')
+        .expand((e) => e.choices)
+        .map((c) => c.selected.kind)
+        .toList();
+    expect(kinds, isEmpty);
+  });
+
+  testWidgets(
+      'an Office 365 create Graph refuses says so on the class card, and can '
+      'be run again from it end-to-end (#272)', (WidgetTester tester) async {
+    // The reported run. Both options are dispatched; Graph refuses the group
+    // create with the `403 Authorization_RequestDenied` of #216, the Smartschool
+    // half lands, and the operator — who applied one class out of an inventory
+    // — is left believing the Office 365 group "never lands".
+    //
+    // Only a full run shows why: the refusal was recorded twice, and both
+    // records are off screen. The log line is on the Synchronisatie tab, and the
+    // outcome rows are in a page-level section under the whole inventory. The
+    // verdict now sits on the card the operator pressed.
+    useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    harness.graph.refuseGroupCreates = true;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // The Smartschool half still landed — a refused action never aborts the
+    // rest of the pass.
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1));
+    expect(harness.graph.createdGroups, isEmpty);
+
+    // …and the card says exactly what happened to each half, with the reason
+    // Graph gave.
+    final verdict = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Resultaat van de vorige poging')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: verdict,
+          matching: find.textContaining('Authorization_RequestDenied')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: verdict,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsOneWidget,
+    );
+
+    // The create is still offered, and running it again against a tenant that
+    // allows it lands the group.
+    harness.graph.refuseGroupCreates = false;
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.graph.createdGroups, hasLength(1));
+    expect(harness.graph.createdGroups.single['displayName'], 'GBS-5WW1');
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1),
+        reason: 'the Smartschool class was already there — no second create');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'an Office 365 group Graph already holds under our address is adopted, '
+      'and the create stops being offered end-to-end (#280)',
+      (WidgetTester tester) async {
+    // The loop #272 made visible. Office 365 already holds `5WW1`'s group — it
+    // answers on `GBS-5WW1@student.school.example` — but somebody renamed its
+    // display name, and the pull is `startswith(displayName,'GBS')` and nothing
+    // else. So the group was invisible to every sync, the linker kept proposing
+    // the create, and every apply died on the create's own pre-create guard
+    // (`mailNickname eq` sees exactly what the pull cannot) with advice to sync
+    // again that provably could not help.
+    //
+    // Only a full run can show the fix: the back-fill lives in the production
+    // Azure pull, the adoption has to survive `link()`'s Azure-group match, and
+    // "the create is no longer offered" is a claim about the class card the
+    // dispatch, the inventory and the shell compose together. A scripted Azure
+    // snapshot would beg the question by handing the app the group it is
+    // supposed to go and find.
+    useTallWindow(tester);
+    final harness = renamedClassGroupHarness();
+    final azureWire = harness.azureTransport! as RenamedClassGroupGraph;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // The pull did ask the prefix-scoped list first, and it did come back
+    // blind — so the group can only have arrived on the targeted read.
+    expect(azureWire.groupListReads, greaterThanOrEqualTo(1));
+    expect(azureWire.nicknameLookups, ["mailNickname in ('GBS-5WW1')"],
+        reason: 'only the address the pull could not account for is asked '
+            'about — the bounded pull stays bounded');
+
+    // The class is on the inventory carrying its group, and what it needs is
+    // the roster, not a create: the adopted group holds one of the two
+    // students.
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-5WW1')), findsOneWidget);
+    expect(
+      find.textContaining(
+          'Werk het ledenbestand van GBS-5WW1 bij (1 toevoegen'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Maak de Office 365-groep GBS-5WW1'),
+      findsNothing,
+      reason: 'the group exists — offering to make it is the whole bug',
+    );
+
+    List<String> kindsFor5WW1() => harness.controller.pendingEntries
+        .where((e) => e.targetId == '5WW1')
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(kindsFor5WW1(), isNot(contains('CreateAzureClassGroup')));
+    expect(kindsFor5WW1(), contains('SyncAzureClassGroupMembers'));
+
+    // …and it stays gone. "Synchroniseer Azure opnieuw" is what the refusal
+    // used to advise and what nothing could satisfy; a second pass now adopts
+    // the group again rather than re-offering the create.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
+
+    expect(
+      find.textContaining('Maak de Office 365-groep GBS-5WW1'),
+      findsNothing,
+    );
+    expect(kindsFor5WW1(), isNot(contains('CreateAzureClassGroup')));
+    expect(harness.graph.createdGroups, isEmpty,
+        reason: 'no duplicate group was ever written');
+    expect(azureWire.createdGroups, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -2403,6 +2647,120 @@ void main() {
     await tester.tap(filter);
     await tester.pumpAndSettle();
     expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Klasgroepen lists only class-shaped Office 365 groups, and a stale one '
+      'is deleted from its own row end-to-end (#271)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, real rail. Our school runs
+    // `1A`, correct everywhere; Office 365 still holds `GBS-9Z` and `GBS-8Y`,
+    // the groups of two classes that stopped running, plus four prefixed groups
+    // that were never classes at all (`GBS - GOK`, `GBS-OKAN`,
+    // `GBS - Leerlingenraad`, `GBS - Frans - 3D`).
+    //
+    // This is the layer that sees what the issue is about. The inventory is
+    // composed from the *stored* documents while the either/or radios come from
+    // the live dispatch, the bulk headers from a third derivation, and the row
+    // only disappears once the write, the relink and the store patch have all
+    // landed — halves of the app that only a full run puts on screen together.
+    // And the action under test is destructive: a widget test rendering the row
+    // in isolation cannot show that "Alles toepassen" over the whole tab leaves
+    // every one of these groups alone.
+    useTallWindow(tester);
+    final harness = staleClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+    // A prefixed group that is not class-shaped is not a class group, so it is
+    // in no class inventory. Each of these was a row before #271 — carrying a
+    // ✓ and no action anybody could take.
+    for (final name in const [
+      'GBS - GOK',
+      'GBS-OKAN',
+      'GBS - Leerlingenraad',
+      'GBS - Frans - 3D',
+    ]) {
+      expect(row(name), findsNothing, reason: '$name is not a class');
+    }
+    // The class-shaped leftovers stay listed: those are old classes, and seeing
+    // them is the point.
+    expect(row('1A'), findsOneWidget);
+    expect(row('GBS-9Z'), findsOneWidget);
+    expect(row('GBS-8Y'), findsOneWidget);
+    expect(find.textContaining('3 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget);
+
+    // Both stale groups share one situation, so the tab collects them under a
+    // bulk header — and it counts **zero** writes, because leaving the group
+    // standing is the default of the pair. A destructive default here would
+    // take two mailboxes, Teams and file libraries on one click.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    final bulkApply = find.textContaining('Alles toepassen (');
+    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+    expect(
+      tester
+          .widget<FilledButton>(find.ancestor(
+            of: bulkApply,
+            matching: find.byType(FilledButton),
+          ))
+          .onPressed,
+      isNull,
+      reason: 'a bulk pass over stale groups must write nothing at all',
+    );
+
+    // The row itself carries the either/or, with the delete as the half the
+    // operator has to reach for.
+    final entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
+          'meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    final delete =
+        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
+    expect(delete, findsOneWidget);
+    final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
+        reason:
+            'nothing is applyable while the default is "leave it standing"');
+
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Exactly the one group the operator picked — and the row is gone with it,
+    // rather than lingering claiming a group that no longer exists.
+    expect(harness.graph.deletedGroups, ['az-GBS-9Z']);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+    expect(row('GBS-9Z'), findsNothing);
+    expect(row('GBS-8Y'), findsOneWidget,
+        reason: 'the class beside it was never selected');
+    expect(row('1A'), findsOneWidget);
+
+    // And a class that still runs is offered no delete at all.
+    expect(find.byKey(const ValueKey('alt-1A-DeleteAzureClassGroup')),
+        findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -6608,6 +6966,207 @@ void main() {
       isEmpty,
       reason: 'department belongs to the software that maintains the list',
     );
+  });
+
+  testWidgets(
+      'an Office 365 rename reaches the app even when our school is second on '
+      "a staff member's department list (#268)", (WidgetTester tester) async {
+    // The cost of the read being narrower than the domain rule, one pass after
+    // #237: Anna Smit's `department` reads `SSM,GBS`, so the school-scoped
+    // `$filter` cannot see her (`startswith`) and Graph has no `contains` to
+    // widen it with. That leaves the delta walk — which filters in Dart, and so
+    // is under no such limit — as the only leg that can carry a change to her
+    // account into the app.
+    //
+    // It applied the server-side narrowing anyway. So when an administrator
+    // renamed her Office 365 sign-in, the delta row was dropped, her *previous*
+    // row survived untouched in the snapshot, and the app went on believing
+    // Smartschool's copy of the address was still right. Nothing looked missing
+    // — that is what made it invisible.
+    //
+    // Only this layer sees it: it needs the stored token and the previous
+    // snapshot to make the pass incremental, the linker to join her by
+    // `employeeId` once the UPN stops matching, and the dispatch to turn the
+    // drift into the to-do the operator should have been given.
+    useTallWindow(tester);
+    final azureWire = SharedDepartmentStaffGraph(
+      // Renamed in Azure since the stored token; everything else unchanged.
+      changed: azStaffUser(upn: 'anna.smit2@school.example'),
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        // Smartschool still holds the address that was correct last pass.
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot: her account as it stood, and the token this pass
+      // resumes from.
+      azureInitial: azSnap(deltaToken: 'AZ-TOKEN', users: [azStaffUser()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: the seeded Azure snapshot is reused untouched, its
+    // token unspent.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+
+    // Today: Check for drift, which is what re-reads Azure — incrementally,
+    // from the stored token.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass really was the incremental one, and the delta walk really was
+    // the only leg that could have delivered her: no bulk read ran, and the
+    // `employeeId` back-fill asked about nobody (she was already accounted for
+    // by the previous snapshot, which is exactly why it cannot save this case).
+    expect(azureWire.resumeTokens, <String>['AZ-TOKEN']);
+    expect(azureWire.bulkReads, 0);
+    expect(azureWire.employeeIdLookups, isEmpty);
+
+    // The rename landed. Before the fix this still read the old address.
+    expect(harness.app.azure.snapshot!.users.single.upn,
+        'anna.smit2@school.example');
+
+    // And the operator is told what it means: Smartschool's copy is now stale.
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.azure?.id, 'az-staff',
+        reason: 'joined by employeeId once the UPN stopped matching');
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(find.text('Wijzig het e-mailadres in Smartschool'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a staff member who left WISA still gets their Office 365 account '
+      'proposed for deletion (#269)', (WidgetTester tester) async {
+    // The other half of #268, and the worse one. Anna Smit has left the school:
+    // WISA no longer lists her and her Smartschool account is already gone. Her
+    // Office 365 account is not — and our prefix sits *second* in the comma list
+    // other software maintains on `department` (`SSM,GBS`, #237).
+    //
+    // Both reads that could surface her fail at once. The bulk `$filter` asks
+    // `startswith(department,'GBS')` and cannot see her, which #268 ruled cannot
+    // be widened (Graph has no `contains`). And the `employeeId` back-fill (#231)
+    // is fed from the *current* WISA snapshot, so the pass that drops her from
+    // WISA is the pass it stops asking about her.
+    //
+    // The shape of the failure is what makes it dangerous: she does not linger as
+    // a to-do the operator ignores, she *vanishes*. No LinkedStaff record is
+    // built, RemoveStaffFromAzure (which needs `azure != null`) is never
+    // evaluated, and the account lives on with nothing but Office 365 itself to
+    // show for it.
+    //
+    // The unavoidable trigger is here too: the stored delta token is past Graph's
+    // 30-day window, so this pass recovers with a full read (#213) and the
+    // previous user list — which had been carrying her — is discarded.
+    //
+    // Only this layer sees the whole thing: the Azure pull has to remember her
+    // from the snapshot it already holds, the linker has to keep the row it
+    // produces as an Azure-only staff record (INV-22), and the operator has to be
+    // handed the deletion in Acties → Personeel.
+    useTallWindow(tester);
+    final azureWire = DepartedStaffGraph();
+    final harness = ReconcileHarness(
+      // Gone from WISA…
+      wisa: wisaSnap(students: const [], staff: const []),
+      // …and gone from Smartschool, so only Azure still holds her.
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot: her account as the previous pass left it, and a
+      // token that has since aged out.
+      azureInitial: azSnap(deltaToken: 'AZ-STALE', users: [azStaffUser()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: the seeded Azure snapshot is reused untouched, its
+    // token unspent.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+
+    // Today: Check for drift, which is what re-reads Azure.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass really was the losing one: the stale token was sent and refused,
+    // so the recovery re-read in full and the previous user list is gone.
+    expect(azureWire.resumeTokens, <String>['AZ-STALE']);
+    expect(azureWire.bulkReads, 1);
+
+    // She came back on the only leg left — one targeted lookup for an id WISA no
+    // longer names, remembered from the snapshot the app already held.
+    expect(azureWire.employeeIdLookups, <String>["employeeId in ('42')"]);
+    expect(harness.app.azure.snapshot?.users.map((u) => u.id),
+        <String>['az-staff']);
+
+    // The linker keeps her as an Azure-only staff record (INV-22: `department`
+    // still names us), which is the record the deletion is raised on.
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.wisa, isNull);
+    expect(linked.smartschool, isNull);
+    expect(linked.azure?.id, 'az-staff');
+
+    // And that is what the operator sees: Acties → Personeel, drilled the way
+    // they would.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(find.text('Verwijder Azure account'), findsOneWidget);
   });
 
   testWidgets(

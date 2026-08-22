@@ -1746,6 +1746,35 @@ void main() {
       expect(passive.controller.syncLockOwner, 'mieke@school');
     });
 
+    test(
+        'loadOverview leaves the phase idle — reading the shared store is not '
+        'a pass (#275)', () async {
+      final linkedStore = InMemoryLinkedStore();
+      // Another operator's sync materialized the shared overview.
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+      final passive = ReconcileHarness(linkedStore: linkedStore);
+      expect(passive.controller.phase, ReconcilePhase.idle);
+
+      await passive.controller.loadOverview();
+
+      // The shared overview is in hand…
+      expect(passive.controller.hasOverview, isTrue);
+      // …but this session has pulled nothing and linked nothing, so it is
+      // still idle. `ready` claims "the last pass finished and `linked` is
+      // current", which would be a straight untruth here — and because the
+      // store read resolves before the first frame, that untruth is what kept
+      // the screen's idle explainer from ever being painted (#275).
+      expect(passive.controller.phase, ReconcilePhase.idle);
+      expect(passive.controller.linked, isNull);
+      expect(passive.controller.busy, isFalse);
+
+      // A real pass is what moves it off idle.
+      await passive.controller.sync();
+      expect(passive.controller.phase, ReconcilePhase.ready);
+      expect(passive.controller.linked, isNotNull);
+    });
+
     test('onStoreChanged refetches the overview and the open classroom',
         () async {
       final linkedStore = InMemoryLinkedStore();
@@ -2227,6 +2256,142 @@ void main() {
       expect(w.accounts, hasLength(3));
       expect(w.accepted, isFalse,
           reason: 'a new colliding account must re-surface the warning');
+    });
+  });
+
+  group('a class entry that owes two writes (#272)', () {
+    /// The Smartschool half: the recorded SOAP action is the fully-qualified
+    /// `…V3#saveClass`.
+    bool savedAClass(ReconcileHarness h) =>
+        h.soap.soapActions.any((a) => a.endsWith('#saveClass'));
+
+    PendingAccountEntry entryOf(ReconcileHarness h) =>
+        h.controller.groupPendingEntries
+            .firstWhere((e) => e.targetId == '5WW1');
+
+    test('offers the Office 365 create beside the Smartschool either/or',
+        () async {
+      final h = newClassNeedingBothWritesHarness();
+      await h.controller.sync();
+
+      final entry = entryOf(h);
+      expect(
+        entry.choices.map((c) => c.selected.kind),
+        ['CreateAzureClassGroup', 'AddToSmartschool'],
+        reason: 'two decisions on one card, and both are selected to run',
+      );
+      expect(h.controller.applyScope(<PendingAccountEntry>[entry]).systems,
+          [core.Origin.azure, core.Origin.smartschool]);
+    });
+
+    test('applying it creates the Smartschool class *and* the Office 365 group',
+        () async {
+      final h = newClassNeedingBothWritesHarness();
+      await h.controller.sync();
+
+      await h.controller.applyEntry(entryOf(h));
+
+      expect(savedAClass(h), isTrue);
+      expect(h.graph.createdGroups, hasLength(1));
+      expect(h.graph.createdGroups.single['displayName'], 'GBS-5WW1');
+      // …and the create chained its roster write (#245), so the group is not
+      // left empty by the one click that made it.
+      expect(h.graph.batchedWrites, hasLength(2));
+      expect(
+        h.controller.groupPendingEntries.map((e) => e.targetId),
+        isNot(contains('5WW1')),
+        reason: 'both writes landed, so the class owes nothing',
+      );
+    });
+
+    test('a refused Office 365 create does not stop the Smartschool half',
+        () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+
+      await h.controller.applyEntry(entryOf(h));
+
+      expect(savedAClass(h), isTrue,
+          reason: 'a failed action must not abort the rest of the pass');
+      expect(
+        h.controller.applyResults!.map((r) => r.outcome),
+        [actions.ActionOutcome.failed, actions.ActionOutcome.applied],
+      );
+    });
+
+    test('a refused Office 365 create is reported on the entry that owed it',
+        () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+      await h.controller.applyEntry(entryOf(h));
+
+      // The card's own verdict — the whole of #272. Before this the only two
+      // records of the refusal were a log line on another screen and a row in a
+      // results section below the entire inventory.
+      final entry = entryOf(h);
+      final outcomes = h.controller.applyOutcomesFor(entry);
+      expect(outcomes, hasLength(2));
+      expect(outcomes.first.outcome, actions.ActionOutcome.failed);
+      expect(outcomes.first.changes.summary,
+          'Maak de Office 365-groep GBS-5WW1 voor klas 5WW1');
+      expect(
+          '${outcomes.first.error}', contains('Authorization_RequestDenied'));
+      expect(outcomes.last.outcome, actions.ActionOutcome.applied);
+      expect(
+          outcomes.last.changes.summary, 'Voeg deze klas toe aan Smartschool');
+    });
+
+    test('a refused create stays on the card, so it can be run again',
+        () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+      await h.controller.applyEntry(entryOf(h));
+
+      final entry = entryOf(h);
+      expect(
+          entry.choices.map((c) => c.selected.kind), ['CreateAzureClassGroup'],
+          reason: 'a failed write left the record alone, so it is re-offered');
+      expect(entry.canApply, isTrue);
+
+      // And a retry against a tenant that no longer refuses it lands.
+      h.graph.refuseGroupCreates = false;
+      await h.controller.applyEntry(entry);
+      expect(h.graph.createdGroups, hasLength(1));
+      expect(h.graph.createdGroups.single['displayName'], 'GBS-5WW1');
+    });
+
+    test("another entry's verdict never lands on this card", () async {
+      final h = newClassChoiceHarness();
+      await h.controller.sync();
+      final one = h.controller.groupPendingEntries
+          .firstWhere((e) => e.targetId == '1A');
+      final other = h.controller.groupPendingEntries
+          .firstWhere((e) => e.targetId == '1B');
+
+      await h.controller.applyEntry(one);
+
+      expect(h.controller.applyOutcomesFor(other), isEmpty);
+      expect(
+        h.controller
+            .applyOutcomesFor(one)
+            .map((o) => o.changes.summary)
+            .toList(),
+        contains('Voeg deze klas toe aan Smartschool'),
+      );
+    });
+
+    test('a sync clears the verdict a previous pass left on a card', () async {
+      final h = newClassNeedingBothWritesHarness();
+      h.graph.refuseGroupCreates = true;
+      await h.controller.sync();
+      await h.controller.applyEntry(entryOf(h));
+      expect(h.controller.applyOutcomesFor(entryOf(h)), isNotEmpty);
+
+      await h.controller.checkDrift();
+      expect(h.controller.applyOutcomesFor(entryOf(h)), isEmpty);
     });
   });
 

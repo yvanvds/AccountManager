@@ -34,8 +34,13 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// Students and staff are partitioned out of the single flat Smartschool
 /// account list by [SmartschoolAccount] `role`: teacher/director ⇒ staff,
 /// everything else ⇒ student. Azure orphans split per INV-22:
-/// `companyName == schoolPrefix` keeps a former *student*, `department`
-/// containing the prefix keeps a former *staff* member.
+/// [studentBelongsToSchool] (`companyName == schoolPrefix`) keeps a former
+/// *student*, [staffBelongsToSchool] (`department` *contains* the prefix, the
+/// comma-separated list other software maintains, #237) keeps a former *staff*
+/// member. Both predicates live in `account_core` rather than here (#279): the
+/// Azure connector's client-side reads must apply the identical rule, because a
+/// read narrower than the linker throws rows away before the linker can ask
+/// about them.
 ///
 /// Fixes carried over from the legacy linker:
 /// - **INV-12:** every `mail`/`upn`/id comparison is trimmed and
@@ -281,7 +286,7 @@ List<_Record> _buildStudentRecords(
 
     if (target != null) {
       target.azure = user;
-    } else if (_matchesPrefix(user.companyName, schoolPrefix)) {
+    } else if (studentBelongsToSchool(user.companyName, schoolPrefix)) {
       records.add(_Record(azure: user));
     }
     // else: a user belonging to another school — not our concern, dropped.
@@ -382,7 +387,7 @@ List<_StaffRecord> _buildStaffRecords(
 
     if (target != null) {
       target.azure = user;
-    } else if (_departmentMatchesPrefix(user.department, schoolPrefix)) {
+    } else if (staffBelongsToSchool(user.department, schoolPrefix)) {
       records.add(_StaffRecord(azure: user));
     }
     // else: a user belonging to another school/population — dropped.
@@ -460,10 +465,12 @@ List<_StaffRecord> _buildStaffRecords(
 ///
 /// Azure carries no `official`-style signal — [az.AzureGroup] is just
 /// `{id, displayName, securityEnabled, mail, mailNickname}` — so an unmatched
-/// Azure group is kept as an orphan *unless* its name looks administrative (see
-/// [_looksLikeClassGroup]); staff/directorate/secretariat groups are excluded
-/// by name rather than included by one, since there is no positive
-/// class-group signal to include by.
+/// Azure group is kept as an orphan only when the name it carries is shaped
+/// like a class (see [_looksLikeClassGroup] and [looksLikeClassName], #271).
+/// The naming convention `<PREFIX>-<KLAS>` this app writes (#228) *is* the
+/// positive signal, so this is an allowlist; before #271 it was a denylist of
+/// four staff-group suffixes, which kept every other prefixed group — subject,
+/// project and council groups included — as a class orphan.
 ///
 /// Confidence mirrors accounts/staff: `high` only when all three systems carry
 /// the group — and because the match key *is* the (normalized) name, presence
@@ -582,13 +589,23 @@ List<LinkedGroup> _linkGroups(
   //    our `<PREFIX>-` namespace falls back to the pre-#228 exact-`displayName`
   //    match, so an unprefixed group somebody made by hand still links.
   //
+  //    …and when the display name says nothing, the **mailNickname** does
+  //    (#280). The address is what makes a class group ours — it is the key the
+  //    create collides on and the key the pull's back-fill adopts by — so a
+  //    group answering on `<PREFIX>-<KLAS>` whose display name somebody renamed
+  //    by hand is the class's group all the same. Without this leg the adopted
+  //    row reaches the linker and is dropped again, and the create it was
+  //    supposed to retire keeps being proposed.
+  //
   //    An Azure group matching no existing record becomes an orphan too (#52),
-  //    but only when it looks like a stale class rather than a
-  //    staff/administrative group.
+  //    but only when the name it carries is shaped like a class (#271) — a
+  //    prefixed group whose remainder is `GOK`, `OKAN` or `Leerlingenraad` is
+  //    not a class group and belongs in no class inventory.
   for (final group in azureSnapshot.groups) {
     final key = normalizeGroupName(group.displayName);
     if (key == null) continue;
-    final bare = azureClassNameOf(group.displayName, schoolPrefix);
+    final bare = azureClassNameOf(group.displayName, schoolPrefix) ??
+        azureClassNameOf(group.mailNickname, schoolPrefix);
     final ofClass = bare == null ? null : byClassName[normalizeGroupName(bare)];
     if (ofClass != null && ofClass.isNotEmpty) {
       for (final rec in ofClass) {
@@ -599,10 +616,7 @@ List<LinkedGroup> _linkGroups(
     final existing = byName[key];
     if (existing != null) {
       existing.azure ??= group;
-    } else if (_looksLikeClassGroup(group.displayName)) {
-      // The denylist is checked against the *full* display name on purpose:
-      // `GBS-Personeel` only ends in a staff suffix before the prefix is
-      // stripped.
+    } else if (_looksLikeClassGroup(group.displayName, bare)) {
       final rec = _GroupRecord(azure: group, className: bare);
       records.add(rec);
       byName[key] = rec;
@@ -626,31 +640,36 @@ List<LinkedGroup> _linkGroups(
   ];
 }
 
-/// Azure AD group-name suffixes that mark a *staff*/administrative group
-/// rather than a class — ported from the literal names legacy
-/// `AddToAzureStaffGroup`/`AddToStaffGroup` look up via `FindGroupByName`
-/// (`{prefix}-Personeel`, `-Directie`, `-Secretariaat`, `-Leraren`). Checked
-/// as a case-insensitive suffix so it applies regardless of the school's
-/// actual prefix.
+/// Whether an unmatched Azure group is kept as a stale-class orphan (#52) —
+/// an **allowlist** on the class-name shape since #271, where it used to be a
+/// four-suffix denylist (`-personeel`, `-directie`, `-secretariaat`,
+/// `-leraren`).
 ///
-/// This is a denylist, not an allowlist, because [az.AzureGroup] carries no
-/// positive class-group signal: `securityEnabled` doesn't split the
-/// populations either — legacy creates both a security-group and a plain
-/// variant of `{prefix}-Personeel` for the same staff population.
-const List<String> _nonClassGroupSuffixes = [
-  '-personeel',
-  '-directie',
-  '-secretariaat',
-  '-leraren',
-];
-
-/// Whether an unmatched Azure group is plausible as a stale class rather than
-/// a known staff/administrative group. See [_nonClassGroupSuffixes].
-bool _looksLikeClassGroup(String? displayName) {
-  final name = normalizeGroupName(displayName);
-  if (name == null) return false;
-  return !_nonClassGroupSuffixes.any(name.endsWith);
-}
+/// The denylist was written because [az.AzureGroup] carried no positive
+/// class-group signal — `securityEnabled` does not split the populations
+/// either, since legacy creates both a security and a plain variant of
+/// `{prefix}-Personeel` for the same staff population. That stopped being true
+/// with #228: the app now *creates* class groups as `<PREFIX>-<KLAS>` through
+/// [azureClassGroupName], so the naming convention itself is the signal, and
+/// [looksLikeClassName] can test the remainder [azureClassNameOf] recovered.
+///
+/// The consequence is the whole of #271. The Azure snapshot is prefix-scoped by
+/// the connector, so a denylist kept **every** prefixed group that was not one
+/// of those four — `SSM - GOK`, `SSM - Leerlingenraad`, `SSM - Frans - 3D` —
+/// each of them an orphan record, a Klasgroepen row, and no action to take on
+/// it. The allowlist keeps only what is shaped like a class, and
+/// `SSM-Personeel` now fails it on its own (`Personeel` is not a class name),
+/// which is why the four suffixes are gone rather than kept alongside.
+///
+/// [bare] is the remainder inside our `<PREFIX>-` namespace, or null for a
+/// group outside it. A group *outside* the namespace is judged on its full
+/// [displayName], which preserves the pre-#228 behaviour for the hand-made,
+/// unprefixed `5A` somebody created without the school's prefix: the exact-name
+/// match above adopts it when a class owns it, and this keeps it as an orphan
+/// when none does. It carries no recoverable class name, so it raises no
+/// stale-group action either way — see `AzureClassGroupWithoutClass`.
+bool _looksLikeClassGroup(String? displayName, String? bare) =>
+    looksLikeClassName(bare ?? displayName);
 
 /// Projects a [wapi.WisaClassGroup] to the canonical [Group] that
 /// [LinkedGroup.wisa] expects. The group is identified and named by its
@@ -779,24 +798,6 @@ bool _seedsClassGroups(
 ) =>
     _isOurWisaSchool(schoolId, ourSchoolIds) &&
     !virtualSchoolIds.contains(schoolId);
-
-/// Whether an Azure user's [companyName] marks it as one of the school's own
-/// (a current or former student). Trimmed + case-insensitive.
-bool _matchesPrefix(String? companyName, String schoolPrefix) {
-  final company = _norm(companyName);
-  final prefix = _norm(schoolPrefix);
-  return company != null && prefix != null && company == prefix;
-}
-
-/// Whether an Azure user's [department] marks it as one of the school's own
-/// staff (a current or former staff member). Per INV-22 the staff signal is a
-/// *substring* match (`department` contains the prefix), unlike the student
-/// signal which is an exact `companyName` equality. Trimmed + case-insensitive.
-bool _departmentMatchesPrefix(String? department, String schoolPrefix) {
-  final dept = _norm(department);
-  final prefix = _norm(schoolPrefix);
-  return dept != null && prefix != null && dept.contains(prefix);
-}
 
 /// The natural key handed to the [PersonIdResolver]: `wisaId → mail → upn →
 /// azureId`, normalized and namespaced so the resolver mints a stable, derived
