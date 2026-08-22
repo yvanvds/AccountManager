@@ -49,25 +49,6 @@ void main() {
       expect(transport.soapActions, isEmpty);
     });
 
-    test('ModifyStaffAzureSchool dry run: no PATCH, repaired value projected',
-        () async {
-      final transport = RecordingGraphTransport();
-      final connectors = Connectors(azure: azureConnector(transport));
-      final action = ModifyStaffAzureSchool(
-        linkedStaff(
-          wisa: wisaStaff(),
-          smartschool: ssStaff(),
-          azure: azureStaff(department: 'OTHER - Wiskunde'),
-        ),
-        cfg,
-      );
-
-      final result = await action.apply(connectors, ApplyOptions.dry);
-      expect(result.outcome, ActionOutcome.dryRun);
-      expect(transport.requests, isEmpty);
-      expect((result.azure! as az.AzureUser).department, 'SSM - Wiskunde');
-    });
-
     test('SetStaffCopyCode dry run: no write, padded fax projected', () async {
       final transport = RecordingSmartschoolTransport();
       final connectors =
@@ -344,38 +325,40 @@ void main() {
     });
 
     test(
-        'ModifyStaffAzureSchool: PATCHes department so the next bulk read can '
-        'see the account (#233)', () async {
-      final transport = RecordingGraphTransport();
-      final connectors = Connectors(azure: azureConnector(transport));
-      final action = ModifyStaffAzureSchool(
-        linkedStaff(
-          wisa: wisaStaff(),
-          smartschool: ssStaff(),
-          azure: azureStaff(id: 'az-moved', department: 'OTHER - Wiskunde'),
-        ),
-        cfg,
-      );
-
-      final result = await action.apply(connectors, const ApplyOptions());
-      expect(result.outcome, ActionOutcome.applied);
-      expect(result.system, Origin.azure);
-
-      final patch = transport.requests
-          .singleWhere((r) => r.method == 'PATCH', orElse: () => throw 'none');
-      expect(patch.url.path, contains('az-moved'));
-      expect(
-        jsonDecode(patch.body!) as Map<String, dynamic>,
-        {'department': 'SSM - Wiskunde'},
-        reason: 'only the department is touched, prefix first',
-      );
-      // Prefix-first is the whole point: it is the `startswith(department, …)`
-      // leg of UserManager.filterFor, so the school-scoped pull now returns the
-      // account without the employeeId back-fill having to find it (#231).
-      expect(
-        (result.azure! as az.AzureUser).department!.startsWith('SSM'),
-        isTrue,
-      );
+        'no staff action ever PATCHes an existing account\'s department (#237)',
+        () async {
+      // `department` is owned by other software and lists every school the
+      // teacher is active at (`GBS,SSM`). The removed #233 repair fired on any
+      // list our prefix did not lead and rewrote it to a bare `SSM`, deleting
+      // the sibling school's claim. Nothing may write it again — asserted over
+      // the whole staff family, not one action, so a reintroduction anywhere
+      // fails here.
+      for (final department in <String?>[
+        'GBS,SSM',
+        'SSM,GBS',
+        'GBS',
+        'OTHER - Wiskunde',
+        null,
+      ]) {
+        final transport = RecordingGraphTransport();
+        final connectors = Connectors(
+          azure: azureConnector(transport),
+          smartschool: smartschoolConnector(RecordingSmartschoolTransport()),
+        );
+        final staff = linkedStaff(
+          wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
+          smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
+          azure: azureStaff(id: 'az-moved', department: department),
+        );
+        for (final action in staffActionsFor(staff, cfg)) {
+          await action.apply(connectors, const ApplyOptions());
+        }
+        expect(
+          transport.requests.where((r) => r.method == 'PATCH'),
+          isEmpty,
+          reason: 'department: $department',
+        );
+      }
     });
 
     test('RemoveStaffFromAzure: deletes the user', () async {

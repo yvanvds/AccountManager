@@ -86,13 +86,15 @@ class UserManager {
   };
 
   /// Server-side `$filter` selecting the school's users: students carry the
-  /// prefix in `companyName`; staff carry it at the start of `department`.
+  /// prefix in `companyName`; staff carry it somewhere in `department`.
   ///
-  /// `startswith` matches the legacy convention where staff `department` is set
-  /// to exactly the prefix. Graph does **not** support `contains` server-side
-  /// on these properties, so an installation that buries the prefix mid-string
-  /// in `department` must use [loadClientFiltered] instead (documented in the
-  /// README).
+  /// Staff `department` is maintained by other software as a comma-separated
+  /// list of every school prefix the teacher is active at (`GBS,SSM`), so
+  /// `startswith` matches only when we happen to be listed first. Graph does
+  /// **not** support `contains` server-side on these properties, so the staff
+  /// this leg misses are found by the `employeeId` back-fill (#231) instead;
+  /// [loadClientFiltered] is the documented fallback for an installation that
+  /// needs the bulk read itself to see them.
   static String filterFor(String schoolPrefix) {
     final p = _escapeODataString(schoolPrefix);
     return "companyName eq '$p' or startswith(department,'$p')";

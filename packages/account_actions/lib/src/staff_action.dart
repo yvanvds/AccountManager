@@ -574,83 +574,31 @@ class DontImportStaffFromWisa extends StaffAction {
 // Modify actions — evaluated only when all three systems are present (§6.3).
 // ---------------------------------------------------------------------------
 
-/// Stamp the school prefix on a staff member's Azure `department` — the staff
-/// counterpart of [ModifyAzureSchool], which the legacy family never had
-/// (#233).
-///
-/// **Why the family needs one.** Students carry the school marker in
-/// `companyName`; staff carry it in `department`. #231 taught the Azure pull to
-/// adopt a moved staff member's existing account by `employeeId`, but nothing
-/// then wrote our marker onto it, so the account stayed invisible to the
-/// school-scoped bulk read (`UserManager.filterFor`'s
-/// `startswith(department, <prefix>)` leg) and had to be re-adopted by the
-/// back-fill on *every* pass. Worse, once the member leaves WISA their id drops
-/// out of `managedStaffEmployeeIds`, the back-fill stops asking, and the account
-/// goes invisible for good — no `RemoveStaffFromAzure` is ever proposed. Setting
-/// the field is what makes the adoption stick.
-///
-/// **Trigger.** A `department` that does not *start with* the prefix — a
-/// **missing** one included, exactly as #224 taught [ModifyAzureSchool] to treat
-/// a null `companyName`. `startswith` (not the linker's laxer `contains`) is the
-/// criterion on purpose: it is precisely the server-side test the next bulk read
-/// applies, so one apply is guaranteed to make the account visible on its own.
-///
-/// **What it writes — an assumption worth stating.** Staff `department` values
-/// in real data carry a suffix (`Arcadia - Wiskunde`) where a student's
-/// `companyName` is flat, so overwriting the field with the bare prefix would
-/// discard whatever the other school wrote there. This action assumes the shape
-/// `<school>` or `<school> - <suffix>` and replaces **only** the leading school
-/// segment, preserving the rest: `OTHER - Wiskunde` → `<prefix> - Wiskunde`, a
-/// bare `OTHER` → `<prefix>`, and an unset field → `<prefix>` (what
-/// [AddStaffToAzure] writes on create). The legacy staff `RemoveFromAzure`
-/// renders this field under a **"Active Schools"** header and both linkers test
-/// it with `contains`, which hints it might instead enumerate several schools —
-/// in which case replacing the head segment evicts a sibling school's claim and
-/// this is the line to revisit. Filed as #237; nothing in either codebase ever
-/// writes such a value today.
-class ModifyStaffAzureSchool extends StaffAction {
-  const ModifyStaffAzureSchool(super.staff, super.config);
-
-  /// The repaired `department`: our prefix, plus whatever the field already
-  /// carried after the first ` - `.
-  String get _department =>
-      _withSchoolPrefix(_az.department, config.schoolPrefix);
-
-  @override
-  bool evaluate() {
-    final prefix = _n(config.schoolPrefix);
-    // No prefix configured: there is nothing to stamp, and blanking the field
-    // would only make the account less findable than it already is.
-    if (prefix == null) return false;
-    final department = _n(_az.department);
-    return department == null || !department.startsWith(prefix);
-  }
-
-  @override
-  ChangeSet describeChanges() => ChangeSet(
-        system: Origin.azure,
-        summary: 'Wijzig de school in Azure',
-        fields: [
-          FieldChange(
-            'department',
-            before: _az.department,
-            after: _department,
-          ),
-        ],
-      );
-
-  @override
-  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) {
-    final department = _department;
-    return _azurePatch(
-      connectors,
-      options,
-      describeChanges(),
-      (users) => users.updateUser(_az.id, department: department),
-      () => _az.copyWith(department: department),
-    );
-  }
-}
+// There is deliberately **no** staff `department` repair here (#237). A staff
+// member's `department` is not ours to write: it is maintained by other
+// software as a comma-separated list of the school prefixes the teacher is
+// currently active at (`GBS,SSM`), and we only ever *read* it — the linker's
+// `contains` test (INV-22) is the correct way to ask "is this teacher active at
+// our school?".
+//
+// The `ModifyStaffAzureSchool` action added in #233 wrote it, and both halves
+// were wrong. It fired whenever `department` did not *start with* our prefix,
+// so it fired for every teacher whose list merely names us second — an ordinary
+// state, not an edge case. And its repair looked for a ` - ` separator that a
+// comma list does not contain, so applying it collapsed `GBS,SSM` to a bare
+// `SSM` and silently destroyed the sibling school's claim in a field we do not
+// own. Removed whole rather than narrowed: there is no value of this field we
+// are entitled to write onto an account that already exists.
+//
+// [AddStaffToAzure] still writes the bare prefix when it *creates* an account,
+// which cannot destroy anything — the account, and therefore the field, did not
+// exist a moment earlier.
+//
+// The two real problems #233 was aimed at survive the removal and are tracked
+// separately: the bulk read's `startswith(department, …)` leg misses staff
+// whose list does not lead with us, and a staff member who leaves WISA drops
+// out of the `employeeId` back-fill and so goes invisible instead of raising a
+// [RemoveStaffFromAzure].
 
 /// Correct the Smartschool internal number to equal the WISA staff
 /// [wapi.WisaStaff.code] (staff bridge to Smartschool, spec §4). Ported from
@@ -825,37 +773,10 @@ class SetStaffCopyCode extends StaffAction {
 // Shared apply helpers for the modify actions.
 // ---------------------------------------------------------------------------
 
-extension _AzurePatch on StaffAction {
-  /// Runs an Azure PATCH ([write]) unless dry-run, and returns the projected
-  /// [record] as the mutated source record.
-  Future<ActionResult> _azurePatch(
-    Connectors connectors,
-    ApplyOptions options,
-    ChangeSet changes,
-    Future<void> Function(az.UserManager users) write,
-    az.AzureUser Function() record,
-  ) async {
-    if (options.dryRun) {
-      return ActionResult(
-        outcome: ActionOutcome.dryRun,
-        changes: changes,
-        system: Origin.azure,
-        azure: record(),
-      );
-    }
-    try {
-      await write(_requireAzure(connectors).users);
-      return ActionResult(
-        outcome: ActionOutcome.applied,
-        changes: changes,
-        system: Origin.azure,
-        azure: record(),
-      );
-    } on Object catch (e) {
-      return _failed(changes, Origin.azure, e);
-    }
-  }
-}
+// The staff family has no Azure-PATCH helper: the only staff modify action that
+// ever wrote to Azure was the `department` repair removed in #237, and
+// `RemoveStaffFromAzure` deletes rather than patches. The student family keeps
+// its own `_azurePatch`.
 
 extension _SmartschoolSave on StaffAction {
   /// Saves [updated] to Smartschool (`saveUser` with an unchanged password)
@@ -912,22 +833,6 @@ String _copyCode(String? wisaId) {
     code = '0$code';
   }
   return code;
-}
-
-/// Separates the school segment of a staff `department` from the rest of the
-/// value (`Arcadia - Wiskunde`). See [ModifyStaffAzureSchool] for the shape
-/// this assumes.
-const String _departmentSeparator = ' - ';
-
-/// [department] with its leading school segment replaced by [schoolPrefix], the
-/// suffix after the first [_departmentSeparator] preserved verbatim. A value
-/// with no separator is all school segment, so it is replaced whole; a blank or
-/// missing one becomes the bare prefix (what [AddStaffToAzure] writes on
-/// create).
-String _withSchoolPrefix(String? department, String schoolPrefix) {
-  final current = department?.trim() ?? '';
-  final at = current.indexOf(_departmentSeparator);
-  return at < 0 ? schoolPrefix : '$schoolPrefix${current.substring(at)}';
 }
 
 /// Trims + lower-cases for case-insensitive comparison (INV-12); blank → null.

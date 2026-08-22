@@ -20,10 +20,12 @@ import 'staff_action_config.dart';
 /// dispatched here: they evaluate against Office 365 group membership, which a
 /// [LinkedStaff] does not carry (see the package README).
 ///
-/// [ModifyStaffAzureSchool] has no legacy counterpart at all — the staff family
-/// never had a `department` repair (#233). Like the student `ModifyAzureSchool`
-/// it sits in the modify branch, so an adopted account is stamped on the pass
-/// *after* its Smartschool side is built and the record is complete.
+/// The modify branch has **no** Azure `department` repair, and must not grow one
+/// (#237): a staff member's `department` is owned by other software and holds a
+/// comma-separated list of the school prefixes they are active at, so the only
+/// correct thing to do with it is read it. The `ModifyStaffAzureSchool` this
+/// branch briefly carried (#233) fired for every teacher our prefix did not lead
+/// the list for, and rewrote `GBS,SSM` to a bare `SSM`.
 ///
 /// A staff member with no Smartschool account raises [DontImportStaffFromWisa]
 /// *and* exactly one of [AddStaffToAzure] / [AddStaffToSmartschool]. Those are
@@ -42,7 +44,6 @@ List<StaffAction> staffActionsFor(
 
   final candidates = complete
       ? <StaffAction>[
-          ModifyStaffAzureSchool(staff, config),
           UpdateStaffWisaName(staff, config),
           ModifySmartschoolStaffEmail(staff, config),
           SetStaffCopyCode(staff, config),
