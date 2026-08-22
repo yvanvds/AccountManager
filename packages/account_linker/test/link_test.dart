@@ -455,6 +455,56 @@ void main() {
       );
     });
 
+    test(
+        'a class group renamed by hand still links, by the address it answers '
+        'on (#280)', () {
+      // The whole of #280. `listGroups` is `startswith(displayName,…)`, so this
+      // group is invisible to the pull until the connector's nickname back-fill
+      // adopts it — and then the linker has to *recognise* it, or the row is
+      // dropped again and the create it was meant to retire keeps coming back.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('5WW1')]),
+        ssSnap(const []),
+        azSnap(const [], groups: [
+          azureGroup(
+            'Klas van juf An',
+            id: 'g-renamed',
+            mail: '$_prefix-5WW1@student.s.be',
+            mailNickname: '$_prefix-5WW1',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.groups, hasLength(1),
+          reason: 'the class carries the group — no spurious orphan beside it');
+      final g = snapshot.groups.single;
+      expect(g.wisa!.name, '5WW1');
+      expect(g.azure!.id, 'g-renamed');
+      expect(g.className, '5WW1');
+    });
+
+    test('the nickname leg never promotes a non-class group to a class (#280)',
+        () {
+      // The address is only ever consulted for the class-name *shape*: a staff
+      // group answering on `<PREFIX>-Personeel` is no more a class than its
+      // display name made it one.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap(const [], groups: [
+          azureGroup(
+            'Personeelsgroep',
+            mailNickname: '$_prefix-Personeel',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      expect(snapshot.groups, isEmpty);
+    });
+
     test('a prefixed group whose class is gone stays an Azure orphan (#228)',
         () {
       final snapshot = link(

@@ -472,6 +472,18 @@ Future<ReconcileServices> bootstrapReconcile({
             ),
             ...managedStaffEmployeeIds(app.wisa.snapshot),
           },
+          // The same blindness on the group side (#280): `listGroups` is
+          // `startswith(displayName,'<PREFIX>')`, so an Office 365 class group
+          // somebody renamed by hand is invisible to every pull even though it
+          // still answers on our `<PREFIX>-<KLAS>` address — and the create the
+          // linker kept proposing then died on its own pre-create guard. Hand
+          // the connector the addresses this pass expects and it adopts them.
+          expectedGroupMailNicknames: (prefix) =>
+              managedClassGroupMailNicknames(
+            app.wisa.snapshot,
+            schoolPrefix: prefix,
+            ourSchoolIds: ourSchoolIdsNow(),
+          ),
           // The prefix scopes the whole Azure pull, and it is operator-editable
           // (#246). Changing it makes this pass re-read in full rather than
           // layering the new school's changes over the old school's users — and

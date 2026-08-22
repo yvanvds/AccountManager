@@ -793,13 +793,21 @@ class CreateAzureClassGroup extends GroupAction {
       // the same display name without complaint.
       final existing = await groups.findByMailNickname(plan.mailNickname);
       if (existing != null) {
+        // Advice the operator can act on, since #280: the Azure pull now looks
+        // the expected `<PREFIX>-<KLAS>` addresses up directly, so the next
+        // synchronisation really does adopt this group. Before that back-fill
+        // existed, a group whose display name had been renamed by hand was
+        // invisible to every pull, and this message sent the operator around a
+        // loop that could not end. In Dutch, because #272 put it on the class
+        // card where an operator reads it.
         return _failed(
           changes,
           Origin.azure,
           StateError(
-            'Office 365 already has a group with mailNickname '
-            '${plan.mailNickname} (${existing.displayName}). Sync Azure again '
-            'so the existing group is linked instead of creating a duplicate.',
+            'Office 365 heeft al een groep op het adres ${plan.mailNickname} '
+            '("${existing.displayName}"). Synchroniseer Azure opnieuw: die '
+            'groep wordt dan overgenomen in plaats van dat er een dubbele '
+            'wordt aangemaakt.',
           ),
         );
       }

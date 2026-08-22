@@ -583,4 +583,150 @@ void main() {
       expect(log.errors.any((m) => m.contains('unmatched')), isFalse);
     });
   });
+
+  group('class-group back-fill by mailNickname (#280)', () {
+    /// One Graph `/groups` row for the class group of #280: it still answers on
+    /// `GBS-5WW1`, but its display name was renamed by hand, so
+    /// `startswith(displayName,'GBS')` — the whole of `listGroups` — is blind to
+    /// it forever.
+    const Map<String, dynamic> renamed = <String, dynamic>{
+      'id': 'g-renamed',
+      'displayName': 'Klas van juf An',
+      'mail': 'GBS-5WW1@student.school.example',
+      'mailNickname': 'GBS-5WW1',
+    };
+
+    /// [route], plus an answer for the targeted `mailNickname in (…)` lookup.
+    GraphResponse Function(GraphRequest) routeWithGroupBackfill({
+      required List<String> lookups,
+      List<Map<String, dynamic>> hits = const [renamed],
+    }) =>
+        (req) {
+          final filter = req.url.queryParameters[r'$filter'] ?? '';
+          if (req.url.path.endsWith('/groups') &&
+              filter.startsWith('mailNickname in')) {
+            lookups.add(filter);
+            return jsonOk({'value': hits});
+          }
+          return route(req);
+        };
+
+    test(
+        'a full sync adopts the group the prefix-scoped list cannot see, asking '
+        'only about the nicknames it could not account for', () async {
+      final lookups = <String>[];
+      final transport =
+          FakeGraphTransport(routeWithGroupBackfill(lookups: lookups));
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: transport,
+        log: log,
+      );
+
+      // `groups.json` carries GBS-3A and GBS-Staff; GBS-5WW1 is the renamed one.
+      final snapshot = await connector.sync(
+        expectedGroupMailNicknames: const ['GBS-3A', 'GBS-5WW1'],
+      );
+
+      // The group already on the list was never asked about — the bounded pull
+      // (PAIN-2) stays bounded.
+      expect(lookups, ["mailNickname in ('GBS-5WW1')"]);
+      // …and the invisible group is in the snapshot, so the linker can reach it.
+      final adopted =
+          snapshot.groups.singleWhere((g) => g.mailNickname == 'GBS-5WW1');
+      expect(adopted.id, 'g-renamed');
+      expect(adopted.displayName, 'Klas van juf An');
+      expect(snapshot.groups, hasLength(3));
+      expect(
+        log.messages
+            .any((m) => m.contains('1 bestaande klasgroep(en) overgenomen')),
+        isTrue,
+      );
+    });
+
+    test('an incremental sync adopts it too — the group read is the same one',
+        () async {
+      final lookups = <String>[];
+      final transport =
+          FakeGraphTransport(routeWithGroupBackfill(lookups: lookups));
+      final connector = connectorWith(transport);
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: AzureSnapshot(
+          fetchedAt: DateTime.utc(2026, 6, 1),
+          deltaToken: 'OLDTOKEN',
+          users: const [],
+          groups: const [],
+        ),
+        expectedGroupMailNicknames: const ['GBS-5WW1'],
+      );
+
+      expect(lookups, ["mailNickname in ('GBS-5WW1')"]);
+      expect(snapshot.groups.map((g) => g.id), contains('g-renamed'));
+    });
+
+    test(
+        'a nickname the prefix-scoped list already answers on is not looked up',
+        () async {
+      final lookups = <String>[];
+      final transport =
+          FakeGraphTransport(routeWithGroupBackfill(lookups: lookups));
+      final connector = connectorWith(transport);
+
+      // `GBS-3A` is on the list by display name and carries no `mailNickname`
+      // in the fixture at all — the linker can already reach it, so asking
+      // Graph about its address would buy nothing.
+      final snapshot =
+          await connector.sync(expectedGroupMailNicknames: const ['GBS-3A']);
+
+      expect(lookups, isEmpty);
+      expect(snapshot.groups, hasLength(2));
+    });
+
+    test('a nickname the tenant has no group for changes nothing', () async {
+      final transport = FakeGraphTransport(
+        routeWithGroupBackfill(lookups: <String>[], hits: const []),
+      );
+      final connector = connectorWith(transport);
+
+      final snapshot =
+          await connector.sync(expectedGroupMailNicknames: const ['GBS-9Z']);
+      expect(snapshot.groups, hasLength(2));
+    });
+
+    test(
+        'a Graph failure on the lookup logs and leaves the snapshot otherwise '
+        'complete, rather than losing the whole pass', () async {
+      GraphResponse failingLookup(GraphRequest req) {
+        final filter = req.url.queryParameters[r'$filter'] ?? '';
+        if (req.url.path.endsWith('/groups') &&
+            filter.startsWith('mailNickname in')) {
+          return graphError(400, 'Request_UnsupportedQuery', 'nope');
+        }
+        return route(req);
+      }
+
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: FakeGraphTransport(failingLookup),
+        log: log,
+      );
+
+      final snapshot =
+          await connector.sync(expectedGroupMailNicknames: const ['GBS-5WW1']);
+
+      expect(snapshot.groups, hasLength(2));
+      expect(snapshot.users, hasLength(3));
+      expect(snapshot.deltaToken, 'PRIMEDTOKEN123');
+      expect(
+        log.errors.any((m) => m.contains('klasgroep-adres(sen) niet opzoeken')),
+        isTrue,
+      );
+    });
+  });
 }

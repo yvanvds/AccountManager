@@ -108,6 +108,25 @@ see them, at the cost of a full-tenant read.
 Note the field is read-only from here: writing our prefix over the list would
 evict a sibling school's claim (#237). Only account creation stamps it.
 
+### The same shape on the group side (#280)
+
+`GroupManager.listGroups` is `startswith(displayName,'<PREFIX>')` and nothing
+else, so an Office 365 **class group** whose display name somebody renamed by
+hand is invisible to every pull we make — even though it still answers on the
+`<PREFIX>-<KLAS>` address that makes it ours. The linker then kept proposing
+`CreateAzureClassGroup`, and every apply died on that action's own pre-create
+guard (`mailNickname` sees exactly what the pull cannot), advising a re-sync that
+provably could not help.
+
+`GroupManager.loadByMailNicknames` is the group counterpart of the `employeeId`
+back-fill: every pass hands `AzureConnector.sync` the `<PREFIX>-<KLAS>` addresses
+it expects (`account_state`'s `managedClassGroupMailNicknames`, derived from the
+students of the schools we manage), and the ones the prefix-scoped list did not
+turn up are read directly by `mailNickname` and merged in. Only the unaccounted
+ones are asked about, so the bounded pull stays bounded. The linker matches an
+Azure group on its nickname when the display name says nothing, so an adopted
+group really does attach to its class.
+
 ## Authentication
 
 OAuth2 **auth-code with PKCE** against the Microsoft identity platform, built
@@ -171,7 +190,8 @@ package defines a `TokenCache` interface and never writes plaintext to disk:
 - `UserManager` — `load`, `loadClientFiltered`, `delta`, `latestDeltaToken`,
   `getUser`, `userExists`, `createUser`, `updateUser`, `deleteUser`,
   `createPrincipalName`.
-- `GroupManager` — `listGroups`, `loadMemberIds`, `addMember`, `removeMember`,
+- `GroupManager` — `listGroups`, `loadByMailNicknames`, `findByMailNickname`,
+  `createGroup`, `deleteGroup`, `loadMemberIds`, `addMember`, `removeMember`,
   and `$batch`-coalesced `addMembers` / `removeMembers`.
 - `GraphClient` / `GraphTransport` — authenticated, paging-aware Graph access
   over a swappable transport.

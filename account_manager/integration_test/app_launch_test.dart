@@ -2373,6 +2373,88 @@ void main() {
   });
 
   testWidgets(
+      'an Office 365 group Graph already holds under our address is adopted, '
+      'and the create stops being offered end-to-end (#280)',
+      (WidgetTester tester) async {
+    // The loop #272 made visible. Office 365 already holds `5WW1`'s group — it
+    // answers on `GBS-5WW1@student.school.example` — but somebody renamed its
+    // display name, and the pull is `startswith(displayName,'GBS')` and nothing
+    // else. So the group was invisible to every sync, the linker kept proposing
+    // the create, and every apply died on the create's own pre-create guard
+    // (`mailNickname eq` sees exactly what the pull cannot) with advice to sync
+    // again that provably could not help.
+    //
+    // Only a full run can show the fix: the back-fill lives in the production
+    // Azure pull, the adoption has to survive `link()`'s Azure-group match, and
+    // "the create is no longer offered" is a claim about the class card the
+    // dispatch, the inventory and the shell compose together. A scripted Azure
+    // snapshot would beg the question by handing the app the group it is
+    // supposed to go and find.
+    useTallWindow(tester);
+    final harness = renamedClassGroupHarness();
+    final azureWire = harness.azureTransport! as RenamedClassGroupGraph;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // The pull did ask the prefix-scoped list first, and it did come back
+    // blind — so the group can only have arrived on the targeted read.
+    expect(azureWire.groupListReads, greaterThanOrEqualTo(1));
+    expect(azureWire.nicknameLookups, ["mailNickname in ('GBS-5WW1')"],
+        reason: 'only the address the pull could not account for is asked '
+            'about — the bounded pull stays bounded');
+
+    // The class is on the inventory carrying its group, and what it needs is
+    // the roster, not a create: the adopted group holds one of the two
+    // students.
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-5WW1')), findsOneWidget);
+    expect(
+      find.textContaining(
+          'Werk het ledenbestand van GBS-5WW1 bij (1 toevoegen'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Maak de Office 365-groep GBS-5WW1'),
+      findsNothing,
+      reason: 'the group exists — offering to make it is the whole bug',
+    );
+
+    List<String> kindsFor5WW1() => harness.controller.pendingEntries
+        .where((e) => e.targetId == '5WW1')
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(kindsFor5WW1(), isNot(contains('CreateAzureClassGroup')));
+    expect(kindsFor5WW1(), contains('SyncAzureClassGroupMembers'));
+
+    // …and it stays gone. "Synchroniseer Azure opnieuw" is what the refusal
+    // used to advise and what nothing could satisfy; a second pass now adopts
+    // the group again rather than re-offering the create.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    await openKlasgroepen(tester);
+
+    expect(
+      find.textContaining('Maak de Office 365-groep GBS-5WW1'),
+      findsNothing,
+    );
+    expect(kindsFor5WW1(), isNot(contains('CreateAzureClassGroup')));
+    expect(harness.graph.createdGroups, isEmpty,
+        reason: 'no duplicate group was ever written');
+    expect(azureWire.createdGroups, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Klasgroepen tab is a full class inventory with a presence column '
       'per system, and highlights the classes that need work end-to-end '
       '(#227)', (WidgetTester tester) async {

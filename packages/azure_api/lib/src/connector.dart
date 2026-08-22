@@ -99,6 +99,14 @@ class AzureConnector {
   /// carries neither our `companyName` nor our `department` — is seen instead of
   /// being proposed for a second, duplicate account.
   ///
+  /// [expectedGroupMailNicknames] are the `<PREFIX>-<KLAS>` addresses this pass
+  /// expects Office 365 class groups for — the group half of the same idea
+  /// (#280). Any the prefix-scoped [GroupManager.listGroups] did not turn up are
+  /// looked up directly by `mailNickname` and merged in
+  /// ([_adoptByMailNickname]), so a class group somebody renamed by hand is
+  /// adopted instead of being proposed for a create that its own nickname then
+  /// refuses.
+  ///
   /// [schoolPrefix] overrides [AzureCredentials.schoolPrefix] for this one pull
   /// (#246). The prefix is operator-editable in Instellingen while the app runs,
   /// but the credentials are baked into the connector at bootstrap — so the
@@ -109,10 +117,14 @@ class AzureConnector {
     String? deltaToken,
     AzureSnapshot? previous,
     Iterable<String> expectedEmployeeIds = const <String>[],
+    Iterable<String> expectedGroupMailNicknames = const <String>[],
     String? schoolPrefix,
   }) async {
     final prefix = schoolPrefix ?? credentials.schoolPrefix;
-    final groupList = await groups.listGroups(prefix);
+    final groupList = await _adoptByMailNickname(
+      await groups.listGroups(prefix),
+      expectedGroupMailNicknames,
+    );
 
     if (deltaToken == null) {
       return _fullRead(groupList, expectedEmployeeIds, prefix);
@@ -249,6 +261,81 @@ class AzureConnector {
       'gevonden zijn maar niet aan de schoolfilter voldoen (overgestapte '
       'leerlingen, en personeelsleden van wie onze school niet vooraan in '
       '"department" staat).',
+    );
+    return byId.values.toList();
+  }
+
+  /// Completes [current] with the Office 365 class groups the prefix-scoped
+  /// group read cannot see (#280): for every nickname in [expected] that no
+  /// group in [current] answers on, one targeted `mailNickname` lookup, merged
+  /// in by object id.
+  ///
+  /// The group counterpart of [_adoptByEmployeeId], and the same bug in a
+  /// different shape. [GroupManager.listGroups] is
+  /// `startswith(displayName,'<PREFIX>')` and nothing else, so a class group
+  /// whose display name somebody renamed by hand — or that was never in our
+  /// namespace — is absent from every snapshot we build, even though it still
+  /// holds the `<PREFIX>-<KLAS>` nickname that makes its address ours. The
+  /// linker therefore keeps proposing the create, and every apply dies on
+  /// `CreateAzureClassGroup`'s pre-create guard with advice ("sync Azure again")
+  /// that provably could not help. This read is what makes that advice true.
+  ///
+  /// A nickname is considered accounted for when a group already in [current]
+  /// carries it as its `mailNickname` **or** as its `displayName` — the two ways
+  /// the linker can already reach a group — so only the genuinely invisible ones
+  /// are asked about and the set stays small.
+  ///
+  /// A Graph failure here is **not** fatal, for the same reason it is not on the
+  /// account side: this step enriches a snapshot that is otherwise complete, and
+  /// losing the whole pass over it would be worse than missing one adoption.
+  /// The failure is logged as an error, and the create's own pre-create guard
+  /// still refuses to write over an existing nickname, so a missed adoption
+  /// cannot become a duplicate group.
+  Future<List<AzureGroup>> _adoptByMailNickname(
+    List<AzureGroup> current,
+    Iterable<String> expected,
+  ) async {
+    final known = <String>{
+      for (final g in current) ...<String>[
+        if ((g.mailNickname ?? '').trim().isNotEmpty)
+          g.mailNickname!.trim().toLowerCase(),
+        if (g.displayName.trim().isNotEmpty) g.displayName.trim().toLowerCase(),
+      ],
+    };
+    final missing = <String>{
+      for (final nickname in expected)
+        if (nickname.trim().isNotEmpty &&
+            !known.contains(nickname.trim().toLowerCase()))
+          nickname.trim(),
+    };
+    if (missing.isEmpty) return current;
+
+    final List<AzureGroup> adopted;
+    try {
+      adopted = await groups.loadByMailNicknames(missing);
+    } on Object catch (e) {
+      _log?.addError(
+        core.Origin.azure,
+        'Azure: kon ${missing.length} klasgroep-adres(sen) niet opzoeken — $e. '
+        'Bestaande groepen daarvoor blijven deze keer onzichtbaar.',
+      );
+      return current;
+    }
+    if (adopted.isEmpty) return current;
+
+    final byId = {for (final g in current) g.id: g};
+    var added = 0;
+    for (final g in adopted) {
+      if (byId.containsKey(g.id)) continue;
+      byId[g.id] = g;
+      added++;
+    }
+    if (added == 0) return current;
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: $added bestaande klasgroep(en) overgenomen die op ons adres '
+      'antwoorden maar wier weergavenaam niet met de schoolprefix begint '
+      '(handmatig hernoemde groepen).',
     );
     return byId.values.toList();
   }

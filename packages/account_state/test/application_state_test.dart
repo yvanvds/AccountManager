@@ -225,6 +225,61 @@ void main() {
     });
 
     test(
+        'the expected class-group addresses are read at sync time, with the '
+        'prefix this pass resolved (#280)', () async {
+      // The group half of the same seam. The addresses are `<PREFIX>-<KLAS>`,
+      // so the callback is handed the prefix the pass actually pulled with —
+      // it cannot close over a frozen one any more than the pull can.
+      var prefix = 'GBS';
+      var nicknames = <String>[];
+      final seenPrefixes = <String>[];
+      final state = SystemState<AzureSnapshot>(
+        system: core.Origin.azure,
+        syncer: azureSyncer(
+          AzureConnector(
+            credentials: AzureCredentials(
+              clientId: 'c',
+              tenantId: 't',
+              azureDomain: 'school.example',
+              schoolPrefix: 'GBS',
+            ),
+            authProvider: const StaticAuthProvider('T'),
+            transport: transport,
+          ),
+          expectedGroupMailNicknames: (p) {
+            seenPrefixes.add(p);
+            return nicknames;
+          },
+          schoolPrefix: () => prefix,
+        ),
+      );
+
+      // Nothing expected yet ⇒ no nickname lookup at all.
+      await state.sync();
+      expect(
+        transport.requests.where(
+          (r) => (r.url.queryParameters[r'$filter'] ?? '')
+              .startsWith('mailNickname in'),
+        ),
+        isEmpty,
+      );
+
+      // The WISA pull lands between the two syncs, and the operator moves the
+      // prefix; the next Azure pass asks about the *new* school's addresses.
+      prefix = 'SSM';
+      nicknames = <String>['SSM-5WW1'];
+      await state.sync();
+      expect(seenPrefixes, ['GBS', 'SSM']);
+      expect(
+        transport.requests
+            .map((r) => r.url.queryParameters[r'$filter'])
+            .whereType<String>()
+            .where((f) => f.startsWith('mailNickname in')),
+        ["mailNickname in ('SSM-5WW1')"],
+      );
+    });
+
+    test(
         'the school prefix is read at sync time too, not at wiring time (#246)',
         () async {
       // The prefix scopes the whole pull, and the operator can change it in
@@ -524,6 +579,131 @@ void main() {
         snap([student('W1'), student('W2', schoolId: 2)]),
       );
       expect(ids, {'W1', 'W2'});
+    });
+  });
+
+  group('managedClassGroupMailNicknames (#280)', () {
+    WisaStudent student(
+      String id, {
+      String classGroup = '1A',
+      String classSubGroup = '',
+      int schoolId = 1,
+    }) =>
+        WisaStudent(
+          wisaId: core.WisaId(id),
+          classGroup: classGroup,
+          classSubGroup: classSubGroup,
+          name: 'Doe',
+          firstName: 'Jane',
+          preferredName: '',
+          birthDate: DateTime.utc(2010),
+          stemId: '',
+          gender: core.Gender.female,
+          nationalId: '',
+          birthPlace: '',
+          nationality: '',
+          address: const core.Address(
+            street: '',
+            houseNumber: '',
+            postalCode: '',
+            city: '',
+            country: '',
+          ),
+          classChange: DateTime.utc(2026),
+          schoolId: schoolId,
+        );
+
+    WisaSnapshot snap(
+      List<WisaStudent> students, {
+      List<WisaSchool> schools = const [],
+    }) =>
+        WisaSnapshot(
+          fetchedAt: DateTime.utc(2026),
+          students: students,
+          staff: const [],
+          classGroups: const [],
+          schools: schools,
+        );
+
+    test('no snapshot yet ⇒ nothing expected', () {
+      expect(
+          managedClassGroupMailNicknames(null, schoolPrefix: 'GBS'), isEmpty);
+    });
+
+    test('one address per class, named after the bare class', () {
+      // Sub-groups share their parent class's one group, so `2F ECO` and
+      // `2F MAW` ask about `GBS-2F` once — never `GBS-2F ECO`.
+      expect(
+        managedClassGroupMailNicknames(
+          snap([
+            student('W1'),
+            student('W2', classGroup: '2F', classSubGroup: 'ECO'),
+            student('W3', classGroup: '2F', classSubGroup: 'MAW'),
+          ]),
+          schoolPrefix: 'GBS',
+        ),
+        {'GBS-1A', 'GBS-2F'},
+      );
+    });
+
+    test('scopes to the managed schools, like the account back-fill', () {
+      expect(
+        managedClassGroupMailNicknames(
+          snap([student('W1'), student('W2', classGroup: '9Z', schoolId: 2)]),
+          schoolPrefix: 'GBS',
+          ourSchoolIds: const {1},
+        ),
+        {'GBS-1A'},
+      );
+    });
+
+    test('falls back to the snapshot\'s own isOurs flags', () {
+      expect(
+        managedClassGroupMailNicknames(
+          snap(
+            [student('W1'), student('W2', classGroup: '9Z', schoolId: 2)],
+            schools: [
+              const WisaSchool(id: 1, name: '', code: '', isOurs: false),
+              const WisaSchool(id: 2, name: '', code: '', isOurs: true),
+            ],
+          ),
+          schoolPrefix: 'GBS',
+        ),
+        {'GBS-9Z'},
+      );
+    });
+
+    test('an unconfigured prefix asks about nothing', () {
+      // There is no `<PREFIX>-<KLAS>` to ask about, and a bare `-1A` would be
+      // somebody else's address.
+      expect(
+        managedClassGroupMailNicknames(snap([student('W1')]),
+            schoolPrefix: ' '),
+        isEmpty,
+      );
+    });
+
+    test('a name Graph would reject as a nickname is dropped', () {
+      // The plan refuses to propose such a create at all
+      // (`isValidMailNickname`), so asking about its address would buy nothing.
+      expect(
+        managedClassGroupMailNicknames(
+          snap([student('W1', classGroup: '1 A'), student('W2')]),
+          schoolPrefix: 'GBS',
+        ),
+        {'GBS-1A'},
+      );
+    });
+
+    test('collapses case but asks as WISA writes it', () {
+      final asked = managedClassGroupMailNicknames(
+        snap([
+          student('W1', classGroup: '5WW1'),
+          student('W2', classGroup: '5ww1')
+        ]),
+        schoolPrefix: 'GBS',
+      );
+      expect(asked, {'GBS-5WW1'});
     });
   });
 

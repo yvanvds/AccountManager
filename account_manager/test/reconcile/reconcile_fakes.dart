@@ -592,6 +592,139 @@ class DepartedStaffGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering the way the tenant answers for the Office 365
+/// class group of #280: it still holds the address `GBS-<class>` as its
+/// `mailNickname`, but somebody renamed its **display name** by hand, so
+/// `GroupManager.listGroups` — `startswith(displayName,'GBS')` and nothing else
+/// — cannot see it on any pull we make.
+///
+/// That is the whole bug. The linker keeps proposing `CreateAzureClassGroup`,
+/// and every apply dies on the create's own pre-create guard (`mailNickname eq`
+/// finds the group Graph is hiding from the pull), telling the operator to sync
+/// again — which provably cannot help. Only a targeted `mailNickname in (…)`
+/// read finds it, so exactly one leg can carry the group into the snapshot and a
+/// test can prove it was taken.
+///
+/// The students are served from the ordinary school-scoped bulk read: nothing is
+/// wrong with *them*, and the class needs its roster linked for the adoption to
+/// be observable as a membership diff.
+///
+/// Wire it into [ReconcileHarness.azureTransport] to drive the **production**
+/// Azure pull, the only place the back-fill lives.
+class RenamedClassGroupGraph implements az.GraphTransport {
+  RenamedClassGroupGraph({
+    this.className = '5WW1',
+    this.groupId = 'az-renamed',
+    this.renamedTo = 'Klas van juf An',
+    this.deltaToken = 'AZ-TOKEN',
+    this.visibleUsers = const <az.AzureUser>[],
+    this.memberIds = const <String>[],
+  });
+
+  /// The bare class the hidden group belongs to — its address is `GBS-<this>`.
+  final String className;
+  final String groupId;
+
+  /// What somebody renamed the group to. Deliberately outside the `GBS-`
+  /// namespace: that is what makes it invisible to the prefix-scoped list.
+  final String renamedTo;
+  final String deltaToken;
+
+  /// The students the school-scoped bulk read returns, exactly as usual.
+  final List<az.AzureUser> visibleUsers;
+
+  /// The group's members, as Graph holds them.
+  final List<String> memberIds;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every `mailNickname in (…)` filter the connector issued, in order — so a
+  /// test can prove it asked only about the addresses it could not account for.
+  final List<String> nicknameLookups = <String>[];
+
+  /// Every `startswith(displayName,…)` group list the connector issued.
+  int groupListReads = 0;
+
+  /// The bodies of every `POST /groups` — a create that must never happen.
+  final List<Map<String, dynamic>> createdGroups = <Map<String, dynamic>>[];
+
+  String get mailNickname => 'GBS-$className';
+
+  Map<String, dynamic> get _groupRow => <String, dynamic>{
+        'id': groupId,
+        'displayName': renamedTo,
+        'securityEnabled': false,
+        'mail': '$mailNickname@student.school.example',
+        'mailNickname': mailNickname,
+      };
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+
+    if (request.method == 'POST' && path.endsWith('/groups')) {
+      createdGroups.add(
+        Map<String, dynamic>.from(jsonDecode(request.body ?? '{}') as Map),
+      );
+      return _ok(<String, dynamic>{'id': 'az-should-not-happen'});
+    }
+    if (path.contains('/members')) {
+      return _ok(<String, dynamic>{
+        'value': <Map<String, dynamic>>[
+          for (final id in memberIds) <String, dynamic>{'id': id},
+        ],
+      });
+    }
+    if (path.endsWith('/groups')) {
+      if (filter.startsWith('mailNickname in')) {
+        nicknameLookups.add(filter);
+        return _ok(<String, dynamic>{
+          'value': filter.contains("'$mailNickname'")
+              ? <Map<String, dynamic>>[_groupRow]
+              : const <Object>[],
+        });
+      }
+      // The prefix-scoped list — blind to the renamed group, which is the bug.
+      groupListReads++;
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$deltaToken',
+        'value': const <Object>[],
+      });
+    }
+    if (filter.startsWith('employeeId in')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    return _ok(<String, dynamic>{
+      'value': <Map<String, dynamic>>[
+        for (final az.AzureUser u in visibleUsers)
+          <String, dynamic>{
+            'id': u.id,
+            'userPrincipalName': u.upn,
+            if (u.employeeId != null) 'employeeId': u.employeeId,
+            'displayName': u.displayName,
+            'givenName': u.givenName,
+            'surname': u.surname,
+            if (u.companyName != null) 'companyName': u.companyName,
+            'accountEnabled': u.accountEnabled,
+          },
+      ],
+    });
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [wapi.WisaSoapTransport] serving a tiny, complete WISA export for one
 /// school, so the **production** WISA pull (a real [wapi.WisaConnector] behind
 /// the real `wisaSyncer`) runs offline.
@@ -1948,6 +2081,94 @@ ReconcileHarness newClassNeedingBothWritesHarness() => ReconcileHarness(
       classTree: const SmartschoolClassTree(path: 'SCHOOL'),
     );
 
+/// A harness for the class group Graph hides from us (#280). Our school 1 runs
+/// one class, `5WW1`, with two students — correct in WISA, correct in
+/// Smartschool, and with both Office 365 accounts already in place.
+///
+/// Office 365 also already holds the class's group, answering on
+/// `GBS-5WW1@student.school.example`, but its display name was renamed by hand,
+/// so the prefix-scoped `listGroups` never returns it. The app therefore
+/// proposed creating the group, and every apply died on the create's pre-create
+/// guard with advice ("synchroniseer Azure opnieuw") that could not come true.
+///
+/// The Azure pull runs for real over [RenamedClassGroupGraph], because the
+/// nickname back-fill only exists in the production syncer — a scripted snapshot
+/// would beg the question.
+///
+/// The group holds **one** of the two students, so a successful adoption is
+/// visible as a roster proposal rather than as silence.
+///
+/// Read the wire back as
+/// `harness.azureTransport! as RenamedClassGroupGraph` to assert on what the
+/// pass actually asked Graph.
+ReconcileHarness renamedClassGroupHarness() {
+  final graph = RenamedClassGroupGraph(
+    className: '5WW1',
+    visibleUsers: [
+      azUser(
+        id: 'az-an',
+        upn: 'an.aerts@student.school.example',
+        employeeId: '1',
+        displayName: 'Aerts An',
+      ),
+      azUser(
+        id: 'az-bo',
+        upn: 'bo.bell@student.school.example',
+        employeeId: '2',
+        displayName: 'Bell Bo',
+      ),
+    ],
+    memberIds: const ['az-an'],
+  );
+  return ReconcileHarness(
+    wisa: wisaSnap(
+      students: [
+        wisaStudent(
+            wisaId: '1', classGroup: '5WW1', firstName: 'An', name: 'Aerts'),
+        wisaStudent(
+            wisaId: '2', classGroup: '5WW1', firstName: 'Bo', name: 'Bell'),
+      ],
+      schools: [wisaSchool(1)],
+      classGroups: [
+        wisaClassGroup(
+          '5WW1',
+          description: '5e jaar Wetenschappen-Wiskunde',
+          schoolCode: '111',
+          schoolId: 1,
+        ),
+      ],
+    ),
+    // In sync, so the only work this fixture raises is on the Office 365 side.
+    smartschool: ssSnap(
+      groups: [
+        ssGroup('5WW1',
+            description: '5e jaar Wetenschappen-Wiskunde',
+            instituteNumber: '111',
+            untis: '5WW1'),
+      ],
+      accounts: [
+        ssAccount(
+          uid: 'an.aerts',
+          accountId: '1',
+          mail: 'an.aerts@student.school.example',
+          givenName: 'An',
+          surname: 'Aerts',
+        ),
+        ssAccount(
+          uid: 'bo.bell',
+          accountId: '2',
+          mail: 'bo.bell@student.school.example',
+          givenName: 'Bo',
+          surname: 'Bell',
+        ),
+      ],
+      memberships: [member('an.aerts', '5WW1'), member('bo.bell', '5WW1')],
+    ),
+    azureTransport: graph,
+    ourSchoolIds: const {1},
+  );
+}
+
 /// A harness for the namesake-class either/or (#250) — the shape the #225
 /// notice leaves behind, alongside a genuinely new class so both readings are on
 /// screen at once.
@@ -2932,6 +3153,14 @@ class ReconcileHarness {
           ),
           ...managedStaffEmployeeIds(app.wisa.snapshot),
         },
+        // …and the `<PREFIX>-<KLAS>` addresses it expects class groups on
+        // (#280), exactly as `bootstrapReconcile` composes them.
+        expectedGroupMailNicknames: (prefix) => managedClassGroupMailNicknames(
+          app.wisa.snapshot,
+          schoolPrefix: prefix,
+          ourSchoolIds:
+              managedSchoolIdsOf(this.liveSettings.current) ?? ourSchoolIds,
+        ),
         // The prefix the pull scopes by, read live (#246) — the fixture's 'GBS'
         // until a test saves one in Instellingen.
         schoolPrefix: () {

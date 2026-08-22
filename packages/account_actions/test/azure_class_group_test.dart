@@ -347,7 +347,12 @@ void main() {
       );
 
       expect(result.outcome, ActionOutcome.failed);
-      expect('${result.error}', contains('already has a group'));
+      // Dutch, and pointing at the one thing that resolves it — the Azure pull
+      // now adopts a group by its nickname (#280), so "synchroniseer opnieuw"
+      // is advice the operator can act on rather than a loop.
+      expect('${result.error}',
+          contains('Office 365 heeft al een groep op het adres SSM-3A'));
+      expect('${result.error}', contains('Synchroniseer Azure opnieuw'));
       expect(transport.sent('POST', pathContains: '/groups'), isFalse);
     });
 

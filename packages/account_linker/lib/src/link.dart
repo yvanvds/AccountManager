@@ -589,6 +589,14 @@ List<LinkedGroup> _linkGroups(
   //    our `<PREFIX>-` namespace falls back to the pre-#228 exact-`displayName`
   //    match, so an unprefixed group somebody made by hand still links.
   //
+  //    …and when the display name says nothing, the **mailNickname** does
+  //    (#280). The address is what makes a class group ours — it is the key the
+  //    create collides on and the key the pull's back-fill adopts by — so a
+  //    group answering on `<PREFIX>-<KLAS>` whose display name somebody renamed
+  //    by hand is the class's group all the same. Without this leg the adopted
+  //    row reaches the linker and is dropped again, and the create it was
+  //    supposed to retire keeps being proposed.
+  //
   //    An Azure group matching no existing record becomes an orphan too (#52),
   //    but only when the name it carries is shaped like a class (#271) — a
   //    prefixed group whose remainder is `GOK`, `OKAN` or `Leerlingenraad` is
@@ -596,7 +604,8 @@ List<LinkedGroup> _linkGroups(
   for (final group in azureSnapshot.groups) {
     final key = normalizeGroupName(group.displayName);
     if (key == null) continue;
-    final bare = azureClassNameOf(group.displayName, schoolPrefix);
+    final bare = azureClassNameOf(group.displayName, schoolPrefix) ??
+        azureClassNameOf(group.mailNickname, schoolPrefix);
     final ofClass = bare == null ? null : byClassName[normalizeGroupName(bare)];
     if (ofClass != null && ofClass.isNotEmpty) {
       for (final rec in ofClass) {

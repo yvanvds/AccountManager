@@ -102,9 +102,16 @@ class ApplicationState {
 /// pull this syncer performed, the stored token and previous list are dropped
 /// and the pass re-reads in full — the same recovery #213 already makes when
 /// Graph refuses a token.
+/// [expectedGroupMailNicknames] is the group half of the same idea (#280), and
+/// is read at sync time **with the prefix this pass resolved**: the addresses
+/// are `<PREFIX>-<KLAS>`, so the callback cannot be handed a frozen prefix any
+/// more than the pull itself can. Supply
+/// [managedClassGroupMailNicknames] over `app.wisa.snapshot` for the production
+/// behaviour. Omit it and the group pull is exactly as it shipped before #280.
 Syncer<AzureSnapshot> azureSyncer(
   AzureConnector connector, {
   Iterable<String> Function()? expectedEmployeeIds,
+  Iterable<String> Function(String schoolPrefix)? expectedGroupMailNicknames,
   String Function()? schoolPrefix,
 }) {
   // The prefix the snapshot in hand was read with. Seeded from the wiring-time
@@ -126,6 +133,8 @@ Syncer<AzureSnapshot> azureSyncer(
         ...?expectedEmployeeIds?.call(),
         ...retainedStaffEmployeeIds(carried, schoolPrefix: prefix),
       },
+      expectedGroupMailNicknames:
+          expectedGroupMailNicknames?.call(prefix) ?? const <String>[],
       schoolPrefix: prefix,
     );
   };
@@ -157,6 +166,46 @@ Set<String> managedStudentEmployeeIds(
       if (effective.isEmpty || effective.contains(student.schoolId))
         if (student.wisaId.value.trim().isNotEmpty) student.wisaId.value.trim(),
   };
+}
+
+/// The `<PREFIX>-<KLAS>` addresses this pass expects Office 365 class groups on
+/// — the group counterpart of [managedStudentEmployeeIds], and what
+/// [azureSyncer] hands the connector so a group Graph already holds under one of
+/// them is adopted rather than endlessly proposed for a create (#280).
+///
+/// Derived from the **students**, not from the class list, and deliberately so:
+/// a class with no students of ours gets no Office 365 group proposed
+/// (`AzureClassGroupPlan.containsStudents`), so asking Graph about its address
+/// would grow a bounded pull for a group nothing would ever create. The bare
+/// class name is `WisaStudent.classGroup` — `2F`, never the sub-grouped
+/// `2F ECO`, since sub-groups share the parent class's one group.
+///
+/// [ourSchoolIds] scopes the students exactly as [managedStudentEmployeeIds]
+/// does, with the same `null`-means-unconfigured fallback to the snapshot's own
+/// `MarkAsOurs` flags. A name that would not survive as a Graph `mailNickname`
+/// is dropped, mirroring the plan that would refuse to propose it.
+///
+/// Names collapse case-insensitively (INV-12) but are asked about as WISA writes
+/// them, so the filter Graph receives is the address the app would create.
+Set<String> managedClassGroupMailNicknames(
+  WisaSnapshot? snapshot, {
+  required String schoolPrefix,
+  Set<int>? ourSchoolIds,
+}) {
+  if (snapshot == null || schoolPrefix.trim().isEmpty) return const <String>{};
+  final effective = ourSchoolIds ??
+      <int>{
+        for (final school in snapshot.schools)
+          if (school.isOurs) school.id,
+      };
+  final byKey = <String, String>{};
+  for (final student in snapshot.students) {
+    if (effective.isNotEmpty && !effective.contains(student.schoolId)) continue;
+    final nickname = core.azureClassGroupName(schoolPrefix, student.classGroup);
+    if (nickname == null || !core.isValidMailNickname(nickname)) continue;
+    byKey.putIfAbsent(nickname.toLowerCase(), () => nickname);
+  }
+  return byKey.values.toSet();
 }
 
 /// The WISA ids of the staff in [snapshot] — the personeel half of the ids
