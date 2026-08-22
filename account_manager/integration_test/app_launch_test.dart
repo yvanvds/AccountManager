@@ -5516,6 +5516,87 @@ void main() {
   });
 
   testWidgets(
+      'a drift check ends like a sync end-to-end: a terminal "Driftcontrole '
+      'voltooid" line, and the WISA-scholen grid named by the roster it had to '
+      'pull (#303)', (WidgetTester tester) async {
+    // The companion of the #207 journey above, for the operator whose first
+    // pass of the session is **Controleer op drift** rather than
+    // **Synchroniseer**. Both asymmetries #303 records show up here in the real
+    // app: the pass used to end on its "Gekoppeld: …" summary with nothing
+    // saying it had finished, and — although this branch really does pull WISA,
+    // because the session holds no roster yet — it left the grid on "School 25".
+    useTallWindow(tester);
+    final settings = SettingsHarness(
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisa': const WisaConnection(server: 'db.school.example', port: '1433')
+            .toJson(),
+        'wisaSchools': <Map<String, dynamic>>[
+          <String, dynamic>{'schoolId': 25, 'ours': true},
+        ],
+      }),
+    );
+    final reconcile = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 25)],
+        schools: <WisaSchool>[
+          parseSchoolRow('25,Instituut Sancta Maria-A,ISMAA'),
+        ],
+      ),
+      smartschool: ssSnap(
+          groups: const [], accounts: [ssAccount()], memberships: const []),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: const {25},
+      settingsStore: settings.store,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: reconcile.bootstrap,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    // The Log panel says the pass is over, and says which pass it was.
+    expect(find.textContaining('Driftcontrole voltooid — '), findsOneWidget);
+    expect(find.textContaining('Klaar.'), findsWidgets);
+    expect(
+      find.textContaining('Sync voltooid'),
+      findsNothing,
+      reason: 'no sync ran — the closing line must not claim one did',
+    );
+    // It pulled WISA (nothing was in hand), so the freshness box carries the
+    // roster this pass fetched for itself.
+    expect(reconcile.wisaSyncs, 1);
+    expect(
+        find.byKey(const ValueKey('reconcile-last-sync-wisa')), findsOneWidget);
+
+    // …and having pulled it, the pass repaired the stored school profiles with
+    // it — the real grid, re-read from the document, with no Opslaan pressed.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+
+    final tile = find.byKey(const ValueKey('settings-wisa-school-25-ours'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect((tester.widget<CheckboxListTile>(tile).title! as Text).data,
+        'Instituut Sancta Maria-A');
+    expect((tester.widget<CheckboxListTile>(tile).subtitle! as Text).data,
+        'ISMAA');
+    expect(find.text('School 25'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Settings/Algemeen werkdatum controls read clearly end-to-end: '
       'renamed virtual label + right-aligned switch instruction (#141)',
       (WidgetTester tester) async {

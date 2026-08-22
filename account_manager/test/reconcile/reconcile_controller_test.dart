@@ -198,6 +198,41 @@ void main() {
           'Sync voltooid — geen accountwijzigingen nodig. Klaar. '
           'Operator: operator@school.example.');
     });
+
+    test('a drift check closes with a terminal line of its own (#303)',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      h.log.clear();
+
+      await h.controller.checkDrift();
+
+      // Until #303 a drift pass logged no closing line at all: it ended on
+      // `_link`'s "Gekoppeld: …" summary, which reads exactly like a pass still
+      // in flight. It gets the same line a sync gets — named for the pass that
+      // actually ran, because a drift check is not a sync.
+      expect(
+          h.log.entries.last.message,
+          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar. '
+          'Operator: operator@school.example.');
+      expect(
+        h.log.entries.where((e) => e.message.startsWith('Sync voltooid')),
+        isEmpty,
+        reason: 'the drift pass must not claim to have synced',
+      );
+    });
+
+    test('an empty operator degrades gracefully on the drift line too (#303)',
+        () async {
+      final h = ReconcileHarness(syncedBy: '');
+      await h.controller.sync();
+      h.log.clear();
+
+      await h.controller.checkDrift();
+
+      expect(h.log.entries.last.message,
+          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar.');
+    });
   });
 
   group('the pass reports itself in Dutch (#258)', () {
@@ -509,6 +544,59 @@ void main() {
 
       expect(settings.saves, 0,
           reason: 'a sync must not rewrite the settings document for nothing');
+    });
+
+    test('a drift check that pulls WISA repairs the document too (#303)',
+        () async {
+      // The repair follows the *pull*, not the pass. `checkDrift` normally
+      // re-reads only Smartschool and Azure — but a session holding no roster
+      // yet pulls WISA first, and that branch has exactly the authority a sync
+      // has, so it heals the profiles with it instead of leaving the operator's
+      // grid saying "School 25" until they happen to press Synchroniseer.
+      final settings = InMemorySettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+        schoolProfiles: legacy.wisaSchools,
+      );
+
+      await h.controller.checkDrift();
+
+      expect(h.wisaSyncs, 1,
+          reason: 'no roster in hand, so the drift pass pulls one');
+      final saved = await settings.load();
+      expect(
+        saved.wisaSchools.map((p) => p.name),
+        ['Instituut Sancta Maria-A', 'Instituut Sancta Maria-B'],
+      );
+      expect(saved.wisaSchools.map((p) => p.code), ['ISMAA', 'ISMAB']);
+      expect(saved.wisaSchools.first.ours, isTrue);
+      expect(saved.wisaSchools.last.virtual, isTrue);
+      expect(h.log.entries.where((e) => e.isError), isEmpty);
+    });
+
+    test(
+        'a drift check over the roster in hand leaves the document alone '
+        '(#303)', () async {
+      // The deliberate other half of that decision. The merge writes WISA's
+      // name over the stored one, so a snapshot somebody else pulled hours ago
+      // must not get to overwrite a rename a fresher sync already recorded — and
+      // an ordinary drift pass never re-reads WISA, so it has nothing newer to
+      // say about the school list than the document already holds.
+      final settings = _RecordingSettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisaInitial: wisaSnap(schools: pulled),
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+        schoolProfiles: legacy.wisaSchools,
+      );
+
+      await h.controller.checkDrift();
+
+      expect(h.wisaSyncs, 0,
+          reason: 'the roster in hand is the one a drift pass links against');
+      expect(settings.saves, 0);
+      expect((await settings.load()).wisaSchools.first.name, isEmpty);
     });
 
     test('a failing settings store is logged, never fails the sync', () async {
@@ -1502,7 +1590,9 @@ void main() {
       // the issue asks for.
       expect(seen.where((v) => v > 0.0 && v < 1.0).length,
           greaterThanOrEqualTo(3));
-      expect(h.controller.progress, greaterThanOrEqualTo(0.9));
+      // …and it *finishes*: the bar used to stop on the 0.9 `_relink` set
+      // before persisting and be cleared from there (#303).
+      expect(h.controller.progress, 1.0);
     });
 
     test('an unchanged re-sync still advances past the start', () async {
@@ -1519,6 +1609,9 @@ void main() {
       expectMonotonic(seen);
       expect(seen.any((v) => v > 0.0), isTrue,
           reason: 'even the short no-changes path moves the bar off zero');
+      // The short path is a finished pass too, so it completes the bar as well
+      // — it used to stop on the 0.25 the WISA pull left it at (#303).
+      expect(h.controller.progress, 1.0);
     });
 
     test('a drift check steps the bar forward through its stages', () async {
@@ -1531,6 +1624,7 @@ void main() {
       expect(seen.first, 0.0);
       expectMonotonic(seen);
       expect(seen.where((v) => v > 0.0 && v < 1.0), isNotEmpty);
+      expect(h.controller.progress, 1.0, reason: 'and reaches the end (#303)');
     });
 
     test('an apply advances once per action, reaching 1.0', () async {

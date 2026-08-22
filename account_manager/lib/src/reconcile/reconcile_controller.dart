@@ -645,7 +645,8 @@ class ReconcileController extends ChangeNotifier {
   /// (each system pulled, linking, persisting) and once per action during an
   /// apply/dry-run, so the bar visibly *advances* rather than sitting as a
   /// motionless sweep that reads as a hung app. Reset to `0.0` when a pass
-  /// begins; meaningless (and unread) while not [busy].
+  /// begins and driven to `1.0` when it ends (#303); meaningless (and unread)
+  /// while not [busy].
   double get progress => _progress;
 
   /// Steps the pass indicator to [value] (clamped) and repaints. A pass only
@@ -1806,6 +1807,9 @@ class ReconcileController extends ChangeNotifier {
           'geen accountwijzigingen nodig.',
         );
         await _persistSystemMeta();
+        // The short path is a finished pass too, so its bar completes as well
+        // (#303) — it used to stop at the 0.25 the WISA pull left it on.
+        _setProgress(1.0);
         _logSyncComplete();
         _finish(ReconcilePhase.ready);
         return;
@@ -1871,15 +1875,22 @@ class ReconcileController extends ChangeNotifier {
   }
 
   /// Terminal "the pass is done, the screen is current" log line closing a
-  /// successful [sync] (#162). The [noChangesNeeded] path says so explicitly;
-  /// otherwise it names how many pending actions await the operator.
-  void _logSyncComplete() {
+  /// successful [sync] (#162) or [checkDrift] (#303). The [noChangesNeeded]
+  /// path says so explicitly; otherwise it names how many pending actions await
+  /// the operator.
+  ///
+  /// [pass] is the name the line opens with, because a drift check is not a
+  /// sync and saying so is the whole point of a terminal line: until #303 the
+  /// drift pass logged none at all, so it ended on [_link]'s "Gekoppeld: …" and
+  /// the operator could not tell from the Log panel whether it had finished or
+  /// was still running.
+  void _logSyncComplete({String pass = 'Sync'}) {
     // Name the operator who ran the pass when known (#169); an empty/unknown
     // operator degrades gracefully (nothing appended, no dangling "by ").
     final by = syncedBy.isEmpty ? '' : ' Operator: $syncedBy.';
     final message = _noChangesNeeded
-        ? 'Sync voltooid — geen accountwijzigingen nodig. Klaar.$by'
-        : 'Sync voltooid — ${pendingActions.length} openstaande actie(s). '
+        ? '$pass voltooid — geen accountwijzigingen nodig. Klaar.$by'
+        : '$pass voltooid — ${pendingActions.length} openstaande actie(s). '
             'Klaar.$by';
     log.addMessage(core.Origin.all, message);
   }
@@ -1893,6 +1904,18 @@ class ReconcileController extends ChangeNotifier {
   /// the roster the change never reached and publish that to the whole team
   /// (#238). The button is disabled with the same reason on screen; this guard
   /// is the backstop for every other caller.
+  ///
+  /// Ends exactly the way a [sync] does (#303): a terminal
+  /// "Driftcontrole voltooid — … Klaar." line, and a progress bar driven to the
+  /// end by [_relink]. Only the school-profile repair (#207) stays a
+  /// sync-and-only-sync affair, and deliberately: [_backfillSchoolProfiles]
+  /// writes WISA's school names and codes back over the stored ones, so the
+  /// authority to run it comes from the **pull**, not from the pass. A drift
+  /// check normally re-reads only Smartschool and Azure, and repairing the
+  /// settings document from a WISA snapshot pulled hours ago by somebody else
+  /// could undo a rename a fresher sync already recorded. The one branch below
+  /// that *does* pull WISA has exactly the authority a sync has, and repairs
+  /// with it.
   Future<void> checkDrift() async {
     if (busy) return;
     final blocked = driftBlockedReason;
@@ -1927,11 +1950,16 @@ class ReconcileController extends ChangeNotifier {
         await _renewLock();
         final pulledWith = _wisaFingerprint();
         log.addMessage(core.Origin.wisa, 'WISA ophalen…');
-        _recordPull(core.Origin.wisa, await app.sync(core.Origin.wisa));
+        final fresh = await app.sync(core.Origin.wisa) as wapi.WisaSnapshot;
+        _recordPull(core.Origin.wisa, fresh);
         _stampWisaPull(pulledWith);
+        // This branch really did pull WISA, so it may repair the stored school
+        // profiles on the strength of it, exactly as [sync] does (#303/#207).
+        await _backfillSchoolProfiles(fresh.schools);
       }
 
       await _relink();
+      _logSyncComplete(pass: 'Driftcontrole');
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       _fail(e);
@@ -2549,6 +2577,11 @@ class ReconcileController extends ChangeNotifier {
     _groupDocs = null;
     _setProgress(0.9);
     await _persist(_linked!);
+    // The pass is done: complete the bar rather than leaving it stopped at 0.9
+    // for [_finish] to clear (#303). [_persist] reports its own failures and
+    // never throws, so this is the end of the pass either way — the shared view
+    // may not have landed, but nothing is still running.
+    _setProgress(1.0);
   }
 
   /// Names every WISA class the group link passed over because Smartschool
