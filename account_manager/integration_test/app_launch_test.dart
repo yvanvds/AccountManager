@@ -2342,26 +2342,35 @@ void main() {
     expect(harness.graph.createdGroups, isEmpty);
 
     // …and the card says exactly what happened to each half, with the reason
-    // Graph gave.
-    final verdict = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
-    await tester.ensureVisible(verdict);
+    // Graph gave. Since #283 each verdict sits with the decision it answers:
+    // the refusal under the create that is still offered, the Smartschool half
+    // — whose decision the write settled — at card level.
+    final refused = find.byKey(const ValueKey('entry-outcomes-group-5WW1-0'));
+    final settled = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
+    await tester.ensureVisible(settled);
     expect(
       find.descendant(
-          of: verdict, matching: find.text('Resultaat van de vorige poging')),
+          of: refused, matching: find.text('Resultaat van de vorige poging')),
       findsOneWidget,
     );
     expect(
       find.descendant(
-          of: verdict,
+          of: refused,
           matching: find.textContaining('Authorization_RequestDenied')),
       findsOneWidget,
     );
     expect(
       find.descendant(
-          of: verdict,
+          of: settled,
           matching: find.text('Voeg deze klas toe aan Smartschool')),
       findsOneWidget,
     );
+    // Both on the one card, on screen together — the whole point of #272, which
+    // #283 splits without losing.
+    for (final block in <Finder>[refused, settled]) {
+      expect(find.descendant(of: find.byKey(entry), matching: block),
+          findsOneWidget);
+    }
 
     // The create is still offered, and running it again against a tenant that
     // allows it lands the group.
@@ -2377,6 +2386,229 @@ void main() {
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
         hasLength(1),
         reason: 'the Smartschool class was already there — no second create');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a card raising two decisions groups each one\'s fields under its own '
+      'heading end-to-end (#281)', (WidgetTester tester) async {
+    // `5WW1` is new to Smartschool *and* has no Office 365 group, so one card
+    // asks the operator two independent questions. The body used to answer them
+    // in one interleaved run: both summaries pooled in the subtitle, then the
+    // Office 365 field diff, then "Kies één oplossing:" with its radios, then
+    // the Smartschool option's diff. Nothing said which diff belonged to which
+    // decision, or that "pick one of these two" covered only half the card.
+    //
+    // Asserted end-to-end rather than on the widget alone: what a decision
+    // block *is* is decided by `entryDetail`, but which decisions a card raises
+    // is decided by the dispatch, the alternative collapse and the inventory
+    // composing — and a heading that groups nothing is exactly the bug.
+    useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+
+    // Two decisions, two blocks — the Office 365 create first, because
+    // `collapseAlternatives` emits the lone actions ahead of the either/ors.
+    final office365 = find.byKey(const ValueKey('entry-choice-group-5WW1-0'));
+    final smartschool = find.byKey(const ValueKey('entry-choice-group-5WW1-1'));
+    expect(office365, findsOneWidget);
+    expect(smartschool, findsOneWidget);
+
+    // The lone action is headed by what it does, and the fields under that
+    // heading are the group it would create.
+    expect(
+      find.descendant(
+        of: office365,
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: office365, matching: find.text('groupTypes: ∅ → Unified')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: office365,
+        matching: find.text('description: ∅ → 5e jaar Wetenschappen-Wiskunde'),
+      ),
+      findsNothing,
+      reason: "the Smartschool class's fields belong to the other decision",
+    );
+    expect(
+      find.descendant(
+          of: office365, matching: find.text('Kies één oplossing:')),
+      findsNothing,
+      reason: 'there is nothing to pick between here',
+    );
+
+    // The either/or is headed by its question, and the diff below the radios is
+    // the Smartschool class the selected half would create.
+    expect(
+      find.descendant(
+          of: smartschool, matching: find.text('Kies één oplossing:')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: smartschool,
+          matching: find.text('Negeer deze klas bij het importeren uit WISA')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: smartschool,
+        matching: find.text('description: ∅ → 5e jaar Wetenschappen-Wiskunde'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: smartschool, matching: find.text('groupTypes: ∅ → Unified')),
+      findsNothing,
+      reason: "the Office 365 group's fields belong to the other decision",
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'after a pass, a card raising two decisions still reads as two and loses '
+      'no verdict end-to-end (#283)', (WidgetTester tester) async {
+    // #281 gave each of `5WW1`'s two decisions a block of its own; the verdict
+    // lines went on pooling below both of them, saying what happened without
+    // saying to which question. Splitting them is not the mechanical move it
+    // looks like, and that is what this run is here for:
+    //
+    // - a **dry-run** settles nothing, so both decisions survive it and each
+    //   one must claim exactly its own verdict — never the other's;
+    // - an **apply** settles the half that lands, so that decision is gone from
+    //   the card the relink builds. Its verdict has no block left to sit in and
+    //   would silently vanish — losing exactly what #272 exists to show. The
+    //   reported run is that case: Smartschool lands, Graph refuses the group,
+    //   and both verdicts have to stay readable side by side.
+    //
+    // Only a full run puts it together: which decisions a card raises is
+    // decided by the dispatch, the alternative collapse and the relink after
+    // the write, and "the verdict went missing" is a claim about what survives
+    // that relink.
+    useTallWindow(tester);
+    final harness = newClassNeedingBothWritesHarness();
+    harness.graph.refuseGroupCreates = true;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    const entry = ValueKey('entry-group-5WW1');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+
+    // A dry-run first: two decisions, two verdicts, one under each heading.
+    final dryRun = find.byKey(const ValueKey('entry-dry-run-5WW1'));
+    await tester.ensureVisible(dryRun);
+    await tester.tap(dryRun);
+    await tester.pumpAndSettle();
+
+    final office365 = find.byKey(const ValueKey('entry-outcomes-group-5WW1-0'));
+    final smartschool =
+        find.byKey(const ValueKey('entry-outcomes-group-5WW1-1'));
+    await tester.ensureVisible(smartschool);
+    expect(
+      find.descendant(
+        of: office365,
+        matching: find.text('Maak de Office 365-groep GBS-5WW1 voor klas 5WW1'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: office365,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsNothing,
+      reason: "the Smartschool write is the other decision's verdict",
+    );
+    expect(
+      find.descendant(
+          of: smartschool,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsOneWidget,
+    );
+    expect(
+        find.byKey(const ValueKey('entry-outcomes-group-5WW1')), findsNothing,
+        reason: 'a dry-run settles no decision, so nothing is left over');
+
+    // Now the real pass. Graph refuses the group; Smartschool takes the class.
+    final apply = find.byKey(const ValueKey('entry-apply-5WW1'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        hasLength(1));
+    expect(harness.graph.createdGroups, isEmpty);
+
+    // The refusal stays with the decision that still asks the question…
+    final decision = find.byKey(const ValueKey('entry-choice-group-5WW1-0'));
+    await tester.ensureVisible(decision);
+    expect(
+      find.descendant(
+          of: decision,
+          matching: find.textContaining('Authorization_RequestDenied')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: decision,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsNothing,
+    );
+
+    // …and the half that landed keeps its verdict at card level, with the
+    // reason it has no decision above it. Nothing went missing.
+    final settled = find.byKey(const ValueKey('entry-outcomes-group-5WW1'));
+    await tester.ensureVisible(settled);
+    expect(
+      find.descendant(
+          of: settled,
+          matching: find.text('Overige resultaten van de vorige poging')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: settled,
+        matching: find.text('Deze acties staan niet meer open op deze kaart.'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: settled,
+          matching: find.text('Voeg deze klas toe aan Smartschool')),
+      findsOneWidget,
+    );
+    // One card, both halves of the story.
+    for (final block in <Finder>[decision, settled]) {
+      expect(find.descendant(of: find.byKey(entry), matching: block),
+          findsOneWidget);
+    }
     expect(tester.takeException(), isNull);
   });
 
