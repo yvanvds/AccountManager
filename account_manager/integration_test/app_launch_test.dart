@@ -5,7 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:account_core/account_core.dart' show Address, Origin;
+import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -34,6 +34,7 @@ import 'package:account_state/account_state.dart'
         SignalRSocketConnector,
         SignalRSubscriber,
         SignalRTransport,
+        SmartschoolClassTree,
         StaticSignalRTokenProvider,
         WisaConnection,
         WisaSchoolProfile,
@@ -45,7 +46,12 @@ import 'package:azure_api/azure_api.dart'
 import 'package:smartschool_api/smartschool_api.dart'
     show DiscardSmartschoolGroup, SmartschoolConnector;
 import 'package:wisa_api/wisa_api.dart'
-    show DontImportClass, WisaImportRule, WisaSchool, parseSchoolRow;
+    show
+        DontImportClass,
+        DontImportUserFromWisa,
+        WisaImportRule,
+        WisaSchool,
+        parseSchoolRow;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1381,8 +1387,8 @@ void main() {
       'Settings, re-bucketing its student to the leaver group (#178)',
       (WidgetTester tester) async {
     // A student enrolled in school 2, fully present in our Smartschool + Azure.
-    // The WISA schools carry no MarkAsOurs flag, so ownership comes solely from
-    // the Settings-derived managed set the applier is wired with — the exact
+    // A WISA snapshot carries no ownership at all (#286), so it comes solely
+    // from the Settings-derived managed set the applier is wired with — the
     // "persisted but never consumed" wiring #178 closes. Here only school 1 is
     // managed, so the school-2 student is groupOnly.
     useTallWindow(tester);
@@ -1422,8 +1428,8 @@ void main() {
       'the Actions drill-down end-to-end (#178)', (WidgetTester tester) async {
     // The very same school-2 student, but now school 2 is one of ours: their
     // class must be browsable instead of sitting in the leaver bucket. Proves
-    // the managed set from Settings — not the snapshot MarkAsOurs flags —
-    // drives which students show. The school itself is no longer a node (#210),
+    // the managed set from Settings drives which students show. The school
+    // itself is no longer a node (#210),
     // so the proof is that the student's own class is reachable.
     useTallWindow(tester);
     final harness = managedSchoolsHarness(ourSchoolIds: const {1, 2});
@@ -6032,7 +6038,7 @@ void main() {
     );
     final live = LiveSettings(stored);
     // One student, enrolled in school 2 and fully present in our Smartschool +
-    // Azure. The WISA schools carry no `MarkAsOurs` flag, so who is managed can
+    // Azure. A WISA snapshot carries no ownership (#286), so who is managed can
     // only come from the settings document — the #178 wiring, now live.
     final harness = ReconcileHarness(
       wisa: wisaSnap(
@@ -6417,6 +6423,489 @@ void main() {
   });
 
   testWidgets(
+      'a settings document carrying the retired MarkAsOurs rule still loads, '
+      'and the dead rule is gone from the view and the next save (#286)',
+      (WidgetTester tester) async {
+    // `MarkAsOurs` was a rule an operator could author and that then silently
+    // did nothing — ownership comes from the WISA-scholen list, which wins as
+    // soon as it holds one school. #286 deleted it. The shared settings document
+    // is what every operator and every older build writes into, so one that
+    // still carries the tag has to load rather than take the app down; the entry
+    // is ignored, and the rules that *do* something are untouched.
+    //
+    // The document can only be introduced as raw JSON now that the type is gone
+    // — which is exactly how it comes back from Cosmos.
+    useTallWindow(tester);
+    final stored = AppSettings.fromJson(<String, dynamic>{
+      'wisaRules': <dynamic>[
+        <String, dynamic>{'type': 'markAsOurs', 'schoolCode': 'ISMAA'},
+        <String, dynamic>{'type': 'dontImportClass', 'className': '3C'},
+      ],
+    }).copyWith(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // The production WISA pull runs on the document as stored: the surviving
+    // rule still prunes 3C, and the retired one changes nothing (as it never
+    // did).
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa lists the live rule and nothing about "beheerd" —
+    // there is no rule kind left to render, and no dead row to puzzle over.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+    expect(find.textContaining('Markeer als beheerd'), findsNothing);
+    // Toevoegen cannot author one either.
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsOurs')),
+        findsNothing);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    // Saving rewrites the document without it, so the next operator to open it
+    // never sees the dead entry again.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await settings.store.load();
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect(
+      (saved.toJson()['wisaRules'] as List<dynamic>)
+          .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+      <String>['dontImportClass'],
+    );
+  });
+
+  testWidgets(
+      'a settings document carrying the retired MarkAsVirtual rule migrates its '
+      'mark to the WISA-scholen grid, and the virtuele werkdatum still reaches '
+      'the pull (#277)', (WidgetTester tester) async {
+    // The risk this issue names: the mark is live configuration, and losing it
+    // is seasonally invisible — the school simply pulls with the ordinary
+    // werkdatum and fails to produce next year's students months later. So the
+    // proof runs end-to-end over the *production* WISA pull: the migrated mark
+    // has to put the virtuele werkdatum on the wire for that school, show up as
+    // the grid's own (unlocked) checkbox, and survive the next save with no rule
+    // left behind.
+    //
+    // The document can only be introduced as raw JSON now that the type is gone
+    // — which is exactly how it comes back from Cosmos.
+    useTallWindow(tester);
+    final stored = AppSettings.fromJson(<String, dynamic>{
+      'wisaRules': <dynamic>[
+        <String, dynamic>{'type': 'markAsVirtual', 'schoolCode': 'V'},
+        <String, dynamic>{'type': 'dontImportClass', 'className': 'OKAN'},
+      ],
+      'wisaSchools': <dynamic>[
+        const WisaSchoolProfile(schoolId: 1, code: 'S1', name: 'School 1')
+            .toJson(),
+        const WisaSchoolProfile(
+          schoolId: 99,
+          code: 'V',
+          name: 'Virtuele school',
+          ours: true,
+        ).toJson(),
+      ],
+    }).copyWith(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+        virtualWorkDate:
+            WorkDateSetting(isNow: false, date: DateTime(2025, 10, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap(schools: const <(int, String, String)>[
+      (1, 'School 1', 'S1'),
+      (99, 'Virtuele school', 'V'),
+    ]);
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The capability is untouched: school 99 still went out on the virtuele
+    // werkdatum, the ordinary school on the ordinary one — and the Log panel
+    // names both, exactly as it did while the rule existed.
+    expect(wire.werkdatums, <String>['01/09/2025', '01/10/2025']);
+    expect(
+      find.textContaining(
+        'WISA ophalen met werkdatum 01/09/2025; virtuele werkdatum '
+        '01/10/2025 voor V.',
+      ),
+      findsOneWidget,
+    );
+
+    // Instellingen → Wisa: the mark now lives on the grid's own checkbox, and
+    // that checkbox is editable — the #273 lock existed only because a rule
+    // could contradict it.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final virtualBox =
+        find.byKey(const ValueKey('settings-wisa-school-99-virtual'));
+    await tester.ensureVisible(virtualBox);
+    await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(virtualBox).value, isTrue);
+    expect(tester.widget<CheckboxListTile>(virtualBox).onChanged, isNotNull);
+    expect(find.text('virtueel (importregel)'), findsNothing);
+
+    // The rules list keeps the rule that does something and says nothing about
+    // virtueel; Toevoegen cannot author one either.
+    expect(find.text('Klas niet importeren uit WISA: OKAN'), findsOneWidget);
+    expect(find.textContaining('Markeer als virtueel'), findsNothing);
+    await tester
+        .ensureVisible(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-add')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsVirtual')),
+        findsNothing);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    // Saving writes the mark where the grid keeps it and drops the rule for
+    // good, so the migration runs once and the next operator sees one surface.
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await settings.store.load();
+    expect(saved.virtualWisaSchoolIds, <int>{99});
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect(
+      (saved.toJson()['wisaRules'] as List<dynamic>)
+          .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+      <String>['dontImportClass'],
+    );
+  });
+
+  testWidgets(
+      'a DontImportFromWisa apply writes its rule to the shared settings '
+      'document, where it outlives the session and is removable (#276)',
+      (WidgetTester tester) async {
+    // The reported bug, driven end-to-end over the *production* WISA pull. A
+    // `DontImportFromWisa` apply only ever grew the process-lifetime
+    // `WisaImportRules` holder, so the exclusion it earned did not merely
+    // evaporate on relaunch — it oscillated. The apply drops the class (or the
+    // retired staff member) from this run's snapshot, the Office 365 side keeps
+    // surfacing (#269) so the operator deletes it, and the next launch rebuilds
+    // the holder empty: WISA still reports the record, nothing exists
+    // downstream, and the app proposes creating it. The rule was also invisible
+    // in Instellingen, so it could neither be seen nor undone.
+    //
+    // Every step here is the operator's own — Klasgroepen → the class → *Negeer
+    // deze klas* → **Toepassen**, then Instellingen → **Herladen** → Wisa —
+    // and the reload is what stands in for the relaunch: it is the stored
+    // document coming back, which is all any other operator or session ever
+    // sees.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    final harness = ReconcileHarness(
+      wisaTransport: RecordingWisaSoap(),
+      liveSettings: live,
+      settingsStore: settings.store,
+      // Smartschool holds only the root a new class would hang under, so WISA's
+      // `3C` is genuinely absent downstream and raises the #244 either/or.
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer: the whole roster comes in, class 3C included.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 1 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Klasgroepen offers the class as one either/or; the operator switches it
+    // to the opt-out.
+    await openKlasgroepen(tester);
+    final entry = find.byKey(const ValueKey('entry-group-3C'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('alt-3C-DoNotImportFromWisa')));
+    await tester.pumpAndSettle();
+
+    // The confirmation says outright that this is permanent and shared — the
+    // operator's one chance to know a standing, group-wide decision is what the
+    // button commits them to.
+    await tester.ensureVisible(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.tap(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('bewaart 1 importregel blijvend voor iedereen'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // It landed on the settings document, on the wire shape #263's pull reads.
+    final saved = await settings.store.load();
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect((saved.wisaRules.single as DontImportClass).className, '3C');
+    expect(harness.controller.error, isNull);
+
+    // The apply re-pulled WISA with the rule itself, so **Controleer op drift**
+    // must not now refuse over the document that apply just wrote (#238).
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+
+    // The operator reads the rule back off the *stored* document — what a
+    // relaunch, and every other operator, gets.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+
+    // …and that document still prunes the pull it is read for.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsWidgets,
+    );
+
+    // A rule applied in error is undone where every other rule is: the #273
+    // editor, which now owns this one too.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final remove = find.byKey(const ValueKey('settings-wisa-rule-0-remove'));
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).wisaRules, isEmpty);
+  });
+
+  testWidgets(
+      'a persisted WISA import rule says who added it, when, and for whom '
+      '(#285)', (WidgetTester tester) async {
+    // The settings document is shared across operators on purpose (#276), and
+    // that only works if a rule somebody else added last month is legible to
+    // whoever opens the panel next. A `DontImportUserFromWisa` stores a bare
+    // WISA code and a `DontImportClass` a bare class name, so a colleague's rule
+    // used to appear as a string with no indication of who added it, when, or
+    // which human it refers to — mechanically removable (#273), but with no way
+    // to tell what you would be undoing. Worse, the people these rules are about
+    // eventually disappear from WISA entirely, so resolving the code against the
+    // current roster for display would give a blank exactly when the name is
+    // needed most.
+    //
+    // Driven end-to-end because the payoff is a rendering: the three fields have
+    // to survive an apply, a store round-trip, a **Herladen**, and the real
+    // Instellingen layout — and the same columns have to serve a rule that
+    // predates #285, which must read "onbekend" rather than blank.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+      // A rule from before #285: on the document, with no provenance at all.
+      // It matches no staff member in the fixture, so it changes no pull.
+      wisaRules: const <WisaImportRule>[DontImportUserFromWisa('OUD')],
+    );
+    final live = LiveSettings(stored);
+    final settings = SettingsHarness(
+      initial: stored,
+      liveSettings: live,
+      operatorName: 'operator@school.example',
+    );
+    final harness = ReconcileHarness(
+      wisaTransport: RecordingWisaSoap(),
+      liveSettings: live,
+      settingsStore: settings.store,
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The operator opts class 3C out of the import — the apply that earns a rule.
+    await openKlasgroepen(tester);
+    final entry = find.byKey(const ValueKey('entry-group-3C'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('alt-3C-DoNotImportFromWisa')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.tap(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Read it back off the *stored* document — what a relaunch, and every other
+    // operator, gets.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+
+    String cell(int index, String field) => tester
+        .widget<Text>(find.byKey(ValueKey('settings-wisa-rule-$index-$field')))
+        .data!;
+
+    // The columns are named, with the timestamp getting one of its own rather
+    // than hiding in a tooltip: with no free-text reason on the record, *when*
+    // is what lets someone reconstruct the context later.
+    expect(
+      find.byKey(const ValueKey('settings-wisa-rules-header')),
+      findsOneWidget,
+    );
+    expect(find.text('Toegevoegd op'), findsOneWidget);
+
+    // Rule 1 is the one the apply just earned: the class it was about, the
+    // instant, and the operator who decided it.
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+    expect(cell(1, 'subject'), '3C');
+    expect(cell(1, 'added-by'), 'operator@school.example');
+    expect(cell(1, 'added-at'), contains('${DateTime.now().year}'));
+
+    // Rule 0 predates #285 and says so, in all three columns. A blank would read
+    // like nobody did it; "onbekend" says the record is missing.
+    expect(cell(0, 'subject'), 'onbekend');
+    expect(cell(0, 'added-at'), 'onbekend');
+    expect(cell(0, 'added-by'), 'onbekend');
+
+    // A rule typed by hand in #273's editor is stamped the same way. The name is
+    // the one field this surface cannot know — it holds no WISA snapshot to
+    // resolve a code against — so it records nothing rather than guessing.
+    await addWisaRule(tester, 'dontImportClass', <String>['OKAN']);
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect(cell(2, 'added-by'), 'operator@school.example');
+    expect(cell(2, 'added-at'), contains('${DateTime.now().year}'));
+    expect(cell(2, 'subject'), 'onbekend');
+
+    // …and all of it is on the shared document, not just on this screen.
+    final saved = await settings.store.load();
+    final earned = saved.provenanceOf(const DontImportClass('3C'))!;
+    expect(earned.subject, '3C');
+    expect(earned.addedBy, 'operator@school.example');
+    expect(earned.addedAt, isNotNull);
+    expect(saved.provenanceOf(const DontImportUserFromWisa('OUD')), isNull);
+    expect(
+      saved.provenanceOf(const DontImportClass('OKAN'))!.addedBy,
+      'operator@school.example',
+    );
+  });
+
+  testWidgets(
       'an Azure domain saved in Instellingen re-links the very next '
       'Synchroniseer, with no pull behind it (#264)',
       (WidgetTester tester) async {
@@ -6445,7 +6934,7 @@ void main() {
     final harness = ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-        schools: [wisaSchool(1, ours: true)],
+        schools: [wisaSchool(1)],
       ),
       smartschool: ssSnap(
         groups: [ssGroup('3C', code: '3C_ss')],
@@ -6946,7 +7435,7 @@ void main() {
     final harness = ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-        schools: [wisaSchool(1, ours: true)],
+        schools: [wisaSchool(1)],
       ),
       smartschool: ssSnap(
         groups: [ssGroup('3C', code: '3C_ss')],
@@ -7519,7 +8008,7 @@ void main() {
     final harness = ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-        schools: [wisaSchool(1, ours: true)],
+        schools: [wisaSchool(1)],
       ),
       smartschool: ssSnap(
         groups: [ssGroup('3C', code: '3C_ss')],

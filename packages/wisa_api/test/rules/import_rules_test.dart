@@ -76,62 +76,27 @@ void main() {
     });
   });
 
-  group('MarkAsVirtual', () {
-    test('flips isVirtual on the matching short school code', () {
-      // The rule keys off the short code, never the long name (#208).
-      const schools = [
-        WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA'),
-        WisaSchool(id: 2, name: 'Sint Dimphna', code: 'SDK'),
+  group('no rule marks a school (#277, #286)', () {
+    test('the sealed hierarchy holds exactly the three record rules', () {
+      // Both school-marking rules are gone: `MarkAsOurs` was dead (#286) and
+      // `MarkAsVirtual` duplicated the WISA-scholen grid, which marks by school
+      // id instead (#277). Nothing in this package flags a `WisaSchool` any
+      // more, so an exhaustive switch over the hierarchy is the whole check —
+      // it stops compiling the moment a fourth kind appears.
+      const rules = <WisaImportRule>[
+        DontImportClass('1A'),
+        DontImportUserFromWisa('AAAAA'),
+        ReplaceInstitute(original: '111', replacement: '222'),
       ];
-      final out = applyRulesToSchools(schools, const [MarkAsVirtual('SMA')]);
-      expect(out[0].isVirtual, isTrue);
-      expect(out[1].isVirtual, isFalse);
-    });
-
-    test('does not match on the long school name', () {
-      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
-      final out =
-          applyRulesToSchools(schools, const [MarkAsVirtual('Sint Maria')]);
-      expect(out.single.isVirtual, isFalse);
-    });
-  });
-
-  group('MarkAsOurs', () {
-    test('flips isOurs on the matching short school code only', () {
-      const schools = [
-        WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA'),
-        WisaSchool(id: 2, name: 'Sint Dimphna', code: 'SDK'),
+      final kinds = <String>[
+        for (final r in rules)
+          switch (r) {
+            DontImportClass() => 'class',
+            DontImportUserFromWisa() => 'user',
+            ReplaceInstitute() => 'institute',
+          },
       ];
-      final out = applyRulesToSchools(schools, const [MarkAsOurs('SMA')]);
-      expect(out[0].isOurs, isTrue);
-      expect(out[1].isOurs, isFalse);
-      // No cross-contamination with the virtual marker.
-      expect(out[0].isVirtual, isFalse);
-    });
-
-    test('does not match on the long school name', () {
-      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
-      final out =
-          applyRulesToSchools(schools, const [MarkAsOurs('Sint Maria')]);
-      expect(out.single.isOurs, isFalse);
-    });
-
-    test('MarkAsVirtual and MarkAsOurs flag independently on one school', () {
-      const schools = [WisaSchool(id: 1, name: 'Sint Maria', code: 'SMA')];
-      final out = applyRulesToSchools(
-        schools,
-        const [MarkAsVirtual('SMA'), MarkAsOurs('SMA')],
-      );
-      expect(out.single.isVirtual, isTrue);
-      expect(out.single.isOurs, isTrue);
-    });
-
-    test('is a no-op for class groups and staff', () {
-      final groups = [_g('1A')];
-      expect(
-          applyRulesToClassGroups(groups, const [MarkAsOurs('SMA')]), groups);
-      final staff = [_s('AAAAA')];
-      expect(applyRulesToStaff(staff, const [MarkAsOurs('SMA')]), staff);
+      expect(kinds, <String>['class', 'user', 'institute']);
     });
   });
 

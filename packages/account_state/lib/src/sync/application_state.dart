@@ -145,9 +145,8 @@ Syncer<AzureSnapshot> azureSyncer(
 /// expects to find in Azure (#224).
 ///
 /// [ourSchoolIds] is the operator's managed-school set from Settings, exactly as
-/// handed to `link()`. `null` falls back to the snapshot's own
-/// `WisaSchool.isOurs` flags, and an empty effective set means ownership is
-/// unconfigured — in which case every WISA student counts, mirroring the
+/// handed to `link()`. `null` — like an empty set — means ownership is
+/// unconfigured, in which case every WISA student counts, mirroring the
 /// linker's own `_isOurWisaSchool` fallback. Scoping matters: a sibling school's
 /// student is none of our business, and looking their account up would grow the
 /// bounded pull for nothing.
@@ -156,11 +155,7 @@ Set<String> managedStudentEmployeeIds(
   Set<int>? ourSchoolIds,
 }) {
   if (snapshot == null) return const <String>{};
-  final effective = ourSchoolIds ??
-      <int>{
-        for (final school in snapshot.schools)
-          if (school.isOurs) school.id,
-      };
+  final effective = ourSchoolIds ?? const <int>{};
   return <String>{
     for (final student in snapshot.students)
       if (effective.isEmpty || effective.contains(student.schoolId))
@@ -181,8 +176,8 @@ Set<String> managedStudentEmployeeIds(
 /// `2F ECO`, since sub-groups share the parent class's one group.
 ///
 /// [ourSchoolIds] scopes the students exactly as [managedStudentEmployeeIds]
-/// does, with the same `null`-means-unconfigured fallback to the snapshot's own
-/// `MarkAsOurs` flags. A name that would not survive as a Graph `mailNickname`
+/// does, with the same `null`-means-unconfigured reading. A name that would not
+/// survive as a Graph `mailNickname`
 /// is dropped, mirroring the plan that would refuse to propose it.
 ///
 /// Names collapse case-insensitively (INV-12) but are asked about as WISA writes
@@ -193,11 +188,7 @@ Set<String> managedClassGroupMailNicknames(
   Set<int>? ourSchoolIds,
 }) {
   if (snapshot == null || schoolPrefix.trim().isEmpty) return const <String>{};
-  final effective = ourSchoolIds ??
-      <int>{
-        for (final school in snapshot.schools)
-          if (school.isOurs) school.id,
-      };
+  final effective = ourSchoolIds ?? const <int>{};
   final byKey = <String, String>{};
   for (final student in snapshot.students) {
     if (effective.isNotEmpty && !effective.contains(student.schoolId)) continue;

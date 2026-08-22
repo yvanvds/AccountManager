@@ -69,6 +69,7 @@ class SettingsServices {
     required this.secrets,
     this.fetchWisaSchools,
     this.liveSettings,
+    this.operatorName = '',
   });
 
   /// The persistence seam for the [AppSettings] document (#114: Cosmos-backed).
@@ -90,6 +91,18 @@ class SettingsServices {
   /// relaunch. Null when the build wires no reconcile stack (the settings-only
   /// harnesses), which simply skips the hand-off.
   final LiveSettings? liveSettings;
+
+  /// The signed-in operator, as the shared settings document should name them
+  /// (#285). Stamped onto every WISA import rule authored here, so a colleague
+  /// reading the rule next month knows whom to ask about it.
+  ///
+  /// This is the same string the rest of the app already shows as the operator
+  /// (`ReconcileController.syncedBy`, the "· door …" on the sync stamps) — the
+  /// broker's account, which is a UPN. #98's sign-in path is what would upgrade
+  /// it to a proper display name; until it does, one readable identifier used
+  /// consistently everywhere beats two half-known ones. Empty when the session
+  /// has no identity yet, which records as `onbekend` rather than as a blank.
+  final String operatorName;
 }
 
 /// Wires the Settings view's two seams for one signed-in session: a
@@ -131,5 +144,8 @@ Future<SettingsServices> bootstrapSettings({
     secrets: secrets,
     fetchWisaSchools: fetchWisaSchools ?? fetchWisaSchoolsLive,
     liveSettings: liveSettings,
+    // The same identity `bootstrapReconcile` syncs as, so a rule this operator
+    // types and a rule this operator's apply earns are attributed alike (#285).
+    operatorName: session.account ?? '',
   );
 }

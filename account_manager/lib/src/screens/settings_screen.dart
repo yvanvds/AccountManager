@@ -5,6 +5,7 @@ import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
 import '../settings/settings_bootstrap.dart';
+import '../settings/wisa_rule_labels.dart';
 
 /// The Settings view (#106): edit the full [AppSettings] config document and
 /// write the two credentials (WISA password, Smartschool passphrase) through the
@@ -35,19 +36,21 @@ import '../settings/settings_bootstrap.dart';
 /// - **Smartschool** (#202): the two rules the legacy app offers
 ///   (`DiscardSmartschoolGroup`, `NoSmartschoolSubgroups`).
 /// - **WISA** (#273): the three rules with no other surface —
-///   `DontImportClass`, `DontImportUserFromWisa` and `ReplaceInstitute`. The two
-///   school-marking rules (`MarkAsVirtual`, `MarkAsOurs`) stay editable and
-///   removable but are *not* offered under **Toevoegen**: the WISA-scholen grid
-///   above already marks a school virtual/beheerd per school **id**, and for
-///   `beheerd` that grid is authoritative (`managedSchoolIdsOf` ignores the
-///   snapshot's `MarkAsOurs` flags as soon as the grid holds one school), so a
-///   rule authored here would be a control that silently does nothing.
+///   `DontImportClass`, `DontImportUserFromWisa` and `ReplaceInstitute`. Neither
+///   school-marking rule is left: `MarkAsOurs` was deleted in #286 and
+///   `MarkAsVirtual` in #277, both because the WISA-scholen grid above marks the
+///   same flag per school **id** and two surfaces for one flag could disagree.
+///   A document that still carries either loads fine — the entry is ignored, and
+///   a `markAsVirtual` mark is carried over to the grid's own checkbox first.
 ///
 /// The WISA list shows the **persisted** rules — the operator's standing
 /// configuration, which is what a pull unions with whatever this session earned.
-/// A rule a `DontImportFromWisa` apply accumulates lives in the reconcile
-/// stack's `WisaImportRules` holder for the life of the process and is on no
-/// settings document, so it does not appear here (#273).
+/// Since #276 that includes the rules a `DontImportFromWisa` apply earns: the
+/// apply writes its rule to this same document, so it shows up in this list
+/// (after a **Herladen**, or in the next session) and is removed here like any
+/// hand-typed one. The reconcile stack's `WisaImportRules` holder still carries
+/// its own copy for the life of the process — that is what re-syncs WISA the
+/// instant the rule is earned — but the document is now the record.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.bootstrap});
 
@@ -110,6 +113,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // unions with the session's own `WisaImportRules` holder at pull time (#263) —
   // so authoring one here reaches the very next Synchroniseer.
   List<WisaImportRule> _wisaRules = const <WisaImportRule>[];
+
+  // Who added each of those rules, when, and for whom (#285), keyed by
+  // `wisaRuleKey` exactly as the document keys it. Edited alongside `_wisaRules`
+  // and pruned to them on save, so removing a rule takes its provenance with it
+  // rather than leaving a stamp that a later, unrelated rule with the same key
+  // would inherit.
+  Map<String, RuleProvenance> _wisaRuleProvenance =
+      const <String, RuleProvenance>{};
 
   // Azure profile.
   final _azClientId = TextEditingController();
@@ -239,6 +250,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     _ssRules = List<SmartschoolImportRule>.of(s.smartschoolRules);
     _wisaRules = List<WisaImportRule>.of(s.wisaRules);
+    _wisaRuleProvenance = Map<String, RuleProvenance>.of(s.wisaRuleProvenance);
 
     _azClientId.text = s.azure.clientId;
     _azTenantId.text = s.azure.tenantId;
@@ -322,12 +334,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _addWisaRule(_WisaRuleKind kind) async {
     final values = await _promptWisaRule(kind: kind);
     if (values == null || !mounted) return;
-    toggle(() => _wisaRules = <WisaImportRule>[..._wisaRules, kind(values)]);
+    final rule = kind(values);
+    toggle(() {
+      _wisaRules = <WisaImportRule>[..._wisaRules, rule];
+      _stampWisaRule(rule);
+    });
   }
 
   /// Re-prompts for the field(s) of the rule at [index], keeping its kind. Every
   /// kind is editable, including the two school-marking ones **Toevoegen** does
   /// not offer — a document that already carries one must stay correctable.
+  ///
+  /// The edited rule is re-stamped (#285): changing what a rule matches makes it
+  /// a different standing decision, and attributing it to whoever wrote the
+  /// *previous* one would be a lie about a record whose whole purpose is saying
+  /// who to ask.
   Future<void> _editWisaRule(int index) async {
     final rule = _wisaRules[index];
     final kind = _WisaRuleKind.of(rule);
@@ -336,16 +357,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
       initial: _wisaRuleValues(rule),
     );
     if (values == null || !mounted) return;
+    final edited = kind(values);
     toggle(() {
-      _wisaRules = List<WisaImportRule>.of(_wisaRules)..[index] = kind(values);
+      _wisaRules = List<WisaImportRule>.of(_wisaRules)..[index] = edited;
+      _pruneWisaProvenance();
+      _stampWisaRule(edited);
     });
   }
 
-  /// Drops the WISA rule at [index] from the working list.
+  /// Drops the WISA rule at [index] from the working list, and its provenance
+  /// with it (#285).
   void _removeWisaRule(int index) {
     toggle(() {
       _wisaRules = List<WisaImportRule>.of(_wisaRules)..removeAt(index);
+      _pruneWisaProvenance();
     });
+  }
+
+  /// Records this session as the author of [rule] (#285).
+  ///
+  /// No subject: this view holds no WISA snapshot to resolve a code against —
+  /// the same reason #273's prompts are free text — so the name genuinely is
+  /// unknown here and is recorded as such rather than guessed from the code the
+  /// operator typed. The two fields that *are* known are the two the issue calls
+  /// load-bearing: who, and when.
+  void _stampWisaRule(WisaImportRule rule) {
+    _wisaRuleProvenance = <String, RuleProvenance>{
+      ..._wisaRuleProvenance,
+      wisaRuleKey(rule): RuleProvenance(
+        addedBy: _services?.operatorName ?? '',
+        addedAt: DateTime.now(),
+      ),
+    };
+  }
+
+  /// Drops every provenance entry no rule in the working list claims any more.
+  void _pruneWisaProvenance() {
+    _wisaRuleProvenance = _prunedWisaProvenance(_wisaRules);
+  }
+
+  Map<String, RuleProvenance> _prunedWisaProvenance(
+    List<WisaImportRule> rules,
+  ) {
+    return <String, RuleProvenance>{
+      for (final rule in rules)
+        if (_wisaRuleProvenance[wisaRuleKey(rule)] case final RuleProvenance p)
+          wisaRuleKey(rule): p,
+    };
   }
 
   /// Asks for the one or two values a WISA rule matches on. Returns the trimmed
@@ -476,6 +534,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       smartschoolRules: List<SmartschoolImportRule>.of(_ssRules),
       wisaRules: List<WisaImportRule>.of(_wisaRules),
+      wisaRuleProvenance: _prunedWisaProvenance(_wisaRules),
       wisaSchools: List<WisaSchoolProfile>.of(_wisaSchools),
     );
   }
@@ -1046,21 +1105,9 @@ class _WorkDateField extends StatelessWidget {
   }
 }
 
-/// How one WISA import rule reads in the settings list.
-String _describeWisaRule(WisaImportRule rule) => switch (rule) {
-      DontImportClass(:final className) =>
-        'Klas niet importeren uit WISA: $className',
-      DontImportUserFromWisa(:final userCode) =>
-        'Gebruiker niet importeren uit WISA: $userCode',
-      ReplaceInstitute(:final original, :final replacement) =>
-        'Vervang instituut: $original → $replacement',
-      MarkAsVirtual(:final schoolCode) => 'Markeer als virtueel: $schoolCode',
-      MarkAsOurs(:final schoolCode) => 'Markeer als beheerd: $schoolCode',
-    };
-
 /// The value(s) a WISA rule matches on, in the field order [_WisaRuleKind]
 /// declares — what the edit prompt opens on. The sealed base type carries no
-/// shared field, so a switch over the five cases is where they meet.
+/// shared field, so a switch over the three cases is where they meet.
 List<String> _wisaRuleValues(WisaImportRule rule) => switch (rule) {
       DontImportClass(:final className) => <String>[className],
       DontImportUserFromWisa(:final userCode) => <String>[userCode],
@@ -1068,21 +1115,16 @@ List<String> _wisaRuleValues(WisaImportRule rule) => switch (rule) {
           original,
           replacement,
         ],
-      MarkAsVirtual(:final schoolCode) => <String>[schoolCode],
-      MarkAsOurs(:final schoolCode) => <String>[schoolCode],
     };
 
-/// The five WISA import rules, with the Dutch labels and the field prompts the
+/// The three WISA import rules, with the Dutch labels and the field prompts the
 /// editor authors them through (#273). Calling a kind builds its rule from the
 /// values the prompt collected, in [fields] order.
 ///
-/// [authorable] is what **Toevoegen** offers. The two school-marking rules are
-/// deliberately not on that menu: the WISA-scholen grid above already marks a
-/// school virtueel/beheerd per school **id**, and for `beheerd` that grid wins
-/// outright — `managedSchoolIdsOf` stops consulting the snapshot's `MarkAsOurs`
-/// flags the moment the grid holds a single school, so a rule authored here
-/// would persist and then do nothing. They stay editable and removable, so a
-/// document that already carries one can be corrected or cleaned up.
+/// Every kind is on the **Toevoegen** menu. The two that were not — the
+/// school-marking `MarkAsVirtual` and `MarkAsOurs`, which duplicated the
+/// WISA-scholen grid above — are gone from the rule hierarchy entirely (#277,
+/// #286), so the grid is the only place either flag is set.
 enum _WisaRuleKind {
   dontImportClass(
     label: 'Klas niet importeren',
@@ -1102,21 +1144,6 @@ enum _WisaRuleKind {
         'ze bij het tweede horen.',
     fields: <String>['Oude instituutcode', 'Nieuwe instituutcode'],
     hints: <String>['Code zoals WISA ze levert', 'Code zoals wij ze willen'],
-  ),
-  markAsVirtual(
-    label: 'Markeer als virtueel',
-    explanation: 'De school met deze code wordt met de virtuele werkdatum '
-        'opgehaald.',
-    fields: <String>['Schoolcode'],
-    hints: <String>['De korte WISA-code van de school'],
-    authorable: false,
-  ),
-  markAsOurs(
-    label: 'Markeer als beheerd',
-    explanation: 'De school met deze code telt als een school die wij beheren.',
-    fields: <String>['Schoolcode'],
-    hints: <String>['De korte WISA-code van de school'],
-    authorable: false,
   );
 
   const _WisaRuleKind({
@@ -1124,7 +1151,6 @@ enum _WisaRuleKind {
     required this.explanation,
     required this.fields,
     required this.hints,
-    this.authorable = true,
   });
 
   /// The menu / dialog label.
@@ -1139,14 +1165,9 @@ enum _WisaRuleKind {
   /// Per-field placeholder text, parallel to [fields].
   final List<String> hints;
 
-  /// Whether **Toevoegen** offers this kind.
-  final bool authorable;
-
-  /// The kinds **Toevoegen** offers.
-  static List<_WisaRuleKind> get addable => <_WisaRuleKind>[
-        for (final kind in _WisaRuleKind.values)
-          if (kind.authorable) kind,
-      ];
+  /// The kinds **Toevoegen** offers — all of them, since the two the menu used
+  /// to hide were deleted rather than hidden (#277, #286).
+  static List<_WisaRuleKind> get addable => _WisaRuleKind.values;
 
   WisaImportRule call(List<String> values) => switch (this) {
         _WisaRuleKind.dontImportClass => DontImportClass(values[0]),
@@ -1155,16 +1176,12 @@ enum _WisaRuleKind {
             original: values[0],
             replacement: values[1],
           ),
-        _WisaRuleKind.markAsVirtual => MarkAsVirtual(values[0]),
-        _WisaRuleKind.markAsOurs => MarkAsOurs(values[0]),
       };
 
   static _WisaRuleKind of(WisaImportRule rule) => switch (rule) {
         DontImportClass() => _WisaRuleKind.dontImportClass,
         DontImportUserFromWisa() => _WisaRuleKind.dontImportUser,
         ReplaceInstitute() => _WisaRuleKind.replaceInstitute,
-        MarkAsVirtual() => _WisaRuleKind.markAsVirtual,
-        MarkAsOurs() => _WisaRuleKind.markAsOurs,
       };
 }
 
@@ -1201,15 +1218,29 @@ class _WisaRulesEditor extends StatelessWidget {
             key: const ValueKey('settings-wisa-rules-empty'),
             style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
           )
-        else
+        else ...<Widget>[
+          const _WisaRuleColumnHeader(),
           for (var i = 0; i < rules.length; i++)
             _RuleRow(
               keyPrefix: 'settings-wisa-rule',
               index: i,
-              description: _describeWisaRule(rules[i]),
+              description: describeWisaRule(rules[i]),
+              // Who decided this, when, and about whom (#285). The document is
+              // shared, so without these a colleague's rule reads as a bare
+              // WISA code nobody dares remove.
+              subject: describeRuleSubject(
+                state._wisaRuleProvenance[wisaRuleKey(rules[i])],
+              ),
+              addedAt: describeRuleAddedAt(
+                state._wisaRuleProvenance[wisaRuleKey(rules[i])],
+              ),
+              addedBy: describeRuleAddedBy(
+                state._wisaRuleProvenance[wisaRuleKey(rules[i])],
+              ),
               onEdit: () => state._editWisaRule(i),
               onRemove: () => state._removeWisaRule(i),
             ),
+        ],
         const SizedBox(height: PlinkSpacing.s4),
         MenuAnchor(
           menuChildren: <Widget>[
@@ -1230,8 +1261,7 @@ class _WisaRulesEditor extends StatelessWidget {
         const SizedBox(height: PlinkSpacing.s3),
         Text(
           'Virtueel en beheerd markeer je per school hierboven bij '
-          '"WISA-scholen", niet met een regel: die lijst gaat per school en is '
-          'voor "beheerd" doorslaggevend.',
+          '"WISA-scholen", niet met een regel.',
           key: const ValueKey('settings-wisa-rules-school-note'),
           style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
         ),
@@ -1447,6 +1477,9 @@ class _RuleRow extends StatelessWidget {
     required this.description,
     required this.onEdit,
     required this.onRemove,
+    this.subject,
+    this.addedAt,
+    this.addedBy,
   });
 
   final String keyPrefix;
@@ -1455,20 +1488,61 @@ class _RuleRow extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onRemove;
 
+  /// The three provenance cells (#285), already resolved to display strings —
+  /// `onbekend` where the document records nothing. All three are null for the
+  /// Smartschool list, which carries no provenance and renders as it always did.
+  final String? subject;
+  final String? addedAt;
+  final String? addedBy;
+
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final TextStyle? meta =
+        text.bodySmall?.copyWith(color: colors.onSurfaceVariant);
     return Padding(
       padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
           Expanded(
+            flex: _RuleColumns.rule,
             child: Text(
               description,
               key: ValueKey('$keyPrefix-$index'),
               style: text.bodyMedium,
             ),
           ),
+          if (subject != null) ...<Widget>[
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              flex: _RuleColumns.subject,
+              child: Text(
+                subject!,
+                key: ValueKey('$keyPrefix-$index-subject'),
+                style: meta,
+              ),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              flex: _RuleColumns.addedAt,
+              child: Text(
+                addedAt!,
+                key: ValueKey('$keyPrefix-$index-added-at'),
+                style: meta,
+              ),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              flex: _RuleColumns.addedBy,
+              child: Text(
+                addedBy!,
+                key: ValueKey('$keyPrefix-$index-added-by'),
+                style: meta,
+              ),
+            ),
+          ],
           IconButton(
             key: ValueKey('$keyPrefix-$index-edit'),
             tooltip: 'Bewerken',
@@ -1481,6 +1555,63 @@ class _RuleRow extends StatelessWidget {
             icon: const Icon(Icons.delete_outline),
             onPressed: onRemove,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The flexes the WISA rule list and its header share, so the two stay in one
+/// grid rather than drifting apart the first time either is edited.
+abstract final class _RuleColumns {
+  static const int rule = 5;
+  static const int subject = 3;
+  static const int addedAt = 3;
+  static const int addedBy = 3;
+
+  /// The width of the two trailing icon buttons, which the header has to leave
+  /// empty to line its labels up with the cells beneath them.
+  static const double actions = 96;
+}
+
+/// Names the provenance columns of the WISA rule list (#285).
+///
+/// The timestamp gets a column of its own rather than a tooltip on purpose:
+/// with no free-text reason on the record, *when* is what lets someone
+/// reconstruct why ("that was the June retirement round"), so it has to be
+/// readable at a glance beside the rule instead of hidden behind a hover.
+class _WisaRuleColumnHeader extends StatelessWidget {
+  const _WisaRuleColumnHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final TextStyle? style = text.labelSmall?.copyWith(
+      color: colors.onSurfaceVariant,
+    );
+    return Padding(
+      key: const ValueKey('settings-wisa-rules-header'),
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+      child: Row(
+        children: <Widget>[
+          Expanded(flex: _RuleColumns.rule, child: Text('Regel', style: style)),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            flex: _RuleColumns.subject,
+            child: Text('Voor', style: style),
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            flex: _RuleColumns.addedAt,
+            child: Text('Toegevoegd op', style: style),
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            flex: _RuleColumns.addedBy,
+            child: Text('Door', style: style),
+          ),
+          const SizedBox(width: _RuleColumns.actions),
         ],
       ),
     );
@@ -1639,20 +1770,6 @@ class _WisaSchoolsEditor extends StatelessWidget {
     );
   }
 
-  /// Whether a `MarkAsVirtual` import rule in the working list already flags the
-  /// school with [code] (#273).
-  ///
-  /// The two surfaces mark by different keys — the grid by school id, the rule by
-  /// the short WISA code — and `wisaSyncer` unions them, so a rule really does
-  /// make the school virtual whatever this grid's checkbox says. The cell has to
-  /// show that rather than contradict it.
-  bool _virtualByRule(String code) {
-    final trimmed = code.trim();
-    if (trimmed.isEmpty) return false;
-    return state._wisaRules
-        .any((r) => r is MarkAsVirtual && r.schoolCode == trimmed);
-  }
-
   /// Lays the known schools out as rows of [_columns] cells, padding the final
   /// row with empty slots so the grid columns stay aligned. Each cell toggles
   /// its school's managed (`ours`) and virtual flags inline.
@@ -1664,12 +1781,7 @@ class _WisaSchoolsEditor extends StatelessWidget {
         final i = start + col;
         cells.add(Expanded(
           child: i < schools.length
-              ? _SchoolCell(
-                  state: state,
-                  index: i,
-                  profile: schools[i],
-                  virtualByRule: _virtualByRule(schools[i].code),
-                )
+              ? _SchoolCell(state: state, index: i, profile: schools[i])
               : const SizedBox.shrink(),
         ));
       }
@@ -1694,6 +1806,13 @@ class _WisaSchoolsEditor extends StatelessWidget {
 /// mass leave. It therefore sits on its own indented, small-type line rather
 /// than as a second equal-looking checkbox.
 ///
+/// Both checkboxes answer for themselves. Until #277 the virtual one could be
+/// rendered ticked-and-locked, reading `virtueel (importregel)`, because a
+/// `MarkAsVirtual` rule set the same flag by school code and the pull unioned
+/// the two — so an unticked box would have been a lie and unticking it would not
+/// have stuck. With the rule retired this grid is the only virtual-school
+/// surface and the checkbox simply means what it shows.
+///
 /// The numeric id is strictly a fallback and never appears twice (#194): the
 /// title degrades name → code → `School <id>`, and the subtitle shows whichever
 /// of code / `id: <id>` the title has not already used — nothing at all when the
@@ -1703,18 +1822,11 @@ class _SchoolCell extends StatelessWidget {
     required this.state,
     required this.index,
     required this.profile,
-    this.virtualByRule = false,
   });
 
   final _SettingsScreenState state;
   final int index;
   final WisaSchoolProfile profile;
-
-  /// Whether a `MarkAsVirtual` import rule already flags this school by its code
-  /// (#273). The cell then renders the flag as set and locks the checkbox: the
-  /// pull unions both surfaces, so an unticked box would be a lie and unticking
-  /// it would not stick. Removing the rule under **Importregels** is the undo.
-  final bool virtualByRule;
 
   @override
   Widget build(BuildContext context) {
@@ -1762,15 +1874,13 @@ class _SchoolCell extends StatelessWidget {
             dense: true,
             visualDensity: VisualDensity.compact,
             title: Text(
-              virtualByRule ? 'virtueel (importregel)' : 'virtueel',
+              'virtueel',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
             ),
-            value: profile.virtual || virtualByRule,
-            onChanged: virtualByRule
-                ? null
-                : (v) => state._toggleSchoolVirtual(index, v ?? false),
+            value: profile.virtual,
+            onChanged: (v) => state._toggleSchoolVirtual(index, v ?? false),
           ),
         ),
       ],

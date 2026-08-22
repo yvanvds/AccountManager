@@ -453,10 +453,12 @@ void main() {
     });
 
     test("unions the persisted rules with the session's own (#263)", () async {
-      // Both halves reach one pull: the `MarkAsVirtual` this session earned and
-      // the `DontImportClass` the operator saved a moment ago.
+      // Both halves reach one pull, and in the documented order: the operator's
+      // persisted rule rewrites institute 111 → 888, and the one this session
+      // holds then rewrites 888 → 999. Only a real union produces 999.
       final wire = RecordingWisaSoap();
-      final rules = WisaImportRules()..add(const wapi.MarkAsVirtual('S1'));
+      final rules = WisaImportRules()
+        ..add(const wapi.ReplaceInstitute(original: '888', replacement: '999'));
       final live = LiveSettings(_settings());
       final syncer = wisaSyncer(
         wapi.WisaConnector.fromParts(
@@ -472,19 +474,18 @@ void main() {
       );
 
       final first = await syncer(null);
-      expect(first.schools.single.isVirtual, isTrue,
-          reason: 'the session rule already marks the school virtual');
-      expect(first.classGroups, hasLength(1));
+      expect(first.classGroups.single.schoolCode, '111',
+          reason: 'nothing matches yet — the session rule keys off 888');
 
       live.publish(_settings().copyWith(
-        wisaRules: const <wapi.WisaImportRule>[wapi.DontImportClass('3C')],
+        wisaRules: const <wapi.WisaImportRule>[
+          wapi.ReplaceInstitute(original: '111', replacement: '888'),
+        ],
       ));
 
-      final pruned = await syncer(null);
-      expect(pruned.classGroups, isEmpty,
-          reason: 'the saved rule reached the pull');
-      expect(pruned.schools.single.isVirtual, isTrue,
-          reason: 'and the session rule was not lost composing it');
+      final merged = await syncer(null);
+      expect(merged.classGroups.single.schoolCode, '999',
+          reason: 'the saved rule ran first and the session rule after it');
     });
   });
 
@@ -570,8 +571,12 @@ void main() {
     });
 
     test('a rule an apply earned never arms the drift gate', () async {
-      // Session rules are not on any settings document, and the apply that
-      // earns one re-syncs WISA itself — so the gate must stay open.
+      // The apply that earns a rule re-syncs WISA itself, so the snapshot in
+      // hand already reflects it and the gate must stay open. The session
+      // holder is on no settings document, so nothing here can move the
+      // fingerprint; since #276 the apply *also* writes the rule to the
+      // document, and re-credits its own pull to it for exactly this reason
+      // (see `ReconcileController._persistEarnedWisaRules` and its test).
       final live = LiveSettings(_settings());
       final harness = ReconcileHarness(
         wisaTransport: RecordingWisaSoap(),
@@ -589,8 +594,8 @@ void main() {
   group('the rest of the reconcile stack reads settings live too (#246)', () {
     /// The #178 fixture, but with ownership coming from the settings document
     /// rather than a constructor argument: one student enrolled in school 2 and
-    /// fully present in our Smartschool + Azure, and no `MarkAsOurs` flag on the
-    /// WISA schools — so who is managed is decided solely by [live].
+    /// fully present in our Smartschool + Azure, and no ownership anywhere on
+    /// the WISA snapshot — so who is managed is decided solely by [live].
     ReconcileHarness managedFrom(LiveSettings live) => ReconcileHarness(
           wisa: wisaSnap(
             students: [wisaStudent(schoolId: 2)],
@@ -921,7 +926,7 @@ void main() {
     ReconcileHarness intakeFrom(LiveSettings live) => ReconcileHarness(
           wisa: wisaSnap(
             students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-            schools: [wisaSchool(1, ours: true)],
+            schools: [wisaSchool(1)],
           ),
           smartschool: ssSnap(
             groups: [ssGroup('3C', code: '3C_ss')],
@@ -996,7 +1001,7 @@ void main() {
       final harness = ReconcileHarness(
         wisa: wisaSnap(
           students: [wisaStudent(classGroup: '3C')],
-          schools: [wisaSchool(1, ours: true)],
+          schools: [wisaSchool(1)],
           classGroups: [wisaClassGroup('3C')],
         ),
         smartschool: ssSnap(
@@ -1108,7 +1113,7 @@ void main() {
       final harness = ReconcileHarness(
         wisa: wisaSnap(
           students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-          schools: [wisaSchool(1, ours: true)],
+          schools: [wisaSchool(1)],
         ),
         smartschool: ssSnap(
           groups: [ssGroup('3C', code: '3C_ss')],

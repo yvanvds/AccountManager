@@ -424,19 +424,21 @@ void main() {
       expect(marked.every((s) => !s.isVirtual), isTrue);
     });
 
-    test('never un-flags a school an import rule already marked (#203)', () {
-      // MarkAsVirtual runs first and matches by code; settings marks by id.
-      // The settings pass is additive, so a legacy rule keeps working even
-      // when the school is not in the settings list.
-      const ruled = <WisaSchool>[
+    test('the grid decides outright, so a stale flag is cleared (#277)', () {
+      // The pass used to be additive: a `MarkAsVirtual` import rule flagged
+      // schools by code before this ran, and un-flagging one would have
+      // contradicted it. That rule is gone, and with it the reason to keep a
+      // flag the operator's list does not claim.
+      const preflagged = <WisaSchool>[
         WisaSchool(
             id: 25,
             name: 'Instituut Sancta Maria-A',
             code: 'ISMAA',
             isVirtual: true),
       ];
-      expect(markVirtualSchools(ruled, const <int>{}).single.isVirtual, isTrue);
-      expect(markVirtualSchools(ruled, {25}).single.isVirtual, isTrue);
+      expect(markVirtualSchools(preflagged, const <int>{}).single.isVirtual,
+          isFalse);
+      expect(markVirtualSchools(preflagged, {25}).single.isVirtual, isTrue);
     });
 
     test('does not mutate the input list (#203)', () {

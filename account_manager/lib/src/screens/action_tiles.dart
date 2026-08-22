@@ -144,9 +144,14 @@ String _followUpCount(int n) => n == 1 ? '1 vervolgactie' : '$n vervolgacties';
 ///
 /// Three things it is careful about:
 /// - **WISA is never written.** The `DontImportFromWisa` family's `ChangeSet`
-///   carries `Origin.wisa`, but what it produces is a local import rule — the
+///   carries `Origin.wisa`, but what it produces is an import rule — the
 ///   connector is read-only. So those are counted as import rules and the
-///   sentence says outright that nothing is written to WISA.
+///   sentence says outright that nothing is written to WISA. Since #276 the
+///   rule lands on the *shared* settings document rather than dying with the
+///   session, so the sentence says that too: this is a standing decision every
+///   operator inherits, not a one-run one, and the operator must know that
+///   before pressing the button (undoing it means finding the rule in
+///   Instellingen → Wisa).
 /// - **Chained follow-ups are named, not counted.** A new student's Office 365
 ///   create writes Smartschool too (#230/#240). Whether the follow-up runs is
 ///   decided by its own `evaluate` after the first write, so it gets its own
@@ -161,7 +166,8 @@ String applyConfirmationMessage(ApplyScope scope) {
     if (writes.isNotEmpty)
       'schrijft ${_changeCount(writes.length)} naar ${_joinSystems(writes)}',
     if (rules > 0)
-      'legt ${_ruleCount(rules)} vast (er wordt niets naar WISA geschreven)',
+      'bewaart ${_ruleCount(rules)} blijvend voor iedereen (er wordt niets '
+          'naar WISA geschreven)',
   ];
   final what =
       clauses.isEmpty ? 'Dit schrijft niets.' : 'Dit ${clauses.join(' en ')}.';

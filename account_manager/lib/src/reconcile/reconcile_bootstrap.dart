@@ -393,14 +393,14 @@ Future<ReconcileServices> bootstrapReconcile({
 
   // The operator's managed-school set from Settings, shared by the linker
   // (#178) and by the Azure back-fill below (#224) so both scope to the same
-  // schools. Null when no school is flagged, so a not-yet-configured group
-  // falls back to the snapshot's own `MarkAsOurs` flags.
+  // schools. Empty when no school is flagged, which every reader treats as
+  // "ownership unconfigured" and counts every school.
   //
   // Read from the live document at every use (#246) — flipping a school's
   // **beheerd** mark in Instellingen must reach the next relink, not the next
   // launch. Both readers below call this, so the linker and the Azure back-fill
   // can never end up scoping to different school sets.
-  Set<int>? ourSchoolIdsNow() => managedSchoolIdsOf(live.current);
+  Set<int> ourSchoolIdsNow() => managedSchoolIdsOf(live.current);
 
   // Assigned immediately below; the Azure syncer closes over it so it can read
   // the WISA snapshot *this* pass just pulled (WISA always syncs first).
@@ -587,17 +587,22 @@ Future<ReconcileServices> bootstrapReconcile({
 }
 
 /// The WISA school ids the operator manages, as the linker and the Azure
-/// back-fill both want them: the `ours`-flagged ids of [settings], or `null`
-/// when the operator has curated no school at all.
+/// back-fill both want them: the `ours`-flagged ids of the WISA-scholen grid in
+/// Instellingen (#178/#246).
 ///
-/// The null is load-bearing and is why this is a named function rather than an
-/// inline read (#178/#246). An **empty set** means "ownership is configured and
-/// nothing is ours"; `null` means "not configured", which makes `link()` and
-/// [PlacementResolver] fall back to the snapshot's own `MarkAsOurs` flags. A
-/// group that has never filled the WISA-scholen grid in must get the second, not
-/// the first.
-Set<int>? managedSchoolIdsOf(AppSettings settings) =>
-    settings.wisaSchools.isEmpty ? null : settings.managedWisaSchoolIds;
+/// This is the whole of ownership since #286. It used to answer `null` for an
+/// install whose grid was empty, so `link()` and [PlacementResolver] would fall
+/// back to the snapshot's own `MarkAsOurs` flags — a fallback no install ever
+/// reached once **Scholen ophalen** had been pressed, and which the rule that
+/// fed it has now been deleted with.
+///
+/// An **empty** set is therefore the answer for a not-yet-configured install,
+/// and it is the right one: every reader treats an empty managed set as
+/// "ownership unconfigured" and counts every school, never as "no school is
+/// ours". It stays a named function so both readers below share one definition
+/// and can never scope to different school sets.
+Set<int> managedSchoolIdsOf(AppSettings settings) =>
+    settings.managedWisaSchoolIds;
 
 /// The Smartschool class-tree live-config, derived from the persisted
 /// connection profile: the year or grade group codes (whichever the school
@@ -646,9 +651,9 @@ String smartschoolSiteFrom(String uri) {
 /// document holds what the operator persisted, and only reading both at call
 /// time lets either move under a running session.
 ///
-/// Schools are re-read per sync so a WISA-side school change is picked up;
-/// `MarkAsVirtual` rules and the operator's virtual marks are applied to them
-/// before the row pulls, the other rules at snapshot construction.
+/// Schools are re-read per sync so a WISA-side school change is picked up; the
+/// operator's virtual marks are stamped onto them before the row pulls (no rule
+/// touches a school since #277), the rest at snapshot construction.
 ///
 /// Because this is the one place a pass's work dates are resolved, it is also
 /// the one place that can say what they were: [log] gets a single
@@ -667,10 +672,7 @@ Syncer<wapi.WisaSnapshot> wisaSyncer(
       final current = settings.current;
       final importRules = rules.unionWith(current.wisaRules);
       final schools = markVirtualSchools(
-        wapi.WisaConnector.applySchoolRules(
-          await connector.loadSchools(),
-          importRules,
-        ),
+        await connector.loadSchools(),
         current.virtualWisaSchoolIds,
       );
       final at = clock();
@@ -735,23 +737,26 @@ String _schoolLabel(wapi.WisaSchool school) {
 /// Flags the operator's virtual WISA schools on a freshly loaded school list.
 ///
 /// The virtual marks live in the settings document keyed by school **id**
-/// ([AppSettings.virtualWisaSchoolIds], #203), while the snapshot-time
-/// `MarkAsVirtual` import rule matches by school **name**. Setting
-/// `WisaSchool.isVirtual` straight from settings mirrors how `ourSchoolIds`
-/// bypasses `MarkAsOurs`: the operator-editable record is authoritative and no
+/// ([AppSettings.virtualWisaSchoolIds], #203), and since #277 this is the only
+/// thing that ever sets `WisaSchool.isVirtual`: the snapshot-time `MarkAsVirtual`
+/// import rule matched by school **code** and fed the same flag, so the pull had
+/// to union two surfaces that could disagree. Ownership made the same move one
+/// issue earlier (#286) — the operator-editable record is authoritative and no
 /// rule has to be synthesised for it.
 ///
-/// The pass is additive — a school the rules already flagged stays flagged even
-/// when it is not in [virtualIds] — so wiring settings in can never silently
-/// un-virtualise a school an existing `MarkAsVirtual` rule covers. Returns a new
-/// list; the input is not mutated.
+/// [virtualIds] is therefore the whole answer, and this pass *sets* the flag
+/// rather than only adding to it: a school outside the set pulls with the
+/// ordinary werkdatum, full stop. Until #277 it was deliberately additive, so
+/// that wiring the grid in could not silently un-virtualise a school a rule
+/// covered; with no rule left to defer to, that additive step could only keep a
+/// stale flag alive against what the grid says. Returns a new list; the input is
+/// not mutated.
 List<wapi.WisaSchool> markVirtualSchools(
   Iterable<wapi.WisaSchool> schools,
   Set<int> virtualIds,
 ) =>
     <wapi.WisaSchool>[
-      for (final s in schools)
-        virtualIds.contains(s.id) ? s.copyWith(isVirtual: true) : s,
+      for (final s in schools) s.copyWith(isVirtual: virtualIds.contains(s.id)),
     ];
 
 String _firstNonEmpty(String preferred, String fallback) =>

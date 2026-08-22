@@ -157,12 +157,12 @@ void main() {
         wisaPullFingerprint(base.copyWith(
           wisaRules: const <WisaImportRule>[
             DontImportClass('3C'),
-            MarkAsVirtual('V'),
+            DontImportUserFromWisa('SMIT'),
           ],
         )),
         isNot(wisaPullFingerprint(base.copyWith(
           wisaRules: const <WisaImportRule>[
-            MarkAsVirtual('V'),
+            DontImportUserFromWisa('SMIT'),
             DontImportClass('3C'),
           ],
         ))),
@@ -173,7 +173,7 @@ void main() {
       final settings = _settings().copyWith(
         wisaRules: const <WisaImportRule>[
           DontImportClass('3C'),
-          MarkAsOurs('S1'),
+          DontImportUserFromWisa('SMIT'),
         ],
       );
       expect(wisaPullFingerprint(settings), wisaPullFingerprint(settings));

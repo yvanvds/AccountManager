@@ -184,21 +184,32 @@ void main() {
 
     test('the WISA opt-out family claims no write at all', () {
       // DontImportStaffFromWisa & co carry Origin.wisa on their ChangeSet, but
-      // WISA is read-only here: what they produce is a local import rule.
+      // WISA is read-only here: what they produce is an import rule.
       final message = applyConfirmationMessage(scope(<Origin>[Origin.wisa]));
       expect(
         message,
-        startsWith('Dit legt 1 importregel vast (er wordt niets naar WISA '
-            'geschreven).'),
+        startsWith('Dit bewaart 1 importregel blijvend voor iedereen (er wordt '
+            'niets naar WISA geschreven).'),
       );
       expect(message, isNot(contains('schrijft 1 wijziging')));
+    });
+
+    test('the rule is announced as permanent and shared (#276)', () {
+      // The rule is written to the shared settings document, so it outlives the
+      // session and every other operator inherits it. A sentence that read like
+      // a one-run decision would be the operator's only warning before an
+      // irreversible-looking click.
+      final message = applyConfirmationMessage(scope(<Origin>[Origin.wisa]));
+      expect(message, contains('blijvend'));
+      expect(message, contains('voor iedereen'));
     });
 
     test('a rule beside a real write is counted apart from it', () {
       expect(
         applyConfirmationMessage(scope(<Origin>[Origin.azure, Origin.wisa])),
-        startsWith('Dit schrijft 1 wijziging naar Office 365 en legt 1 '
-            'importregel vast (er wordt niets naar WISA geschreven).'),
+        startsWith('Dit schrijft 1 wijziging naar Office 365 en bewaart 1 '
+            'importregel blijvend voor iedereen (er wordt niets naar WISA '
+            'geschreven).'),
       );
     });
 

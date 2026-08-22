@@ -54,10 +54,10 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// [ourSchoolIds] is the set of WISA school ids we actually **manage** (#133).
 /// The shared credentials pull every group school, so this set is what tells a
 /// student who left *our* school (but is still in a sibling group school) from
-/// one who is genuinely present here. When null, it is derived from the
-/// snapshot's own `WisaSchool.isOurs` flags (the `MarkAsOurs` import rule). When
-/// that derived set is also empty — ownership unconfigured — every WISA-present
-/// student is treated as ours, preserving the pre-#134 behaviour. For students
+/// one who is genuinely present here. It comes from Settings and nowhere else
+/// (#286): null and empty both mean ownership is unconfigured, in which case
+/// every WISA-present student is treated as ours, preserving the pre-#134
+/// behaviour. For students
 /// and staff, membership never changes which records exist or their identity
 /// keys, only how each is classified ([WisaPresence]); for **groups** it is a
 /// filter (#205), because a class of a school we do not manage has no business
@@ -78,11 +78,7 @@ LinkedSnapshot link(
   required String schoolPrefix,
   Set<int>? ourSchoolIds,
 }) {
-  final effectiveOurSchoolIds = ourSchoolIds ??
-      <int>{
-        for (final school in wisaSnapshot.schools)
-          if (school.isOurs) school.id,
-      };
+  final effectiveOurSchoolIds = ourSchoolIds ?? const <int>{};
 
   // The virtual schools (#209). Unlike ownership there is no caller override:
   // the flag is stamped onto the school list before the pull, and `sync()`

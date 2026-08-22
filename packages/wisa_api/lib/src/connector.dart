@@ -97,9 +97,9 @@ class WisaConnector {
   }
 
   /// Pulls every school the credentials grant access to. Returns the
-  /// list as it would appear in a snapshot — but **without** the
-  /// [MarkAsVirtual] rule applied. Call [sync] for the rule-applied
-  /// view.
+  /// list as it would appear in a snapshot — but with every school
+  /// non-virtual: which of them is virtual is the operator's per-school
+  /// mark in Instellingen, stamped on by the app before [sync] (#277).
   Future<List<WisaSchool>> loadSchools() async {
     final csv = await _performQuery(WisaQuery.getSchools, const []);
     if (csv.isEmpty) {
@@ -126,13 +126,12 @@ class WisaConnector {
   /// [workDate] is used as the "Werkdatum" parameter for each query
   /// **unless** the school's `isVirtual` flag is set, in which case
   /// [virtualWorkDate] is used (falls back to [workDate] when null).
-  /// Apply [MarkAsVirtual] rules to [schools] before passing them in
-  /// (see [applySchoolRules]).
+  /// Flag [schools] from the operator's per-school virtual marks before
+  /// passing them in — the app's `markVirtualSchools` does that (#277).
   ///
   /// [rules] is the full set of import rules — `ReplaceInstitute`,
-  /// `DontImportClass`, and `DontImportUserFromWisa` are applied during
-  /// snapshot construction here; `MarkAsVirtual` should already be
-  /// reflected in the `isVirtual` flag of each school.
+  /// `DontImportClass`, and `DontImportUserFromWisa` — all applied during
+  /// snapshot construction here. No rule touches a school any more.
   Future<WisaSnapshot> sync({
     required Iterable<WisaSchool> schools,
     required DateTime workDate,
@@ -176,15 +175,6 @@ class WisaConnector {
       schools: schools.toList(),
     );
   }
-
-  /// Applies [MarkAsVirtual] rules to a freshly-loaded list of schools.
-  /// Convenience for callers that want to compute the post-rule school
-  /// list before passing it to [sync].
-  static List<WisaSchool> applySchoolRules(
-    Iterable<WisaSchool> schools,
-    Iterable<WisaImportRule> rules,
-  ) =>
-      applyRulesToSchools(schools, rules);
 
   Future<List<WisaClassGroup>> _loadClassGroups(
     WisaSchool school,

@@ -107,6 +107,10 @@ enum Origin {
 
 /// Import rules applied at snapshot construction time
 /// (`docs/domain-model.md` §3.11).
+///
+/// Neither legacy school-marking rule is here. Both flagged a WISA school by its
+/// short code, and both flags are the operator's WISA-scholen list keyed by
+/// school **id** instead — `MarkAsOurs` since #286, `MarkAsVirtual` since #277.
 enum Rule {
   // Smartschool import rules.
   ssDiscardGroup,
@@ -114,7 +118,6 @@ enum Rule {
   // WISA import rules.
   wiReplaceInstitution,
   wiDontImportClass,
-  wiMarkAsVirtual,
   wiDontImportUser,
   ;
 

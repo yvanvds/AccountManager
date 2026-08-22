@@ -270,9 +270,10 @@ See INV-40, INV-41, INV-42. `ApplyOptions` carries `dryRun: bool` (PAIN-3).
 | `DontImportClass` | WISA | Discard | className |
 | `DontImportUserFromWisa` | WISA | Discard | userCode |
 | `ReplaceInstitute` | WISA | Modify | from → to |
-| `MarkAsVirtual` | WISA | WorkDate | schoolCode |
 
 Rules are applied **at snapshot construction time** (inside the connector or just after), not at link time. The legacy code interleaves them; we don't.
+
+The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `MarkAsOurs` are **not** ported. Both flagged a `WisaSchool` by its short code, and both flags are the operator's WISA-scholen list in Instellingen instead, keyed by school **id**: `AppSettings.virtualWisaSchoolIds` decides which schools pull with the virtual werkdatum (#277) and `AppSettings.managedWisaSchoolIds` which schools we manage (#286). A settings document that still carries either rule loads; a persisted `MarkAsVirtual` is migrated onto the matching school's `virtual` flag on the way in.
 
 ## 4. Identity scheme
 

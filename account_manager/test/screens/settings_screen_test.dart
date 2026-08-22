@@ -808,7 +808,7 @@ void main() {
       initial: AppSettings(
         wisaRules: <WisaImportRule>[
           const DontImportClass('OKAN'),
-          const MarkAsVirtual('VIRT'),
+          const DontImportUserFromWisa('VIRT'),
         ],
       ),
     );
@@ -1109,9 +1109,8 @@ void main() {
   });
 
   testWidgets(
-      'Toevoegen offers the three rules with no other surface, and not the two '
-      'the WISA-scholen grid already marks (#273)',
-      (WidgetTester tester) async {
+      'Toevoegen offers the three rules with no other surface, and neither '
+      'school-marking rule (#273)', (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness();
     await tester
@@ -1130,14 +1129,14 @@ void main() {
       expect(
           find.byKey(ValueKey('settings-wisa-rule-add-$kind')), findsOneWidget);
     }
-    // `MarkAsOurs` is dead once the grid holds a school (managedSchoolIdsOf
-    // stops reading the snapshot's flags), and `MarkAsVirtual` duplicates the
-    // grid's per-school mark — neither is offered as a new rule.
+    // Neither school-marking rule is a rule kind any more — `MarkAsOurs` went
+    // in #286 and `MarkAsVirtual` in #277 — so there is nothing to offer and
+    // nothing that could be authored to contradict the grid.
     expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsVirtual')),
         findsNothing);
     expect(find.byKey(const ValueKey('settings-wisa-rule-add-markAsOurs')),
         findsNothing);
-    // …and the section says where those two live instead.
+    // …and the section says where the school marks live instead.
     expect(find.byKey(const ValueKey('settings-wisa-rules-school-note')),
         findsOneWidget);
   });
@@ -1173,8 +1172,19 @@ void main() {
 
     final saved = await harness.store.load();
     expect(saved.wisaRules, hasLength(3));
-    // …on the wire shape the codec already defined — no new tags (#273).
-    expect(saved.toJson()['wisaRules'], <Map<String, dynamic>>[
+    // …on the rule tags the codec already defined — no new ones (#273). The
+    // provenance keys #285 writes beside them are asserted separately below;
+    // stripping them here keeps this test about the rule half of the object.
+    final encoded = (saved.toJson()['wisaRules'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .map((Map<String, dynamic> rule) => <String, dynamic>{
+              for (final MapEntry<String, dynamic> e in rule.entries)
+                if (!const <String>{'subject', 'addedBy', 'addedAt'}
+                    .contains(e.key))
+                  e.key: e.value,
+            })
+        .toList();
+    expect(encoded, <Map<String, dynamic>>[
       {'type': 'dontImportClass', 'className': 'OKAN'},
       {'type': 'dontImportUserFromWisa', 'userCode': 'ABC'},
       {
@@ -1303,47 +1313,64 @@ void main() {
   });
 
   testWidgets(
-      'a school-marking rule stays editable and removable even though '
-      'Toevoegen does not offer it (#273)', (WidgetTester tester) async {
+      'a persisted MarkAsOurs is ignored, so the list shows only live rules '
+      '(#286)', (WidgetTester tester) async {
     _useTallWindow(tester);
+    // A document another operator (or an older build) wrote. The rule kind is
+    // gone, so it can only be introduced as raw JSON — which is exactly the
+    // shape Cosmos hands back.
     final harness = SettingsHarness(
-      initial: AppSettings(
-        wisaRules: <WisaImportRule>[const MarkAsOurs('ISMAA')],
-      ),
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisaRules': <dynamic>[
+          <String, dynamic>{'type': 'markAsOurs', 'schoolCode': 'ISMAA'},
+          <String, dynamic>{'type': 'dontImportClass', 'className': 'OKAN'},
+        ],
+      }),
     );
     await tester
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
     await _openTab(tester, 'settings-tab-wisa');
-    // Editable: the prompt opens on the rule's own kind and value.
-    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-edit')));
-    await tester.pumpAndSettle();
-    expect(find.text('Markeer als beheerd'), findsOneWidget);
-    expect(find.text('ISMAA'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-cancel')));
-    await tester.pumpAndSettle();
+    expect(find.text('Klas niet importeren uit WISA: OKAN'), findsOneWidget);
+    expect(find.textContaining('Markeer als beheerd'), findsNothing);
 
-    // …and removable, so a legacy rule that contradicts the grid can go.
-    await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-remove')));
-    await tester.pumpAndSettle();
+    // …and saving drops it from the document for good.
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
-    expect((await harness.store.load()).wisaRules, isEmpty);
+    final saved = await harness.store.load();
+    expect(saved.wisaRules, hasLength(1));
+    expect(
+      (saved.toJson()['wisaRules'] as List<dynamic>)
+          .map((dynamic r) => (r as Map<String, dynamic>)['type']),
+      <String>['dontImportClass'],
+    );
   });
 
   testWidgets(
-      'a MarkAsVirtual rule shows on the school it marks instead of '
-      'contradicting the grid (#273)', (WidgetTester tester) async {
+      'a persisted MarkAsVirtual becomes the grid\'s own checkbox, unlocked '
+      '(#277)', (WidgetTester tester) async {
     _useTallWindow(tester);
+    // A document another operator (or an older build) wrote. The rule kind is
+    // gone, so it can only be introduced as raw JSON — which is exactly the
+    // shape Cosmos hands back.
     final harness = SettingsHarness(
-      initial: AppSettings(
-        wisaRules: <WisaImportRule>[const MarkAsVirtual('ISMV')],
-        wisaSchools: const <WisaSchoolProfile>[
-          WisaSchoolProfile(schoolId: 1, code: 'ISMV', name: 'Virtuele school'),
-          WisaSchoolProfile(schoolId: 2, code: 'ISMAA', name: 'Sint-Maarten'),
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisaRules': <dynamic>[
+          <String, dynamic>{'type': 'markAsVirtual', 'schoolCode': 'ISMV'},
         ],
-      ),
+        'wisaSchools': <dynamic>[
+          const WisaSchoolProfile(
+                  schoolId: 1,
+                  code: 'ISMV',
+                  name: 'Virtuele school',
+                  ours: true)
+              .toJson(),
+          const WisaSchoolProfile(
+                  schoolId: 2, code: 'ISMAA', name: 'Sint-Maarten', ours: true)
+              .toJson(),
+        ],
+      }),
     );
     await tester
         .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
@@ -1351,22 +1378,33 @@ void main() {
 
     await _openTab(tester, 'settings-tab-wisa');
 
-    // The rule-marked school reads as virtual and says where that came from;
-    // its checkbox is locked, because the pull unions both surfaces and
-    // unticking it would not stick.
+    // The mark survived, on the grid this time: ticked and editable, with no
+    // "(importregel)" caveat, because nothing can contradict the checkbox now.
     final marked = tester.widget<CheckboxListTile>(
       find.byKey(const ValueKey('settings-wisa-school-1-virtual')),
     );
     expect(marked.value, isTrue);
-    expect(marked.onChanged, isNull);
-    expect(find.text('virtueel (importregel)'), findsOneWidget);
+    expect(marked.onChanged, isNotNull);
+    expect(find.text('virtueel (importregel)'), findsNothing);
 
-    // The school no rule names is untouched: unticked and still editable.
+    // The school the rule never named is untouched.
     final plain = tester.widget<CheckboxListTile>(
       find.byKey(const ValueKey('settings-wisa-school-2-virtual')),
     );
     expect(plain.value, isFalse);
     expect(plain.onChanged, isNotNull);
+
+    // The rules list has nothing left to show, and unticking now sticks.
+    expect(find.byKey(const ValueKey('settings-wisa-rules-empty')),
+        findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey('settings-wisa-school-1-virtual')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    final saved = await harness.store.load();
+    expect(saved.virtualWisaSchoolIds, isEmpty);
+    expect(saved.wisaRules, isEmpty);
   });
 
   testWidgets(
@@ -1390,5 +1428,220 @@ void main() {
     // is what blocks a stale drift pass.
     expect(live.current.wisaRules, hasLength(1));
     expect(wisaPullFingerprint(live.current), isNot(before));
+  });
+
+  group('a persisted WISA rule says who added it, when, and for whom (#285)',
+      () {
+    testWidgets('renders the three fields, each in its own column',
+        (WidgetTester tester) async {
+      // The shared settings document is the point (#276), and it only works if a
+      // rule a colleague added last month is legible to whoever opens the panel
+      // next: a bare `DontImportUserFromWisa` shows an opaque WISA code, and the
+      // staff these rules are about eventually vanish from WISA altogether, so
+      // the name cannot be resolved later.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: AppSettings(
+          wisaRules: const <WisaImportRule>[DontImportUserFromWisa('SMIT')],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'user:SMIT': RuleProvenance(
+              subject: 'Jan Smit',
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 6, 30, 14, 5),
+            ),
+          },
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+
+      expect(
+        find.byKey(const ValueKey('settings-wisa-rules-header')),
+        findsOneWidget,
+      );
+      expect(find.text('Toegevoegd op'), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(
+                find.byKey(const ValueKey('settings-wisa-rule-0-subject')))
+            .data,
+        'Jan Smit',
+      );
+      expect(
+        tester
+            .widget<Text>(
+                find.byKey(const ValueKey('settings-wisa-rule-0-added-by')))
+            .data,
+        'ann@school.example',
+      );
+      // A full, absolute stamp: read months later, "gisteren" or a year-less
+      // date would tell the reader nothing.
+      final stamp = tester
+          .widget<Text>(
+              find.byKey(const ValueKey('settings-wisa-rule-0-added-at')))
+          .data!;
+      expect(stamp, contains('30/06/2026'));
+    });
+
+    testWidgets('a rule stored before #285 reads as onbekend, not as a blank',
+        (WidgetTester tester) async {
+      // An empty cell reads like nobody did it. "onbekend" says the record is
+      // missing — the true statement, and the one that tells the reader to ask.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: AppSettings(
+          wisaRules: <WisaImportRule>[const DontImportClass('OKAN')],
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+
+      for (final String cell in <String>['subject', 'added-at', 'added-by']) {
+        expect(
+          tester
+              .widget<Text>(find.byKey(ValueKey('settings-wisa-rule-0-$cell')))
+              .data,
+          'onbekend',
+          reason: 'the $cell cell of a pre-#285 rule',
+        );
+      }
+    });
+
+    testWidgets('a rule typed by hand is stamped the same way an apply is',
+        (WidgetTester tester) async {
+      // #273's editor is the other authoring surface, and a rule typed there is
+      // just as much a standing decision the rest of the group inherits.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(operatorName: 'ann@school.example');
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+      await _addWisaRule(tester, 'dontImportClass', <String>['OKAN']);
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      final provenance = saved.provenanceOf(const DontImportClass('OKAN'))!;
+      expect(provenance.addedBy, 'ann@school.example');
+      expect(provenance.addedAt, isNotNull);
+      // No subject: this view holds no WISA snapshot to resolve a name against
+      // (the same reason #273's prompts are free text), so it records nothing
+      // rather than passing the typed code off as a name.
+      expect(provenance.subject, isEmpty);
+    });
+
+    testWidgets('removing a rule takes its provenance with it',
+        (WidgetTester tester) async {
+      // Otherwise a later, unrelated rule keying the same way would inherit a
+      // stamp naming an operator who never decided it.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: AppSettings(
+          wisaRules: const <WisaImportRule>[DontImportClass('OKAN')],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'class:OKAN': RuleProvenance(
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 1, 1),
+            ),
+          },
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+      await tester
+          .tap(find.byKey(const ValueKey('settings-wisa-rule-0-remove')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      expect(saved.wisaRules, isEmpty);
+      expect(saved.wisaRuleProvenance, isEmpty);
+    });
+
+    testWidgets('editing a rule re-attributes it to whoever edited it',
+        (WidgetTester tester) async {
+      // Changing what a rule matches makes it a different standing decision;
+      // leaving the previous operator's name on it would be a lie about a record
+      // whose whole purpose is saying who to ask.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        operatorName: 'bob@school.example',
+        initial: AppSettings(
+          wisaRules: const <WisaImportRule>[DontImportClass('OKAN')],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'class:OKAN': RuleProvenance(
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 1, 1),
+            ),
+          },
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openTab(tester, 'settings-tab-wisa');
+      await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-wisa-rule-value-0')),
+        'ONTHAAL',
+      );
+      await tester.pump();
+      await tester
+          .tap(find.byKey(const ValueKey('settings-wisa-rule-confirm')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      expect(saved.wisaRuleProvenance.keys, <String>['class:ONTHAAL']);
+      expect(
+        saved.provenanceOf(const DontImportClass('ONTHAAL'))!.addedBy,
+        'bob@school.example',
+      );
+    });
+
+    testWidgets('a stamp on its own does not arm the drift gate',
+        (WidgetTester tester) async {
+      // `wisaPullFingerprint` covers the persisted rules (#238/#263), and
+      // provenance must stay out of it: who typed a rule changes nothing about
+      // what WISA returns, and #276's post-apply re-credit depends on that.
+      _useTallWindow(tester);
+      const rules = <WisaImportRule>[DontImportClass('OKAN')];
+      final live = LiveSettings(const AppSettings(wisaRules: rules));
+      final harness = SettingsHarness(
+        operatorName: 'ann@school.example',
+        initial: const AppSettings(wisaRules: rules),
+        liveSettings: live,
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      final before = wisaPullFingerprint(live.current);
+      await _openTab(tester, 'settings-tab-wisa');
+      await tester.tap(find.byKey(const ValueKey('settings-wisa-rule-0-edit')));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const ValueKey('settings-wisa-rule-confirm')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      // Re-confirming the same values re-stamps the rule but changes no match.
+      expect(
+        live.current.provenanceOf(const DontImportClass('OKAN'))!.addedBy,
+        'ann@school.example',
+      );
+      expect(wisaPullFingerprint(live.current), before);
+    });
   });
 }

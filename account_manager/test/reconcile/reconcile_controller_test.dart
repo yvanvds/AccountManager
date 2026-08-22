@@ -44,6 +44,23 @@ class _RecordingSettingsStore extends InMemorySettingsStore {
   }
 }
 
+/// A settings store that hands back a document this session has never seen —
+/// what a re-read looks like when another operator saved a werkdatum while this
+/// pass was running (#276). Saves land normally on top of it.
+class _MovedWerkdatumStore extends InMemorySettingsStore {
+  _MovedWerkdatumStore(this.theirs) : super(const AppSettings());
+
+  final AppSettings theirs;
+  bool _handedOver = false;
+
+  @override
+  Future<AppSettings> load() async {
+    if (_handedOver) return super.load();
+    _handedOver = true;
+    return theirs;
+  }
+}
+
 /// A settings store whose every read throws — models the store being down while
 /// a sync tries to repair the school profiles (#207).
 class _ThrowingSettingsStore implements SettingsStore {
@@ -421,6 +438,283 @@ void main() {
           'Bad state: cosmos 503',
         ),
       );
+    });
+  });
+
+  group('a DontImportFromWisa apply persists its rule (#276)', () {
+    // Two freshly hired teachers exist in WISA only, so each raises the #248
+    // either/or: provision them, or stop importing them. Picking the opt-out is
+    // what earns a `DontImportUserFromWisa` rule — and, until #276, that rule
+    // lived only in the process-lifetime `WisaImportRules` holder, so the next
+    // launch rebuilt it empty, WISA still reported the person active, and the
+    // account the operator had meanwhile deleted (#269) was proposed anew.
+    ReconcileHarness ignoreStaffHarness({
+      SettingsStore? settingsStore,
+      LiveSettings? liveSettings,
+    }) =>
+        ReconcileHarness(
+          wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+          smartschool: ssSnap(
+            groups: const [],
+            accounts: const [],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+          settingsStore: settingsStore,
+          liveSettings: liveSettings,
+        );
+
+    /// Syncs, switches the staff either/or to the opt-out the way the screen
+    /// does, and applies that one row.
+    Future<void> ignoreTheStaffMember(ReconcileHarness h) async {
+      final entry =
+          h.controller.pendingEntries.firstWhere((e) => e.family == 'staff');
+      h.controller.chooseAlternative(
+        entry: entry,
+        group: actions.staffImportAlternative,
+        kind: 'DontImportStaffFromWisa',
+      );
+      // Re-read after the choice: the entry list is rebuilt.
+      final chosen = h.controller.pendingEntries
+          .firstWhere((e) => e.targetId == entry.targetId);
+      await h.controller.applyEntry(chosen);
+    }
+
+    test('writes the earned rule to the shared settings document', () async {
+      final settings = InMemorySettingsStore(const AppSettings());
+      final live = LiveSettings(const AppSettings());
+      final h = ignoreStaffHarness(settingsStore: settings, liveSettings: live);
+      await h.controller.sync();
+
+      await ignoreTheStaffMember(h);
+
+      final saved = await settings.load();
+      expect(saved.wisaRules.single, isA<wapi.DontImportUserFromWisa>());
+      expect(
+        (saved.wisaRules.single as wapi.DontImportUserFromWisa).userCode,
+        'SMIT',
+      );
+      // …and it is published, so this session's next pull unions it in without
+      // a reload (#263) and Instellingen shows what the store holds (#273).
+      expect(live.current.wisaRules, hasLength(1));
+      expect(h.controller.error, isNull);
+    });
+
+    test('tells the operator the exclusion is permanent and shared', () async {
+      // A rule every operator inherits, for as long as nobody removes it, must
+      // not land silently — the log is where the operator finds out what the
+      // click actually committed them to.
+      final settings = InMemorySettingsStore(const AppSettings());
+      final h = ignoreStaffHarness(
+        settingsStore: settings,
+        liveSettings: LiveSettings(const AppSettings()),
+      );
+      await h.controller.sync();
+
+      await ignoreTheStaffMember(h);
+
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains('Importregel bewaard voor iedereen: Gebruiker niet importeren '
+            'uit WISA: SMIT. Dit blijft gelden tot de regel in Instellingen → '
+            'Wisa verwijderd wordt.'),
+      );
+    });
+
+    test('applying the same rule twice does not grow the persisted list',
+        () async {
+      // `WisaImportRules`' de-dup has to hold across the persist path too, or a
+      // September of re-applies would append the same rule until the settings
+      // document itself became the problem.
+      final settings = _RecordingSettingsStore(const AppSettings());
+      final h = ignoreStaffHarness(
+        settingsStore: settings,
+        liveSettings: LiveSettings(const AppSettings()),
+      );
+      await h.controller.sync();
+
+      await ignoreTheStaffMember(h);
+      await ignoreTheStaffMember(h);
+
+      expect((await settings.load()).wisaRules, hasLength(1));
+      expect(settings.saves, 1,
+          reason: 'the second apply had nothing new to write');
+    });
+
+    test('a dry run writes nothing', () async {
+      // A dry run projects the rule without earning it; a shared, permanent
+      // change must never come out of a preview.
+      final settings = _RecordingSettingsStore(const AppSettings());
+      final h = ignoreStaffHarness(
+        settingsStore: settings,
+        liveSettings: LiveSettings(const AppSettings()),
+      );
+      await h.controller.sync();
+      final entry =
+          h.controller.pendingEntries.firstWhere((e) => e.family == 'staff');
+      h.controller.chooseAlternative(
+        entry: entry,
+        group: actions.staffImportAlternative,
+        kind: 'DontImportStaffFromWisa',
+      );
+
+      await h.controller.dryRunEntry(h.controller.pendingEntries
+          .firstWhere((e) => e.targetId == entry.targetId));
+
+      expect(settings.saves, 0);
+      expect((await settings.load()).wisaRules, isEmpty);
+    });
+
+    test('a failing settings store is logged, never fails the pass', () async {
+      // The apply pass itself succeeded and its results are on screen; losing
+      // them to a wedged Cosmos would be the worse failure.
+      final h = ignoreStaffHarness(
+        settingsStore: const _ThrowingSettingsStore('cosmos 503'),
+        liveSettings: LiveSettings(const AppSettings()),
+      );
+      await h.controller.sync();
+
+      await ignoreTheStaffMember(h);
+
+      expect(h.controller.error, isNull);
+      expect(
+        h.controller.applyResults!.map((r) => r.outcome),
+        everyElement(actions.ActionOutcome.applied),
+      );
+      expect(
+        h.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains('Kon de WISA-importregel(s) niet opslaan in de instellingen: '
+            'Bad state: cosmos 503'),
+      );
+    });
+
+    test('does not arm the drift gate it just satisfied (#238)', () async {
+      // `wisaPullFingerprint` covers the persisted rules, so this write would
+      // otherwise block **Controleer op drift** with "synchroniseer eerst" —
+      // over a rule the applier had already re-pulled WISA with.
+      final settings = InMemorySettingsStore(const AppSettings());
+      final live = LiveSettings(const AppSettings());
+      final h = ignoreStaffHarness(settingsStore: settings, liveSettings: live);
+      await h.controller.sync();
+      expect(h.controller.canCheckDrift, isTrue);
+
+      await ignoreTheStaffMember(h);
+
+      expect(h.controller.driftBlockedReason, isNull);
+      expect(h.controller.canCheckDrift, isTrue);
+    });
+
+    test('still arms it for a change another operator slipped in', () async {
+      // The re-credit is narrow on purpose: it claims only *these rules*. A
+      // werkdatum this session's snapshot was never pulled with comes back on
+      // the re-read and must keep blocking drift.
+      final live = LiveSettings(const AppSettings());
+      final h = ignoreStaffHarness(
+        settingsStore: _MovedWerkdatumStore(
+          AppSettings(
+            wisa: WisaConnection(
+              workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9)),
+            ),
+          ),
+        ),
+        liveSettings: live,
+      );
+      await h.controller.sync();
+      expect(h.controller.canCheckDrift, isTrue);
+
+      await ignoreTheStaffMember(h);
+
+      expect(live.current.wisaRules, hasLength(1),
+          reason: 'the rule still landed on the document that came back');
+      expect(
+        h.controller.driftBlockedReason,
+        'WISA-instellingen gewijzigd — synchroniseer eerst.',
+      );
+    });
+
+    group('the persisted rule records who, when, and for whom (#285)', () {
+      test('stamps the operator, the instant, and the subject\'s name',
+          () async {
+        // A `DontImportUserFromWisa` stores nothing but `SMIT`, and the staff
+        // these rules are about are precisely the ones who later disappear from
+        // WISA — so the name has to be captured here, at the decision, or it is
+        // gone. The operator is the load-bearing half: with no reason field on
+        // the record, it is the pointer to the person who remembers.
+        final settings = InMemorySettingsStore(const AppSettings());
+        final h = ignoreStaffHarness(
+          settingsStore: settings,
+          liveSettings: LiveSettings(const AppSettings()),
+        );
+        await h.controller.sync();
+
+        await ignoreTheStaffMember(h);
+
+        final saved = await settings.load();
+        final provenance =
+            saved.provenanceOf(const wapi.DontImportUserFromWisa('SMIT'))!;
+        expect(provenance.subject, 'Anna Smit');
+        expect(provenance.addedBy, 'operator@school.example');
+        // The pass's own clock, sampled once for the whole pass.
+        expect(provenance.addedAt, kFixtureDate);
+      });
+
+      test('re-applying keeps the first operator\'s stamp', () async {
+        // Two operators can reach the same conclusion; the union puts persisted
+        // rules first (#263), so the collapse keeps the decision the document
+        // has been standing on — and its author with it.
+        final settings = InMemorySettingsStore(AppSettings(
+          wisaRules: const <wapi.WisaImportRule>[
+            wapi.DontImportUserFromWisa('SMIT'),
+          ],
+          wisaRuleProvenance: <String, RuleProvenance>{
+            'user:SMIT': RuleProvenance(
+              subject: 'Anna Smit',
+              addedBy: 'ann@school.example',
+              addedAt: DateTime.utc(2026, 1, 15, 9),
+            ),
+          },
+        ));
+        final h = ignoreStaffHarness(
+          settingsStore: settings,
+          liveSettings: LiveSettings(const AppSettings()),
+        );
+        await h.controller.sync();
+
+        await ignoreTheStaffMember(h);
+
+        final provenance = (await settings.load())
+            .provenanceOf(const wapi.DontImportUserFromWisa('SMIT'))!;
+        expect(provenance.addedBy, 'ann@school.example');
+        expect(provenance.addedAt, DateTime.utc(2026, 1, 15, 9));
+      });
+
+      test('an unsigned-in session still records when, and for whom', () async {
+        // #98's sign-in is what supplies the operator; a session without one
+        // must not lose the other two fields — "onbekend" for the author is the
+        // honest degradation, a lost date is a real loss.
+        final settings = InMemorySettingsStore(const AppSettings());
+        final h = ReconcileHarness(
+          wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+          smartschool: ssSnap(
+            groups: const [],
+            accounts: const [],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+          settingsStore: settings,
+          liveSettings: LiveSettings(const AppSettings()),
+          syncedBy: '',
+        );
+        await h.controller.sync();
+
+        await ignoreTheStaffMember(h);
+
+        final provenance = (await settings.load())
+            .provenanceOf(const wapi.DontImportUserFromWisa('SMIT'))!;
+        expect(provenance.addedBy, isEmpty);
+        expect(provenance.subject, 'Anna Smit');
+        expect(provenance.addedAt, isNotNull);
+      });
     });
   });
 
@@ -891,7 +1185,7 @@ void main() {
     ReconcileHarness newIntakeHarness() => ReconcileHarness(
           wisa: wisaSnap(
             students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
-            schools: [wisaSchool(1, ours: true)],
+            schools: [wisaSchool(1)],
           ),
           smartschool: ssSnap(
             groups: [ssGroup('3C', code: '3C_ss')],
@@ -1222,7 +1516,6 @@ void main() {
               id: 25,
               name: 'Instituut Sancta Maria-A',
               code: 'ISMAA',
-              isOurs: true,
             ),
           ],
         ),

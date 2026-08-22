@@ -941,18 +941,30 @@ wapi.WisaStudent wisaStudent({
       schoolId: schoolId,
     );
 
-/// A WISA school, optionally flagged [ours] (the managed-school signal the
-/// linker joins student `schoolId` against, #133/#134) and/or [virtual] (the
-/// flag `markVirtualSchools` stamps before the pull, whose class groups the
-/// linker refuses to seed, #209).
-wapi.WisaSchool wisaSchool(int id, {bool ours = false, bool virtual = false}) =>
-    wapi.WisaSchool(
+/// A WISA school, optionally flagged [virtual] (the flag `markVirtualSchools`
+/// stamps before the pull, whose class groups the linker refuses to seed, #209).
+///
+/// A school carries no ownership flag (#286): which schools we manage is the
+/// harness's `ourSchoolIds` — the persisted Settings path, and the only one.
+wapi.WisaSchool wisaSchool(int id, {bool virtual = false}) => wapi.WisaSchool(
       id: id,
       name: 'School $id',
       code: '',
-      isOurs: ours,
       isVirtual: virtual,
     );
+
+/// The managed-school set a fixture's reconcile stack scopes by: the live
+/// settings document's WISA-scholen list when it configures one, otherwise the
+/// set the harness was constructed with.
+///
+/// Since #286 an unconfigured document answers with an **empty** set rather than
+/// null, so emptiness is what the fallback tests for — otherwise a fixture that
+/// pins `ourSchoolIds` directly, without curating school profiles, would silently
+/// lose its managed set.
+Set<int>? _managedSchoolsOr(AppSettings settings, Set<int>? pinned) {
+  final configured = managedSchoolIdsOf(settings);
+  return configured.isEmpty ? pinned : configured;
+}
 
 /// A WISA class group. [name] is the `fullName` the linker matches on;
 /// [schoolId] decides whether the class belongs to a school we manage — a
@@ -1288,13 +1300,14 @@ ReconcileHarness manyDepartedHarness({
 
 /// A reconcile harness for the group-wide-leave keep-Azure case (#134): one
 /// student still in *our* Smartschool and Azure, but whose WISA record now sits
-/// only in a sibling group school (id 2) we don't manage — school 1 is flagged
-/// ours. The dispatcher must raise the Smartschool departure (unregister/delete)
-/// while **keeping** Azure (no `RemoveStudentFromAzure`).
+/// only in a sibling group school (id 2) we don't manage — only school 1 is in
+/// the managed set. The dispatcher must raise the Smartschool departure
+/// (unregister/delete) while **keeping** Azure (no `RemoveStudentFromAzure`).
 ReconcileHarness movedToSiblingHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
       wisa: wisaSnap(
         students: [wisaStudent(schoolId: 2)],
-        schools: [wisaSchool(1, ours: true), wisaSchool(2)],
+        schools: [wisaSchool(1), wisaSchool(2)],
       ),
       smartschool: ssSnap(
         groups: const [],
@@ -1305,9 +1318,9 @@ ReconcileHarness movedToSiblingHarness() => ReconcileHarness(
     );
 
 /// A harness for the managed-schools-only Actions filter (#178). One student is
-/// enrolled in school 2 and fully present in *our* Smartschool + Azure. The WISA
-/// schools carry **no** `MarkAsOurs` flag, so the managed set comes solely from
-/// [ourSchoolIds] (the persisted Settings path). Managing only school 1 leaves
+/// enrolled in school 2 and fully present in *our* Smartschool + Azure. The
+/// managed set comes solely from [ourSchoolIds] (the persisted Settings path —
+/// the only one since #286). Managing only school 1 leaves
 /// the student `groupOnly` — kept out of the school tree (re-bucketed to "Niet
 /// toegewezen"); adding school 2 to the managed set surfaces it under School 2.
 ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
@@ -1837,8 +1850,8 @@ ReconcileHarness virtualClassGroupHarness() => ReconcileHarness(
           wisaStudent(wisaId: '2', classGroup: '1V', schoolId: 99),
         ],
         schools: [
-          wisaSchool(1, ours: true),
-          wisaSchool(99, ours: true, virtual: true),
+          wisaSchool(1),
+          wisaSchool(99, virtual: true),
         ],
         classGroups: [
           wisaClassGroup(
@@ -3149,7 +3162,7 @@ class ReconcileHarness {
           ...managedStudentEmployeeIds(
             app.wisa.snapshot,
             ourSchoolIds:
-                managedSchoolIdsOf(this.liveSettings.current) ?? ourSchoolIds,
+                _managedSchoolsOr(this.liveSettings.current, ourSchoolIds),
           ),
           ...managedStaffEmployeeIds(app.wisa.snapshot),
         },
@@ -3159,7 +3172,7 @@ class ReconcileHarness {
           app.wisa.snapshot,
           schoolPrefix: prefix,
           ourSchoolIds:
-              managedSchoolIdsOf(this.liveSettings.current) ?? ourSchoolIds,
+              _managedSchoolsOr(this.liveSettings.current, ourSchoolIds),
         ),
         // The prefix the pull scopes by, read live (#246) — the fixture's 'GBS'
         // until a test saves one in Instellingen.
@@ -3279,10 +3292,10 @@ class ReconcileHarness {
           // tenant); a fixture that applies `AddToSmartschool` for real names
           // the root here, and a test that saves one in Instellingen wins.
           classTree: _liveClassTree(s.smartschool) ?? classTree,
-          // The operator's managed-school set from Settings (#178). When unset,
-          // the linker falls back to the WISA snapshot's MarkAsOurs flags, as
-          // bootstrap does for a not-yet-configured group.
-          ourSchoolIds: managedSchoolIdsOf(s) ?? ourSchoolIds,
+          // The operator's managed-school set from Settings (#178), falling back
+          // to whatever set this fixture was pinned with when the document
+          // configures none.
+          ourSchoolIds: _managedSchoolsOr(s, ourSchoolIds),
         );
       },
     );

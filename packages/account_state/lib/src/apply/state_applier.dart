@@ -75,8 +75,8 @@ class ApplierSettings {
   final SmartschoolClassTree classTree;
 
   /// The `ours`-flagged WISA school ids (#178), or null when no school is
-  /// flagged — which falls back to the snapshot's own `MarkAsOurs` flags rather
-  /// than treating an empty managed set as "none".
+  /// flagged — which, like an empty set, reads as "ownership unconfigured" and
+  /// counts every school, never as "no school is ours".
   final Set<int>? ourSchoolIds;
 }
 
@@ -94,7 +94,10 @@ class ApplierSettings {
 /// 3. for a `DontImportFromWisa` action (which writes nothing and returns a
 ///    [ActionResult.wisaRule]), accumulates the rule in [wisaRules] and
 ///    **re-syncs WISA** so the ignored record drops from the next snapshot —
-///    the one path that does hit the network again.
+///    the one path that does hit the network again. Making that rule permanent
+///    is the caller's job, not this layer's: since #276 the reconcile controller
+///    writes it to the shared settings document once the pass ends, where the
+///    store (and, for #285, the operator's identity) lives.
 ///
 /// **Smartschool uid uniqueness (#72).** Because State holds the account set,
 /// this applier wraps the injected [StudentActionConfig] / [StaffActionConfig]
@@ -184,7 +187,7 @@ class StateApplier {
   /// `AppSettings.wisaSchools` ownership flags, #178). Threaded into `link()` so
   /// a student present only in a non-managed sibling school is classified
   /// [core.WisaPresence.groupOnly] and kept out of the managed-school Actions
-  /// view. Null falls back to the snapshot's `MarkAsOurs` flags (see `link()`).
+  /// view. Null reads as unconfigured — every school counts (see `link()`).
   Set<int>? get ourSchoolIds => settings.ourSchoolIds;
 
   /// Smartschool class-tree live-config the placement resolver needs.

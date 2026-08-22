@@ -3,11 +3,11 @@
 /// The shared credentials pull *every* WISA school the group can see, but we
 /// only **manage** some of them. This profile records, per school id, whether
 /// it is [ours] (managed) and an optional per-school [prefix] override for the
-/// Azure-orphan scoping the linker does (INV-22). It is the persistent, keyed
-/// counterpart of the snapshot-time `MarkAsOurs` import rule: the rule flips
-/// `WisaSchool.isOurs` at pull time by school *name*, while this list is the
-/// operator-editable ownership record keyed by school *id* that survives in the
-/// settings blob.
+/// Azure-orphan scoping the linker does (INV-22). Since #286 this list is the
+/// **only** ownership record: the snapshot-time `MarkAsOurs` import rule that
+/// once flagged a school by code is gone, because this operator-editable list —
+/// keyed by school *id* and persisted in the settings document — won over it
+/// everywhere it was read.
 ///
 /// The shape (`{ schemaVersion, schoolId, code, name, ours, virtual, prefix }`)
 /// is the
@@ -46,8 +46,11 @@ class WisaSchoolProfile {
 
   /// Whether this school is a *virtual* school, i.e. one WISA must be queried
   /// with [AppSettings.wisa]'s separate virtual workdate instead of the ordinary
-  /// one (#203). The persistent, id-keyed counterpart of the snapshot-time
-  /// `MarkAsVirtual` import rule, exactly as [ours] is for `MarkAsOurs`.
+  /// one (#203). Since #277 this is the **only** virtual-school surface: the
+  /// snapshot-time `MarkAsVirtual` import rule set the same flag by short code,
+  /// the pull unioned both, and the two could disagree — so the rule went the
+  /// way [ours]'s did in #286, its persisted marks migrated onto this flag by
+  /// [adoptRetiredVirtualMarks].
   /// Defaults to `false`, so a settings document written before this field
   /// existed loads with every school non-virtual.
   final bool virtual;
@@ -133,4 +136,46 @@ class WisaSchoolProfile {
   String toString() =>
       'WisaSchoolProfile(schoolId: $schoolId, code: $code, name: $name, '
       'ours: $ours, virtual: $virtual, prefix: $prefix)';
+}
+
+/// Carries the school codes of retired `MarkAsVirtual` import rules onto the
+/// matching profiles' [WisaSchoolProfile.virtual] flag (#277).
+///
+/// The rule marked a school by its short **code**, the grid marks by school
+/// **id**, and both fed one flag; retiring the rule therefore has to move its
+/// marks rather than drop them, or a school pulled with the virtual werkdatum
+/// would quietly start pulling with the ordinary one. Runs against the profiles
+/// in the very document the rules came out of — no fetch is needed, because a
+/// school can only be marked `ours` after **Scholen ophalen** put a row here, so
+/// every school that can matter already has one.
+///
+/// Two kinds of mark are deliberately **dropped** rather than migrated:
+///
+/// - one on a school that is not [WisaSchoolProfile.ours]. A virtual school
+///   exists to create next-schoolyear accounts for our own students a few months
+///   early; for a sibling school's students the delay is irrelevant, since they
+///   turn up in an ordinary school anyway.
+/// - one whose code matches no profile at all. It marked nothing the operator
+///   could see before either, the grid being the list of schools this install
+///   knows about.
+///
+/// Idempotent, and safe to run on every load: a document that has since been
+/// saved carries no retired entries, so [codes] is empty and the profiles come
+/// back untouched. Codes are compared trimmed, as the rule editor stored them.
+List<WisaSchoolProfile> adoptRetiredVirtualMarks(
+  List<WisaSchoolProfile> profiles,
+  Set<String> codes,
+) {
+  if (codes.isEmpty) return profiles;
+  final wanted = <String>{
+    for (final code in codes)
+      if (code.trim().isNotEmpty) code.trim(),
+  };
+  if (wanted.isEmpty) return profiles;
+  return <WisaSchoolProfile>[
+    for (final p in profiles)
+      p.ours && !p.virtual && wanted.contains(p.code.trim())
+          ? p.copyWith(virtual: true)
+          : p,
+  ];
 }

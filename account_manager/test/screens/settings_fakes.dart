@@ -16,6 +16,7 @@ class SettingsHarness {
     Map<SecretRef, String> secrets = const {},
     this.fetchWisaSchools,
     this.liveSettings,
+    this.operatorName = '',
   })  : store = InMemorySettingsStore(initial),
         secrets = InMemorySecretProvider(secrets);
 
@@ -33,11 +34,16 @@ class SettingsHarness {
   /// Instellingen reaches the running reconcile stack.
   final LiveSettings? liveSettings;
 
+  /// The signed-in operator a rule authored here is attributed to (#285).
+  /// Defaults to empty — the unsigned-in session, which records as `onbekend`.
+  final String operatorName;
+
   SettingsServices get services => SettingsServices(
         store: store,
         secrets: secrets,
         fetchWisaSchools: fetchWisaSchools,
         liveSettings: liveSettings,
+        operatorName: operatorName,
       );
 
   /// A ready-made bootstrap closure for [SettingsScreen]/[AccountManagerApp].
