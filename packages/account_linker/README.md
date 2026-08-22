@@ -42,6 +42,13 @@ raise a removal — are split per INV-22: a student carries `companyName ==
 schoolPrefix`; a staff member carries a `department` that **contains** the
 prefix.
 
+Both tests live in `account_core` (`studentBelongsToSchool` /
+`staffBelongsToSchool`, and their union `belongsToSchool`) rather than here
+(#279). The Azure connector's client-side reads must apply the identical rule:
+a read *wider* than the linker is merely wasteful, but a read *narrower* than
+the linker is silently lossy — the linker never gets to ask about a row the
+read already dropped.
+
 ## OQ-1 — `WisaStaff.code` vs `WisaStaff.wisaId` (RESOLVED)
 
 > **Question:** Are a staff member's `code` and `wisaId` ever genuinely

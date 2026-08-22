@@ -105,7 +105,8 @@ class UserManager {
   ///   lists that this filter did not turn up — on the full *and* the
   ///   incremental path; and
   /// - [_belongsToSchool], which every leg that filters in Dart uses, and which
-  ///   applies the real comma-list rule.
+  ///   applies the real comma-list rule — the linker's own, shared from
+  ///   `account_core` (#279).
   ///
   /// [loadClientFiltered] remains the fallback for an installation that needs
   /// the bulk read itself to see them, at the cost of a full-tenant read.
@@ -515,17 +516,16 @@ class UserManager {
   /// even looked missing), and [loadClientFiltered] could not see them either,
   /// which is the one thing it exists to do.
   ///
-  /// Kept identical to `_departmentMatchesPrefix` in `account_linker`: a read
-  /// narrower than the linker drops rows the linker would have kept, and the
-  /// linker never gets to ask about a row the read threw away. #279 proposes
-  /// folding the two copies into one shared `account_core` rule so they cannot
-  /// drift apart a second time.
-  bool _belongsToSchool(AzureUser u, String prefix) {
-    final p = prefix.toLowerCase();
-    final company = u.companyName?.toLowerCase();
-    final dept = u.department?.toLowerCase();
-    return company == p || (dept != null && dept.contains(p));
-  }
+  /// This is now a call, not a copy (#279): `core.belongsToSchool` is the single
+  /// definition the linker applies too. A read narrower than the linker drops
+  /// rows the linker would have kept, and the linker never gets to ask about a
+  /// row the read threw away — so the two must not be able to drift apart. Do
+  /// not re-inline the test here.
+  bool _belongsToSchool(AzureUser u, String prefix) => core.belongsToSchool(
+        companyName: u.companyName,
+        department: u.department,
+        schoolPrefix: prefix,
+      );
 
   /// Lower-cases, strips diacritics, and drops characters Azure rejects in a
   /// UPN local part. Ports the legacy accent table and `[^a-zA-Z_.+-]` filter.

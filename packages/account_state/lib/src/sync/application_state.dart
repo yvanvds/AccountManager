@@ -230,11 +230,14 @@ Set<String> retainedStaffEmployeeIds(
   required String schoolPrefix,
 }) {
   if (snapshot == null) return const <String>{};
-  final prefix = schoolPrefix.trim().toLowerCase();
-  if (prefix.isEmpty) return const <String>{};
   return <String>{
     for (final user in snapshot.users)
-      if ((user.department ?? '').trim().toLowerCase().contains(prefix))
+      // INV-22's staff signal, from the one definition in `account_core` (#279)
+      // — the very rule by which the linker keeps an Azure-only staff record,
+      // and by which the connector's client-side reads keep the row at all. A
+      // blank prefix matches nobody there, so an unconfigured school remembers
+      // nobody rather than the whole snapshot.
+      if (core.staffBelongsToSchool(user.department, schoolPrefix))
         if ((user.employeeId ?? '').trim().isNotEmpty) user.employeeId!.trim(),
   };
 }

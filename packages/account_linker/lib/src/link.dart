@@ -34,8 +34,13 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// Students and staff are partitioned out of the single flat Smartschool
 /// account list by [SmartschoolAccount] `role`: teacher/director ⇒ staff,
 /// everything else ⇒ student. Azure orphans split per INV-22:
-/// `companyName == schoolPrefix` keeps a former *student*, `department`
-/// containing the prefix keeps a former *staff* member.
+/// [studentBelongsToSchool] (`companyName == schoolPrefix`) keeps a former
+/// *student*, [staffBelongsToSchool] (`department` *contains* the prefix, the
+/// comma-separated list other software maintains, #237) keeps a former *staff*
+/// member. Both predicates live in `account_core` rather than here (#279): the
+/// Azure connector's client-side reads must apply the identical rule, because a
+/// read narrower than the linker throws rows away before the linker can ask
+/// about them.
 ///
 /// Fixes carried over from the legacy linker:
 /// - **INV-12:** every `mail`/`upn`/id comparison is trimmed and
@@ -281,7 +286,7 @@ List<_Record> _buildStudentRecords(
 
     if (target != null) {
       target.azure = user;
-    } else if (_matchesPrefix(user.companyName, schoolPrefix)) {
+    } else if (studentBelongsToSchool(user.companyName, schoolPrefix)) {
       records.add(_Record(azure: user));
     }
     // else: a user belonging to another school — not our concern, dropped.
@@ -382,7 +387,7 @@ List<_StaffRecord> _buildStaffRecords(
 
     if (target != null) {
       target.azure = user;
-    } else if (_departmentMatchesPrefix(user.department, schoolPrefix)) {
+    } else if (staffBelongsToSchool(user.department, schoolPrefix)) {
       records.add(_StaffRecord(azure: user));
     }
     // else: a user belonging to another school/population — dropped.
@@ -779,24 +784,6 @@ bool _seedsClassGroups(
 ) =>
     _isOurWisaSchool(schoolId, ourSchoolIds) &&
     !virtualSchoolIds.contains(schoolId);
-
-/// Whether an Azure user's [companyName] marks it as one of the school's own
-/// (a current or former student). Trimmed + case-insensitive.
-bool _matchesPrefix(String? companyName, String schoolPrefix) {
-  final company = _norm(companyName);
-  final prefix = _norm(schoolPrefix);
-  return company != null && prefix != null && company == prefix;
-}
-
-/// Whether an Azure user's [department] marks it as one of the school's own
-/// staff (a current or former staff member). Per INV-22 the staff signal is a
-/// *substring* match (`department` contains the prefix), unlike the student
-/// signal which is an exact `companyName` equality. Trimmed + case-insensitive.
-bool _departmentMatchesPrefix(String? department, String schoolPrefix) {
-  final dept = _norm(department);
-  final prefix = _norm(schoolPrefix);
-  return dept != null && prefix != null && dept.contains(prefix);
-}
 
 /// The natural key handed to the [PersonIdResolver]: `wisaId → mail → upn →
 /// azureId`, normalized and namespaced so the resolver mints a stable, derived

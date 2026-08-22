@@ -307,7 +307,7 @@ Rules are applied **at snapshot construction time** (inside the connector or jus
 
 - **INV-20 [D]:** `link` is a **pure function**: `(WisaSnapshot, SmartschoolSnapshot, AzureSnapshot) → LinkedSnapshot`. Same input ⇒ same output.
 - **INV-21 [D]:** Every WISA student appears in **exactly one** `LinkedAccount`.
-- **INV-22 [D]:** Every Azure user with `companyName == schoolPrefix` (students) or `department contains schoolPrefix` (staff) appears in **exactly one** `LinkedAccount`, even after the person has left the school (so the engine can raise a remove action).
+- **INV-22 [D]:** Every Azure user with `companyName == schoolPrefix` (students) or `department contains schoolPrefix` (staff) appears in **exactly one** `LinkedAccount`, even after the person has left the school (so the engine can raise a remove action). Both tests have a single implementation, `account_core`'s `studentBelongsToSchool` / `staffBelongsToSchool` (and their union `belongsToSchool`), which the linker, the Azure connector's client-side reads, and the staff-retention rule all call (#279). Blank prefix matches nobody. A connector read narrower than the linker is silently lossy — the linker never gets to ask about a row the read dropped — which is why the rule may not be re-implemented per package.
 - **INV-23 [D]:** When two Smartschool accounts collide on `mail`, **both** end up in some `LinkedAccount`, never silently dropped. A `ResolveDuplicateMail` warning action is raised.
 
 ### Membership

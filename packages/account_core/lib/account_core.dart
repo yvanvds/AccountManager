@@ -15,5 +15,6 @@ export 'src/log.dart';
 export 'src/password.dart';
 export 'src/person.dart';
 export 'src/person_id_resolver.dart';
+export 'src/school_prefix.dart';
 export 'src/snapshot.dart';
 export 'src/source_records.dart';

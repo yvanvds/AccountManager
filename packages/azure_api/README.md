@@ -92,7 +92,10 @@ OData can ask:
   does not honour these property filters), and so does
   `UserManager.loadClientFiltered`. Neither is bound by OData, so both apply the
   real rule: `companyName` equals the prefix, **or** `department` *contains* it —
-  the same test the linker applies (INV-22). Before #268 both inherited the
+  the same test the linker applies (INV-22). Since #279 it is *literally* the
+  same: `core.belongsToSchool` in `account_core` is the single definition both
+  packages call, because a read narrower than the linker throws rows away before
+  the linker can ask about them. Before #268 both inherited the
   server-side `startswith` instead, which silently dropped every delta change to
   a staff member listed second (their stale row survived from the previous
   snapshot, so nothing looked missing) and left `loadClientFiltered` unable to do
