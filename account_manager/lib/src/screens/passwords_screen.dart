@@ -40,6 +40,10 @@ class PasswordsScreen extends StatefulWidget {
 
 class _PasswordsScreenState extends State<PasswordsScreen> {
   PasswordController? _controller;
+
+  /// The reconcile stack this screen bootstrapped, kept so the listener below
+  /// can be detached again.
+  ReconcileServices? _services;
   Object? _error;
   bool _busy = false;
   int _attempts = 0;
@@ -52,9 +56,19 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
 
   @override
   void dispose() {
+    _services?.controller.removeListener(_adoptSnapshot);
     _controller?.dispose();
     super.dispose();
   }
+
+  /// Re-reads the live Smartschool snapshot after a pass on another tab (#287).
+  ///
+  /// The tree this screen draws is the one the *session* holds, and the session
+  /// can acquire a newer one at any time — a sync, a drift check, or an apply
+  /// that patched an account. The reconcile controller notifies on all three;
+  /// [PasswordController.refresh] is identity-guarded, so a notification that
+  /// changed nothing here costs nothing.
+  void _adoptSnapshot() => _controller?.refresh();
 
   /// Bootstraps the shared stack (once), then builds the [PasswordController]
   /// over the current Smartschool snapshot, the shared password queue, and the
@@ -72,7 +86,11 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
       final services = await make();
       if (!mounted) return;
       final controller = PasswordController(
-        snapshot: services.app.smartschool.snapshot,
+        // Read live rather than captured (#287): a session that opened this tab
+        // before its first sync — or before adopting the shared state — used to
+        // stay on whatever tree it held at that instant, for the rest of its
+        // life.
+        snapshot: () => services.app.smartschool.snapshot,
         queue: services.passwordQueue,
         backends: services.passwordBackends,
         writer: services.passwordFileWriter,
@@ -84,6 +102,9 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
         controller.dispose();
         return;
       }
+      _services?.controller.removeListener(_adoptSnapshot);
+      _services = services;
+      services.controller.addListener(_adoptSnapshot);
       setState(() => _controller = controller);
     } on Object catch (e) {
       if (mounted) setState(() => _error = e);

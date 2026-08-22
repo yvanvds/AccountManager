@@ -8,6 +8,11 @@ import 'models/azure_user.dart';
 class UserDelta {
   /// Users created or changed since the last sync, already filtered to the
   /// school (by `companyName` / `department`).
+  ///
+  /// Every entry is a **whole** record: a sparse Graph row (id plus the changed
+  /// properties, the ordinary shape of a resumed walk) has been merged onto the
+  /// record the caller passed in as `known`, so upserting one of these can never
+  /// blank a field the row stayed silent about (#288).
   final List<AzureUser> changed;
 
   /// Azure object ids of users Graph reported as removed (`@removed`). Not
@@ -256,8 +261,19 @@ class UserManager {
   /// delta token representing "now" via `$deltatoken=latest`. Paired with
   /// [load] on the first sync so the bulk read stays `$filter`-scoped (PAIN-2)
   /// while still establishing a resume point.
+  ///
+  /// **The `$select` is not decoration.** A delta token encodes the query
+  /// options of the request that minted it, and Graph honours *those* on every
+  /// resume — a `$select` added to the resume itself is ignored. Priming
+  /// without one therefore produced rows carrying only `id` and whatever
+  /// changed, which [_walkDelta] could not classify and silently dropped: every
+  /// hand-edit made in the Entra portal vanished, permanently, because the walk
+  /// that dropped it still advanced the token (#288).
   Future<String?> latestDeltaToken() async {
-    final url = _graph.uri('users/delta', query: {r'$deltatoken': 'latest'});
+    final url = _graph.uri(
+      'users/delta',
+      query: {r'$deltatoken': 'latest', r'$select': _select},
+    );
     final result = await _graph.getDelta(url);
     return result.deltaToken;
   }
@@ -265,17 +281,37 @@ class UserManager {
   /// Incremental delta read: resumes from a token returned by a previous
   /// [deltaInitial]/[delta] call. Only changed and removed users come back.
   ///
+  /// [known] is the caller's current user list keyed by Azure object id — the
+  /// previous snapshot. A resumed row is Graph's `id` plus *at least* the
+  /// changed properties, so it is merged onto `known[id]` before anything looks
+  /// at it (#288): the school test then judges the *whole* record rather than a
+  /// fragment that mentions neither `companyName` nor `department`, and the
+  /// record the caller upserts keeps the `upn`, `employeeId` and `displayName`
+  /// the row never spoke about. A sparse row about a user [known] does not hold
+  /// stays unclassifiable and is dropped, exactly as before.
+  ///
   /// This is the one read whose caller (`AzureConnector.sync`) comes prepared
   /// for a refusal: a token Graph no longer accepts is recovered from with a
   /// full read (#213). The transport is told so, so it logs that reply as a
   /// detail rather than as an error the operator should act on (#229). Every
   /// other failure — including a resume that fails for any other reason — stays
   /// an error.
-  Future<UserDelta> delta(String deltaToken, String schoolPrefix) {
-    final url = _graph.uri('users/delta', query: {r'$deltatoken': deltaToken});
+  Future<UserDelta> delta(
+    String deltaToken,
+    String schoolPrefix, {
+    Map<String, AzureUser> known = const <String, AzureUser>{},
+  }) {
+    final url = _graph.uri(
+      'users/delta',
+      // Graph resumes on the options the token was minted with, so this is
+      // belt-and-braces for a token minted elsewhere; [latestDeltaToken] is
+      // where it actually takes effect.
+      query: {r'$deltatoken': deltaToken, r'$select': _select},
+    );
     return _walkDelta(
       url,
       schoolPrefix,
+      known: known,
       expected: (e) => e.isRejectedDeltaToken,
     );
   }
@@ -283,6 +319,7 @@ class UserManager {
   Future<UserDelta> _walkDelta(
     Uri url,
     String schoolPrefix, {
+    Map<String, AzureUser> known = const <String, AzureUser>{},
     GraphFailurePredicate? expected,
   }) async {
     final result = await _graph.getDelta(url, expected: expected);
@@ -294,7 +331,10 @@ class UserManager {
         if (id != null) removedIds.add(id);
         continue;
       }
-      final user = AzureUser.fromGraphJson(row);
+      final previous = known[(row['id'] as String?) ?? ''];
+      final user = previous == null
+          ? AzureUser.fromGraphJson(row)
+          : previous.mergeGraphJson(row);
       if (_belongsToSchool(user, schoolPrefix)) changed.add(user);
     }
     _log?.addMessage(

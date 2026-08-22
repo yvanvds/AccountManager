@@ -3128,10 +3128,10 @@ void main() {
       linkedStore: linkedStore,
     ).controller.sync();
 
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Deliberately holding no seeded snapshot: since #287 a session that does
+    // adopts the shared state and gets the interactive tiles instead, and this
+    // scenario is about the passive card.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -3457,6 +3457,82 @@ void main() {
   });
 
   testWidgets(
+      'a sync whose shared write fails still closes the open class, so the '
+      'drill-down never pairs the previous generation with the fresh view '
+      'end-to-end (#289)', (WidgetTester tester) async {
+    // The real app, real navigation. The bug is a composition one: the four
+    // derived caches were dropped on the far side of the store write, so a
+    // Cosmos write that timed out or threw left the class the operator had open
+    // — its documents read for the generation before — standing in front of the
+    // freshly linked view. Only an end-to-end run navigates the way that shows
+    // it: sync, drill in, sync again over a store that refuses the write, and
+    // look at what is still on screen.
+    useTallWindow(tester);
+    final inner = InMemoryLinkedStore();
+    final harness = ReconcileHarness(
+      linkedStore: inner,
+      // The first sync lands generation 1 so there is something to drill into;
+      // every write after it throws.
+      controllerStore: StallingLinkedStore(
+        inner: inner,
+        failWith: StateError('cosmos down'),
+        healthyWrites: 1,
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Drill into the class the shared view just materialized.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget,
+        reason: 'the drill-down is open on 3C');
+    expect(harness.controller.selectedClassroom?.classroom, '3C');
+
+    // WISA moves the student out of 3C, and the operator re-syncs — but the
+    // shared store refuses the write.
+    harness.wisaResult = wisaSnap(
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+      students: [wisaStudent(classGroup: '3D')],
+    );
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Kon het gedeelde overzicht niet opslaan'),
+      findsWidgets,
+      reason: 'the write really did fail',
+    );
+
+    // Back on Acties: the class the operator had open is closed, because the
+    // view behind it was replaced. Before the fix the detail view was still
+    // there, joining the fresh entries to 3C's stale documents.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom, isNull);
+    expect(find.byKey(const ValueKey('actions-classroom-back')), findsNothing,
+        reason: 'a re-link closes the drill-down, write or no write');
+    expect(harness.controller.classroomPendingEntries, isEmpty);
+    // …and the session is still perfectly usable: it holds the view it linked.
+    expect(harness.controller.linked, isNotNull);
+  });
+
+  testWidgets(
       'applying a class\'s work updates its Acties badge on the way back to '
       'the overview, without a re-sync end-to-end (#236)',
       (WidgetTester tester) async {
@@ -3565,11 +3641,10 @@ void main() {
     );
     await operatorA.controller.sync();
 
-    final operatorB = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-      hub: hub,
-    );
+    // Deliberately holding no seeded snapshot: since #287 a session that does
+    // adopts the shared state, and this scenario is about what a session with
+    // *only* the shared documents keeps being offered.
+    final operatorB = ReconcileHarness(linkedStore: linkedStore, hub: hub);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4336,11 +4411,10 @@ void main() {
         .controller
         .sync();
 
-    // Session 2 is the real app over the same stores. It never syncs.
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Session 2 is the real app over the same stores. It never syncs, and holds
+    // no seeded snapshot to adopt from either (#287) — so this stays the purely
+    // passive read #115 is about.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4391,11 +4465,10 @@ void main() {
         .controller
         .sync();
 
-    // Session 2 is the real app over the same stores. It never syncs.
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Session 2 is the real app over the same stores. It never syncs, and holds
+    // no seeded snapshot to adopt from either (#287) — so this stays the purely
+    // passive read #163 is about.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4436,11 +4509,10 @@ void main() {
         .controller
         .sync();
 
-    // Session 2 is the real app over the same stores. It never syncs.
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Session 2 is the real app over the same stores. It never syncs, and holds
+    // no seeded snapshot to adopt from either (#287) — so this stays the purely
+    // passive read #119 is about.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4481,16 +4553,14 @@ void main() {
     // handler and say nothing about it, which reads as an interactive screen
     // whose taps stopped working rather than as a view of the shared state.
     useTallWindow(tester);
-    final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
-    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
-        .controller
-        .sync();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
 
-    final resumed = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Deliberately holding no seeded snapshot: since #287 a session that does
+    // adopts the shared state and its tiles are interactive from the first
+    // frame (covered by its own scenario below). This is the session that has
+    // nothing to build a view from.
+    final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
@@ -4528,7 +4598,12 @@ void main() {
     await tester.tap(find.text('3C'));
     await tester.pumpAndSettle();
     expect(readOnly, findsOneWidget);
-    expect(find.textContaining('nog niet gesynchroniseerd'), findsOneWidget);
+    // Since #287 the notice names what is missing rather than reporting the
+    // absence of a sync: there is no snapshot here to build a view from.
+    expect(
+      find.textContaining('Geen opgeslagen momentopname'),
+      findsOneWidget,
+    );
     expect(find.byIcon(Icons.lock_outline), findsWidgets);
     expect(pendingTiles, findsNothing,
         reason: 'nothing in this class is actionable — that is the point');
@@ -4553,6 +4628,87 @@ void main() {
     expect(readOnly, findsNothing);
     expect(find.byIcon(Icons.lock_outline), findsNothing);
     expect(pendingTiles, findsWidgets);
+  });
+
+  testWidgets(
+      'the second operator of the day starts from the shared synced state: '
+      'Acties, Klasgroepen and Synchronisatie are all usable without pulling '
+      'anything (#287)', (WidgetTester tester) async {
+    // The everyday case this issue is about. Operator A syncs — minutes of WISA
+    // SOAP per school, the Smartschool group walk and the Azure read. Operator B
+    // launches the real app five minutes later onto the same shared stores.
+    //
+    // This is the layer that sees it: the seeding happens in the screens'
+    // bootstrap, the notice replaces a different widget on each of three tabs,
+    // and only a full-app run puts an operator in front of the result. Before
+    // #287 B was read-only everywhere until they repeated A's whole pull.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(
+      store: snapshots,
+      linkedStore: linkedStore,
+      syncedBy: 'jan@school.example',
+    ).controller.sync();
+
+    final operatorB = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: operatorB.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Synchronisatie says whose pull this session is working from — and both
+    // passes stay available for an operator who wants something fresher.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-adopted')), findsOneWidget);
+    expect(find.textContaining('jan@school.example'), findsWidgets);
+    expect(find.byKey(const ValueKey('reconcile-seed-refused')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('reconcile-sync')))
+          .onPressed,
+      isNotNull,
+    );
+
+    // Klasgroepen: the inventory is live, not a wall of static rows, and it
+    // says where the view came from.
+    await openKlasgroepen(tester);
+    expect(find.byKey(const ValueKey('class-groups-read-only')), findsNothing);
+    expect(find.byKey(const ValueKey('class-groups-shared-state')),
+        findsOneWidget);
+    expect(find.text('Gedeelde synchronisatie'), findsOneWidget);
+
+    // Acties: drill into a class and the tiles are the interactive ones —
+    // choices, dry-run, apply — with the same notice above them.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('actions-read-only')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-shared-state')), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+    final pendingTiles = find.byWidgetPredicate((w) =>
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('entry-'));
+    expect(pendingTiles, findsWidgets);
+
+    // The whole of it without one connector round-trip, and without touching
+    // the shared view: no generation bump, so no client is asked to refetch.
+    expect(operatorB.wisaSyncs, 0);
+    expect(operatorB.ssSyncs, 0);
+    expect(operatorB.azSyncs, 0);
+    expect((await linkedStore.readSyncState()).generation, 1);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -5357,6 +5513,87 @@ void main() {
     expect(saved.wisaSchools.single.code, 'ISMAA');
     expect(saved.wisaSchools.single.ours, isTrue);
     expect(saved.wisaSchools.single.virtual, isFalse);
+  });
+
+  testWidgets(
+      'a drift check ends like a sync end-to-end: a terminal "Driftcontrole '
+      'voltooid" line, and the WISA-scholen grid named by the roster it had to '
+      'pull (#303)', (WidgetTester tester) async {
+    // The companion of the #207 journey above, for the operator whose first
+    // pass of the session is **Controleer op drift** rather than
+    // **Synchroniseer**. Both asymmetries #303 records show up here in the real
+    // app: the pass used to end on its "Gekoppeld: …" summary with nothing
+    // saying it had finished, and — although this branch really does pull WISA,
+    // because the session holds no roster yet — it left the grid on "School 25".
+    useTallWindow(tester);
+    final settings = SettingsHarness(
+      initial: AppSettings.fromJson(<String, dynamic>{
+        'wisa': const WisaConnection(server: 'db.school.example', port: '1433')
+            .toJson(),
+        'wisaSchools': <Map<String, dynamic>>[
+          <String, dynamic>{'schoolId': 25, 'ours': true},
+        ],
+      }),
+    );
+    final reconcile = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 25)],
+        schools: <WisaSchool>[
+          parseSchoolRow('25,Instituut Sancta Maria-A,ISMAA'),
+        ],
+      ),
+      smartschool: ssSnap(
+          groups: const [], accounts: [ssAccount()], memberships: const []),
+      azure: azSnap(users: [azUser()]),
+      ourSchoolIds: const {25},
+      settingsStore: settings.store,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: reconcile.bootstrap,
+      settingsBootstrap: settings.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+
+    // The Log panel says the pass is over, and says which pass it was.
+    expect(find.textContaining('Driftcontrole voltooid — '), findsOneWidget);
+    expect(find.textContaining('Klaar.'), findsWidgets);
+    expect(
+      find.textContaining('Sync voltooid'),
+      findsNothing,
+      reason: 'no sync ran — the closing line must not claim one did',
+    );
+    // It pulled WISA (nothing was in hand), so the freshness box carries the
+    // roster this pass fetched for itself.
+    expect(reconcile.wisaSyncs, 1);
+    expect(
+        find.byKey(const ValueKey('reconcile-last-sync-wisa')), findsOneWidget);
+
+    // …and having pulled it, the pass repaired the stored school profiles with
+    // it — the real grid, re-read from the document, with no Opslaan pressed.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+
+    final tile = find.byKey(const ValueKey('settings-wisa-school-25-ours'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect((tester.widget<CheckboxListTile>(tile).title! as Text).data,
+        'Instituut Sancta Maria-A');
+    expect((tester.widget<CheckboxListTile>(tile).subtitle! as Text).data,
+        'ISMAA');
+    expect(find.text('School 25'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -7783,6 +8020,117 @@ void main() {
     await tester.tap(staffClass);
     await tester.pumpAndSettle();
     expect(find.text('Wijzig het e-mailadres in Smartschool'), findsOneWidget);
+  });
+
+  testWidgets(
+      'an edit made by hand in Office 365 shows up on the very next Controleer '
+      'op drift, with the rest of the account intact (#288)',
+      (WidgetTester tester) async {
+    // The report: an administrator renames someone in the Entra portal, the
+    // operator presses Controleer op drift, and nothing happens — the log says
+    // `0 gewijzigd` and the action list is unchanged. Only restarting the app
+    // (which re-seeds from the shared cold store) ever surfaced the edit, and by
+    // then the delta walk that dropped it had already advanced the token, so the
+    // change was never offered again.
+    //
+    // The cause is one query option: the request that *mints* the token carried
+    // no `$select`, so every resumed row came back as `{id, <what changed>}`.
+    // Read as a whole user such a row names no school, and the connector's
+    // client-side prefix test dropped it.
+    //
+    // Only this layer sees the whole thing: it needs the stored token and the
+    // seeded snapshot to make the pass incremental, the merge to keep the record
+    // whole, the linker to join the merged row, and the dispatch to turn the
+    // drift into the to-do the operator should have been handed.
+    useTallWindow(tester);
+    final azureWire = HandEditedUserGraph(
+      // Exactly what Graph sends for a display-name edit: the object id and the
+      // properties that changed. No UPN, no employeeId, no companyName.
+      row: <String, dynamic>{
+        'id': 'az1',
+        'displayName': 'Janneke Doe',
+        'givenName': 'Janneke',
+      },
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot: her account exactly in step with WISA, and the
+      // token this pass resumes from.
+      azureInitial: azSnap(
+        deltaToken: 'AZ-TOKEN',
+        users: [azUser(displayName: 'Jane Doe')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: the seeded Azure snapshot is reused untouched, its
+    // token unspent, and the student has nothing to do.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+      reason: 'the account starts in step with WISA, so the drift below is '
+          'entirely the hand-edit',
+    );
+
+    // Today: Check for drift, the only route to an Azure read in normal
+    // operation — and incrementally, from the stored token.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass really was the incremental one, so the sparse resumed row really
+    // was the only thing that could have carried the edit: no bulk read ran and
+    // the `employeeId` back-fill asked about nobody.
+    expect(azureWire.resumeTokens, <String>['AZ-TOKEN']);
+    expect(azureWire.bulkReads, 0);
+    expect(azureWire.employeeIdLookups, isEmpty);
+
+    // The edit landed — and nothing else moved. Before the fix this row was
+    // dropped whole; upserted raw it would instead have blanked the UPN and the
+    // `employeeId → wisaId` bridge the linker joins on.
+    expect(
+      harness.app.azure.snapshot!.users.single,
+      azUser(displayName: 'Janneke Doe', givenName: 'Janneke'),
+    );
+
+    // And the operator is handed the one to-do it means: put the WISA name back
+    // on the Office 365 account. Exactly one — a blanked record would have
+    // raised "Wijzig de school in Azure" beside it.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de naam in Azure'],
+    );
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
   });
 
   testWidgets(

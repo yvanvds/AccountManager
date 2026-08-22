@@ -249,6 +249,141 @@ void main() {
     });
   });
 
+  group('a resumed delta row is sparse (#288)', () {
+    /// The account the previous snapshot holds, complete.
+    const stored = AzureUser(
+      id: 'az1',
+      upn: 'jane.doe@student.school.example',
+      employeeId: 'W1',
+      displayName: 'Jane Doe',
+      givenName: 'Jane',
+      surname: 'Doe',
+      companyName: 'GBS',
+      department: '3C',
+    );
+
+    AzureSnapshot previousWith(List<AzureUser> users) => AzureSnapshot(
+          fetchedAt: DateTime.utc(2026, 6, 1),
+          deltaToken: 'OLDTOKEN',
+          users: users,
+          groups: const [],
+        );
+
+    /// A delta walk answering with [rows] and nothing else — no groups, no bulk
+    /// read, no back-fill hits.
+    GraphResponse Function(GraphRequest) walkOf(
+      List<Map<String, dynamic>> rows, {
+      List<Map<String, dynamic>> backfill = const [],
+    }) =>
+        (req) {
+          final path = req.url.path;
+          if (path.contains('/members') || path.contains('groups')) {
+            return jsonOk({'value': const <Object>[]});
+          }
+          if (path.contains('users/delta')) {
+            return jsonOk({
+              '@odata.deltaLink':
+                  'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=T2',
+              'value': rows,
+            });
+          }
+          final filter = req.url.queryParameters[r'$filter'] ?? '';
+          if (filter.startsWith('employeeId in')) {
+            return jsonOk({'value': backfill});
+          }
+          return jsonOk({'value': const <Object>[]});
+        };
+
+    test('a hand-edit in Entra reaches the snapshot with the record intact',
+        () async {
+      // The report: an administrator renames someone in the O365 portal, the
+      // resumed walk reports `{id, displayName}` — and the connector both
+      // dropped the row (it names no school) and, for the rows it did keep,
+      // upserted the fragment over the record, wiping the UPN and the
+      // `employeeId → wisaId` bridge the linker joins on.
+      final connector = connectorWith(FakeGraphTransport(walkOf(
+        <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'az1',
+            'displayName': 'Janneke Doe',
+            'givenName': 'Janneke',
+          },
+        ],
+      )));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [stored]),
+      );
+
+      expect(
+        snapshot.users.single,
+        stored.copyWith(displayName: 'Janneke Doe', givenName: 'Janneke'),
+      );
+    });
+
+    test('a sparse row never blanks the record of a user it does not name',
+        () async {
+      final connector = connectorWith(FakeGraphTransport(walkOf(
+        <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'az1', 'accountEnabled': false},
+        ],
+      )));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [
+          stored,
+          AzureUser(
+            id: 'az2',
+            upn: 'jan.peeters@student.school.example',
+            employeeId: 'W2',
+            displayName: 'Jan Peeters',
+            companyName: 'GBS',
+          ),
+        ]),
+      );
+
+      final byId = {for (final u in snapshot.users) u.id: u};
+      expect(byId['az1'], stored.copyWith(accountEnabled: false));
+      expect(byId['az2']?.displayName, 'Jan Peeters');
+    });
+
+    test(
+        'the employeeId back-fill repairs a record instead of skipping it on '
+        'object-id presence', () async {
+      // The safety net was disarmed too: the back-fill re-fetched the right
+      // record with the full `$select` and then dropped it on the floor because
+      // the object id was already in the map. A record Graph just handed us
+      // wins over one we are unsure about.
+      const degraded = AzureUser(id: 'az1', upn: '', companyName: 'GBS');
+      final connector = connectorWith(FakeGraphTransport(walkOf(
+        const <Map<String, dynamic>>[],
+        backfill: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'az1',
+            'userPrincipalName': 'jane.doe@student.school.example',
+            'employeeId': 'W1',
+            'displayName': 'Jane Doe',
+            'givenName': 'Jane',
+            'surname': 'Doe',
+            'companyName': 'GBS',
+            'department': '3C',
+            'accountEnabled': true,
+          },
+        ],
+      )));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [degraded]),
+        expectedEmployeeIds: const ['W1'],
+      );
+
+      expect(snapshot.users.single, stored);
+    });
+  });
+
   group('rejected delta token (#213)', () {
     /// Routes a delta *resume* to [rejection] while the full-read path
     /// (`$deltatoken=latest` + the `$filter` bulk read) succeeds.

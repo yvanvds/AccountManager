@@ -19,7 +19,8 @@ import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
-import 'package:account_state/account_state.dart' show CandidateAction;
+import 'package:account_state/account_state.dart'
+    show CandidateAction, SystemSyncMeta;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 // The `Werkdatum` SOAP parameter's own formatter, so the freshness line names
@@ -425,12 +426,17 @@ class EmptyLine extends StatelessWidget {
 /// responding. This says which of the two the operator is looking at, why, and
 /// offers the sync that turns one into the other.
 ///
-/// Two ways to get here, and the operator is told which: a **passive** session
-/// that only read the shared overview (`loadOverview()`, never synced), or one
-/// whose sync/drift pass **failed** before it could link. A failed pass never
-/// discards an existing linked view — `_fail` records the error and returns to
-/// `ready`, leaving `linked` untouched — so the failure wording only ever
-/// appears when this session had nothing linked to begin with.
+/// Three ways to get here, and the operator is told which: a session whose
+/// sync/drift pass **failed** before it could link, one that was **refused** the
+/// shared cold seed and says why ([ReconcileController.seedRefusedReason],
+/// #287), or one that has simply not opened yet. A failed pass never discards an
+/// existing linked view — `_fail` records the error and returns to `ready`,
+/// leaving `linked` untouched — so the failure wording only ever appears when
+/// this session had nothing linked to begin with.
+///
+/// Since #287 the ordinary passive session is *not* one of them: a session
+/// holding a usable cold seed adopts the shared state and renders
+/// [SharedStateNotice] instead, because the view it is offering is real.
 ///
 /// [keyValue] names the notice per screen, so a shell that has built both tabs
 /// still has one identifiable notice per view.
@@ -450,6 +456,16 @@ class ReadOnlyNotice extends StatelessWidget {
     final ColorScheme colors = Theme.of(context).colorScheme;
     final bool failed = controller.error != null;
     final bool lockedByOther = controller.syncLockedByOther;
+    // Why the shared state could not be adopted (#287) — the one blocking
+    // notice a refused session owes the operator. A pass that just failed is
+    // the more recent news, so it still speaks first.
+    final String? refused = controller.seedRefusedReason;
+    final String reason = failed
+        ? 'De laatste sync is mislukt, dus deze sessie heeft geen actuele '
+            'acties om toe te passen.'
+        : refused ??
+            'Deze sessie heeft nog niet gesynchroniseerd, dus deze acties '
+                'kunnen niet worden toegepast.';
 
     return Container(
       key: ValueKey(keyValue),
@@ -473,14 +489,8 @@ class ReadOnlyNotice extends StatelessWidget {
                     Text('Alleen-lezen overzicht', style: text.titleSmall),
                     const SizedBox(height: PlinkSpacing.s1),
                     Text(
-                      failed
-                          ? 'De laatste sync is mislukt, dus deze sessie heeft '
-                              'geen actuele acties om toe te passen. Hieronder '
-                              'staat het gedeelde overzicht van de vorige sync.'
-                          : 'Deze sessie heeft nog niet gesynchroniseerd, dus '
-                              'deze acties kunnen niet worden toegepast. '
-                              'Hieronder staat het gedeelde overzicht van de '
-                              'laatste sync.',
+                      '$reason Hieronder staat het gedeelde overzicht van de '
+                      'laatste sync.',
                       style: text.bodyMedium,
                     ),
                   ],
@@ -495,6 +505,119 @@ class ReadOnlyNotice extends StatelessWidget {
                 controller.busy || lockedByOther ? null : controller.sync,
             icon: const Icon(Icons.sync, size: 18),
             label: const Text('Synchroniseer'),
+          ),
+          // A dead Synchronise needs its reason on screen too — the same
+          // named-holder line the Reconcile screen shows (#108).
+          if (lockedByOther) ...<Widget>[
+            const SizedBox(height: PlinkSpacing.s2),
+            Text(
+              '${controller.syncLockOwner} is aan het synchroniseren…',
+              style: text.bodySmall,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The announcement above a list this session is acting on but did **not** pull
+/// for itself (#287): the linked view was built from the cold seed a colleague's
+/// sync left in the shared store.
+///
+/// The counterpart of [ReadOnlyNotice], and deliberately not a warning. The
+/// tiles below it are the real interactive ones — choices, dry-run, apply — so
+/// this says only where the view came from and when, and leaves both passes
+/// within reach for an operator who decides they want something fresher. That is
+/// the whole product point of #287: the people who edit WISA are the people who
+/// use this app, so the tool shows how fresh the shared state is instead of
+/// demanding proof of freshness on every launch.
+///
+/// [keyValue] names it per screen, exactly as [ReadOnlyNotice] is named.
+class SharedStateNotice extends StatelessWidget {
+  const SharedStateNotice({
+    super.key,
+    required this.controller,
+    this.keyValue = 'actions-shared-state',
+  });
+
+  final ReconcileController controller;
+  final String keyValue;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final SystemSyncMeta? from = controller.adoptedFrom;
+    final bool lockedByOther = controller.syncLockedByOther;
+
+    // Dated as soon as it leaves today (#192), the same stamp the Synchronisatie
+    // screen's last-sync box renders — a pull from three days ago must not read
+    // like this morning's.
+    final String when =
+        from == null ? '' : ' van ${formatFreshnessStamp(from.at)}';
+    final String by =
+        from == null || from.syncedBy.isEmpty ? '' : ', door ${from.syncedBy}';
+    // The werkdatum the roster is *as of* (#247): it is what decides which
+    // school year the list below describes, and this session did not run the
+    // pull that chose it.
+    final DateTime? workDate = from?.workDate;
+    final String asOf = workDate == null
+        ? ''
+        : ' De klaslijsten zijn die van werkdatum '
+            '${wapi.formatWerkdatum(workDate)}.';
+
+    return Container(
+      key: ValueKey(keyValue),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.primary),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(Icons.groups_outlined, size: 18, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text('Gedeelde synchronisatie', style: text.titleSmall),
+                    const SizedBox(height: PlinkSpacing.s1),
+                    Text(
+                      'Deze weergave komt van de gedeelde synchronisatie'
+                      '$when$by. Je kan er meteen mee werken.$asOf',
+                      style: text.bodyMedium,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: PlinkSpacing.s3),
+          Wrap(
+            spacing: PlinkSpacing.s3,
+            runSpacing: PlinkSpacing.s2,
+            children: <Widget>[
+              FilledButton.icon(
+                key: ValueKey('$keyValue-sync'),
+                onPressed:
+                    controller.busy || lockedByOther ? null : controller.sync,
+                icon: const Icon(Icons.sync, size: 18),
+                label: const Text('Synchroniseer'),
+              ),
+              OutlinedButton.icon(
+                key: ValueKey('$keyValue-drift'),
+                onPressed:
+                    controller.canCheckDrift ? controller.checkDrift : null,
+                icon: const Icon(Icons.difference_outlined, size: 18),
+                label: const Text('Controleer op drift'),
+              ),
+            ],
           ),
           // A dead Synchronise needs its reason on screen too — the same
           // named-holder line the Reconcile screen shows (#108).

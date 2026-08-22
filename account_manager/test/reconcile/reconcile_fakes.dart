@@ -478,6 +478,78 @@ class SharedDepartmentStaffGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering a resumed `/users/delta` the way Graph
+/// answers it after somebody edited an account **by hand** in the Office 365 /
+/// Entra portal (#288): the row carries the object id and the properties that
+/// changed, and nothing else.
+///
+/// That sparseness is Graph's documented contract for a changed instance, and it
+/// is what made every hand-edit invisible. Read as a whole user, such a row
+/// names no school, so the connector's client-side prefix test threw it away —
+/// permanently, because the walk that dropped it still advanced the token. The
+/// operator pressed **Controleer op drift**, read `0 gewijzigd`, and only a
+/// restart (re-seeding from the shared cold store) ever showed the edit.
+///
+/// The bulk read and the `employeeId` back-fill both answer empty, so a test can
+/// prove the delta walk really was the only leg that could have delivered it.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from and the record the row
+/// edits.
+class HandEditedUserGraph implements az.GraphTransport {
+  HandEditedUserGraph({required this.row, this.freshToken = 'AZ-NEXT'});
+
+  /// The one sparse row the resumed walk reports — `{id, <changed props>}`.
+  final Map<String, dynamic> row;
+
+  /// The token this walk leaves behind for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran — none, on an incremental pass.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value':
+            token == 'latest' ? const <Object>[] : <Map<String, dynamic>>[row],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [az.GraphTransport] answering the way the tenant answers on the pass that
 /// has to notice a staff member **left** WISA (#269).
 ///
@@ -1144,6 +1216,7 @@ wapi.WisaSnapshot wisaSnap({
   List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaSchool> schools = const [],
   List<wapi.WisaClassGroup> classGroups = const [],
+  DateTime? workDate,
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: fetchedAt ?? kFixtureDate,
@@ -1151,6 +1224,11 @@ wapi.WisaSnapshot wisaSnap({
       staff: staff,
       classGroups: classGroups,
       schools: schools,
+      // The date the roster is *as of* (#247). Left unstamped by default, as a
+      // hand-built fixture is; a test about which school year the shared state
+      // describes (#287) sets it, and the controller then folds it into the
+      // per-system freshness the next session reads back.
+      workDate: workDate,
     );
 
 ss.SmartschoolSnapshot ssSnap({
@@ -2600,13 +2678,22 @@ class InMemorySnapshotStore implements SnapshotStore {
 /// persist-stall the reconcile controller must survive (#168), and since #254
 /// the same for the narrow post-apply write-back.
 class StallingLinkedStore implements LinkedStore {
-  StallingLinkedStore({InMemoryLinkedStore? inner, this.failWith})
-      : _in = inner ?? InMemoryLinkedStore();
+  StallingLinkedStore({
+    InMemoryLinkedStore? inner,
+    this.failWith,
+    this.healthyWrites = 0,
+  }) : _in = inner ?? InMemoryLinkedStore();
 
   final InMemoryLinkedStore _in;
 
   /// When set, a write throws this instead of hanging.
   final Object? failWith;
+
+  /// How many `writeMaterialized` calls land in [_in] normally before the
+  /// stall/throw begins — so one session can materialize a healthy generation,
+  /// drill into it, and only *then* meet a store that will not take the next
+  /// view (#289).
+  int healthyWrites;
 
   /// True once a write was attempted — proves the controller reached persist.
   bool writeAttempted = false;
@@ -2624,6 +2711,17 @@ class StallingLinkedStore implements LinkedStore {
     void Function(String message)? onProgress,
   }) {
     writeAttempted = true;
+    if (healthyWrites > 0) {
+      healthyWrites--;
+      return _in.writeMaterialized(
+        view,
+        syncedBy: syncedBy,
+        at: at,
+        droppedDecisions: droppedDecisions,
+        systemSyncs: systemSyncs,
+        onProgress: onProgress,
+      );
+    }
     return _stall<void>();
   }
 
@@ -3466,6 +3564,8 @@ class ReconcileHarness {
   static Future<ReconcileHarness> resume({
     required SnapshotStore store,
     InMemoryLinkedStore? linkedStore,
+    LinkedStore? controllerStore,
+    Duration? persistTimeout,
     InMemorySignalHub? hub,
     SignalSubscriber? subscriber,
     wapi.WisaSnapshot? wisa,
@@ -3493,6 +3593,8 @@ class ReconcileHarness {
       azure: azure,
       store: store,
       linkedStore: linkedStore,
+      controllerStore: controllerStore,
+      persistTimeout: persistTimeout,
       hub: hub,
       subscriber: subscriber,
       wisaInitial: wisaSeed,

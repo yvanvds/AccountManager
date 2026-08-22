@@ -53,9 +53,11 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
     try {
       final services = await make();
       if (mounted) setState(() => _services = services);
-      // Passive-session read (#115): show the shared overview from the store
-      // without pulling or re-linking. Fire-and-forget; it notifies listeners.
-      unawaited(services.controller.loadOverview());
+      // The session's opening read: the shared overview from the store (#115),
+      // and then the linked view built from the same shared state when the cold
+      // seed allows it (#287) — no pull either way. Fire-and-forget; it
+      // notifies listeners.
+      unawaited(services.controller.openSession());
     } on Object catch (e) {
       if (mounted) setState(() => _bootstrapError = e);
     } finally {
@@ -202,6 +204,11 @@ class _Header extends StatelessWidget {
     // Synchroniseer used to report "geen accountwijzigingen nodig" over a save
     // it had skipped.
     final String? pendingSettings = controller.pendingSettingsReason;
+    // Whose sync this session is working from, when it adopted the shared state
+    // rather than pulling for itself (#287) — and, when it could not, the one
+    // blocking reason it stays read-only.
+    final SystemSyncMeta? adopted = controller.adoptedFrom;
+    final String? seedRefused = controller.seedRefusedReason;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -262,6 +269,41 @@ class _Header extends StatelessWidget {
               Icon(Icons.info_outline, size: 16, color: colors.primary),
               const SizedBox(width: PlinkSpacing.s2),
               Flexible(child: Text(pendingSettings, style: text.bodySmall)),
+            ],
+          ),
+        ],
+        if (adopted != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            key: const ValueKey('reconcile-adopted'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.groups_outlined, size: 16, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(
+                child: Text(
+                  'Deze sessie werkt met de gedeelde synchronisatie van '
+                  '${formatFreshnessStamp(adopted.at)}'
+                  '${adopted.syncedBy.isEmpty ? '' : ', door '
+                      '${adopted.syncedBy}'}'
+                  ' — er is niets opgehaald.',
+                  style: text.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (seedRefused != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            key: const ValueKey('reconcile-seed-refused'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.info_outline, size: 16, color: colors.primary),
+              const SizedBox(width: PlinkSpacing.s2),
+              Flexible(child: Text(seedRefused, style: text.bodySmall)),
             ],
           ),
         ],

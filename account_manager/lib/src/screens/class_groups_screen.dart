@@ -84,10 +84,11 @@ class _ClassGroupsScreenState extends State<ClassGroupsScreen> {
     try {
       final services = await make();
       if (mounted) setState(() => _services = services);
-      // Passive-session read (#115): the shared overview and the class
-      // inventory straight from the store, with no pull and no re-link.
-      // Idempotent with the other screens' own reads (all share one controller).
-      unawaited(services.controller.loadOverview());
+      // The session's opening read: the shared overview and the class inventory
+      // straight from the store (#115), then the linked view built from that
+      // same shared state when the cold seed allows it (#287) — no pull either
+      // way. Idempotent with the other screens' own reads (one controller).
+      unawaited(services.controller.openSession());
     } on Object catch (e) {
       if (mounted) setState(() => _bootstrapError = e);
     } finally {
@@ -322,12 +323,21 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
 
     // Without a linked view there is nothing to choose, dry-run or apply, and
     // the static rows are otherwise indistinguishable from interactive ones
-    // whose taps stopped working (#214).
+    // whose taps stopped working (#214). With one this session adopted rather
+    // than pulled, the rows *are* interactive and the notice says whose sync
+    // they came from instead (#287).
     if (!active) {
       slivers
         ..add(_section(ReadOnlyNotice(
           controller: controller,
           keyValue: 'class-groups-read-only',
+        )))
+        ..add(_gap(PlinkSpacing.s4));
+    } else if (controller.adoptedFrom != null) {
+      slivers
+        ..add(_section(SharedStateNotice(
+          controller: controller,
+          keyValue: 'class-groups-shared-state',
         )))
         ..add(_gap(PlinkSpacing.s4));
     }

@@ -71,8 +71,13 @@ void main() {
     late List<String> opens;
     Object? openError;
 
-    PasswordController build({String Function()? gen}) => PasswordController(
-          snapshot: _snapshot(),
+    // One stable snapshot per controller: the provider is read live (#287), so
+    // handing it a factory that mints a fresh object each call would make every
+    // read look like a changed tree.
+    PasswordController build({String Function()? gen}) {
+      final snap = _snapshot();
+      return PasswordController(
+          snapshot: () => snap,
           queue: queue,
           backends: backends,
           generatePassword: gen ?? _seqGenerator(),
@@ -84,8 +89,8 @@ void main() {
             final error = openError;
             if (error != null) throw error;
             opens.add(path);
-          },
-        );
+          });
+    }
 
     setUp(() {
       queue = InMemoryPasswordQueueStore();
@@ -306,17 +311,20 @@ void main() {
     late List<(String, List<int>)> writes;
     late List<String> opens;
 
-    PasswordController build() => PasswordController(
-          snapshot: _snapshot(),
-          queue: queue,
-          backends: backends,
-          generatePassword: _seqGenerator(),
-          writer: (name, bytes) async {
-            writes.add((name, List<int>.of(bytes)));
-            return 'C:/exports/$name';
-          },
-          opener: (path) async => opens.add(path),
-        );
+    PasswordController build() {
+      final snap = _snapshot();
+      return PasswordController(
+        snapshot: () => snap,
+        queue: queue,
+        backends: backends,
+        generatePassword: _seqGenerator(),
+        writer: (name, bytes) async {
+          writes.add((name, List<int>.of(bytes)));
+          return 'C:/exports/$name';
+        },
+        opener: (path) async => opens.add(path),
+      );
+    }
 
     setUp(() {
       queue = InMemoryPasswordQueueStore();
@@ -333,8 +341,9 @@ void main() {
     test('orders the staff list alphabetically by name (#186)', () {
       // Three staff seeded out of alphabetical order across mixed casing; the
       // controller must expose them sorted by display name (alice, Bob, Charlie).
+      final snap = staffOrderSnap();
       final c = PasswordController(
-        snapshot: staffOrderSnap(),
+        snapshot: () => snap,
         queue: queue,
         backends: backends,
         generatePassword: _seqGenerator(),
@@ -346,13 +355,16 @@ void main() {
 
     /// The Personeel search over three staff whose names differ in case and in
     /// which half is distinctive: Charlie Zulu, alice Bravo, Bob Alpha.
-    PasswordController buildStaffSearch() => PasswordController(
-          snapshot: staffOrderSnap(),
-          queue: queue,
-          backends: backends,
-          generatePassword: _seqGenerator(),
-          writer: (name, bytes) async => 'C:/exports/$name',
-        );
+    PasswordController buildStaffSearch() {
+      final snap = staffOrderSnap();
+      return PasswordController(
+        snapshot: () => snap,
+        queue: queue,
+        backends: backends,
+        generatePassword: _seqGenerator(),
+        writer: (name, bytes) async => 'C:/exports/$name',
+      );
+    }
 
     test('searches any part of the full name, case-insensitively (#215)', () {
       final c = buildStaffSearch()..setStaffFilterText('ZUL');

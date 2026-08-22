@@ -1147,11 +1147,11 @@ void main() {
   // --- Passive-session drill-downs (no pull, no link) ----------------------
 
   testWidgets(
-      'a passive session drills into a classroom read-only via readClassroom, '
-      'loading only that class (#115/#154)', (WidgetTester tester) async {
-    // Tall, like its siblings: the read-only notice #214 added above the list
-    // costs the first card its place on an 800×600 fold, and this test is about
-    // which class was read, not about where the fold falls.
+      'a seeded session adopts the shared state and still reads only the class '
+      'it drills into (#115/#154/#287)', (WidgetTester tester) async {
+    // Tall, like its siblings: the notice above the list costs the first card
+    // its place on an 800×600 fold, and this test is about which class was
+    // read, not about where the fold falls.
     _useTallWindow(tester);
     final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
@@ -1171,16 +1171,17 @@ void main() {
     // session rendered (#210).
     expect(find.text('Jaar 3'), findsOneWidget);
     expect(find.text('School 1'), findsNothing);
-    expect(s2.controller.linked, isNull,
-        reason: 'link() is never called in a passive session');
-    // Nothing loaded until the operator drills in.
+    // Since #287 the cold seed is linked on open, so this session can act — and
+    // it got there without asking any of the three systems for anything.
+    expect(s2.controller.linked, isNotNull);
+    expect(s2.controller.adoptedFrom?.syncedBy, 'operator@school.example');
+    // The drill-down is still lazy: nothing is read until the operator opens a
+    // class, and then only that class.
     expect(s2.controller.classroomAccounts, isNull);
 
     await _drill(tester, node: 'Jaar 3', classroom: '3C');
 
-    // Only the 3C class was read; the read-only account tile renders.
     expect(s2.controller.classroomAccounts, hasLength(1));
-    expect(find.text('Jane Doe'), findsOneWidget);
     expect(s2.wisaSyncs, 0);
     expect(s2.ssSyncs, 0);
     expect(s2.azSyncs, 0);
@@ -1464,7 +1465,14 @@ void main() {
     // The state is named instead of silently swapping in static cards.
     expect(readOnly, findsOneWidget);
     expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
-    expect(find.textContaining('nog niet gesynchroniseerd'), findsOneWidget);
+    // Since #287 the notice names *why* there is nothing to act on rather than
+    // reporting the absence of a sync: this session holds no seeded snapshot to
+    // build a view from, which is a thing only a pull can fix.
+    expect(
+      find.textContaining('Geen opgeslagen momentopname voor WISA, '
+          'Smartschool en Azure AD'),
+      findsOneWidget,
+    );
 
     // …with the sync affordance right there, and live.
     expect(tester.widget<FilledButton>(readOnlySync).onPressed, isNotNull);
@@ -1501,6 +1509,68 @@ void main() {
   });
 
   testWidgets(
+      'a session that adopted the shared state says whose sync it is working '
+      'from, and its tiles are the interactive ones (#287)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    // Operator A syncs; operator B opens Acties five minutes later and never
+    // presses Synchroniseer. Before #287 that second session got the
+    // "nog niet gesynchroniseerd" read-only notice and static cards, after
+    // minutes of WISA/Smartschool/Azure traffic were the only way out of it.
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
+        .controller
+        .sync();
+
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    // The shared-state notice replaces the read-only one, and names the pull.
+    expect(readOnly, findsNothing);
+    expect(find.byKey(const ValueKey('actions-shared-state')), findsOneWidget);
+    expect(find.text('Gedeelde synchronisatie'), findsOneWidget);
+    expect(find.textContaining('operator@school.example'), findsWidgets);
+
+    // The tiles below it really are interactive — no locks, real entry tiles —
+    // and no system was asked for anything to get here.
+    expect(find.byIcon(Icons.lock_outline), findsNothing);
+    expect(
+      find.byWidgetPredicate((w) =>
+          w.key is ValueKey<String> &&
+          (w.key! as ValueKey<String>).value.startsWith('entry-')),
+      findsWidgets,
+    );
+    expect(s2.wisaSyncs, 0);
+    expect(s2.ssSyncs, 0);
+    expect(s2.azSyncs, 0);
+
+    // Both passes stay within reach for an operator who wants something
+    // fresher; taking one makes the view this session's own.
+    final sync = find.byKey(const ValueKey('actions-shared-state-sync'));
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const ValueKey('actions-shared-state-drift')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    await tester.ensureVisible(sync);
+    await tester.tap(sync);
+    await tester.pumpAndSettle();
+
+    expect(s2.wisaSyncs, 1);
+    expect(s2.controller.adoptedFrom, isNull);
+    expect(find.byKey(const ValueKey('actions-shared-state')), findsNothing);
+  });
+
+  testWidgets(
       'a session whose sync failed is told the sync failed, not that it never '
       'ran (#214)', (WidgetTester tester) async {
     _useTallWindow(tester);
@@ -1530,17 +1600,15 @@ void main() {
       "the read-only banner's sync is disabled and named when another operator "
       'holds the lease (#214/#108)', (WidgetTester tester) async {
     _useTallWindow(tester);
-    final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
-    await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
-        .controller
-        .sync();
+    await ReconcileHarness(linkedStore: linkedStore).controller.sync();
     await linkedStore.acquireLease(owner: 'mieke@school', now: kFixtureDate);
 
-    final s2 = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
+    // Deliberately *not* a seeded session: since #287 one of those adopts the
+    // shared state and gets the interactive tiles plus [SharedStateNotice]
+    // instead. This is the session with nothing to build a view from, which is
+    // the one the read-only banner is for.
+    final s2 = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
     await tester.pumpAndSettle();
 

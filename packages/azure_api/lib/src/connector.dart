@@ -89,8 +89,9 @@ class AzureConnector {
   /// minted during *this* sync — from this pass's delta walk, or from
   /// [UserManager.latestDeltaToken] on a full read — never a carried-over older
   /// one. That is what makes [AzureSnapshot.fetchedAt] a truthful age for the
-  /// token it ships with, and what keeps a token from silently ageing past
-  /// Graph's 30-day limit while every sync appears to succeed.
+  /// token it ships with, and what keeps a token from silently ageing past the
+  /// lifetime Graph gives a `user` delta link (7 days) while every sync appears
+  /// to succeed.
   ///
   /// [expectedEmployeeIds] are the WISA ids this pass expects to find accounts
   /// for. Any that the prefix-scoped read did not turn up are looked up
@@ -132,7 +133,17 @@ class AzureConnector {
 
     final UserDelta delta;
     try {
-      delta = await users.delta(deltaToken, prefix);
+      // The previous user list goes *into* the walk, not just over it: a
+      // resumed row is sparse (id plus what changed), so it has to be merged
+      // onto the record it updates before it can be classified or applied
+      // (#288).
+      delta = await users.delta(
+        deltaToken,
+        prefix,
+        known: {
+          for (final u in previous?.users ?? const <AzureUser>[]) u.id: u
+        },
+      );
     } on GraphException catch (e) {
       if (!e.isRejectedDeltaToken) rethrow;
       _log?.addMessage(
@@ -147,8 +158,9 @@ class AzureConnector {
     // No `@odata.deltaLink` on the final page means this walk produced no
     // resume point. Keeping the old token here (the pre-#213 behaviour) let a
     // token stop advancing while every sync still reported success, until it
-    // aged past Graph's 30-day limit and every later pass died on it. Dropping
-    // it costs one full read next pass and always leaves a fresh token behind.
+    // aged past the lifetime Graph gives a `user` delta link (7 days) and every
+    // later pass died on it. Dropping it costs one full read next pass and
+    // always leaves a fresh token behind.
     if (delta.deltaToken == null) {
       _log?.addMessage(
         core.Origin.azure,
@@ -249,19 +261,40 @@ class AzureConnector {
 
     final byId = {for (final u in current) u.id: u};
     var added = 0;
+    var repaired = 0;
     for (final u in adopted) {
-      if (byId.containsKey(u.id)) continue;
+      final existing = byId[u.id];
+      if (existing == null) {
+        byId[u.id] = u;
+        added++;
+        continue;
+      }
+      // The object id is already here, but this record is not the one we
+      // already had: it came straight off Graph with the full `$select`, so it
+      // wins (#288). Skipping on mere id presence meant the connector fetched
+      // the correct record over the wire and then threw it away — which is how
+      // a record a sparse delta row had degraded stayed degraded.
+      if (existing == u) continue;
       byId[u.id] = u;
-      added++;
+      repaired++;
     }
-    if (added == 0) return current;
-    _log?.addMessage(
-      core.Origin.azure,
-      'Azure: $added bestaand(e) account(s) overgenomen die via employeeId '
-      'gevonden zijn maar niet aan de schoolfilter voldoen (overgestapte '
-      'leerlingen, en personeelsleden van wie onze school niet vooraan in '
-      '"department" staat).',
-    );
+    if (added == 0 && repaired == 0) return current;
+    if (added > 0) {
+      _log?.addMessage(
+        core.Origin.azure,
+        'Azure: $added bestaand(e) account(s) overgenomen die via employeeId '
+        'gevonden zijn maar niet aan de schoolfilter voldoen (overgestapte '
+        'leerlingen, en personeelsleden van wie onze school niet vooraan in '
+        '"department" staat).',
+      );
+    }
+    if (repaired > 0) {
+      _log?.addMessage(
+        core.Origin.azure,
+        'Azure: $repaired account(s) bijgewerkt met de volledige gegevens uit '
+        'de employeeId-opzoeking.',
+      );
+    }
     return byId.values.toList();
   }
 
@@ -362,6 +395,11 @@ class AzureConnector {
 
   /// Upserts [delta.changed] and drops [delta.removedIds] over [base], keeping
   /// the result keyed by Azure object id.
+  ///
+  /// A whole-record upsert is only safe because [UserManager.delta] was handed
+  /// the same [base] and has already merged each sparse Graph row onto the
+  /// record it updates (#288); the entries here are complete users, not
+  /// fragments.
   static List<AzureUser> _applyDelta(List<AzureUser> base, UserDelta delta) {
     final byId = {for (final u in base) u.id: u};
     for (final id in delta.removedIds) {

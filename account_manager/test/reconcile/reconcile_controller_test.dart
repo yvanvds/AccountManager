@@ -198,6 +198,41 @@ void main() {
           'Sync voltooid — geen accountwijzigingen nodig. Klaar. '
           'Operator: operator@school.example.');
     });
+
+    test('a drift check closes with a terminal line of its own (#303)',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      h.log.clear();
+
+      await h.controller.checkDrift();
+
+      // Until #303 a drift pass logged no closing line at all: it ended on
+      // `_link`'s "Gekoppeld: …" summary, which reads exactly like a pass still
+      // in flight. It gets the same line a sync gets — named for the pass that
+      // actually ran, because a drift check is not a sync.
+      expect(
+          h.log.entries.last.message,
+          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar. '
+          'Operator: operator@school.example.');
+      expect(
+        h.log.entries.where((e) => e.message.startsWith('Sync voltooid')),
+        isEmpty,
+        reason: 'the drift pass must not claim to have synced',
+      );
+    });
+
+    test('an empty operator degrades gracefully on the drift line too (#303)',
+        () async {
+      final h = ReconcileHarness(syncedBy: '');
+      await h.controller.sync();
+      h.log.clear();
+
+      await h.controller.checkDrift();
+
+      expect(h.log.entries.last.message,
+          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar.');
+    });
   });
 
   group('the pass reports itself in Dutch (#258)', () {
@@ -318,6 +353,96 @@ void main() {
       );
       expect(h.controller.linked, isNotNull);
     });
+
+    test(
+        'a failing writeMaterialized still drops the drill-down caches, so the '
+        'open class cannot pair the previous generation with the fresh view '
+        '(#289)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+
+      // Session 1 materializes generation 1, so there are stored documents for
+      // the next session to drill into.
+      final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+      await s1.controller.sync();
+
+      // Session 2 reads that view, opens a class and the Klasgroepen
+      // inventory — and its own writes fail.
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        controllerStore: StallingLinkedStore(
+          inner: linkedStore,
+          failWith: StateError('cosmos down'),
+        ),
+      );
+      await s2.controller.loadOverview();
+      final classroom = s2.controller.schoolRollups
+          .expand((s) => s2.controller.childrenOf(s.key))
+          .expand((g) => s2.controller.childrenOf(g.key))
+          .single;
+      await s2.controller.openClassroom(classroom);
+      await s2.controller.loadGroups();
+      s2.controller.expandedPath = <String>[classroom.key];
+      expect(s2.controller.classroomAccounts, isNotEmpty);
+      expect(s2.controller.groupDocs, isNotEmpty);
+
+      await s2.controller.sync();
+
+      // The write really did fail…
+      expect(
+        s2.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains('Kon het gedeelde overzicht niet opslaan')),
+      );
+      // …and the session still holds the view it just linked.
+      expect(s2.controller.linked, isNotNull);
+      // The caches derived from the *previous* generation went with the
+      // re-link, whether or not the shared write landed.
+      expect(s2.controller.selectedClassroom, isNull,
+          reason: 'the open class was read for the view that was replaced');
+      expect(s2.controller.classroomAccounts, isNull);
+      expect(s2.controller.groupDocs, isNull);
+      expect(s2.controller.expandedPath, isEmpty);
+      // With nothing open, no live entry can be joined to a stale document.
+      expect(s2.controller.classroomPendingEntries, isEmpty);
+    });
+
+    test(
+        'a stalled writeMaterialized during a drift check drops them too '
+        '(#289)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+
+      final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+      await s1.controller.sync();
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        controllerStore: StallingLinkedStore(inner: linkedStore),
+        persistTimeout: const Duration(milliseconds: 50),
+      );
+      await s2.controller.loadOverview();
+      final classroom = s2.controller.schoolRollups
+          .expand((s) => s2.controller.childrenOf(s.key))
+          .expand((g) => s2.controller.childrenOf(g.key))
+          .single;
+      await s2.controller.openClassroom(classroom);
+      await s2.controller.loadGroups();
+      expect(s2.controller.classroomAccounts, isNotEmpty);
+
+      await s2.controller.checkDrift();
+
+      expect(
+        s2.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains(
+          'Het opslaan van het gedeelde overzicht duurde langer dan',
+        )),
+      );
+      expect(s2.controller.selectedClassroom, isNull);
+      expect(s2.controller.classroomAccounts, isNull);
+      expect(s2.controller.groupDocs, isNull);
+    });
   });
 
   group('check for drift', () {
@@ -419,6 +544,59 @@ void main() {
 
       expect(settings.saves, 0,
           reason: 'a sync must not rewrite the settings document for nothing');
+    });
+
+    test('a drift check that pulls WISA repairs the document too (#303)',
+        () async {
+      // The repair follows the *pull*, not the pass. `checkDrift` normally
+      // re-reads only Smartschool and Azure — but a session holding no roster
+      // yet pulls WISA first, and that branch has exactly the authority a sync
+      // has, so it heals the profiles with it instead of leaving the operator's
+      // grid saying "School 25" until they happen to press Synchroniseer.
+      final settings = InMemorySettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+        schoolProfiles: legacy.wisaSchools,
+      );
+
+      await h.controller.checkDrift();
+
+      expect(h.wisaSyncs, 1,
+          reason: 'no roster in hand, so the drift pass pulls one');
+      final saved = await settings.load();
+      expect(
+        saved.wisaSchools.map((p) => p.name),
+        ['Instituut Sancta Maria-A', 'Instituut Sancta Maria-B'],
+      );
+      expect(saved.wisaSchools.map((p) => p.code), ['ISMAA', 'ISMAB']);
+      expect(saved.wisaSchools.first.ours, isTrue);
+      expect(saved.wisaSchools.last.virtual, isTrue);
+      expect(h.log.entries.where((e) => e.isError), isEmpty);
+    });
+
+    test(
+        'a drift check over the roster in hand leaves the document alone '
+        '(#303)', () async {
+      // The deliberate other half of that decision. The merge writes WISA's
+      // name over the stored one, so a snapshot somebody else pulled hours ago
+      // must not get to overwrite a rename a fresher sync already recorded — and
+      // an ordinary drift pass never re-reads WISA, so it has nothing newer to
+      // say about the school list than the document already holds.
+      final settings = _RecordingSettingsStore(legacy);
+      final h = ReconcileHarness(
+        wisaInitial: wisaSnap(schools: pulled),
+        wisa: wisaSnap(schools: pulled),
+        settingsStore: settings,
+        schoolProfiles: legacy.wisaSchools,
+      );
+
+      await h.controller.checkDrift();
+
+      expect(h.wisaSyncs, 0,
+          reason: 'the roster in hand is the one a drift pass links against');
+      expect(settings.saves, 0);
+      expect((await settings.load()).wisaSchools.first.name, isEmpty);
     });
 
     test('a failing settings store is logged, never fails the sync', () async {
@@ -1412,7 +1590,9 @@ void main() {
       // the issue asks for.
       expect(seen.where((v) => v > 0.0 && v < 1.0).length,
           greaterThanOrEqualTo(3));
-      expect(h.controller.progress, greaterThanOrEqualTo(0.9));
+      // …and it *finishes*: the bar used to stop on the 0.9 `_relink` set
+      // before persisting and be cleared from there (#303).
+      expect(h.controller.progress, 1.0);
     });
 
     test('an unchanged re-sync still advances past the start', () async {
@@ -1429,6 +1609,9 @@ void main() {
       expectMonotonic(seen);
       expect(seen.any((v) => v > 0.0), isTrue,
           reason: 'even the short no-changes path moves the bar off zero');
+      // The short path is a finished pass too, so it completes the bar as well
+      // — it used to stop on the 0.25 the WISA pull left it at (#303).
+      expect(h.controller.progress, 1.0);
     });
 
     test('a drift check steps the bar forward through its stages', () async {
@@ -1441,6 +1624,7 @@ void main() {
       expect(seen.first, 0.0);
       expectMonotonic(seen);
       expect(seen.where((v) => v > 0.0 && v < 1.0), isNotEmpty);
+      expect(h.controller.progress, 1.0, reason: 'and reaches the end (#303)');
     });
 
     test('an apply advances once per action, reaching 1.0', () async {
@@ -2167,6 +2351,233 @@ void main() {
             .map((c) => c.classroom),
         contains('3D'),
       );
+    });
+  });
+
+  group('adopting the shared synced state (#287)', () {
+    /// Session 1 syncs, leaving cold snapshots and a materialized view behind;
+    /// session 2 is the fresh launch that seeds from them.
+    Future<(ReconcileHarness, InMemorySnapshotStore, InMemoryLinkedStore)>
+        sharedState({wapi.WisaSnapshot? wisa}) async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final s1 = ReconcileHarness(
+        wisa: wisa,
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s1.controller.sync();
+      return (s1, snapshots, linkedStore);
+    }
+
+    test(
+        'a seeded session links from the shared state without pulling or '
+        'persisting', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final generationBefore = (await linkedStore.readSyncState()).generation;
+      final hub = InMemorySignalHub();
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        hub: hub,
+      );
+      expect(s2.controller.linked, isNull, reason: 'nothing linked on open');
+
+      await s2.controller.openSession();
+
+      // The whole point: a usable view, and not one connector was touched.
+      expect(s2.controller.linked, isNotNull);
+      expect(s2.wisaSyncs, 0);
+      expect(s2.ssSyncs, 0);
+      expect(s2.azSyncs, 0);
+      // It says whose pull it is working from.
+      expect(s2.controller.adoptedFrom?.syncedBy, 'operator@school.example');
+      expect(s2.controller.seedRefusedReason, isNull);
+      // And the shared store is exactly as it was: no generation bump, no
+      // rewrite of the ~9.6k documents, no nudge to every other operator.
+      expect((await linkedStore.readSyncState()).generation, generationBefore);
+      expect(hub.published, isEmpty);
+      // Reading the store is still not a pass (#275).
+      expect(s2.controller.phase, ReconcilePhase.idle);
+    });
+
+    test('the adopted view carries every account, school-wide', () async {
+      final (s1, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+
+      await s2.controller.openSession();
+
+      // The same pending work the syncing session derived — without an open
+      // classroom, which is what a flat school-wide list needs (#295).
+      expect(s2.controller.selectedClassroom, isNull);
+      expect(
+        s2.controller.pendingEntries.map((e) => e.targetId),
+        s1.controller.pendingEntries.map((e) => e.targetId),
+      );
+      expect(s2.controller.pendingEntries, isNotEmpty);
+    });
+
+    test('adoption runs once however many screens open the session', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+
+      await s2.controller.openSession();
+      final first = s2.controller.linked;
+      // The Acties and Klasgroepen tabs open the same controller.
+      await s2.controller.openSession();
+      await s2.controller.openSession();
+
+      expect(identical(s2.controller.linked, first), isTrue,
+          reason: 'a link over the whole roster is not paid for three times');
+    });
+
+    test('a session with no seeded snapshot refuses, and says which', () async {
+      final linkedStore = InMemoryLinkedStore();
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+      // The everyday first launch on a machine whose cold store is empty.
+      final fresh = ReconcileHarness(linkedStore: linkedStore);
+      await fresh.controller.openSession();
+
+      expect(fresh.controller.linked, isNull);
+      expect(fresh.controller.adoptedFrom, isNull);
+      expect(
+        fresh.controller.seedRefusedReason,
+        contains('Geen opgeslagen momentopname voor WISA, Smartschool en '
+            'Azure AD'),
+      );
+      expect(fresh.wisaSyncs, 0);
+    });
+
+    test('a store nobody has ever synced has nothing to adopt', () async {
+      final snapshots = InMemorySnapshotStore();
+      // Seeds without a shared sync record: a cold store written by a pass
+      // whose materialize never landed.
+      await ReconcileHarness(store: snapshots).controller.sync();
+
+      final s2 = await ReconcileHarness.resume(store: snapshots);
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNull);
+      expect(
+        s2.controller.seedRefusedReason,
+        contains('nog geen gedeelde synchronisatie'),
+      );
+    });
+
+    test('a werkdatum today no longer resolves to refuses, naming both dates',
+        () async {
+      // The shared roster was pulled three days ago and is *as of* that date;
+      // this session's settings track "now", which is the fixture date.
+      final stale = kFixtureDate.subtract(const Duration(days: 3));
+      final (_, snapshots, linkedStore) = await sharedState(
+        wisa: wisaSnap(workDate: stale),
+      );
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNull);
+      expect(s2.controller.seedRefusedReason,
+          contains(wapi.formatWerkdatum(stale)));
+      expect(s2.controller.seedRefusedReason,
+          contains(wapi.formatWerkdatum(kFixtureDate)));
+    });
+
+    test('a werkdatum that still matches today is adopted', () async {
+      final (_, snapshots, linkedStore) = await sharedState(
+        wisa: wisaSnap(workDate: kFixtureDate),
+      );
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNotNull);
+      expect(s2.controller.adoptedFrom?.workDate, kFixtureDate);
+    });
+
+    test('a saved setting the seed predates refuses until a sync', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      // The operator changes an Azure pull input in Instellingen before the
+      // first screen finishes opening. The seeded snapshot was pulled without
+      // it, so adopting would act on a view the save never reached.
+      s2.liveSettings.publish(
+        s2.liveSettings.current.copyWith(schoolPrefix: 'NIEUW'),
+      );
+
+      await s2.controller.openSession();
+
+      expect(s2.controller.linked, isNull);
+      expect(s2.controller.seedRefusedReason, contains('Instellingen'));
+    });
+
+    test('a real sync takes the view over from the adopted one', () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+      expect(s2.controller.adoptedFrom, isNotNull);
+
+      // The operator decides they want something fresher after all.
+      s2.wisaResult = wisaSnap(
+        fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+        students: [wisaStudent(classGroup: '3D')],
+      );
+      await s2.controller.sync();
+
+      expect(s2.wisaSyncs, 1);
+      expect(s2.controller.linked, isNotNull);
+      expect(s2.controller.adoptedFrom, isNull,
+          reason: 'this view is this session\'s own now');
+      expect((await linkedStore.readSyncState()).generation, 2);
+    });
+
+    test('a refusal clears once a sync has produced a view', () async {
+      final linkedStore = InMemoryLinkedStore();
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+      final fresh = ReconcileHarness(linkedStore: linkedStore);
+      await fresh.controller.openSession();
+      expect(fresh.controller.seedRefusedReason, isNotNull);
+
+      await fresh.controller.sync();
+
+      expect(fresh.controller.seedRefusedReason, isNull);
+      expect(fresh.controller.linked, isNotNull);
+    });
+
+    test('an adopted session can dry-run and apply without syncing first',
+        () async {
+      final (_, snapshots, linkedStore) = await sharedState();
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.openSession();
+
+      await s2.controller.dryRun();
+
+      expect(s2.controller.dryRunResults, isNotNull);
+      expect(s2.controller.dryRunResults, isNotEmpty);
+      expect(s2.wisaSyncs, 0, reason: 'still no pull anywhere in this session');
     });
   });
 

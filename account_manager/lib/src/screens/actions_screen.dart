@@ -93,10 +93,11 @@ class _ActionsScreenState extends State<ActionsScreen> {
     try {
       final services = await make();
       if (mounted) setState(() => _services = services);
-      // Passive-session read (#115): show the shared overview from the store
-      // without pulling or re-linking. Idempotent with the Reconcile screen's
-      // own read (both share the one controller). Fire-and-forget.
-      unawaited(services.controller.loadOverview());
+      // The session's opening read: the shared overview from the store (#115),
+      // and then the linked view built from the same shared state when the cold
+      // seed allows it (#287) — no pull either way. Idempotent with the other
+      // screens' own reads (all share the one controller). Fire-and-forget.
+      unawaited(services.controller.openSession());
     } on Object catch (e) {
       if (mounted) setState(() => _bootstrapError = e);
     } finally {
@@ -612,7 +613,7 @@ class _ActionsBodyState extends State<_ActionsBody>
     if (controller.loadingClassroom) {
       return slivers..add(_section(const LinearProgressIndicator()));
     }
-    slivers.addAll(_readOnlySlivers());
+    slivers.addAll(_stateNoticeSlivers());
 
     // Only the Personeel tab carries a per-list lookup; the mode switch that
     // used to sit beside it now lives once, at the top of the view (#226).
@@ -665,16 +666,23 @@ class _ActionsBodyState extends State<_ActionsBody>
   static const String _noMatchLabel =
       'Geen accounts die aan de filter voldoen.';
 
-  /// The read-only announcement shown above either drill-down when this session
-  /// has no linked view to act on (#214) — a passive session that only read the
-  /// shared overview, or one whose sync/drift pass failed before it could link.
-  /// Empty in an active session, where the tiles below are the interactive ones.
-  List<Widget> _readOnlySlivers() {
-    if (controller.linked != null) return const <Widget>[];
-    return <Widget>[
-      _section(ReadOnlyNotice(controller: controller)),
-      _gap(PlinkSpacing.s3),
-    ];
+  /// The announcement shown above either drill-down about where this session's
+  /// view comes from.
+  ///
+  /// Two of them, and never both: [ReadOnlyNotice] when there is no linked view
+  /// to act on (#214) — a session refused the shared seed, or one whose
+  /// sync/drift pass failed before it could link — and [SharedStateNotice] when
+  /// the tiles below *are* interactive but were built from the cold seed a
+  /// colleague's sync left behind (#287). Empty only in a session that pulled
+  /// for itself.
+  List<Widget> _stateNoticeSlivers() {
+    final Widget? notice = controller.linked == null
+        ? ReadOnlyNotice(controller: controller)
+        : controller.adoptedFrom == null
+            ? null
+            : SharedStateNotice(controller: controller);
+    if (notice == null) return const <Widget>[];
+    return <Widget>[_section(notice), _gap(PlinkSpacing.s3)];
   }
 
   /// A lazy sliver over pending [rows] (situation headers + entry tiles) — the

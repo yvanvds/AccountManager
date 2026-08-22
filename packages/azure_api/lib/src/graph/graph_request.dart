@@ -83,6 +83,13 @@ class GraphException implements Exception {
   ///   returns it for a genuinely malformed query, which must stay loud rather
   ///   than silently degrade into an expensive full read on every pass.
   ///
+  /// Do not read that message as the lifetime: the number in Graph's text is
+  /// generic, and the documented lifetime of a `directoryObject`/`user` delta
+  /// link is **7 days**, not 30 (#288). Nothing here depends on the figure —
+  /// the recovery is driven by the reply, not by a clock — but the operator
+  /// reading the log should not be told a token has a month left when it has a
+  /// week.
+  ///
   /// The classification lives on the reply rather than on the connector because
   /// two layers need it: `UserManager.delta` hands it to `GraphClient` as the
   /// failure shape it expects — so the transport logs it as a detail instead of

@@ -41,6 +41,57 @@ void main() {
       expect(user.displayName, '');
     });
 
+    group('mergeGraphJson (#288)', () {
+      const stored = AzureUser(
+        id: 'az1',
+        upn: 'jane.doe@student.school.example',
+        employeeId: 'W1',
+        displayName: 'Jane Doe',
+        givenName: 'Jane',
+        surname: 'Doe',
+        companyName: 'GBS',
+        department: '3C',
+      );
+
+      test('a property the row omits keeps its current value', () {
+        final merged = stored.mergeGraphJson(<String, dynamic>{
+          'id': 'az1',
+          'displayName': 'Janneke Doe',
+        });
+        expect(merged, stored.copyWith(displayName: 'Janneke Doe'));
+      });
+
+      test('a property the row sends as null is cleared', () {
+        final merged = stored.mergeGraphJson(<String, dynamic>{
+          'id': 'az1',
+          'employeeId': null,
+          'department': null,
+        });
+        expect(merged.employeeId, isNull);
+        expect(merged.department, isNull);
+        expect(merged.companyName, 'GBS', reason: 'unmentioned, so untouched');
+      });
+
+      test('accountEnabled follows presence, not truthiness', () {
+        expect(
+            stored
+                .mergeGraphJson(<String, dynamic>{'id': 'az1'}).accountEnabled,
+            isTrue);
+        expect(
+          stored.mergeGraphJson(<String, dynamic>{
+            'id': 'az1',
+            'accountEnabled': false
+          }).accountEnabled,
+          isFalse,
+        );
+      });
+
+      test('an empty incoming id never replaces the one we are keyed by', () {
+        expect(stored.mergeGraphJson(<String, dynamic>{'id': ''}).id, 'az1');
+        expect(stored.mergeGraphJson(const <String, dynamic>{}).id, 'az1');
+      });
+    });
+
     test('isRemoved detects @removed delta entries', () {
       expect(
         AzureUser.isRemoved({

@@ -181,6 +181,145 @@ void main() {
     });
   });
 
+  group('a resumed delta row is sparse (#288)', () {
+    /// The nine fields [AzureUser] reads, as one `$select` value.
+    const allFields = 'id,userPrincipalName,employeeId,displayName,givenName,'
+        'surname,companyName,department,accountEnabled';
+
+    /// One delta page carrying [rows], closed by a deltaLink.
+    FakeGraphTransport walkOf(List<Map<String, dynamic>> rows) =>
+        FakeGraphTransport(
+          (_) => jsonOk(<String, dynamic>{
+            '@odata.deltaLink':
+                'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=T2',
+            'value': rows,
+          }),
+        );
+
+    /// The record the previous snapshot holds for the hand-edited student.
+    const stored = AzureUser(
+      id: 'az1',
+      upn: 'jane.doe@student.school.example',
+      employeeId: '1',
+      displayName: 'Jane Doe',
+      givenName: 'Jane',
+      surname: 'Doe',
+      companyName: 'GBS',
+    );
+
+    test('the token-minting request carries the full \$select', () async {
+      // Graph encodes the *initial* request's query options into the token and
+      // replays those on every resume, so this is the request that decides
+      // whether a resumed row arrives with anything on it at all. Priming
+      // without a `$select` is the whole bug.
+      final transport = FakeGraphTransport(
+        (_) => jsonOk(readFixture('delta_latest.json')),
+      );
+      await UserManager(clientWith(transport)).latestDeltaToken();
+      expect(
+          transport.requests.single.url.queryParameters[r'$select'], allFields);
+    });
+
+    test('the resume carries it too', () async {
+      final transport = walkOf(const <Map<String, dynamic>>[]);
+      await UserManager(clientWith(transport)).delta('T1', 'GBS');
+      final request = transport.requests.single;
+      expect(request.url.queryParameters[r'$deltatoken'], 'T1');
+      expect(request.url.queryParameters[r'$select'], allFields);
+    });
+
+    test('a hand-edit lands and the rest of the record survives', () async {
+      // Exactly what Graph sends for a display-name edit made in the Entra
+      // portal: the object id, and the properties that changed. Read as a whole
+      // user this row is a wreck — no UPN, no employeeId, no companyName — and
+      // the school test then threw it away, so the edit was lost for good
+      // (the walk still advances the token, so it is never offered again).
+      final transport = walkOf(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'az1',
+          'displayName': 'Janneke Doe',
+          'givenName': 'Janneke',
+        },
+      ]);
+
+      final delta = await UserManager(clientWith(transport)).delta(
+        'T1',
+        'GBS',
+        known: const <String, AzureUser>{'az1': stored},
+      );
+
+      expect(
+        delta.changed.single,
+        stored.copyWith(displayName: 'Janneke Doe', givenName: 'Janneke'),
+      );
+    });
+
+    test('a sparse row that only flips accountEnabled is kept', () async {
+      final transport = walkOf(<Map<String, dynamic>>[
+        <String, dynamic>{'id': 'az1', 'accountEnabled': false},
+      ]);
+
+      final delta = await UserManager(clientWith(transport)).delta(
+        'T1',
+        'GBS',
+        known: const <String, AzureUser>{'az1': stored},
+      );
+
+      expect(delta.changed.single.accountEnabled, isFalse);
+      expect(delta.changed.single.employeeId, '1',
+          reason: 'the bridge to WISA must not be blanked by a silent row');
+      expect(delta.changed.single.upn, 'jane.doe@student.school.example');
+    });
+
+    test('a property Graph sends as null really is cleared', () async {
+      // Presence decides, not emptiness: this is how a cleared employeeId
+      // arrives, and it must not be mistaken for "the row said nothing".
+      final transport = walkOf(<Map<String, dynamic>>[
+        <String, dynamic>{'id': 'az1', 'employeeId': null},
+      ]);
+
+      final delta = await UserManager(clientWith(transport)).delta(
+        'T1',
+        'GBS',
+        known: const <String, AzureUser>{'az1': stored},
+      );
+
+      expect(delta.changed.single.employeeId, isNull);
+      expect(delta.changed.single.displayName, 'Jane Doe');
+    });
+
+    test('a sparse row moving someone out of our school is dropped', () async {
+      // The merge is not a way to keep everybody: judged whole, this record no
+      // longer belongs to us, so it leaves the changed set (and the connector
+      // stops carrying it).
+      final transport = walkOf(<Map<String, dynamic>>[
+        <String, dynamic>{'id': 'az1', 'companyName': 'OTHER'},
+      ]);
+
+      final delta = await UserManager(clientWith(transport)).delta(
+        'T1',
+        'GBS',
+        known: const <String, AzureUser>{'az1': stored},
+      );
+
+      expect(delta.changed, isEmpty);
+    });
+
+    test('a sparse row about a user we have never seen is still dropped',
+        () async {
+      // Nothing to merge it onto and nothing in it to classify it by. A
+      // genuinely new account arrives with its properties, so this only ever
+      // covers strangers.
+      final transport = walkOf(<Map<String, dynamic>>[
+        <String, dynamic>{'id': 'az-unknown', 'displayName': 'Someone Else'},
+      ]);
+
+      final delta = await UserManager(clientWith(transport)).delta('T1', 'GBS');
+
+      expect(delta.changed, isEmpty);
+    });
+  });
+
   group('getUser', () {
     test('returns the parsed user', () async {
       final transport =
