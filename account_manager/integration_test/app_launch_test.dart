@@ -5754,33 +5754,35 @@ void main() {
   });
 
   testWidgets(
-      'an adopted staff account is stamped with our department, so the repair '
-      'sticks instead of depending on the back-fill forever (#233)',
-      (WidgetTester tester) async {
-    // The third piece of the transferred-account problem, and the one the staff
-    // family never had. #231 made the pull *find* Anna Smit's existing account
-    // by employeeId, but nothing wrote our marker onto it: her `department`
-    // still names the sibling group school, so neither leg of the connector's
-    // `$filter` matches and every single pass has to re-adopt her by back-fill.
-    // Once she leaves WISA her id drops out of `managedStaffEmployeeIds`, the
-    // back-fill stops asking, and the account is invisible for good — no
-    // RemoveStaffFromAzure would ever be proposed for it.
+      "a moved staff member's Azure department is left exactly as the other "
+      'software wrote it (#237)', (WidgetTester tester) async {
+    // The counterpart of the #231 test above, one pass later: Anna Smit's
+    // record is now complete (WISA + Smartschool + Azure), so the modify branch
+    // is live, and her `department` still reads `GBS,SSM` — the comma-separated
+    // list of the schools she is active at, maintained by other software and
+    // read-only from here. Our prefix being second in it is the ordinary state,
+    // not a defect.
     //
-    // Here the record is complete (WISA + Smartschool + Azure), which is the
-    // pass after AddStaffToSmartschool ran, so the modify branch is live.
+    // #233 briefly shipped a repair for this. It fired on any list our prefix
+    // did not lead, and its rewrite split on a ` - ` a comma list has none of,
+    // so one apply turned `SSM,GBS` into `GBS` and deleted the sibling school's
+    // claim. This is the layer that proves the operator is no longer offered
+    // that: the whole pass must raise nothing and write nothing.
     useTallWindow(tester);
     final azureWire = TransferredAccountGraph(
       employeeId: '42',
       upn: 'smit.anna@other.example',
       displayName: 'Smit Anna',
-      department: 'OTHER - Wiskunde',
+      // The harness school is `GBS`, so this is the destructive case exactly:
+      // we are on the list, just not first.
+      department: 'SSM,GBS',
     );
     final harness = ReconcileHarness(
       wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
       smartschool: ssSnap(
         groups: const [],
-        // Her Smartschool mail already matches the adopted UPN, so the only
-        // thing left wrong about this staff member is the Azure department.
+        // Her Smartschool mail already matches the adopted UPN, so nothing else
+        // about this staff member is out of step either.
         accounts: [ssStaffAccount(mail: 'smit.anna@other.example')],
         memberships: const [],
       ),
@@ -5799,73 +5801,44 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
-    // The starting state: invisible to the school-scoped read, present only
-    // because the #231 back-fill went looking for her by employeeId.
-    expect(azureWire.bulkReads, 1);
+    // She is in the snapshot — found by the #231 back-fill, since the
+    // school-scoped `$filter` leg is `startswith(department, …)` and her list
+    // does not lead with us.
     expect(azureWire.employeeIdLookups, <String>["employeeId in ('42')"]);
     final linked = harness.controller.linked!.snapshot.staff.single;
     expect(linked.wisa, isNotNull);
     expect(linked.smartschool, isNotNull);
     expect(linked.azure?.id, 'az-transferred');
-    expect(harness.app.azure.snapshot!.users.single.department,
-        'OTHER - Wiskunde');
+    expect(harness.app.azure.snapshot!.users.single.department, 'SSM,GBS');
 
-    // Acties → Personeel: the operator is offered the repair.
+    // Nothing anywhere in the pass proposes touching the school field — this
+    // staff member is fully synced, so she raises no to-do at all.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((a) => a.kind),
+      isNot(contains('ModifyStaffAzureSchool')),
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'staff'),
+      isEmpty,
+    );
+
+    // And the operator sees it: Acties has no staff work to show.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
-    expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+    expect(find.text('Wijzig de school in Azure'), findsNothing);
 
-    // Apply just that row.
-    final entry = harness.controller.pendingEntries
-        .firstWhere((e) => e.family == 'staff');
-    final id = entry.targetId;
-    await tester.ensureVisible(find.byKey(ValueKey('entry-staff-$id')));
-    await tester.tap(find.byKey(ValueKey('entry-staff-$id')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
-    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
-
-    // One PATCH, touching `department` only, with our prefix at the head and
-    // the subject the other school wrote still on it.
-    final patches =
-        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
-    expect(patches, hasLength(1));
-    expect(patches.single.url.path, contains('az-transferred'));
+    // No write reached Azure, so the list the other software maintains is
+    // exactly as it was.
     expect(
-      jsonDecode(patches.single.body!) as Map<String, dynamic>,
-      <String, dynamic>{'department': 'GBS - Wiskunde'},
+      harness.graph.requests.where((r) => r.method == 'PATCH'),
+      isEmpty,
+      reason: 'department belongs to the software that maintains the list',
     );
-    expect(azureWire.bulkReads, 1, reason: 'the repair is a write, not a read');
-
-    // Prefix-first is what makes it stick: that is exactly the
-    // `startswith(department,'GBS')` leg of UserManager.filterFor, so the next
-    // school-scoped bulk read returns the account on its own — no employeeId
-    // back-fill required, and a later departure can raise a removal.
-    final repaired = harness.app.azure.snapshot!.users.single.department!;
-    expect(repaired, 'GBS - Wiskunde');
-    expect(repaired.startsWith('GBS'), isTrue);
-    // …and the re-linked view the operator now sees carries it too.
-    expect(harness.controller.linked!.snapshot.staff.single.azure?.id,
-        'az-transferred');
   });
 
   testWidgets(

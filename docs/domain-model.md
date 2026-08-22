@@ -127,7 +127,7 @@ The flat shape mirrors Smartschool's SOAP contract. It must **not** leak past th
 | `givenName` | `String` | |
 | `surname` | `String` | |
 | `companyName` | `String?` | School prefix; used to identify former members to remove |
-| `department` | `String?` | Holds school prefix for staff |
+| `department` | `String?` | Staff: a **comma-separated list of school prefixes** (`GBS,SSM`) — every school the teacher is currently active at. Owned by other software: we read it (`contains`, INV-22) and never write it on an existing account (#237); only account *creation* stamps our prefix. Students: the class group. |
 
 ### 3.7 `Group` and `Membership` — major redesign
 

@@ -51,20 +51,19 @@ void main() {
       expect(actions.whereType<UpdateStaffWisaName>(), isEmpty);
       expect(actions.whereType<ModifySmartschoolStaffEmail>(), isEmpty);
       expect(actions.whereType<SetStaffCopyCode>(), isEmpty);
-      expect(actions.whereType<ModifyStaffAzureSchool>(), isEmpty);
     });
 
     test(
-        'an adopted account with another school\'s department is not repaired '
-        'until the record is complete (#233)', () {
+        "an adopted account carrying another school's department raises the "
+        'ordinary create, and nothing about the department (#237)', () {
       // WISA + Azure, no Smartschool — the state #231's back-fill leaves a
-      // moved staff member in. The mutually exclusive branches (§6.3) mean the
-      // department repair waits for the pass after AddStaffToSmartschool, the
-      // same way the student `ModifyAzureSchool` does.
+      // moved staff member in. `department` is the sibling school's to maintain
+      // (it lists every school the teacher is active at), so the only thing
+      // still missing here is the Smartschool account.
       final actions = staffActionsFor(
         linkedStaff(
           wisa: wisaStaff(),
-          azure: azureStaff(department: 'OTHER - Wiskunde'),
+          azure: azureStaff(department: 'GBS'),
         ),
         cfg,
       );
@@ -123,29 +122,29 @@ void main() {
       expect(types(actions), [SetStaffCopyCode]);
     });
 
-    test(
-        "an Azure department naming another school → only "
-        'ModifyStaffAzureSchool (#233)', () {
-      final actions = staffActionsFor(
-        linkedStaff(
-          wisa: wisaStaff(),
-          smartschool: ssStaff(),
-          azure: azureStaff(department: 'OTHER - Wiskunde'),
-        ),
-        cfg,
-      );
-      expect(types(actions), [ModifyStaffAzureSchool]);
-    });
-
-    test('a fully-synced staff member with our prefix raises no repair (#233)',
-        () {
-      // The default fixture's `department` is exactly the prefix, so the new
-      // action must not turn every clean staff record into a pending item.
-      expect(
-        staffActionsFor(fullySyncedStaff(), cfg)
-            .whereType<ModifyStaffAzureSchool>(),
-        isEmpty,
-      );
+    test('an Azure department naming other schools raises nothing (#237)', () {
+      // `department` is a comma-separated list of the schools the teacher is
+      // active at, maintained by other software. Our prefix appearing second —
+      // or not at all on a record the back-fill adopted by employeeId — is not
+      // a defect we may "repair": the write that used to do it (#233) collapsed
+      // the list to our prefix alone and destroyed the sibling school's claim.
+      for (final department in <String?>[
+        'GBS,SSM',
+        'SSM,GBS',
+        'GBS',
+        'OTHER - Wiskunde',
+        null,
+      ]) {
+        final actions = staffActionsFor(
+          linkedStaff(
+            wisa: wisaStaff(),
+            smartschool: ssStaff(),
+            azure: azureStaff(department: department),
+          ),
+          cfg,
+        );
+        expect(actions, isEmpty, reason: 'department: $department');
+      }
     });
 
     test('present-branch never emits a lifecycle action', () {
@@ -232,7 +231,7 @@ void main() {
         linkedStaff(
           wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
           smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
-          azure: azureStaff(department: 'OTHER - Wiskunde'),
+          azure: azureStaff(),
         ),
       ]) {
         for (final action in staffActionsFor(staff, cfg)) {
@@ -296,7 +295,7 @@ void main() {
         linkedStaff(
           wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
           smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
-          azure: azureStaff(department: 'OTHER - Wiskunde'),
+          azure: azureStaff(),
         ),
       ]) {
         for (final action in staffActionsFor(staff, cfg)) {
@@ -321,7 +320,7 @@ void main() {
         linkedStaff(
           wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
           smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
-          azure: azureStaff(department: 'OTHER - Wiskunde'),
+          azure: azureStaff(),
         ),
       ]) {
         for (final action in staffActionsFor(staff, cfg)) {

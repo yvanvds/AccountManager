@@ -64,14 +64,19 @@ The bulk `$filter` is:
 companyName eq '<prefix>' or startswith(department,'<prefix>')
 ```
 
-Students carry the prefix in `companyName`; staff carry it at the **start** of
-`department` (the legacy convention sets staff `department` to exactly the
-prefix). Graph supports `eq` and `startswith` server-side on these properties,
-but **not** `contains`. If an installation buries the prefix mid-string in
-`department`, server-side `startswith` would miss those staff — use
-`UserManager.loadClientFiltered`, which pulls with `$select` only and filters
-client-side. The delta path always filters client-side, because `/users/delta`
-does not honour these property filters.
+Students carry the prefix in `companyName`. Staff carry it in `department`,
+which other software maintains as a **comma-separated list of every school
+prefix the teacher is active at** (`GBS,SSM`) — so our prefix is at the *start*
+of the value only when we happen to be listed first. Graph supports `eq` and
+`startswith` server-side on these properties, but **not** `contains`, so the
+`startswith` leg misses every staff member whose list does not lead with us;
+today they are picked up by the `employeeId` back-fill (#231) instead.
+`UserManager.loadClientFiltered` — which pulls with `$select` only and filters
+client-side — is the documented fallback. The delta path always filters
+client-side, because `/users/delta` does not honour these property filters.
+
+Note the field is read-only from here: writing our prefix over the list would
+evict a sibling school's claim (#237). Only account creation stamps it.
 
 ## Authentication
 

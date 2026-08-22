@@ -110,8 +110,8 @@ than `else`, but sets `OK = false` inside the missing branch, so the two
 branches are mutually exclusive just like the student parser. The staff
 lifecycle set is `AddStaffToAzure`, `AddStaffToSmartschool`,
 `RemoveStaffFromSmartschool`, `DontImportStaffFromWisa`, `RemoveStaffFromAzure`;
-the modify set is `ModifyStaffAzureSchool`, `UpdateStaffWisaName`,
-`ModifySmartschoolStaffEmail`, `SetStaffCopyCode`. Staff bridge to Smartschool
+the modify set is `UpdateStaffWisaName`, `ModifySmartschoolStaffEmail`,
+`SetStaffCopyCode`. Staff bridge to Smartschool
 by `WisaStaff.code` (not `wisaId`) — `AddStaffToSmartschool` and
 `UpdateStaffWisaName` write the code into `accountId` (spec §4, OQ-1), while the
 numeric `wisaId` becomes the copy-code.
@@ -248,21 +248,22 @@ own those).
   the action converges after one apply.
 - **Staff gender on create.** Legacy `AddToSmartschool` hard-codes `Female` for
   new staff (WISA staff rows carry no gender); preserved verbatim.
-- **`ModifyStaffAzureSchool` is an addition, not a port.** The legacy staff
-  family has no `department` repair, so an Azure account adopted by the
-  `employeeId` back-fill (#231) never carried our marker and stayed invisible to
-  the school-scoped bulk read forever (#233). It fires when `department` does not
-  *start with* the school prefix — a missing one included, mirroring what #224
-  taught the student `ModifyAzureSchool` about a null `companyName` — and it is
-  `startswith`, not the linker's laxer `contains`, because that is the exact
-  server-side test `UserManager.filterFor` applies. **Assumed value shape:**
-  `<school>` or `<school> - <suffix>` (real data carries a subject suffix,
-  `Arcadia - Wiskunde`), so only the leading school segment is replaced and any
-  suffix is preserved. Legacy's staff `RemoveFromAzure` renders the field under
-  an "Active Schools" header and both linkers test it with `contains`, so it may
-  instead enumerate several schools — in which case replacing the head segment
-  evicts a sibling school's claim and this needs to become a prepend. Tracked as
-  #237.
+- **No staff `department` repair — the field is not ours to write (#237).** A
+  staff member's Azure `department` is maintained by other software and holds a
+  **comma-separated list of school prefixes** (`GBS,SSM`), one per school the
+  teacher is currently active at. We read it — the linker's `contains` test
+  (INV-22) is exactly the right question, "is this teacher active at our
+  school?" — and we never write it on an account that already exists.
+  `ModifyStaffAzureSchool` (#233) did, and it was destructive: it fired whenever
+  the list did not *start with* our prefix, which is every teacher we are not
+  listed first for, and its "repair" split on a ` - ` separator a comma list has
+  none of, so `GBS,SSM` was rewritten to a bare `SSM` — deleting the sibling
+  school's claim. Removed whole rather than narrowed. `AddStaffToAzure` still
+  writes the bare prefix when it **creates** an account, which destroys nothing.
+  The two problems #233 was actually aimed at — the bulk read's
+  `startswith(department, …)` leg missing staff whose list does not lead with us,
+  and a staff member who leaves WISA going invisible instead of raising
+  `RemoveStaffFromAzure` — are tracked as their own issues.
 - Smartschool `uid` uniqueness for new accounts is the caller's concern (the
   State layer holds the account set); the default builder is deliberately
   simple.

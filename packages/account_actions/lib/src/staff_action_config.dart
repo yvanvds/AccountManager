@@ -11,6 +11,11 @@ class StaffActionConfig {
   /// The school prefix stamped on a staff member's Azure `department` when a
   /// new account is created (legacy `CreateStaffMember` sets
   /// `Department = Connector.Prefix`).
+  ///
+  /// **Create only** (#237). On an account that already exists, `department` is
+  /// read-only from our side: other software maintains it as a comma-separated
+  /// list of every school prefix the teacher is active at, so writing our prefix
+  /// over it would evict a sibling school's claim. No staff action patches it.
   final String schoolPrefix;
 
   /// The base UPN domain, e.g. `arcadiascholen.be`. New staff UPNs are minted
