@@ -359,6 +359,96 @@ class TransferredAccountGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering the way the tenant answers for a staff member
+/// whose Azure `department` lists our school **second** (`SSM,GBS`) — the
+/// ordinary state of the comma list other software maintains (#237).
+///
+/// The school-scoped bulk `$filter` cannot see such an account
+/// (`startswith(department, …)`) and Graph has no `contains` to widen it with,
+/// so on an incremental pass the only leg that can carry a change to it into the
+/// app is the **delta** walk, which filters in Dart. This wire resumes from the
+/// stored token and reports exactly one changed user; the bulk read and the
+/// `employeeId` back-fill both answer empty, so a test can prove which leg the
+/// account arrived on.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from.
+class SharedDepartmentStaffGraph implements az.GraphTransport {
+  SharedDepartmentStaffGraph({
+    az.AzureUser? changed,
+    this.freshToken = 'AZ-NEXT',
+  }) : changed = changed ?? azStaffUser();
+
+  /// The user `/users/delta` reports as changed since the stored token.
+  final az.AzureUser changed;
+
+  /// The token this walk leaves behind for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued — empty on a pass
+  /// whose accounts were all accounted for already.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran — none, on an incremental pass.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        // A `$deltatoken=latest` prime carries no data by definition; a resume
+        // carries the one account that changed.
+        'value': token == 'latest'
+            ? const <Object>[]
+            : <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': changed.id,
+                  'userPrincipalName': changed.upn,
+                  if (changed.employeeId != null)
+                    'employeeId': changed.employeeId,
+                  'displayName': changed.displayName,
+                  'givenName': changed.givenName,
+                  'surname': changed.surname,
+                  if (changed.companyName != null)
+                    'companyName': changed.companyName,
+                  if (changed.department != null)
+                    'department': changed.department,
+                  'accountEnabled': changed.accountEnabled,
+                },
+              ],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [wapi.WisaSoapTransport] serving a tiny, complete WISA export for one
 /// school, so the **production** WISA pull (a real [wapi.WisaConnector] behind
 /// the real `wisaSyncer`) runs offline.
@@ -705,6 +795,33 @@ az.AzureUser azUser({
       givenName: givenName,
       surname: surname,
       companyName: 'GBS',
+    );
+
+/// An Azure **staff** account. Staff carry no `companyName`; their school lives
+/// in `department`, which other software maintains as the comma-separated list
+/// of every school they are active at (#237) — so the default lists ours
+/// *second*, the ordinary state that the connector's server-side `$filter`
+/// (`startswith`) cannot see (#268).
+///
+/// The defaults line up with [wisaStaff] and [ssStaffAccount], so a record built
+/// from all three is fully in sync and raises no action of its own.
+az.AzureUser azStaffUser({
+  String id = 'az-staff',
+  String upn = 'anna.smit@school.example',
+  String? employeeId = '42',
+  String displayName = 'Smit Anna',
+  String givenName = 'Anna',
+  String surname = 'Smit',
+  String department = 'SSM,GBS',
+}) =>
+    az.AzureUser(
+      id: id,
+      upn: upn,
+      employeeId: employeeId,
+      displayName: displayName,
+      givenName: givenName,
+      surname: surname,
+      department: department,
     );
 
 core.Group ssGroup(

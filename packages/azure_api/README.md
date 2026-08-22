@@ -67,13 +67,34 @@ companyName eq '<prefix>' or startswith(department,'<prefix>')
 Students carry the prefix in `companyName`. Staff carry it in `department`,
 which other software maintains as a **comma-separated list of every school
 prefix the teacher is active at** (`GBS,SSM`) — so our prefix is at the *start*
-of the value only when we happen to be listed first. Graph supports `eq` and
-`startswith` server-side on these properties, but **not** `contains`, so the
-`startswith` leg misses every staff member whose list does not lead with us;
-today they are picked up by the `employeeId` back-fill (#231) instead.
-`UserManager.loadClientFiltered` — which pulls with `$select` only and filters
-client-side — is the documented fallback. The delta path always filters
-client-side, because `/users/delta` does not honour these property filters.
+of the value only when we happen to be listed first.
+
+**The server-side leg cannot be widened** (#268). Graph offers `eq`,
+`startswith`, `in` and `ne` on these properties and no `contains` at all;
+`endswith` is limited to `mail` / `otherMails` / `userPrincipalName`, and
+`$search` tokenizes only `displayName` / `description`. There is simply no OData
+query for "our prefix somewhere in the list", and the only alternative is the
+full-tenant read PAIN-2 exists to avoid. So the narrow fast path stays, and the
+staff it misses are completed by the two legs that are *not* limited to what
+OData can ask:
+
+- **the `employeeId` back-fill (#231)** — the designed complement, not an
+  accident. Every pass hands the connector the WISA ids it expects accounts for
+  and it looks up the ones this `$filter` did not turn up, on the full read and
+  the incremental one alike.
+- **the client-side test** — the delta path always filters in Dart (`/users/delta`
+  does not honour these property filters), and so does
+  `UserManager.loadClientFiltered`. Neither is bound by OData, so both apply the
+  real rule: `companyName` equals the prefix, **or** `department` *contains* it —
+  the same test the linker applies (INV-22). Before #268 both inherited the
+  server-side `startswith` instead, which silently dropped every delta change to
+  a staff member listed second (their stale row survived from the previous
+  snapshot, so nothing looked missing) and left `loadClientFiltered` unable to do
+  the one thing it exists for.
+
+`UserManager.loadClientFiltered` — `$select` only, filtered client-side — remains
+the documented fallback for an installation that needs the bulk read *itself* to
+see them, at the cost of a full-tenant read.
 
 Note the field is read-only from here: writing our prefix over the list would
 evict a sibling school's claim (#237). Only account creation stamps it.

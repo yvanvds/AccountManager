@@ -6611,6 +6611,102 @@ void main() {
   });
 
   testWidgets(
+      'an Office 365 rename reaches the app even when our school is second on '
+      "a staff member's department list (#268)", (WidgetTester tester) async {
+    // The cost of the read being narrower than the domain rule, one pass after
+    // #237: Anna Smit's `department` reads `SSM,GBS`, so the school-scoped
+    // `$filter` cannot see her (`startswith`) and Graph has no `contains` to
+    // widen it with. That leaves the delta walk — which filters in Dart, and so
+    // is under no such limit — as the only leg that can carry a change to her
+    // account into the app.
+    //
+    // It applied the server-side narrowing anyway. So when an administrator
+    // renamed her Office 365 sign-in, the delta row was dropped, her *previous*
+    // row survived untouched in the snapshot, and the app went on believing
+    // Smartschool's copy of the address was still right. Nothing looked missing
+    // — that is what made it invisible.
+    //
+    // Only this layer sees it: it needs the stored token and the previous
+    // snapshot to make the pass incremental, the linker to join her by
+    // `employeeId` once the UPN stops matching, and the dispatch to turn the
+    // drift into the to-do the operator should have been given.
+    useTallWindow(tester);
+    final azureWire = SharedDepartmentStaffGraph(
+      // Renamed in Azure since the stored token; everything else unchanged.
+      changed: azStaffUser(upn: 'anna.smit2@school.example'),
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        // Smartschool still holds the address that was correct last pass.
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot: her account as it stood, and the token this pass
+      // resumes from.
+      azureInitial: azSnap(deltaToken: 'AZ-TOKEN', users: [azStaffUser()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: the seeded Azure snapshot is reused untouched, its
+    // token unspent.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+
+    // Today: Check for drift, which is what re-reads Azure — incrementally,
+    // from the stored token.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass really was the incremental one, and the delta walk really was
+    // the only leg that could have delivered her: no bulk read ran, and the
+    // `employeeId` back-fill asked about nobody (she was already accounted for
+    // by the previous snapshot, which is exactly why it cannot save this case).
+    expect(azureWire.resumeTokens, <String>['AZ-TOKEN']);
+    expect(azureWire.bulkReads, 0);
+    expect(azureWire.employeeIdLookups, isEmpty);
+
+    // The rename landed. Before the fix this still read the old address.
+    expect(harness.app.azure.snapshot!.users.single.upn,
+        'anna.smit2@school.example');
+
+    // And the operator is told what it means: Smartschool's copy is now stale.
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.azure?.id, 'az-staff',
+        reason: 'joined by employeeId once the UPN stopped matching');
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(find.text('Wijzig het e-mailadres in Smartschool'), findsOneWidget);
+  });
+
+  testWidgets(
       'the apply-confirmation dialog names the system the pass really writes, '
       'in Dutch (#234)', (WidgetTester tester) async {
     // The report, reproduced through the real app: a student whose WISA name

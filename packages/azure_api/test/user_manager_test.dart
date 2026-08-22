@@ -407,6 +407,109 @@ void main() {
     });
   });
 
+  // `department` is a comma-separated list of every school the teacher is
+  // active at (`SSM,GBS`), maintained by other software — our prefix sitting
+  // second in it is the ordinary state, not a defect (#237). Graph cannot ask
+  // "contains" server-side, so `filterFor` stays `startswith`; but every leg
+  // that filters in **Dart** can, and until #268 none of them did.
+  group('department is a comma list, not a prefix (#268)', () {
+    /// One Graph row for a staff member the `$filter` cannot see: our prefix is
+    /// on their `department` list, just not first.
+    Map<String, dynamic> listedSecond({String displayName = 'Smit Anna'}) =>
+        <String, dynamic>{
+          'id': 'az-staff',
+          'userPrincipalName': 'anna.smit@school.example',
+          'employeeId': '42',
+          'displayName': displayName,
+          'department': 'SSM,GBS',
+        };
+
+    /// A staff member of a school that is genuinely not ours.
+    Map<String, dynamic> anotherSchool() => <String, dynamic>{
+          'id': 'az-other',
+          'userPrincipalName': 'jos.peeters@other.example',
+          'employeeId': '99',
+          'displayName': 'Peeters Jos',
+          'department': 'SSM,ZAV',
+        };
+
+    test('a delta walk keeps a staff member whose list does not lead with us',
+        () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          '@odata.deltaLink':
+              'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=T2',
+          'value': [listedSecond(), anotherSchool()],
+        }),
+      );
+
+      final delta = await UserManager(clientWith(transport)).delta('T1', 'GBS');
+
+      // Ours is in — theirs is still out. The change used to be dropped here
+      // and the previous snapshot's stale row simply survived, so an edit made
+      // in Azure never reached the app and nothing looked missing.
+      expect(delta.changed.map((u) => u.id), <String>['az-staff']);
+    });
+
+    test('loadClientFiltered finally does the one thing it exists for',
+        () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          'value': [
+            listedSecond(),
+            anotherSchool(),
+            <String, dynamic>{
+              'id': 'az-student',
+              'userPrincipalName': 'jane.doe@student.school.example',
+              'companyName': 'GBS',
+            },
+          ],
+        }),
+      );
+
+      final users =
+          await UserManager(clientWith(transport)).loadClientFiltered('GBS');
+
+      // No `$filter` at all — the whole tenant comes down and the prefix test
+      // happens here, which is exactly why it may be the wide one.
+      expect(
+        transport.last.url.queryParameters.containsKey(r'$filter'),
+        isFalse,
+      );
+      expect(users.map((u) => u.id), <String>['az-staff', 'az-student']);
+    });
+
+    test('the case of the prefix and of the list does not matter', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          'value': [
+            <String, dynamic>{
+              'id': 'az-staff',
+              'userPrincipalName': 'anna.smit@school.example',
+              'department': 'ssm,gbs',
+            },
+          ],
+        }),
+      );
+
+      final users =
+          await UserManager(clientWith(transport)).loadClientFiltered('GbS');
+
+      expect(users.map((u) => u.id), <String>['az-staff']);
+    });
+
+    test('the server-side filter is deliberately left narrow', () async {
+      // Not an oversight: Graph has no `contains` on these properties, and
+      // `endswith` covers only mail/UPN, so this is the widest bounded query
+      // there is. The staff it misses are completed by the `employeeId`
+      // back-fill (#231) and by the client-side legs above.
+      expect(
+        UserManager.filterFor('GBS'),
+        "companyName eq 'GBS' or startswith(department,'GBS')",
+      );
+    });
+  });
+
   group('loadByEmployeeIds (#224)', () {
     /// One Graph `/users` row for a transferred-in student: the employeeId is
     /// ours, the companyName is unset and the department still names the school

@@ -90,11 +90,25 @@ class UserManager {
   ///
   /// Staff `department` is maintained by other software as a comma-separated
   /// list of every school prefix the teacher is active at (`GBS,SSM`), so
-  /// `startswith` matches only when we happen to be listed first. Graph does
-  /// **not** support `contains` server-side on these properties, so the staff
-  /// this leg misses are found by the `employeeId` back-fill (#231) instead;
-  /// [loadClientFiltered] is the documented fallback for an installation that
-  /// needs the bulk read itself to see them.
+  /// `startswith` matches only when we happen to be listed first.
+  ///
+  /// **This leg cannot be widened** (#268). Graph offers `eq`, `startswith`,
+  /// `in` and `ne` on these properties and no `contains` at all; `endswith` is
+  /// limited to `mail` / `otherMails` / `userPrincipalName`, and `$search`
+  /// tokenizes only `displayName` / `description`. So there is no server-side
+  /// query for "our prefix somewhere in the list", and the alternative is a
+  /// full-tenant read — the very thing PAIN-2 exists to avoid. The ruling is
+  /// therefore: keep this narrow fast path, and complete it with the two legs
+  /// that are **not** limited to what OData can ask:
+  ///
+  /// - the `employeeId` back-fill (#231), which adopts every staff member WISA
+  ///   lists that this filter did not turn up — on the full *and* the
+  ///   incremental path; and
+  /// - [_belongsToSchool], which every leg that filters in Dart uses, and which
+  ///   applies the real comma-list rule.
+  ///
+  /// [loadClientFiltered] remains the fallback for an installation that needs
+  /// the bulk read itself to see them, at the cost of a full-tenant read.
   static String filterFor(String schoolPrefix) {
     final p = _escapeODataString(schoolPrefix);
     return "companyName eq '$p' or startswith(department,'$p')";
@@ -201,10 +215,14 @@ class UserManager {
     return users;
   }
 
-  /// Full read with `$select` only, filtered client-side by [schoolPrefix].
-  /// Fallback for tenants where the prefix is not at the start of
-  /// `department` (so server-side `startswith` would miss staff). Pulls more
-  /// than [load]; use only when [load]'s server-side filter is insufficient.
+  /// Full read with `$select` only, filtered client-side by [schoolPrefix]
+  /// through [_belongsToSchool] — so it really does see the staff whose
+  /// `department` lists us second, which is its whole reason for existing.
+  ///
+  /// Fallback for tenants where the prefix is not at the start of `department`
+  /// (so server-side `startswith` would miss staff). Pulls the whole tenant, far
+  /// more than [load]; use only when [load]'s server-side filter plus the
+  /// `employeeId` back-fill is insufficient.
   Future<List<AzureUser>> loadClientFiltered(String schoolPrefix) async {
     final url = _graph.uri('users', query: {r'$select': _select});
     final rows = await _graph.getCollection(url, onPage: _accountProgress());
@@ -483,11 +501,30 @@ class UserManager {
     };
   }
 
+  /// Whether [u] belongs to [prefix]'s school under the **domain** rule
+  /// (INV-22), which is deliberately wider than [filterFor]: a student is an
+  /// exact `companyName` match, a staff member is a `department` that *contains*
+  /// the prefix anywhere in the comma-separated list other software maintains
+  /// (`SSM,GBS`).
+  ///
+  /// Every leg that filters here does it in Dart — the [delta] walk and
+  /// [loadClientFiltered] — so none of them is bound by what OData can express.
+  /// They inherited the `startswith` narrowing anyway until #268, which cost:
+  /// an incremental pass silently dropped every change to a staff member listed
+  /// second (their stale row survived from the previous snapshot, so nothing
+  /// even looked missing), and [loadClientFiltered] could not see them either,
+  /// which is the one thing it exists to do.
+  ///
+  /// Kept identical to `_departmentMatchesPrefix` in `account_linker`: a read
+  /// narrower than the linker drops rows the linker would have kept, and the
+  /// linker never gets to ask about a row the read threw away. #279 proposes
+  /// folding the two copies into one shared `account_core` rule so they cannot
+  /// drift apart a second time.
   bool _belongsToSchool(AzureUser u, String prefix) {
     final p = prefix.toLowerCase();
     final company = u.companyName?.toLowerCase();
     final dept = u.department?.toLowerCase();
-    return company == p || (dept != null && dept.startsWith(p));
+    return company == p || (dept != null && dept.contains(p));
   }
 
   /// Lower-cases, strips diacritics, and drops characters Azure rejects in a
