@@ -2091,6 +2091,100 @@ void main() {
   });
 
   testWidgets(
+      'the Klasgroepen inventory is searchable by class name and description, '
+      'composing with the attention switch end-to-end (#262)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, real rail, real keyboard
+    // input. The search is a filter over the *composed* inventory: the rows
+    // come from the stored documents, the interactive halves and the "same
+    // situation" bulk headers from the live dispatch, and the switch is a
+    // second filter over the same list — a widget test sees the row builder,
+    // not what a needle does to all four of those at once.
+    //
+    // Our school runs `1A` ("Eerste jaar A"), the sub-grouped `2F`
+    // (`2F ECO` + `2F MAW`, both "Tweede jaar F") and the leftover `GBS-9Z`.
+    useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final search = find.byKey(const ValueKey('class-groups-search'));
+    final filter = find.byKey(const ValueKey('class-groups-only-attention'));
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+    Future<void> type(String needle) async {
+      await tester.ensureVisible(search);
+      await tester.enterText(search, needle);
+      await tester.pumpAndSettle();
+    }
+
+    expect(search, findsOneWidget);
+    expect(row('1A'), findsOneWidget);
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('GBS-9Z'), findsOneWidget);
+
+    // By name: one class out of the whole inventory, which is the question the
+    // operator arrived with ("is `1A` right?") and used to answer by scrolling.
+    await type('1a');
+    expect(row('1A'), findsOneWidget);
+    expect(row('2F ECO'), findsNothing);
+    expect(row('2F MAW'), findsNothing);
+    expect(row('GBS-9Z'), findsNothing);
+
+    // By description — "tweede" is in no class *name* at all, and a class is
+    // looked up by what it teaches as often as by its code.
+    await type('tweede');
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('2F MAW'), findsOneWidget);
+    expect(row('1A'), findsNothing);
+
+    // Per-part and order-independent, exactly like the two Personeel searches
+    // (#187/#215/#217), and one needle may span name and description.
+    await type('maw tweede');
+    expect(row('2F MAW'), findsOneWidget);
+    expect(row('2F ECO'), findsNothing);
+
+    // Nothing matched says so — and not in the words of an inventory that was
+    // never synced, nor of a school where everything is in order.
+    await type('1a tweede');
+    expect(
+        find.text('Geen klassen die aan de filter voldoen.'), findsOneWidget);
+    expect(find.textContaining('Nog geen klasinventaris'), findsNothing);
+    expect(find.textContaining('Elke klas staat in orde'), findsNothing);
+
+    // The two filters compose (#262): the switch narrows what the search left.
+    // `2F ECO` carries the missing-group work; `2F MAW` shares that group and
+    // so asks nothing of its own.
+    await type('2f');
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('2F MAW'), findsOneWidget);
+    await tester.ensureVisible(filter);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(row('2F ECO'), findsOneWidget);
+    expect(row('2F MAW'), findsNothing);
+    expect(row('GBS-9Z'), findsNothing,
+        reason: 'it needs attention, but the search is still on');
+
+    // Clearing the box restores the inventory the switch still governs.
+    await tester.ensureVisible(search);
+    await tester.tap(find.byKey(const ValueKey('class-groups-search-clear')));
+    await tester.pumpAndSettle();
+    expect(row('GBS-9Z'), findsOneWidget);
+    expect(row('1A'), findsNothing, reason: 'the switch survives the clear');
+    await tester.ensureVisible(filter);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       "a student's Office 365 class group is reported on their own account "
       'end-to-end, pointing at the one class-level write (#245)',
       (WidgetTester tester) async {

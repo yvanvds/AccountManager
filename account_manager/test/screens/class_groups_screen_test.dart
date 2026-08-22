@@ -18,6 +18,15 @@ void _useTallWindow(WidgetTester tester) {
 final Finder _readOnly = find.byKey(const ValueKey('class-groups-read-only'));
 final Finder _filter =
     find.byKey(const ValueKey('class-groups-only-attention'));
+final Finder _search = find.byKey(const ValueKey('class-groups-search'));
+
+Finder _row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+/// Types [needle] into the inventory search box and settles.
+Future<void> _type(WidgetTester tester, String needle) async {
+  await tester.enterText(_search, needle);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   testWidgets('shows the not-configured panel when AAD is absent, in Dutch',
@@ -235,6 +244,144 @@ void main() {
         findsOneWidget);
     expect(find.text('Onze eerste klas'), findsOneWidget);
     expect(find.textContaining('Klas van een andere school'), findsNothing);
+  });
+
+  testWidgets(
+      'the search finds a class by its name and by its description (#262)',
+      (WidgetTester tester) async {
+    // The fixture: `1A` ("Eerste jaar A"), the two sub-groups of `2F` (both
+    // "Tweede jaar F") and the stale `GBS-9Z`.
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_search, findsOneWidget);
+    expect(_row('1A'), findsOneWidget);
+    expect(_row('2F ECO'), findsOneWidget);
+
+    // By name: the one class asked about, out of the whole inventory.
+    await _type(tester, '1a');
+    expect(_row('1A'), findsOneWidget);
+    expect(_row('2F ECO'), findsNothing);
+    expect(_row('2F MAW'), findsNothing);
+    expect(_row('GBS-9Z'), findsNothing);
+
+    // By description — a class is looked up by what it teaches as often as by
+    // its code, and "eerste" appears in no class *name* at all.
+    await _type(tester, 'tweede');
+    expect(_row('2F ECO'), findsOneWidget);
+    expect(_row('2F MAW'), findsOneWidget);
+    expect(_row('1A'), findsNothing);
+
+    // Per-part and order-independent, like the two Personeel searches
+    // (#187/#215/#217): both parts must occur, in either order, and one needle
+    // may span the name and the description.
+    await _type(tester, 'maw tweede');
+    expect(_row('2F MAW'), findsOneWidget);
+    expect(_row('2F ECO'), findsNothing);
+
+    // Clearing brings the whole inventory back.
+    await tester.tap(find.byKey(const ValueKey('class-groups-search-clear')));
+    await tester.pumpAndSettle();
+    expect(_row('1A'), findsOneWidget);
+    expect(_row('2F ECO'), findsOneWidget);
+    expect(_row('GBS-9Z'), findsOneWidget);
+  });
+
+  testWidgets('the search composes with the attention switch (#262)',
+      (WidgetTester tester) async {
+    // `2F ECO` needs work (no Office 365 group for `2F`); `2F MAW` shares that
+    // group and so asks nothing itself.
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _type(tester, '2f');
+    expect(_row('2F ECO'), findsOneWidget);
+    expect(_row('2F MAW'), findsOneWidget);
+    expect(_row('1A'), findsNothing);
+
+    // The switch narrows what the search left, rather than replacing it.
+    await tester.tap(_filter);
+    await tester.pumpAndSettle();
+    expect(_row('2F ECO'), findsOneWidget);
+    expect(_row('2F MAW'), findsNothing);
+    expect(_row('1A'), findsNothing,
+        reason: 'the search is still on while the switch filters');
+
+    // And the search still narrows what the switch left.
+    await _type(tester, '1a');
+    expect(
+        find.text('Geen klassen die aan de filter voldoen.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a search that matches nothing says so, and says something else '
+      'than an empty inventory (#262)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Two parts taken from two different classes match neither.
+    await _type(tester, '1a tweede');
+    expect(_row('1A'), findsNothing);
+    expect(
+        find.text('Geen klassen die aan de filter voldoen.'), findsOneWidget);
+    expect(find.textContaining('Nog geen klasinventaris'), findsNothing,
+        reason: 'the sync ran and the school has classes — only the needle '
+            'found none');
+    expect(find.textContaining('Elke klas staat in orde'), findsNothing,
+        reason: 'a typo must not read as a statement about the school');
+
+    // While the "nothing needs attention" line is still the one shown when it
+    // is the switch, not the search, that empties the list.
+    await _type(tester, '');
+    await tester.tap(_filter);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('entry-group-2F ECO')));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-2F ECO'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Elke klas staat in orde'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a bulk header offers only the classes the search left standing (#262)',
+      (WidgetTester tester) async {
+    // `1A` and `1B` both need their Office 365 roster updated, so the tab
+    // collects them into one "same situation" header that acts on both.
+    _useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+
+    // Narrowed to one class, the bulk affordance is gone: a button that says it
+    // acts on "exactly the classes it names" must not write to a class the
+    // operator has filtered off the screen.
+    await _type(tester, '1a');
+    expect(_row('1A'), findsOneWidget);
+    expect(_row('1B'), findsNothing);
+    expect(find.text('Klassen in dezelfde situatie'), findsNothing);
+
+    await _type(tester, 'eerste jaar');
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
   });
 
   testWidgets('classes sort by year, numerically (#227)',
