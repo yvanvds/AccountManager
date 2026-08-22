@@ -12,6 +12,10 @@ import 'log_buffer.dart';
 /// What the reconcile screen is doing right now.
 enum ReconcilePhase {
   /// Nothing has run yet this session.
+  ///
+  /// A passive read of the shared store (`loadOverview`) leaves the phase
+  /// here — it is not a pass — so a session that only ever reads stays idle,
+  /// and the screen keeps explaining what its two buttons do (#275).
   idle,
 
   /// A sync (or drift check) is pulling snapshots.
@@ -1809,7 +1813,13 @@ class ReconcileController extends ChangeNotifier {
       _rollups = await store.readRollups();
       _decisions = await store.readDecisions();
       await _refreshLock();
-      if (_phase == ReconcilePhase.idle) _phase = ReconcilePhase.ready;
+      // The phase stays [ReconcilePhase.idle]: reading the shared store is not
+      // a pass. Claiming `ready` here said "the last pass finished and [linked]
+      // is current" over a session that has pulled nothing and linked nothing —
+      // and since the read resolves on the microtask queue, it landed before
+      // the operator's first frame, which is what kept the screen's only
+      // explanation of Synchroniseer / Controleer op drift off the screen
+      // entirely (#275).
       notifyListeners();
     } on Object catch (e) {
       log.addError(core.Origin.all, 'Kon het overzicht niet laden: $e');

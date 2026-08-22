@@ -1746,6 +1746,35 @@ void main() {
       expect(passive.controller.syncLockOwner, 'mieke@school');
     });
 
+    test(
+        'loadOverview leaves the phase idle — reading the shared store is not '
+        'a pass (#275)', () async {
+      final linkedStore = InMemoryLinkedStore();
+      // Another operator's sync materialized the shared overview.
+      await ReconcileHarness(linkedStore: linkedStore).controller.sync();
+
+      final passive = ReconcileHarness(linkedStore: linkedStore);
+      expect(passive.controller.phase, ReconcilePhase.idle);
+
+      await passive.controller.loadOverview();
+
+      // The shared overview is in hand…
+      expect(passive.controller.hasOverview, isTrue);
+      // …but this session has pulled nothing and linked nothing, so it is
+      // still idle. `ready` claims "the last pass finished and `linked` is
+      // current", which would be a straight untruth here — and because the
+      // store read resolves before the first frame, that untruth is what kept
+      // the screen's idle explainer from ever being painted (#275).
+      expect(passive.controller.phase, ReconcilePhase.idle);
+      expect(passive.controller.linked, isNull);
+      expect(passive.controller.busy, isFalse);
+
+      // A real pass is what moves it off idle.
+      await passive.controller.sync();
+      expect(passive.controller.phase, ReconcilePhase.ready);
+      expect(passive.controller.linked, isNotNull);
+    });
+
     test('onStoreChanged refetches the overview and the open classroom',
         () async {
       final linkedStore = InMemoryLinkedStore();

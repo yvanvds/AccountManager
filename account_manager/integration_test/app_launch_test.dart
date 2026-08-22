@@ -250,12 +250,18 @@ void main() {
     await tester.tap(find.text('Synchronisatie'));
     await tester.pumpAndSettle();
 
-    // The two buttons under the heading. The idle explainer that names them in
-    // prose is translated with them but is not assertable here: `loadOverview`
-    // moves the phase off `idle` before the operator's first frame, so the
-    // paragraph never reaches the screen at all (#275).
+    // The two buttons under the heading, and the explainer that names them in
+    // prose — which #265 translated but could not assert, because the passive
+    // store read moved the phase off `idle` before the operator's first frame
+    // and the paragraph never reached the screen (fixed in #275).
     expect(find.text('Synchroniseer'), findsOneWidget);
     expect(find.text('Controleer op drift'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reconcile-explainer')), findsOneWidget);
+    expect(
+      find.textContaining('Synchroniseer haalt WISA op en vergelijkt het met '
+          'de vorige momentopname'),
+      findsOneWidget,
+    );
 
     // The log panel's own chrome, empty state included.
     expect(find.text('Logboek'), findsOneWidget);
@@ -277,11 +283,13 @@ void main() {
           reason: '"$english" is the English label #265 replaced');
     }
 
-    // A sync heads the counts section the way the Acties tree heads its own.
+    // A sync heads the counts section the way the Acties tree heads its own —
+    // and retires the introduction, the banner now having a pass to report on.
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(find.text('Overzicht'), findsOneWidget);
     expect(find.text('Overview'), findsNothing);
+    expect(find.byKey(const ValueKey('reconcile-explainer')), findsNothing);
 
     // A second pass over unchanged WISA raises the smart-diff notice, which
     // now says what the Log line beside it says (#258).
