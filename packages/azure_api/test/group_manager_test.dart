@@ -71,8 +71,10 @@ void main() {
       final result = await groups.listGroups('GBS');
 
       expect(result, hasLength(45));
+      // The milestone lines only: since #266 the closing summary reads
+      // "N groepen opgehaald voor …" and would otherwise match too.
       expect(
-        log.messages.where((m) => m.contains('groepen opgehaald')).toList(),
+        log.messages.where((m) => m.endsWith('groepen opgehaald…')).toList(),
         ['Azure: 20 groepen opgehaald…', 'Azure: 40 groepen opgehaald…'],
       );
     });
@@ -85,7 +87,7 @@ void main() {
       await groups.listGroups('GBS');
 
       expect(
-        log.messages.where((m) => m.contains('groepen opgehaald')),
+        log.messages.where((m) => m.endsWith('groepen opgehaald…')),
         isEmpty,
       );
     });
@@ -281,6 +283,93 @@ void main() {
       final groups = GroupManager(clientWith(transport));
       expect(await groups.removeMembers('g1', const []), isEmpty);
       expect(transport.requests, isEmpty);
+    });
+  });
+
+  // Everything this manager writes into an [ILog] lands in the app's Log panel
+  // beside the Dutch the app layer writes there (#253/#257/#258), so it is
+  // Dutch too (#266).
+  group('operator log lines are Dutch (#266)', () {
+    test('the group read reports what it pulled, for which prefix', () async {
+      final transport = FakeGraphTransport((req) {
+        if (req.url.path.contains('/members')) {
+          return jsonOk({'value': const <Object>[]});
+        }
+        return jsonOk(readFixture('groups.json'));
+      });
+      final log = RecordingLog();
+
+      await GroupManager(clientWith(transport), log: log).listGroups('GBS');
+
+      expect(log.messages, contains('Azure: 2 groepen opgehaald voor "GBS".'));
+      expect(log.messages, isNot(contains(contains('loaded '))));
+    });
+
+    test('a created class group and the membership writes are Dutch', () async {
+      final created = FakeGraphTransport((_) => jsonOk({'id': 'g-new'}));
+      final createLog = RecordingLog();
+      await GroupManager(clientWith(created), log: createLog).createGroup(
+        displayName: 'GBS-2A',
+        mailNickname: 'GBS-2A',
+      );
+      expect(
+        createLog.messages,
+        contains('Azure: Microsoft 365-groep GBS-2A (GBS-2A) aangemaakt.'),
+      );
+
+      final wrote = FakeGraphTransport.constant(noContent());
+      final writeLog = RecordingLog();
+      final groups = GroupManager(clientWith(wrote), log: writeLog);
+      await groups.addMember('g1', 'u1');
+      await groups.removeMember('g1', 'u1');
+      expect(
+        writeLog.messages,
+        containsAll(<String>[
+          'Azure: u1 toegevoegd aan groep g1.',
+          'Azure: u1 verwijderd uit groep g1.',
+        ]),
+      );
+
+      final batched = FakeGraphTransport((req) {
+        final body = jsonDecode(req.body!) as Map<String, dynamic>;
+        final requests =
+            (body['requests'] as List).cast<Map<String, dynamic>>();
+        return jsonOk({
+          'responses': [
+            for (final r in requests) {'id': r['id'], 'status': 204},
+          ],
+        });
+      });
+      final batchLog = RecordingLog();
+      final batchGroups = GroupManager(clientWith(batched), log: batchLog);
+      await batchGroups.addMembers('g1', <String>['u1', 'u2']);
+      await batchGroups.removeMembers('g1', <String>['u1', 'u2']);
+      expect(
+        batchLog.messages,
+        containsAll(<String>[
+          'Azure: 2 leden in batch toegevoegd aan groep g1.',
+          'Azure: 2 leden in batch verwijderd uit groep g1.',
+        ]),
+      );
+
+      // Not one of the five lines is still the English it used to be.
+      for (final english in <String>[
+        'created Microsoft 365 group',
+        'added ',
+        'removed ',
+        'batch-added',
+        'batch-removed',
+      ]) {
+        expect(
+          <String>[
+            ...createLog.messages,
+            ...writeLog.messages,
+            ...batchLog.messages,
+          ].where((m) => m.contains(english)),
+          isEmpty,
+          reason: english,
+        );
+      }
     });
   });
 }

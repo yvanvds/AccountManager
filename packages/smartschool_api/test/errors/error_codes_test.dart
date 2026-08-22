@@ -17,16 +17,18 @@ void main() {
       expect(codes.translate(42), '42');
     });
 
-    test('unknown code falls back to a generic message', () {
+    test('unknown code falls back to a generic Dutch message (#266)', () {
+      // The fallback is written straight into the operator's Log panel by the
+      // connector, so it is Dutch like every other line of a pass.
       final codes = SmartschoolErrorCodes.fromJson('{"1":"x"}');
-      expect(codes.translate(999), 'Smartschool error 999');
+      expect(codes.translate(999), 'Smartschool-fout 999');
     });
 
     test('empty table is not loaded and always falls back', () {
       expect(SmartschoolErrorCodes.empty.isLoaded, isFalse);
       expect(
         SmartschoolErrorCodes.empty.translate(5),
-        'Smartschool error 5',
+        'Smartschool-fout 5',
       );
     });
 

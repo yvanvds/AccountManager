@@ -169,13 +169,13 @@ class SmartschoolConnector {
   ) {
     for (final rule in unmatchedImportRules(forest, rules)) {
       final effect = switch (rule) {
-        DiscardSmartschoolGroup() => 'nothing was discarded',
-        NoSmartschoolSubgroups() => 'no subgroups were pruned',
+        DiscardSmartschoolGroup() => 'er is niets weggelaten',
+        NoSmartschoolSubgroups() => 'er zijn geen subgroepen weggesnoeid',
       };
       _log?.addMessage(
         core.Origin.smartschool,
-        'Import rule "${rule.groupName}" matched no Smartschool group in this '
-        'pull — $effect. Check the group name.',
+        'Importregel "${rule.groupName}" kwam bij deze ophaalbeurt met geen '
+        'enkele Smartschool-groep overeen — $effect. Controleer de groepsnaam.',
       );
     }
   }
@@ -240,7 +240,7 @@ class SmartschoolConnector {
       if (code == _noDirectAccountsCode) {
         _log?.addMessage(
           core.Origin.smartschool,
-          'No direct accounts in $groupName',
+          'Geen rechtstreekse accounts in $groupName.',
         );
       } else if (code != 0) {
         _log?.addError(core.Origin.smartschool, await _message(code));
@@ -255,7 +255,7 @@ class SmartschoolConnector {
     ];
     _log?.addMessage(
       core.Origin.smartschool,
-      'Added ${kept.length} accounts to $groupName',
+      '${kept.length} account(s) opgehaald uit $groupName.',
     );
     return SmartschoolAccountPayload(accounts: kept, groupIds: parsed.groupIds);
   }
@@ -281,7 +281,7 @@ class SmartschoolConnector {
     if (role == null) {
       _log?.addError(
         core.Origin.smartschool,
-        'Cannot save ${account.uid}: role is unknown',
+        'Kan ${account.uid} niet opslaan: rol is onbekend.',
       );
       return false;
     }
@@ -328,7 +328,10 @@ class SmartschoolConnector {
 
     final qrOk = await updateQrCode(account.uid, account.accountId);
     if (!qrOk) {
-      _log?.addError(core.Origin.smartschool, 'Failed to update QR Code');
+      _log?.addError(
+        core.Origin.smartschool,
+        'Kon de QR-code niet bijwerken.',
+      );
     }
 
     if (account.preferredName.isNotEmpty) {
@@ -340,7 +343,7 @@ class SmartschoolConnector {
       if (!nameOk) {
         _log?.addError(
           core.Origin.smartschool,
-          'Failed to update preferred name',
+          'Kon de roepnaam niet bijwerken.',
         );
       }
     }
@@ -598,7 +601,7 @@ class SmartschoolConnector {
     } on Object catch (e) {
       _log?.addError(
         core.Origin.smartschool,
-        'Failed to load Smartschool error codes: $e',
+        'Kon de Smartschool-foutcodes niet laden: $e',
       );
     }
   }

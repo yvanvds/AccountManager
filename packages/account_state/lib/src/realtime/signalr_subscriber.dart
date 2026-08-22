@@ -92,7 +92,11 @@ class SignalRSubscriber implements SignalSubscriber {
       try {
         await _connectOnce();
       } on Object catch (e) {
-        _log?.addError(core.Origin.all, 'SignalR connection lost: $e');
+        // Kept as an error, and therefore Dutch (#266): the operator can do
+        // nothing about the transport itself, but losing the live channel is
+        // why another operator's sync stops showing up here — so the panel has
+        // to say it in the language the rest of the pass speaks.
+        _log?.addError(core.Origin.all, 'SignalR-verbinding verbroken: $e');
       }
       if (_closed) break;
       await Future<void>.delayed(_reconnectDelay);
@@ -182,8 +186,12 @@ class SignalRSubscriber implements SignalSubscriber {
       try {
         await onReconnect();
       } on Object catch (e) {
+        // The wording `ReconcileController` already uses for exactly this
+        // failure ("Kon niet bijwerken na het herverbinden: …", #258).
         _log?.addError(
-            core.Origin.all, 'SignalR reconnect catch-up failed: $e');
+          core.Origin.all,
+          'SignalR: kon niet bijwerken na het herverbinden: $e',
+        );
       }
     }());
   }

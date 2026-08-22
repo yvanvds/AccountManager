@@ -84,11 +84,11 @@ class WisaConnector {
       if (csv.isEmpty) {
         _log?.addError(
           core.Origin.wisa,
-          'Test Connection should have at least one result',
+          'Verbindingstest leverde geen resultaat op.',
         );
         return false;
       }
-      _log?.addMessage(core.Origin.wisa, 'Connection Succeeded');
+      _log?.addMessage(core.Origin.wisa, 'Verbinding geslaagd.');
       return true;
     } on Exception catch (e) {
       _log?.addError(core.Origin.wisa, e.toString());
@@ -103,7 +103,10 @@ class WisaConnector {
   Future<List<WisaSchool>> loadSchools() async {
     final csv = await _performQuery(WisaQuery.getSchools, const []);
     if (csv.isEmpty) {
-      _log?.addError(core.Origin.wisa, 'Instellingen: empty result');
+      // "Scholen", the word Instellingen names them with (its **Scholen
+      // ophalen** button drives this very call), rather than WISA's own
+      // "instellingen" — which in this app is the settings screen.
+      _log?.addError(core.Origin.wisa, 'Scholen: leeg resultaat.');
       return const [];
     }
     final parsed = splitCsvWithHeader(csv, schoolCsvHeader);
@@ -189,7 +192,7 @@ class WisaConnector {
   ) async {
     final csv = await _performQuery(WisaQuery.syncClassGroups, params);
     if (csv.isEmpty) {
-      _log?.addError(core.Origin.wisa, 'ClassGroups: empty result');
+      _log?.addError(core.Origin.wisa, 'Klassen: leeg resultaat.');
       return const [];
     }
     final parsed = splitCsvWithHeader(csv, classGroupCsvHeader);
@@ -207,7 +210,7 @@ class WisaConnector {
       core.Origin.wisa,
       // The short code, as the sync log has always named a school — before
       // #208 that half simply sat on `school.name`.
-      'Loading classgroups from ${school.code} succeeded.',
+      'Klassen opgehaald uit ${school.code}.',
     );
     return groups;
   }
@@ -218,7 +221,7 @@ class WisaConnector {
   ) async {
     final csv = await _performQuery(WisaQuery.syncStudents, params);
     if (csv.isEmpty) {
-      _log?.addError(core.Origin.wisa, 'Students: empty result');
+      _log?.addError(core.Origin.wisa, 'Leerlingen: leeg resultaat.');
       return const [];
     }
     final parsed = splitCsvWithHeader(csv, studentCsvHeader);
@@ -234,7 +237,7 @@ class WisaConnector {
     }
     _log?.addMessage(
       core.Origin.wisa,
-      'Loading ${students.length} students from ${school.code} succeeded.',
+      '${students.length} leerling(en) opgehaald uit ${school.code}.',
     );
     return students;
   }
@@ -245,7 +248,7 @@ class WisaConnector {
   ) async {
     final csv = await _performQuery(WisaQuery.syncStaff, params);
     if (csv.isEmpty) {
-      _log?.addError(core.Origin.wisa, 'Staff: empty result');
+      _log?.addError(core.Origin.wisa, 'Personeel: leeg resultaat.');
       return const [];
     }
     final parsed = splitCsvWithHeader(csv, staffCsvHeader);
@@ -261,7 +264,7 @@ class WisaConnector {
     }
     _log?.addMessage(
       core.Origin.wisa,
-      'Loading ${staff.length} staff members from ${school.code} succeeded.',
+      '${staff.length} personeelsleden opgehaald uit ${school.code}.',
     );
     return staff;
   }

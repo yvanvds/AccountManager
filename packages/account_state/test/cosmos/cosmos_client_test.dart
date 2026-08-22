@@ -608,10 +608,15 @@ void main() {
       expect(governor.concurrency, 6,
           reason: '24 halved twice while the account was throttling');
       // One line for the burst, not one per 429 (a real burst is thousands).
+      // It is reported into the operator's Log panel, so it is Dutch (#266).
       expect(reported, hasLength(1));
-      expect(reported.single, contains('throttling'));
-      expect(reported.single, contains('narrowing the write fan-out to 12'),
-          reason: 'the operator sees the persist slow down, not silence');
+      expect(reported.single, contains('Cosmos beperkt het tempo (429)'));
+      expect(
+        reported.single,
+        contains('het aantal gelijktijdige schrijfacties verlaagd naar 12'),
+        reason: 'the operator sees the persist slow down, not silence',
+      );
+      expect(reported.single, isNot(contains('throttling')));
     });
   });
 
@@ -723,10 +728,23 @@ void main() {
       expect(reported, hasLength(1));
       g.recordSuccess();
       expect(reported, hasLength(2));
-      expect(reported.last, contains('eased'));
+      // All three reports go into the operator's Log panel, so all three are
+      // Dutch (#266).
+      expect(reported.last, contains('Cosmos beperkt het tempo niet meer'));
 
       g.recordThrottle(attempt: 8); // out of attempts
-      expect(reported.last, contains('giving up'));
+      expect(
+        reported.last,
+        'Cosmos beperkt het tempo nog steeds na 8 pogingen — deze aanvraag '
+        'wordt opgegeven.',
+      );
+      for (final english in <String>['throttling', 'eased', 'giving up']) {
+        expect(
+          reported.where((m) => m.contains(english)),
+          isEmpty,
+          reason: english,
+        );
+      }
     });
   });
 }

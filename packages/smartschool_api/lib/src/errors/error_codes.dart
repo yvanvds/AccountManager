@@ -37,8 +37,12 @@ class SmartschoolErrorCodes {
   bool get isLoaded => _codes.isNotEmpty;
 
   /// Returns the message for [code], or a generic
-  /// `Smartschool error <code>` when the code is unknown or the table is
+  /// `Smartschool-fout <code>` when the code is unknown or the table is
   /// not loaded.
+  ///
+  /// The fallback is Dutch because it is written straight into the operator's
+  /// Log panel by the connector's `_message` (#266). The table's own values are
+  /// Smartschool's, quoted as it sends them.
   String translate(int code) =>
-      _codes[code.toString()] ?? 'Smartschool error $code';
+      _codes[code.toString()] ?? 'Smartschool-fout $code';
 }

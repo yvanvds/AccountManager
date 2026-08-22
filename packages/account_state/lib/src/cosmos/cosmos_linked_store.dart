@@ -196,6 +196,9 @@ class CosmosLinkedStore implements LinkedStore {
         for (final a in view.accounts)
           a.id.value: (pk: a.school, doc: a.toJson()),
       },
+      // The labels are what the progress line names the container with, and it
+      // goes straight into the operator's Log panel (#266) — so they are the
+      // words the app already uses, not the container names.
       label: 'accounts',
       onProgress: onProgress,
     );
@@ -207,7 +210,7 @@ class CosmosLinkedStore implements LinkedStore {
         for (final g in view.groups)
           g.id.value: (pk: g.school, doc: g.toJson()),
       },
-      label: 'groups',
+      label: 'klasgroepen',
       onProgress: onProgress,
     );
     // Rollups: same replace, keyed by the rollup node key.
@@ -217,7 +220,7 @@ class CosmosLinkedStore implements LinkedStore {
       docsById: {
         for (final r in view.rollups) r.key: (pk: r.school, doc: r.toJson()),
       },
-      label: 'rollups',
+      label: 'tellingen',
       onProgress: onProgress,
     );
 
@@ -740,7 +743,9 @@ class CosmosLinkedStore implements LinkedStore {
 
     final total = writes.length;
     if (label != null && onProgress != null && unchanged > 0) {
-      onProgress('Persisting $label: $unchanged unchanged, $total to write…');
+      onProgress(
+        'Opslaan van $label: $unchanged ongewijzigd, $total te schrijven…',
+      );
     }
     await _runBounded(
       writes,
@@ -753,7 +758,7 @@ class CosmosLinkedStore implements LinkedStore {
           ? null
           : (done) {
               if (done == total || done % _progressEvery == 0) {
-                onProgress('Persisting $label: $done/$total…');
+                onProgress('Opslaan van $label: $done/$total…');
               }
             },
     );

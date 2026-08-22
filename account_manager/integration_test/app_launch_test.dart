@@ -419,6 +419,83 @@ void main() {
   });
 
   testWidgets(
+      'a Synchroniseer over the production connectors fills the Log panel with '
+      'Dutch to the bottom — the connector packages included (#266)',
+      (WidgetTester tester) async {
+    // #258 made the app layer's lines Dutch, which left the panel switching
+    // language one layer *down*: `packages/wisa_api`, `smartschool_api` and
+    // `azure_api` take an `ILog` at construction and bootstrap hands them this
+    // very LogBuffer, so a single Synchroniseer still produced Dutch app lines
+    // over English connector ones.
+    //
+    // All three pulls here are the **production** ones — a real WisaConnector,
+    // SmartschoolConnector and AzureConnector over scripted wires — so what the
+    // panel renders is what the packages themselves wrote, not a fixture.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisaTransport: RecordingWisaSoap(),
+      smartschoolTransport: GroupTreeSoap(),
+      azureTransport: StaleDeltaTokenGraph(),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('reconcile-log-panel')), findsOneWidget);
+    final List<String> logged =
+        harness.log.entries.map((e) => e.message).toList();
+
+    // One line from each of the three packages, exactly as it was written.
+    for (final String line in <String>[
+      // wisa_api — the school named by its short code, as since #208.
+      'Klassen opgehaald uit S1.',
+      '1 leerling(en) opgehaald uit S1.',
+      '0 personeelsleden opgehaald uit S1.',
+      // smartschool_api — the wire answers code 19 for every group.
+      'Geen rechtstreekse accounts in School.',
+      // azure_api — both managers, on the full-read path.
+      'Azure: 0 groepen opgehaald voor "GBS".',
+      'Azure: 1 gebruikers opgehaald voor "GBS".',
+    ]) {
+      expect(logged, contains(line), reason: line);
+    }
+
+    // …and they really are on screen, in the panel, under the app's own Dutch.
+    expect(find.textContaining('leerling(en) opgehaald uit S1.'), findsWidgets);
+    expect(find.textContaining('Geen rechtstreekse accounts in'), findsWidgets);
+    expect(find.textContaining('gebruikers opgehaald voor'), findsWidgets);
+    expect(find.textContaining('WISA opgehaald: '), findsWidgets);
+    expect(find.textContaining('Gekoppeld: '), findsWidgets);
+
+    // Not one entry of the pass — at any severity — is still the English the
+    // connectors used to write.
+    for (final String english in <String>[
+      'Loading ',
+      'succeeded.',
+      'No direct accounts',
+      'Added ',
+      'Azure: loaded ',
+      'Azure: delta for',
+      'Connection Succeeded',
+      'empty result',
+    ]) {
+      expect(
+        logged.where((String m) => m.contains(english)),
+        isEmpty,
+        reason: english,
+      );
+    }
+  });
+
+  testWidgets(
       'while a sync runs the reconcile header shows a determinate progress bar '
       'that has advanced past the start end-to-end (#176)',
       (WidgetTester tester) async {
@@ -1024,10 +1101,15 @@ void main() {
     );
     expect(find.textContaining('Sync voltooid'), findsOneWidget);
 
-    // Throttling was reported as progress, not silence (#196.5).
+    // Throttling was reported as progress, not silence (#196.5) — in Dutch
+    // like the rest of the panel since #266.
     expect(
       harness.log.entries.map((e) => e.message),
-      contains(contains('throttling')),
+      contains(contains('Cosmos beperkt het tempo')),
+    );
+    expect(
+      harness.log.entries.map((e) => e.message),
+      isNot(contains(contains('throttling'))),
     );
 
     // …and the shared state is *whole*: every account document landed, plus the
@@ -1105,10 +1187,15 @@ void main() {
       harness.log.entries.where((e) => e.isError).map((e) => e.message),
       isEmpty,
     );
-    // The operator is told the pass was a no-op rather than seeing silence.
+    // The operator is told the pass was a no-op rather than seeing silence —
+    // in Dutch, like the rest of the panel, since #266.
     expect(
       harness.log.entries.map((e) => e.message),
-      contains(contains('120 unchanged')),
+      contains(contains('Opslaan van accounts: 120 ongewijzigd')),
+    );
+    expect(
+      harness.log.entries.map((e) => e.message),
+      isNot(contains(contains('Persisting'))),
     );
   });
 
@@ -5193,14 +5280,17 @@ void main() {
     // typo is visible rather than silent.
     expect(
       find.textContaining(
-        'Import rule "Sportclub" matched no Smartschool group in this pull',
+        'Importregel "Sportclub" kwam bij deze ophaalbeurt met geen enkele '
+        'Smartschool-groep overeen',
       ),
       findsOneWidget,
     );
+    // …in Dutch, like every other line of the pass around it (#266).
+    expect(find.textContaining('matched no Smartschool group'), findsNothing);
     // The two that did fire are not reported — that is the distinction the
     // operator could not make before.
-    expect(find.textContaining('Import rule "organisatie"'), findsNothing);
-    expect(find.textContaining('Import rule "KLASSEN"'), findsNothing);
+    expect(find.textContaining('Importregel "organisatie"'), findsNothing);
+    expect(find.textContaining('Importregel "KLASSEN"'), findsNothing);
   });
 
   testWidgets(
@@ -6066,9 +6156,14 @@ void main() {
     // …and the operator is told why the full read happened, with the rejected
     // token's age — the diagnostic that says whether Graph expired a genuinely
     // old token or the app had stopped advancing it.
-    expect(find.textContaining('Graph rejected the stored delta token'),
+    // …in Dutch since #266, the age in Dutch units with it.
+    expect(find.textContaining('Graph weigerde het bewaarde deltatoken'),
         findsOneWidget);
-    expect(find.textContaining('stored 15h'), findsOneWidget);
+    expect(find.textContaining('bewaard 15u'), findsOneWidget);
+    expect(
+      find.textContaining('Graph rejected the stored delta token'),
+      findsNothing,
+    );
 
     // …and that is *all* the operator sees about it (#229). The recovery
     // worked, so nothing in the panel is red: the transport used to log the raw
@@ -6091,8 +6186,10 @@ void main() {
       harness.log.entries.map((e) => e.message),
       contains(allOf(
         contains('users/delta'),
+        // The Graph body verbatim, with the client's own Dutch clause on it
+        // (#266) rather than the English "(handled — …)" it used to append.
         contains('DeltaLink older than 30 days'),
-        contains('handled'),
+        contains('(afgehandeld — de synchronisatie herstelt hiervan)'),
       )),
     );
 

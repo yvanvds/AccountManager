@@ -125,9 +125,9 @@ class AzureConnector {
       if (!e.isRejectedDeltaToken) rethrow;
       _log?.addMessage(
         core.Origin.azure,
-        'Azure: Graph rejected the stored delta token '
-        '(${_tokenAge(previous)}) — $e. Discarding it and re-reading all '
-        'accounts in full.',
+        'Azure: Graph weigerde het bewaarde deltatoken '
+        '(${_tokenAge(previous)}) — $e. Het wordt weggegooid en alle accounts '
+        'worden opnieuw volledig opgehaald.',
       );
       return _fullRead(groupList, expectedEmployeeIds, prefix);
     }
@@ -140,8 +140,9 @@ class AzureConnector {
     if (delta.deltaToken == null) {
       _log?.addMessage(
         core.Origin.azure,
-        'Azure: the delta response carried no deltaLink, so this sync leaves '
-        'no resume token — the next sync re-reads all accounts in full.',
+        'Azure: het delta-antwoord bevatte geen deltaLink, dus deze '
+        'synchronisatie laat geen hervattingstoken achter — de volgende '
+        'synchronisatie haalt alle accounts opnieuw volledig op.',
       );
     }
 
@@ -220,8 +221,9 @@ class AzureConnector {
     } on Object catch (e) {
       _log?.addError(
         core.Origin.azure,
-        'Azure: could not look up ${missing.length} unmatched employeeId(s) — '
-        '$e. Any existing account for them stays unseen this pass.',
+        'Azure: kon ${missing.length} niet-gekoppelde employeeId(s) niet '
+        'opzoeken — $e. Bestaande accounts daarvoor blijven deze keer '
+        'onzichtbaar.',
       );
       return current;
     }
@@ -237,8 +239,9 @@ class AzureConnector {
     if (added == 0) return current;
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: adopted $added existing account(s) found by employeeId that the '
-      'school filter does not match (transferred students).',
+      'Azure: $added bestaand(e) account(s) overgenomen die via employeeId '
+      'gevonden zijn maar niet aan de schoolfilter voldoen (overgestapte '
+      'leerlingen).',
     );
     return byId.values.toList();
   }
@@ -251,15 +254,15 @@ class AzureConnector {
   /// dates the token itself thanks to the token invariant on [sync].
   static String _tokenAge(AzureSnapshot? previous) {
     final at = previous?.fetchedAt;
-    if (at == null) return 'age unknown — no previous snapshot';
+    if (at == null) return 'ouderdom onbekend — geen vorige snapshot';
     final age = _now().difference(at);
-    return 'stored ${_formatAge(age)} ago, at ${at.toIso8601String()}';
+    return 'bewaard ${_formatAge(age)} geleden, op ${at.toIso8601String()}';
   }
 
   static String _formatAge(Duration age) {
-    if (age.isNegative) return 'less than a minute';
-    if (age.inDays > 0) return '${age.inDays}d ${age.inHours % 24}h';
-    if (age.inHours > 0) return '${age.inHours}h ${age.inMinutes % 60}m';
+    if (age.isNegative) return 'minder dan een minuut';
+    if (age.inDays > 0) return '${age.inDays}d ${age.inHours % 24}u';
+    if (age.inHours > 0) return '${age.inHours}u ${age.inMinutes % 60}m';
     return '${age.inMinutes}m';
   }
 

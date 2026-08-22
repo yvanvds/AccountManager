@@ -175,6 +175,38 @@ SmartschoolAccount _student() => SmartschoolAccount(
       status: 'actief',
     );
 
+/// An account whose role the connector cannot map, so `saveAccount` refuses it
+/// before any write goes out.
+SmartschoolAccount _roleless() => const SmartschoolAccount(
+      uid: 'x',
+      accountId: '',
+      mail: '',
+      registerId: '',
+      stemId: 0,
+      role: null,
+      givenName: '',
+      surname: '',
+      extraNames: '',
+      initials: '',
+      preferredName: '',
+      gender: core.Gender.x,
+      birthDate: null,
+      birthPlace: '',
+      birthCountry: '',
+      address: core.Address(
+        street: '',
+        houseNumber: '',
+        postalCode: '',
+        city: '',
+        country: '',
+      ),
+      mobilePhone: '',
+      homePhone: '',
+      fax: '',
+      untisId: '',
+      status: 'actief',
+    );
+
 void main() {
   group('sync', () {
     test('flattens the group tree with parentId edges', () async {
@@ -314,7 +346,7 @@ void main() {
       // A rule that matched must not be reported as doing nothing.
       expect(
         log.messages,
-        isNot(contains(contains('matched no Smartschool group'))),
+        isNot(contains(contains('kwam bij deze ophaalbeurt'))),
       );
     });
 
@@ -337,15 +369,21 @@ void main() {
       expect(
         log.messages,
         contains(
-          'Import rule "Sprot" matched no Smartschool group in this pull — '
-          'nothing was discarded. Check the group name.',
+          'Importregel "Sprot" kwam bij deze ophaalbeurt met geen enkele '
+          'Smartschool-groep overeen — er is niets weggelaten. Controleer de '
+          'groepsnaam.',
         ),
       );
       // The rule that did match is not named, even though pruning an empty
       // subtree changed nothing either — that is the distinction #241 is about.
       expect(
-        log.messages.where((m) => m.contains('matched no Smartschool group')),
+        log.messages.where((m) => m.contains('kwam bij deze ophaalbeurt')),
         hasLength(1),
+      );
+      // …and not a word of the English this line used to be (#266).
+      expect(
+        log.messages,
+        isNot(contains(contains('matched no Smartschool group'))),
       );
     });
   });
@@ -385,36 +423,7 @@ void main() {
 
     test('refuses an account with no role', () async {
       final t = _FakeTransport();
-      const account = SmartschoolAccount(
-        uid: 'x',
-        accountId: '',
-        mail: '',
-        registerId: '',
-        stemId: 0,
-        role: null,
-        givenName: '',
-        surname: '',
-        extraNames: '',
-        initials: '',
-        preferredName: '',
-        gender: core.Gender.x,
-        birthDate: null,
-        birthPlace: '',
-        birthCountry: '',
-        address: core.Address(
-          street: '',
-          houseNumber: '',
-          postalCode: '',
-          city: '',
-          country: '',
-        ),
-        mobilePhone: '',
-        homePhone: '',
-        fax: '',
-        untisId: '',
-        status: 'actief',
-      );
-      final ok = await _connector(t).saveAccount(account, password: 'p');
+      final ok = await _connector(t).saveAccount(_roleless(), password: 'p');
       expect(ok, isFalse);
       expect(t.sentTo(SmartschoolMethod.saveUser), isFalse);
     });
@@ -430,6 +439,60 @@ void main() {
       );
       expect(ok, isFalse);
       expect(log.errors.join(), contains('Gebruiker bestaat niet'));
+    });
+  });
+
+  // Everything this connector writes into an [core.ILog] lands in the app's Log
+  // panel beside the Dutch the app layer writes (#253/#257/#258), so it is
+  // Dutch too (#266). The connector's API, doc comments and test names are not.
+  group('operator log lines are Dutch (#266)', () {
+    test('the pull names each group it read, and the ones with no accounts',
+        () async {
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      await _connector(t, log: log).sync();
+
+      // "School" (SCH) answers Smartschool code 19 — no direct accounts.
+      expect(log.messages, contains('Geen rechtstreekse accounts in School.'));
+      // …while 1A's payload really did carry some.
+      expect(log.messages, contains(contains('opgehaald uit 1A.')));
+      for (final english in <String>['No direct accounts', 'Added ']) {
+        expect(
+          log.messages.where((m) => m.contains(english)),
+          isEmpty,
+          reason: english,
+        );
+      }
+    });
+
+    test('a role the connector cannot map is refused in Dutch', () async {
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      final ok = await _connector(t, log: log).saveAccount(
+        _roleless(),
+        password: 'p',
+      );
+
+      expect(ok, isFalse);
+      expect(log.errors, contains('Kan x niet opslaan: rol is onbekend.'));
+      expect(log.errors, isNot(contains(contains('role is unknown'))));
+    });
+
+    test('a failed QR-code and roepnaam write are reported in Dutch', () async {
+      // Both ride on `saveUserParameter`, so one refusing code fails the pair.
+      final t = _FakeTransport(
+        writeResults: const {SmartschoolMethod.saveUserParameter: 7},
+      );
+      final log = _RecordingLog();
+      final ok = await _connector(t, log: log).saveAccount(
+        _student(),
+        password: 'pw1',
+      );
+
+      expect(ok, isFalse);
+      expect(log.errors, contains('Kon de QR-code niet bijwerken.'));
+      expect(log.errors, contains('Kon de roepnaam niet bijwerken.'));
+      expect(log.errors, isNot(contains(contains('Failed to update'))));
     });
   });
 

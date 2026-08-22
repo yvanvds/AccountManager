@@ -531,4 +531,122 @@ void main() {
       );
     });
   });
+
+  // Every line this manager writes into an [ILog] lands in the app's Log panel,
+  // beside the Dutch the app layer writes there (#253/#257/#258), so it is
+  // Dutch too (#266). The API and these test names are not.
+  group('operator log lines are Dutch (#266)', () {
+    test('the bulk read reports what it pulled, for which prefix', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk(readFixture('users_page2.json')),
+      );
+      final log = RecordingLog();
+
+      await UserManager(clientWith(transport), log: log).load('GBS');
+
+      expect(
+          log.messages, contains('Azure: 1 gebruikers opgehaald voor "GBS".'));
+      expect(log.messages, isNot(contains(contains('loaded '))));
+    });
+
+    test('the client-filtered read says so, in Dutch', () async {
+      final transport = FakeGraphTransport(
+        (_) => usersPage(startIndex: 0, count: 2),
+      );
+      final log = RecordingLog();
+
+      await UserManager(clientWith(transport), log: log)
+          .loadClientFiltered('GBS');
+
+      expect(
+        log.messages,
+        contains(contains('gebruikers opgehaald (lokaal gefilterd) voor '
+            '"GBS".')),
+      );
+      expect(log.messages, isNot(contains(contains('client-filtered'))));
+    });
+
+    test('a delta walk reports its changed/removed counts in Dutch', () async {
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          '@odata.deltaLink':
+              'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=T',
+          'value': const <Object>[],
+        }),
+      );
+      final log = RecordingLog();
+
+      await UserManager(clientWith(transport), log: log).delta('OLD', 'GBS');
+
+      expect(
+        log.messages,
+        contains('Azure: delta voor "GBS" — 0 gewijzigd, 0 verwijderd.'),
+      );
+      expect(log.messages, isNot(contains(contains('changed, '))));
+    });
+
+    test('the employeeId back-fill lookup reports in Dutch', () async {
+      final transport =
+          FakeGraphTransport((_) => jsonOk({'value': <Object>[]}));
+      final log = RecordingLog();
+
+      await UserManager(clientWith(transport), log: log)
+          .loadByEmployeeIds(<String>['W7']);
+
+      expect(
+        log.messages,
+        contains('Azure: 1 employeeId(s) rechtstreeks opgezocht — '
+            '0 bestaand(e) account(s) gevonden.'),
+      );
+      expect(log.messages, isNot(contains(contains('looked up'))));
+    });
+
+    test('the write lines — create, update, delete, reset — are Dutch',
+        () async {
+      final created = FakeGraphTransport.constant(
+        jsonOk({'id': 'new-id', 'userPrincipalName': 'k.l@school.example'}),
+      );
+      final createLog = RecordingLog();
+      await UserManager(clientWith(created), log: createLog).createUser(
+        userPrincipalName: 'k.l@school.example',
+        displayName: 'K L',
+        password: 'Secret123!',
+        givenName: 'K',
+        surname: 'L',
+      );
+      expect(
+        createLog.messages,
+        contains('Azure: gebruiker k.l@school.example aangemaakt.'),
+      );
+
+      final patched = FakeGraphTransport.constant(noContent());
+      final patchLog = RecordingLog();
+      final users = UserManager(clientWith(patched), log: patchLog);
+      await users.updateUser('id-1', department: '4A');
+      await users.deleteUser('id-1');
+      await users.setPassword('id-1', 'Bacoxy7!');
+      expect(
+        patchLog.messages,
+        containsAll(<String>[
+          'Azure: gebruiker id-1 bijgewerkt.',
+          'Azure: gebruiker id-1 verwijderd.',
+          'Azure: wachtwoord van id-1 opnieuw ingesteld.',
+        ]),
+      );
+      // None of the English these five lines used to be survives anywhere.
+      for (final english in <String>[
+        'created user',
+        'updated user',
+        'deleted user',
+        'reset password',
+      ]) {
+        expect(
+          <String>[...createLog.messages, ...patchLog.messages]
+              .where((m) => m.contains(english)),
+          isEmpty,
+          reason: english,
+        );
+      }
+    });
+  });
 }

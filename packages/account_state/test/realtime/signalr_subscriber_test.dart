@@ -288,8 +288,32 @@ void main() {
 
       // The first attempt failed and a second one succeeded.
       expect(log.errors, isNotEmpty);
-      expect(log.errors.first, contains('SignalR connection lost'));
+      // Still an error, and Dutch like the rest of the panel (#266).
+      expect(log.errors.first, contains('SignalR-verbinding verbroken'));
+      expect(log.errors.first, isNot(contains('connection lost')));
       expect(connector.sockets, hasLength(1), reason: 'the retry connected');
+    });
+
+    test('a failed catch-up is logged in Dutch, not thrown (#266)', () async {
+      // The wording ReconcileController already uses for this very failure
+      // ("Kon niet bijwerken na het herverbinden", #258).
+      final log = _RecordingLog();
+      final sub = build(
+        log: log,
+        onReconnect: () async => throw StateError('shard read failed'),
+      );
+      addTearDown(sub.close);
+      sub.signals.listen((_) {});
+      await pumpEventQueue();
+
+      connector.sockets.single.serverSend(_frame(const {}));
+      await pumpEventQueue();
+
+      expect(
+        log.errors,
+        contains(contains('SignalR: kon niet bijwerken na het herverbinden')),
+      );
+      expect(log.errors, isNot(contains(contains('catch-up failed'))));
     });
 
     test('close stops the reconnect loop and closes the stream', () async {

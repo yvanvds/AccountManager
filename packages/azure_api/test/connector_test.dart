@@ -336,9 +336,10 @@ void main() {
       // The operator is told what happened, with the rejected token's age —
       // the diagnostic that separates "genuinely old" from "stopped advancing".
       final recovery = log.messages.firstWhere(
-        (m) => m.contains('rejected the stored delta token'),
+        (m) => m.contains('weigerde het bewaarde deltatoken'),
       );
-      expect(recovery, contains('14h'));
+      // The age reads in Dutch units since #266 ("u", not "h").
+      expect(recovery, contains('14u'));
       expect(recovery, contains('DeltaLink older than 30 days'));
     });
 
@@ -386,10 +387,16 @@ void main() {
         log.messages,
         contains(contains('DeltaLink older than 30 days')),
       );
-      // And so is the connector's own explanation, with the token's age.
+      // And so is the connector's own explanation, with the token's age (#266
+      // made the clause Dutch; the Graph body it quotes stays as Graph sent it).
       expect(
         log.messages,
-        contains(contains('Graph rejected the stored delta token')),
+        contains(contains('Graph weigerde het bewaarde deltatoken')),
+      );
+      expect(log.messages, contains(contains('bewaard ')));
+      expect(
+        log.messages,
+        isNot(contains(contains('Graph rejected the stored delta token'))),
       );
     });
 
@@ -494,9 +501,11 @@ void main() {
       expect(adopted.companyName, isNull);
       expect(snapshot.users, hasLength(4));
       expect(
-        log.messages.any((m) => m.contains('adopted 1 existing account')),
+        log.messages
+            .any((m) => m.contains('1 bestaand(e) account(s) overgenomen')),
         isTrue,
       );
+      expect(log.messages.any((m) => m.contains('adopted ')), isFalse);
     });
 
     test('an incremental sync adopts it too — the delta path is equally blind',
@@ -568,9 +577,10 @@ void main() {
       expect(snapshot.users, hasLength(3));
       expect(snapshot.deltaToken, 'PRIMEDTOKEN123');
       expect(
-        log.errors.any((m) => m.contains('unmatched employeeId')),
+        log.errors.any((m) => m.contains('niet-gekoppelde employeeId(s)')),
         isTrue,
       );
+      expect(log.errors.any((m) => m.contains('unmatched')), isFalse);
     });
   });
 }
