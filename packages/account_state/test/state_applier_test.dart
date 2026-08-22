@@ -856,6 +856,54 @@ void main() {
       );
     });
 
+    test('deleting a stale class group drops it from the snapshot (#271)',
+        () async {
+      // `SSM-9Z` is the group of a class that no longer runs anywhere, so the
+      // relink offers the stale-group either/or on it. Applying the delete has
+      // to remove the *group* — not a user — from the Azure snapshot, or the
+      // relink re-raises the very pair the operator just resolved.
+      final harness = classHarness(groups: [
+        az.AzureGroup(
+          id: 'az-2A',
+          displayName: 'SSM-2A',
+          mail: 'SSM-2A@student.school.example',
+          mailNickname: 'SSM-2A',
+          memberIds: const ['az-1'],
+        ),
+        az.AzureGroup(
+          id: 'az-9Z',
+          displayName: 'SSM-9Z',
+          mail: 'SSM-9Z@student.school.example',
+          mailNickname: 'SSM-9Z',
+        ),
+      ]);
+      final before = await harness.applier.link();
+      final delete =
+          before.groupActions.whereType<DeleteAzureClassGroup>().single;
+
+      final applied = await harness.applier.applyGroup(delete);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.refreshed, isTrue);
+      expect(
+        harness.app.azure.snapshot!.groups.map((g) => g.id),
+        ['az-2A'],
+        reason: 'only the stale group goes — no re-sync (#72)',
+      );
+      expect(
+        harness.app.azure.snapshot!.users.map((u) => u.id),
+        ['az-1'],
+        reason: 'deleting a group removes nobody\'s account',
+      );
+      expect(applied.followUps, isEmpty, reason: 'nothing follows a delete');
+      expect(
+        applied.linked!.groupActions.whereType<DeleteAzureClassGroup>(),
+        isEmpty,
+        reason: 'the stale class is gone from the relinked view',
+      );
+      expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
+    });
+
     test('a dry run writes nothing and patches nothing', () async {
       final harness = classHarness();
       final before = await harness.applier.link();

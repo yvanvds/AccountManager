@@ -356,6 +356,56 @@ void main() {
     );
 
     test(
+      'a prefixed group that is not class-shaped is no class orphan (#271)',
+      () {
+        // The Azure read is prefix-scoped, so before #271 the four-suffix
+        // denylist kept every one of these as a class orphan: a Klasgroepen row
+        // each, carrying no action anybody could take. They are subject,
+        // project and council groups, not classes.
+        final snapshot = link(
+          wisaSnap(const []),
+          ssSnap(const []),
+          azSnap(
+            const [],
+            groups: [
+              azureGroup('$_prefix - GOK'),
+              azureGroup('$_prefix-OKAN'),
+              azureGroup('$_prefix - Leerlingenraad'),
+              azureGroup('$_prefix - Frans - 3D'),
+              azureGroup('$_prefix - Draaiboeken verlies en rouw'),
+              azureGroup('$_prefix - Leeratelier vs groeipad'),
+            ],
+          ),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+        );
+        expect(snapshot.groups, isEmpty);
+      },
+    );
+
+    test('a class-shaped prefixed group is still kept as an orphan (#271)', () {
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap(
+          const [],
+          groups: [
+            for (final klas in const ['9Z', '6BW', '5WW1', '1C'])
+              azureClassGroup(_prefix, klas),
+          ],
+        ),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(
+        snapshot.groups.map((g) => g.className),
+        ['9Z', '6BW', '5WW1', '1C'],
+        reason: 'stale old classes are exactly what the operator wants to see',
+      );
+    });
+
+    test(
         'a prefixed Office 365 class group links to the bare class it is '
         'named after (#228)', () {
       final snapshot = link(

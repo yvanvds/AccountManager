@@ -383,24 +383,116 @@ void main() {
     });
   });
 
-  group('a vanished class is reported, never deleted (#228)', () {
+  group('a vanished class: leave it standing, or delete it (#228/#271)', () {
     LinkedGroup orphan(az.AzureGroup group, {String? className = '9Z'}) =>
         linkedGroup(azure: group, className: className);
 
-    test('an app-shaped class group with no class raises the notice', () {
+    test('an app-shaped class group with no class raises the either/or', () {
       final actions = groupActionsFor(orphan(azureClassGroup('9Z')));
-      expect(actions.map((a) => a.runtimeType), [AzureClassGroupWithoutClass]);
-      final action = actions.single;
-      expect(action.canApply, isFalse,
-          reason: 'groups are never deleted automatically');
       expect(
-        action.describeChanges().summary,
-        contains('De klas 9Z bestaat niet meer'),
+        actions.map((a) => a.runtimeType),
+        [AzureClassGroupWithoutClass, DeleteAzureClassGroup],
+        reason: 'the notice leads because it is the default of the pair',
       );
       expect(
-        () => action.apply(const Connectors(), const ApplyOptions()),
+        actions.map((a) => a.alternativeGroup),
+        everyElement(staleClassGroupAlternative),
+        reason: 'one choice, two radios — never two independent to-dos',
+      );
+    });
+
+    test('the notice is the informational default, and never writes', () {
+      final notice = groupActionsFor(orphan(azureClassGroup('9Z')))
+          .whereType<AzureClassGroupWithoutClass>()
+          .single;
+
+      expect(notice.canApply, isFalse);
+      expect(notice.isDefaultAlternative, isTrue,
+          reason: 'a bulk apply over stale groups must write nothing at all');
+      expect(
+        notice.describeChanges().summary,
+        'Laat de Office 365-groep SSM-9Z staan — klas 9Z bestaat niet meer '
+        'in WISA of Smartschool',
+      );
+      expect(
+        () => notice.apply(const Connectors(), const ApplyOptions()),
         throwsUnsupportedError,
       );
+    });
+
+    test('the delete is applyable but never the default (#271)', () {
+      final delete = groupActionsFor(orphan(azureClassGroup('9Z')))
+          .whereType<DeleteAzureClassGroup>()
+          .single;
+
+      expect(delete.canApply, isTrue);
+      expect(delete.isDefaultAlternative, isFalse,
+          reason: 'deleting takes the mailbox, the Team and the files with it');
+      expect(
+        delete.describeChanges().summary,
+        'Verwijder de Office 365-groep SSM-9Z van de verdwenen klas 9Z',
+      );
+      expect(
+        delete.describeChanges().fields.map((f) => f.field),
+        contains('postvak, Teams en bestanden'),
+      );
+      expect(delete.unlocks, isEmpty, reason: 'nothing follows a delete');
+    });
+
+    test('applying the delete asks Graph to delete that one group', () async {
+      final transport = RecordingGraphTransport(handler: _classGroupGraph);
+      final delete = DeleteAzureClassGroup(
+        orphan(azureClassGroup('9Z', id: 'az-stale')),
+      );
+
+      final result = await delete.apply(
+        Connectors(azure: azureConnector(transport)),
+        const ApplyOptions(),
+      );
+
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.removed, isTrue,
+          reason: 'the State layer drops it from the snapshot');
+      expect(result.azureGroup, isNull);
+      final deletes =
+          transport.requests.where((r) => r.method == 'DELETE').toList();
+      expect(deletes, hasLength(1));
+      expect(deletes.single.url.path, endsWith('/groups/az-stale'));
+    });
+
+    test('a dry run of the delete writes nothing', () async {
+      final transport = RecordingGraphTransport(handler: _classGroupGraph);
+      final delete = DeleteAzureClassGroup(
+        orphan(azureClassGroup('9Z', id: 'az-stale')),
+      );
+
+      final result = await delete.apply(
+        Connectors(azure: azureConnector(transport)),
+        ApplyOptions.dry,
+      );
+
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect(result.removed, isTrue);
+      expect(transport.sent('DELETE'), isFalse);
+    });
+
+    test('a group whose name is not class-shaped raises no delete (#271)', () {
+      // The linker refuses to orphan these since #271, but a delete must not
+      // inherit its scope from a filter one layer away.
+      for (final name in const ['GOK', 'OKAN', 'Leerlingenraad', 'Personeel']) {
+        final actions = groupActionsFor(
+          orphan(azureClassGroup(name), className: name),
+        );
+        expect(actions.whereType<DeleteAzureClassGroup>(), isEmpty,
+            reason: '$name is not a class');
+      }
+    });
+
+    test('a record naming no Azure object id raises no delete (#271)', () {
+      final actions = groupActionsFor(orphan(azureClassGroup('9Z', id: ' ')));
+      expect(actions.whereType<AzureClassGroupWithoutClass>(), hasLength(1));
+      expect(actions.whereType<DeleteAzureClassGroup>(), isEmpty,
+          reason: 'there is nothing to address the DELETE to');
     });
 
     test('a security group or a hand-made Team is left unmentioned', () {

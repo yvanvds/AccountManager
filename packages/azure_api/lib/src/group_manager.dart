@@ -134,6 +134,22 @@ class GroupManager {
     );
   }
 
+  /// Deletes a group outright (#271) — the write behind
+  /// `DeleteAzureClassGroup`, for the Office 365 group of a class that no
+  /// longer runs anywhere.
+  ///
+  /// Graph deletes the group *and* everything hanging off it: the mailbox and
+  /// its history, the Team, the SharePoint site and the files on it. There is
+  /// no undo beyond the tenant's own 30-day soft-delete window, which is why
+  /// the action that calls this is never the default of a bulk apply.
+  Future<void> deleteGroup(String groupId) async {
+    await _graph.delete(_graph.uri('groups/${Uri.encodeComponent(groupId)}'));
+    _log?.addMessage(
+      core.Origin.azure,
+      'Azure: groep $groupId verwijderd.',
+    );
+  }
+
   /// Returns the object ids of a group's members, following pagination.
   Future<List<String>> loadMemberIds(String groupId) async {
     final url = _graph.uri(

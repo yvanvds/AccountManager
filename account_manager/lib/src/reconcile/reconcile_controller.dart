@@ -2295,9 +2295,25 @@ class ReconcileController extends ChangeNotifier {
         systems: _syncState.systems,
       );
       _rollups = await store.readRollups();
+      final shard = _appliedShard(patch);
+      // …and so is the class inventory this session is holding (#271). The
+      // rows come from the stored documents, so an apply that **removed** one —
+      // a deleted Office 365 class group — would otherwise leave its row on
+      // screen, still claiming a group that no longer exists, until the next
+      // sync. Same guard the other operators' [_refetchFromStore] uses, so a
+      // pass that touched no class pays for no read.
+      if (_groupDocs != null &&
+          (shard == null || shard.touchesPartition(groupsPartition))) {
+        try {
+          _groupDocs = await store.readGroups();
+        } on Object catch (e) {
+          log.addError(
+              core.Origin.all, 'Kon de klasgroepen niet vernieuwen: $e');
+        }
+      }
       await _publish(ChangeSignal.viewChanged(
         generation: generation,
-        shard: _appliedShard(patch),
+        shard: shard,
       ));
     } on TimeoutException {
       log.addError(

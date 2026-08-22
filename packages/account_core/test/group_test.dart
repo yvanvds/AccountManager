@@ -234,4 +234,71 @@ void main() {
       expect(isValidMailNickname(null), isFalse);
     });
   });
+
+  group('the class-name shape (#271)', () {
+    test('a class is year digits, letters, and an optional trailing digit', () {
+      for (final name in const ['1C', '2F', '3D', '6BW', '5WW1', '10A']) {
+        expect(looksLikeClassName(name), isTrue, reason: '$name is a class');
+      }
+      // Trimmed like every other name comparison (INV-12).
+      expect(looksLikeClassName('  2F  '), isTrue);
+    });
+
+    test('a prefixed group that is not a class fails the shape', () {
+      // Every one of these carries the school prefix in the real tenant, and
+      // every one of them was a Klasgroepen row before #271.
+      for (final name in const [
+        'GOK',
+        'OKAN',
+        'Leerlingenraad',
+        'Draaiboeken verlies en rouw',
+        'Leeratelier vs groeipad',
+        'Frans - 3D',
+        'Personeel',
+        'Directie',
+        'Secretariaat',
+        'Leraren',
+      ]) {
+        expect(looksLikeClassName(name), isFalse, reason: '$name is no class');
+      }
+    });
+
+    test('the shape judges a bare class name, not a decorated one', () {
+      // A prefixed display name and a sub-grouped WISA `fullName` both fail: the
+      // caller strips the prefix with [azureClassNameOf] first, and sub-groups
+      // get no Office 365 group of their own (#228).
+      expect(looksLikeClassName('SSM-2F'), isFalse);
+      expect(looksLikeClassName('2F ECO'), isFalse);
+      expect(looksLikeClassName(''), isFalse);
+      expect(looksLikeClassName('  '), isFalse);
+      expect(looksLikeClassName(null), isFalse);
+    });
+
+    test(
+        'every group CreateAzureClassGroup would create is recognised again '
+        '(#271)', () {
+      // The two halves of the bridge must not drift: the create side names a
+      // group `<PREFIX>-<KLAS>` from the WISA class name, and this recognise
+      // side has to hand that same class name back. Round-trip the shapes the
+      // school actually runs.
+      for (final className in const ['1A', '2F', '3D', '6BW', '5WW1']) {
+        final displayName = azureClassGroupName('SSM', className)!;
+        final recovered = azureClassNameOf(displayName, 'SSM');
+        expect(recovered, className);
+        expect(looksLikeClassName(recovered), isTrue,
+            reason: '$displayName must still read as the class group it is');
+      }
+    });
+
+    test('the accepted asymmetry: a non-digit class name is not recognised',
+        () {
+      // `azureClassGroupName` follows WISA and will happily name `SSM-OKAN`,
+      // while this side is a fixed shape — so such a group, once stale, drops
+      // out of Klasgroepen with no delete offered. Settled deliberately on
+      // #271: neither OKAN nor GOK is a class here, and filtering them out is
+      // the point. This test records the trade-off rather than a surprise.
+      expect(azureClassGroupName('SSM', 'OKAN'), 'SSM-OKAN');
+      expect(looksLikeClassName('OKAN'), isFalse);
+    });
+  });
 }

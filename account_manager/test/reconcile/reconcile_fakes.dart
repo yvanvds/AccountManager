@@ -73,6 +73,11 @@ class RecordingGraph implements az.GraphTransport {
   /// the membership writes a class-group roster sync performs (#228/#245).
   final List<String> batchedWrites = <String>[];
 
+  /// The object ids of every `DELETE /groups/<id>` this transport accepted, in
+  /// order — the Office 365 groups a delete action actually removed (#271).
+  /// Deliberately not the member-ref deletes, which end in `/$ref`.
+  final List<String> deletedGroups = <String>[];
+
   int _created = 0;
 
   /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
@@ -146,8 +151,17 @@ class RecordingGraph implements az.GraphTransport {
         statusCode: 200,
       );
     }
+    // A group delete (#271): `DELETE /groups/<id>`, as opposed to the
+    // `/groups/<id>/members/<id>/$ref` a membership removal issues.
+    if (request.method == 'DELETE') {
+      final match = _groupPath.firstMatch(request.url.path);
+      if (match != null) deletedGroups.add(match.group(1)!);
+    }
     return const az.GraphResponse(statusCode: 204);
   }
+
+  /// `/v1.0/groups/<id>` — the group resource itself, not a sub-collection.
+  static final RegExp _groupPath = RegExp(r'/groups/([^/]+)$');
 
   /// `/v1.0/users/<id-or-upn>` — a read of one user, as opposed to the
   /// collection reads `/v1.0/users` and `/v1.0/users/delta`.
@@ -1424,9 +1438,17 @@ ReconcileHarness foreignClassGroupHarness() => ReconcileHarness(
 /// group, so exactly one create proposal must reach the operator — named after
 /// the parent class, never after a sub-group.
 ///
-/// [withStaleGroup] adds `GBS-9Z`, the group of a class that no longer exists,
-/// which must be reported for manual cleanup and never deleted.
-ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
+/// [withStaleGroup] adds `GBS-9Z`, the group of a class that no longer exists —
+/// the row that carries the "laat staan / verwijder" either/or of #271.
+///
+/// [withNonClassGroups] adds the prefixed groups that are **not** classes and so
+/// belong in no class inventory: `GBS - GOK`, `GBS-OKAN`,
+/// `GBS - Leerlingenraad`, `GBS - Frans - 3D`. Every one of them was a
+/// Klasgroepen row before #271, carrying a ✓ and no action anybody could take.
+ReconcileHarness azureClassGroupHarness({
+  bool withStaleGroup = false,
+  bool withNonClassGroups = false,
+}) =>
     ReconcileHarness(
       wisa: wisaSnap(
         students: [
@@ -1495,6 +1517,64 @@ ReconcileHarness azureClassGroupHarness({bool withStaleGroup = false}) =>
         groups: [
           azClassGroup('1A', memberIds: const ['az1']),
           if (withStaleGroup) azClassGroup('9Z'),
+          if (withNonClassGroups) ...<az.AzureGroup>[
+            azNonClassGroup('GBS - GOK'),
+            azNonClassGroup('GBS-OKAN'),
+            azNonClassGroup('GBS - Leerlingenraad'),
+            azNonClassGroup('GBS - Frans - 3D'),
+          ],
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the stale Office 365 class groups of #271. Our school 1 runs
+/// exactly one class, `1A`, correct in all three systems — and Office 365 still
+/// holds `GBS-9Z` and `GBS-8Y`, the groups of two classes that stopped running.
+///
+/// Two of them, deliberately: one stale group is a row, **two** are a "same
+/// situation" bulk subset, which is where a destructive action would do its
+/// worst. The notice is the default of the pair, so the header's "Alles
+/// toepassen" counts zero and the delete is only ever the pick an operator made
+/// on one row.
+///
+/// The four prefixed non-class groups are here too — they must not appear in the
+/// inventory at all, let alone in that subset.
+ReconcileHarness staleClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '1A')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+        ],
+        memberships: [member('jane', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1']),
+          azClassGroup('9Z'),
+          azClassGroup('8Y'),
+          azNonClassGroup('GBS - GOK'),
+          azNonClassGroup('GBS-OKAN'),
+          azNonClassGroup('GBS - Leerlingenraad'),
+          azNonClassGroup('GBS - Frans - 3D'),
         ],
       ),
       ourSchoolIds: const {1},
@@ -2128,6 +2208,20 @@ az.AzureGroup azClassGroup(
       mail: 'GBS-$className@student.school.example',
       mailNickname: 'GBS-$className',
       memberIds: memberIds,
+    );
+
+/// A prefixed Office 365 group that is **not** a class (#271): a subject,
+/// project or council group, named exactly as the school names them — with the
+/// spaces around the separator the operator types, which is why a
+/// `<PREFIX>-` strip recovers no class name from most of them.
+///
+/// Shaped like the class groups in every other respect (mail-enabled, nickname
+/// equal to the display name), so nothing but the *name* can tell them apart.
+az.AzureGroup azNonClassGroup(String displayName) => az.AzureGroup(
+      id: 'az-$displayName',
+      displayName: displayName,
+      mail: '${displayName.replaceAll(' ', '')}@student.school.example',
+      mailNickname: displayName,
     );
 
 /// Deterministic in-memory resolver (mirrors the linker's test fixture).

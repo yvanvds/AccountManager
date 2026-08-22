@@ -37,8 +37,9 @@ import 'group_placement.dart';
 ///
 /// **Scope.** The whole legacy family ships here, plus the actions legacy never
 /// had: [ClassExistsAsSmartschoolGroup] (informational, #225) and the Office 365
-/// class-group trio [CreateAzureClassGroup] / [SyncAzureClassGroupMembers] /
-/// [AzureClassGroupWithoutClass] (#228). [DoNotImportFromWisa],
+/// class-group quartet [CreateAzureClassGroup] / [SyncAzureClassGroupMembers] /
+/// [AzureClassGroupWithoutClass] / [DeleteAzureClassGroup] (#228/#271).
+/// [DoNotImportFromWisa],
 /// [DoNotImportFromSmartschool] (informational), and [ModifySmartschoolData]
 /// derive everything from the WISA/Smartschool group pair (#54). The remaining
 /// three — [AddToSmartschool], [CreateInSmartschool] (informational), and
@@ -72,10 +73,11 @@ sealed class GroupAction {
 
   /// The key shared by mutually-exclusive alternatives resolving the same
   /// situation (#110). `null` (the default) means the action stands on its own.
-  /// The group family has two: [classImportAlternative] for a class Smartschool
-  /// does not have (#244) and [namesakeClassAlternative] for one it already
-  /// carries under a group the linker could not adopt (#250). See
-  /// [StudentAction.alternativeGroup].
+  /// The group family has three: [classImportAlternative] for a class
+  /// Smartschool does not have (#244), [namesakeClassAlternative] for one it
+  /// already carries under a group the linker could not adopt (#250), and
+  /// [staleClassGroupAlternative] for an Office 365 group whose class is gone
+  /// (#271). See [StudentAction.alternativeGroup].
   String? get alternativeGroup => null;
 
   /// Whether this action is the default alternative within its
@@ -918,43 +920,69 @@ class SyncAzureClassGroupMembers extends GroupAction {
   }
 }
 
+/// The [GroupAction.alternativeGroup] key shared by the two readings of an
+/// Office 365 class group whose class is gone (#271): leave it standing
+/// ([AzureClassGroupWithoutClass]) *or* delete it
+/// ([DeleteAzureClassGroup]).
+///
+/// **The default is the notice**, the same polarity [CreateInSmartschool] has
+/// inside [classImportAlternative] and [ClassExistsAsSmartschoolGroup] inside
+/// [namesakeClassAlternative] — and here it matters more than in either. The
+/// notice is informational, so the selected option of a bulk pass writes
+/// **nothing**: "Alles toepassen" over a year's worth of stale groups leaves
+/// every one of them alone, and deleting one is a radio the operator flips on
+/// that one row. Deleting an Office 365 group takes its mailbox, its Team and
+/// its files with it, so the polarity is not a preference — it is the guard.
+///
+/// A key of its own rather than a third member of an existing one, for the
+/// reason [namesakeClassAlternative] is separate from [classImportAlternative]:
+/// the pending list keys its "same situation" bulk subsets on this very string
+/// (`PendingChoice.situationId`), so pooling stale groups with new classes
+/// would file both under one header offering one **Apply to all**.
+const String staleClassGroupAlternative = 'class-group-stale';
+
 /// An Office 365 class group whose class no longer exists in WISA or
-/// Smartschool (#228). **Informational only** (`canApply == false`): groups are
-/// never deleted automatically — the mailbox and whatever is shared with it
-/// outlive the class — so this is the Azure analogue of the Smartschool orphan
-/// notice [DoNotImportFromSmartschool], and the cleanup stays a hand decision.
+/// Smartschool (#228) — **leave it standing**, the conservative half of the
+/// [staleClassGroupAlternative] pair and its default (#271).
+///
+/// Informational (`canApply == false`), so it is the reading under which
+/// nothing is written: it is the Azure analogue of the Smartschool orphan notice
+/// [DoNotImportFromSmartschool]. Until #271 it was the *only* reading — it told
+/// the operator to delete the group by hand — which left the class inventory
+/// carrying rows whose whole content was an instruction to go elsewhere.
+/// [DeleteAzureClassGroup] now sits beside it as the non-default alternative.
 ///
 /// It is deliberately narrow. An unmatched Azure group is only reported when it
 /// is shaped exactly like one this app creates: inside the school's `<PREFIX>-`
 /// namespace, a mail-enabled Microsoft 365 group, and answering on a nickname
 /// equal to its display name. A security group, a hand-made Team, or anything
 /// outside the namespace is left unmentioned rather than filling the Klasgroepen
-/// list with rows nobody will act on (the clutter #209/#225 fixed).
+/// list with rows nobody will act on (the clutter #209/#225/#271 fixed).
 class AzureClassGroupWithoutClass extends GroupAction {
   const AzureClassGroupWithoutClass(super.group);
 
   az.AzureGroup? get _azure => group.azure as az.AzureGroup?;
 
   @override
-  bool evaluate() {
-    final azure = _azure;
-    return group.wisa == null &&
-        group.smartschool == null &&
-        azure != null &&
-        group.className != null &&
-        azure.isUnified &&
-        _sameName(azure.mailNickname, azure.displayName);
-  }
+  bool evaluate() => _staleClassGroup(group);
 
   @override
   bool get canApply => false;
 
+  /// The notice leads — and is the default of — the pair (#271), so a bulk
+  /// apply over stale groups writes nothing and the delete stays a deliberate,
+  /// per-row pick.
+  @override
+  String? get alternativeGroup => staleClassGroupAlternative;
+
+  @override
+  bool get isDefaultAlternative => true;
+
   @override
   ChangeSet describeChanges() => ChangeSet(
         system: Origin.azure,
-        summary: 'De klas ${group.className} bestaat niet meer, maar de '
-            'Office 365-groep ${_azure?.displayName} nog wel. Verwijder ze '
-            'manueel als ze niet meer nodig is.',
+        summary: 'Laat de Office 365-groep ${_azure?.displayName} staan — '
+            'klas ${group.className} bestaat niet meer in WISA of Smartschool',
         fields: [
           FieldChange('mail', before: _azure?.mail ?? ''),
           FieldChange('leden', before: '${_azure?.memberIds.length ?? 0}'),
@@ -967,9 +995,112 @@ class AzureClassGroupWithoutClass extends GroupAction {
         'AzureClassGroupWithoutClass is informational and cannot be applied '
         '(canApply is false)',
       );
-
-  static bool _sameName(String? a, String? b) =>
-      a != null &&
-      b != null &&
-      a.trim().toLowerCase() == b.trim().toLowerCase();
 }
+
+/// Delete the Office 365 group of a class that no longer runs (#271) — the
+/// applyable half of the [staleClassGroupAlternative] pair, and never its
+/// default.
+///
+/// Genuinely destructive, and the only group action that is: Graph deletes the
+/// group together with its mailbox and history, its Team, and its SharePoint
+/// files. Three things therefore hold it in place, and each of them is tested:
+///
+/// - **It proposes on exactly the record the notice does**, via the one
+///   [_staleClassGroup] predicate — Azure-only, inside the school's `<PREFIX>-`
+///   namespace, a mail-enabled Microsoft 365 group whose nickname is its display
+///   name — plus one guard of its own: the recovered class name must be
+///   *shaped* like a class ([looksLikeClassName]). The linker already refuses to
+///   orphan anything else since #271, so that guard is belt-and-braces: a delete
+///   must not inherit its scope from a filter one layer away.
+/// - **It is never the selected option of a bulk pass**, because the notice
+///   beside it is the default of their shared alternative group. The operator
+///   flips this radio on one row, and only that row is written.
+/// - **The linked record must actually name a group to delete** — a blank Azure
+///   object id yields no proposal rather than a `DELETE /groups/`.
+///
+/// Deliberately no `unlocks`: nothing follows a delete.
+class DeleteAzureClassGroup extends GroupAction {
+  const DeleteAzureClassGroup(super.group);
+
+  az.AzureGroup? get _azure => group.azure as az.AzureGroup?;
+
+  @override
+  bool evaluate() =>
+      _staleClassGroup(group) &&
+      looksLikeClassName(group.className) &&
+      (_azure?.id.trim().isNotEmpty ?? false);
+
+  /// The destructive half, so never the default (#271). See
+  /// [staleClassGroupAlternative].
+  @override
+  String? get alternativeGroup => staleClassGroupAlternative;
+
+  @override
+  bool get isDefaultAlternative => false;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'Verwijder de Office 365-groep ${_azure?.displayName} van de '
+            'verdwenen klas ${group.className}',
+        fields: [
+          FieldChange('mail', before: _azure?.mail ?? ''),
+          FieldChange('leden', before: '${_azure?.memberIds.length ?? 0}'),
+          const FieldChange(
+            'postvak, Teams en bestanden',
+            before: 'verdwijnen mee',
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.azure,
+        removed: true,
+      );
+    }
+
+    try {
+      await _requireAzure(connectors).groups.deleteGroup(_azure!.id);
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.azure,
+        removed: true,
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.azure, e);
+    }
+  }
+}
+
+/// Whether [group] is an Office 365 class group left behind by a class that no
+/// longer exists anywhere (#228/#271) — the one condition
+/// [AzureClassGroupWithoutClass] and [DeleteAzureClassGroup] share.
+///
+/// One definition rather than two copies, because the pair are alternatives:
+/// they must fire together or a stale group is left with a lone applyable
+/// delete as its only reading, which is precisely the "no safe default" state
+/// [staleClassGroupAlternative] exists to prevent.
+bool _staleClassGroup(LinkedGroup group) {
+  final azure = group.azure;
+  return group.wisa == null &&
+      group.smartschool == null &&
+      azure is az.AzureGroup &&
+      group.className != null &&
+      azure.isUnified &&
+      _sameName(azure.mailNickname, azure.displayName);
+}
+
+/// Trimmed, case-folded equality (INV-12) for the nickname/display-name check.
+bool _sameName(String? a, String? b) =>
+    a != null && b != null && a.trim().toLowerCase() == b.trim().toLowerCase();

@@ -118,10 +118,10 @@ numeric `wisaId` becomes the copy-code.
 
 `groupActions(snapshot)` walks the snapshot's class groups, ported from the
 legacy `GroupActionParser`. The split is on the WISA/Smartschool **pair** rather
-than all three systems; the Office 365 class-group actions added in #228
+than all three systems; the Office 365 class-group actions added in #228/#271
 (`CreateAzureClassGroup`, `SyncAzureClassGroupMembers`,
-`AzureClassGroupWithoutClass`) are orthogonal to a class's Smartschool state and
-ride alongside **both** branches:
+`AzureClassGroupWithoutClass`, `DeleteAzureClassGroup`) are orthogonal to a
+class's Smartschool state and ride alongside **both** branches:
 
 - **Missing from WISA or Smartschool** → the lifecycle-style actions, in legacy
   parser order: `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass`
@@ -141,6 +141,14 @@ ride alongside **both** branches:
   `namesakeClassAlternative` for one Smartschool already has (#250), which keeps
   the two situations in separate bulk-apply subsets. The default is always the
   provisioning/diagnosis half, never the blacklist.
+- **Azure-only, class-shaped** (a group whose class stopped running) → the
+  `staleClassGroupAlternative` pair of #271: the informational
+  `AzureClassGroupWithoutClass` (leave it standing) and the applyable
+  `DeleteAzureClassGroup`. The notice is the default, so a bulk apply over stale
+  groups writes nothing and a delete — which takes the group's mailbox, Team and
+  files with it — is only ever the pick an operator made on that one row. A
+  prefixed group whose remainder is *not* class-shaped (`SSM - GOK`,
+  `SSM-OKAN`) is not orphaned by the linker at all and so raises nothing.
 - **Present in both** → only `ModifySmartschoolData` (sync institute number,
   Untis code, and description).
 
@@ -229,8 +237,8 @@ account row diagnoses and names the class, and the class row applies. Both are
 derived from the same `AzureClassGroupResolver` indexes in `account_state`, so
 they cannot disagree — and a class whose group does not exist yet, or a group
 whose class has vanished, is deliberately silent per student: neither has a
-per-student remedy (`CreateAzureClassGroup` and `AzureClassGroupWithoutClass`
-own those).
+per-student remedy (`CreateAzureClassGroup` and the
+`AzureClassGroupWithoutClass` / `DeleteAzureClassGroup` pair own those).
 
 ## Deferred (documented divergences)
 

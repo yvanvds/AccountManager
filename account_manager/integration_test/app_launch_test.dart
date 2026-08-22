@@ -2159,12 +2159,14 @@ void main() {
     expect(find.byKey(const ValueKey('class-row-1A')), findsOneWidget);
     expect(find.text('deelgroep van 2F'), findsNWidgets(2));
 
-    // The group of a class that no longer exists is reported, never deleted.
+    // The group of a class that no longer exists reads as the either/or it
+    // became in #271 — leave it standing (the default) or delete it — so the
+    // collapsed line is marked "(keuze)" rather than "(manueel)".
     expect(
-      find.textContaining('De klas 9Z bestaat niet meer'),
-      findsOneWidget,
+      find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+      findsWidgets,
     );
-    expect(find.textContaining('(manueel)'), findsWidgets);
+    expect(find.textContaining('(keuze)'), findsWidgets);
 
     // Expand the class's row and apply just it.
     const entry = ValueKey('entry-group-2F ECO');
@@ -2403,6 +2405,120 @@ void main() {
     await tester.tap(filter);
     await tester.pumpAndSettle();
     expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Klasgroepen lists only class-shaped Office 365 groups, and a stale one '
+      'is deleted from its own row end-to-end (#271)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, real rail. Our school runs
+    // `1A`, correct everywhere; Office 365 still holds `GBS-9Z` and `GBS-8Y`,
+    // the groups of two classes that stopped running, plus four prefixed groups
+    // that were never classes at all (`GBS - GOK`, `GBS-OKAN`,
+    // `GBS - Leerlingenraad`, `GBS - Frans - 3D`).
+    //
+    // This is the layer that sees what the issue is about. The inventory is
+    // composed from the *stored* documents while the either/or radios come from
+    // the live dispatch, the bulk headers from a third derivation, and the row
+    // only disappears once the write, the relink and the store patch have all
+    // landed — halves of the app that only a full run puts on screen together.
+    // And the action under test is destructive: a widget test rendering the row
+    // in isolation cannot show that "Alles toepassen" over the whole tab leaves
+    // every one of these groups alone.
+    useTallWindow(tester);
+    final harness = staleClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+    // A prefixed group that is not class-shaped is not a class group, so it is
+    // in no class inventory. Each of these was a row before #271 — carrying a
+    // ✓ and no action anybody could take.
+    for (final name in const [
+      'GBS - GOK',
+      'GBS-OKAN',
+      'GBS - Leerlingenraad',
+      'GBS - Frans - 3D',
+    ]) {
+      expect(row(name), findsNothing, reason: '$name is not a class');
+    }
+    // The class-shaped leftovers stay listed: those are old classes, and seeing
+    // them is the point.
+    expect(row('1A'), findsOneWidget);
+    expect(row('GBS-9Z'), findsOneWidget);
+    expect(row('GBS-8Y'), findsOneWidget);
+    expect(find.textContaining('3 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget);
+
+    // Both stale groups share one situation, so the tab collects them under a
+    // bulk header — and it counts **zero** writes, because leaving the group
+    // standing is the default of the pair. A destructive default here would
+    // take two mailboxes, Teams and file libraries on one click.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    final bulkApply = find.textContaining('Alles toepassen (');
+    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+    expect(
+      tester
+          .widget<FilledButton>(find.ancestor(
+            of: bulkApply,
+            matching: find.byType(FilledButton),
+          ))
+          .onPressed,
+      isNull,
+      reason: 'a bulk pass over stale groups must write nothing at all',
+    );
+
+    // The row itself carries the either/or, with the delete as the half the
+    // operator has to reach for.
+    final entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
+          'meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    final delete =
+        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
+    expect(delete, findsOneWidget);
+    final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
+        reason:
+            'nothing is applyable while the default is "leave it standing"');
+
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Exactly the one group the operator picked — and the row is gone with it,
+    // rather than lingering claiming a group that no longer exists.
+    expect(harness.graph.deletedGroups, ['az-GBS-9Z']);
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+    expect(row('GBS-9Z'), findsNothing);
+    expect(row('GBS-8Y'), findsOneWidget,
+        reason: 'the class beside it was never selected');
+    expect(row('1A'), findsOneWidget);
+
+    // And a class that still runs is offered no delete at all.
+    expect(find.byKey(const ValueKey('alt-1A-DeleteAzureClassGroup')),
+        findsNothing);
     expect(tester.takeException(), isNull);
   });
 

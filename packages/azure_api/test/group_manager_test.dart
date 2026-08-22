@@ -199,6 +199,25 @@ void main() {
     });
   });
 
+  group('group deletion (#271)', () {
+    test('deleteGroup DELETEs the group resource itself, in Dutch', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      final log = RecordingLog();
+      await GroupManager(clientWith(transport), log: log).deleteGroup('g1');
+
+      expect(transport.last.method, 'DELETE');
+      expect(transport.last.url.path, endsWith('/groups/g1'),
+          reason: 'the group, not one of its member refs');
+      expect(log.messages, contains('Azure: groep g1 verwijderd.'));
+    });
+
+    test('an id with reserved characters is encoded', () async {
+      final transport = FakeGraphTransport.constant(noContent());
+      await GroupManager(clientWith(transport)).deleteGroup('a/b');
+      expect(transport.last.url.path, endsWith('/groups/a%2Fb'));
+    });
+  });
+
   group('\$batch', () {
     test('coalesces many adds into one \$batch POST with relative urls',
         () async {
