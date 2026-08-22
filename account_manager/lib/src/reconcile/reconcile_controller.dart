@@ -2529,6 +2529,24 @@ class ReconcileController extends ChangeNotifier {
     // This pass pulled and linked for itself, so the view is no longer somebody
     // else's to attribute (#287).
     _adoptedFrom = null;
+    // A re-link invalidates any open drill-down: the documents behind it were
+    // read for the view [_link] just replaced, and the live entries the screens
+    // join them against are the new one's. The remembered accordion path goes
+    // with them (#235), so it can never point at a node the fresh view no longer
+    // has, and the class inventory goes too — the Klasgroepen tab re-reads
+    // (#227).
+    //
+    // Sits here, before [_persist], and not on the far side of the store write
+    // it used to (#289). These are invalidations of *this session's* derived
+    // caches; whether the shared write lands has nothing to do with them, and a
+    // write that timed out or threw used to skip them entirely — leaving the
+    // open classroom joining fresh entries against the previous generation's
+    // documents. Written straight to the fields: the pass notifies once when it
+    // finishes.
+    _selectedClassroom = null;
+    _expandedPath = const <String>[];
+    _classroomAccounts = null;
+    _groupDocs = null;
     _setProgress(0.9);
     await _persist(_linked!);
   }
@@ -2843,16 +2861,6 @@ class ReconcileController extends ChangeNotifier {
       // Nudge every passive session to refetch: the whole view was rewritten,
       // so the signal names no narrower shard (#116).
       await _publish(ChangeSignal.viewChanged(generation: view.generation));
-      // A re-sync invalidates any open drill-down; the next open re-reads. The
-      // remembered accordion path goes with it (#235), so it can never point at
-      // a node this new generation no longer has. Written straight to the field:
-      // the pass notifies once when it finishes.
-      _selectedClassroom = null;
-      _expandedPath = const <String>[];
-      _classroomAccounts = null;
-      // The class inventory goes with it: the Klasgroepen tab re-reads the
-      // generation this pass just wrote (#227).
-      _groupDocs = null;
     } on TimeoutException {
       log.addError(
         core.Origin.all,

@@ -2678,13 +2678,22 @@ class InMemorySnapshotStore implements SnapshotStore {
 /// persist-stall the reconcile controller must survive (#168), and since #254
 /// the same for the narrow post-apply write-back.
 class StallingLinkedStore implements LinkedStore {
-  StallingLinkedStore({InMemoryLinkedStore? inner, this.failWith})
-      : _in = inner ?? InMemoryLinkedStore();
+  StallingLinkedStore({
+    InMemoryLinkedStore? inner,
+    this.failWith,
+    this.healthyWrites = 0,
+  }) : _in = inner ?? InMemoryLinkedStore();
 
   final InMemoryLinkedStore _in;
 
   /// When set, a write throws this instead of hanging.
   final Object? failWith;
+
+  /// How many `writeMaterialized` calls land in [_in] normally before the
+  /// stall/throw begins — so one session can materialize a healthy generation,
+  /// drill into it, and only *then* meet a store that will not take the next
+  /// view (#289).
+  int healthyWrites;
 
   /// True once a write was attempted — proves the controller reached persist.
   bool writeAttempted = false;
@@ -2702,6 +2711,17 @@ class StallingLinkedStore implements LinkedStore {
     void Function(String message)? onProgress,
   }) {
     writeAttempted = true;
+    if (healthyWrites > 0) {
+      healthyWrites--;
+      return _in.writeMaterialized(
+        view,
+        syncedBy: syncedBy,
+        at: at,
+        droppedDecisions: droppedDecisions,
+        systemSyncs: systemSyncs,
+        onProgress: onProgress,
+      );
+    }
     return _stall<void>();
   }
 
@@ -3544,6 +3564,8 @@ class ReconcileHarness {
   static Future<ReconcileHarness> resume({
     required SnapshotStore store,
     InMemoryLinkedStore? linkedStore,
+    LinkedStore? controllerStore,
+    Duration? persistTimeout,
     InMemorySignalHub? hub,
     SignalSubscriber? subscriber,
     wapi.WisaSnapshot? wisa,
@@ -3571,6 +3593,8 @@ class ReconcileHarness {
       azure: azure,
       store: store,
       linkedStore: linkedStore,
+      controllerStore: controllerStore,
+      persistTimeout: persistTimeout,
       hub: hub,
       subscriber: subscriber,
       wisaInitial: wisaSeed,

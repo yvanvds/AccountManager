@@ -318,6 +318,96 @@ void main() {
       );
       expect(h.controller.linked, isNotNull);
     });
+
+    test(
+        'a failing writeMaterialized still drops the drill-down caches, so the '
+        'open class cannot pair the previous generation with the fresh view '
+        '(#289)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+
+      // Session 1 materializes generation 1, so there are stored documents for
+      // the next session to drill into.
+      final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+      await s1.controller.sync();
+
+      // Session 2 reads that view, opens a class and the Klasgroepen
+      // inventory — and its own writes fail.
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        controllerStore: StallingLinkedStore(
+          inner: linkedStore,
+          failWith: StateError('cosmos down'),
+        ),
+      );
+      await s2.controller.loadOverview();
+      final classroom = s2.controller.schoolRollups
+          .expand((s) => s2.controller.childrenOf(s.key))
+          .expand((g) => s2.controller.childrenOf(g.key))
+          .single;
+      await s2.controller.openClassroom(classroom);
+      await s2.controller.loadGroups();
+      s2.controller.expandedPath = <String>[classroom.key];
+      expect(s2.controller.classroomAccounts, isNotEmpty);
+      expect(s2.controller.groupDocs, isNotEmpty);
+
+      await s2.controller.sync();
+
+      // The write really did fail…
+      expect(
+        s2.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains('Kon het gedeelde overzicht niet opslaan')),
+      );
+      // …and the session still holds the view it just linked.
+      expect(s2.controller.linked, isNotNull);
+      // The caches derived from the *previous* generation went with the
+      // re-link, whether or not the shared write landed.
+      expect(s2.controller.selectedClassroom, isNull,
+          reason: 'the open class was read for the view that was replaced');
+      expect(s2.controller.classroomAccounts, isNull);
+      expect(s2.controller.groupDocs, isNull);
+      expect(s2.controller.expandedPath, isEmpty);
+      // With nothing open, no live entry can be joined to a stale document.
+      expect(s2.controller.classroomPendingEntries, isEmpty);
+    });
+
+    test(
+        'a stalled writeMaterialized during a drift check drops them too '
+        '(#289)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+
+      final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+      await s1.controller.sync();
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+        controllerStore: StallingLinkedStore(inner: linkedStore),
+        persistTimeout: const Duration(milliseconds: 50),
+      );
+      await s2.controller.loadOverview();
+      final classroom = s2.controller.schoolRollups
+          .expand((s) => s2.controller.childrenOf(s.key))
+          .expand((g) => s2.controller.childrenOf(g.key))
+          .single;
+      await s2.controller.openClassroom(classroom);
+      await s2.controller.loadGroups();
+      expect(s2.controller.classroomAccounts, isNotEmpty);
+
+      await s2.controller.checkDrift();
+
+      expect(
+        s2.log.entries.where((e) => e.isError).map((e) => e.message),
+        contains(contains(
+          'Het opslaan van het gedeelde overzicht duurde langer dan',
+        )),
+      );
+      expect(s2.controller.selectedClassroom, isNull);
+      expect(s2.controller.classroomAccounts, isNull);
+      expect(s2.controller.groupDocs, isNull);
+    });
   });
 
   group('check for drift', () {

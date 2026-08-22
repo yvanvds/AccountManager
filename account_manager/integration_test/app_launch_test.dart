@@ -3457,6 +3457,82 @@ void main() {
   });
 
   testWidgets(
+      'a sync whose shared write fails still closes the open class, so the '
+      'drill-down never pairs the previous generation with the fresh view '
+      'end-to-end (#289)', (WidgetTester tester) async {
+    // The real app, real navigation. The bug is a composition one: the four
+    // derived caches were dropped on the far side of the store write, so a
+    // Cosmos write that timed out or threw left the class the operator had open
+    // — its documents read for the generation before — standing in front of the
+    // freshly linked view. Only an end-to-end run navigates the way that shows
+    // it: sync, drill in, sync again over a store that refuses the write, and
+    // look at what is still on screen.
+    useTallWindow(tester);
+    final inner = InMemoryLinkedStore();
+    final harness = ReconcileHarness(
+      linkedStore: inner,
+      // The first sync lands generation 1 so there is something to drill into;
+      // every write after it throws.
+      controllerStore: StallingLinkedStore(
+        inner: inner,
+        failWith: StateError('cosmos down'),
+        healthyWrites: 1,
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // Drill into the class the shared view just materialized.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jaar 3'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('3C'));
+    await tester.tap(find.text('3C'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget,
+        reason: 'the drill-down is open on 3C');
+    expect(harness.controller.selectedClassroom?.classroom, '3C');
+
+    // WISA moves the student out of 3C, and the operator re-syncs — but the
+    // shared store refuses the write.
+    harness.wisaResult = wisaSnap(
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+      students: [wisaStudent(classGroup: '3D')],
+    );
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Kon het gedeelde overzicht niet opslaan'),
+      findsWidgets,
+      reason: 'the write really did fail',
+    );
+
+    // Back on Acties: the class the operator had open is closed, because the
+    // view behind it was replaced. Before the fix the detail view was still
+    // there, joining the fresh entries to 3C's stale documents.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom, isNull);
+    expect(find.byKey(const ValueKey('actions-classroom-back')), findsNothing,
+        reason: 'a re-link closes the drill-down, write or no write');
+    expect(harness.controller.classroomPendingEntries, isEmpty);
+    // …and the session is still perfectly usable: it holds the view it linked.
+    expect(harness.controller.linked, isNotNull);
+  });
+
+  testWidgets(
       'applying a class\'s work updates its Acties badge on the way back to '
       'the overview, without a re-sync end-to-end (#236)',
       (WidgetTester tester) async {
