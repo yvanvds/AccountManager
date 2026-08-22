@@ -44,7 +44,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
-    expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('actions-only-with-actions')), findsNothing);
   });
 
   testWidgets('a failed bootstrap offers a retry, in Dutch (#253)',
@@ -111,29 +112,39 @@ void main() {
   });
 
   testWidgets(
-      'the global Dry-run all / Apply all act across all classes (#154)',
-      (WidgetTester tester) async {
+      'the header states the workload and offers nothing that acts on all of '
+      'it (#294)', (WidgetTester tester) async {
+    // The global "Dry-run alles" / "Alles toepassen" pair used to sit here and
+    // write every pending action in every class off one dialog, over a
+    // drill-down the operator had not opened. What replaces it is nothing: the
+    // count is a statement of how much work exists, and every way to act on
+    // that work is reached by looking at it first.
     _useTallWindow(tester);
     final harness = ReconcileHarness();
     await harness.controller.sync();
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    // Dry-run everything from the header — no drill needed, nothing written.
-    await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
-    await tester.pumpAndSettle();
-    expect(find.text('Resultaat van de dry-run'), findsOneWidget);
-    expect(harness.soap.soapActions, isEmpty);
+    expect(
+      find.textContaining(
+          '${harness.controller.totalPendingCount} openstaande actie(s)'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
+    expect(find.text('Dry-run alles'), findsNothing);
+    expect(find.text('Alles toepassen'), findsNothing);
+    expect(find.byKey(const ValueKey('actions-progress')), findsNothing);
 
-    // Apply everything: confirm the dialog, the Smartschool write happens.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    // Per-entry apply is untouched — bulk moves down to where the cohort is on
+    // screen, it is not taken away.
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+    final id = harness.controller.classroomPendingEntries.single.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
     await tester.pumpAndSettle();
-    expect(find.text('Openstaande acties toepassen?'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
-    expect(harness.soap.soapActions, isNotEmpty);
+    expect(find.byKey(ValueKey('entry-apply-$id')), findsOneWidget);
+    expect(find.byKey(ValueKey('entry-dry-run-$id')), findsOneWidget);
   });
 
   testWidgets('cancelling the apply dialog writes nothing (#154)',
@@ -143,9 +154,14 @@ void main() {
     await harness.controller.sync();
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
 
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    final id = harness.controller.classroomPendingEntries.single.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Annuleer'));
     await tester.pumpAndSettle();
@@ -1684,11 +1700,17 @@ void main() {
           .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
 
+      await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
+
       // Idle: no dialog.
       expect(dialog, findsNothing);
 
-      await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-      await tester.tap(find.byKey(const ValueKey('actions-apply')));
+      // Driven from the cohort header — the two departed students are one
+      // decision, on screen, above the button that applies it.
+      final bulk = find.byKey(ValueKey(
+          'situation-apply-${harness.controller.classroomPendingSituations.single.key}'));
+      await tester.ensureVisible(bulk);
+      await tester.tap(bulk);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
       await tester.pumpAndSettle();
@@ -1752,9 +1774,13 @@ void main() {
           .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
 
+      await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
+
       // A dry-run needs no confirmation, so it goes straight into the pass.
-      await tester.ensureVisible(find.byKey(const ValueKey('actions-dry-run')));
-      await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
+      final bulkDryRun = find.byKey(ValueKey(
+          'situation-dry-run-${harness.controller.classroomPendingSituations.single.key}'));
+      await tester.ensureVisible(bulkDryRun);
+      await tester.tap(bulkDryRun);
       await tester.pumpAndSettle();
 
       expect(dialog, findsOneWidget);
@@ -1787,8 +1813,12 @@ void main() {
           .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-      await tester.tap(find.byKey(const ValueKey('actions-apply')));
+      await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
+
+      final bulk = find.byKey(ValueKey(
+          'situation-apply-${harness.controller.classroomPendingSituations.single.key}'));
+      await tester.ensureVisible(bulk);
+      await tester.tap(bulk);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
       await tester.pumpAndSettle();
@@ -1810,10 +1840,10 @@ void main() {
       );
     });
 
-    testWidgets('the per-situation and per-entry affordances run behind it too',
+    testWidgets('the per-entry affordance runs behind it too',
         (WidgetTester tester) async {
       _useTallWindow(tester);
-      var gate = Completer<void>();
+      final gate = Completer<void>();
       final harness = twoDeparted(gate: () => gate.future);
       await harness.controller.sync();
       await tester
@@ -1821,21 +1851,7 @@ void main() {
       await tester.pumpAndSettle();
       await _drill(tester, node: 'Niet toegewezen', classroom: 'Zonder klas');
 
-      // The same-situation bulk dry-run.
-      final key = harness.controller.classroomPendingSituations.single.key;
-      final bulkDryRun = find.byKey(ValueKey('situation-dry-run-$key'));
-      await tester.ensureVisible(bulkDryRun);
-      await tester.tap(bulkDryRun);
-      await tester.pumpAndSettle();
-      expect(dialog, findsOneWidget);
-      expect(find.text('Dry-run bezig…'), findsOneWidget);
-      expect(line(tester, 'actions-progress-count'), 'Actie 1 van 2');
-      gate.complete();
-      await tester.pumpAndSettle();
-      expect(dialog, findsNothing);
-
-      // The per-entry apply, which is a pass of exactly one.
-      gate = Completer<void>();
+      // A pass of exactly one, next to the two-account cohort pass above.
       final entry = harness.controller.pendingEntries
           .firstWhere((e) => e.target == 'Sofie Claes');
       final id = entry.targetId;

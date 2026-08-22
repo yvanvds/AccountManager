@@ -282,7 +282,7 @@ void main() {
       await h.controller.sync();
       h.log.clear();
 
-      await h.controller.dryRun();
+      await h.controller.dryRunEntries(h.controller.pendingEntries);
 
       final messages = h.log.entries.map((e) => e.message).toList();
       expect(messages.first, startsWith('Dry-run gestart voor '));
@@ -297,7 +297,7 @@ void main() {
       await h.controller.sync();
       h.log.clear();
 
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       final messages = h.log.entries.map((e) => e.message).toList();
       expect(messages.first, startsWith('Toepassen gestart voor '));
@@ -1000,7 +1000,7 @@ void main() {
       final h = ReconcileHarness();
       await h.controller.sync();
 
-      await h.controller.dryRun();
+      await h.controller.dryRunEntries(h.controller.pendingEntries);
 
       final results = h.controller.dryRunResults;
       expect(results, isNotNull);
@@ -1025,7 +1025,7 @@ void main() {
       await h.controller.sync();
       final linkedBefore = h.controller.linked;
 
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       final results = h.controller.applyResults;
       expect(results, isNotNull);
@@ -1100,7 +1100,7 @@ void main() {
       final before = pendingByNode(h.controller);
       expect(before.values, contains(greaterThan(0)));
 
-      await h.controller.dryRun();
+      await h.controller.dryRunEntries(h.controller.pendingEntries);
 
       expect(pendingByNode(h.controller), before);
       expect(h.soap.soapActions, isEmpty, reason: 'nothing was written');
@@ -1120,7 +1120,7 @@ void main() {
       await h.controller.sync();
       expect(klas3C(h.controller).pendingCount, 1);
 
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       expect(
         h.controller.applyResults!.map((r) => r.outcome),
@@ -1227,7 +1227,7 @@ void main() {
       await h.controller.sync();
       final before = await h.linkedStore.readSyncState();
 
-      await h.controller.dryRun();
+      await h.controller.dryRunEntries(h.controller.pendingEntries);
 
       expect(
           (await h.linkedStore.readSyncState()).generation, before.generation);
@@ -1270,7 +1270,7 @@ void main() {
       final h = ReconcileHarness(controllerStore: failing);
       await h.controller.sync();
 
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       expect(failing.appliedWriteAttempted, isTrue);
       expect(h.controller.phase, ReconcilePhase.ready);
@@ -1292,7 +1292,7 @@ void main() {
       );
       await h.controller.sync();
 
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       expect(stalling.appliedWriteAttempted, isTrue);
       expect(h.controller.phase, ReconcilePhase.ready);
@@ -1347,7 +1347,7 @@ void main() {
       expect(h.controller.applyableCount,
           lessThan(h.controller.pendingActions.length));
 
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       expect(h.controller.error, isNull);
       expect(
@@ -1458,7 +1458,7 @@ void main() {
       await h.controller.sync();
 
       final steps = recordSteps(h.controller);
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       expect(steps.map((s) => s.total).toSet(), <int>{steps.length},
           reason: 'the planned total never moves mid-pass');
@@ -1483,7 +1483,7 @@ void main() {
       await h.controller.sync();
 
       final steps = recordSteps(h.controller);
-      await h.controller.dryRun();
+      await h.controller.dryRunEntries(h.controller.pendingEntries);
 
       expect(steps, isNotEmpty);
       expect(steps.map((s) => s.dry), everyElement(isTrue));
@@ -1633,7 +1633,7 @@ void main() {
       expect(h.controller.applyableCount, 4);
 
       final seen = recordProgress(h.controller);
-      await h.controller.applyAll();
+      await h.controller.applyEntries(h.controller.pendingEntries);
 
       expect(seen.first, 0.0);
       expectMonotonic(seen);
@@ -2573,7 +2573,7 @@ void main() {
       );
       await s2.controller.openSession();
 
-      await s2.controller.dryRun();
+      await s2.controller.dryRunEntries(s2.controller.pendingEntries);
 
       expect(s2.controller.dryRunResults, isNotNull);
       expect(s2.controller.dryRunResults, isNotEmpty);

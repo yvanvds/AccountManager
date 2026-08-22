@@ -185,10 +185,10 @@ class PendingActionOption {
 /// dialog (#234).
 ///
 /// Built by [ReconcileController.applyScope] from the **selected**, applyable
-/// option of each choice — exactly the actions `applyAll` / `applyEntries` /
-/// `applyEntry` would run — so the dialog names the systems the pass genuinely
-/// reaches instead of the hard-coded "Smartschool and Azure AD" it used to
-/// claim for every action.
+/// option of each choice — exactly the actions `applyEntries` / `applyEntry`
+/// would run — so the dialog names the systems the pass genuinely reaches
+/// instead of the hard-coded "Smartschool and Azure AD" it used to claim for
+/// every action.
 class ApplyScope {
   const ApplyScope({required this.systems, required this.chained});
 
@@ -1794,7 +1794,7 @@ class ReconcileController extends ChangeNotifier {
 
   /// What a confirmed apply of [entries] would actually write (#234) — the
   /// systems the apply-confirmation dialog names, derived from the very options
-  /// [applyAll] / [applyEntries] / [applyEntry] would run.
+  /// [applyEntries] / [applyEntry] would run.
   ///
   /// Pass the confirmation dialog the *same* list the pass will run over
   /// (#252): the dialog and the write agreeing is the whole point of building
@@ -2373,16 +2373,12 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
-  /// Dry-runs the chosen resolution of **every** pending entry (PAIN-3): the
-  /// full apply path, zero writes. Results land in [dryRunResults].
-  Future<void> dryRun() => dryRunEntries(pendingEntries);
-
-  /// Applies the chosen resolution of every pending entry for real, refreshing
-  /// the linked view from the State layer's incremental patches as it goes.
-  /// Only the **selected** alternative of each choice runs — a departed student
-  /// is unregistered *or* deleted, never both (#110). Results land in
-  /// [applyResults].
-  Future<void> applyAll() => applyEntries(pendingEntries);
+  // There is deliberately no `applyAll` / `dryRun` over the whole linked view
+  // (#294). Every pass starts from a list the operator is looking at: one card
+  // ([applyEntry]), one decision across its cohort ([applyDecisions]), or a
+  // scoped selection ([applyEntries]). A method that took "everything pending"
+  // existed only to serve a header button that wrote every account in the
+  // school on the strength of a dialog nobody could verify.
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>
@@ -2441,8 +2437,8 @@ class ReconcileController extends ChangeNotifier {
       _run(decisions, dry: true);
 
   /// Runs the selected, applyable option of every decision in [decisions]
-  /// through the apply path (dry or real). Shared by the global, per-entry, and
-  /// per-cohort affordances so all three behave identically (#110). Each option
+  /// through the apply path (dry or real). Shared by the per-entry and
+  /// per-cohort affordances so both behave identically (#110). Each option
   /// is bound to its own target; on a real write the applier patches the
   /// snapshot and returns a fresh linked view we adopt as the pass proceeds.
   ///

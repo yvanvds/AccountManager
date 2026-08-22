@@ -373,6 +373,22 @@ void main() {
       ),
       findsOneWidget,
     );
+    // The header states the workload and stops there (#294): the global
+    // "Dry-run alles" / "Alles toepassen" pair that wrote every account in the
+    // school off one dialog is gone, and nothing on the overview replaces it.
+    // Whatever the operator applies, they reach by opening it first.
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.textContaining('openstaande actie(s)'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
+    expect(find.text('Dry-run alles'), findsNothing);
+    expect(find.text('Alles toepassen'), findsNothing);
+
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('3C'));
@@ -380,16 +396,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
 
-    // Dry-run all from the header: the projected changes render, nothing writes.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-dry-run')));
-    await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
+    // Open the one account in 3C and dry-run it: the projected changes render,
+    // nothing writes.
+    final String id =
+        harness.controller.classroomPendingEntries.single.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-dry-run-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-dry-run-$id')));
     await tester.pumpAndSettle();
     expect(find.text('Resultaat van de dry-run'), findsOneWidget);
     expect(harness.soap.soapActions, isEmpty);
 
-    // Apply all: confirm the dialog, the Smartschool write happens for real.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    // Apply it: confirm the dialog, the Smartschool write happens for real.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
@@ -624,6 +646,30 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Drills the Actions overview into the leaver bucket, where the two departed
+  /// students of [twoDepartedHarness] sit as a single cohort.
+  Future<void> drillZonderKlas(WidgetTester tester) async {
+    await tester.tap(find.text('Niet toegewezen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Zonder klas'));
+    await tester.tap(find.text('Zonder klas'));
+    await tester.pumpAndSettle();
+  }
+
+  /// Presses the open classroom's one cohort header — the bulk apply that
+  /// stands where the header's global "Alles toepassen" used to (#294). The
+  /// cohort is on screen above the button, which is the whole difference.
+  Future<void> tapCohortApply(
+    WidgetTester tester,
+    ReconcileHarness harness,
+  ) async {
+    final String key = harness.controller.classroomPendingSituations.single.key;
+    final Finder bulk = find.byKey(ValueKey('situation-apply-$key'));
+    await tester.ensureVisible(bulk);
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+  }
+
   /// Opens the Klasgroepen tab from the navigation rail (#227). The class
   /// inventory is a destination of its own now, not a node inside Acties.
   Future<void> openKlasgroepen(WidgetTester tester) async {
@@ -672,13 +718,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
     await syncThenOpenActions(tester);
+    await drillZonderKlas(tester);
 
     // Idle: no dialog.
     expect(progressDialog, findsNothing);
 
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
-    await tester.pumpAndSettle();
+    await tapCohortApply(tester, harness);
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -741,10 +786,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
     await syncThenOpenActions(tester);
+    await drillZonderKlas(tester);
 
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
-    await tester.pumpAndSettle();
+    await tapCohortApply(tester, harness);
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(progressDialog, findsOneWidget);
@@ -760,7 +804,8 @@ void main() {
       reason: 'the failure is reported on the page, not behind a stuck modal',
     );
     // The app is usable again: the affordances are live and reachable.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    final String key = harness.controller.classroomPendingSituations.single.key;
+    await tester.ensureVisible(find.byKey(ValueKey('situation-apply-$key')));
     expect(tester.takeException(), isNull);
   });
 
@@ -1365,10 +1410,15 @@ void main() {
     expect(find.byKey(ValueKey('entry-student-${entry.targetId}')),
         findsOneWidget);
 
-    // Apply all: the Smartschool departure writes against the recording SOAP
-    // transport; Azure (Graph) is never called.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    // Apply the row: the Smartschool departure writes against the recording
+    // SOAP transport; Azure (Graph) is never called.
+    await tester
+        .ensureVisible(find.byKey(ValueKey('entry-student-${entry.targetId}')));
+    await tester.tap(find.byKey(ValueKey('entry-student-${entry.targetId}')));
+    await tester.pumpAndSettle();
+    await tester
+        .ensureVisible(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
@@ -5092,10 +5142,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Maak een nieuw Smartschool account'), findsWidgets);
 
-    // Apply all for real (against the recording SOAP transport): the create runs
-    // and its minted password is captured into the shared queue.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    // Apply the row for real (against the recording SOAP transport): the create
+    // runs and its minted password is captured into the shared queue.
+    final String createId =
+        harness.controller.classroomPendingEntries.single.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$createId')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$createId')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$createId')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$createId')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();

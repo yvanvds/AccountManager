@@ -207,7 +207,7 @@ String readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
 // ---------------------------------------------------------------------------
 
 /// Shows the apply-confirmation dialog and, on confirm, runs [apply] behind the
-/// modal progress dialog (#110/#243). Shared by the global, per-situation, and
+/// modal progress dialog (#110/#243). Shared by the per-situation and
 /// per-entry apply affordances so a write is always one deliberate confirmation
 /// followed by one visible pass.
 ///
@@ -256,10 +256,10 @@ Future<void> confirmAndApply(
 /// operator had usually scrolled past — so the app looked hung, and nothing
 /// stopped them scrolling, switching family tab, or navigating away mid-write.
 ///
-/// Every affordance goes through here — global, per-situation, per-entry, and
-/// dry-run as well as apply — so the pass behaves the same wherever it is
-/// started. A dry-run over hundreds of accounts is exactly as slow and was
-/// exactly as silent.
+/// Every affordance goes through here — per-situation and per-entry, dry-run as
+/// well as apply — so the pass behaves the same wherever it is started. A
+/// dry-run over hundreds of accounts is exactly as slow and was exactly as
+/// silent.
 ///
 /// The dialog's lifetime is bound to [run]'s future rather than to any observed
 /// controller state: it is dismissed in a `finally`, so a pass that fails — or

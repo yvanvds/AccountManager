@@ -31,8 +31,10 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 /// loaded (via `LinkedStore.readClassroom`) and built only when the operator
 /// drills into it.
 /// The per-class list itself renders through a lazy [SliverList] so only the
-/// on-screen tiles build. The global "Dry-run all" / "Apply all" act on every
-/// pending entry across all classes.
+/// on-screen tiles build. Every apply starts from something the operator has
+/// opened — one card, or one decision across the cohort shown above it; the
+/// header's global "Dry-run alles" / "Alles toepassen" pair was removed in #294
+/// precisely because it did not.
 ///
 /// One view-wide switch above the family tab bar — "toon enkel accounts met
 /// acties", on by default — collapses all of that to the work list (#226):
@@ -746,9 +748,19 @@ class _ActionsBodyState extends State<_ActionsBody>
       ];
 }
 
-/// The Actions title plus the global "Dry-run all" / "Apply all" affordances
-/// (#110/#154): the secondary escape hatch that acts on every pending entry's
-/// chosen resolution, across all classes.
+/// The Actions title and how much work is pending — and, since #294, nothing
+/// that acts on it.
+///
+/// It used to carry a global "Dry-run alles" / "Alles toepassen" pair that ran
+/// every pending action of every family in every class in one pass. There is no
+/// safe reading of that: the drill-down below is collapsed, so the operator had
+/// seen none of the changes, and at a September changeover the count behind the
+/// button is in the thousands. Its confirmation named systems and a number,
+/// which is not the same as having looked. Bulk itself is not gone — it lives on
+/// the per-decision cohort header, where the cohort is on screen and one action
+/// deep — but the affordance that applied what nobody had read is.
+///
+/// The count line stays. It states how much work exists; it is not a button.
 class _ActionsHeader extends StatelessWidget {
   const _ActionsHeader({
     required this.controller,
@@ -786,50 +798,6 @@ class _ActionsHeader extends StatelessWidget {
           },
           style: text.bodyMedium,
         ),
-        const SizedBox(height: PlinkSpacing.s4),
-        Wrap(
-          spacing: PlinkSpacing.s3,
-          runSpacing: PlinkSpacing.s2,
-          children: <Widget>[
-            OutlinedButton.icon(
-              key: const ValueKey('actions-dry-run'),
-              onPressed: controller.busy || controller.applyableCount == 0
-                  ? null
-                  : () => runWithProgress(
-                        context,
-                        controller: controller,
-                        dry: true,
-                        run: controller.dryRun,
-                      ),
-              icon: const Icon(Icons.visibility_outlined),
-              label: const Text('Dry-run alles'),
-            ),
-            TextButton.icon(
-              key: const ValueKey('actions-apply'),
-              onPressed: controller.busy || controller.applyableCount == 0
-                  ? null
-                  : () => confirmAndApply(
-                        context,
-                        controller: controller,
-                        title: 'Openstaande acties toepassen?',
-                        scope: controller.applyScope(controller.pendingEntries),
-                        apply: controller.applyAll,
-                      ),
-              icon: const Icon(Icons.play_arrow_outlined),
-              label: const Text('Alles toepassen'),
-            ),
-          ],
-        ),
-        if (controller.busy) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s4),
-          // Determinate, like the Reconcile header's (#176/#243): the value
-          // exists on the very same controller, and an indeterminate sweep here
-          // was a motionless bar that read as a hung app.
-          LinearProgressIndicator(
-            key: const ValueKey('actions-progress'),
-            value: controller.progress,
-          ),
-        ],
       ],
     );
   }
