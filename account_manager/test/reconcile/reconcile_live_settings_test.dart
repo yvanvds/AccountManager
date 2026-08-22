@@ -570,8 +570,12 @@ void main() {
     });
 
     test('a rule an apply earned never arms the drift gate', () async {
-      // Session rules are not on any settings document, and the apply that
-      // earns one re-syncs WISA itself — so the gate must stay open.
+      // The apply that earns a rule re-syncs WISA itself, so the snapshot in
+      // hand already reflects it and the gate must stay open. The session
+      // holder is on no settings document, so nothing here can move the
+      // fingerprint; since #276 the apply *also* writes the rule to the
+      // document, and re-credits its own pull to it for exactly this reason
+      // (see `ReconcileController._persistEarnedWisaRules` and its test).
       final live = LiveSettings(_settings());
       final harness = ReconcileHarness(
         wisaTransport: RecordingWisaSoap(),

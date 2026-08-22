@@ -94,7 +94,10 @@ class ApplierSettings {
 /// 3. for a `DontImportFromWisa` action (which writes nothing and returns a
 ///    [ActionResult.wisaRule]), accumulates the rule in [wisaRules] and
 ///    **re-syncs WISA** so the ignored record drops from the next snapshot —
-///    the one path that does hit the network again.
+///    the one path that does hit the network again. Making that rule permanent
+///    is the caller's job, not this layer's: since #276 the reconcile controller
+///    writes it to the shared settings document once the pass ends, where the
+///    store (and, for #285, the operator's identity) lives.
 ///
 /// **Smartschool uid uniqueness (#72).** Because State holds the account set,
 /// this applier wraps the injected [StudentActionConfig] / [StaffActionConfig]

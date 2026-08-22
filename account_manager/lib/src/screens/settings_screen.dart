@@ -5,6 +5,7 @@ import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
 import '../settings/settings_bootstrap.dart';
+import '../settings/wisa_rule_labels.dart';
 
 /// The Settings view (#106): edit the full [AppSettings] config document and
 /// write the two credentials (WISA password, Smartschool passphrase) through the
@@ -45,9 +46,12 @@ import '../settings/settings_bootstrap.dart';
 ///
 /// The WISA list shows the **persisted** rules — the operator's standing
 /// configuration, which is what a pull unions with whatever this session earned.
-/// A rule a `DontImportFromWisa` apply accumulates lives in the reconcile
-/// stack's `WisaImportRules` holder for the life of the process and is on no
-/// settings document, so it does not appear here (#273).
+/// Since #276 that includes the rules a `DontImportFromWisa` apply earns: the
+/// apply writes its rule to this same document, so it shows up in this list
+/// (after a **Herladen**, or in the next session) and is removed here like any
+/// hand-typed one. The reconcile stack's `WisaImportRules` holder still carries
+/// its own copy for the life of the process — that is what re-syncs WISA the
+/// instant the rule is earned — but the document is now the record.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.bootstrap});
 
@@ -1046,18 +1050,6 @@ class _WorkDateField extends StatelessWidget {
   }
 }
 
-/// How one WISA import rule reads in the settings list.
-String _describeWisaRule(WisaImportRule rule) => switch (rule) {
-      DontImportClass(:final className) =>
-        'Klas niet importeren uit WISA: $className',
-      DontImportUserFromWisa(:final userCode) =>
-        'Gebruiker niet importeren uit WISA: $userCode',
-      ReplaceInstitute(:final original, :final replacement) =>
-        'Vervang instituut: $original → $replacement',
-      MarkAsVirtual(:final schoolCode) => 'Markeer als virtueel: $schoolCode',
-      MarkAsOurs(:final schoolCode) => 'Markeer als beheerd: $schoolCode',
-    };
-
 /// The value(s) a WISA rule matches on, in the field order [_WisaRuleKind]
 /// declares — what the edit prompt opens on. The sealed base type carries no
 /// shared field, so a switch over the five cases is where they meet.
@@ -1206,7 +1198,7 @@ class _WisaRulesEditor extends StatelessWidget {
             _RuleRow(
               keyPrefix: 'settings-wisa-rule',
               index: i,
-              description: _describeWisaRule(rules[i]),
+              description: describeWisaRule(rules[i]),
               onEdit: () => state._editWisaRule(i),
               onRemove: () => state._removeWisaRule(i),
             ),

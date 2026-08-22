@@ -45,6 +45,18 @@ import 'package:wisa_api/wisa_api.dart';
 /// all. So the two sources stay distinct — persisted rules on the settings
 /// document, read live at pull time through [unionWith]; session-earned rules
 /// here — and the pull unions them.
+///
+/// ## An earned rule is persisted too (#276)
+///
+/// This holder is no longer the *record* of a `DontImportFromWisa` apply, only
+/// its immediate effect: it is what lets the applier re-sync WISA at once,
+/// without waiting for a settings round-trip. The app layer writes the same rule
+/// to the settings document (`mergeEarnedWisaRules`) when the apply pass ends,
+/// because the exclusion is a standing decision — WISA keeps reporting a retired
+/// staff member active indefinitely — and a rule that died with the process made
+/// the app propose re-creating the very account it had just been told to stop
+/// importing. The two copies collapse to one at the next pull, exactly as
+/// [unionWith] collapses any other overlap.
 class WisaImportRules {
   WisaImportRules({Iterable<WisaImportRule> initial = const []}) {
     for (final rule in initial) {

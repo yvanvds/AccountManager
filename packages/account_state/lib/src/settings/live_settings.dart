@@ -71,9 +71,14 @@ class LiveSettings {
 /// #263 the pull reads them from the live document, so a saved rule changes
 /// what the roster contains — and a drift pass, which never re-pulls WISA,
 /// would otherwise relink against the roster the rule never reached. Only the
-/// *persisted* rules count; the ones a `DontImportFromWisa` apply accumulates
-/// in the session's `WisaImportRules` holder trigger their own re-sync and are
-/// not part of any settings document.
+/// *persisted* rules count; the ones a `DontImportFromWisa` apply accumulates in
+/// the session's `WisaImportRules` holder trigger their own re-sync.
+///
+/// Since #276 an earned rule reaches this document too, which would make every
+/// such apply arm the gate — falsely, because the applier already re-pulled WISA
+/// with the rule. The apply path therefore re-credits its own pull to the
+/// document it just wrote (`ReconcileController._persistEarnedWisaRules`); the
+/// fingerprint itself stays a plain function of the document.
 ///
 /// Order-sensitive, like [smartschoolPullFingerprint]: the connector applies
 /// the rules in sequence.

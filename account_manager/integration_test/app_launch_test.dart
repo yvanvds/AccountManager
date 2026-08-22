@@ -5,7 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:account_core/account_core.dart' show Address, Origin;
+import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -34,6 +34,7 @@ import 'package:account_state/account_state.dart'
         SignalRSocketConnector,
         SignalRSubscriber,
         SignalRTransport,
+        SmartschoolClassTree,
         StaticSignalRTokenProvider,
         WisaConnection,
         WisaSchoolProfile,
@@ -6414,6 +6415,149 @@ void main() {
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-wisa');
     expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a DontImportFromWisa apply writes its rule to the shared settings '
+      'document, where it outlives the session and is removable (#276)',
+      (WidgetTester tester) async {
+    // The reported bug, driven end-to-end over the *production* WISA pull. A
+    // `DontImportFromWisa` apply only ever grew the process-lifetime
+    // `WisaImportRules` holder, so the exclusion it earned did not merely
+    // evaporate on relaunch — it oscillated. The apply drops the class (or the
+    // retired staff member) from this run's snapshot, the Office 365 side keeps
+    // surfacing (#269) so the operator deletes it, and the next launch rebuilds
+    // the holder empty: WISA still reports the record, nothing exists
+    // downstream, and the app proposes creating it. The rule was also invisible
+    // in Instellingen, so it could neither be seen nor undone.
+    //
+    // Every step here is the operator's own — Klasgroepen → the class → *Negeer
+    // deze klas* → **Toepassen**, then Instellingen → **Herladen** → Wisa —
+    // and the reload is what stands in for the relaunch: it is the stored
+    // document coming back, which is all any other operator or session ever
+    // sees.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final settings = SettingsHarness(initial: stored, liveSettings: live);
+    final harness = ReconcileHarness(
+      wisaTransport: RecordingWisaSoap(),
+      liveSettings: live,
+      settingsStore: settings.store,
+      // Smartschool holds only the root a new class would hang under, so WISA's
+      // `3C` is genuinely absent downstream and raises the #244 either/or.
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // A first Synchroniseer: the whole roster comes in, class 3C included.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 1 klassen.',
+      ),
+      findsOneWidget,
+    );
+
+    // Klasgroepen offers the class as one either/or; the operator switches it
+    // to the opt-out.
+    await openKlasgroepen(tester);
+    final entry = find.byKey(const ValueKey('entry-group-3C'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('alt-3C-DoNotImportFromWisa')));
+    await tester.pumpAndSettle();
+
+    // The confirmation says outright that this is permanent and shared — the
+    // operator's one chance to know a standing, group-wide decision is what the
+    // button commits them to.
+    await tester.ensureVisible(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.tap(find.byKey(const ValueKey('entry-apply-3C')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('bewaart 1 importregel blijvend voor iedereen'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // It landed on the settings document, on the wire shape #263's pull reads.
+    final saved = await settings.store.load();
+    expect(saved.wisaRules.single, isA<DontImportClass>());
+    expect((saved.wisaRules.single as DontImportClass).className, '3C');
+    expect(harness.controller.error, isNull);
+
+    // The apply re-pulled WISA with the rule itself, so **Controleer op drift**
+    // must not now refuse over the document that apply just wrote (#238).
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
+
+    // The operator reads the rule back off the *stored* document — what a
+    // relaunch, and every other operator, gets.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
+    await tester.tap(find.byKey(const ValueKey('settings-reload')));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
+
+    // …and that document still prunes the pull it is read for.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(
+        'WISA opgehaald: 1 leerling(en), 0 personeelsleden, 0 klassen.',
+      ),
+      findsWidgets,
+    );
+
+    // A rule applied in error is undone where every other rule is: the #273
+    // editor, which now owns this one too.
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-wisa');
+    final remove = find.byKey(const ValueKey('settings-wisa-rule-0-remove'));
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).wisaRules, isEmpty);
   });
 
   testWidgets(

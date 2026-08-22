@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
+import '../settings/wisa_rule_labels.dart';
 import 'log_buffer.dart';
 
 /// What the reconcile screen is doing right now.
@@ -2117,6 +2118,10 @@ class ReconcileController extends ChangeNotifier {
     final options =
         dry ? actions.ApplyOptions.dry : const actions.ApplyOptions();
     final results = <ActionOutcomeEntry>[];
+    // The WISA import rules this pass earned (#276). Collected across the whole
+    // pass and written once at the end rather than per action, so blacklisting
+    // thirty departed teachers is one settings write, not thirty.
+    final earnedRules = <wapi.WisaImportRule>[];
     // "Dry-run" is the term the Acties buttons already use ("Dry-run alles"),
     // so it stays; its counterpart is the "Alles toepassen" of those same
     // buttons rather than a second word for the same thing.
@@ -2144,6 +2149,7 @@ class ReconcileController extends ChangeNotifier {
         results.addAll(await _applyOne(
           () => _applyAny(option.action, options),
           option,
+          earnedRules,
         ));
         // Advance once per action so a long apply/dry-run pass reads as busy
         // and visibly progressing rather than a motionless bar (#176).
@@ -2162,6 +2168,7 @@ class ReconcileController extends ChangeNotifier {
       } else {
         _applyResults = results;
         _dryRunResults = null;
+        await _persistEarnedWisaRules(earnedRules);
         await _shareApplied(_refreshRollups(), touched);
       }
       _applyStep = null;
@@ -2175,7 +2182,9 @@ class ReconcileController extends ChangeNotifier {
         _applyResults = results;
         // A pass that broke halfway still wrote whatever it got through, so the
         // overview owes the operator those counts too (#236) — and so do the
-        // other operators (#254).
+        // other operators (#254). The rules it earned before it broke are just
+        // as real, and just as permanent (#276).
+        await _persistEarnedWisaRules(earnedRules);
         await _shareApplied(_refreshRollups(), touched);
       }
       // Nothing is in flight any more, however the pass ended (#243).
@@ -2204,15 +2213,27 @@ class ReconcileController extends ChangeNotifier {
   /// relinked record — and the operator's one click therefore made two writes.
   /// Both are logged and both land in the results list; hiding the second would
   /// under-report what the app just did.
+  ///
+  /// Every WISA import rule a real write earned is appended to [earnedRules] on
+  /// the way past, for the pass to persist when it ends (#276) — the follow-ups
+  /// included, since a chained write is as much this click's doing as the option
+  /// the operator picked.
   Future<List<ActionOutcomeEntry>> _applyOne(
     Future<ApplyResult> Function() run,
     PendingActionOption option,
+    List<wapi.WisaImportRule> earnedRules,
   ) async {
     final changes = option.changes;
     try {
       final applied = await run();
       if (applied.refreshed) _linked = applied.linked;
       final result = applied.result;
+      for (final r in <actions.ActionResult>[result, ...applied.followUps]) {
+        final rule = r.wisaRule;
+        // A dry run projects the rule without earning it, and a failed action
+        // earned nothing at all — neither may reach the shared document.
+        if (rule != null && r.wrote) earnedRules.add(rule);
+      }
       return <ActionOutcomeEntry>[
         _record(option, changes, result),
         // A chained follow-up is a write the same click performed on the same
@@ -2686,6 +2707,75 @@ class ReconcileController extends ChangeNotifier {
       log.addError(
         core.Origin.wisa,
         'Kon de WISA-schoolnamen niet bijwerken in de instellingen: $e',
+      );
+    }
+  }
+
+  /// Writes the WISA import rules this apply pass earned to the shared settings
+  /// document (#276), so the exclusion outlives the session that decided it.
+  ///
+  /// Until this, a `DontImportFromWisa` apply only grew the process-lifetime
+  /// `WisaImportRules` holder, and that made the rule oscillate rather than
+  /// merely evaporate: the apply drops the person from this run's snapshot,
+  /// their Azure account keeps surfacing (#269) so the operator deletes it, and
+  /// the next launch rebuilds the holder empty — WISA still reports the person
+  /// active, no Azure account exists any more, and the linker proposes creating
+  /// them. Persisting the rule is what breaks that loop, and it is the same
+  /// document #263 reads at pull time and #273 edits, so the rule is visible and
+  /// removable in Instellingen → Wisa with no extra UI.
+  ///
+  /// The document is re-read immediately before the write, exactly as
+  /// [_backfillSchoolProfiles] does, so a change another operator saved during
+  /// this pass is not clobbered by this session's copy; nothing is written when
+  /// every earned rule is already on it.
+  ///
+  /// **The drift gate stays honest.** `wisaPullFingerprint` covers the persisted
+  /// rules (#238), so this write would otherwise arm it — falsely, because the
+  /// applier re-pulled WISA *with* these rules the moment each was earned, and
+  /// the snapshot in hand already reflects them. So the pull is re-credited to
+  /// the document it now matches, but only when the gate was closed to begin
+  /// with and the saved document differs from the one in hand by nothing but
+  /// these rules. Anything else another operator slipped in — a werkdatum, a
+  /// virtual-school mark — arms the gate as it should.
+  ///
+  /// A failing settings store must never fail the pass: the writes it performed
+  /// are done and reported, so the problem is logged and the operator can
+  /// re-apply (or type the rule in Instellingen) rather than lose the results.
+  Future<void> _persistEarnedWisaRules(
+    List<wapi.WisaImportRule> earned,
+  ) async {
+    final store = settingsStore;
+    if (store == null || earned.isEmpty) return;
+    final live = liveSettings;
+    // Sampled before the write: whether the WISA snapshot in hand is credited
+    // to the document this session holds, and what that document plus these
+    // rules would fingerprint as.
+    final held = live?.current;
+    final inSync = _wisaFingerprint() == _wisaPullFingerprint;
+    try {
+      final stored = await store.load();
+      final merged = mergeEarnedWisaRules(stored: stored, earned: earned);
+      if (merged == null) return;
+      await store.save(merged.settings);
+      live?.publish(merged.settings);
+      if (inSync && held != null) {
+        final credited = wisaPullFingerprint(
+          mergeEarnedWisaRules(stored: held, earned: earned)?.settings ?? held,
+        );
+        if (credited == _wisaFingerprint()) _stampWisaPull(credited);
+      }
+      for (final rule in merged.added) {
+        log.addMessage(
+          core.Origin.wisa,
+          'Importregel bewaard voor iedereen: ${describeWisaRule(rule)}. '
+          'Dit blijft gelden tot de regel in Instellingen → Wisa verwijderd '
+          'wordt.',
+        );
+      }
+    } on Object catch (e) {
+      log.addError(
+        core.Origin.wisa,
+        'Kon de WISA-importregel(s) niet opslaan in de instellingen: $e',
       );
     }
   }
