@@ -75,6 +75,13 @@ class ApplicationState {
 /// read afterwards (#224 students, #231 staff). Omit it and the pull is exactly
 /// as it shipped before #224.
 ///
+/// On top of whatever the caller names, this syncer **always** adds
+/// [retainedStaffEmployeeIds] over the snapshot it was handed (#269). Those ids
+/// are not the caller's to supply: they come from Azure, not WISA, and the whole
+/// point is that they outlive WISA. Without them a staff member's account leaves
+/// the app's view on the same pass WISA stops listing them, and the deletion
+/// they need is never proposed.
+///
 /// WISA and Smartschool have no equivalent helper: their syncers are the
 /// one-liner `(_) => connector.sync(...)`, written at the wiring site because
 /// their per-sync parameters (WISA schools/workdate, the import-rule sets) come
@@ -108,10 +115,17 @@ Syncer<AzureSnapshot> azureSyncer(
     final prefix = schoolPrefix?.call() ?? connector.credentials.schoolPrefix;
     final moved = prefix != pulledWith;
     pulledWith = prefix;
+    // The snapshot this pass may build on. A moved prefix invalidates all of
+    // it — token, users, and the ids remembered from them all describe the
+    // *previous* school — so it is dropped whole rather than in pieces.
+    final carried = moved ? null : previous;
     return connector.sync(
-      deltaToken: moved ? null : previous?.deltaToken,
-      previous: moved ? null : previous,
-      expectedEmployeeIds: expectedEmployeeIds?.call() ?? const <String>[],
+      deltaToken: carried?.deltaToken,
+      previous: carried,
+      expectedEmployeeIds: <String>{
+        ...?expectedEmployeeIds?.call(),
+        ...retainedStaffEmployeeIds(carried, schoolPrefix: prefix),
+      },
       schoolPrefix: prefix,
     );
   };
@@ -167,5 +181,60 @@ Set<String> managedStaffEmployeeIds(WisaSnapshot? snapshot) {
     for (final member in snapshot.staff)
       if ((member.wisaId?.value.trim() ?? '').isNotEmpty)
         member.wisaId!.value.trim(),
+  };
+}
+
+/// The `employeeId`s of the staff accounts the Azure snapshot **already in
+/// hand** holds for our school — the ids [azureSyncer] keeps feeding the
+/// back-fill so a staff member who leaves WISA does not take their Office 365
+/// account out of the app's view with them (#269).
+///
+/// [managedStaffEmployeeIds] is derived from the *current* WISA snapshot, so the
+/// moment WISA stops listing someone their id leaves that set and the back-fill
+/// stops asking about them. For a staff member whose `department` lists our
+/// school second in the comma-separated list other software maintains
+/// (`SSM,GBS`, #237) that is fatal: the bulk read's server-side
+/// `startswith(department, …)` cannot see them either, and #268 ruled that leg
+/// cannot be widened — Graph has no `contains`. So the pass that drops them from
+/// WISA is the pass their account drops out of the snapshot. No `LinkedStaff`
+/// record is built for them, `RemoveStaffFromAzure` (which needs `azure != null`)
+/// is never evaluated, and the Office 365 account lives on unmanaged. The failure
+/// is not a to-do left visibly undone — the person vanishes from the app.
+///
+/// The snapshot in hand *is* the memory that closes this, and it costs no new
+/// storage: it is persisted after every pull and re-seeded at launch, so the
+/// account it already carries names the id to keep asking about. The retention
+/// rule is the account itself — an id is remembered while the Azure row still
+/// names our school in `department` (INV-22's staff signal, the very rule by
+/// which the linker keeps an Azure-only staff record). Once the account is
+/// deleted, or another school's software drops our prefix from the list, there is
+/// nothing left to remember and the id falls out on its own. No "former staff"
+/// state is invented, and nothing is ever remembered forever.
+///
+/// Only the `department` (staff) signal is read here. A departed *student* is
+/// unaffected: the bulk read's `companyName eq '<prefix>'` leg is an equality,
+/// not a prefix match, so it keeps returning their account with no help. The
+/// group-wide student question is #113.
+///
+/// Costs nothing on an incremental pass: the accounts are already in the user
+/// list the delta builds on, so the connector's back-fill finds them accounted
+/// for and issues no lookup. What this is for is the **full read**, which drops
+/// that list — a delta token Graph refused (#213), or a walk that left no
+/// deltaLink behind. Neither is avoidable: a token expires after 30 days, so any
+/// long enough gap between passes forces one, and from then on the account was
+/// gone for good. (A first sync has no snapshot to remember from, and a *changed*
+/// prefix deliberately drops the memory with everything else — those users belong
+/// to the previous school.)
+Set<String> retainedStaffEmployeeIds(
+  AzureSnapshot? snapshot, {
+  required String schoolPrefix,
+}) {
+  if (snapshot == null) return const <String>{};
+  final prefix = schoolPrefix.trim().toLowerCase();
+  if (prefix.isEmpty) return const <String>{};
+  return <String>{
+    for (final user in snapshot.users)
+      if ((user.department ?? '').trim().toLowerCase().contains(prefix))
+        if ((user.employeeId ?? '').trim().isNotEmpty) user.employeeId!.trim(),
   };
 }

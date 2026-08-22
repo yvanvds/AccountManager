@@ -6707,6 +6707,111 @@ void main() {
   });
 
   testWidgets(
+      'a staff member who left WISA still gets their Office 365 account '
+      'proposed for deletion (#269)', (WidgetTester tester) async {
+    // The other half of #268, and the worse one. Anna Smit has left the school:
+    // WISA no longer lists her and her Smartschool account is already gone. Her
+    // Office 365 account is not — and our prefix sits *second* in the comma list
+    // other software maintains on `department` (`SSM,GBS`, #237).
+    //
+    // Both reads that could surface her fail at once. The bulk `$filter` asks
+    // `startswith(department,'GBS')` and cannot see her, which #268 ruled cannot
+    // be widened (Graph has no `contains`). And the `employeeId` back-fill (#231)
+    // is fed from the *current* WISA snapshot, so the pass that drops her from
+    // WISA is the pass it stops asking about her.
+    //
+    // The shape of the failure is what makes it dangerous: she does not linger as
+    // a to-do the operator ignores, she *vanishes*. No LinkedStaff record is
+    // built, RemoveStaffFromAzure (which needs `azure != null`) is never
+    // evaluated, and the account lives on with nothing but Office 365 itself to
+    // show for it.
+    //
+    // The unavoidable trigger is here too: the stored delta token is past Graph's
+    // 30-day window, so this pass recovers with a full read (#213) and the
+    // previous user list — which had been carrying her — is discarded.
+    //
+    // Only this layer sees the whole thing: the Azure pull has to remember her
+    // from the snapshot it already holds, the linker has to keep the row it
+    // produces as an Azure-only staff record (INV-22), and the operator has to be
+    // handed the deletion in Acties → Personeel.
+    useTallWindow(tester);
+    final azureWire = DepartedStaffGraph();
+    final harness = ReconcileHarness(
+      // Gone from WISA…
+      wisa: wisaSnap(students: const [], staff: const []),
+      // …and gone from Smartschool, so only Azure still holds her.
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot: her account as the previous pass left it, and a
+      // token that has since aged out.
+      azureInitial: azSnap(deltaToken: 'AZ-STALE', users: [azStaffUser()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: the seeded Azure snapshot is reused untouched, its
+    // token unspent.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+
+    // Today: Check for drift, which is what re-reads Azure.
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass really was the losing one: the stale token was sent and refused,
+    // so the recovery re-read in full and the previous user list is gone.
+    expect(azureWire.resumeTokens, <String>['AZ-STALE']);
+    expect(azureWire.bulkReads, 1);
+
+    // She came back on the only leg left — one targeted lookup for an id WISA no
+    // longer names, remembered from the snapshot the app already held.
+    expect(azureWire.employeeIdLookups, <String>["employeeId in ('42')"]);
+    expect(harness.app.azure.snapshot?.users.map((u) => u.id),
+        <String>['az-staff']);
+
+    // The linker keeps her as an Azure-only staff record (INV-22: `department`
+    // still names us), which is the record the deletion is raised on.
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.wisa, isNull);
+    expect(linked.smartschool, isNull);
+    expect(linked.azure?.id, 'az-staff');
+
+    // And that is what the operator sees: Acties → Personeel, drilled the way
+    // they would.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final staffSchool =
+        find.byKey(const ValueKey('rollup-school-school|staff'));
+    await tester.ensureVisible(staffSchool);
+    await tester.tap(staffSchool);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
+    await tester.pumpAndSettle();
+    final staffClass = find
+        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
+    await tester.ensureVisible(staffClass);
+    await tester.tap(staffClass);
+    await tester.pumpAndSettle();
+    expect(find.text('Verwijder Azure account'), findsOneWidget);
+  });
+
+  testWidgets(
       'the apply-confirmation dialog names the system the pass really writes, '
       'in Dutch (#234)', (WidgetTester tester) async {
     // The report, reproduced through the real app: a student whose WISA name

@@ -81,7 +81,13 @@ OData can ask:
 - **the `employeeId` back-fill (#231)** — the designed complement, not an
   accident. Every pass hands the connector the WISA ids it expects accounts for
   and it looks up the ones this `$filter` did not turn up, on the full read and
-  the incremental one alike.
+  the incremental one alike. Since #269 the caller also names the staff ids the
+  *previous snapshot* already held for our school (`account_state`'s
+  `retainedStaffEmployeeIds`), so an account does not leave the app's view on the
+  pass WISA stops listing its owner — which is what lets the engine propose
+  `RemoveStaffFromAzure` for someone who left. The id is remembered only while
+  the Azure row still names our school in `department`, so it falls out by itself
+  once the account is gone.
 - **the client-side test** — the delta path always filters in Dart (`/users/delta`
   does not honour these property filters), and so does
   `UserManager.loadClientFiltered`. Neither is bound by OData, so both apply the

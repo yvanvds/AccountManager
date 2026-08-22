@@ -449,6 +449,120 @@ class SharedDepartmentStaffGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering the way the tenant answers on the pass that
+/// has to notice a staff member **left** WISA (#269).
+///
+/// [azStaffUser]'s Office 365 account is still there, with our prefix second in
+/// the comma list other software maintains (`SSM,GBS`, #237). WISA no longer
+/// lists her, so the `employeeId` back-fill's WISA-derived set (#231) no longer
+/// names her either — and this wire is the pass where that used to be fatal:
+///
+/// - the stored delta token is past Graph's 30-day window, so the resume is
+///   **refused** and the pass recovers with a full read (#213). That recovery is
+///   unavoidable — every token expires eventually — and it is what discards the
+///   previous user list;
+/// - the recovered `$filter`-scoped bulk read returns **nothing** for her:
+///   `startswith(department,'GBS')` cannot see a list that leads with `SSM`, and
+///   Graph has no `contains` to widen it with (#268);
+/// - only a targeted `employeeId in (…)` lookup turns her up.
+///
+/// So exactly one leg can carry the account into the snapshot, and a test can
+/// prove it was taken. Wire it into [ReconcileHarness.azureTransport] with an
+/// `azureInitial` holding the dead token and the account as the previous pass
+/// left it — the memory that names the id to ask about.
+class DepartedStaffGraph implements az.GraphTransport {
+  DepartedStaffGraph({
+    az.AzureUser? account,
+    this.freshToken = 'AZ-FRESH',
+  }) : account = account ?? azStaffUser();
+
+  /// The account that outlived the WISA row, exactly as Graph still holds it.
+  final az.AzureUser account;
+
+  /// The token the recovered full read primes for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order — so a test can
+  /// prove the refused one really was sent, and not re-sent afterwards.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued, in order.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token == 'latest') return _deltaLink();
+      resumeTokens.add(token);
+      // A token this transport itself handed out is honoured, so a test can
+      // show the recovery restored incremental syncing rather than pinning the
+      // app to a full read forever.
+      if (token == freshToken) return _deltaLink();
+      return az.GraphResponse(
+        statusCode: 400,
+        body: jsonEncode(<String, dynamic>{
+          'error': <String, dynamic>{
+            'code': 'Request_UnsupportedQuery',
+            'message': 'DeltaLink older than 30 days is not supported.',
+          },
+        }),
+      );
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{
+        'value': filter.contains("'${account.employeeId}'")
+            ? <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': account.id,
+                  'userPrincipalName': account.upn,
+                  if (account.employeeId != null)
+                    'employeeId': account.employeeId,
+                  'displayName': account.displayName,
+                  'givenName': account.givenName,
+                  'surname': account.surname,
+                  if (account.companyName != null)
+                    'companyName': account.companyName,
+                  if (account.department != null)
+                    'department': account.department,
+                  'accountEnabled': account.accountEnabled,
+                },
+              ]
+            : const <Object>[],
+      });
+    }
+    // The school-scoped bulk read, blind to her — the whole problem.
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  /// An empty delta page closed by a deltaLink carrying [freshToken].
+  az.GraphResponse _deltaLink() => _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value': const <Object>[],
+      });
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [wapi.WisaSoapTransport] serving a tiny, complete WISA export for one
 /// school, so the **production** WISA pull (a real [wapi.WisaConnector] behind
 /// the real `wisaSyncer`) runs offline.

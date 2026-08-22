@@ -330,6 +330,131 @@ void main() {
     });
   });
 
+  group('azureSyncer keeps a departed staff member visible (#269)', () {
+    // Anna Smit's Office 365 account carries our prefix *second* in the comma
+    // list other software maintains (`SSM,GBS`, #237), so the bulk read's
+    // `startswith(department,'GBS')` cannot see it and #268 ruled that leg
+    // cannot be widened. She has now left WISA, so `managedStaffEmployeeIds`
+    // names her no more either — and the account still exists in the tenant.
+    late _RecordingGraphTransport transport;
+
+    /// The `employeeId in (…)` filters this pass issued, in order.
+    List<String> lookups() => transport.requests
+        .map((r) => r.url.queryParameters[r'$filter'])
+        .whereType<String>()
+        .where((f) => f.startsWith('employeeId in'))
+        .toList();
+
+    GraphResponse route(GraphRequest req) {
+      final path = req.url.path;
+      if (path.contains('groups')) return _jsonOk({'value': <Object?>[]});
+      if (path.contains('users/delta')) {
+        return _jsonOk({
+          '@odata.deltaLink':
+              'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=NEXT',
+          'value': <Object?>[],
+        });
+      }
+      final filter = req.url.queryParameters[r'$filter'] ?? '';
+      if (filter.startsWith('employeeId in')) {
+        return _jsonOk({
+          'value': filter.contains("'42'")
+              ? [
+                  {
+                    'id': 'az-staff',
+                    'userPrincipalName': 'anna.smit@school.example',
+                    'employeeId': '42',
+                    'displayName': 'Smit Anna',
+                    'department': 'SSM,GBS',
+                    'accountEnabled': true,
+                  },
+                ]
+              : <Object?>[],
+        });
+      }
+      // The school-scoped bulk read: blind to her, which is the whole problem.
+      return _jsonOk({'value': <Object?>[]});
+    }
+
+    AzureSnapshot held({String? deltaToken}) => AzureSnapshot(
+          fetchedAt: DateTime.utc(2026),
+          deltaToken: deltaToken,
+          users: const [
+            AzureUser(
+              id: 'az-staff',
+              upn: 'anna.smit@school.example',
+              employeeId: '42',
+              displayName: 'Smit Anna',
+              department: 'SSM,GBS',
+            ),
+          ],
+          groups: const [],
+        );
+
+    SystemState<AzureSnapshot> stateFor(
+      AzureSnapshot? initial, {
+      String Function()? prefix,
+    }) =>
+        SystemState<AzureSnapshot>(
+          system: core.Origin.azure,
+          initial: initial,
+          syncer: azureSyncer(
+            AzureConnector(
+              credentials: AzureCredentials(
+                clientId: 'c',
+                tenantId: 't',
+                azureDomain: 'school.example',
+                schoolPrefix: 'GBS',
+              ),
+              authProvider: const StaticAuthProvider('T'),
+              transport: transport,
+            ),
+            // WISA no longer lists her, so the caller's set is empty — exactly
+            // the state that used to lose her.
+            expectedEmployeeIds: () => const <String>[],
+            schoolPrefix: prefix,
+          ),
+        );
+
+    setUp(() => transport = _RecordingGraphTransport(route));
+
+    test('a full read looks her up again from the snapshot in hand', () async {
+      // The full read is where she was lost: the bulk `$filter` returns nothing
+      // for her and the previous user list is not carried over, so before this
+      // she simply ceased to exist as far as the app was concerned.
+      final snapshot = await stateFor(held()).sync();
+
+      expect(lookups(), ["employeeId in ('42')"]);
+      expect(snapshot.users.map((u) => u.id), ['az-staff'],
+          reason: 'the account the linker needs to raise a deletion on');
+    });
+
+    test('an incremental pass costs no extra lookup', () async {
+      // She is already in the user list the delta builds on, so the connector
+      // finds her accounted for. Remembering her must not add Graph traffic to
+      // the pass that never lost her.
+      final snapshot = await stateFor(held(deltaToken: 'AZ-TOKEN')).sync();
+
+      expect(lookups(), isEmpty);
+      expect(snapshot.users.map((u) => u.id), ['az-staff']);
+    });
+
+    test('a moved prefix drops the memory with the rest of the snapshot',
+        () async {
+      // A snapshot read under another prefix describes another school —
+      // token, users and the ids remembered from them alike (#246).
+      var prefix = 'GBS';
+      final state = stateFor(held(), prefix: () => prefix);
+      await state.sync();
+      expect(lookups(), ["employeeId in ('42')"]);
+
+      prefix = 'SSM';
+      await state.sync();
+      expect(lookups(), ["employeeId in ('42')"],
+          reason: 'no second lookup: GBS staff are not SSM\'s to remember');
+    });
+  });
+
   group('managedStudentEmployeeIds (#224)', () {
     WisaStudent student(String id, {int schoolId = 1}) => WisaStudent(
           wisaId: core.WisaId(id),
@@ -448,6 +573,107 @@ void main() {
           snap([member('SMIT'), member('JANS', wisaId: '  43  ')]),
         ),
         {'43'},
+      );
+    });
+  });
+
+  group('retainedStaffEmployeeIds (#269)', () {
+    AzureUser user(
+      String id, {
+      String? employeeId,
+      String? department,
+      String? companyName,
+    }) =>
+        AzureUser(
+          id: id,
+          upn: '$id@school.example',
+          employeeId: employeeId,
+          department: department,
+          companyName: companyName,
+        );
+
+    AzureSnapshot snap(List<AzureUser> users) => AzureSnapshot(
+          fetchedAt: DateTime.utc(2026),
+          users: users,
+          groups: const [],
+        );
+
+    test('no snapshot yet ⇒ nothing remembered', () {
+      expect(retainedStaffEmployeeIds(null, schoolPrefix: 'GBS'), isEmpty);
+    });
+
+    test('remembers a staff member our school lists second in department', () {
+      // The case the bulk read cannot see: `startswith(department,'GBS')` is
+      // false, Graph has no `contains` to widen it with (#268), and once WISA
+      // stops listing them `managedStaffEmployeeIds` stops naming them too.
+      expect(
+        retainedStaffEmployeeIds(
+          snap([user('a', employeeId: '42', department: 'SSM,GBS')]),
+          schoolPrefix: 'GBS',
+        ),
+        {'42'},
+      );
+    });
+
+    test('another school\'s account is not remembered', () {
+      // The retention rule is the account itself: the id is kept only while the
+      // row still names our school. When another school's software drops our
+      // prefix from the list, nothing is left to remember.
+      expect(
+        retainedStaffEmployeeIds(
+          snap([user('a', employeeId: '42', department: 'SSM,OTHER')]),
+          schoolPrefix: 'GBS',
+        ),
+        isEmpty,
+      );
+    });
+
+    test('reads the staff signal only, never the student one', () {
+      // A student's account is found by `companyName eq '<prefix>'`, an equality
+      // the bulk read answers with no help from us. Remembering them here would
+      // grow the bounded lookup for nothing — and the group-wide student
+      // question is #113, not this.
+      expect(
+        retainedStaffEmployeeIds(
+          snap([user('a', employeeId: '7', companyName: 'GBS')]),
+          schoolPrefix: 'GBS',
+        ),
+        isEmpty,
+      );
+    });
+
+    test('matches case-insensitively and trims, like every other id bridge',
+        () {
+      expect(
+        retainedStaffEmployeeIds(
+          snap([user('a', employeeId: '  42  ', department: ' ssm,gbs ')]),
+          schoolPrefix: 'GBS',
+        ),
+        {'42'},
+      );
+    });
+
+    test('an account with no employeeId leaves nothing to ask about', () {
+      // `employeeId` is the only key `loadByEmployeeIds` can use; a row without
+      // one cannot be looked up again by any means.
+      expect(
+        retainedStaffEmployeeIds(
+          snap([user('a', department: 'SSM,GBS'), user('b', employeeId: '  ')]),
+          schoolPrefix: 'GBS',
+        ),
+        isEmpty,
+      );
+    });
+
+    test('an unconfigured prefix remembers nobody', () {
+      // Every `department` contains the empty string, so a blank prefix would
+      // otherwise remember the whole snapshot.
+      expect(
+        retainedStaffEmployeeIds(
+          snap([user('a', employeeId: '42', department: 'SSM,GBS')]),
+          schoolPrefix: '   ',
+        ),
+        isEmpty,
       );
     });
   });

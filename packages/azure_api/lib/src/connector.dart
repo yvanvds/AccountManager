@@ -194,6 +194,12 @@ class AzureConnector {
   /// Only the ids that went unaccounted for are asked about, so the set stays
   /// small.
   ///
+  /// Nothing here requires an id to still be in WISA. The caller also names the
+  /// staff ids the *previous* snapshot held for our school (#269), so a staff
+  /// member who left WISA keeps surfacing until their account is actually gone —
+  /// which is what lets the linker keep an Azure-only record for them and the
+  /// engine propose `RemoveStaffFromAzure` instead of losing them silently.
+  ///
   /// A Graph failure here is **not** fatal: this step enriches a snapshot that
   /// is otherwise complete, and losing the whole pass over it would be worse
   /// than missing the adoption for one sync. The failure is logged as an error,
@@ -241,7 +247,8 @@ class AzureConnector {
       core.Origin.azure,
       'Azure: $added bestaand(e) account(s) overgenomen die via employeeId '
       'gevonden zijn maar niet aan de schoolfilter voldoen (overgestapte '
-      'leerlingen).',
+      'leerlingen, en personeelsleden van wie onze school niet vooraan in '
+      '"department" staat).',
     );
     return byId.values.toList();
   }
