@@ -49,7 +49,8 @@ void main() {
         syncedBy: 'op@school.example',
         payloadOf: (s) => s.toJson(),
         deltaTokenOf: (s) => s.deltaToken,
-        inner: (_) async => _azSnap(deltaToken: 'TOK-9'),
+        inner: (_, {bool fullRead = false}) async =>
+            _azSnap(deltaToken: 'TOK-9'),
       );
 
       final fresh = await syncer(null);
@@ -73,7 +74,7 @@ void main() {
         syncedBy: 'op',
         payloadOf: (s) => s.toJson(),
         onError: (e) => reported = e,
-        inner: (_) async => _azSnap(),
+        inner: (_, {bool fullRead = false}) async => _azSnap(),
       );
 
       final fresh = await syncer(null);
@@ -93,7 +94,7 @@ void main() {
         store: store,
         syncedBy: 'op',
         payloadOf: (s) => s.toJson(),
-        inner: (_) async => throw Exception('network'),
+        inner: (_, {bool fullRead = false}) async => throw Exception('network'),
       );
 
       await expectLater(syncer(null), throwsException);

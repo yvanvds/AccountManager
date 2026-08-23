@@ -63,7 +63,7 @@ void main() {
       ) =>
           SystemState<S>(
             system: system,
-            syncer: (_) async {
+            syncer: (_, {bool fullRead = false}) async {
               synced.add(system);
               return make();
             },
@@ -507,6 +507,38 @@ void main() {
       await state.sync();
       expect(lookups(), ["employeeId in ('42')"],
           reason: 'no second lookup: GBS staff are not SSM\'s to remember');
+    });
+
+    test('a forced re-read drops the token but keeps remembering her (#316)',
+        () async {
+      // The interaction the drift pass turns on: `fullRead` drops the *resume
+      // point* and nothing else. A re-read that dropped the snapshot too — the
+      // way a moved prefix does — would forget the very ids the back-fill has to
+      // ask about, and the account would leave the app's view on the pass meant
+      // to repair it.
+      final snapshot =
+          await stateFor(held(deltaToken: 'AZ-TOKEN')).sync(fullRead: true);
+
+      expect(
+        transport.requests.where((r) => r.url.path.contains('users/delta')).map(
+              (r) => r.url.queryParameters[r'$deltatoken'],
+            ),
+        isNot(contains('AZ-TOKEN')),
+        reason: 'the stored token is not resumed from',
+      );
+      expect(
+        transport.requests
+            .where((r) => r.url.path.endsWith('/users'))
+            .map((r) => r.url.queryParameters[r'$filter'])
+            .where((f) => !(f ?? '').startsWith('employeeId in')),
+        ["companyName eq 'GBS' or startswith(department,'GBS')"],
+        reason: 'the school-scoped bulk read ran instead',
+      );
+      expect(lookups(), ["employeeId in ('42')"],
+          reason: 'previous still went in, so #269 still remembers her');
+      expect(snapshot.users.map((u) => u.id), ['az-staff']);
+      expect(snapshot.deltaToken, 'NEXT',
+          reason: 'the re-read mints a fresh token rather than carrying one');
     });
   });
 

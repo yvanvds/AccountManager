@@ -8339,7 +8339,7 @@ void main() {
   });
 
   testWidgets(
-      'a Check for drift whose stored Azure delta token Graph refuses still '
+      'an Azure re-pull whose stored delta token Graph refuses still '
       'finishes, on a full re-read that leaves a usable token behind, and '
       'reads as the clean pass it was (#213/#229)',
       (WidgetTester tester) async {
@@ -8377,9 +8377,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(azureWire.resumeTokens, isEmpty);
 
-    // Today: Check for drift, which is what re-reads Azure.
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    // Today: the operator flips a school **beheerd** in Instellingen, so the
+    // next Synchroniseer re-pulls Azure (#259) — incrementally, from the token
+    // the session holds. That is the pass a refusal can still happen on:
+    // **Controleer op drift** drops the stored token by design since #316, so
+    // it never sends one to be refused.
+    harness.markSchoolManaged(1);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
     // The pass finished instead of dying: no inline failure, not busy, and the
@@ -8446,10 +8451,11 @@ void main() {
       )),
     );
 
-    // A second drift check resumes from that fresh token: the recovery restored
+    // A second such pass resumes from that fresh token: the recovery restored
     // incremental syncing rather than condemning the app to full reads.
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    harness.markSchoolManaged(2);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(azureWire.resumeTokens, <String>['DEADTOKEN', 'FRESH-DELTA-TOKEN']);
     expect(azureWire.bulkReads, 1, reason: 'no second full read');
@@ -8776,10 +8782,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(azureWire.resumeTokens, isEmpty);
 
-    // Today: Check for drift, which is what re-reads Azure — incrementally,
-    // from the stored token.
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    // Today: the operator flips a school **beheerd** in Instellingen, so the
+    // next Synchroniseer re-pulls Azure (#259) — incrementally, from the stored
+    // token. That is the pass this bug lives on: **Controleer op drift** re-reads
+    // in full since #316, and a full read is not what the delta walk has to
+    // survive.
+    harness.markSchoolManaged(1);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
@@ -8813,8 +8823,8 @@ void main() {
   });
 
   testWidgets(
-      'an edit made by hand in Office 365 shows up on the very next Controleer '
-      'op drift, with the rest of the account intact (#288)',
+      'an edit made by hand in Office 365 shows up on the very next incremental '
+      'Azure pull, with the rest of the account intact (#288)',
       (WidgetTester tester) async {
     // The report: an administrator renames someone in the Entra portal, the
     // operator presses Controleer op drift, and nothing happens — the log says
@@ -8827,6 +8837,11 @@ void main() {
     // no `$select`, so every resumed row came back as `{id, <what changed>}`.
     // Read as a whole user such a row names no school, and the connector's
     // client-side prefix test dropped it.
+    //
+    // (The report came from **Controleer op drift**, which was the only pass
+    // that re-read Azure at the time. Since #316 that button drops the token and
+    // re-reads in full, so the incremental pass this bug lives on is reached the
+    // way the sync below reaches it — the walk itself is unchanged.)
     //
     // Only this layer sees the whole thing: it needs the stored token and the
     // seeded snapshot to make the pass incremental, the merge to keep the record
@@ -8882,10 +8897,14 @@ void main() {
           'entirely the hand-edit',
     );
 
-    // Today: Check for drift, the only route to an Azure read in normal
-    // operation — and incrementally, from the stored token.
-    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
-    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    // Today: the operator flips a school **beheerd** in Instellingen, so the
+    // next Synchroniseer re-pulls Azure (#259) — incrementally, from the stored
+    // token. Since #316 that is the pass which resumes a delta at all;
+    // **Controleer op drift** re-reads in full, and a sparse resumed row is
+    // precisely what a full read never has to cope with.
+    harness.markSchoolManaged(1);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
@@ -8920,6 +8939,113 @@ void main() {
   });
 
   testWidgets(
+      'Controleer op drift re-reads Azure in full, so a stale field no delta '
+      'could ever report is repaired and the phantom action goes away (#316)',
+      (WidgetTester tester) async {
+    // The report (#315): Acties offers `Office 365 · Wijzig de school in Azure`
+    // for a student whose Azure account already carries the school — and the
+    // proposal survives **Controleer op drift**, pass after pass, because the
+    // pass ran the ordinary incremental pull. `/users/delta` reports what
+    // changed *since our token*, which is precisely not "what does Azure hold
+    // right now": an edit older than the token, or one an earlier walk dropped,
+    // is unreachable forever. The only things that ever forced a full read were
+    // accidents (a token Graph refused, #213; a changed prefix, #246), neither
+    // of which an operator can ask for.
+    //
+    // Only this layer sees it: it needs the seeded snapshot and its token to
+    // make the pass incremental, the production Azure pull to decide which leg
+    // to take, the linker to rebuild the record, and the action engine to stop
+    // offering the write — which is the thing the operator was actually looking
+    // at.
+    useTallWindow(tester);
+    // Graph holds her with our school on it; the app's stored copy says another.
+    // Everything else about the account is in step, so the school is the only
+    // thing this pass can be about.
+    final azureWire = DriftedUserGraph(user: azUser(displayName: 'Jane Doe'));
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot, holding the school she was at *before* the
+      // transfer — and the token whose walks all missed the correction.
+      azureInitial: azSnap(
+        deltaToken: 'AZ-TOKEN',
+        users: [azUser(displayName: 'Jane Doe', companyName: 'SBE')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // The seeded Azure snapshot is reused untouched, its token unspent — so the
+    // linked view is built on the stale copy, exactly as the operator's was.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+    expect(azureWire.bulkReads, 0);
+
+    // And there is the phantom, on screen, the way it was reported.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final stale = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      stale.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de school in Azure'],
+    );
+    await selectAccount(tester, stale.targetId);
+    expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+
+    // So the operator does the one thing the screen offers for exactly this:
+    // Controleer op drift.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass asked Azure what it holds *now*: the stored token was not sent,
+    // the `$filter`-scoped bulk read ran, and a fresh token was left behind. The
+    // delta this wire would have answered reports nothing at all, so before
+    // #316 every one of these passes was a no-op.
+    expect(azureWire.resumeTokens, isEmpty);
+    expect(azureWire.bulkReads, 1);
+    expect(harness.app.azure.snapshot?.deltaToken, 'AZ-NEXT');
+    expect(harness.app.azure.snapshot?.users.single.companyName, 'GBS');
+
+    // Which is the whole point: the action the operator was staring at is gone,
+    // and no PATCH that would have changed nothing is offered for bulk apply.
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+    );
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    expect(find.text('Wijzig de school in Azure'), findsNothing);
+
+    // And the log says which kind of pass it was, so the two are still
+    // distinguishable afterwards — the diagnostic #315 went without.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains('Azure AD volledig opnieuw gelezen — 1 account(s).'),
+    );
+  });
+
+  testWidgets(
       'a staff member who left WISA still gets their Office 365 account '
       'proposed for deletion (#269)', (WidgetTester tester) async {
     // The other half of #268, and the worse one. Anna Smit has left the school:
@@ -8939,9 +9065,11 @@ void main() {
     // evaluated, and the account lives on with nothing but Office 365 itself to
     // show for it.
     //
-    // The unavoidable trigger is here too: the stored delta token is past Graph's
-    // 30-day window, so this pass recovers with a full read (#213) and the
-    // previous user list — which had been carrying her — is discarded.
+    // The trigger is the drift pass itself: since #316 it re-reads Azure in
+    // full, which discards the previous user list — the very list that had been
+    // carrying her. (Before that the same loss only arrived by accident, when
+    // Graph refused an aged token; this snapshot still carries one, and the
+    // pass no longer even sends it.)
     //
     // Only this layer sees the whole thing: the Azure pull has to remember her
     // from the snapshot it already holds, the linker has to keep the row it
@@ -8984,9 +9112,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
-    // The pass really was the losing one: the stale token was sent and refused,
-    // so the recovery re-read in full and the previous user list is gone.
-    expect(azureWire.resumeTokens, <String>['AZ-STALE']);
+    // The pass really was the losing one: it re-read in full, so the previous
+    // user list is gone. The stored token was not resumed from at all (#316) —
+    // dropping it is what makes this the full read, and the snapshot it came
+    // with still goes in, which is the only reason she survives below.
+    expect(azureWire.resumeTokens, isEmpty);
     expect(azureWire.bulkReads, 1);
 
     // She came back on the only leg left — one targeted lookup for an id WISA no

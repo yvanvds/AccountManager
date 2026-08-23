@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
+import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter/foundation.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
@@ -2196,6 +2197,18 @@ class ReconcileController extends ChangeNotifier {
   /// through other tools) and re-links. WISA is not re-pulled — that is what
   /// [sync] is for.
   ///
+  /// "Re-reads" is meant literally on both systems since #316. Smartschool
+  /// always was one — its syncer reads the whole site — but Azure ran the
+  /// ordinary incremental pull, resuming `/users/delta` from the stored token,
+  /// so the pass could only surface what Graph reported *since that token*.
+  /// Anything older, or anything an earlier walk dropped, was invisible to every
+  /// later pass, and the only things that ever forced a full read were accidents
+  /// (a token Graph refused, #213; a changed school prefix, #246). This pass now
+  /// asks for the full read outright. It is materially more expensive than a
+  /// delta — the whole school, though still `$filter`-bounded — and that is the
+  /// trade: the delta path stays what [sync] uses, and the operator pays for the
+  /// re-read only on the button whose job is to repair drift.
+  ///
   /// Refuses outright while [driftBlockedReason] is set: because WISA is not
   /// re-pulled here, a pass run after a werkdatum change would reconcile against
   /// the roster the change never reached and publish that to the whole team
@@ -2239,8 +2252,27 @@ class ReconcileController extends ChangeNotifier {
       await _renewLock();
       log.addMessage(core.Origin.azure, 'Azure AD controleren op drift…');
       final azPulledWith = _settingsFingerprint(core.Origin.azure);
-      _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
+      // **In full**, not as an incremental resume (#316). `/users/delta` reports
+      // what Graph chose to send since our stored token, which is precisely not
+      // "what does Azure hold right now": an edit older than the token — or one
+      // an earlier walk dropped — survives every later delta, so the pass whose
+      // whole job is to repair drift could never see the drift it was run for.
+      // Only the *token* is dropped; the snapshot in hand still goes to the
+      // syncer, which remembers from it the staff ids the back-fill must keep
+      // asking about (#269).
+      final azure =
+          await app.sync(core.Origin.azure, fullRead: true) as az.AzureSnapshot;
+      _recordPull(core.Origin.azure, azure);
       _stampPull(core.Origin.azure, azPulledWith);
+      // Says which kind of pass this was, in the panel the operator reads: a
+      // delta pass leaves `Azure: delta voor "…" — N gewijzigd` behind, this one
+      // leaves the size of the whole read. Without it the two are
+      // indistinguishable after the fact, which is what made #315 so hard to
+      // pin down.
+      log.addMessage(
+        core.Origin.azure,
+        'Azure AD volledig opnieuw gelezen — ${azure.users.length} account(s).',
+      );
       _setProgress(0.6);
 
       if (app.wisa.snapshot == null) {

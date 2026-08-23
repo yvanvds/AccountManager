@@ -313,7 +313,7 @@ class _Harness {
       initial: wisa ?? _wSnap(),
       // A re-sync re-reads the base rows filtered by the current rule set —
       // exactly what the real WISA connector does at snapshot construction.
-      syncer: (_) async {
+      syncer: (_, {bool fullRead = false}) async {
         counts[0]++;
         // Students carry no drop rule; staff are filtered by the accumulated
         // DontImportUserFromWisa rules, as the real connector does.
@@ -326,7 +326,7 @@ class _Harness {
     final ssState = SystemState<ss.SmartschoolSnapshot>(
       system: core.Origin.smartschool,
       initial: ssSnap,
-      syncer: (_) async {
+      syncer: (_, {bool fullRead = false}) async {
         counts[1]++;
         return ssSnap;
       },
@@ -334,7 +334,7 @@ class _Harness {
     final azState = SystemState<az.AzureSnapshot>(
       system: core.Origin.azure,
       initial: azSnap,
-      syncer: (_) async {
+      syncer: (_, {bool fullRead = false}) async {
         counts[2]++;
         return azSnap;
       },
@@ -1138,17 +1138,17 @@ void main() {
           wisa: SystemState<wapi.WisaSnapshot>(
             system: core.Origin.wisa,
             initial: _wSnap(),
-            syncer: (_) async => _wSnap(),
+            syncer: (_, {bool fullRead = false}) async => _wSnap(),
           ),
           smartschool: SystemState<ss.SmartschoolSnapshot>(
             system: core.Origin.smartschool,
             initial: _sSnap(),
-            syncer: (_) async => _sSnap(),
+            syncer: (_, {bool fullRead = false}) async => _sSnap(),
           ),
           azure: SystemState<az.AzureSnapshot>(
             system: core.Origin.azure,
             initial: _aSnap(users: [_azUser(id: 'az-orphan')]),
-            syncer: (_) async => _aSnap(),
+            syncer: (_, {bool fullRead = false}) async => _aSnap(),
           ),
         ),
         connectors:

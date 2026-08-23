@@ -221,17 +221,17 @@ class _Harness {
       wisa: SystemState<wapi.WisaSnapshot>(
         system: core.Origin.wisa,
         initial: wisa ?? _wSnap(),
-        syncer: (_) async => wisa ?? _wSnap(),
+        syncer: (_, {bool fullRead = false}) async => wisa ?? _wSnap(),
       ),
       smartschool: SystemState<ss.SmartschoolSnapshot>(
         system: core.Origin.smartschool,
         initial: smartschool ?? _sSnap(),
-        syncer: (_) async => smartschool ?? _sSnap(),
+        syncer: (_, {bool fullRead = false}) async => smartschool ?? _sSnap(),
       ),
       azure: SystemState<az.AzureSnapshot>(
         system: core.Origin.azure,
         initial: azure ?? _aSnap(),
-        syncer: (_) async => azure ?? _aSnap(),
+        syncer: (_, {bool fullRead = false}) async => azure ?? _aSnap(),
       ),
     );
     var n = 0;

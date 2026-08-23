@@ -562,6 +562,91 @@ class HandEditedUserGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering the way the tenant answers when the app's
+/// stored copy of an account has drifted **past what any delta can report**
+/// (#315/#316).
+///
+/// Graph holds the account as it stands now — that is [user], and the
+/// `$filter`-scoped bulk read returns it. A resumed `/users/delta` reports
+/// **nothing**: the edit predates the token the session holds, which is the
+/// whole point. So an incremental pass, however many times it is run, can only
+/// ever confirm the stale copy the app already has, while a re-read repairs it
+/// in one.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from and the account as the app
+/// wrongly remembers it.
+class DriftedUserGraph implements az.GraphTransport {
+  DriftedUserGraph({az.AzureUser? user, this.freshToken = 'AZ-NEXT'})
+      : user = user ?? azUser();
+
+  /// The account exactly as Graph holds it — what a full read returns.
+  final az.AzureUser user;
+
+  /// The token a pass leaves behind, whichever leg it took.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order — empty on a
+  /// pass that re-read instead.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      // Nothing changed *since the token*, which is not the same thing as
+      // nothing being wrong.
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value': const <Object>[],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{
+      'value': <Map<String, dynamic>>[_row(user)],
+    });
+  }
+
+  static Map<String, dynamic> _row(az.AzureUser u) => <String, dynamic>{
+        'id': u.id,
+        'userPrincipalName': u.upn,
+        if (u.employeeId != null) 'employeeId': u.employeeId,
+        'displayName': u.displayName,
+        'givenName': u.givenName,
+        'surname': u.surname,
+        if (u.companyName != null) 'companyName': u.companyName,
+        if (u.department != null) 'department': u.department,
+        'accountEnabled': u.accountEnabled,
+      };
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [az.GraphTransport] answering the way the tenant answers on the pass that
 /// has to notice a staff member **left** WISA (#269).
 ///
@@ -1158,6 +1243,10 @@ az.AzureUser azUser({
   String displayName = '',
   String givenName = '',
   String surname = '',
+  // The school stamped on a student account. The harness prefix by default, so
+  // the account is in step; a fixture about a *stale* copy of it (#315/#316)
+  // names another school here.
+  String companyName = 'GBS',
 }) =>
     az.AzureUser(
       id: id,
@@ -1166,7 +1255,7 @@ az.AzureUser azUser({
       displayName: displayName,
       givenName: givenName,
       surname: surname,
-      companyName: 'GBS',
+      companyName: companyName,
     );
 
 /// An Azure **staff** account. Staff carry no `companyName`; their school lives
@@ -3452,14 +3541,14 @@ class ReconcileHarness {
         log: log,
         clock: () => kFixtureDate,
       );
-      wisaSync = (previous) async {
+      wisaSync = (previous, {bool fullRead = false}) async {
         wisaSyncs++;
         final error = wisaError;
         if (error != null) throw error;
-        return inner(previous);
+        return inner(previous, fullRead: fullRead);
       };
     } else {
-      wisaSync = (_) async {
+      wisaSync = (_, {bool fullRead = false}) async {
         wisaSyncs++;
         final error = wisaError;
         if (error != null) throw error;
@@ -3483,7 +3572,7 @@ class ReconcileHarness {
         transport: ssTransport,
         log: log,
       );
-      ssSync = (_) async {
+      ssSync = (_, {bool fullRead = false}) async {
         ssSyncs++;
         // The live document's rules win when it carries any (#246), exactly as
         // `bootstrapReconcile` reads `live.current.smartschoolRules` at pull
@@ -3494,7 +3583,7 @@ class ReconcileHarness {
         );
       };
     } else {
-      ssSync = (_) async {
+      ssSync = (_, {bool fullRead = false}) async {
         ssSyncs++;
         return ssResult;
       };
@@ -3547,13 +3636,18 @@ class ReconcileHarness {
           return prefix.isEmpty ? 'GBS' : prefix;
         },
       );
-      azSync = (previous) async {
+      azSync = (previous, {bool fullRead = false}) async {
         azSyncs++;
-        return inner(previous);
+        // Forwarded, so a test can press **Controleer op drift** and see the
+        // production syncer take the full-read branch it forces (#316).
+        return inner(previous, fullRead: fullRead);
       };
     } else {
-      azSync = (_) async {
+      azSync = (_, {bool fullRead = false}) async {
         azSyncs++;
+        // What the pass asked for, so a test with a scripted Azure pull can
+        // still assert that a drift check asks for a re-read (#316).
+        azFullReads += fullRead ? 1 : 0;
         // When a test wires a gate, the Azure pull parks here until released,
         // so a widget test can hold a sync mid-flight and observe the busy
         // progress bar the earlier stages have already advanced (#176).
@@ -3881,6 +3975,37 @@ class ReconcileHarness {
   int wisaSyncs = 0;
   int ssSyncs = 0;
   int azSyncs = 0;
+
+  /// How many of those [azSyncs] were asked for as a **re-read** rather than an
+  /// incremental resume (#316) — what **Controleer op drift** forces. Counted on
+  /// the scripted pull, so a test that models no Graph at all can still prove
+  /// which kind of pass ran.
+  int azFullReads = 0;
+
+  /// Models the operator flipping a WISA school **beheerd** in Instellingen —
+  /// a saved *Azure pull input* (`azurePullFingerprint`, #259), so the next
+  /// **Synchroniseer** re-pulls Azure instead of leaving the snapshot this
+  /// session already holds alone.
+  ///
+  /// Which is what a test about the **incremental** Azure pass has to reach for
+  /// since #316: **Controleer op drift** re-reads Azure in full by design, so
+  /// the smart sync is the pass that still resumes the stored delta token. The
+  /// school is written with the name and code a [wisaSchool] fixture carries, so
+  /// the school-profile back-fill (#207) finds nothing to repair afterwards.
+  void markSchoolManaged(int schoolId) {
+    final profiles = <WisaSchoolProfile>[
+      for (final p in liveSettings.current.wisaSchools)
+        if (p.schoolId != schoolId) p,
+      WisaSchoolProfile(
+        schoolId: schoolId,
+        name: 'School $schoolId',
+        ours: true,
+      ),
+    ]..sort((a, b) => a.schoolId.compareTo(b.schoolId));
+    liveSettings.publish(
+      liveSettings.current.copyWith(wisaSchools: profiles),
+    );
+  }
 
   final RecordingSoap soap = RecordingSoap();
   final RecordingGraph graph = RecordingGraph();

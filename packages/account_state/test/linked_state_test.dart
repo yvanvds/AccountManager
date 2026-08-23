@@ -213,7 +213,7 @@ final _staffConfig =
 SystemState<S> _sys<S extends core.Snapshot>(core.Origin o, S? initial) =>
     SystemState<S>(
       system: o,
-      syncer: (_) async => initial as S,
+      syncer: (_, {bool fullRead = false}) async => initial as S,
       initial: initial,
     );
 

@@ -38,14 +38,21 @@ class ApplicationState {
   /// [core.Origin.smartschool], or [core.Origin.azure]); the [core.Origin.all]
   /// and [core.Origin.other] wildcards are not syncable and throw
   /// [ArgumentError].
-  Future<core.Snapshot> sync(core.Origin system) {
+  ///
+  /// [fullRead] asks for a deliberate re-read rather than an incremental resume
+  /// (#316) — see [Syncer]. It is what **Controleer op drift** passes: a pass
+  /// whose whole job is to find what somebody changed behind the app's back
+  /// cannot be scoped to what the stored resume point happens to report. WISA
+  /// and Smartschool read in full every pass anyway, so it changes nothing for
+  /// them.
+  Future<core.Snapshot> sync(core.Origin system, {bool fullRead = false}) {
     switch (system) {
       case core.Origin.wisa:
-        return wisa.sync();
+        return wisa.sync(fullRead: fullRead);
       case core.Origin.smartschool:
-        return smartschool.sync();
+        return smartschool.sync(fullRead: fullRead);
       case core.Origin.azure:
-        return azure.sync();
+        return azure.sync(fullRead: fullRead);
       case core.Origin.all:
       case core.Origin.other:
         throw ArgumentError.value(
@@ -102,6 +109,14 @@ class ApplicationState {
 /// pull this syncer performed, the stored token and previous list are dropped
 /// and the pass re-reads in full — the same recovery #213 already makes when
 /// Graph refuses a token.
+///
+/// **A caller can force the same full read** by passing `fullRead: true`
+/// (#316), which is what **Controleer op drift** does. That case is narrower
+/// than a moved prefix: the snapshot in hand still describes *our* school, so
+/// only the token is dropped and `previous` goes in untouched — the pass reads
+/// Azure whole while [retainedStaffEmployeeIds] still remembers who to keep
+/// asking about (#269).
+///
 /// [expectedGroupMailNicknames] is the group half of the same idea (#280), and
 /// is read at sync time **with the prefix this pass resolved**: the addresses
 /// are `<PREFIX>-<KLAS>`, so the callback cannot be handed a frozen prefix any
@@ -118,7 +133,7 @@ Syncer<AzureSnapshot> azureSyncer(
   // value, which is the one the cold seed (if any) was pulled with: bootstrap
   // wires this from the very document it just loaded.
   var pulledWith = schoolPrefix?.call() ?? connector.credentials.schoolPrefix;
-  return (previous) {
+  return (previous, {bool fullRead = false}) {
     final prefix = schoolPrefix?.call() ?? connector.credentials.schoolPrefix;
     final moved = prefix != pulledWith;
     pulledWith = prefix;
@@ -127,7 +142,15 @@ Syncer<AzureSnapshot> azureSyncer(
     // *previous* school — so it is dropped whole rather than in pieces.
     final carried = moved ? null : previous;
     return connector.sync(
-      deltaToken: carried?.deltaToken,
+      // A [fullRead] pass drops the resume point and **only** the resume point
+      // (#316). `/users/delta` reports what changed since our token, so an edit
+      // older than it — or one an earlier walk dropped — survives every later
+      // incremental pass; the connector's `_fullRead` branch is what asks Azure
+      // what it holds right now. The snapshot itself still goes in: the ids the
+      // back-fill keeps asking about are remembered from it (#269), and a
+      // re-read that forgot them would take a departed staff member's account
+      // out of the app's view on the very pass meant to repair the view.
+      deltaToken: fullRead ? null : carried?.deltaToken,
       previous: carried,
       expectedEmployeeIds: <String>{
         ...?expectedEmployeeIds?.call(),

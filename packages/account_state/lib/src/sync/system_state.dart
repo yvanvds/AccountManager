@@ -9,9 +9,21 @@ import 'package:account_core/account_core.dart' as core;
 /// (PAIN-2). Syncers whose systems do a full read each time (WISA, Smartschool)
 /// simply ignore it.
 ///
+/// [fullRead] says **this pass is a deliberate re-read**: build the snapshot
+/// from what the system holds right now rather than resuming whatever
+/// incremental state [previous] carries (#316). Only the *resume point* is
+/// dropped — [previous] is still handed in, so a syncer that remembers things
+/// from the snapshot in hand (Azure's retained staff ids, #269) keeps
+/// remembering them. Syncers that read the whole system every pass ignore it,
+/// exactly as they ignore [previous]; it costs them nothing because they have no
+/// resume point to drop.
+///
 /// A syncer that throws leaves the [SystemState] untouched — the previous
 /// snapshot and `lastSync` survive a failed sync (domain-model §6.1).
-typedef Syncer<S extends core.Snapshot> = Future<S> Function(S? previous);
+typedef Syncer<S extends core.Snapshot> = Future<S> Function(
+  S? previous, {
+  bool fullRead,
+});
 
 /// Tests whether a connector is configured and reachable. Returns `true` on a
 /// successful probe. Used by [SystemState.test]; kept separate from [Syncer]
@@ -75,13 +87,18 @@ class SystemState<S extends core.Snapshot> {
   /// intact and the error propagates to the caller (domain-model §6.1).
   /// Concurrent syncs are rejected with a [StateError] rather than racing on
   /// the shared snapshot slot.
-  Future<S> sync() async {
+  ///
+  /// [fullRead] asks the syncer for a deliberate re-read instead of an
+  /// incremental resume (#316) — see [Syncer]. The snapshot in hand is handed to
+  /// the syncer either way; the flag only says whether the pass may build on the
+  /// resume point that snapshot carries.
+  Future<S> sync({bool fullRead = false}) async {
     if (_syncing) {
       throw StateError('A $system sync is already in progress');
     }
     _syncing = true;
     try {
-      final fresh = await _syncer(_snapshot);
+      final fresh = await _syncer(_snapshot, fullRead: fullRead);
       _snapshot = fresh;
       _lastSync = fresh.fetchedAt;
       return fresh;

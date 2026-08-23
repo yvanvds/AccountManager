@@ -443,7 +443,11 @@ Future<ReconcileServices> bootstrapReconcile({
         // whichever pass the operator runs next: a moved
         // `smartschoolPullFingerprint` makes the smart sync re-pull this system
         // instead of leaving the snapshot it already holds alone.
-        inner: (_) => ssConnector.sync(rules: live.current.smartschoolRules),
+        // `fullRead` is ignored here and everywhere Smartschool is pulled: the
+        // connector reads the whole site every pass, so there is no resume
+        // point a drift check could be asked to drop (#316).
+        inner: (_, {bool fullRead = false}) =>
+            ssConnector.sync(rules: live.current.smartschoolRules),
       ),
     ),
     azure: SystemState<az.AzureSnapshot>(
@@ -666,7 +670,9 @@ Syncer<wapi.WisaSnapshot> wisaSyncer(
   core.ILog? log,
   DateTime Function() clock = DateTime.now,
 }) =>
-    (_) async {
+    // `fullRead` is ignored: WISA is read whole on every pass, so a drift check
+    // asking for a re-read is asking for what it already gets (#316).
+    (_, {bool fullRead = false}) async {
       // One consistent read for the whole pull: a save landing mid-pull must not
       // split the school list and the work dates across two documents.
       final current = settings.current;
