@@ -300,14 +300,14 @@ The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `Mark
 ### Account / person
 
 - **INV-10 [I]:** Every `WisaStudent` has a non-null, non-empty `wisaId`. *Legacy assumes; CSV may produce empty rows.*
-- **INV-11 [I]:** No two `WisaStudent`s share a `wisaId`. *Assumed, not checked.*
+- **INV-11 [I]:** No two `WisaStudent`s share a `wisaId` **within one school**. Across the aggregated pull they do: the shared WISA credentials are queried one school at a time and the results concatenated, and `WisaStudent.schoolId` is a single int, so a student enrolled in two group schools arrives as two rows carrying the same `wisaId` and different `schoolId`/`classGroup` (#318). A `wisaId` identifies a **person**, not a row.
 - **INV-12 [D]:** `mail` and `upn` are compared **case-insensitively** and trimmed. *Legacy `.Equals()` is case-sensitive — a latent bug we don't preserve.*
 - **INV-13 [I]:** Two Smartschool accounts may legitimately share a `mail` only via the co-account mechanism. The legacy linker silently drops one when this happens; see INV-23.
 
 ### Linking
 
 - **INV-20 [D]:** `link` is a **pure function**: `(WisaSnapshot, SmartschoolSnapshot, AzureSnapshot) → LinkedSnapshot`. Same input ⇒ same output.
-- **INV-21 [D]:** Every WISA student appears in **exactly one** `LinkedAccount`.
+- **INV-21 [D]:** Every WISA **person** appears in **exactly one** `LinkedAccount` — per person, not per row (#318, and see INV-11). A person the aggregated pull returns twice merges into one record whose `wisaSchoolIds` holds *both* schools, so `WisaPresence` reads `ours` when either of them is ours; the record's `wisa` — the row the class placement is derived from — is the row of a managed school, never whichever school the pull happened to read first. Linking per row instead minted a second record for the same person, and since both rows key on `wisa:<wisaId>` the resolver handed the two records the **same** `LinkedAccountId`, putting two records' actions on one card.
 - **INV-22 [D]:** Every Azure user with `companyName == schoolPrefix` (students) or `department contains schoolPrefix` (staff) appears in **exactly one** `LinkedAccount`, even after the person has left the school (so the engine can raise a remove action). Both tests have a single implementation, `account_core`'s `studentBelongsToSchool` / `staffBelongsToSchool` (and their union `belongsToSchool`), which the linker, the Azure connector's client-side reads, and the staff-retention rule all call (#279). Blank prefix matches nobody. A connector read narrower than the linker is silently lossy — the linker never gets to ask about a row the read dropped — which is why the rule may not be re-implemented per package.
 - **INV-23 [D]:** When two Smartschool accounts collide on `mail`, **both** end up in some `LinkedAccount`, never silently dropped. A `ResolveDuplicateMail` warning action is raised.
 

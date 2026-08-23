@@ -21,10 +21,18 @@ const Address _blankAddress = Address(
 /// A WISA student carrying only the fields the linker reads (`wisaId`,
 /// `schoolId`); the rest are inert defaults. [schoolId] selects which group
 /// school the student sits in (the ours-vs-group join, #134).
-wapi.WisaStudent wisaStudent(String wisaId, {int schoolId = 1}) =>
+///
+/// [classGroup] is otherwise inert to the linker, but it is what tells two rows
+/// of the *same* person apart when they come from two group schools (#318) —
+/// the class is the payload the ours-school row has to win with.
+wapi.WisaStudent wisaStudent(
+  String wisaId, {
+  int schoolId = 1,
+  String classGroup = '',
+}) =>
     wapi.WisaStudent(
       wisaId: WisaId(wisaId),
-      classGroup: '',
+      classGroup: classGroup,
       classSubGroup: '',
       name: 'Doe',
       firstName: 'Jane',

@@ -133,14 +133,27 @@ void main() {
     });
 
     Glados(_scenario).test(
-      'INV-21: every WISA student appears in exactly one account',
+      'INV-21: every WISA person appears in exactly one account',
       (specs) {
+        // Per **person**, not per row (#318). The shared WISA credentials pull
+        // one school at a time and concatenate, and `schoolId` is a single int,
+        // so one person enrolled in two group schools arrives as two rows
+        // sharing a `wisaId`. Read per row — as this property was until #318 —
+        // the invariant demanded a record for each of them, which is exactly
+        // the second record that collapsed onto the first's `LinkedAccountId`.
+        // What must hold is that the person links **once**, holding one of
+        // their own rows; the tag pool is small enough that these scenarios
+        // generate repeated wisaIds routinely.
         final built = _build(specs, SeqResolver());
+        final rowsOf = <String, List<wapi.WisaStudent>>{};
         for (final student in built.students) {
+          (rowsOf[student.wisaId.value] ??= <wapi.WisaStudent>[]).add(student);
+        }
+        for (final entry in rowsOf.entries) {
           final hits = built.linked.accounts
-              .where((a) => identical(a.wisa, student))
+              .where((a) => entry.value.any((row) => identical(a.wisa, row)))
               .length;
-          expect(hits, 1, reason: 'student ${student.wisaId} appeared $hits×');
+          expect(hits, 1, reason: 'person ${entry.key} appeared $hits×');
         }
       },
     );

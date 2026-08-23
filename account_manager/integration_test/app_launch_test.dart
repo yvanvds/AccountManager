@@ -1687,6 +1687,79 @@ void main() {
   });
 
   testWidgets(
+      'a student enrolled in two WISA schools gets one card, offering only the '
+      'provisioning work (#318)', (WidgetTester tester) async {
+    // The screenshot on the report: one card offering "Maak een nieuw Office
+    // 365 account" *and* the Smartschool departure either/or — create this
+    // student's account and unregister it in the same breath, for someone
+    // enrolled with us right now. Two linked records carrying one
+    // `LinkedAccountId`, because both of the person's WISA rows keyed on
+    // `wisa:1`, and the card is assembled from that id.
+    //
+    // Driven end-to-end because the collapse is invisible below this level: the
+    // linker's own records are individually coherent, and it is only where the
+    // screen groups them by id that the contradiction appears.
+    useTallWindow(tester);
+    final harness = dualEnrolledHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // One person, one pending entry — and both of their schools on the record,
+    // which is what makes the presence read `ours` instead of `groupOnly`.
+    final students = harness.controller.pendingEntries
+        .where((e) => e.family == 'student')
+        .toList();
+    expect(students, hasLength(1));
+    final entry = students.single;
+
+    // The contradiction itself: provisioning and departure can never both be
+    // true of one account, and before #318 this entry carried all three.
+    final kinds =
+        entry.choices.expand((c) => c.alternatives).map((a) => a.kind).toList();
+    expect(kinds, contains('AddStudentToAzure'));
+    expect(kinds, isNot(contains('UnregisterStudentFromSmartschool')),
+        reason: 'the student is enrolled with us — never offer to unregister');
+    expect(kinds, isNot(contains('DeleteStudentFromSmartschool')));
+
+    // One person, one linked record, carrying *both* of their schools — which
+    // is what makes the presence read `ours` instead of `groupOnly`.
+    expect(
+      harness.controller.linked!.snapshot.accounts.single.wisaSchoolIds,
+      const {1, 2},
+    );
+
+    // On screen: the row files them under **our** class — the placement comes
+    // from the ours-school row, not from whichever school the concatenated pull
+    // read first (the sibling's `4ECO` arrives ahead of our `3BO` here).
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final Finder row = find.byKey(ValueKey('account-row-${entry.targetId}'));
+    expect(row, findsOneWidget);
+    expect(
+        find.descendant(of: row, matching: find.text('3BO')), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('4ECO')), findsNothing);
+    expect(find.descendant(of: row, matching: find.text('Zonder klas')),
+        findsNothing);
+
+    // …and the card offers the provisioning alone. The departure either/or is
+    // the half that must never share a card with it.
+    await selectAccount(tester, entry.targetId);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    expect(find.text('Schrijf de leerling uit in Smartschool'), findsNothing);
+    expect(find.text('Verwijder dit account uit Smartschool'), findsNothing);
+  });
+
+  testWidgets(
       'the Actions list hides a school the operator does not manage in '
       'Settings, re-bucketing its student to the leaver group (#178)',
       (WidgetTester tester) async {

@@ -1600,6 +1600,37 @@ ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
       ourSchoolIds: ourSchoolIds,
     );
 
+/// A harness for the dual-enrolled student (#318). One person — WISA id `1`,
+/// the Smartschool account [ssAccount] already carries — enrolled in **two**
+/// group schools, of which only school 1 is ours. The shared WISA credentials
+/// pull one school at a time and concatenate, so that person arrives as two
+/// rows sharing a `wisaId`: the sibling school's `4ECO` first, our own `3BO`
+/// second. There is no Azure account yet, so the only work owed is the
+/// provisioning.
+///
+/// Before #318 the second row spawned a *second* record, both keyed
+/// `wisa:1` and so handed the same `LinkedAccountId`: one card offering "Maak
+/// een nieuw Office 365 account" (the ours record) next to the Smartschool
+/// unregister/delete either/or (the sibling record) — a proposal to unregister
+/// a student who is enrolled with us right now.
+ReconcileHarness dualEnrolledHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '4ECO', schoolId: 2),
+          wisaStudent(wisaId: '1', classGroup: '3BO', schoolId: 1),
+        ],
+        classGroups: [wisaClassGroup('3BO')],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+
 /// A harness for the school-less Actions drill-down (#210). Two managed schools
 /// (1 and 2) each hold students, and their years overlap: school 1 has `1A` and
 /// `3C`, school 2 has `1B` and the non-numeric `OKAN`. So a correct overview
