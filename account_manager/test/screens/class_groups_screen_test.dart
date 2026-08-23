@@ -207,11 +207,45 @@ void main() {
   testWidgets(
       'an informational-only class colours no cell, and still lights its row '
       '(#298)', (WidgetTester tester) async {
-    // `GBS-9Z` is the group of a class that stopped running. Its decision is an
-    // either/or whose default half is the "laat staan" notice (#271), so there
-    // is no write pending and the Office 365 cell stays green — while the row
-    // itself is highlighted, because `needsAttention` counts the notice and on
-    // this screen the notice *is* the work (#225/#250).
+    // `9Z` is an official Smartschool class WISA does not have. Its decision is
+    // an either/or whose default half is the "laat deze klas staan" notice
+    // (#313), so there is no write pending and the Smartschool cell stays green
+    // — while the row itself is highlighted, because `needsAttention` counts the
+    // notice and on this screen the notice *is* the work (#225/#250).
+    //
+    // (This claim used to be made on a stale Office 365 group, whose pair had
+    // the same polarity. Since #327 that row proposes a delete outright, so it
+    // is no longer an informational-only class — see the test below.)
+    _useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, '9Z', core.Origin.smartschool),
+        SystemIndicatorState.inOrder);
+    expect(_cell(tester, '9Z', core.Origin.wisa), SystemIndicatorState.missing);
+    expect(
+        _cell(tester, '9Z', core.Origin.azure), SystemIndicatorState.missing);
+
+    final ColorScheme colors = Theme.of(tester.element(_row('9Z'))).colorScheme;
+    final Container box = tester.widget<Container>(_row('9Z'));
+    expect(
+      ((box.decoration! as BoxDecoration).border! as Border).top.color,
+      colors.primary,
+      reason: 'the row still asks something of the operator',
+    );
+  });
+
+  testWidgets(
+      'a stale Office 365 group colours its own cell, because the delete is '
+      'work this screen can do (#298/#327)', (WidgetTester tester) async {
+    // `GBS-9Z` is the group of a class that stopped running. Until #327 its
+    // decision defaulted to a notice that wrote nothing, so the cell read green
+    // while the card in fact carried a delete one radio away. Now the delete is
+    // the card's single proposal, and the cell says so: there is an applyable
+    // Office 365 write pending on this very screen.
     _useTallWindow(tester);
     final harness = azureClassGroupHarness(withStaleGroup: true);
     await harness.controller.sync();
@@ -220,20 +254,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_cell(tester, 'GBS-9Z', core.Origin.azure),
-        SystemIndicatorState.inOrder);
+        SystemIndicatorState.needsWork);
     expect(_cell(tester, 'GBS-9Z', core.Origin.wisa),
         SystemIndicatorState.missing);
     expect(_cell(tester, 'GBS-9Z', core.Origin.smartschool),
         SystemIndicatorState.missing);
-
-    final ColorScheme colors =
-        Theme.of(tester.element(_row('GBS-9Z'))).colorScheme;
-    final Container box = tester.widget<Container>(_row('GBS-9Z'));
-    expect(
-      ((box.decoration! as BoxDecoration).border! as Border).top.color,
-      colors.primary,
-      reason: 'the row still asks something of the operator',
-    );
   });
 
   testWidgets(
@@ -953,8 +978,8 @@ void main() {
   });
 
   testWidgets(
-      'a stale class group offers a delete, and leaving it alone is the '
-      'default (#271)', (WidgetTester tester) async {
+      'a stale class group proposes its delete and nothing else (#271/#327)',
+      (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = azureClassGroupHarness(withStaleGroup: true);
     await harness.controller.sync();
@@ -966,34 +991,48 @@ void main() {
     await tester.tap(find.byKey(entry));
     await tester.pumpAndSettle();
 
-    // Two radios, one choice — never two independent to-dos.
-    final leave =
-        find.byKey(const ValueKey('alt-GBS-9Z-AzureClassGroupWithoutClass'));
-    final delete =
-        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
-    expect(leave, findsOneWidget);
-    expect(delete, findsOneWidget);
+    // One proposal, no radio pair: "laat de groep staan" and "doe niets" are
+    // the same act, and the operator performs the second by not pressing
+    // Toepassen (#327).
+    expect(
+      find.byKey(const ValueKey('alt-GBS-9Z-AzureClassGroupWithoutClass')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup')),
+        findsNothing);
+    expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+    expect(find.byIcon(Icons.radio_button_unchecked), findsNothing);
+    expect(find.text('Kies één oplossing:'), findsNothing);
+    expect(
+      find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+      findsNothing,
+      reason: 'the no-op is not on offer any more',
+    );
+
+    // The card leads with the delete's own summary, and states the inventory of
+    // what goes with the group.
     expect(
       find.text('Verwijder de Office 365-groep GBS-9Z van de verdwenen '
           'klas 9Z'),
-      findsOneWidget,
+      findsWidgets,
     );
+    expect(find.text('leden: 0'), findsOneWidget);
+    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
+        findsOneWidget);
 
-    // The default is the informational half, so nothing is applyable until the
-    // operator deliberately picks the delete.
+    // Nothing was written by opening the card: the delete runs on the
+    // operator's press, behind the ordinary confirmation.
+    expect(harness.graph.deletedGroups, isEmpty);
     final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
-    await tester.ensureVisible(apply);
-    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
-        reason: 'a delete must never be the pre-selected resolution');
-
-    await tester.ensureVisible(delete);
-    await tester.tap(delete);
-    await tester.pumpAndSettle();
     await tester.ensureVisible(apply);
     expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
 
     await tester.tap(apply);
     await tester.pumpAndSettle();
+    expect(harness.graph.deletedGroups, isEmpty,
+        reason: 'the confirmation is still standing');
+    expect(find.textContaining('GBS-9Z'), findsWidgets,
+        reason: 'the dialog names the group it is about to take');
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -1001,6 +1040,39 @@ void main() {
     expect(_row('GBS-9Z'), findsNothing,
         reason: 'the relink drops the group the operator just removed');
     expect(_row('1A'), findsOneWidget, reason: 'no other class was touched');
+  });
+
+  testWidgets(
+      'a stale group with no object id keeps its lone "(manueel)" notice '
+      '(#327)', (WidgetTester tester) async {
+    // The one stale group the delete cannot act on: there is no id to address a
+    // DELETE to, so the row falls back to stating the situation — informational,
+    // marked "(manueel)", with no apply of its own.
+    _useTallWindow(tester);
+    final harness = staleClassGroupHarness(idlessStaleGroup: true);
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+      findsWidgets,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets,
+        reason: 'an informational row is still marked as one');
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-GBS-9Z')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup')),
+        findsNothing);
+    expect(find.textContaining('Verwijder de Office 365-groep GBS-9Z'),
+        findsNothing);
+    final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
+        reason: 'an informational row writes nothing');
   });
 
   testWidgets('a class that still exists is offered no delete (#271)',
@@ -1019,7 +1091,8 @@ void main() {
       find.byKey(const ValueKey('alt-2F ECO-DeleteAzureClassGroup')),
       findsNothing,
     );
-    expect(find.textContaining('Verwijder de Office 365-groep'), findsNothing,
+    expect(find.textContaining('Verwijder de Office 365-groep GBS-2F'),
+        findsNothing,
         reason: '2F is a running class — deleting its group is not on offer');
   });
 
@@ -1038,10 +1111,10 @@ void main() {
 
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget,
         reason: 'the cohort is still worth naming; only the pair is withdrawn');
-    // Neither half of this either/or may be written in bulk — the notice
-    // because it writes nothing, the delete because #293 withholds it — so the
-    // header carries no pair rather than a dead "Alles toepassen (0)" the
-    // operator can go and make live (#326).
+    // Since #327 the delete is the *selected* resolution of both rows, so the
+    // only thing keeping it off the bulk path is the #293 sanction #326 taught
+    // the header to read — hence no pair rather than a dead "Alles toepassen
+    // (2)" one confirmation away from two deleted groups.
     expect(find.textContaining('Alles toepassen ('), findsNothing);
     expect(find.text('Dry-run alles'), findsNothing);
 
@@ -1058,14 +1131,15 @@ void main() {
       'the stale-group card states the group\'s facts instead of diffing them '
       '(#305)', (WidgetTester tester) async {
     // `GBS-9Z` is the group of a class that stopped running, still holding its
-    // 21 members. Under the heading "Laat de Office 365-groep GBS-9Z staan"
-    // its two fields read
+    // 21 members. Under the heading "Verwijder de Office 365-groep GBS-9Z" its
+    // three fields once read
     //
     //   mail: GBS-9Z@student.school.example → ∅
     //   leden: 21 → ∅
+    //   postvak, Teams en bestanden: verdwijnen mee → ∅
     //
-    // — the address and the members going away, which is precisely what the
-    // *other* radio does and what this one promises not to.
+    // — three fields each being emptied, when they are the inventory of what
+    // goes with the group, and "verdwijnen mee" was never a value at all.
     _useTallWindow(tester);
     final harness = staleClassGroupHarness();
     await harness.controller.sync();
@@ -1078,20 +1152,25 @@ void main() {
 
     expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
     expect(find.text('leden: 21'), findsOneWidget);
-    expect(find.textContaining('→ ∅'), findsNothing,
-        reason: 'the option that writes nothing clears nothing');
+    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
+        findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing);
 
-    // The delete beside it names the same facts — the inventory of what goes,
-    // not three fields each being emptied. "verdwijnen mee" was never a value.
+    // The notice the delete cannot be offered for states the same two facts the
+    // same way (#327): it is the other reading of one group, not a diff.
+    final idless = staleClassGroupHarness(idlessStaleGroup: true);
+    await idless.controller.sync();
     await tester
-        .tap(find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup')));
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: idless.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-GBS-9Z')));
     await tester.pumpAndSettle();
 
     expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
     expect(find.text('leden: 21'), findsOneWidget);
-    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
-        findsOneWidget);
-    expect(find.textContaining('→ ∅'), findsNothing);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing');
   });
 
   // --- The Smartschool leftovers (#313) --------------------------------------

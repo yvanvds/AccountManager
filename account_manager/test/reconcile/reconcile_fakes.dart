@@ -2186,17 +2186,24 @@ ReconcileHarness azureClassGroupHarness({
 ///
 /// Two of them, deliberately: one stale group is a row, **two** are a "same
 /// situation" bulk subset, which is where a destructive action would do its
-/// worst. Neither half of the pair is bulk-sanctioned (#293), so since #326 the
-/// header offers no bulk pass at all — whichever way the radios are set — and
-/// the delete is only ever the pick an operator made on one row.
+/// worst. The delete is not bulk-sanctioned (#293), so since #326 the header
+/// offers no bulk pass at all, and it is only ever the pick an operator made on
+/// one row — which since #327 is the row's single proposal rather than one
+/// radio of two.
 ///
 /// The four prefixed non-class groups are here too — they must not appear in the
 /// inventory at all, let alone in that subset.
 ///
-/// `GBS-9Z` still holds the 21 members its class left behind (#305): both halves
-/// of the either/or name that number, and a stale group with an empty roster
-/// cannot show whether the card *states* it or claims it is being cleared.
-ReconcileHarness staleClassGroupHarness() => ReconcileHarness(
+/// `GBS-9Z` still holds the 21 members its class left behind (#305): the card
+/// names that number, and a stale group with an empty roster cannot show
+/// whether it *states* it or claims it is being cleared.
+///
+/// [idlessStaleGroup] strips `GBS-9Z` of its Azure object id, which is the one
+/// stale group `DeleteAzureClassGroup` cannot act on: with no id to address a
+/// `DELETE /groups/` to, the row falls back to the lone informational
+/// `AzureClassGroupWithoutClass` notice (#327).
+ReconcileHarness staleClassGroupHarness({bool idlessStaleGroup = false}) =>
+    ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: '1', classGroup: '1A')],
         schools: [wisaSchool(1)],
@@ -2226,6 +2233,7 @@ ReconcileHarness staleClassGroupHarness() => ReconcileHarness(
         groups: [
           azClassGroup('1A', memberIds: const ['az1']),
           azClassGroup('9Z',
+              id: idlessStaleGroup ? '' : null,
               memberIds: List<String>.generate(21, (int i) => 'az-oud-$i')),
           azClassGroup('8Y'),
           azNonClassGroup('GBS - GOK'),
@@ -3140,9 +3148,10 @@ az.AzureSnapshot azSnap({
 az.AzureGroup azClassGroup(
   String className, {
   List<String> memberIds = const [],
+  String? id,
 }) =>
     az.AzureGroup(
-      id: 'az-GBS-$className',
+      id: id ?? 'az-GBS-$className',
       displayName: 'GBS-$className',
       mail: 'GBS-$className@student.school.example',
       mailNickname: 'GBS-$className',

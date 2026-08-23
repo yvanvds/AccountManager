@@ -2612,14 +2612,17 @@ void main() {
     expect(find.byKey(const ValueKey('class-row-1A')), findsOneWidget);
     expect(find.text('deelgroep van 2F'), findsNWidgets(2));
 
-    // The group of a class that no longer exists reads as the either/or it
-    // became in #271 — leave it standing (the default) or delete it — so the
-    // collapsed line is marked "(keuze)" rather than "(manueel)".
+    // The group of a class that no longer exists reads as the one thing it
+    // proposes since #327 — the delete — so its collapsed line is that summary,
+    // bare: not "(keuze)", because there is nothing to choose between, and not
+    // "(manueel)", because this one is applyable.
     expect(
-      find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+      find.textContaining('Verwijder de Office 365-groep GBS-9Z'),
       findsWidgets,
     );
-    expect(find.textContaining('(keuze)'), findsWidgets);
+    expect(find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+        findsNothing);
+    expect(find.textContaining('(keuze)'), findsNothing);
 
     // Expand the class's row and apply just it.
     const entry = ValueKey('entry-group-2F ECO');
@@ -3611,13 +3614,14 @@ void main() {
     // `GBS - Leerlingenraad`, `GBS - Frans - 3D`).
     //
     // This is the layer that sees what the issue is about. The inventory is
-    // composed from the *stored* documents while the either/or radios come from
+    // composed from the *stored* documents while the card's controls come from
     // the live dispatch, the bulk headers from a third derivation, and the row
     // only disappears once the write, the relink and the store patch have all
     // landed — halves of the app that only a full run puts on screen together.
     // And the action under test is destructive: a widget test rendering the row
-    // in isolation cannot show that "Alles toepassen" over the whole tab leaves
-    // every one of these groups alone.
+    // in isolation cannot show that the whole tab still offers no bulk pass
+    // over these groups now that the delete is each row's selected resolution
+    // (#327).
     useTallWindow(tester);
     final harness = staleClassGroupHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -3652,40 +3656,46 @@ void main() {
         findsOneWidget);
 
     // Both stale groups share one situation, so the tab collects them under a
-    // bulk header — and that header offers no bulk pass at all: neither half of
-    // the pair may be written that way (#293/#326). A bulk affordance here would
-    // take two mailboxes, Teams and file libraries on one click.
+    // bulk header — and that header offers no bulk pass at all, because the
+    // delete withholds the #293 sanction and #326 taught the header to read it.
+    // A bulk affordance here would take two mailboxes, Teams and file libraries
+    // on one click, and since #327 the delete is each row's *selected*
+    // resolution rather than a radio away.
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
     expect(find.textContaining('Alles toepassen ('), findsNothing,
         reason: 'a bulk pass over stale groups must write nothing at all');
 
-    // The row itself carries the either/or, with the delete as the half the
-    // operator has to reach for.
+    // The row proposes exactly one thing — no radios, no "laat de groep staan"
+    // no-op to read past (#327).
     final entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
     await tester.ensureVisible(entry);
     await tester.tap(entry);
     await tester.pumpAndSettle();
     expect(
-      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
-          'meer in WISA of Smartschool'),
+      find.text('Verwijder de Office 365-groep GBS-9Z van de verdwenen '
+          'klas 9Z'),
       findsWidgets,
     );
-    final delete =
-        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
-    expect(delete, findsOneWidget);
-    final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
-    await tester.ensureVisible(apply);
-    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
-        reason:
-            'nothing is applyable while the default is "leave it standing"');
+    expect(find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+        findsNothing);
+    expect(find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup')),
+        findsNothing,
+        reason: 'a lone action renders no radio at all');
+    expect(find.text('Kies één oplossing:'), findsNothing);
+    // What the delete takes with it, on the card, before anything is pressed.
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
+        findsOneWidget);
+    expect(harness.graph.deletedGroups, isEmpty,
+        reason: 'opening a card writes nothing');
 
-    await tester.ensureVisible(delete);
-    await tester.tap(delete);
-    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
     await tester.ensureVisible(apply);
     expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
     await tester.tap(apply);
     await tester.pumpAndSettle();
+    expect(harness.graph.deletedGroups, isEmpty,
+        reason: 'the confirmation dialog is still standing');
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -3705,8 +3715,59 @@ void main() {
   });
 
   testWidgets(
-      'flipping every stale group to its delete still arms no bulk pass, '
-      'end-to-end (#326)', (WidgetTester tester) async {
+      'a stale group the delete cannot address keeps its lone "(manueel)" '
+      'notice end-to-end (#327)', (WidgetTester tester) async {
+    // The other side of #327. `GBS-9Z` is stale exactly as above, but the
+    // tenant handed us no object id for it, so there is nothing to address a
+    // `DELETE /groups/` to. That is the one case where "leave it standing" is
+    // not a no-op dressed as a choice but the honest whole content of the row —
+    // and it must survive as the informational, "(manueel)"-marked notice it
+    // always was, with no apply of its own.
+    //
+    // End-to-end because the claim spans three surfaces a widget test sees
+    // separately: the collapsed row line (composed from the *stored* candidate
+    // document), the expanded card (from the live dispatch), and the tab's
+    // bulk header — plus the entry-level Toepassen button, which is gated on
+    // the whole card rather than on this decision.
+    useTallWindow(tester);
+    final harness = staleClassGroupHarness(idlessStaleGroup: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // The collapsed row states the situation and marks it as hand work.
+    expect(find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+        findsWidgets);
+    expect(find.textContaining('(manueel)'), findsWidgets);
+    expect(find.textContaining('(keuze)'), findsNothing,
+        reason: 'a lone notice is not a choice');
+
+    final Finder entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    // No delete on offer, and nothing on the card can write.
+    expect(find.textContaining('Verwijder de Office 365-groep GBS-9Z'),
+        findsNothing);
+    expect(find.text('Kies één oplossing:'), findsNothing);
+    expect(find.text('leden: 21'), findsOneWidget,
+        reason: 'the notice still states what the group holds');
+    final Finder apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull);
+    expect(harness.graph.deletedGroups, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a whole cohort of stale groups set to delete still arms no bulk pass, '
+      'end-to-end (#326/#327)', (WidgetTester tester) async {
     // The reported hole, in the real app. `GBS-9Z` and `GBS-8Y` are the Office
     // 365 groups of two classes that stopped running, so Klasgroepen files them
     // under one "same situation" header. That header counted
@@ -3717,12 +3778,16 @@ void main() {
     // and the header read "Alles toepassen (2)", one confirmation away from
     // taking two mailboxes, two Teams and two file libraries.
     //
-    // Only a full run can see it. The radios are rendered per row from the live
+    // #327 then removed the pair outright, so the delete is now the selected
+    // resolution of every stale row from the moment the tab opens — the state
+    // that used to take four taps to reach is the *default*. Which makes #326's
+    // guard the only thing standing between this cohort and one press.
+    //
+    // Only a full run can see it. The cards are rendered per row from the live
     // dispatch; the header is a separate derivation over the whole tab, above
-    // the inventory rather than beside the rows it acts on; and the claim is
-    // about what that second surface does *after* the operator has touched the
-    // first. A widget test that renders the header in isolation is handed a
-    // cohort somebody else built, which is precisely the seam that drifted.
+    // the inventory rather than beside the rows it acts on. A widget test that
+    // renders the header in isolation is handed a cohort somebody else built,
+    // which is precisely the seam that drifted.
     useTallWindow(tester);
     final harness = staleClassGroupHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -3734,40 +3799,36 @@ void main() {
     await syncThenOpenKlasgroepen(tester);
     expect(harness.controller.error, isNull);
 
-    // Untouched, the tab already offers no bulk pass: both rows default to the
-    // notice, which writes nothing. Since #326 the pair is *absent* rather than
+    // Both rows are set to a delete out of the box (#327), and the header
+    // offers nothing: the sanction is a property of the action, not of how many
+    // rows happen to be set to it. Since #326 the pair is *absent* rather than
     // dead at (0) — a disabled button invites the operator to go and make it
     // live, which is the very move this guards against.
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget,
         reason: 'the cohort is still named; only the bulk pair is withdrawn');
-    expect(find.textContaining('Alles toepassen ('), findsNothing);
+    expect(find.textContaining('Alles toepassen ('), findsNothing,
+        reason: 'a cohort of selected deletes must never arm a bulk pass');
     expect(find.text('Dry-run alles'), findsNothing);
 
-    // Now make the delete the selected resolution of every row in the cohort —
-    // the four taps that used to arm it.
+    // Each row really is set to its delete — the state that used to need a
+    // flipped radio on every one of them.
     for (final String id in const <String>['GBS-9Z', 'GBS-8Y']) {
       final Finder entry = find.byKey(ValueKey('entry-group-$id'));
       await tester.ensureVisible(entry);
       await tester.tap(entry);
       await tester.pumpAndSettle();
-      final Finder delete =
-          find.byKey(ValueKey('alt-$id-DeleteAzureClassGroup'));
-      await tester.ensureVisible(delete);
-      await tester.tap(delete);
-      await tester.pumpAndSettle();
-      // Collapse again so the next row's radios are reachable on the same page.
+      final Finder rowApply = find.byKey(ValueKey('entry-apply-$id'));
+      await tester.ensureVisible(rowApply);
+      expect(tester.widget<FilledButton>(rowApply).onPressed, isNotNull);
+      expect(find.textContaining('Verwijder de Office 365-groep $id'),
+          findsWidgets);
+      // Collapse again so the next row is reachable on the same page.
       await tester.ensureVisible(entry);
       await tester.tap(entry);
       await tester.pumpAndSettle();
     }
 
-    // Both rows are set to a delete, and the header still offers nothing: the
-    // sanction is a property of the action, not of how many rows happen to be
-    // set to it.
-    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
-    expect(find.textContaining('Alles toepassen ('), findsNothing,
-        reason: 'a flipped radio must never arm a bulk delete');
-    expect(find.text('Dry-run alles'), findsNothing);
+    expect(find.textContaining('Alles toepassen ('), findsNothing);
     expect(harness.graph.deletedGroups, isEmpty);
 
     // What the operator kept is the per-row path: one group at a time, from the
@@ -3786,7 +3847,8 @@ void main() {
 
     expect(harness.graph.deletedGroups, ['az-GBS-9Z']);
     expect(find.byKey(const ValueKey('class-row-GBS-8Y')), findsOneWidget,
-        reason: 'the group beside it was flipped too, and still stands');
+        reason: 'the group beside it proposes the same delete, and still '
+            'stands — one press, one group');
     expect(tester.takeException(), isNull);
   });
 
@@ -3830,26 +3892,23 @@ void main() {
         findsOneWidget,
         reason: 'both leftovers now ask something instead of showing a ✓');
 
-    // Widened, not loosened: neither half of the pair is bulk-sanctioned, so
-    // the tab offers no bulk pass over these groups at all (#293/#326).
+    // Widened, not loosened: the delete is not bulk-sanctioned, so the tab
+    // offers no bulk pass over these groups at all (#293/#326) even though it
+    // is now each row's selected resolution (#327).
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
     expect(find.textContaining('Alles toepassen ('), findsNothing);
 
     // The renamed group is its class's group by the address it answers on
-    // (#280), so its row carries the pair under the name somebody typed over
+    // (#280), so its row carries the delete under the name somebody typed over
     // it.
     final renamed = find.byKey(const ValueKey('entry-group-Klas van juf An'));
     await tester.ensureVisible(renamed);
     await tester.tap(renamed);
     await tester.pumpAndSettle();
     expect(
-      find.text('Laat de Office 365-groep Klas van juf An staan — klas 8Y '
-          'bestaat niet meer in WISA of Smartschool'),
+      find.text('Verwijder de Office 365-groep Klas van juf An van de '
+          'verdwenen klas 8Y'),
       findsWidgets,
-    );
-    expect(
-      find.byKey(const ValueKey('alt-Klas van juf An-DeleteAzureClassGroup')),
-      findsOneWidget,
     );
     await tester.tap(renamed);
     await tester.pumpAndSettle();
@@ -3861,19 +3920,14 @@ void main() {
     await tester.tap(entry);
     await tester.pumpAndSettle();
     expect(
-      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
-          'meer in WISA of Smartschool'),
+      find.text('Verwijder de Office 365-groep GBS-9Z van de verdwenen '
+          'klas 9Z'),
       findsWidgets,
     );
     expect(find.text('leden: 21'), findsOneWidget);
     expect(find.text('mail: '), findsNothing,
         reason: 'a security group has no address, so no line states one');
 
-    final delete =
-        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
-    await tester.ensureVisible(delete);
-    await tester.tap(delete);
-    await tester.pumpAndSettle();
     final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
     await tester.ensureVisible(apply);
     expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
@@ -3882,11 +3936,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    // Exactly the one group the operator picked, and its row goes with it.
+    // Exactly the one group the operator pressed on, and its row goes with it.
     expect(harness.graph.deletedGroups, ['az-GBS-9Z']);
     expect(row('GBS-9Z'), findsNothing);
     expect(row('Klas van juf An'), findsOneWidget,
-        reason: 'the group beside it was never selected');
+        reason: 'the group beside it was never applied');
     expect(row('1A'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -3976,27 +4030,28 @@ void main() {
   });
 
   testWidgets(
-      'the "laat de groep staan" notice states its facts end-to-end, it does '
-      'not diff them (#305)', (WidgetTester tester) async {
+      'a stale group\'s card states its facts end-to-end, it does not diff '
+      'them (#305/#327)', (WidgetTester tester) async {
     // The reported card, in the real app. `GBS-9Z` is the group of a class that
-    // stopped running, still holding its 21 members, and the pre-selected half
-    // of its either/or is the notice that leaves it alone. It read
+    // stopped running, still holding its 21 members. Its card read
     //
     //   Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet meer …
     //   mail: GBS-9Z@student.school.example → ∅
     //   leden: 21 → ∅
     //
     // — a heading promising the group stays, over two lines saying its address
-    // and its 21 members are going away. That is what the *other* radio does,
-    // and it is the reading a bulk pass would run.
+    // and its 21 members are going away. Since #327 that heading is gone with
+    // the no-op it named, and the card leads with the delete; the fields are
+    // the inventory of what goes with the group, which is a statement, not a
+    // diff against an empty half.
     //
     // End-to-end rather than on the widget alone, because the shape has to
     // survive the whole path the operator's card is built from: the group
-    // dispatch's `ChangeSet`, the alternative collapse into one choice, the
-    // radio that swaps which option's fields are on screen, and only then a
-    // line of text in the tile. And "no arrow anywhere" is a claim about the
-    // page as composed — this tab also renders a same-situation bulk header
-    // over the two stale groups, which a row-scoped widget test cannot see.
+    // dispatch's `ChangeSet`, the collapse into one decision, the choice
+    // heading, and only then a line of text in the tile. And "no arrow
+    // anywhere" is a claim about the page as composed — this tab also renders a
+    // same-situation bulk header over the two stale groups, which a row-scoped
+    // widget test cannot see.
     useTallWindow(tester);
     final harness = staleClassGroupHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -4013,33 +4068,24 @@ void main() {
     await tester.tap(entry);
     await tester.pumpAndSettle();
 
-    // The default half is the notice, and under its heading are two facts.
+    // The card's only heading is the delete's own summary, and under it the
+    // inventory of what the delete takes.
     expect(
-      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
-          'meer in WISA of Smartschool'),
+      find.text('Verwijder de Office 365-groep GBS-9Z van de verdwenen '
+          'klas 9Z'),
       findsWidgets,
     );
-    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
-    expect(find.text('leden: 21'), findsOneWidget);
-    expect(find.textContaining('→ ∅'), findsNothing,
-        reason: 'the option that writes nothing clears nothing — and no other '
-            'card on this page diffs against an empty half either');
-
-    // Flip to the delete and the same two facts are the inventory of what goes,
-    // joined by the consequence that was never a field value at all.
-    final delete =
-        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
-    await tester.ensureVisible(delete);
-    await tester.tap(delete);
-    await tester.pumpAndSettle();
-
+    expect(find.textContaining('Laat de Office 365-groep GBS-9Z staan'),
+        findsNothing);
     expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
     expect(find.text('leden: 21'), findsOneWidget);
     expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
         findsOneWidget);
-    expect(find.textContaining('→ ∅'), findsNothing);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the inventory of what goes is stated, never diffed — and no '
+            'other card on this page diffs against an empty half either');
     expect(harness.graph.deletedGroups, isEmpty,
-        reason: 'picking a radio writes nothing on its own');
+        reason: 'reading a card writes nothing on its own');
     expect(tester.takeException(), isNull);
   });
 

@@ -416,7 +416,10 @@ class SituationCohort {
   /// first meant that flipping two rows of a stale Office 365 class group to
   /// "delete" armed a header that took both groups — mailboxes, Teams and files
   /// — on one press, on an action whose own class says no bulk affordance may
-  /// offer it. Both flags, because a cohort is a mix: the members of a
+  /// offer it. Since #327 dropped that pair's no-op half, the delete is the
+  /// *selected* resolution of every such row from the moment the tab opens, so
+  /// this narrowing is the only thing standing between the cohort and one
+  /// press. Both flags, because a cohort is a mix: the members of a
   /// `classImportAlternative` cohort set to "create" are sanctioned, the ones
   /// flipped to the blacklist beside it are not.
   ///

@@ -729,7 +729,9 @@ List<LinkedGroup> _linkGroups(
 /// unprefixed `5A` somebody created without the school's prefix: the exact-name
 /// match above adopts it when a class owns it, and this keeps it as an orphan
 /// when none does. It carries no recoverable class name, so it raises no
-/// stale-group action either way — see `AzureClassGroupWithoutClass`.
+/// stale-group action either way — neither `DeleteAzureClassGroup` nor the
+/// `AzureClassGroupWithoutClass` notice that stands in where the delete cannot
+/// act.
 bool _looksLikeClassGroup(String? displayName, String? bare) =>
     looksLikeClassName(bare ?? displayName);
 

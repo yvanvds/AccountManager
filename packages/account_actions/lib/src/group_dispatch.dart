@@ -64,13 +64,15 @@ import 'group_placement.dart';
 /// dispatch is exactly as it shipped before #228.
 ///
 /// An Azure-only orphan group (`wisa == null && smartschool == null`, #52)
-/// yields the [staleClassGroupAlternative] pair — the informational
-/// [AzureClassGroupWithoutClass] and the applyable [DeleteAzureClassGroup]
-/// (#271) — and only when it is shaped like a group this app created; anything
-/// else still yields nothing. The notice leads and is the default, so a bulk
-/// apply over stale groups writes nothing at all and a delete (which takes the
-/// group's mailbox, Team and files with it) is only ever the pick the operator
-/// made on that one row.
+/// yields [DeleteAzureClassGroup] (#271) — **one action, no radio pair** since
+/// #327 — and only when it is shaped like a group this app created; anything
+/// else still yields nothing. Where the delete cannot fire because the record
+/// names no Azure object id, the informational
+/// [AzureClassGroupWithoutClass] states that instead, as a lone "(manueel)"
+/// row. The two are mutually exclusive rather than alternatives: what keeps a
+/// delete (which takes the group's mailbox, Team and files with it) out of
+/// every bulk pass is [GroupAction.canApplyToAll] (#293/#326), not the polarity
+/// of a pair.
 ///
 /// Each candidate is constructed bound to [group] and kept only when its pure
 /// [GroupAction.evaluate] returns true. Pure and deterministic (INV-40): same
@@ -113,13 +115,14 @@ List<GroupAction> groupActionsFor(
       CreateAzureClassGroup(group, azurePlan),
       SyncAzureClassGroupMembers(group, azurePlan),
     ],
-    // The stale-group either/or (#271). The notice leads because it is the
-    // default of the pair, exactly as the create leads the blacklist above: the
-    // order is the order the operator reads the radios in, and the fallback the
-    // grouping uses if a default is ever forgotten — so the delete is never
-    // first.
-    AzureClassGroupWithoutClass(group),
+    // The stale-group readings (#271/#327). Not an either/or: their predicates
+    // partition the stale groups, so at most one of the two ever survives
+    // `evaluate` for a given record — the delete where it can act, the
+    // "(manueel)" notice where it cannot. The delete leads because it is the
+    // ordinary case; the order carries no other meaning here, since these two
+    // never appear on one card together.
     DeleteAzureClassGroup(group),
+    AzureClassGroupWithoutClass(group),
   ];
 
   return [

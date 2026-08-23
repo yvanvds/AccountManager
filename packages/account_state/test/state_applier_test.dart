@@ -1022,10 +1022,12 @@ void main() {
 
       test('an informational group action is never chained', () async {
         // The orphan notice throws on apply; the walk must skip it whatever a
-        // future `unlocks` declaration says.
+        // future `unlocks` declaration says. Since #327 that notice is raised
+        // only where the delete beside it cannot fire — here, a stale group the
+        // tenant gave no object id to address a DELETE to.
         final harness = classHarness(groups: [
           az.AzureGroup(
-            id: 'az-9Z',
+            id: '',
             displayName: 'SSM-9Z',
             mail: 'SSM-9Z@student.school.example',
             mailNickname: 'SSM-9Z',

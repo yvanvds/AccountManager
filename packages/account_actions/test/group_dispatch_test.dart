@@ -227,7 +227,7 @@ void main() {
       expect(notice.alternativeGroup, staleSmartschoolClassAlternative);
       expect(delete.alternativeGroup, staleSmartschoolClassAlternative);
       expect(notice.alternativeGroup, isNot(classImportAlternative));
-      expect(notice.alternativeGroup, isNot(staleClassGroupAlternative));
+      expect(notice.alternativeGroup, isNot(namesakeClassAlternative));
 
       // Polarity: the informational notice leads and is the default, so a bulk
       // apply writes *nothing* for a Smartschool leftover and the delete stays

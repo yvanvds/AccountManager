@@ -182,13 +182,17 @@ class's Smartschool state and ride alongside **both** branches:
   Smartschool leftovers, where the notice is the default so a bulk pass writes
   nothing and the delete is a per-row pick a bulk affordance may never reach
   (#293).
-- **Azure-only, class-shaped** (a group whose class stopped running) → the
-  `staleClassGroupAlternative` pair of #271: the informational
-  `AzureClassGroupWithoutClass` (leave it standing) and the applyable
-  `DeleteAzureClassGroup`. The notice is the default, so a bulk apply over stale
-  groups writes nothing and a delete — which takes the group's mailbox, Team and
-  files with it — is only ever the pick an operator made on that one row. A
-  prefixed group whose remainder is *not* class-shaped (`SSM - GOK`,
+- **Azure-only, class-shaped** (a group whose class stopped running) →
+  `DeleteAzureClassGroup` (#271), and since #327 that is the **whole** of what
+  the row proposes. It used to be one radio of a pair whose default half was an
+  informational "laat de groep staan"; that half was a no-op — the operator
+  performs it by not pressing **Toepassen** — so the card asked them to record a
+  non-decision. The delete takes the group's mailbox, Team and files with it, and
+  what keeps it out of every bulk pass is `canApplyToAll == false` (#293), read
+  by both bulk paths since #326, rather than the polarity of a pair.
+  `AzureClassGroupWithoutClass` survives as the lone `(manueel)` notice for the
+  one stale group the delete cannot address — a record naming no Azure object
+  id. A prefixed group whose remainder is *not* class-shaped (`SSM - GOK`,
   `SSM-OKAN`) is not orphaned by the linker at all and so raises nothing.
 - **Present in both** → only `ModifySmartschoolData` (sync institute number,
   Untis code, and description).
@@ -281,8 +285,8 @@ account row diagnoses and names the class, and the class row applies. Both are
 derived from the same `AzureClassGroupResolver` indexes in `account_state`, so
 they cannot disagree — and a class whose group does not exist yet, or a group
 whose class has vanished, is deliberately silent per student: neither has a
-per-student remedy (`CreateAzureClassGroup` and the
-`AzureClassGroupWithoutClass` / `DeleteAzureClassGroup` pair own those).
+per-student remedy (`CreateAzureClassGroup` and `DeleteAzureClassGroup` own
+those).
 
 ## Deferred (documented divergences)
 

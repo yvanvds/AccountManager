@@ -415,36 +415,42 @@ void main() {
     });
   });
 
-  group('a vanished class: leave it standing, or delete it (#228/#271)', () {
+  group('a vanished class: delete its group (#228/#271/#327)', () {
     LinkedGroup orphan(az.AzureGroup group, {String? className = '9Z'}) =>
         linkedGroup(azure: group, className: className);
 
-    test('an app-shaped class group with no class raises the either/or', () {
+    test('an app-shaped class group with no class raises the delete alone', () {
       final actions = groupActionsFor(orphan(azureClassGroup('9Z')));
       expect(
         actions.map((a) => a.runtimeType),
-        [AzureClassGroupWithoutClass, DeleteAzureClassGroup],
-        reason: 'the notice leads because it is the default of the pair',
+        [DeleteAzureClassGroup],
+        reason: 'the no-op "leave it standing" is not an option (#327) — the '
+            'operator performs it by not pressing Toepassen',
       );
       expect(
-        actions.map((a) => a.alternativeGroup),
-        everyElement(staleClassGroupAlternative),
-        reason: 'one choice, two radios — never two independent to-dos',
+        actions.single.alternativeGroup,
+        isNull,
+        reason: 'one action, so no alternative group and no radio pair',
       );
+      expect(actions.single.isDefaultAlternative, isFalse);
     });
 
-    test('the notice is the informational default, and never writes', () {
-      final notice = groupActionsFor(orphan(azureClassGroup('9Z')))
-          .whereType<AzureClassGroupWithoutClass>()
-          .single;
+    test('the notice fires only where the delete cannot (#327)', () {
+      // A record naming no Azure object id: there is nothing to address a
+      // DELETE to, so the row falls back to stating the situation — the one
+      // case that is still genuinely informational.
+      final actions = groupActionsFor(orphan(azureClassGroup('9Z', id: ' ')));
+      final notice = actions.whereType<AzureClassGroupWithoutClass>().single;
 
+      expect(actions.map((a) => a.runtimeType), [AzureClassGroupWithoutClass]);
       expect(notice.canApply, isFalse);
-      expect(notice.isDefaultAlternative, isTrue,
-          reason: 'a bulk apply over stale groups must write nothing at all');
+      expect(notice.alternativeGroup, isNull,
+          reason: 'a lone "(manueel)" row, not half of a choice');
       expect(
         notice.describeChanges().summary,
         'Laat de Office 365-groep SSM-9Z staan — klas 9Z bestaat niet meer '
         'in WISA of Smartschool',
+        reason: 'the informational row itself is unchanged by #327',
       );
       expect(
         () => notice.apply(const Connectors(), const ApplyOptions()),
@@ -452,14 +458,26 @@ void main() {
       );
     });
 
-    test('the delete is applyable but never the default (#271)', () {
+    test('a deletable stale group raises no notice beside its delete (#327)',
+        () {
+      expect(
+        groupActionsFor(orphan(azureClassGroup('9Z')))
+            .whereType<AzureClassGroupWithoutClass>(),
+        isEmpty,
+        reason: 'the two readings partition the stale groups — never both',
+      );
+    });
+
+    test('the delete is applyable, and withheld from every bulk pass (#271)',
+        () {
       final delete = groupActionsFor(orphan(azureClassGroup('9Z')))
           .whereType<DeleteAzureClassGroup>()
           .single;
 
       expect(delete.canApply, isTrue);
-      expect(delete.isDefaultAlternative, isFalse,
-          reason: 'deleting takes the mailbox, the Team and the files with it');
+      expect(delete.canApplyToAll, isFalse,
+          reason: 'deleting takes the mailbox, the Team and the files with it, '
+              'and since #327 this flag is the whole guard');
       expect(
         delete.describeChanges().summary,
         'Verwijder de Office 365-groep SSM-9Z van de verdwenen klas 9Z',
@@ -471,22 +489,20 @@ void main() {
       expect(delete.unlocks, isEmpty, reason: 'nothing follows a delete');
     });
 
-    test('both halves state the group\'s facts, they do not diff them (#305)',
+    test('both readings state the group\'s facts, they do not diff them (#305)',
         () {
       // The notice's whole content is "this group stays", and under that
       // heading its two fields read "mail: SSM-9Z@… → ∅" and "leden: 21 → ∅" —
-      // the address and the 21 members being cleared, which is what the *other*
-      // radio does. Neither field is a value moving anywhere, so neither may be
+      // the address and the 21 members being cleared, which is what a *delete*
+      // does. Neither field is a value moving anywhere, so neither may be
       // described as one.
-      final actions = groupActionsFor(
-        orphan(azureClassGroup('9Z',
-            memberIds: List<String>.generate(21, (int i) => 'az-$i'))),
-      );
+      final members = List<String>.generate(21, (int i) => 'az-$i');
+      final actions =
+          groupActionsFor(orphan(azureClassGroup('9Z', memberIds: members)));
 
-      final notice = actions
-          .whereType<AzureClassGroupWithoutClass>()
-          .single
-          .describeChanges();
+      final notice = groupActionsFor(
+        orphan(azureClassGroup('9Z', id: ' ', memberIds: members)),
+      ).whereType<AzureClassGroupWithoutClass>().single.describeChanges();
       expect(notice.fields.map((f) => f.field), ['mail', 'leden']);
       expect(
         notice.fields.every((f) => f.shape == FieldChangeShape.statement),
@@ -557,24 +573,25 @@ void main() {
           orphan(azureClassGroup(name), className: name),
         );
         expect(actions, isEmpty,
-            reason: '$name is not a class — and both halves move together');
+            reason: '$name is not a class — and neither reading fires');
       }
     });
 
     test('a record naming no Azure object id raises no delete (#271)', () {
       final actions = groupActionsFor(orphan(azureClassGroup('9Z', id: ' ')));
-      expect(actions.whereType<AzureClassGroupWithoutClass>(), hasLength(1));
+      expect(actions.whereType<AzureClassGroupWithoutClass>(), hasLength(1),
+          reason: 'the notice takes over exactly where the delete drops out');
       expect(actions.whereType<DeleteAzureClassGroup>(), isEmpty,
           reason: 'there is nothing to address the DELETE to');
     });
 
     test(
-        'a class group the legacy app created raises the pair too — it is no '
+        'a class group the legacy app created raises its delete too — it is no '
         'less stale for being a security group (#312)', () {
       // The reported bug. The `SSM-3ECO`-shaped groups in the live tenant are
       // plain security groups carrying no address at all, made by the WPF app
       // long before this port existed. `isUnified` is false for every one of
-      // them, so the whole either/or went silent and each row was inventory
+      // them, so the whole reading went silent and each row was inventory
       // with an instruction to go elsewhere — the state #271 set out to remove.
       final actions = groupActionsFor(orphan(az.AzureGroup(
         id: 'g-legacy',
@@ -585,27 +602,22 @@ void main() {
 
       expect(
         actions.map((a) => a.runtimeType),
-        [AzureClassGroupWithoutClass, DeleteAzureClassGroup],
+        [DeleteAzureClassGroup],
         reason: 'the delete may not be limited to groups this port created',
-      );
-      expect(
-        actions.map((a) => a.alternativeGroup),
-        everyElement(staleClassGroupAlternative),
-        reason: 'widened together, so the delete is never a lone reading',
       );
     });
 
     test('a group with no address states only the facts it has (#312)', () {
-      final actions = groupActionsFor(orphan(az.AzureGroup(
-        id: 'g-legacy',
-        displayName: 'SSM-9Z',
-        securityEnabled: true,
-        mailNickname: 'SSM-9Z',
-        memberIds: const ['az-1', 'az-2'],
-      )));
+      az.AzureGroup legacy({String id = 'g-legacy'}) => az.AzureGroup(
+            id: id,
+            displayName: 'SSM-9Z',
+            securityEnabled: true,
+            mailNickname: 'SSM-9Z',
+            memberIds: const ['az-1', 'az-2'],
+          );
 
       expect(
-        actions
+        groupActionsFor(orphan(legacy(id: ' ')))
             .whereType<AzureClassGroupWithoutClass>()
             .single
             .describeChanges()
@@ -615,7 +627,7 @@ void main() {
         reason: 'a security group has no mail, and `mail: ` states nothing',
       );
       expect(
-        actions
+        groupActionsFor(orphan(legacy()))
             .whereType<DeleteAzureClassGroup>()
             .single
             .describeChanges()
@@ -637,10 +649,7 @@ void main() {
         mailNickname: 'SSM-9Z',
       )));
 
-      expect(
-        actions.map((a) => a.runtimeType),
-        [AzureClassGroupWithoutClass, DeleteAzureClassGroup],
-      );
+      expect(actions.map((a) => a.runtimeType), [DeleteAzureClassGroup]);
     });
 
     test('a group the linker recovered no class name for is left unmentioned',
