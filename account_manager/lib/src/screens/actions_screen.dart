@@ -31,8 +31,10 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 /// loaded (via `LinkedStore.readClassroom`) and built only when the operator
 /// drills into it.
 /// The per-class list itself renders through a lazy [SliverList] so only the
-/// on-screen tiles build. The global "Dry-run all" / "Apply all" act on every
-/// pending entry across all classes.
+/// on-screen tiles build. Every apply starts from something the operator has
+/// opened — one card, or one decision across the cohort shown above it; the
+/// header's global "Dry-run alles" / "Alles toepassen" pair was removed in #294
+/// precisely because it did not.
 ///
 /// One view-wide switch above the family tab bar — "toon enkel accounts met
 /// acties", on by default — collapses all of that to the work list (#226):
@@ -55,6 +57,26 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 /// A session with no linked view — passive, or one whose pass failed before it
 /// linked — can only show the stored documents, so both drill-downs say so out
 /// loud rather than quietly swapping in static cards (#214).
+///
+/// Every action line names the system it writes to (#298): one card can raise
+/// work in two systems and the summaries do not always say where they land. The
+/// three-way system indicator that reads *needs work* rather than *exists*
+/// arrives with the flat list of #295; its vocabulary — and the principle it
+/// shares with Klasgroepen — already lives in `system_indicator.dart`.
+///
+/// **Colour by work that can be done on this screen.** Klasgroepen highlights a
+/// row on `MaterializedGroup.needsAttention`, informational notices included
+/// (#225/#250), because there the manual notice *is* the work the operator
+/// does on that screen. Here an informational candidate is a diagnosis of work
+/// that happens elsewhere, so it colours nothing, raises no badge and puts no
+/// row in the work list — `pendingDecisionCount` has counted it zero since
+/// #245/#255, and the indicators apply that same predicate. The case that
+/// forces the rule is `AzureClassGroupMembership`: Office 365 class membership
+/// is a property of the group, so the write is one `SyncAzureClassGroupMembers`
+/// per class on Klasgroepen. Colouring it here would paint ~3000 student rows
+/// orange at the rollover for work this screen structurally cannot do. (#290
+/// proposed the opposite and was closed; the action still declares
+/// `canApply => false`.)
 ///
 /// Shares the one memoized [ReconcileServices] (and so the one
 /// [ReconcileController]) with the Reconcile and Passwords screens, so a sync
@@ -388,24 +410,23 @@ class _ActionsBodyState extends State<_ActionsBody>
     ];
   }
 
-  /// The active-session pending situations narrowed by the name search. The
-  /// "only with actions" toggle is a no-op here — every pending entry already
-  /// carries an action — so only the search filters, dropping any subset left
-  /// empty so the same-situation headers stay in sync (#187).
-  List<List<PendingAccountEntry>> _filterSituations(
-    List<List<PendingAccountEntry>> situations,
+  /// The active-session pending entries narrowed by the name search. The "only
+  /// with actions" toggle is a no-op here — every pending entry already carries
+  /// an action — so only the search filters (#187).
+  ///
+  /// The cohorts are grouped *from this result* rather than filtered afterwards
+  /// (#292), so a bulk header can only ever cover accounts the search left on
+  /// screen: label, confirmation scope and write come from one list, which is
+  /// the standing rule since #252.
+  List<PendingAccountEntry> _filterEntries(
+    List<PendingAccountEntry> entries,
   ) {
     final query = _query;
-    if (query.isEmpty) return situations;
-    final out = <List<PendingAccountEntry>>[];
-    for (final subset in situations) {
-      final kept = <PendingAccountEntry>[
-        for (final e in subset)
-          if (query.matches(e.target)) e,
-      ];
-      if (kept.isNotEmpty) out.add(kept);
-    }
-    return out;
+    if (query.isEmpty) return entries;
+    return <PendingAccountEntry>[
+      for (final e in entries)
+        if (query.matches(e.target)) e,
+    ];
   }
 
   /// Rebuilds the sliver content for the newly-selected family, and — when the
@@ -625,13 +646,15 @@ class _ActionsBodyState extends State<_ActionsBody>
         : const <Widget>[];
 
     if (controller.linked != null) {
-      final situations = controller.classroomPendingSituations;
-      if (situations.isEmpty) {
+      final all = controller.classroomPendingEntries;
+      if (all.isEmpty) {
         return slivers
           ..add(_section(const EmptyLine('Geen openstaande acties in deze '
               'klas.')));
       }
-      final rows = pendingRows(_filterSituations(situations));
+      final shown = _filterEntries(all);
+      final rows =
+          pendingRows(ReconcileController.situationCohorts(shown), shown);
       slivers
         ..addAll(searchSlivers)
         ..add(rows.isEmpty
@@ -694,8 +717,8 @@ class _ActionsBodyState extends State<_ActionsBody>
           itemBuilder: (context, index) {
             final row = rows[index];
             return switch (row) {
-              SituationHeaderRow(:final entries) =>
-                SituationHeader(controller: controller, entries: entries),
+              SituationHeaderRow(:final cohort) =>
+                SituationHeader(controller: controller, cohort: cohort),
               EntryRow(:final entry) =>
                 PendingEntryTile(controller: controller, entry: entry),
             };
@@ -745,9 +768,19 @@ class _ActionsBodyState extends State<_ActionsBody>
       ];
 }
 
-/// The Actions title plus the global "Dry-run all" / "Apply all" affordances
-/// (#110/#154): the secondary escape hatch that acts on every pending entry's
-/// chosen resolution, across all classes.
+/// The Actions title and how much work is pending — and, since #294, nothing
+/// that acts on it.
+///
+/// It used to carry a global "Dry-run alles" / "Alles toepassen" pair that ran
+/// every pending action of every family in every class in one pass. There is no
+/// safe reading of that: the drill-down below is collapsed, so the operator had
+/// seen none of the changes, and at a September changeover the count behind the
+/// button is in the thousands. Its confirmation named systems and a number,
+/// which is not the same as having looked. Bulk itself is not gone — it lives on
+/// the per-decision cohort header, where the cohort is on screen and one action
+/// deep — but the affordance that applied what nobody had read is.
+///
+/// The count line stays. It states how much work exists; it is not a button.
 class _ActionsHeader extends StatelessWidget {
   const _ActionsHeader({
     required this.controller,
@@ -785,50 +818,6 @@ class _ActionsHeader extends StatelessWidget {
           },
           style: text.bodyMedium,
         ),
-        const SizedBox(height: PlinkSpacing.s4),
-        Wrap(
-          spacing: PlinkSpacing.s3,
-          runSpacing: PlinkSpacing.s2,
-          children: <Widget>[
-            OutlinedButton.icon(
-              key: const ValueKey('actions-dry-run'),
-              onPressed: controller.busy || controller.applyableCount == 0
-                  ? null
-                  : () => runWithProgress(
-                        context,
-                        controller: controller,
-                        dry: true,
-                        run: controller.dryRun,
-                      ),
-              icon: const Icon(Icons.visibility_outlined),
-              label: const Text('Dry-run alles'),
-            ),
-            TextButton.icon(
-              key: const ValueKey('actions-apply'),
-              onPressed: controller.busy || controller.applyableCount == 0
-                  ? null
-                  : () => confirmAndApply(
-                        context,
-                        controller: controller,
-                        title: 'Openstaande acties toepassen?',
-                        scope: controller.applyScope(controller.pendingEntries),
-                        apply: controller.applyAll,
-                      ),
-              icon: const Icon(Icons.play_arrow_outlined),
-              label: const Text('Alles toepassen'),
-            ),
-          ],
-        ),
-        if (controller.busy) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s4),
-          // Determinate, like the Reconcile header's (#176/#243): the value
-          // exists on the very same controller, and an indeterminate sweep here
-          // was a motionless bar that read as a hung app.
-          LinearProgressIndicator(
-            key: const ValueKey('actions-progress'),
-            value: controller.progress,
-          ),
-        ],
       ],
     );
   }
@@ -1289,8 +1278,9 @@ class _AccountTile extends StatelessWidget {
           for (final c in candidateChoices(account.candidates))
             Padding(
               padding: const EdgeInsets.only(top: PlinkSpacing.s1),
-              child: Text(
-                readOnlyCandidateLine(c),
+              child: ActionLine(
+                system: c.selected.system,
+                line: readOnlyCandidateLine(c),
                 style: text.bodySmall?.copyWith(color: muted),
               ),
             ),

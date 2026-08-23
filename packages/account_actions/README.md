@@ -51,6 +51,42 @@ from the next snapshot.
 same projected record while performing **no** writes. The detail dialog and the
 "apply" button share this one path.
 
+### `canApply` and `canApplyToAll`
+
+Two independent flags, on all three families:
+
+| Flag | Question | Default |
+|---|---|---|
+| `canApply` | Can the app write this at all? `false` for an informational action, whose `apply` throws. | `true` |
+| `canApplyToAll` | May it be written to **many** records in one pass? (#293) | `false` |
+
+`canApply` is the mechanism, `canApplyToAll` is the sanction, and the sanction
+presupposes the mechanism — `canApplyToAll` is never `true` where `canApply` is
+`false`.
+
+`canApplyToAll` ports legacy's `AccountAction.canBeAppliedToAll`, which the two
+account families carried and granted deliberately, action by action. The line it
+draws: **mechanical corrections and provisioning** may go in bulk;
+**destructive** actions (delete, unregister, remove, and the blacklists, which
+are destructive in effect) and **judgement** actions — the name and address
+modifiers, where the operator is meant to look at the record — never do.
+
+It lives on the action rather than in a list of kinds held by the screen: such a
+list drifts from what the domain sanctions, and an action added later silently
+inherits whatever the list's default happens to be. Declared here, a new action
+is withheld until someone decides otherwise.
+
+The group family had no legacy answer to port — the legacy Klassen view offered
+no bulk apply at all — so each of its four grants is a decision recorded in the
+action's own doc comment. `SyncAzureClassGroupMembers` is the headline one: at
+the September rollover every class's Office 365 roster is wrong at once, the
+diff is computed per class from the roster already held, and the write is
+idempotent with removals limited to our own students.
+
+`test/can_apply_to_all_test.dart` pins the exact granted set per family. Its
+classification switches are exhaustive over the sealed families, so adding an
+action makes that file fail to compile until the new action is classified.
+
 ## Dispatch (§6.3)
 
 `studentActions(snapshot, config)` walks the snapshot's student records and,

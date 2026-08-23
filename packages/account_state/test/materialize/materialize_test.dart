@@ -777,6 +777,67 @@ void main() {
       expect(restored.isDefaultAlternative, isTrue);
     });
 
+    test('a count field survives a candidate JSON round-trip (#300)', () {
+      // A stored candidate is what a passive session renders. If the count
+      // shape is dropped on the way through Cosmos, that session shows
+      // "leden toevoegen: ∅ → 21" again while the live one no longer does.
+      final original = CandidateAction(
+        family: 'group',
+        kind: 'SyncAzureClassGroupMembers',
+        system: core.Origin.azure,
+        summary: 'Werk het ledenbestand van GBS-1A bij',
+        fields: [
+          FieldChange.count('leden toevoegen', 21),
+          const FieldChange('mail', after: 'GBS-1A@student.school.example'),
+        ],
+      );
+      final restored = CandidateAction.fromJson(original.toJson());
+      expect(restored.fields.first.shape, FieldChangeShape.count);
+      expect(restored.fields.first.after, '21');
+      expect(restored.fields.first.before, isNull);
+      expect(restored.fields.last.shape, FieldChangeShape.transition,
+          reason: 'an ordinary transition is unaffected');
+    });
+
+    test('a statement field survives a candidate JSON round-trip (#305)', () {
+      // Same reasoning as the count above, for the other non-transition shape:
+      // dropped on the way through Cosmos, the "laat de groep staan" notice
+      // reads "mail: GBS-9Z@… → ∅" in a passive session — an address being
+      // cleared by the option that writes nothing.
+      const original = CandidateAction(
+        family: 'group',
+        kind: 'AzureClassGroupWithoutClass',
+        system: core.Origin.azure,
+        summary: 'Laat de Office 365-groep GBS-9Z staan',
+        canApply: false,
+        fields: [
+          FieldChange.statement('mail', 'GBS-9Z@student.school.example'),
+          FieldChange.statement('leden', '21'),
+        ],
+      );
+      final restored = CandidateAction.fromJson(original.toJson());
+      expect(
+        restored.fields.map((f) => f.shape),
+        everyElement(FieldChangeShape.statement),
+      );
+      expect(restored.fields.map((f) => f.before),
+          ['GBS-9Z@student.school.example', '21']);
+      expect(restored.fields.every((f) => f.after == null), isTrue);
+    });
+
+    test('a field written before #300/#305 reads back as a transition', () {
+      final restored = CandidateAction.fromJson(<String, dynamic>{
+        'family': 'group',
+        'kind': 'SyncAzureClassGroupMembers',
+        'system': core.Origin.azure.toJson(),
+        'summary': 'Werk het ledenbestand bij',
+        'fields': [
+          {'field': 'leden toevoegen', 'after': '21'},
+        ],
+      });
+      expect(restored.fields.single.shape, FieldChangeShape.transition);
+    });
+
     test('buildRollups counts the choice once at every level', () {
       final account = _account(candidates: [
         candidate('UnregisterStudentFromSmartschool',

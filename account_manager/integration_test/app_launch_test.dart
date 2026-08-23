@@ -15,6 +15,7 @@ import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
+import 'package:account_manager/src/screens/system_indicator.dart';
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
     show
@@ -373,6 +374,22 @@ void main() {
       ),
       findsOneWidget,
     );
+    // The header states the workload and stops there (#294): the global
+    // "Dry-run alles" / "Alles toepassen" pair that wrote every account in the
+    // school off one dialog is gone, and nothing on the overview replaces it.
+    // Whatever the operator applies, they reach by opening it first.
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.textContaining('openstaande actie(s)'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
+    expect(find.text('Dry-run alles'), findsNothing);
+    expect(find.text('Alles toepassen'), findsNothing);
+
     await tester.tap(find.text('Jaar 3'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('3C'));
@@ -380,16 +397,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
 
-    // Dry-run all from the header: the projected changes render, nothing writes.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-dry-run')));
-    await tester.tap(find.byKey(const ValueKey('actions-dry-run')));
+    // Open the one account in 3C and dry-run it: the projected changes render,
+    // nothing writes.
+    final String id =
+        harness.controller.classroomPendingEntries.single.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-dry-run-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-dry-run-$id')));
     await tester.pumpAndSettle();
     expect(find.text('Resultaat van de dry-run'), findsOneWidget);
     expect(harness.soap.soapActions, isEmpty);
 
-    // Apply all: confirm the dialog, the Smartschool write happens for real.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    // Apply it: confirm the dialog, the Smartschool write happens for real.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
@@ -624,6 +647,30 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Drills the Actions overview into the leaver bucket, where the two departed
+  /// students of [twoDepartedHarness] sit as a single cohort.
+  Future<void> drillZonderKlas(WidgetTester tester) async {
+    await tester.tap(find.text('Niet toegewezen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Zonder klas'));
+    await tester.tap(find.text('Zonder klas'));
+    await tester.pumpAndSettle();
+  }
+
+  /// Presses the open classroom's one cohort header — the bulk apply that
+  /// stands where the header's global "Alles toepassen" used to (#294). The
+  /// cohort is on screen above the button, which is the whole difference.
+  Future<void> tapCohortApply(
+    WidgetTester tester,
+    ReconcileHarness harness,
+  ) async {
+    final String key = harness.controller.classroomPendingSituations.single.key;
+    final Finder bulk = find.byKey(ValueKey('situation-apply-$key'));
+    await tester.ensureVisible(bulk);
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+  }
+
   /// Opens the Klasgroepen tab from the navigation rail (#227). The class
   /// inventory is a destination of its own now, not a node inside Acties.
   Future<void> openKlasgroepen(WidgetTester tester) async {
@@ -672,13 +719,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
     await syncThenOpenActions(tester);
+    await drillZonderKlas(tester);
 
     // Idle: no dialog.
     expect(progressDialog, findsNothing);
 
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
-    await tester.pumpAndSettle();
+    await tapCohortApply(tester, harness);
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -741,10 +787,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
     await syncThenOpenActions(tester);
+    await drillZonderKlas(tester);
 
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
-    await tester.pumpAndSettle();
+    await tapCohortApply(tester, harness);
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(progressDialog, findsOneWidget);
@@ -760,7 +805,8 @@ void main() {
       reason: 'the failure is reported on the page, not behind a stuck modal',
     );
     // The app is usable again: the affordances are live and reachable.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
+    final String key = harness.controller.classroomPendingSituations.single.key;
+    await tester.ensureVisible(find.byKey(ValueKey('situation-apply-$key')));
     expect(tester.takeException(), isNull);
   });
 
@@ -1365,10 +1411,15 @@ void main() {
     expect(find.byKey(ValueKey('entry-student-${entry.targetId}')),
         findsOneWidget);
 
-    // Apply all: the Smartschool departure writes against the recording SOAP
-    // transport; Azure (Graph) is never called.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    // Apply the row: the Smartschool departure writes against the recording
+    // SOAP transport; Azure (Graph) is never called.
+    await tester
+        .ensureVisible(find.byKey(ValueKey('entry-student-${entry.targetId}')));
+    await tester.tap(find.byKey(ValueKey('entry-student-${entry.targetId}')));
+    await tester.pumpAndSettle();
+    await tester
+        .ensureVisible(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
@@ -1849,9 +1900,10 @@ void main() {
         findsNothing);
 
     // The bulk header offers the one resolution for both classes.
-    final key = harness.controller.groupPendingEntries
-        .firstWhere((e) => e.targetId == '1A')
-        .situationKey;
+    final key = harness.controller.groupPendingSituations
+        .firstWhere((c) => c.label.startsWith('Voeg deze klas toe aan '
+            'Smartschool'))
+        .key;
     final bulk = find.byKey(ValueKey('situation-apply-$key'));
     await tester.ensureVisible(bulk);
     expect(
@@ -1936,15 +1988,18 @@ void main() {
         reason: 'the opt-out is an alternative to pick, never a to-do that '
             'also runs');
 
-    // The namesake classes form a bulk subset of their own. Pooling them with
+    // The namesake classes form a bulk cohort of their own. Pooling them with
     // the new classes would have filed them under a header offering to create
     // classes that already exist.
-    final namesakeKey = harness.controller.groupPendingEntries
-        .firstWhere((e) => e.targetId == '2G')
-        .situationKey;
-    final newKey = harness.controller.groupPendingEntries
-        .firstWhere((e) => e.targetId == '1A')
-        .situationKey;
+    final cohorts = harness.controller.groupPendingSituations;
+    final namesakeKey = cohorts
+        .firstWhere((c) => c.label.startsWith('Deze klas bestaat in '
+            'Smartschool'))
+        .key;
+    final newKey = cohorts
+        .firstWhere((c) => c.label.startsWith('Voeg deze klas toe aan '
+            'Smartschool'))
+        .key;
     expect(namesakeKey, isNot(newKey));
 
     final namesakeBulk = find.byKey(ValueKey('situation-apply-$namesakeKey'));
@@ -1956,27 +2011,25 @@ void main() {
       reason: 'the header names one either/or led by the hand-fix notice',
     );
 
-    // Run that whole subset. It is not a no-op — each class still needs its
-    // Office 365 group (#228), which is a decision of its own — but nothing it
-    // writes touches the class's import: no Smartschool class is created, and
-    // no DontImportClass rule is written.
+    // And it offers nothing to run, out loud. Since #292 the cohort is that one
+    // decision rather than the whole card, and that decision's pre-selected
+    // resolution is a hand repair the app cannot perform — so the button counts
+    // zero and is dead. Under the old grouping it was live, because the classes
+    // also need an Office 365 group (#228): pressing a header that said "this
+    // class is already there" wrote something else entirely.
     final pulls = harness.wisaSyncs;
-    await tester.tap(namesakeBulk);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-
     expect(
-      harness.controller.applyResults!.map((r) => r.changes.summary),
-      isNot(contains('Negeer deze klas bij het importeren uit WISA')),
-      reason: 'the rule would drop the classes the app just said to repair',
+      find.descendant(
+          of: namesakeBulk,
+          matching: find.text('Alles toepassen '
+              '(0)')),
+      findsOneWidget,
     );
+    expect(tester.widget<FilledButton>(namesakeBulk).onPressed, isNull,
+        reason: 'nothing to write means nothing to press');
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
         isEmpty,
         reason: 'Smartschool already holds 2G and 2H');
-    // A DontImportClass rule re-pulls WISA, so an untouched pull count is the
-    // proof that none was written.
-    expect(harness.wisaSyncs, pulls);
 
     // The two classes are still on the list, still asking for the hand repair.
     for (final id in const ['2G', '2H']) {
@@ -1990,7 +2043,7 @@ void main() {
       );
     }
 
-    // And the fix did not simply silence the list: the other subset still
+    // And the fix did not simply silence the list: the other cohort still
     // creates the genuinely new classes, and blacklists neither.
     final newBulk = find.byKey(ValueKey('situation-apply-$newKey'));
     await tester.ensureVisible(newBulk);
@@ -2000,12 +2053,78 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
-        hasLength(2));
+        hasLength(2),
+        reason: '1A and 1B are created; 2G and 2H are not touched');
     expect(
       harness.controller.applyResults!.map((r) => r.changes.summary),
       isNot(contains('Negeer deze klas bij het importeren uit WISA')),
+      reason: 'the rule would drop the classes the app just said to repair',
     );
+    // A DontImportClass rule re-pulls WISA, so an untouched pull count is the
+    // proof that none was written.
     expect(harness.wisaSyncs, pulls);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Smartschool-namesake notice names the group\'s code end-to-end, it '
+      'does not diff it (#306)', (WidgetTester tester) async {
+    // The last bare-`before` field #305 left standing, in the real app. `2G` is
+    // a WISA class Smartschool already carries on a group that is not flagged
+    // official, so the app proposes no create and instead tells the operator to
+    // repair the group by hand — an informational notice that writes nothing
+    // (`canApply == false`). Under that heading its three fields read
+    //
+    //   name: 2G → 2G
+    //   code: G2G → ∅
+    //   officiële klas: nee → ja
+    //
+    // The outer two are the repair being asked for. The middle one is not a
+    // value moving at all: the code is how the operator finds the group in
+    // Smartschool, and through the before → after template it claims the notice
+    // clears it.
+    //
+    // End-to-end rather than on the action alone, because the line the operator
+    // reads is assembled across the whole path: the group dispatch's
+    // `ChangeSet`, the collapse of the notice and its "negeer deze klas" half
+    // into one either/or, the radio that decides whose fields are on screen, and
+    // only then `fieldChangeLine`. "No cleared field anywhere on this card" is
+    // also a claim about the page as composed — this tab renders the second
+    // namesake class and the two ordinary new classes beside it.
+    useTallWindow(tester);
+    final harness = namesakeClassChoiceHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final entry = find.byKey(const ValueKey('entry-group-2G'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    // The notice is the pre-selected half, and it states the code as a fact.
+    expect(
+      find.textContaining(
+          'Deze klas bestaat in Smartschool maar is geen officiële klas'),
+      findsWidgets,
+    );
+    expect(find.text('code: G2G'), findsOneWidget);
+
+    // The repair it *is* asking for still reads as the transition it is.
+    expect(find.text('officiële klas: nee → ja'), findsOneWidget);
+
+    // And nothing on this page claims a field is being emptied — least of all
+    // an action that cannot be applied.
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'a notice that writes nothing clears nothing');
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        isEmpty,
+        reason: 'opening a card writes nothing');
     expect(tester.takeException(), isNull);
   });
 
@@ -2619,6 +2738,76 @@ void main() {
   });
 
   testWidgets(
+      'an expanded card states its summary once and its member counts as '
+      'counts end-to-end (#300)', (WidgetTester tester) async {
+    // The reported card, in the real app: `1A` exists everywhere and carries
+    // one decision, the Office 365 roster write. It read
+    //
+    //   Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)
+    //   **Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)**
+    //   leden toevoegen: ∅ → 1
+    //   leden verwijderen: ∅ → 1
+    //
+    // — the collapsed preview and the #281 decision heading saying the same
+    // sentence one line apart, and two quantities pushed through the
+    // before/after diff template.
+    //
+    // Asserted end-to-end rather than on the widget alone, because both halves
+    // are claims about *composition*. "Once" is a count over the whole card as
+    // the inventory builds it, and this tab also renders a same-situation bulk
+    // header carrying that identical summary — a widget test scoped to one row
+    // cannot see that the page as a whole still reads correctly. And the count
+    // shape starts in the dispatch's `ChangeSet`, travels through the
+    // alternative collapse, and only becomes a line of text in the tile.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    const String summary =
+        'Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)';
+    final Finder row = find.byKey(const ValueKey('class-row-1A'));
+    expect(
+        find.descendant(of: row, matching: find.text(summary)), findsOneWidget);
+
+    final Finder tile = find.byKey(const ValueKey('entry-group-1A'));
+    await tester.ensureVisible(tile);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+
+    // Once, still — the decision's heading replaced the preview instead of
+    // joining it, and it is the heading that stayed: it groups the diff under
+    // it and it still names the system the write lands in (#281/#298).
+    expect(
+      find.descendant(of: row, matching: find.text(summary)),
+      findsOneWidget,
+      reason: 'the card said it twice, one line above the other',
+    );
+    final Finder block = find.byKey(const ValueKey('entry-choice-group-1A-0'));
+    expect(find.descendant(of: block, matching: find.text(summary)),
+        findsOneWidget);
+    expect(find.descendant(of: block, matching: find.text('Office 365 ·')),
+        findsOneWidget);
+
+    // The numbers under it read as the quantities they are.
+    expect(
+        find.descendant(of: block, matching: find.text('leden toevoegen: 1')),
+        findsOneWidget);
+    expect(
+        find.descendant(of: block, matching: find.text('leden verwijderen: 1')),
+        findsOneWidget);
+    expect(find.textContaining('∅ →'), findsNothing,
+        reason: 'a count is not a field whose old value was empty');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an Office 365 group Graph already holds under our address is adopted, '
       'and the create stops being offered end-to-end (#280)',
       (WidgetTester tester) async {
@@ -3003,6 +3192,74 @@ void main() {
   });
 
   testWidgets(
+      'the "laat de groep staan" notice states its facts end-to-end, it does '
+      'not diff them (#305)', (WidgetTester tester) async {
+    // The reported card, in the real app. `GBS-9Z` is the group of a class that
+    // stopped running, still holding its 21 members, and the pre-selected half
+    // of its either/or is the notice that leaves it alone. It read
+    //
+    //   Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet meer …
+    //   mail: GBS-9Z@student.school.example → ∅
+    //   leden: 21 → ∅
+    //
+    // — a heading promising the group stays, over two lines saying its address
+    // and its 21 members are going away. That is what the *other* radio does,
+    // and it is the reading a bulk pass would run.
+    //
+    // End-to-end rather than on the widget alone, because the shape has to
+    // survive the whole path the operator's card is built from: the group
+    // dispatch's `ChangeSet`, the alternative collapse into one choice, the
+    // radio that swaps which option's fields are on screen, and only then a
+    // line of text in the tile. And "no arrow anywhere" is a claim about the
+    // page as composed — this tab also renders a same-situation bulk header
+    // over the two stale groups, which a row-scoped widget test cannot see.
+    useTallWindow(tester);
+    final harness = staleClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    // The default half is the notice, and under its heading are two facts.
+    expect(
+      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
+          'meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing — and no other '
+            'card on this page diffs against an empty half either');
+
+    // Flip to the delete and the same two facts are the inventory of what goes,
+    // joined by the consequence that was never a field value at all.
+    final delete =
+        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
+        findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing);
+    expect(harness.graph.deletedGroups, isEmpty,
+        reason: 'picking a radio writes nothing on its own');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       "a student's Office 365 class group is reported on their own account "
       'end-to-end, pointing at the one class-level write (#245)',
       (WidgetTester tester) async {
@@ -3103,6 +3360,111 @@ void main() {
         .toList();
     expect(applyable,
         ['SyncAzureClassGroupMembers', 'SyncAzureClassGroupMembers']);
+  });
+
+  testWidgets(
+      'a system cell means "work you can do on this screen": the class that '
+      'carries the Office 365 roster write says so, the students it diagnoses '
+      'do not, end-to-end (#298)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, real rail. Same #245 fixture:
+    // every class exists in all three systems and is in sync with Smartschool,
+    // so the *only* work anywhere is the Azure roster — which is exactly the
+    // state that used to render three ticks and say nothing.
+    //
+    // Only a full-app run puts both halves of the rule on screen at once. The
+    // Klasgroepen cells are composed from the stored documents plus the live
+    // dispatch, the Acties cards from a second projection of that same
+    // dispatch, and the rule is that the two must disagree about who owns the
+    // write: the class does, the ~3000 students do not.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+
+    SystemIndicatorState cellOf(String klas, Origin system) => tester
+        .widget<SystemIndicatorCell>(
+          find.byKey(ValueKey('class-cell-$klas-${system.name}')),
+        )
+        .state;
+
+    // `1A` is present in all three systems, so the old reading was three ticks.
+    // Under #298 the Office 365 cell carries the pending roster write while the
+    // other two stay green.
+    expect(cellOf('1A', Origin.wisa), SystemIndicatorState.inOrder);
+    expect(cellOf('1A', Origin.smartschool), SystemIndicatorState.inOrder);
+    expect(cellOf('1A', Origin.azure), SystemIndicatorState.needsWork);
+    expect(cellOf('1B', Origin.azure), SystemIndicatorState.needsWork);
+
+    // The three states are distinguishable without colour too — the icon
+    // changes shape, so a monochrome screenshot still reads.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('class-cell-1A-azure')),
+        matching: find.byIcon(Icons.pending_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('class-cell-1A-wisa')),
+        matching: find.byIcon(Icons.check_circle_outline),
+      ),
+      findsOneWidget,
+    );
+
+    // And the row's own line names the system it writes to, so the cell and the
+    // card agree instead of the operator having to infer it from a group name.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('class-row-1A')),
+        matching: find.text('Office 365 ·'),
+      ),
+      findsOneWidget,
+    );
+
+    // The students the same fact is reported on are informational only, so
+    // nothing over on Acties turns orange for them: their cards still carry the
+    // diagnosis, marked "(manueel)", and raise no applyable work at all.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
+    await tester.ensureVisible(yearNode);
+    await tester.tap(yearNode);
+    await tester.pumpAndSettle();
+    final classNode = find.byKey(const ValueKey('rollup-class-class|1|1|1A'));
+    await tester.ensureVisible(classNode);
+    await tester.tap(classNode);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jane Doe'), findsOneWidget);
+    expect(
+      find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets);
+    final studentWork = harness.controller.pendingEntries
+        .where((e) => e.family == 'student')
+        .expand(workSystemsOfEntry)
+        .toList();
+    expect(
+      studentWork,
+      isEmpty,
+      reason: 'Office 365 class membership is a property of the group, so the '
+          'write is one per class on Klasgroepen — colouring it per student '
+          'would paint the whole school orange at the rollover',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -3761,7 +4123,7 @@ void main() {
     expect(find.text('Tom Tas'), findsNothing,
         reason: 'the operator is looking at 3C — Tom is not on this page');
 
-    final key = harness.controller.classroomPendingEntries.first.situationKey;
+    final key = harness.controller.classroomPendingSituations.single.key;
     final bulk = find.byKey(ValueKey('situation-apply-$key'));
     await tester.ensureVisible(bulk);
     // The header line the count sits on is Dutch, like the rest of the screen
@@ -3806,6 +4168,112 @@ void main() {
     expect(klas3C, findsNothing, reason: 'the class the operator cleared');
     expect(
         find.descendant(of: klas3D, matching: find.text('1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a bulk apply covers one decision everywhere it occurs, and writes '
+      'nothing else on the cards it touches end-to-end (#292)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Smartschool and
+    // Graph write paths. The September rollover in miniature: three students
+    // moved up into `4A` while Smartschool still has all three in last year's
+    // `3C`, so every one of them needs the same class change — and one of them,
+    // Sam, also has a stale Office 365 display name.
+    //
+    // Both halves of the defect are only visible here. The header's cohort is
+    // built by the controller, rendered by the shared tile library and scoped by
+    // the drill-down, and what the button behind it writes is decided a fourth
+    // place again: the old grouping keyed on the family plus the sorted set of
+    // *every* decision on a card, so Sam fell into a subset of his own and the
+    // operator read "2 accounts in dezelfde situatie" for work that three
+    // students needed. Pressing the other header then wrote Sam's Office 365
+    // rename along with his class change, under a label that named neither.
+    useTallWindow(tester);
+    final harness = rolloverHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Drill into 4A, where all three students now belong.
+    final jaar4 = find.byKey(const ValueKey('rollup-grade-grades|4'));
+    await tester.ensureVisible(jaar4);
+    await tester.tap(jaar4);
+    await tester.pumpAndSettle();
+    final klas4A = find.byKey(const ValueKey('rollup-class-class|1|4|4A'));
+    await tester.ensureVisible(klas4A);
+    await tester.tap(klas4A);
+    await tester.pumpAndSettle();
+    expect(harness.controller.selectedClassroom?.classroom, '4A');
+
+    // One header for the class change, and it counts all three — Sam included,
+    // whatever else his card carries.
+    expect(
+      find.text('Wijzig de klas in Smartschool — 3 accounts in dezelfde '
+          'situatie'),
+      findsOneWidget,
+    );
+    final moveKey = harness.controller.classroomPendingSituations
+        .firstWhere((c) => c.label == 'Wijzig de klas in Smartschool')
+        .key;
+    final moveBulk = find.byKey(ValueKey('situation-apply-$moveKey'));
+    await tester.ensureVisible(moveBulk);
+    expect(
+      find.descendant(of: moveBulk, matching: find.text('Alles toepassen (3)')),
+      findsOneWidget,
+    );
+    // Sam's second decision is on his card, and gets no bulk header of its own:
+    // he is the only student who needs it.
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
+    expect(find.textContaining('Wijzig de naam in Azure — '), findsNothing);
+
+    // The confirmation names the one decision: three Smartschool writes, and no
+    // claim on Office 365.
+    await tester.tap(moveBulk);
+    await tester.pumpAndSettle();
+    // Scoped to the dialog: since #298 the cards behind it lead each line with
+    // the system it writes to, so Sam's rename puts "Office 365 ·" on screen —
+    // which is the point of that issue and says nothing about this pass.
+    final confirmation = find.byType(AlertDialog);
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('3 wijzigingen')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('Office 365')),
+      findsNothing,
+      reason: "summing every decision on every card would quote Sam's "
+          'rename and then not write it',
+    );
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Three class moves in Smartschool…
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+      hasLength(3),
+      reason: 'one pass covered the whole class, Sam included',
+    );
+    expect(
+      harness.controller.applyResults!.map((r) => r.changes.summary),
+      everyElement('Wijzig de klas in Smartschool'),
+    );
+    // …and not a single Office 365 write. Sam's rename is a decision the
+    // operator never pressed.
+    expect(
+      harness.graph.requests.where((r) => r.method == 'PATCH'),
+      isEmpty,
+      reason: 'the bulk pass wrote the decision on the header and no other',
+    );
+    // It is still his to make, still on the screen.
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -4992,10 +5460,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Maak een nieuw Smartschool account'), findsWidgets);
 
-    // Apply all for real (against the recording SOAP transport): the create runs
-    // and its minted password is captured into the shared queue.
-    await tester.ensureVisible(find.byKey(const ValueKey('actions-apply')));
-    await tester.tap(find.byKey(const ValueKey('actions-apply')));
+    // Apply the row for real (against the recording SOAP transport): the create
+    // runs and its minted password is captured into the shared queue.
+    final String createId =
+        harness.controller.classroomPendingEntries.single.targetId;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$createId')));
+    await tester.tap(find.byKey(ValueKey('entry-student-$createId')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$createId')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$createId')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
@@ -8648,7 +9121,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The bulk header offers the one resolution for both hires.
-    final key = entries.first.situationKey;
+    final key = harness.controller.classroomPendingSituations.single.key;
     final bulk = find.byKey(ValueKey('situation-apply-$key'));
     await tester.ensureVisible(bulk);
     expect(

@@ -185,10 +185,10 @@ class PendingActionOption {
 /// dialog (#234).
 ///
 /// Built by [ReconcileController.applyScope] from the **selected**, applyable
-/// option of each choice — exactly the actions `applyAll` / `applyEntries` /
-/// `applyEntry` would run — so the dialog names the systems the pass genuinely
-/// reaches instead of the hard-coded "Smartschool and Azure AD" it used to
-/// claim for every action.
+/// option of each choice — exactly the actions `applyEntries` / `applyEntry`
+/// would run — so the dialog names the systems the pass genuinely reaches
+/// instead of the hard-coded "Smartschool and Azure AD" it used to claim for
+/// every action.
 class ApplyScope {
   const ApplyScope({required this.systems, required this.chained});
 
@@ -281,6 +281,13 @@ class PendingChoice {
   /// so two departed students share one bulk-apply subset, and — since #283 —
   /// routes a pass's verdict back to the decision it is the verdict of.
   String get situationId => alternatives.first.situationId;
+
+  /// A short human description of *this* decision (#292): both sides of an
+  /// either/or, or the lone action's summary. What a [SituationCohort] leads
+  /// with, so the header names the one decision it applies and nothing else.
+  String get situationLabel => isChoice
+      ? alternatives.map((a) => a.changes.summary).join(' / ')
+      : selected.changes.summary;
 }
 
 /// The pending actions for **one** linked account, staff member, or class group
@@ -305,24 +312,73 @@ class PendingAccountEntry {
   /// The decision points for this target, in dispatch order.
   final List<PendingChoice> choices;
 
-  /// A stable signature of this entry's *situation* — its family plus the sorted
-  /// set of its choices' [PendingChoice.situationId]. Two entries with the same
-  /// key are "in the same situation", so a bulk apply can act on the subset.
-  String get situationKey {
-    final ids = choices.map((c) => c.situationId).toList()..sort();
-    return '$family|${ids.join(',')}';
-  }
-
-  /// A short human description of the situation (the choices' summaries), used as
-  /// the header of a same-situation subset.
-  String get situationLabel => choices.map((c) {
-        if (!c.isChoice) return c.selected.changes.summary;
-        return c.alternatives.map((a) => a.changes.summary).join(' / ');
-      }).join('; ');
-
   /// Whether an apply pass would write anything for this entry — at least one
   /// selected option is applyable.
   bool get canApply => choices.any((c) => c.selected.canApply);
+}
+
+/// One account's stake in one decision (#292): the card the decision sits on,
+/// and the decision itself. The unit of work every bulk affordance acts on.
+///
+/// Both halves, because neither is enough on its own. The [choice] is what a
+/// pass runs and what a cohort is keyed by; the [entry] is what the pass owes
+/// the shared store afterwards (`_shareApplied` patches *targets*, and a choice
+/// carries only a display label) and what the operator is shown.
+class PendingDecision {
+  const PendingDecision({required this.entry, required this.choice});
+
+  /// The card this decision was raised on.
+  final PendingAccountEntry entry;
+
+  /// The decision itself, with its alternatives and the operator's pick.
+  final PendingChoice choice;
+
+  /// The decision's identity, by the same rule everything else keys on.
+  String get situationId => choice.situationId;
+
+  /// Whether an apply pass would write anything for **this decision** — the
+  /// selected alternative is applyable. Deliberately not
+  /// [PendingAccountEntry.canApply], which answers for the whole card: a
+  /// namesake class whose import decision is a hand-fix notice still has an
+  /// applyable Office 365 group decision beside it, and a cohort of the former
+  /// must not count itself as work.
+  bool get canApply => choice.selected.canApply;
+}
+
+/// Every account that raises one and the same decision (#292) — the subset a
+/// bulk apply of that decision covers.
+///
+/// The cohort replaces the "same combination of decisions" grouping that keyed
+/// on the family plus the sorted set of *every* decision on a card. Two students
+/// who both need their class changed in Smartschool landed in different subsets
+/// the moment one of them also needed an email fix, so the one operation the app
+/// exists for at the September rollover — every student changes class — was
+/// fragmented hardest of all. One decision, one cohort; a card with three
+/// decisions appears in three of them.
+class SituationCohort {
+  const SituationCohort({required this.key, required this.decisions})
+      : assert(decisions.length > 0);
+
+  /// The cohort's identity — the family plus the [PendingChoice.situationId] it
+  /// groups. Family included because a situation is only unique within one: the
+  /// three dispatchers name their action classes independently.
+  final String key;
+
+  /// The accounts raising this decision, in first-seen order.
+  final List<PendingDecision> decisions;
+
+  /// How many accounts are in the cohort.
+  int get length => decisions.length;
+
+  /// What this decision reads as — both sides of an either/or, or the lone
+  /// action's summary. Taken off the first member because every member of a
+  /// cohort answers the same question.
+  String get label => decisions.first.choice.situationLabel;
+
+  /// How many of them a bulk apply would actually write — the count the "Alles
+  /// toepassen (n)" button quotes. Zero for a cohort of informational notices,
+  /// which is what disables the button.
+  int get applyableCount => decisions.where((d) => d.canApply).length;
 }
 
 /// One colliding Smartschool account inside a [DuplicateMailWarning] (#109),
@@ -903,28 +959,60 @@ class ReconcileController extends ChangeNotifier {
     return entries;
   }
 
-  /// The pending entries grouped into "same situation" subsets (#110), in
-  /// first-seen order. Each subset shares a [PendingAccountEntry.situationKey],
-  /// so it can be bulk-applied ("apply this resolution to all departed
-  /// students") while each entry keeps its own chosen alternative.
-  List<List<PendingAccountEntry>> get pendingSituations =>
-      _groupSituations(pendingEntries);
+  /// The pending entries grouped into "same situation" cohorts (#110/#292), in
+  /// first-seen order. Each cohort is **one** decision and every account that
+  /// raises it, so it can be bulk-applied ("unregister every departed student")
+  /// while each account keeps its own chosen alternative.
+  List<SituationCohort> get pendingSituations =>
+      situationCohorts(pendingEntries);
 
-  /// Groups [entries] into "same situation" subsets in first-seen order — the
+  /// Groups the decisions of [entries] into cohorts in first-seen order — the
   /// shared grouping the global list and the per-classroom / per-group
-  /// drill-downs all use (#110/#154).
-  static List<List<PendingAccountEntry>> _groupSituations(
+  /// drill-downs all use (#110/#154/#292).
+  ///
+  /// Public and static because a screen must be able to group the list it is
+  /// *showing* rather than read a cohort off the controller and hope the two
+  /// agree: the Personeel search narrows the classroom list, the Klasgroepen
+  /// search narrows the inventory, and #252 is precisely what happens when a
+  /// bulk button's cohort is resolved anywhere other than the rows on screen.
+  ///
+  /// One entry contributes one member per decision it carries, so an account
+  /// with three decisions is in three cohorts. Non-applyable decisions stay in:
+  /// they are part of the situation, they are counted in the header's "n
+  /// accounts", and [SituationCohort.applyableCount] — not the length — is what
+  /// the apply button quotes and is gated on.
+  static List<SituationCohort> situationCohorts(
     List<PendingAccountEntry> entries,
   ) {
     final order = <String>[];
-    final bySituation = <String, List<PendingAccountEntry>>{};
+    final byKey = <String, List<PendingDecision>>{};
     for (final e in entries) {
-      final key = e.situationKey;
-      if (!bySituation.containsKey(key)) order.add(key);
-      (bySituation[key] ??= <PendingAccountEntry>[]).add(e);
+      for (final c in e.choices) {
+        final key = '${e.family}|${c.situationId}';
+        if (!byKey.containsKey(key)) order.add(key);
+        (byKey[key] ??= <PendingDecision>[])
+            .add(PendingDecision(entry: e, choice: c));
+      }
     }
-    return [for (final key in order) bySituation[key]!];
+    return [
+      for (final key in order)
+        SituationCohort(key: key, decisions: byKey[key]!),
+    ];
   }
+
+  /// Every decision of [entries], in dispatch order — the whole-card reading of
+  /// the same list a cohort holds one decision of (#292).
+  ///
+  /// What the "do everything on this account" affordances run through, so the
+  /// per-card apply and the per-decision apply share one pass rather than two
+  /// that can drift apart.
+  static List<PendingDecision> decisionsOf(
+    Iterable<PendingAccountEntry> entries,
+  ) =>
+      <PendingDecision>[
+        for (final e in entries)
+          for (final c in e.choices) PendingDecision(entry: e, choice: c),
+      ];
 
   /// The live pending entries for the accounts of the currently-open classroom
   /// (#154): the interactive tiles the Actions drill-down builds for one class,
@@ -940,10 +1028,10 @@ class ReconcileController extends ChangeNotifier {
     ];
   }
 
-  /// [classroomPendingEntries] grouped into same-situation subsets, so the
+  /// [classroomPendingEntries] grouped into same-situation cohorts, so the
   /// per-class list keeps the bulk-apply affordance of the old flat list (#154).
-  List<List<PendingAccountEntry>> get classroomPendingSituations =>
-      _groupSituations(classroomPendingEntries);
+  List<SituationCohort> get classroomPendingSituations =>
+      situationCohorts(classroomPendingEntries);
 
   /// The live group ("Klasgroepen") pending entries (#154): the interactive
   /// tiles the group drill-down builds. Empty in a passive session.
@@ -955,9 +1043,9 @@ class ReconcileController extends ChangeNotifier {
     ];
   }
 
-  /// [groupPendingEntries] grouped into same-situation subsets (#154).
-  List<List<PendingAccountEntry>> get groupPendingSituations =>
-      _groupSituations(groupPendingEntries);
+  /// [groupPendingEntries] grouped into same-situation cohorts (#154).
+  List<SituationCohort> get groupPendingSituations =>
+      situationCohorts(groupPendingEntries);
 
   /// The count shown in the Actions header (#154): the live entry count in an
   /// active session, or the summed top-level rollup pending counts in a passive
@@ -1701,11 +1789,12 @@ class ReconcileController extends ChangeNotifier {
   /// **selected** applyable option of each choice (#110). A departed student
   /// counts once (the chosen resolution), not twice, and the informational group
   /// actions are excluded.
-  int get applyableCount => _selectedActions(pendingEntries).length;
+  int get applyableCount =>
+      _selectedActions(decisionsOf(pendingEntries)).length;
 
   /// What a confirmed apply of [entries] would actually write (#234) — the
   /// systems the apply-confirmation dialog names, derived from the very options
-  /// [applyAll] / [applyEntries] / [applyEntry] would run.
+  /// [applyEntries] / [applyEntry] would run.
   ///
   /// Pass the confirmation dialog the *same* list the pass will run over
   /// (#252): the dialog and the write agreeing is the whole point of building
@@ -1719,8 +1808,19 @@ class ReconcileController extends ChangeNotifier {
   /// the visible action never names. The follow-up cannot be counted, because
   /// its own `evaluate` decides at apply time whether it runs at all; it can
   /// only be named.
-  ApplyScope applyScope(Iterable<PendingAccountEntry> entries) {
-    final selected = _selectedActions(entries);
+  ApplyScope applyScope(Iterable<PendingAccountEntry> entries) =>
+      applyScopeForDecisions(decisionsOf(entries));
+
+  /// What a confirmed apply of [decisions] would write — [applyScope] narrowed
+  /// to the decision, which is what a cohort's confirmation dialog needs (#292).
+  ///
+  /// Summing every decision of every card in the cohort over-claims, and
+  /// visibly: "apply the class change to these 14 students" would quote the
+  /// email fixes and Office 365 renames that happen to share their cards, and
+  /// then not write them. The dialog names one decision because the pass runs
+  /// one decision.
+  ApplyScope applyScopeForDecisions(Iterable<PendingDecision> decisions) {
+    final selected = _selectedActions(decisions);
     if (selected.isEmpty) return ApplyScope.empty;
     final systems = <core.Origin>[for (final o in selected) o.changes.system];
     final chained = <core.Origin>{
@@ -1729,15 +1829,14 @@ class ReconcileController extends ChangeNotifier {
     return ApplyScope(systems: systems, chained: chained);
   }
 
-  /// The live actions to run for [entries]: the selected, applyable option of
-  /// every choice, in order.
+  /// The live actions to run for [decisions]: each one's selected option, in
+  /// order, skipping the ones no apply pass would write.
   List<PendingActionOption> _selectedActions(
-    Iterable<PendingAccountEntry> entries,
+    Iterable<PendingDecision> decisions,
   ) =>
       [
-        for (final e in entries)
-          for (final c in e.choices)
-            if (c.selected.canApply) c.selected,
+        for (final d in decisions)
+          if (d.canApply) d.choice.selected,
       ];
 
   /// Runs the smart sync: pull WISA, diff against the retained snapshot, and
@@ -2274,16 +2373,12 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
-  /// Dry-runs the chosen resolution of **every** pending entry (PAIN-3): the
-  /// full apply path, zero writes. Results land in [dryRunResults].
-  Future<void> dryRun() => _run(pendingEntries, dry: true);
-
-  /// Applies the chosen resolution of every pending entry for real, refreshing
-  /// the linked view from the State layer's incremental patches as it goes.
-  /// Only the **selected** alternative of each choice runs — a departed student
-  /// is unregistered *or* deleted, never both (#110). Results land in
-  /// [applyResults].
-  Future<void> applyAll() => _run(pendingEntries, dry: false);
+  // There is deliberately no `applyAll` / `dryRun` over the whole linked view
+  // (#294). Every pass starts from a list the operator is looking at: one card
+  // ([applyEntry]), one decision across its cohort ([applyDecisions]), or a
+  // scoped selection ([applyEntries]). A method that took "everything pending"
+  // existed only to serve a header button that wrote every account in the
+  // school on the strength of a dialog nobody could verify.
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>
@@ -2293,50 +2388,83 @@ class ReconcileController extends ChangeNotifier {
   Future<void> applyEntry(PendingAccountEntry entry) =>
       applyEntries(<PendingAccountEntry>[entry]);
 
-  /// Applies the chosen resolution of every entry in [entries] (#110) — the
-  /// bulk "apply this resolution to all of these" pass. Each entry keeps its
-  /// own chosen alternative, so a subset of departed students can be
-  /// unregistered while another is deleted.
+  /// Applies **every** chosen resolution on each of [entries] (#110) — the
+  /// whole-card pass. Each entry keeps its own chosen alternative, so one
+  /// departed student can be unregistered while another is deleted.
   ///
-  /// It takes the entries themselves rather than a `situationKey` to resolve
-  /// back through [pendingEntries], and that is the whole of #252. The bulk
-  /// header this runs for is rendered over a **scoped** list — the open
-  /// classroom's entries, or the group drill-down's, minus whatever the search
-  /// box filters out — while re-resolving a key against [pendingEntries] means
-  /// every entry in the entire linked view, across every class. A button
-  /// labelled "Alles toepassen (1)" therefore wrote every account group-wide
-  /// that happened to share the situation, none of which the operator had seen.
-  /// Passing the very list the header counted makes that mismatch structurally
-  /// impossible: label, confirmation scope ([applyScope]) and write are one
+  /// The per-decision counterpart is [applyDecisions] (#292); this is the "do
+  /// everything on this account" reading, which stays because it is not blind —
+  /// every decision it runs is on screen on the card above the button.
+  ///
+  /// It takes the entries themselves rather than a key to resolve back through
+  /// [pendingEntries], and that is the whole of #252. The affordance this runs
+  /// for is rendered over a **scoped** list — the open classroom's entries, or
+  /// the group drill-down's, minus whatever the search box filters out — while
+  /// re-resolving a key against [pendingEntries] means every entry in the entire
+  /// linked view, across every class. A button labelled "Alles toepassen (1)"
+  /// therefore wrote every account group-wide that happened to share the
+  /// situation, none of which the operator had seen. Passing the very list the
+  /// header counted makes that mismatch structurally impossible: label,
+  /// confirmation scope ([applyScope]) and write are one
   /// list.
   Future<void> applyEntries(Iterable<PendingAccountEntry> entries) =>
-      _run(entries, dry: false);
+      _run(decisionsOf(entries), dry: false);
 
   /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes.
   Future<void> dryRunEntries(Iterable<PendingAccountEntry> entries) =>
-      _run(entries, dry: true);
+      _run(decisionsOf(entries), dry: true);
 
-  /// Runs the selected, applyable option of every choice in [entries] through
-  /// the apply path (dry or real). Shared by the global, per-entry, and
-  /// per-situation affordances so all three behave identically (#110). Each
-  /// option is bound to its own target; on a real write the applier patches the
+  /// Applies **one nominated decision per account** (#292) — the bulk pass a
+  /// [SituationCohort]'s "Alles toepassen" runs, and the seam a school-wide
+  /// apply-all builds on.
+  ///
+  /// The difference from [applyEntries] is the whole of #292: given the same
+  /// fourteen students, `applyEntries` writes every selected decision on each of
+  /// their cards, while this writes only the decision the operator read on the
+  /// header. Bulk-applying "Wijzig Klas in Smartschool" therefore stops
+  /// silently writing the email fixes and Office 365 renames that happen to
+  /// share those cards — a claim the operator could not have verified, because
+  /// the header named one action and the pass ran whatever else was there.
+  ///
+  /// Each member still contributes its **own** selected alternative, exactly as
+  /// the whole-card pass does: a cohort of departed students where one is set to
+  /// unregister and one to delete applies each as chosen.
+  Future<void> applyDecisions(Iterable<PendingDecision> decisions) =>
+      _run(decisions, dry: false);
+
+  /// Dry-runs [decisions] — [applyDecisions] with no writes.
+  Future<void> dryRunDecisions(Iterable<PendingDecision> decisions) =>
+      _run(decisions, dry: true);
+
+  /// Runs the selected, applyable option of every decision in [decisions]
+  /// through the apply path (dry or real). Shared by the per-entry and
+  /// per-cohort affordances so both behave identically (#110). Each option
+  /// is bound to its own target; on a real write the applier patches the
   /// snapshot and returns a fresh linked view we adopt as the pass proceeds.
   ///
-  /// It takes the *entries* rather than the resolved options because a real pass
-  /// owes the shared store a patch afterwards (#254), and the entries are what
-  /// name the targets it touched — an option carries only a display label.
+  /// It takes [PendingDecision]s rather than the resolved options because a real
+  /// pass owes the shared store a patch afterwards (#254), and the decisions are
+  /// what name the targets it touched — an option carries only a display label.
+  /// Since #292 that is also what lets one pass serve both readings of "apply":
+  /// the whole card is simply every decision on it.
   Future<void> _run(
-    Iterable<PendingAccountEntry> entries, {
+    Iterable<PendingDecision> decisions, {
     required bool dry,
   }) async {
     if (busy || _linked == null) return;
-    final selected = _selectedActions(entries);
-    // The targets this pass writes to, captured before it starts: the entries
-    // are derived from the pre-apply linked view, which the pass replaces.
-    final touched = <PendingAccountEntry>[
-      for (final e in entries)
-        if (e.choices.any((c) => c.selected.canApply)) e,
-    ];
+    final selected = _selectedActions(decisions);
+    // The targets this pass writes to, captured before it starts: the decisions
+    // are derived from the pre-apply linked view, which the pass replaces. One
+    // patch per target however many of its decisions this pass runs — a card
+    // has one stored document.
+    final touched = <PendingAccountEntry>[];
+    final seen = <String>{};
+    for (final d in decisions) {
+      if (!d.canApply) continue;
+      if (seen.add('${d.entry.family}|${d.entry.targetId}')) {
+        touched.add(d.entry);
+      }
+    }
     _begin(ReconcilePhase.applying);
 
     final options =

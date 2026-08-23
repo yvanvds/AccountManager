@@ -1,4 +1,6 @@
+import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/screens/class_groups_screen.dart';
+import 'package:account_manager/src/screens/system_indicator.dart';
 import 'package:account_state/account_state.dart' show InMemoryLinkedStore;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +23,18 @@ final Finder _filter =
 final Finder _search = find.byKey(const ValueKey('class-groups-search'));
 
 Finder _row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+/// What one row's cell says about one system (#298).
+SystemIndicatorState _cell(
+  WidgetTester tester,
+  String klas,
+  core.Origin system,
+) =>
+    tester
+        .widget<SystemIndicatorCell>(
+          find.byKey(ValueKey('class-cell-$klas-${system.name}')),
+        )
+        .state;
 
 /// Types [needle] into the inventory search box and settles.
 Future<void> _type(WidgetTester tester, String needle) async {
@@ -114,6 +128,104 @@ void main() {
         findsOneWidget);
     expect(find.descendant(of: row, matching: find.text('Eerste jaar A')),
         findsOneWidget);
+    for (final system in const <core.Origin>[
+      core.Origin.wisa,
+      core.Origin.smartschool,
+      core.Origin.azure,
+    ]) {
+      expect(_cell(tester, '1A', system), SystemIndicatorState.inOrder);
+    }
+  });
+
+  testWidgets(
+      'a class that is present everywhere but carries a pending Office 365 '
+      'write says so on its Office 365 cell (#298)',
+      (WidgetTester tester) async {
+    // The screenshot in the issue: `1A` exists in WISA, Smartschool and Office
+    // 365 and is carrying an Azure roster write, so it used to render three
+    // ticks with nothing on the card saying the pending work was an Azure one.
+    _useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, '1A', core.Origin.wisa), SystemIndicatorState.inOrder);
+    expect(_cell(tester, '1A', core.Origin.smartschool),
+        SystemIndicatorState.inOrder);
+    expect(
+      _cell(tester, '1A', core.Origin.azure),
+      SystemIndicatorState.needsWork,
+      reason: 'the class is carrying a stale Office 365 roster',
+    );
+
+    // And the line itself names the system it writes to, so the card and the
+    // cell tell the same story.
+    expect(
+      find.descendant(of: _row('1A'), matching: find.text('Office 365 ·')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: _row('1A'),
+        matching: find.textContaining('Werk het ledenbestand van GBS-1A bij'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+      'a class with no Office 365 group reads missing, not pending '
+      '(#298)', (WidgetTester tester) async {
+    // Missing beats work pending: `2F ECO` is in WISA and Smartschool and has
+    // no group at all, and the create it raises is exactly the work of making
+    // one. The cell must say the group is absent, not that it needs a tweak.
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, '2F ECO', core.Origin.wisa),
+        SystemIndicatorState.inOrder);
+    expect(_cell(tester, '2F ECO', core.Origin.smartschool),
+        SystemIndicatorState.inOrder);
+    expect(_cell(tester, '2F ECO', core.Origin.azure),
+        SystemIndicatorState.missing);
+  });
+
+  testWidgets(
+      'an informational-only class colours no cell, and still lights its row '
+      '(#298)', (WidgetTester tester) async {
+    // `GBS-9Z` is the group of a class that stopped running. Its decision is an
+    // either/or whose default half is the "laat staan" notice (#271), so there
+    // is no write pending and the Office 365 cell stays green — while the row
+    // itself is highlighted, because `needsAttention` counts the notice and on
+    // this screen the notice *is* the work (#225/#250).
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness(withStaleGroup: true);
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, 'GBS-9Z', core.Origin.azure),
+        SystemIndicatorState.inOrder);
+    expect(_cell(tester, 'GBS-9Z', core.Origin.wisa),
+        SystemIndicatorState.missing);
+    expect(_cell(tester, 'GBS-9Z', core.Origin.smartschool),
+        SystemIndicatorState.missing);
+
+    final ColorScheme colors =
+        Theme.of(tester.element(_row('GBS-9Z'))).colorScheme;
+    final Container box = tester.widget<Container>(_row('GBS-9Z'));
+    expect(
+      ((box.decoration! as BoxDecoration).border! as Border).top.color,
+      colors.primary,
+      reason: 'the row still asks something of the operator',
+    );
   });
 
   testWidgets(
@@ -306,6 +418,62 @@ void main() {
       findsWidgets,
     );
     expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+  });
+
+  testWidgets(
+      'an open row states its summary once, and its member counts as counts '
+      '(#300)', (WidgetTester tester) async {
+    // Class `1A` raises one decision: the Office 365 roster write. Collapsed,
+    // the row previews it; since #281 the expanded body leads that decision
+    // with the very same sentence, so opening the row printed it twice, one
+    // line directly above the other. And the roster numbers went through the
+    // before/after template — "leden toevoegen: ∅ → 1" — which claims a field
+    // used to be empty and is becoming 1, true of nothing that happens here.
+    _useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    const String summary =
+        'Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)';
+    const ValueKey<String> block = ValueKey('entry-choice-group-1A-0');
+
+    // Collapsed, the preview says it — once.
+    expect(find.descendant(of: _row('1A'), matching: find.text(summary)),
+        findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
+    await tester.pumpAndSettle();
+
+    // Open, it is still said once: the decision's heading takes the preview's
+    // place rather than joining it.
+    expect(
+      find.descendant(of: _row('1A'), matching: find.text(summary)),
+      findsOneWidget,
+      reason: 'the heading replaces the collapsed preview, it does not repeat '
+          'it',
+    );
+    expect(
+      find.descendant(of: find.byKey(block), matching: find.text(summary)),
+      findsOneWidget,
+      reason: 'and the surviving half is the heading, which groups the diff '
+          'below it',
+    );
+    // It is still led by the system it writes to (#298) — with the preview
+    // gone, this heading is the only thing on the card that says so.
+    expect(
+      find.descendant(
+          of: find.byKey(block), matching: find.text('Office 365 ·')),
+      findsOneWidget,
+    );
+
+    // And the numbers read as the quantities they are.
+    expect(find.text('leden toevoegen: 1'), findsOneWidget);
+    expect(find.text('leden verwijderen: 1'), findsOneWidget);
+    expect(find.textContaining('∅ →'), findsNothing,
+        reason: 'a count is not a field whose old value was empty');
   });
 
   testWidgets(
@@ -878,6 +1046,46 @@ void main() {
     expect(_row('GBS-8Y'), findsNothing);
     expect(find.text('Klassen in dezelfde situatie'), findsNothing);
     expect(harness.graph.deletedGroups, isEmpty);
+  });
+
+  testWidgets(
+      'the stale-group card states the group\'s facts instead of diffing them '
+      '(#305)', (WidgetTester tester) async {
+    // `GBS-9Z` is the group of a class that stopped running, still holding its
+    // 21 members. Under the heading "Laat de Office 365-groep GBS-9Z staan"
+    // its two fields read
+    //
+    //   mail: GBS-9Z@student.school.example → ∅
+    //   leden: 21 → ∅
+    //
+    // — the address and the members going away, which is precisely what the
+    // *other* radio does and what this one promises not to.
+    _useTallWindow(tester);
+    final harness = staleClassGroupHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-GBS-9Z')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing');
+
+    // The delete beside it names the same facts — the inventory of what goes,
+    // not three fields each being emptied. "verdwijnen mee" was never a value.
+    await tester
+        .tap(find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
+        findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing);
   });
 
   testWidgets('classes sort by year, numerically (#227)',

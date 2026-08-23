@@ -69,6 +69,21 @@ sealed class StaffAction {
   /// [StudentAction.canApply] and [GroupAction.canApply].
   bool get canApply => true;
 
+  /// Whether this action may be written to **many** records in one pass (#293)
+  /// — the staff half of [StudentAction.canApplyToAll], ported from legacy's
+  /// `AccountAction.canBeAppliedToAll`
+  /// (`Action\StaffAccount\AccountAction.cs:23`). Defaults to `false`; see
+  /// [StudentAction.canApplyToAll] for why the flag lives on the action rather
+  /// than in the screen, and for the line legacy drew between mechanical and
+  /// judgement work.
+  ///
+  /// Legacy granted it to three staff actions. Two are ported and override this
+  /// ([AddStaffToAzure], [ModifySmartschoolStaffEmail]); the third,
+  /// `AddToStaffGroup`, is the Office 365 `-Personeel` placement this package
+  /// still defers (see the README), so there is no Dart action to carry the
+  /// grant yet.
+  bool get canApplyToAll => false;
+
   /// The action types this one **unlocks** on the same target (#240) — the staff
   /// family's half of the chaining [StudentAction.unlocks] introduced for
   /// students (#230) and extended to class groups in #245, deliberately the same
@@ -199,6 +214,20 @@ class AddStaffToAzure extends StaffAction {
   @override
   bool get isDefaultAlternative => true;
 
+  /// Provisioning goes in bulk (legacy `AddToAzure(…, true, true)`), the staff
+  /// twin of [AddStudentToAzure]'s grant: a term's new hires arrive together.
+  ///
+  /// It is the applyable half of [staffImportAlternative], so a bulk pass only
+  /// ever provisions — the opt-out beside it is not the default and is not
+  /// bulk-applyable either, so no pass can blacklist a cohort of new staff.
+  ///
+  /// Its [unlocks] chain still runs per record, so the Smartschool create rides
+  /// along even though [AddStaffToSmartschool] withholds the grant on its own:
+  /// the chain is a consequence of *this* action being sanctioned, and the same
+  /// two writes legacy performed.
+  @override
+  bool get canApplyToAll => true;
+
   String get _displayName => '${_wisa.firstName} ${_wisa.lastName}'.trim();
 
   String _projectedUpn() =>
@@ -308,6 +337,15 @@ class AddStaffToAzure extends StaffAction {
 /// the account is built from the Azure record with the WISA [wapi.WisaStaff.code]
 /// as its `accountId` (spec §4) and the WISA `wisaId` as its copy-code (`fax`);
 /// the group placement (Leerkrachten / Leerlingen) is deferred (see README).
+///
+/// **Not bulk-applyable** (#293), deliberately unlike its student twin
+/// [AddStudentToSmartschool]: legacy passed `AddToSmartschool(…, true, false)`
+/// here and `(…, true, true)` there, the one place the two families disagree
+/// about the same operation. The asymmetry is preserved rather than tidied — a
+/// staff account raised on its own means the #240 chain did not carry it, so
+/// something about that record is unusual and an operator should look. The
+/// ordinary new-hire path is unaffected: [AddStaffToAzure] is bulk-applyable and
+/// [unlocks] this create behind it, per record.
 class AddStaffToSmartschool extends StaffAction {
   const AddStaffToSmartschool(super.staff, super.config);
 
@@ -673,6 +711,12 @@ class ModifySmartschoolStaffEmail extends StaffAction {
   bool evaluate() =>
       _domainOf(_ss.mail) == config.azureDomain.toLowerCase() &&
       !_eq(_ss.mail, _az.upn);
+
+  /// Copying the Azure UPN down to Smartschool is mechanical, so it goes in bulk
+  /// (legacy `ModifySmartschoolStaffEmail(…, true, true)`) — the staff twin of
+  /// [ModifySmartschoolStudentEmail]'s grant.
+  @override
+  bool get canApplyToAll => true;
 
   @override
   ChangeSet describeChanges() => ChangeSet(

@@ -73,6 +73,30 @@ sealed class StudentAction {
   /// has carried informational members since #54.
   bool get canApply => true;
 
+  /// Whether this action may be written to **many** records in one pass (#293)
+  /// — the port of legacy's `AccountAction.canBeAppliedToAll`
+  /// (`Action\StudentAccount\AccountAction.cs:22`), which defaulted to `false`
+  /// and was granted action by action.
+  ///
+  /// Distinct from [canApply], which says whether the app can write the action
+  /// *at all*. A bulk affordance needs both: [canApply] is the mechanism,
+  /// [canApplyToAll] is the sanction. It is therefore never `true` where
+  /// [canApply] is `false`, and a test pins that for all three families.
+  ///
+  /// **A property of the action, never a list of kinds held in the UI.** Such a
+  /// list drifts from what the domain actually sanctions, and an action added
+  /// later silently inherits whatever the list's default happened to be.
+  /// Declared here, a new action is conservative until someone decides
+  /// otherwise — which is the whole reason the default is `false`.
+  ///
+  /// The line legacy drew over a decade of use, and this port keeps: mechanical
+  /// corrections and provisioning may go in bulk; **destructive** actions
+  /// ([RemoveStudentFromAzure], [DeleteStudentFromSmartschool],
+  /// [UnregisterStudentFromSmartschool]) and **judgement** actions — the name
+  /// and address modifiers, where the operator is meant to look at the record —
+  /// never do.
+  bool get canApplyToAll => false;
+
   /// The action types this one **unlocks** on the same target (#230).
   ///
   /// Provisioning a brand-new student is a chain, not a single action: the
@@ -178,6 +202,11 @@ class AddStudentToAzure extends StudentAction {
   /// reaches both systems and the confirmation dialog says both (#234).
   @override
   Set<Origin> get unlockedSystems => const {Origin.smartschool};
+
+  /// Provisioning goes in bulk (legacy `AddToAzure(…, true, true)`): a new
+  /// intake arrives as a cohort, and creating their accounts is mechanical.
+  @override
+  bool get canApplyToAll => true;
 
   @override
   ChangeSet describeChanges() {
@@ -301,6 +330,13 @@ class AddStudentToSmartschool extends StudentAction {
       account.isInOurWisa &&
       account.azure != null &&
       account.smartschool == null;
+
+  /// Provisioning goes in bulk (legacy `AddToSmartschool(…, true, true)`), the
+  /// second half of the same intake pass [AddStudentToAzure] leads. Note the
+  /// staff twin [AddStaffToSmartschool] is deliberately **not** bulk-applyable:
+  /// legacy withheld it there and this port keeps the asymmetry.
+  @override
+  bool get canApplyToAll => true;
 
   ss.SmartschoolAccount _build() {
     final wisa = _wisa;
@@ -622,6 +658,12 @@ class ModifyAzureStudentEmail extends StudentAction {
 
   String get _newUpn => '${_localPart(_az.upn)}@${config.studentDomain}';
 
+  /// A mechanical domain correction, so it goes in bulk (legacy
+  /// `ModifyAzureStudentEmail(…, true, true)`, and the same grant on the dead
+  /// `ChangeEmail` that stated the rule twice).
+  @override
+  bool get canApplyToAll => true;
+
   @override
   ChangeSet describeChanges() => ChangeSet(
         system: Origin.azure,
@@ -701,6 +743,12 @@ class ModifyAzureSchool extends StudentAction {
   @override
   bool evaluate() => !_eq(_az.companyName, config.schoolPrefix);
 
+  /// Stamping our own prefix on our own students is mechanical, so it goes in
+  /// bulk (legacy `ModifyAzureSchool(…, true, true)`) — and it is what makes a
+  /// transferred student's adoption stick, a repair that arrives per intake.
+  @override
+  bool get canApplyToAll => true;
+
   @override
   ChangeSet describeChanges() => ChangeSet(
         system: Origin.azure,
@@ -732,6 +780,11 @@ class ModifyAccountId extends StudentAction {
 
   @override
   bool evaluate() => _wisa.wisaId.value.trim() != _ss.accountId.trim();
+
+  /// Copying one id onto another is mechanical, so it goes in bulk (legacy
+  /// `ModifyAccountID(…, true, true)`).
+  @override
+  bool get canApplyToAll => true;
 
   @override
   ChangeSet describeChanges() => ChangeSet(
@@ -795,6 +848,11 @@ class ModifySmartschoolStudentEmail extends StudentAction {
   bool evaluate() =>
       _domainOf(_ss.mail) == config.azureDomain.toLowerCase() &&
       !_eq(_ss.mail, _az.upn);
+
+  /// Copying the Azure UPN down to Smartschool is mechanical, so it goes in
+  /// bulk (legacy `ModifySmartschoolStudentEmail(…, true, true)`).
+  @override
+  bool get canApplyToAll => true;
 
   @override
   ChangeSet describeChanges() => ChangeSet(
@@ -888,6 +946,11 @@ class ModifySmartschoolStemId extends StudentAction {
   @override
   bool evaluate() => _wisaStemId != _ss.stemId;
 
+  /// A mechanical WISA → Smartschool copy, so it goes in bulk (legacy
+  /// `ModifySmartschoolStemID(…, true, true)`).
+  @override
+  bool get canApplyToAll => true;
+
   @override
   ChangeSet describeChanges() => ChangeSet(
         system: Origin.smartschool,
@@ -914,6 +977,14 @@ class ModifySmartschoolBirthPlace extends StudentAction {
 
   @override
   bool evaluate() => !_eq(_ss.birthPlace, _wisa.birthPlace);
+
+  /// A mechanical WISA → Smartschool copy, so it goes in bulk (legacy
+  /// `ModifySmartschoolBirthPlace(…, true, true)`). Note the *name* and
+  /// *address* modifiers beside it are deliberately withheld: those are the
+  /// fields where WISA and Smartschool legitimately disagree and the operator is
+  /// meant to look at the record.
+  @override
+  bool get canApplyToAll => true;
 
   @override
   ChangeSet describeChanges() => ChangeSet(
@@ -1001,6 +1072,13 @@ class MoveToSmartschoolClassGroup extends StudentAction {
   @override
   bool evaluate() =>
       !_isAdultEducation && placement.className != placement.currentClassName;
+
+  /// The bulk action the app exists for (legacy
+  /// `MoveToSmartschoolClassGroup(…, true, true)`): at the September rollover
+  /// **every** student changes class group, and the move is a mechanical
+  /// consequence of the WISA class they already sit in.
+  @override
+  bool get canApplyToAll => true;
 
   @override
   ChangeSet describeChanges() => ChangeSet(

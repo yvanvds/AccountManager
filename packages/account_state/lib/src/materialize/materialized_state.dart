@@ -15,7 +15,7 @@
 library;
 
 import 'package:account_actions/account_actions.dart'
-    show Alternatives, FieldChange, collapseAlternatives;
+    show Alternatives, FieldChange, FieldChangeShape, collapseAlternatives;
 import 'package:account_core/account_core.dart' as core;
 
 /// One dispatched action, flattened for storage and display.
@@ -86,6 +86,13 @@ class CandidateAction {
                 'field': f.field,
                 if (f.before != null) 'before': f.before,
                 if (f.after != null) 'after': f.after,
+                // Which of the three shapes this is (#300, #305). Read back as
+                // a transition, a count renders as "∅ → 21" again and a
+                // statement as "GBS-9Z@… → ∅" — so a passive session would show
+                // the very thing the live one no longer does. Omitted for the
+                // transition, which is what every field written before #300 is.
+                if (f.shape != FieldChangeShape.transition)
+                  'shape': f.shape.name,
               },
           ],
         'canApply': canApply,
@@ -105,6 +112,7 @@ class CandidateAction {
               (f as Map<String, dynamic>)['field'] as String,
               before: f['before'] as String?,
               after: f['after'] as String?,
+              shape: _fieldShape(f['shape'] as String?),
             ),
         ],
         canApply: json['canApply'] as bool? ?? true,
@@ -112,6 +120,17 @@ class CandidateAction {
         isDefaultAlternative: json['isDefaultAlternative'] as bool? ?? false,
       );
 }
+
+/// The persisted [FieldChangeShape] of one stored field.
+///
+/// Absent in documents written before #300/#305 — and in every field that is a
+/// plain transition, which is exactly what those documents hold — so an unknown
+/// or missing name reads back as [FieldChangeShape.transition].
+FieldChangeShape _fieldShape(String? name) =>
+    FieldChangeShape.values.firstWhere(
+      (FieldChangeShape s) => s.name == name,
+      orElse: () => FieldChangeShape.transition,
+    );
 
 /// The decision points a candidate list represents (#251) — the persisted-view
 /// counterpart of the reconcile controller's `PendingChoice`, built by the one

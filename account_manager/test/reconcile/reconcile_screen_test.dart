@@ -112,17 +112,19 @@ void main() {
     // The one fixture student's applyable actions surface as a pending indicator.
     expect(find.text('2 openstaande acties'), findsOneWidget);
 
-    // …but the pending actions moved to the Actions tab: neither the title, the
-    // global apply, nor any entry tile is on the Reconcile screen (#154).
+    // …but the pending actions moved to the Actions tab: neither the title, an
+    // apply affordance, nor any entry tile is on the Reconcile screen (#154).
     expect(find.textContaining('Pending actions'), findsNothing);
-    expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
     expect(find.byKey(const ValueKey('reconcile-apply')), findsNothing);
-    expect(
-      find.byWidgetPredicate((w) =>
-          w.key is ValueKey<String> &&
-          (w.key! as ValueKey<String>).value.startsWith('entry-')),
-      findsNothing,
-    );
+    for (final String prefix in <String>['entry-', 'situation-']) {
+      expect(
+        find.byWidgetPredicate((w) =>
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith(prefix)),
+        findsNothing,
+        reason: 'no "$prefix" affordance belongs on Synchronisatie',
+      );
+    }
 
     // A second sync with unchanged WISA: the no-changes banner.
     harness.wisaResult =

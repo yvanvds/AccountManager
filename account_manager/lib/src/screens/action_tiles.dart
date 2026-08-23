@@ -30,23 +30,31 @@ import 'package:wisa_api/wisa_api.dart' as wapi show formatWerkdatum;
 
 import '../format/timestamps.dart';
 import '../reconcile/reconcile_controller.dart';
+import 'system_indicator.dart';
+
+// The system vocabulary both action screens speak (#298) — what a coloured
+// WISA / Smartschool / Office 365 cell means, and how an action line names the
+// system it writes to. Re-exported so a screen that already imports the tile
+// library gets it without a second import, exactly as `systemLabel` was reached
+// before it moved there.
+export 'system_indicator.dart';
 
 // ---------------------------------------------------------------------------
 // Rows.
 // ---------------------------------------------------------------------------
 
 /// One row of a per-classroom (or per-group) pending list: a same-situation
-/// bulk header or a single account entry. Flattening the situation → entries
-/// tree into a linear list lets a lazy [SliverList] build only the on-screen
-/// rows (#111/#154).
+/// bulk header or a single account entry. Flattening the cohorts → entries tree
+/// into a linear list lets a lazy [SliverList] build only the on-screen rows
+/// (#111/#154).
 sealed class PendingRow {
   const PendingRow();
 }
 
 class SituationHeaderRow extends PendingRow {
-  const SituationHeaderRow(this.entries);
+  const SituationHeaderRow(this.cohort);
 
-  final List<PendingAccountEntry> entries;
+  final SituationCohort cohort;
 }
 
 class EntryRow extends PendingRow {
@@ -55,19 +63,26 @@ class EntryRow extends PendingRow {
   final PendingAccountEntry entry;
 }
 
-/// Flattens same-situation [situations] into the linear [PendingRow] list a
-/// lazy sliver builds from: a bulk header only where more than one account
-/// shares the situation, then that subset's entries.
-List<PendingRow> pendingRows(List<List<PendingAccountEntry>> situations) {
-  final rows = <PendingRow>[];
-  for (final subset in situations) {
-    if (subset.length > 1) rows.add(SituationHeaderRow(subset));
-    for (final entry in subset) {
-      rows.add(EntryRow(entry));
-    }
-  }
-  return rows;
-}
+/// Flattens [cohorts] and [entries] into the linear [PendingRow] list a lazy
+/// sliver builds from: the bulk headers, then one tile per account.
+///
+/// The headers lead rather than each sitting above its own run of rows, and
+/// since #292 they have to. A cohort is one decision, so an account with three
+/// decisions belongs to three of them; interleaving would mean rendering its
+/// card three times, once under each. Klasgroepen already collects its bulk
+/// affordances above the inventory for the same reason (its rows are sorted by
+/// class name, so a cohort was never contiguous there either), and this is that
+/// shape. Both lists therefore read the same way: what can be done in bulk on
+/// top, the accounts themselves below, each exactly once.
+List<PendingRow> pendingRows(
+  List<SituationCohort> cohorts,
+  List<PendingAccountEntry> entries,
+) =>
+    <PendingRow>[
+      for (final cohort in cohorts)
+        if (cohort.length > 1) SituationHeaderRow(cohort),
+      for (final entry in entries) EntryRow(entry),
+    ];
 
 // ---------------------------------------------------------------------------
 // Wording.
@@ -104,18 +119,6 @@ String? sharedViewFreshness(ReconcileController controller) {
       workDate == null ? '' : ' · werkdatum ${wapi.formatWerkdatum(workDate)}';
   return 'Generatie ${state.generation}$when$who$asOf';
 }
-
-/// The Dutch name the operator knows a system by — the same names the action
-/// summaries and the rest of the screen use (#234). Azure AD is "Office 365"
-/// throughout this app, so the dialog says that and not the tenant's technical
-/// name.
-String systemLabel(core.Origin system) => switch (system) {
-      core.Origin.azure => 'Office 365',
-      core.Origin.smartschool => 'Smartschool',
-      core.Origin.wisa => 'WISA',
-      core.Origin.all => 'alle systemen',
-      core.Origin.other => 'een ander systeem',
-    };
 
 /// Joins system names the way Dutch reads them: "a", "a en b", "a, b en c".
 String _joinSystems(Iterable<core.Origin> systems) {
@@ -189,10 +192,17 @@ String applyConfirmationMessage(ApplyScope scope) {
 /// The account card used to render a bare bullet for every candidate (#255), so
 /// a student's informational candidate — since #245 the student family has one —
 /// read like due work next to a badge that counted it zero.
+///
+/// The system the action lands in is **not** in the string: [ActionLine] puts
+/// it in front as a tag of its own (#298), so the summary stays the one
+/// addressable string the dialogs and outcome rows also quote. That tag also
+/// took over from the leading bullet these lines used to carry — two leaders on
+/// one line read as a typo, and the interactive tile's lines never had one, so
+/// dropping it is what finally makes the two identical.
 String readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
   final summary = choice.selected.summary;
-  if (choice.isChoice) return '• $summary (keuze)';
-  return choice.selected.canApply ? '• $summary' : '• $summary (manueel)';
+  if (choice.isChoice) return '$summary (keuze)';
+  return choice.selected.canApply ? summary : '$summary (manueel)';
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +210,7 @@ String readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
 // ---------------------------------------------------------------------------
 
 /// Shows the apply-confirmation dialog and, on confirm, runs [apply] behind the
-/// modal progress dialog (#110/#243). Shared by the global, per-situation, and
+/// modal progress dialog (#110/#243). Shared by the per-situation and
 /// per-entry apply affordances so a write is always one deliberate confirmation
 /// followed by one visible pass.
 ///
@@ -249,10 +259,10 @@ Future<void> confirmAndApply(
 /// operator had usually scrolled past — so the app looked hung, and nothing
 /// stopped them scrolling, switching family tab, or navigating away mid-write.
 ///
-/// Every affordance goes through here — global, per-situation, per-entry, and
-/// dry-run as well as apply — so the pass behaves the same wherever it is
-/// started. A dry-run over hundreds of accounts is exactly as slow and was
-/// exactly as silent.
+/// Every affordance goes through here — per-situation and per-entry, dry-run as
+/// well as apply — so the pass behaves the same wherever it is started. A
+/// dry-run over hundreds of accounts is exactly as slow and was exactly as
+/// silent.
 ///
 /// The dialog's lifetime is bound to [run]'s future rather than to any observed
 /// controller state: it is dismissed in a `finally`, so a pass that fails — or
@@ -691,39 +701,46 @@ class MessagePanel extends StatelessWidget {
 // Interactive tiles.
 // ---------------------------------------------------------------------------
 
-/// The bulk header of one "same situation" subset (#110): the "apply this
-/// resolution to all" affordance that honours each entry's own chosen
-/// alternative. Rendered as its own row in the lazy list, only when more than
-/// one account shares the situation.
+/// The bulk header of one [SituationCohort] (#110/#292): the "apply this one
+/// decision to every account that needs it" affordance, honouring each
+/// account's own chosen alternative. Rendered as its own row in the lazy list,
+/// only when more than one account raises the decision.
 ///
-/// Every affordance here acts on [entries] — the exact subset this header was
-/// built over and counts (#252). That list is already scoped by whatever list
-/// rendered it: the open classroom's pending entries, or the class inventory's,
-/// narrowed further by the search box. The bulk pass used to re-resolve the
-/// situation key against the *whole* linked view instead, so a header reading
-/// "Alles toepassen (1)" inside one class wrote every account group-wide in the
-/// same situation. The label, the confirmation scope and the write are now one
-/// list, so they cannot drift apart again.
+/// Every affordance here acts on [cohort]'s decisions — the exact members this
+/// header was built over and counts (#252). That list is already scoped by
+/// whatever list rendered it: the open classroom's pending entries, or the class
+/// inventory's, narrowed further by the search box. The bulk pass used to
+/// re-resolve the situation key against the *whole* linked view instead, so a
+/// header reading "Alles toepassen (1)" inside one class wrote every account
+/// group-wide in the same situation. The label, the confirmation scope and the
+/// write are one list, so they cannot drift apart again.
+///
+/// Since #292 that list is one decision deep as well as scoped. The header names
+/// a single decision, so the pass behind it writes a single decision: pressing
+/// "Wijzig Klas in Smartschool" on fourteen students no longer also writes the
+/// email fix one of them happens to need. That is what makes the claim on the
+/// button verifiable at all — the operator can read one action's description and
+/// know what the button does to everyone in the cohort.
 class SituationHeader extends StatelessWidget {
   const SituationHeader({
     super.key,
     required this.controller,
-    required this.entries,
+    required this.cohort,
     this.noun = 'accounts',
   });
 
   final ReconcileController controller;
-  final List<PendingAccountEntry> entries;
+  final SituationCohort cohort;
 
-  /// What this subset is a subset *of*, in Dutch — "accounts" in a classroom,
+  /// What this cohort is a cohort *of*, in Dutch — "accounts" in a classroom,
   /// "klassen" in the class inventory (#227).
   final String noun;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final key = entries.first.situationKey;
-    final applyable = entries.where((e) => e.canApply).length;
+    final String key = cohort.key;
+    final int applyable = cohort.applyableCount;
 
     return Padding(
       padding: const EdgeInsets.only(
@@ -734,7 +751,7 @@ class SituationHeader extends StatelessWidget {
         children: <Widget>[
           Expanded(
             child: Text(
-              '${entries.first.situationLabel} — ${entries.length} '
+              '${cohort.label} — ${cohort.length} '
               '$noun in dezelfde situatie',
               style: text.titleSmall,
             ),
@@ -748,7 +765,7 @@ class SituationHeader extends StatelessWidget {
                       context,
                       controller: controller,
                       dry: true,
-                      run: () => controller.dryRunEntries(entries),
+                      run: () => controller.dryRunDecisions(cohort.decisions),
                     ),
             child: const Text('Dry-run alles'),
           ),
@@ -760,11 +777,13 @@ class SituationHeader extends StatelessWidget {
                 : () => confirmAndApply(
                       context,
                       controller: controller,
-                      title: 'Toepassen op ${entries.length} $noun?',
-                      // The dialog is scoped to the very entries the pass below
-                      // runs over — the ones this header counted (#234/#252).
-                      scope: controller.applyScope(entries),
-                      apply: () => controller.applyEntries(entries),
+                      title: 'Toepassen op ${cohort.length} $noun?',
+                      // The dialog is scoped to the very decisions the pass
+                      // below runs — the ones this header counted (#234/#252),
+                      // and only those (#292).
+                      scope:
+                          controller.applyScopeForDecisions(cohort.decisions),
+                      apply: () => controller.applyDecisions(cohort.decisions),
                     ),
             child: Text('Alles toepassen ($applyable)'),
           ),
@@ -777,10 +796,94 @@ class SituationHeader extends StatelessWidget {
 /// The collapsed line one [PendingChoice] reads as: an either/or is marked
 /// "(keuze)" on its pre-selected half, an informational action "(manueel)", and
 /// an ordinary one is its bare summary.
+///
+/// Rendered through [ActionLine], which leads it with the system it writes to
+/// (#298); the system is deliberately not spliced into the string here.
 String pendingChoiceLine(PendingChoice c) {
   final summary = c.selected.changes.summary;
   if (c.isChoice) return '$summary (keuze)';
   return c.selected.canApply ? summary : '$summary (manueel)';
+}
+
+/// The expandable card both action screens build a record with pending work on
+/// — the Acties [PendingEntryTile] and the Klasgroepen class row.
+///
+/// It exists for one rule neither screen can hold on its own (#300). A
+/// collapsed card previews its decisions as summary lines; since #281 the
+/// expanded body *leads every decision with the very same sentence*, because
+/// that heading is what tells the operator which diff belongs to which
+/// decision. So on a card carrying one action the operator read it twice, one
+/// line directly above the other:
+///
+/// > Werk het ledenbestand van SSM-1A bij (21 toevoegen, 17 verwijderen)
+/// > **Werk het ledenbestand van SSM-1A bij (21 toevoegen, 17 verwijderen)**
+///
+/// The heading is the one that has to stay: it groups the block under it, it is
+/// uniform across every decision (#281), and it is what #295's details pane —
+/// which has no collapsed row at all — will read [entryDetail] for. So the
+/// *preview* gives way instead. [subtitle] is therefore built with whether the
+/// card is open, which is the one thing an [ExpansionTile] does not hand its
+/// own subtitle.
+class PendingCardTile extends StatefulWidget {
+  const PendingCardTile({
+    super.key,
+    required this.tileKey,
+    this.leading,
+    required this.title,
+    required this.subtitle,
+    required this.children,
+  });
+
+  /// Names the tile itself (`entry-<family>-<targetId>`). Deliberately not this
+  /// widget's own [key]: the screens' tests and #295's row builder address the
+  /// [ExpansionTile], and two widgets answering to one key would make
+  /// `find.byKey` ambiguous.
+  final Key tileKey;
+
+  final Widget? leading;
+  final Widget title;
+
+  /// The collapsed body, told whether the card is open so it can drop what the
+  /// expanded body now says. `null` renders no subtitle at all.
+  final Widget? Function(BuildContext context, bool expanded) subtitle;
+
+  final List<Widget> children;
+
+  @override
+  State<PendingCardTile> createState() => _PendingCardTileState();
+}
+
+class _PendingCardTileState extends State<PendingCardTile> {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(PendingCardTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A new [tileKey] builds a fresh [ExpansionTile], which starts collapsed.
+    // Without this the two would drift apart — an open card recycled onto
+    // another record would hide its preview while showing nothing instead.
+    if (oldWidget.tileKey != widget.tileKey) _expanded = false;
+  }
+
+  @override
+  Widget build(BuildContext context) => ExpansionTile(
+        key: widget.tileKey,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: widget.leading,
+        title: widget.title,
+        subtitle: widget.subtitle(context, _expanded),
+        onExpansionChanged: (bool expanded) =>
+            setState(() => _expanded = expanded),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          PlinkSpacing.s5,
+          0,
+          PlinkSpacing.s5,
+          PlinkSpacing.s4,
+        ),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        children: widget.children,
+      );
 }
 
 /// One account's pending resolution (#110): a single expandable row showing the
@@ -807,27 +910,28 @@ class PendingEntryTile extends StatelessWidget {
         border: Border.all(color: hairline),
         borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
       ),
-      child: ExpansionTile(
-        key: ValueKey('entry-${entry.family}-${entry.targetId}'),
-        shape: const Border(),
-        collapsedShape: const Border(),
+      child: PendingCardTile(
+        tileKey: ValueKey('entry-${entry.family}-${entry.targetId}'),
         leading: PlinkBadge(entry.family),
         title: Text(entry.target, style: text.bodyLarge),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            for (final c in entry.choices)
-              Text(pendingChoiceLine(c), style: text.bodySmall),
-          ],
-        ),
-        childrenPadding: const EdgeInsets.fromLTRB(
-          PlinkSpacing.s5,
-          0,
-          PlinkSpacing.s5,
-          PlinkSpacing.s4,
-        ),
-        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        // The whole subtitle here is the preview, so an open card has none:
+        // every line it holds is repeated as a heading below (#300).
+        subtitle: (context, expanded) => expanded
+            ? null
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  // Each line led by the system it writes to (#298): one card
+                  // can raise work in two systems and the summaries do not
+                  // always say where they land.
+                  for (final c in entry.choices)
+                    ActionLine(
+                      system: c.selected.changes.system,
+                      line: pendingChoiceLine(c),
+                    ),
+                ],
+              ),
         children: entryDetail(context, controller: controller, entry: entry),
       ),
     );
@@ -927,6 +1031,13 @@ String choiceHeading(PendingChoice choice) =>
 /// was on the card. Under its own heading each diff belongs to something, and a
 /// card with two decisions reads as two.
 ///
+/// That heading is also why an open card drops its collapsed preview (#300):
+/// the two say the same sentence, and on a card carrying one decision the
+/// operator read it twice in a row. The heading is the half that stays — it
+/// groups the block under it, and [entryDetail] has to stand on its own in
+/// #295's details pane, where there is no collapsed row to have previewed
+/// anything.
+///
 /// The verdict lines pooled the same way and for the same reason (#283): one
 /// apply on that card produces two of them, and below both decisions they said
 /// what happened without saying to which question. So the block carries the part
@@ -965,8 +1076,14 @@ class EntryChoiceBlock extends StatelessWidget {
           Divider(height: 1, color: Theme.of(context).dividerColor),
           const SizedBox(height: PlinkSpacing.s3),
         ],
-        Text(
-          choiceHeading(choice),
+        // Led by the system it writes to, exactly as the collapsed preview is
+        // (#298). Since #300 that preview gives way while the card is open, so
+        // this heading is the only thing left saying where the write lands —
+        // and a summary that names a group ("Werk het ledenbestand van GBS-1A
+        // bij") does not say it.
+        ActionLine(
+          system: choice.selected.changes.system,
+          line: choiceHeading(choice),
           style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: PlinkSpacing.s1),
@@ -1215,6 +1332,26 @@ class ChoiceControl extends StatelessWidget {
   }
 }
 
+/// How one [actions.FieldChange] reads on a card.
+///
+/// Three shapes, because a `ChangeSet` describes three kinds of thing (#300,
+/// #305). A **transition** is a value moving, and reads as one:
+/// `mail: ∅ → 1a@…`. A **count** is a quantity the action acts on, and reads as
+/// the number it is: `leden toevoegen: 21`. A **statement** is a fact about the
+/// record an informational notice is describing, and reads as that fact:
+/// `mail: GBS-9Z@…`.
+///
+/// Put through the transition template, the two of them that are not
+/// transitions each claimed something untrue: a count, that the field used to
+/// be empty and is becoming 21; a statement, that the value it names is being
+/// cleared — on a notice whose whole point is that nothing is written.
+String fieldChangeLine(actions.FieldChange f) => switch (f.shape) {
+      actions.FieldChangeShape.count => '${f.field}: ${f.after}',
+      actions.FieldChangeShape.statement => '${f.field}: ${f.before}',
+      actions.FieldChangeShape.transition =>
+        '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}',
+    };
+
 /// The per-field diff (or a lifecycle note) for a single option — the one that
 /// stands alone, or the one selected inside a [ChoiceControl].
 class OptionDetail extends StatelessWidget {
@@ -1242,10 +1379,7 @@ class OptionDetail extends StatelessWidget {
               for (final f in fields)
                 Padding(
                   padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
-                  child: Text(
-                    '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}',
-                    style: text.bodySmall,
-                  ),
+                  child: Text(fieldChangeLine(f), style: text.bodySmall),
                 ),
             ],
     );

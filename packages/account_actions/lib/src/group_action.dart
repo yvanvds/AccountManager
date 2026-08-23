@@ -71,6 +71,20 @@ sealed class GroupAction {
   /// (UI / State layer) gate the "apply" affordance on this.
   bool get canApply => true;
 
+  /// Whether this action may be written to **many** classes in one pass (#293)
+  /// — the group half of [StudentAction.canApplyToAll]. Defaults to `false`;
+  /// see [StudentAction.canApplyToAll] for why the flag lives on the action.
+  ///
+  /// **No legacy answer to port.** `canBeAppliedToAll` existed only on the two
+  /// account families; the legacy Klassen view offered no bulk apply at all, so
+  /// every member of this family is a decision made here rather than inherited.
+  /// The same line is drawn: the mechanical class syncs and the class-group
+  /// provisioning are granted ([AddToSmartschool], [ModifySmartschoolData],
+  /// [CreateAzureClassGroup], [SyncAzureClassGroupMembers]); the blacklist
+  /// ([DoNotImportFromWisa]) and the delete ([DeleteAzureClassGroup]) are
+  /// withheld, and the informational members cannot have it at all.
+  bool get canApplyToAll => false;
+
   /// The key shared by mutually-exclusive alternatives resolving the same
   /// situation (#110). `null` (the default) means the action stands on its own.
   /// The group family has three: [classImportAlternative] for a class
@@ -250,6 +264,17 @@ class DoNotImportFromWisa extends GroupAction {
       ? namesakeClassAlternative
       : classImportAlternative;
 
+  /// **Never in bulk** (#293). Blacklisting a class is a judgement about one
+  /// class, and the failure it causes is silent and hard to undo: the class
+  /// drops out of the next WISA snapshot while whatever exists downstream
+  /// survives, unmanaged. That is precisely what #244 and #250 were filed for
+  /// after "Alles toepassen" did it to a year's worth of classes at once. The
+  /// polarity of its alternative group already keeps it off the selected path;
+  /// withholding the flag means it cannot be bulk-applied even when an operator
+  /// deliberately switches to it.
+  @override
+  bool get canApplyToAll => false;
+
   wapi.DontImportClass _rule() => wapi.DontImportClass(_wisa.name);
 
   @override
@@ -318,6 +343,14 @@ class AddToSmartschool extends GroupAction {
 
   @override
   bool get isDefaultAlternative => true;
+
+  /// **In bulk** (#293). Importing the new classes is the start-of-year
+  /// operation this family exists for, and the created class is derived
+  /// mechanically from the WISA one — nothing here asks the operator to judge a
+  /// single class. It is also the half of [classImportAlternative] that a bulk
+  /// pass is *meant* to write; the blacklist beside it withholds the flag.
+  @override
+  bool get canApplyToAll => true;
 
   /// The official Smartschool class to create, derived from the WISA class and
   /// the resolved parent. Untis is set to the class name (legacy
@@ -523,7 +556,12 @@ class ClassExistsAsSmartschoolGroup extends GroupAction {
             before: _namesake.name,
             after: _wisa.name,
           ),
-          FieldChange('code', before: _namesake.id.value),
+          // A fact, not a transition (#306): the code is how the operator
+          // finds the group in Smartschool, and this notice writes nothing at
+          // all. As a transition it read `code: G2G → ∅` — the code being
+          // cleared. Its neighbours here *are* transitions: the rename and the
+          // make-it-official are the repair being asked for.
+          FieldChange.statement('code', _namesake.id.value),
           FieldChange(
             'officiële klas',
             before: _namesake.official ? 'ja' : 'nee',
@@ -607,6 +645,13 @@ class ModifySmartschoolData extends GroupAction {
       group.wisa != null &&
       group.smartschool != null &&
       (_instituteDiffers || _untisDiffers || _descriptionDiffers);
+
+  /// **In bulk** (#293). Three mechanical field copies — institute number and
+  /// description down from WISA, Untis converged to the class name — with no
+  /// judgement in any of them, and Untis drift in particular tends to show up
+  /// across a whole year's classes at once.
+  @override
+  bool get canApplyToAll => true;
 
   /// The Smartschool group as it will look once synced. Institute number and
   /// description are pulled from WISA; Untis is converged to the class name
@@ -748,6 +793,14 @@ class CreateAzureClassGroup extends GroupAction {
   @override
   Set<Origin> get unlockedSystems => const {Origin.azure};
 
+  /// **In bulk** (#293). Provisioning, and provisioning that arrives a year at a
+  /// time: every new class needs its Office 365 group, and both the name and
+  /// the membership are derived — the [AzureClassGroupPlan] answers each of
+  /// them, and a class whose name would not survive as a `mailNickname` yields
+  /// no proposal to bulk-apply in the first place.
+  @override
+  bool get canApplyToAll => true;
+
   @override
   ChangeSet describeChanges() => ChangeSet(
         system: Origin.azure,
@@ -855,19 +908,40 @@ class SyncAzureClassGroupMembers extends GroupAction {
   bool evaluate() =>
       plan.owner && group.azure != null && plan.membershipDiffers;
 
+  /// **In bulk — the group family's headline grant** (#293), and the one this
+  /// flag was decided on explicitly rather than by analogy.
+  ///
+  /// At the September rollover every class's Office 365 roster is wrong at once,
+  /// for the same reason every student's Smartschool class is: the classes
+  /// turned over. Applying this one action across the school in a single pass is
+  /// exactly the operation the rollover needs, and it is safe to do so on three
+  /// counts — the diff is computed per class from the roster the app already
+  /// holds, it is idempotent (a class already in sync does not
+  /// [evaluate] true, and re-running writes the same membership), and its
+  /// removals are limited to students this app can account for, so a bulk pass
+  /// can never strip staff or titular members it does not own.
+  ///
+  /// The counterpart per-account view, `AzureClassGroupMembership`, stays
+  /// informational precisely so this class-level write is the single place the
+  /// membership is repaired — bulk or not.
+  @override
+  bool get canApplyToAll => true;
+
   @override
   ChangeSet describeChanges() => ChangeSet(
         system: Origin.azure,
         summary: 'Werk het ledenbestand van ${plan.displayName} bij '
             '(${plan.membersToAdd.length} toevoegen, '
             '${plan.membersToRemove.length} verwijderen)',
+        // Counts, not transitions (#300): "21 members will be added" is a
+        // quantity this write acts on, and describing it as a field whose old
+        // value was empty and whose new value is 21 describes nothing that
+        // happens to this group.
         fields: [
           if (plan.membersToAdd.isNotEmpty)
-            FieldChange('leden toevoegen',
-                after: '${plan.membersToAdd.length}'),
+            FieldChange.count('leden toevoegen', plan.membersToAdd.length),
           if (plan.membersToRemove.isNotEmpty)
-            FieldChange('leden verwijderen',
-                after: '${plan.membersToRemove.length}'),
+            FieldChange.count('leden verwijderen', plan.membersToRemove.length),
         ],
       );
 
@@ -991,9 +1065,14 @@ class AzureClassGroupWithoutClass extends GroupAction {
         system: Origin.azure,
         summary: 'Laat de Office 365-groep ${_azure?.displayName} staan — '
             'klas ${group.className} bestaat niet meer in WISA of Smartschool',
+        // Nothing is written here, so nothing moves: these two lines describe
+        // the group the operator is being told about (#305). Put through the
+        // before → after template they read `mail: GBS-9Z@… → ∅` and
+        // `leden: 21 → ∅` — the address and the members going away, which is
+        // what the *other* half of this either/or does.
         fields: [
-          FieldChange('mail', before: _azure?.mail ?? ''),
-          FieldChange('leden', before: '${_azure?.memberIds.length ?? 0}'),
+          FieldChange.statement('mail', _azure?.mail ?? ''),
+          FieldChange.statement('leden', '${_azure?.memberIds.length ?? 0}'),
         ],
       );
 
@@ -1046,17 +1125,30 @@ class DeleteAzureClassGroup extends GroupAction {
   @override
   bool get isDefaultAlternative => false;
 
+  /// **Never in bulk** (#293), and the clearest case in the whole port: Graph
+  /// takes the group's mailbox, its Team and its SharePoint files with it, and
+  /// none of that comes back. A fourth guard beside the three above — the
+  /// operator flips this radio on one row, and even then no bulk affordance may
+  /// offer it.
+  @override
+  bool get canApplyToAll => false;
+
   @override
   ChangeSet describeChanges() => ChangeSet(
         system: Origin.azure,
         summary: 'Verwijder de Office 365-groep ${_azure?.displayName} van de '
             'verdwenen klas ${group.className}',
+        // What the delete takes with it, stated (#305). The summary above
+        // already says the group goes; these lines are the inventory of it, and
+        // an arrow on each one claimed three separate fields were being
+        // cleared — least of all `postvak, Teams en bestanden: verdwijnen
+        // mee → ∅`, which was never a value in the first place.
         fields: [
-          FieldChange('mail', before: _azure?.mail ?? ''),
-          FieldChange('leden', before: '${_azure?.memberIds.length ?? 0}'),
-          const FieldChange(
+          FieldChange.statement('mail', _azure?.mail ?? ''),
+          FieldChange.statement('leden', '${_azure?.memberIds.length ?? 0}'),
+          const FieldChange.statement(
             'postvak, Teams en bestanden',
-            before: 'verdwijnen mee',
+            'verdwijnen mee',
           ),
         ],
       );

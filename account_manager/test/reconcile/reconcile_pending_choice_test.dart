@@ -63,16 +63,21 @@ void main() {
           reason: 'unregister (keep the account) is the safe default');
     });
 
-    test('the two departed accounts share one situation subset', () async {
+    test('the two departed accounts share one situation cohort', () async {
       final h = departedHarness();
       await h.controller.sync();
 
-      final studentSituations = h.controller.pendingSituations
-          .where((s) => s.every((e) => e.family == 'student'))
+      final studentCohorts = h.controller.pendingSituations
+          .where((c) => c.decisions.every((d) => d.entry.family == 'student'))
           .toList();
-      expect(studentSituations, hasLength(1),
+      expect(studentCohorts, hasLength(1),
           reason: 'both departed students are the same situation');
-      expect(studentSituations.single, hasLength(2));
+      expect(studentCohorts.single.length, 2);
+      expect(
+        studentCohorts.single.key,
+        'student|${actions.smartschoolDepartureAlternative}',
+        reason: 'a cohort is keyed by the one decision it groups (#292)',
+      );
     });
   });
 
@@ -289,20 +294,24 @@ void main() {
       final entries = h.controller.groupPendingEntries;
       expect(entries.map((e) => e.targetId), containsAll(<String>['1A', '1B']));
 
-      final key = entries.firstWhere((e) => e.targetId == '1A').situationKey;
-      final subset = entries.where((e) => e.situationKey == key).toList();
+      final cohort = h.controller.groupPendingSituations.firstWhere(
+          (c) => c.key == 'group|${actions.classImportAlternative}');
       expect(
-        subset.map((e) => e.targetId),
+        cohort.decisions.map((d) => d.entry.targetId),
         containsAll(<String>['1A', '1B']),
         reason: 'both new classes are the same situation, bulk-applied at once',
       );
       final pulls = h.wisaSyncs;
 
-      await h.controller.applyEntries(subset);
+      await h.controller.applyDecisions(cohort.decisions);
 
       final summaries = summariesOf(h);
       expect(summaries.where((s) => s == create), hasLength(2));
       expect(summaries, isNot(contains(ignore)));
+      expect(summaries, hasLength(2),
+          reason: 'the cohort is one decision, so the pass writes that '
+              "decision and nothing else on the classes' cards — their "
+              'Office 365 groups are a decision of their own (#292)');
       expect(h.wisaSyncs, pulls);
     });
 
@@ -379,13 +388,25 @@ void main() {
         importChoiceOf(entryFor(h, '1A')).situationId,
         actions.classImportAlternative,
       );
+      final cohorts = h.controller.groupPendingSituations;
+      final namesake = cohorts.firstWhere(
+        (c) => c.key == 'group|${actions.namesakeClassAlternative}',
+      );
+      final fresh = cohorts.firstWhere(
+        (c) => c.key == 'group|${actions.classImportAlternative}',
+      );
       expect(
-        entryFor(h, '2G').situationKey,
-        isNot(entryFor(h, '1A').situationKey),
+        namesake.decisions.map((d) => d.entry.targetId),
+        <String>['2G', '2H'],
         reason: '"create this class" and "this class is already there" are two '
             'situations, so they get two bulk headers',
       );
-      expect(entryFor(h, '2G').situationKey, entryFor(h, '2H').situationKey);
+      expect(
+          fresh.decisions.map((d) => d.entry.targetId), <String>['1A', '1B']);
+      expect(namesake.applyableCount, 0,
+          reason: 'the hand-fix notice writes nothing, so its cohort offers '
+              'nothing to apply — the Office 365 group beside it on the same '
+              'cards is a cohort of its own (#292)');
     });
 
     test('"apply to all" creates the new classes and blacklists no namesake',
@@ -519,16 +540,16 @@ void main() {
       final entries = staffEntries(h);
       expect(entries, hasLength(2));
 
-      final key = entries.first.situationKey;
-      final subset = entries.where((e) => e.situationKey == key).toList();
+      final cohort = h.controller.pendingSituations.firstWhere(
+          (c) => c.key == 'staff|${actions.staffImportAlternative}');
       expect(
-        subset,
-        hasLength(2),
+        cohort.decisions.map((d) => d.entry.targetId),
+        entries.map((e) => e.targetId),
         reason: 'both new hires are the same situation, bulk-applied at once',
       );
       final pulls = h.wisaSyncs;
 
-      await h.controller.applyEntries(subset);
+      await h.controller.applyDecisions(cohort.decisions);
 
       final summaries = summariesOf(h);
       expect(summaries.where((s) => s == createAzure), hasLength(2));

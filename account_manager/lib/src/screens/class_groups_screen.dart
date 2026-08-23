@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' show ActionOutcome;
+import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart'
     show MaterializedGroup, candidateChoices, pendingDecisionCount;
 import 'package:flutter/material.dart';
@@ -14,16 +15,25 @@ import 'action_tiles.dart';
 /// The **Klasgroepen** tab (#227): the full class inventory.
 ///
 /// Every class the last sync linked is a row here — not only the ones that
-/// raised something — with a presence column per system (WISA · Smartschool ·
-/// Office 365) and the rows that need work highlighted. That inversion is the
-/// whole point. The Acties drill-down listed changes, so a *wrong* proposal
-/// looked exactly like every right one: `2G` was offered for creation although
+/// raised something — with a column per system (WISA · Smartschool · Office
+/// 365) and the rows that need work highlighted. That inversion is the whole
+/// point. The Acties drill-down listed changes, so a *wrong* proposal looked
+/// exactly like every right one: `2G` was offered for creation although
 /// Smartschool already had it (#225), and nothing on screen could have shown
-/// otherwise. Three ticks on a row means the class is correct everywhere, and
-/// anything else stands out.
+/// otherwise. Three green ticks on a row means the class is correct everywhere,
+/// and anything else stands out.
 ///
-/// Three things the layout is deliberate about:
+/// Four things the layout is deliberate about:
 ///
+/// - **A cell means "work you can do on this screen", not mere presence**
+///   (#298). Until then the three cells answered *does this class exist in
+///   system X* and nothing else, so `1A` — present everywhere and carrying a
+///   pending Office 365 roster write — read as three ticks with nothing saying
+///   the pending work was an Azure one. A cell now shows the worst of presence
+///   and pending work for that one system: red missing, orange work pending,
+///   green in order. [SystemIndicatorCell] and the principle behind it live in
+///   `system_indicator.dart`, shared with Acties so a coloured cell means the
+///   same thing on both screens.
 /// - **The Office 365 column is per *class*, not per row.** Sub-groups get no
 ///   group of their own (#228), so `2F ECO` / `2F MAW` / `2F MOW` / `2F STEMW`
 ///   are all served by the one group `<PREFIX>-2F`. Each such row names that
@@ -37,8 +47,15 @@ import 'action_tiles.dart';
 /// - **Informational notices are not buried.** A class Smartschool already
 ///   holds, or an Office 365 group left behind by a class that is gone, is real
 ///   manual work with no automated write, so it contributes nothing to a pending
-///   count (#225/#250). The filter and the highlight therefore key on
-///   [MaterializedGroup.needsAttention], never on the pending count.
+///   count (#225/#250). The filter and the row **highlight** therefore key on
+///   [MaterializedGroup.needsAttention], never on the pending count — and that
+///   stays true under #298, which is not the contradiction it looks like. The
+///   reconciling principle is *colour by work that can be done on this screen*:
+///   here the manual notice is the work you do on this screen, so it lights the
+///   row; in Acties an informational candidate diagnoses work that happens
+///   somewhere else, so it colours nothing there. The system **cells** are the
+///   narrower reading — they promise a write, so they count only applyable
+///   work. See the library doc of `system_indicator.dart`.
 ///
 /// A class that needs work is inspected — and, where it is applyable, dry-run
 /// and applied — right here, through the same tiles Acties uses
@@ -408,31 +425,37 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
   /// every new class of the year"), so they sit here, each acting on exactly the
   /// classes it names.
   ///
-  /// [shown] is the set of class names the search left standing, and a subset is
+  /// [shown] is the set of class names the search left standing, and a cohort is
   /// narrowed to it: a button that acts on "exactly the classes it names" must
   /// not quietly write to classes the operator filtered off the screen, and a
-  /// subset left with one class is no longer a bulk affordance at all — its one
+  /// cohort left with one class is no longer a bulk affordance at all — its one
   /// row carries the same action.
+  ///
+  /// Since #292 a cohort is one *decision* rather than one combination of them,
+  /// so a class new to Smartschool that also lacks an Office 365 group appears
+  /// under both headers, and pressing either writes only what that header names.
   List<Widget> _bulkSlivers(bool active, Set<String> shown) {
     if (!active) return const <Widget>[];
-    final subsets = <List<PendingAccountEntry>>[];
-    for (final subset in controller.groupPendingSituations) {
-      final kept = <PendingAccountEntry>[
-        for (final e in subset)
-          if (shown.contains(e.targetId)) e,
+    final cohorts = <SituationCohort>[];
+    for (final cohort in controller.groupPendingSituations) {
+      final kept = <PendingDecision>[
+        for (final d in cohort.decisions)
+          if (shown.contains(d.entry.targetId)) d,
       ];
-      if (kept.length > 1) subsets.add(kept);
+      if (kept.length > 1) {
+        cohorts.add(SituationCohort(key: cohort.key, decisions: kept));
+      }
     }
-    if (subsets.isEmpty) return const <Widget>[];
+    if (cohorts.isEmpty) return const <Widget>[];
     return <Widget>[
       _section(const _SectionTitle('Klassen in dezelfde situatie')),
       SliverPadding(
         padding: _hPad,
         sliver: SliverList.builder(
-          itemCount: subsets.length,
+          itemCount: cohorts.length,
           itemBuilder: (context, index) => SituationHeader(
             controller: controller,
-            entries: subsets[index],
+            cohort: cohorts[index],
             noun: 'klassen',
           ),
         ),
@@ -634,11 +657,12 @@ class _SectionTitle extends StatelessWidget {
 
 /// One class of the inventory.
 ///
-/// A class with live work is an [ExpansionTile] keyed exactly as the Acties
+/// A class with live work is a [PendingCardTile] keyed exactly as the Acties
 /// entry tiles are (`entry-group-<klas>`), so opening it offers the same
-/// radios, the same per-field diff and the same dry-run / apply pair. A class
-/// with nothing to do — the majority, and the reason this tab exists — is a
-/// plain card: name, description, three presence cells.
+/// radios, the same per-field diff and the same dry-run / apply pair — and
+/// gives way with the same preview lines (#300). A class with nothing to do —
+/// the majority, and the reason this tab exists — is a plain card: name,
+/// description, three system cells.
 class _ClassRow extends StatelessWidget {
   const _ClassRow({
     required this.controller,
@@ -684,26 +708,33 @@ class _ClassRow extends StatelessWidget {
       ],
     );
 
-    final Widget body = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        if (group.description.isNotEmpty)
-          Text(group.description, style: text.bodySmall),
-        const SizedBox(height: PlinkSpacing.s2),
-        _PresenceRow(group: group),
-        for (final line in _lines(entry, group)) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s1),
-          Text(
-            line,
-            style: entry == null
-                ? text.bodySmall
-                    ?.copyWith(color: Theme.of(context).disabledColor)
-                : text.bodySmall,
-          ),
-        ],
-      ],
-    );
+    // The row's own body: what the class *is* (description, three system
+    // cells), and — while [showLines] — a preview of what it owes. The preview
+    // is dropped on an open card, because the expanded body leads every
+    // decision with the same sentence (#300); the cells and the description are
+    // facts about the class and stay either way.
+    Widget body({required bool showLines}) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (group.description.isNotEmpty)
+              Text(group.description, style: text.bodySmall),
+            const SizedBox(height: PlinkSpacing.s2),
+            _SystemRow(group: group, work: _workSystems()),
+            if (showLines)
+              for (final line in _lines(entry, group)) ...<Widget>[
+                const SizedBox(height: PlinkSpacing.s1),
+                ActionLine(
+                  system: line.system,
+                  line: line.text,
+                  style: entry == null
+                      ? text.bodySmall
+                          ?.copyWith(color: Theme.of(context).disabledColor)
+                      : text.bodySmall,
+                ),
+              ],
+          ],
+        );
 
     // Every row is addressable by its class name, whether or not it has work —
     // the inventory is the thing being verified, so a test (and the element
@@ -721,7 +752,9 @@ class _ClassRow extends StatelessWidget {
           children: <Widget>[
             title,
             const SizedBox(height: PlinkSpacing.s2),
-            body,
+            // Nothing to expand, so nothing repeats it: a passive row keeps its
+            // candidate lines.
+            body(showLines: true),
           ],
         ),
       );
@@ -731,19 +764,10 @@ class _ClassRow extends StatelessWidget {
       key: rowKey,
       margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
       decoration: decoration,
-      child: ExpansionTile(
-        key: ValueKey('entry-group-${entry.targetId}'),
-        shape: const Border(),
-        collapsedShape: const Border(),
+      child: PendingCardTile(
+        tileKey: ValueKey('entry-group-${entry.targetId}'),
         title: title,
-        subtitle: body,
-        childrenPadding: const EdgeInsets.fromLTRB(
-          PlinkSpacing.s5,
-          0,
-          PlinkSpacing.s5,
-          PlinkSpacing.s4,
-        ),
-        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        subtitle: (context, expanded) => body(showLines: !expanded),
         children: entryDetail(context, controller: controller, entry: entry),
       ),
     );
@@ -751,23 +775,52 @@ class _ClassRow extends StatelessWidget {
 
   /// The collapsed summary lines: the live choices in an active session, the
   /// stored candidates in a passive one — each worded exactly as Acties words
-  /// it, so an either/or reads as the one decision it is (#251).
-  List<String> _lines(PendingAccountEntry? entry, MaterializedGroup group) {
+  /// it, so an either/or reads as the one decision it is (#251), and each
+  /// carrying the system it writes to so [ActionLine] can lead with it (#298).
+  ///
+  /// A preview, and only that: an open card renders the decisions themselves
+  /// and these lines stand down (#300).
+  List<({core.Origin system, String text})> _lines(
+    PendingAccountEntry? entry,
+    MaterializedGroup group,
+  ) {
     if (entry != null) {
-      return <String>[for (final c in entry.choices) pendingChoiceLine(c)];
+      return <({core.Origin system, String text})>[
+        for (final c in entry.choices)
+          (system: c.selected.changes.system, text: pendingChoiceLine(c)),
+      ];
     }
-    return <String>[
+    return <({core.Origin system, String text})>[
       for (final c in candidateChoices(group.candidates))
-        readOnlyCandidateLine(c),
+        (system: c.selected.system, text: readOnlyCandidateLine(c)),
     ];
+  }
+
+  /// The systems this row has applyable work in (#298) — what turns a cell
+  /// orange.
+  ///
+  /// An **active** session answers from the live dispatch, which drops a
+  /// decision the moment it is applied; a passive one from the stored
+  /// candidates, which is all it has. The same split
+  /// [_ClassRowModel.attentionIn] makes, and for the same reason: in an active
+  /// session a class with no entry has nothing left to do, whatever the
+  /// document that was materialized before the last apply still says.
+  Set<core.Origin> _workSystems() {
+    if (!active) return workSystemsOfCandidates(row.group.candidates);
+    final PendingAccountEntry? entry = row.entry;
+    return entry == null ? const <core.Origin>{} : workSystemsOfEntry(entry);
   }
 }
 
-/// The three presence cells of one class: WISA · Smartschool · Office 365.
-class _PresenceRow extends StatelessWidget {
-  const _PresenceRow({required this.group});
+/// The three system cells of one class: WISA · Smartschool · Office 365 (#227),
+/// each reading *work you can do here* rather than mere presence since #298.
+class _SystemRow extends StatelessWidget {
+  const _SystemRow({required this.group, required this.work});
 
   final MaterializedGroup group;
+
+  /// The systems this class has applyable work in.
+  final Set<core.Origin> work;
 
   @override
   Widget build(BuildContext context) {
@@ -785,87 +838,36 @@ class _PresenceRow extends StatelessWidget {
     final String azureDetail = g.azureGroupName ??
         (isSubGroup ? 'nog geen groep voor $bare' : 'nog geen groep');
 
+    // Each cell is addressable on its own — `class-cell-<klas>-<systeem>` — so
+    // a test, and the flat list of #295, can ask one row what it says about one
+    // system rather than counting icons across three.
+    Widget cell(core.Origin system, bool present,
+            {String? detail, String? note}) =>
+        Expanded(
+          child: SystemIndicatorCell(
+            key: ValueKey('class-cell-${g.label}-${system.name}'),
+            system: system,
+            state: systemIndicatorState(
+              present: present,
+              hasWork: work.contains(system),
+            ),
+            detail: detail,
+            note: note,
+          ),
+        );
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Expanded(child: _PresenceCell(system: 'WISA', present: g.inWisa)),
-        Expanded(
-          child: _PresenceCell(system: 'Smartschool', present: g.inSmartschool),
-        ),
-        Expanded(
-          child: _PresenceCell(
-            system: 'Office 365',
-            present: g.inAzure,
-            detail: azureDetail,
-            note: isSubGroup ? 'deelgroep van $bare' : null,
-          ),
+        cell(core.Origin.wisa, g.inWisa),
+        cell(core.Origin.smartschool, g.inSmartschool),
+        cell(
+          core.Origin.azure,
+          g.inAzure,
+          detail: azureDetail,
+          note: isSubGroup ? 'deelgroep van $bare' : null,
         ),
       ],
-    );
-  }
-}
-
-class _PresenceCell extends StatelessWidget {
-  const _PresenceCell({
-    required this.system,
-    required this.present,
-    this.detail,
-    this.note,
-  });
-
-  final String system;
-  final bool present;
-
-  /// The name of the thing that is (or is not) there — the Office 365 group.
-  final String? detail;
-
-  /// A second line that explains the row's relationship to [detail].
-  final String? note;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    final Color muted = Theme.of(context).disabledColor;
-
-    return Padding(
-      padding: const EdgeInsets.only(right: PlinkSpacing.s2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Icon(
-            present ? Icons.check_circle_outline : Icons.remove_circle_outline,
-            size: 16,
-            color: present ? colors.primary : muted,
-          ),
-          const SizedBox(width: PlinkSpacing.s1),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  system,
-                  style: text.bodySmall,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (detail != null)
-                  Text(
-                    detail!,
-                    style: text.bodySmall?.copyWith(color: muted),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                if (note != null)
-                  Text(
-                    note!,
-                    style: text.bodySmall?.copyWith(color: muted),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
