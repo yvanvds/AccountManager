@@ -131,6 +131,7 @@ class PendingActionOption {
     required this.target,
     required this.changes,
     required this.canApply,
+    this.canApplyToAll = false,
     this.unlockedSystems = const {},
   });
 
@@ -162,6 +163,19 @@ class PendingActionOption {
 
   /// Whether an apply pass would actually write this option.
   final bool canApply;
+
+  /// Whether this action is sanctioned for a **school-wide** apply (#293/#296)
+  /// — `StudentAction.canApplyToAll` et al., read off the action rather than
+  /// decided here.
+  ///
+  /// A different question from [canApply], which asks whether the action has an
+  /// automated write at all. This asks whether writing it to every record that
+  /// needs it, off one confirmation, is a thing the operator may do without
+  /// looking at each record: true for the rollover class move, false for the
+  /// destructive and judgement-call actions. The sanction presupposes the
+  /// mechanism — the action classes pin `canApplyToAll ⇒ canApply` — so nothing
+  /// here has to re-check it.
+  final bool canApplyToAll;
 
   /// The systems only a **chained follow-up** of this option would write to
   /// (`StudentAction.unlockedSystems` et al., #234) — never the option's own
@@ -282,6 +296,16 @@ class PendingChoice {
   /// routes a pass's verdict back to the decision it is the verdict of.
   String get situationId => alternatives.first.situationId;
 
+  /// Whether the resolution the operator has **picked here** is sanctioned for
+  /// a school-wide apply (#296).
+  ///
+  /// Read off the selected alternative rather than off the decision, because an
+  /// either/or can mix the two: the staff import decision offers "create in
+  /// Office 365" (sanctioned), "create in Smartschool" and "never import this
+  /// person" (both withheld). So the answer is a property of what this account
+  /// is set to do, which is also what a bulk pass would run for it.
+  bool get canApplyToAll => selected.canApplyToAll;
+
   /// A short human description of *this* decision (#292): both sides of an
   /// either/or, or the lone action's summary. What a [SituationCohort] leads
   /// with, so the header names the one decision it applies and nothing else.
@@ -343,6 +367,11 @@ class PendingDecision {
   /// applyable Office 365 group decision beside it, and a cohort of the former
   /// must not count itself as work.
   bool get canApply => choice.selected.canApply;
+
+  /// Whether this account's stake in the decision may be written by a
+  /// school-wide pass (#296) — [PendingChoice.canApplyToAll] of the resolution
+  /// it is set to.
+  bool get canApplyToAll => choice.canApplyToAll;
 }
 
 /// Every account that raises one and the same decision (#292) — the subset a
@@ -686,6 +715,18 @@ class ReconcileController extends ChangeNotifier {
   List<MaterializedAccount>? _accountDocsCache;
   LinkedState? _accountDocsKey;
 
+  /// Memoized school-wide cohorts by [SituationCohort.key] (#296), keyed on the
+  /// identity of the [pendingEntries] list they were grouped from — which is
+  /// itself invalidated by a relink and by every [chooseAlternative], so this
+  /// inherits both.
+  ///
+  /// A per-decision "Toepassen op alle" has to answer *how many accounts in the
+  /// school need this* while a details pane is being built, and a details pane
+  /// is rebuilt on every controller notification. Regrouping ~9.6k accounts'
+  /// decisions per block per frame is what that costs without a cache.
+  Map<String, SituationCohort>? _cohortIndexCache;
+  List<PendingAccountEntry>? _cohortIndexKey;
+
   /// The persisted operator decisions loaded from the shared store (#109/#110),
   /// used to tell which duplicate-mail collisions have been accepted. Refreshed
   /// on every overview read and after each accept/revoke.
@@ -930,6 +971,9 @@ class ReconcileController extends ChangeNotifier {
       // (`AzureClassGroupMembership`), so the apply affordance is gated on the
       // action rather than assumed, exactly as the group family's is.
       canApply: (a) => a.canApply,
+      // The school-wide sanction of #293, carried here so #296's per-decision
+      // "Toepassen op alle" can read it off the pending list.
+      canApplyToAll: (a) => a.canApplyToAll,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
@@ -943,6 +987,7 @@ class ReconcileController extends ChangeNotifier {
       // Read off the action like the other two families since #240: every staff
       // action is applyable today, but nothing here should assume it.
       canApply: (a) => a.canApply,
+      canApplyToAll: (a) => a.canApplyToAll,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
@@ -954,6 +999,7 @@ class ReconcileController extends ChangeNotifier {
       isDefault: (a) => a.isDefaultAlternative,
       changes: (a) => a.describeChanges(),
       canApply: (a) => a.canApply,
+      canApplyToAll: (a) => a.canApplyToAll,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     _pendingCacheKey = l;
@@ -968,6 +1014,75 @@ class ReconcileController extends ChangeNotifier {
   /// while each account keeps its own chosen alternative.
   List<SituationCohort> get pendingSituations =>
       situationCohorts(pendingEntries);
+
+  /// The whole school's cohort for one decision, narrowed to the members a
+  /// **school-wide** apply may write (#296) — or `null` when this decision gets
+  /// no apply-all at all.
+  ///
+  /// Three narrowings, and each is load-bearing:
+  ///
+  /// - **The action must be sanctioned.** `null` unless the resolution
+  ///   [decision] is set to declares [PendingActionOption.canApplyToAll] (#293).
+  ///   That is what keeps the destructive and judgement-call actions — a delete,
+  ///   a rename, a blacklist — off this path entirely; they get checkbox
+  ///   multi-select instead (#297).
+  /// - **Every member must be sanctioned too**, not merely the one the operator
+  ///   is looking at. The staff import decision mixes the two in one either/or,
+  ///   so a colleague set to "never import" is not swept along by a cohort
+  ///   armed from a colleague set to "create in Office 365".
+  /// - **Non-applyable members are out**, exactly as they are everywhere else.
+  ///
+  /// So the returned cohort's members are precisely the actions the pass will
+  /// run: its length is the N on the button, the list the screen filters to, and
+  /// the change count the confirmation quotes, all from one resolution.
+  ///
+  /// This is the one cohort in the app that is deliberately **not** grouped from
+  /// the rows on screen (#252). It is school-wide by definition — that is the
+  /// September rollover it exists for — so the safety comes from the other
+  /// direction: the screen filters its list down to this cohort and makes the
+  /// operator look at it before the confirmation is offered.
+  SituationCohort? applyToAllCohort(PendingDecision decision) => decision
+          .canApplyToAll
+      ? applyToAllCohortFor('${decision.entry.family}|${decision.situationId}')
+      : null;
+
+  /// [applyToAllCohort] by [SituationCohort.key] — what a screen holding an
+  /// armed cohort re-reads it as on every build.
+  ///
+  /// The key rather than the members, deliberately. A cohort under review is
+  /// live: the operator can still switch an account's alternative while looking
+  /// at it, and a captured list would then apply the resolution they changed
+  /// their mind about. Re-reading means the rows on screen, the N on the button,
+  /// the confirmation's change count and the write are all one resolution of the
+  /// same key — which is the #252 guarantee, arrived at from the other side.
+  ///
+  /// `null` once the cohort has emptied — every member applied, or the last one
+  /// switched to a resolution that is not sanctioned — which is a screen's cue
+  /// to drop out of its review mode.
+  SituationCohort? applyToAllCohortFor(String key) {
+    final all = _cohortIndex[key];
+    if (all == null) return null;
+    final members = <PendingDecision>[
+      for (final d in all.decisions)
+        if (d.canApply && d.canApplyToAll) d,
+    ];
+    if (members.isEmpty) return null;
+    return SituationCohort(key: all.key, decisions: members);
+  }
+
+  /// [pendingSituations] as a lookup by [SituationCohort.key], memoized on the
+  /// entry list it was grouped from.
+  Map<String, SituationCohort> get _cohortIndex {
+    final entries = pendingEntries;
+    final cached = _cohortIndexCache;
+    if (cached != null && identical(_cohortIndexKey, entries)) return cached;
+    final index = <String, SituationCohort>{
+      for (final c in situationCohorts(entries)) c.key: c,
+    };
+    _cohortIndexKey = entries;
+    _cohortIndexCache = index;
+    return index;
+  }
 
   /// Groups the decisions of [entries] into cohorts in first-seen order — the
   /// shared grouping the global list and the per-classroom / per-group
@@ -1124,6 +1239,7 @@ class ReconcileController extends ChangeNotifier {
     required bool Function(T) isDefault,
     required actions.ChangeSet Function(T) changes,
     required bool Function(T) canApply,
+    required bool Function(T) canApplyToAll,
     required Set<core.Origin> Function(T) unlockedSystems,
   }) {
     final order = <String>[];
@@ -1156,6 +1272,7 @@ class ReconcileController extends ChangeNotifier {
                   target: labels[id]!,
                   changes: changes(a),
                   canApply: canApply(a),
+                  canApplyToAll: canApplyToAll(a),
                   unlockedSystems: unlockedSystems(a),
                 ),
             ],
@@ -2332,6 +2449,11 @@ class ReconcileController extends ChangeNotifier {
   // scoped selection ([applyEntries]). A method that took "everything pending"
   // existed only to serve a header button that wrote every account in the
   // school on the strength of a dialog nobody could verify.
+  //
+  // #296's school-wide apply-all is not a return of it: it is
+  // [applyDecisions] over an [applyToAllCohort], which is one action the
+  // operator has read, over a list the screen has just filtered itself down to.
+  // The pass still receives the members themselves, never a key to re-resolve.
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>

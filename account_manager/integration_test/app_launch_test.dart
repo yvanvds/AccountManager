@@ -633,9 +633,126 @@ void main() {
   }
 
   // The bulk affordance that stood where the Acties header's global "Alles
-  // toepassen" used to (#294) now lives only on the Klasgroepen cohort headers,
-  // which the class-inventory scenarios below drive directly. Acties itself
-  // carries no bulk apply since #295; #296 gives it one, cohort-first.
+  // toepassen" used to (#294) comes in two shapes now: the Klasgroepen cohort
+  // headers, which the class-inventory scenarios below drive directly, and — on
+  // Acties since #296 — a per-decision "Toepassen op alle" that filters the flat
+  // list down to its cohort before offering a confirmation. The run below is
+  // that one, end to end.
+
+  testWidgets(
+      'a decision applied across the whole school shows its cohort first, and '
+      'writes that decision alone end-to-end (#296)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Smartschool and
+    // Graph write paths. The September rollover in miniature: three students
+    // moved up into `4A` while Smartschool still has all three in last year's
+    // `3C`, so every one of them needs the same class change — and Sam alone
+    // also has a stale Office 365 display name.
+    //
+    // Only a full run puts the two halves of #296 on screen in the order that
+    // matters. The count on the button is resolved school-wide by the
+    // controller, the rows it promises are rendered by the screen out of a
+    // *filtered* list, and the write is decided a third time by the pass. This
+    // walks it the way the operator does: narrow the list to one student, arm
+    // the cohort from their card, and check that the other two are now on
+    // screen — before anything is confirmed, let alone written.
+    useTallWindow(tester);
+    final harness = rolloverHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder row(String id) => find.byKey(ValueKey('account-row-$id'));
+
+    // The operator is looking at Sam alone.
+    await tester.enterText(find.byKey(const ValueKey('actions-search')), 'Sam');
+    await tester.pumpAndSettle();
+    expect(row(sam), findsOneWidget);
+    expect(row(sara), findsNothing);
+
+    await selectAccount(tester, sam);
+
+    // His card carries two decisions. Only the class move is sanctioned for a
+    // school-wide pass (#293) — a rename is a judgement call — and the button
+    // counts the school, not the search box.
+    final Finder rename = find.byKey(ValueKey('decision-apply-all-student-'
+        '$sam-0'));
+    final Finder moveAll = find.byKey(ValueKey('decision-apply-all-student-'
+        '$sam-1'));
+    expect(rename, findsNothing);
+    await tester.ensureVisible(moveAll);
+    expect(
+      find.descendant(
+          of: moveAll, matching: find.text('Toepassen op alle (3)')),
+      findsOneWidget,
+    );
+
+    // Pressing it writes nothing. It shows the cohort: the list is now the
+    // three accounts the pass would touch, and the search box that was hiding
+    // two of them has stood down.
+    await tester.tap(moveAll);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('actions-cohort-banner')), findsOneWidget);
+    expect(
+      find.text('Wijzig de klas in Smartschool — 3 account(s) in de hele '
+          'school'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('actions-search')), findsNothing);
+    for (final id in <String>[sam, sara, tom]) {
+      await tester.ensureVisible(row(id));
+      expect(row(id), findsOneWidget);
+    }
+    expect(
+        harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+        isEmpty);
+
+    // The confirmation names that one decision: three Smartschool writes, and
+    // no claim on Office 365. Scoped to the dialog, because the cards behind it
+    // lead each line with the system it writes to (#298).
+    await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
+    await tester.pumpAndSettle();
+    final Finder confirmation = find.byType(AlertDialog);
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('3 wijzigingen')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('Office 365')),
+      findsNothing,
+      reason: "summing every decision on every card would quote Sam's rename "
+          'and then not write it',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Three class moves against the real SOAP transport, each with its own
+    // payload; not one Graph write, because the rename was never armed.
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+      hasLength(3),
+    );
+    expect(harness.graph.requests.where((r) => r.method == 'PATCH'), isEmpty);
+    expect(harness.controller.applyResults, hasLength(3));
+    expect(find.text('Resultaat van het toepassen'), findsWidgets);
+
+    // The review is over — what it was built from has been written — so the
+    // list has its own controls back.
+    expect(find.byKey(const ValueKey('actions-cohort-banner')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   /// Opens the Klasgroepen tab from the navigation rail (#227). The class
   /// inventory is a destination of its own now, not a node inside Acties.

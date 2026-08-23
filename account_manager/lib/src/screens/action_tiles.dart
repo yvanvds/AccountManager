@@ -205,7 +205,12 @@ String readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
 ///
 /// [scope] is what that particular confirmation covers (#234) — the systems the
 /// pass will really reach, not a fixed pair.
-Future<void> confirmAndApply(
+///
+/// Answers whether the pass actually ran, so a caller can tell "the operator
+/// said no" from "the writes are done" (#296): a cancelled confirmation must
+/// leave the screen exactly as the operator left it, while a finished pass has
+/// invalidated everything the affordance was built from.
+Future<bool> confirmAndApply(
   BuildContext context, {
   required ReconcileController controller,
   required String title,
@@ -230,14 +235,15 @@ Future<void> confirmAndApply(
       ],
     ),
   );
-  if (!(confirmed ?? false)) return;
-  if (!context.mounted) return;
+  if (!(confirmed ?? false)) return false;
+  if (!context.mounted) return false;
   await runWithProgress(
     context,
     controller: controller,
     dry: false,
     run: apply,
   );
+  return true;
 }
 
 /// Runs one dry-run/apply pass behind a **modal** progress dialog (#243).
@@ -897,10 +903,19 @@ class _PendingCardTileState extends State<PendingCardTile> {
 /// two targets that share a display label share an entry, so a kind is not
 /// guaranteed unique within one card — and a duplicate key among a [Column]'s
 /// children is a build-time crash, not a cosmetic clash.
+///
+/// [onApplyToAll] is the school-wide apply-all seam (#296). Passed in rather
+/// than reached for, because only Acties can honour it: pressing it filters
+/// *that* screen's flat list down to the cohort so the operator can read it
+/// before confirming, and a screen with no such list has no honest way to show
+/// what the button would write. Klasgroepen therefore leaves it `null` and its
+/// blocks carry no apply-all — its own per-cohort headers already sit above the
+/// rows they cover.
 List<Widget> entryDetail(
   BuildContext context, {
   required ReconcileController controller,
   required PendingAccountEntry entry,
+  void Function(PendingDecision decision)? onApplyToAll,
 }) =>
     <Widget>[
       for (final (index, choice) in entry.choices.indexed)
@@ -911,6 +926,7 @@ List<Widget> entryDetail(
           entry: entry,
           choice: choice,
           index: index,
+          onApplyToAll: onApplyToAll,
         ),
       EntryOutcomes(
         keyValue: 'entry-outcomes-${entry.family}-${entry.targetId}',
@@ -996,6 +1012,7 @@ class EntryChoiceBlock extends StatelessWidget {
     required this.entry,
     required this.choice,
     required this.index,
+    this.onApplyToAll,
   });
 
   final ReconcileController controller;
@@ -1007,6 +1024,10 @@ class EntryChoiceBlock extends StatelessWidget {
   /// the block's verdict, which is keyed by position for the reason
   /// [entryDetail] keys the blocks themselves that way.
   final int index;
+
+  /// What the block's "Toepassen op alle (N)" hands back (#296), or `null` on a
+  /// screen that offers no school-wide apply. See [entryDetail].
+  final void Function(PendingDecision decision)? onApplyToAll;
 
   @override
   Widget build(BuildContext context) {
@@ -1036,12 +1057,45 @@ class EntryChoiceBlock extends StatelessWidget {
           ChoiceControl(controller: controller, entry: entry, choice: choice)
         else
           OptionDetail(option: choice.selected),
+        ..._applyToAll(context),
         EntryOutcomes(
           keyValue: 'entry-outcomes-${entry.family}-${entry.targetId}-$index',
           outcomes: controller.applyOutcomesForChoice(entry, choice),
         ),
       ],
     );
+  }
+
+  /// The block's school-wide affordance (#296), or nothing.
+  ///
+  /// Nothing in three cases, and they are different statements. The screen may
+  /// offer no apply-all at all ([onApplyToAll] is `null`); the action may not be
+  /// sanctioned for one (`canApplyToAll`, #293), which is the majority and
+  /// includes every destructive action; or this account may be the only one in
+  /// the school that needs the decision, where "op alle (1)" says nothing the
+  /// **Toepassen** button below does not already say.
+  List<Widget> _applyToAll(BuildContext context) {
+    final onApplyToAll = this.onApplyToAll;
+    if (onApplyToAll == null) return const <Widget>[];
+    final decision = PendingDecision(entry: entry, choice: choice);
+    final cohort = controller.applyToAllCohort(decision);
+    if (cohort == null || cohort.length < 2) return const <Widget>[];
+
+    return <Widget>[
+      const SizedBox(height: PlinkSpacing.s2),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          key: ValueKey(
+              'decision-apply-all-${entry.family}-${entry.targetId}-$index'),
+          // Never disabled on the count — a cohort this short does not render
+          // — but a pass already running owns the connectors.
+          onPressed: controller.busy ? null : () => onApplyToAll(decision),
+          icon: const Icon(Icons.done_all, size: 16),
+          label: Text('Toepassen op alle (${cohort.length})'),
+        ),
+      ),
+    ];
   }
 }
 

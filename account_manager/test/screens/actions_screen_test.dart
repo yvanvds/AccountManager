@@ -363,6 +363,217 @@ void main() {
     expect(find.textContaining('in dezelfde situatie'), findsNothing);
   });
 
+  // --- School-wide apply-all, cohort first (#296) ---------------------------
+
+  group('a decision can be applied across the whole school (#296)', () {
+    /// The block-level "Toepassen op alle (N)" of the [index]-th decision on
+    /// [id]'s card.
+    Finder applyAll(String id, int index) =>
+        find.byKey(ValueKey('decision-apply-all-student-$id-$index'));
+
+    /// Which rows the flat list is showing right now, by account id.
+    Set<String> listedRows(WidgetTester tester) => tester
+        .widgetList<SystemIndicatorCell>(find.descendant(
+          of: find.byKey(const ValueKey('actions-list')),
+          matching: find.byWidgetPredicate(
+              (w) => w is SystemIndicatorCell && w.system == Origin.wisa),
+        ))
+        .map((c) => (c.key! as ValueKey<String>)
+            .value
+            .replaceFirst('account-cell-', '')
+            .replaceFirst('-wisa', ''))
+        .toSet();
+
+    int classMoves(ReconcileHarness harness) => harness.soap.soapActions
+        .where((a) => a.endsWith('#saveUserToClass'))
+        .length;
+
+    /// The September rollover in miniature: three students moved up into `4A`
+    /// while Smartschool still has all three in last year's `3C`, so every one
+    /// of them needs the same class change — and Sam alone also carries a stale
+    /// Office 365 display name, which is a decision #293 withholds from bulk.
+    Future<ReconcileHarness> openRollover(WidgetTester tester) async {
+      _useWideWindow(tester);
+      final harness = rolloverHarness();
+      await harness.controller.sync();
+      await tester
+          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      return harness;
+    }
+
+    testWidgets(
+        'only the sanctioned decision offers it, and only when more than one '
+        'account needs it (#293)', (WidgetTester tester) async {
+      final harness = await openRollover(tester);
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+
+      // Sam's card, in dispatch order: the Office 365 rename, then the class
+      // move. The move is the rollover action legacy granted
+      // `canBeAppliedToAll`; the rename is a judgement call and is withheld.
+      expect(
+        harness.controller.pendingEntries
+            .firstWhere((e) => e.target == 'Sam Sels')
+            .choices
+            .map((c) => c.situationId),
+        <String>['ModifyAzureName', 'MoveToSmartschoolClassGroup'],
+      );
+      expect(applyAll(sam, 0), findsNothing,
+          reason: 'a rename over the whole school is exactly what the sanction '
+              'refuses');
+      expect(applyAll(sam, 1), findsOneWidget);
+      expect(
+        find.descendant(
+            of: applyAll(sam, 1), matching: find.text('Toepassen op alle (3)')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an account alone in its situation gets no apply-all',
+        (WidgetTester tester) async {
+      // Jane needs the very same class move, but she is the only one — and
+      // "op alle (1)" says nothing the Toepassen button below it does not.
+      _useWideWindow(tester);
+      final harness = ReconcileHarness();
+      await harness.controller.sync();
+      await tester
+          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      final id = _studentEntry(harness.controller).targetId;
+      await _select(tester, id);
+
+      expect(find.textContaining('Toepassen op alle'), findsNothing);
+      expect(find.byKey(ValueKey('entry-apply-$id')), findsOneWidget);
+    });
+
+    testWidgets(
+        'pressing it shows the cohort instead of writing it, whatever the '
+        'search box was set to', (WidgetTester tester) async {
+      final harness = await openRollover(tester);
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      final sara = _idOf(harness.controller, 'Sara Segers');
+      final tom = _idOf(harness.controller, 'Tom Tas');
+
+      // The operator has been looking at Sam alone.
+      await tester.enterText(
+          find.byKey(const ValueKey('actions-search')), 'Sam');
+      await tester.pumpAndSettle();
+      expect(listedRows(tester), <String>{sam});
+
+      await _select(tester, sam);
+      await tester.ensureVisible(applyAll(sam, 1));
+      await tester.tap(applyAll(sam, 1));
+      await tester.pumpAndSettle();
+
+      // The whole cohort is on screen — the count is school-wide, so the list
+      // it is confirmed against has to be too.
+      expect(listedRows(tester), <String>{sam, sara, tom});
+      expect(
+          find.byKey(const ValueKey('actions-cohort-banner')), findsOneWidget);
+      expect(
+        find.text('Wijzig de klas in Smartschool — 3 account(s) in de hele '
+            'school'),
+        findsOneWidget,
+      );
+      // The list's own controls stand down: they would either narrow the very
+      // list the operator is being asked to confirm, or do nothing.
+      expect(find.byKey(const ValueKey('actions-search')), findsNothing);
+      expect(find.byKey(const ValueKey('actions-only-with-actions')),
+          findsNothing);
+      // …and the header stops describing the list as the work list, which it
+      // no longer is.
+      expect(
+        find.textContaining('de lijst toont de accounts van één beslissing'),
+        findsOneWidget,
+      );
+
+      // And nothing has been written.
+      expect(
+          harness.soap.soapActions.where((a) => a.contains('save')), isEmpty);
+      expect(find.text('Resultaat van het toepassen'), findsNothing);
+    });
+
+    testWidgets('Annuleer gives the list and its controls back',
+        (WidgetTester tester) async {
+      final harness = await openRollover(tester);
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+      await tester.ensureVisible(applyAll(sam, 1));
+      await tester.tap(applyAll(sam, 1));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('actions-cohort-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('actions-cohort-banner')), findsNothing);
+      expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+      expect(classMoves(harness), 0);
+    });
+
+    testWidgets(
+        'the confirmation names that one decision, and the pass writes it for '
+        'the whole cohort (#292/#234)', (WidgetTester tester) async {
+      final harness = await openRollover(tester);
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+      await tester.ensureVisible(applyAll(sam, 1));
+      await tester.tap(applyAll(sam, 1));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
+      await tester.pumpAndSettle();
+
+      final Finder dialog = find.byType(AlertDialog);
+      expect(find.text('Toepassen op 3 account(s)?'), findsOneWidget);
+      expect(
+        find.descendant(
+            of: dialog, matching: find.textContaining('3 wijzigingen')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+            of: dialog, matching: find.textContaining('Office 365')),
+        findsNothing,
+        reason: "summing every decision on every card would quote Sam's rename "
+            'and then not write it',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(classMoves(harness), 3);
+      expect(harness.graph.requests.where((r) => r.method == 'PATCH'), isEmpty,
+          reason: 'the rename was never armed');
+      expect(harness.controller.applyResults, hasLength(3));
+      // The review is over: what it was built from has been written.
+      expect(find.byKey(const ValueKey('actions-cohort-banner')), findsNothing);
+      expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+    });
+
+    testWidgets('a dry-run covers the same cohort and leaves it standing',
+        (WidgetTester tester) async {
+      final harness = await openRollover(tester);
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+      await tester.ensureVisible(applyAll(sam, 1));
+      await tester.tap(applyAll(sam, 1));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('actions-cohort-dry-run')));
+      await tester.pumpAndSettle();
+
+      expect(harness.controller.dryRunResults, hasLength(3));
+      expect(classMoves(harness), 0);
+      expect(find.text('Resultaat van de dry-run'), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('actions-cohort-banner')), findsOneWidget,
+          reason: 'the dry-run is what the operator reads before pressing the '
+              'button beside it, so it must not dissolve the review');
+    });
+  });
+
   testWidgets('cancelling the apply dialog writes nothing (#154)',
       (WidgetTester tester) async {
     _useWideWindow(tester);

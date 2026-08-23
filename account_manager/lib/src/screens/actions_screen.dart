@@ -87,13 +87,41 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 /// blocks inside its expandable rows, and two screens wording one decision two
 /// ways is how an operator stops trusting either.
 ///
+/// ## School-wide apply-all, cohort first (#296)
+///
+/// At the September rollover every student in the school needs the same
+/// Smartschool class change. Doing that one account at a time is not a workflow
+/// anyone will follow, so a decision block in the details pane offers
+/// **Toepassen op alle (N)** — but only for the actions #293 sanctions for it,
+/// which excludes every destructive one.
+///
+/// Pressing it does **not** write. It arms a review: the list drops its own
+/// controls and filters down to exactly the N accounts the pass would touch, and
+/// a banner above it names the one decision and offers **Dry-run alles**,
+/// **Alles toepassen (N)** and **Annuleer**. So the operator scrolls the real
+/// cohort — the same rows, the same indicators, each still selectable to read
+/// its diff — before any confirmation is offered.
+///
+/// That is exactly what the global "Alles toepassen" of #294 could not do, and
+/// the difference is not the dialog: it is that the button names *one* action
+/// whose description and field diff the operator is looking at, over a list they
+/// can see. The cohort is re-read from the controller by key on every build
+/// rather than captured, so switching an account's alternative mid-review moves
+/// it out of the cohort instead of being written as the resolution the operator
+/// changed their mind about.
+///
 /// ## What it deliberately does not do
 ///
 /// Nothing here applies an action the operator has not seen. The header's global
 /// "Dry-run alles" / "Alles toepassen" pair went in #294 for exactly that
-/// reason, and the flat list adds no replacement: the only apply is the per-card
-/// pair inside the open details pane. School-wide bulk apply with its cohort
-/// visible first is #296, and checkbox multi-select is #297.
+/// reason, and it is not coming back: every apply is started from a list that is
+/// on screen. Checkbox multi-select, for the kinds that get no apply-all, is
+/// #297.
+///
+/// A running pass cannot be cancelled and is never concurrent — a rollover over
+/// ~3000 accounts takes a long time, and is resumable in practice because every
+/// applied decision settles out of the refreshed view, so re-arming picks up
+/// what is left.
 ///
 /// A session that #287 refuses to seed gets one blocking [ReadOnlyNotice] and no
 /// list at all. The old screen offered a read-only browse of the stored
@@ -338,6 +366,15 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// running pass emits.
   String? _selectedId;
 
+  /// The [SituationCohort.key] of the decision under school-wide review (#296),
+  /// or `null` when the list is the ordinary one.
+  ///
+  /// The key, never the members. A cohort under review is live — the operator
+  /// can switch an account's alternative while looking at it — so it is
+  /// re-resolved from the controller on every build; see
+  /// [ReconcileController.applyToAllCohortFor].
+  String? _cohortKey;
+
   ReconcileController get controller => widget.controller;
 
   @override
@@ -364,12 +401,15 @@ class _ActionsBodyState extends State<_ActionsBody>
   }
 
   /// Rebuilds for the newly-selected family and — when the family actually
-  /// changed — drops the selection, which belongs to the list being left behind.
+  /// changed — drops the selection and any armed cohort, both of which belong
+  /// to the list being left behind. A cohort is single-family by construction
+  /// (its key leads with the family), so it would review an empty list here.
   void _onTabChanged() {
     final index = _tabs.index;
     if (index != _shownIndex) {
       _shownIndex = index;
       _selectedId = null;
+      _cohortKey = null;
     }
     if (mounted) setState(() {});
   }
@@ -422,7 +462,26 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// one another: the switch keeps the accounts with work, the search keeps the
   /// names asked for, the system filter keeps the rows that system has something
   /// to say about.
-  List<_AccountRow> _visibleRows(List<_AccountRow> rows) {
+  ///
+  /// A cohort under review (#296) replaces all three instead of composing with
+  /// them — that is what "the list shows you the cohort" means. The N on the
+  /// button counts the school, so a search or a system chip left over from a
+  /// moment ago must not quietly hide members of the very list the operator is
+  /// being asked to confirm. The controls are off screen while it is armed, so
+  /// there is nothing to look inert.
+  List<_AccountRow> _visibleRows(
+    List<_AccountRow> rows,
+    SituationCohort? cohort,
+  ) {
+    if (cohort != null) {
+      final members = <String>{
+        for (final d in cohort.decisions) d.entry.targetId,
+      };
+      return <_AccountRow>[
+        for (final r in rows)
+          if (members.contains(r.id)) r,
+      ];
+    }
     final NameQuery query = _query;
     final core.Origin? origin = _system.origin;
     return <_AccountRow>[
@@ -433,6 +492,23 @@ class _ActionsBodyState extends State<_ActionsBody>
                 r.stateFor(origin) != SystemIndicatorState.inOrder))
           r,
     ];
+  }
+
+  /// The cohort the screen is reviewing, re-read by key from the controller on
+  /// every build (#296) — `null` when nothing is armed, and also when the armed
+  /// cohort has emptied out from under the review.
+  SituationCohort? _armedCohort() {
+    final key = _cohortKey;
+    if (key == null) return null;
+    return controller.applyToAllCohortFor(key);
+  }
+
+  /// Arms the school-wide review of [decision]: the list narrows to its cohort
+  /// and the banner takes over from the list controls. Nothing is written.
+  void _armCohort(PendingDecision decision) {
+    final cohort = controller.applyToAllCohort(decision);
+    if (cohort == null) return;
+    setState(() => _cohortKey = cohort.key);
   }
 
   @override
@@ -454,8 +530,9 @@ class _ActionsBodyState extends State<_ActionsBody>
   Widget _body(BuildContext context, BoxConstraints constraints) {
     final bool wide = constraints.maxWidth >= _splitBreakpoint;
     final bool active = controller.linked != null;
+    final SituationCohort? cohort = active ? _armedCohort() : null;
     final rows = active ? _rows() : const <_AccountRow>[];
-    final visible = _visibleRows(rows);
+    final visible = _visibleRows(rows, cohort);
     // A selection the current filters have hidden is not a selection any more:
     // the operator cannot see what they would be acting on.
     final _AccountRow? selected = _selectedRow(visible);
@@ -472,6 +549,7 @@ class _ActionsBodyState extends State<_ActionsBody>
           child: _ActionsHeader(
             controller: controller,
             onlyWithActions: _onlyWithActions,
+            reviewingCohort: cohort != null,
           ),
         ),
         const SizedBox(height: PlinkSpacing.s4),
@@ -499,16 +577,25 @@ class _ActionsBodyState extends State<_ActionsBody>
               head,
               Padding(
                 padding: _hPad,
-                child: _ListControls(
-                  searchController: _search,
-                  onlyWithActions: _onlyWithActions,
-                  onOnlyWithActionsChanged: (v) =>
-                      setState(() => _onlyWithActions = v),
-                  sort: _sort,
-                  onSortChanged: (v) => setState(() => _sort = v),
-                  system: _system,
-                  onSystemChanged: (v) => setState(() => _system = v),
-                ),
+                // The two are exclusive: while a cohort is under review the
+                // list is *that cohort*, so controls that would narrow it
+                // further would either lie about N or do nothing.
+                child: cohort == null
+                    ? _ListControls(
+                        searchController: _search,
+                        onlyWithActions: _onlyWithActions,
+                        onOnlyWithActionsChanged: (v) =>
+                            setState(() => _onlyWithActions = v),
+                        sort: _sort,
+                        onSortChanged: (v) => setState(() => _sort = v),
+                        system: _system,
+                        onSystemChanged: (v) => setState(() => _system = v),
+                      )
+                    : _CohortReviewBanner(
+                        controller: controller,
+                        cohort: cohort,
+                        onDisarm: () => setState(() => _cohortKey = null),
+                      ),
               ),
               const SizedBox(height: PlinkSpacing.s3),
               Padding(
@@ -669,7 +756,11 @@ class _ActionsBodyState extends State<_ActionsBody>
               style: text.bodyMedium,
             )
           else
-            _AccountDetail(controller: controller, row: selected),
+            _AccountDetail(
+              controller: controller,
+              row: selected,
+              onApplyToAll: _armCohort,
+            ),
           ..._resultSections(),
           const SizedBox(height: PlinkSpacing.s6),
         ],
@@ -712,14 +803,17 @@ class _ActionsBodyState extends State<_ActionsBody>
 /// safe reading of that: the operator had seen none of the changes, and at a
 /// September changeover the count behind the button is in the thousands. Its
 /// confirmation named systems and a number, which is not the same as having
-/// looked. Bulk itself is not gone for good — #296 gives it back with the cohort
-/// on screen first — but the affordance that applied what nobody had read is.
+/// looked. Bulk itself is not gone — #296 put it back on the decision block,
+/// where pressing it filters the list to the cohort and shows the operator the
+/// accounts before offering a confirmation — but the affordance that applied
+/// what nobody had read is.
 ///
 /// The count line stays. It states how much work exists; it is not a button.
 class _ActionsHeader extends StatelessWidget {
   const _ActionsHeader({
     required this.controller,
     required this.onlyWithActions,
+    this.reviewingCohort = false,
   });
 
   final ReconcileController controller;
@@ -727,6 +821,11 @@ class _ActionsHeader extends StatelessWidget {
   /// Whether the work-list filter is on, so the sub-line describes the list the
   /// operator is actually looking at.
   final bool onlyWithActions;
+
+  /// Whether a school-wide cohort is under review (#296), in which case neither
+  /// reading of [onlyWithActions] describes the list: it is one decision's
+  /// cohort, and the banner right below says so.
+  final bool reviewingCohort;
 
   @override
   Widget build(BuildContext context) {
@@ -745,11 +844,14 @@ class _ActionsHeader extends StatelessWidget {
         Text('Acties', style: text.headlineMedium),
         const SizedBox(height: PlinkSpacing.s2),
         Text(
-          switch ((count, onlyWithActions)) {
-            (0, _) => 'Geen openstaande acties.',
-            (_, true) => '$count openstaande actie(s) — de lijst toont enkel '
-                'accounts met werk.',
-            (_, false) => '$count openstaande actie(s) — de lijst toont elk '
+          switch ((count, reviewingCohort, onlyWithActions)) {
+            (0, _, _) => 'Geen openstaande acties.',
+            (_, true, _) => '$count openstaande actie(s) — de lijst toont de '
+                'accounts van één beslissing.',
+            (_, _, true) =>
+              '$count openstaande actie(s) — de lijst toont enkel '
+                  'accounts met werk.',
+            (_, _, false) => '$count openstaande actie(s) — de lijst toont elk '
                 'account. Drie groene vinkjes betekent dat het account overal '
                 'juist staat.',
           },
@@ -860,6 +962,122 @@ class _ListControls extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+/// The cohort under school-wide review (#296): what the one armed decision is,
+/// how many accounts in the school raise it, and the two passes that cover
+/// exactly them — plus the way out.
+///
+/// It stands where [_ListControls] normally stands, and that placement is the
+/// design. The list below it *is* the cohort, so this reads as a caption of the
+/// rows the operator is scrolling rather than as a floating button whose scope
+/// has to be taken on trust. It is the answer to the "Alles toepassen" of #294:
+/// the same power, but the list is filtered to what will be written and the
+/// operator is standing in front of it before a dialog is ever offered.
+///
+/// Both passes run over the very cohort this banner counted — the standing rule
+/// since #252 — and that cohort is re-read from the controller on every build,
+/// so an alternative switched mid-review moves the account out of the list, out
+/// of N, out of the confirmation's change count and out of the write together.
+class _CohortReviewBanner extends StatelessWidget {
+  const _CohortReviewBanner({
+    required this.controller,
+    required this.cohort,
+    required this.onDisarm,
+  });
+
+  final ReconcileController controller;
+  final SituationCohort cohort;
+
+  /// Leaves the review and gives the list its own controls back.
+  final VoidCallback onDisarm;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final int count = cohort.length;
+
+    return Container(
+      key: const ValueKey('actions-cohort-banner'),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        color: colors.primary.withValues(alpha: 0.06),
+        border: Border.all(color: colors.primary),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            '${cohort.label} — $count account(s) in de hele school',
+            style: text.titleSmall,
+          ),
+          const SizedBox(height: PlinkSpacing.s1),
+          Text(
+            'De lijst toont enkel deze accounts. Bekijk ze en bevestig '
+            'hieronder; elk account krijgt zijn eigen gekozen oplossing.',
+            style: text.bodySmall,
+          ),
+          const SizedBox(height: PlinkSpacing.s3),
+          Wrap(
+            spacing: PlinkSpacing.s2,
+            runSpacing: PlinkSpacing.s2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              TextButton(
+                key: const ValueKey('actions-cohort-cancel'),
+                onPressed: controller.busy ? null : onDisarm,
+                child: const Text('Annuleer'),
+              ),
+              OutlinedButton(
+                key: const ValueKey('actions-cohort-dry-run'),
+                onPressed: controller.busy
+                    ? null
+                    : () => runWithProgress(
+                          context,
+                          controller: controller,
+                          dry: true,
+                          // Nothing is written, so the review survives it: the
+                          // dry-run is what the operator reads before pressing
+                          // the one beside it.
+                          run: () =>
+                              controller.dryRunDecisions(cohort.decisions),
+                        ),
+                child: const Text('Dry-run alles'),
+              ),
+              FilledButton(
+                key: const ValueKey('actions-cohort-apply'),
+                onPressed: controller.busy ? null : () => _apply(context),
+                child: Text('Alles toepassen ($count)'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Confirms, runs, and — only when the pass really ran — leaves the review.
+  ///
+  /// A cancelled confirmation must put the operator back exactly where they
+  /// were, still looking at the cohort. A finished pass has invalidated it:
+  /// every decision it wrote settles out of the refreshed view, so what is left
+  /// is the failures, and re-arming from a card is how they are picked up.
+  Future<void> _apply(BuildContext context) async {
+    final ran = await confirmAndApply(
+      context,
+      controller: controller,
+      // The count and the noun the banner just showed, so the dialog is
+      // recognisably about the list behind it.
+      title: 'Toepassen op ${cohort.length} account(s)?',
+      // Scoped to this one decision across the cohort (#292): summing every
+      // decision on every card would quote writes this pass will not make.
+      scope: controller.applyScopeForDecisions(cohort.decisions),
+      apply: () => controller.applyDecisions(cohort.decisions),
+    );
+    if (ran) onDisarm();
   }
 }
 
@@ -1027,10 +1245,17 @@ class _SystemRow extends StatelessWidget {
 /// made those blocks stand on their own precisely so this pane could reuse them
 /// with no collapsed row above to have previewed anything.
 class _AccountDetail extends StatelessWidget {
-  const _AccountDetail({required this.controller, required this.row});
+  const _AccountDetail({
+    required this.controller,
+    required this.row,
+    required this.onApplyToAll,
+  });
 
   final ReconcileController controller;
   final _AccountRow row;
+
+  /// What a decision block's "Toepassen op alle (N)" arms (#296).
+  final void Function(PendingDecision decision) onApplyToAll;
 
   @override
   Widget build(BuildContext context) {
@@ -1066,7 +1291,12 @@ class _AccountDetail extends StatelessWidget {
             style: text.bodyMedium,
           )
         else
-          ...entryDetail(context, controller: controller, entry: entry),
+          ...entryDetail(
+            context,
+            controller: controller,
+            entry: entry,
+            onApplyToAll: onApplyToAll,
+          ),
       ],
     );
   }
