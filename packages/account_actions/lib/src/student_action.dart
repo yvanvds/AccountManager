@@ -1241,15 +1241,34 @@ class AzureClassGroupMembership extends StudentAction {
   String _summary() {
     final target = placement.groupName ?? placement.className;
     if (!placement.missingFromOwnGroup) {
-      return 'Staat nog in de Office 365-klasgroep $_strays. Werk het '
-          'ledenbestand van die klas bij.';
+      return 'Staat nog in de Office 365-klasgroep $_strays. '
+          '${_instruction('die klas')}';
     }
     if (placement.strayGroupNames.isEmpty) {
-      return 'Ontbreekt in de Office 365-klasgroep $target. Werk het '
-          'ledenbestand van klas ${placement.className} bij.';
+      return 'Ontbreekt in de Office 365-klasgroep $target. '
+          '${_instruction('klas ${placement.className}')}';
     }
     return 'Zit in de verkeerde Office 365-klasgroep: $_strays in plaats van '
-        '$target. Werk het ledenbestand van beide klassen bij.';
+        '$target. ${_instruction('beide klassen')}';
+  }
+
+  /// What the operator should do about it — and *where* (#331).
+  ///
+  /// Normally the remedy is the class-level `SyncAzureClassGroupMembers`, which
+  /// this row deliberately does not duplicate. But when every group named here
+  /// is mastered by Exchange Online, that write does not exist: the class card
+  /// carries `AzureClassGroupNotManageable` instead, and telling the operator to
+  /// go and update a roster the app will not offer to update sends them around
+  /// the loop #331 was filed to break.
+  String _instruction(String which) {
+    if (!placement.onlyExchangeManagedGroups) {
+      return 'Werk het ledenbestand van $which bij.';
+    }
+    final subject = placement.unmanagedGroupNames.length == 1
+        ? 'Die groep wordt'
+        : 'Die groepen worden';
+    return '$subject in Exchange Online beheerd; Graph kan de ledenlijst niet '
+        'bijwerken. Pas het lidmaatschap daar aan.';
   }
 
   @override

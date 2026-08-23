@@ -57,6 +57,41 @@ void main() {
         // A delta token must be primed for the next incremental sync.
         expect(snapshot.deltaToken, isNotNull);
       });
+
+      test('groups come back with the shape that says who manages them (#331)',
+          () async {
+        // Read-only, per the live-testing policy: this asserts the *shape* is
+        // read, never that a write is refused. It is the one thing a fake
+        // transport cannot prove — that `$select` really carries `mailEnabled`
+        // and `groupTypes` back from Graph. Drop either and every group reads
+        // `mailEnabled: false, groupTypes: []`, which is exactly the blindness
+        // that let a mail-enabled security group be proposed for a membership
+        // sync on every pass.
+        final snapshot = await connector.sync();
+        expect(snapshot.groups, isNotEmpty);
+
+        // The school's class groups are Microsoft 365 groups, so at least one
+        // must carry `Unified` — the proof the field arrives at all.
+        expect(
+          snapshot.groups.where((g) => g.isUnified),
+          isNotEmpty,
+          reason: 'groupTypes is missing from the read if nothing is unified',
+        );
+        // And the two flags must agree with each other on every group: a
+        // unified group is mail-enabled and never Exchange-mastered.
+        for (final group in snapshot.groups.where((g) => g.isUnified)) {
+          expect(group.mailEnabled, isTrue, reason: group.displayName);
+          expect(group.canManageMembership, isTrue, reason: group.displayName);
+        }
+        // A group we will not write to is one Exchange masters, and nothing
+        // else — stated as an invariant so a live tenant that grows a second
+        // `SSM-1A` is reported rather than silently synced.
+        for (final group
+            in snapshot.groups.where((g) => !g.canManageMembership)) {
+          expect(group.mailEnabled, isTrue, reason: group.displayName);
+          expect(group.isUnified, isFalse, reason: group.displayName);
+        }
+      });
     },
     skip: config == null
         ? 'Set AZURE_ACCESS_TOKEN (+ client/tenant/domain/prefix) to run.'

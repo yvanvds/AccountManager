@@ -416,6 +416,33 @@ az.AzureGroup azureClassGroup(
       displayName: '$prefix-$className',
       mail: '$prefix-$className@$domain',
       mailNickname: '$prefix-$className',
+      mailEnabled: true,
+      groupTypes: const ['Unified'],
+      memberIds: memberIds,
+    );
+
+/// An Office 365 class group somebody made by hand as a **mail-enabled security
+/// group** (#331) — `SSM-1A` in the live tenant, and the one shape among the
+/// school's 372 prefixed groups whose membership Graph refuses to write.
+///
+/// Identical to [azureClassGroup] in everything an operator can see: same name,
+/// same nickname, same address. Only `securityEnabled` + the empty `groupTypes`
+/// tell them apart, which is exactly why the app proposed a roster sync on it
+/// every pass and every one of the 38 changes came back refused.
+az.AzureGroup azureMailEnabledSecurityClassGroup(
+  String className, {
+  String prefix = 'SSM',
+  String domain = 'student.school.example',
+  String? id,
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: id ?? 'az-$prefix-$className',
+      displayName: '$prefix-$className',
+      mail: '$prefix-$className@$domain',
+      mailNickname: '$prefix-$className',
+      mailEnabled: true,
+      securityEnabled: true,
       memberIds: memberIds,
     );
 

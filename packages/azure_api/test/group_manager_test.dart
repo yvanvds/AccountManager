@@ -34,7 +34,8 @@ void main() {
       );
       expect(
         groupCall.url.queryParameters[r'$select'],
-        'id,displayName,securityEnabled,mail,mailNickname',
+        'id,displayName,securityEnabled,mailEnabled,groupTypes,mail,'
+        'mailNickname',
       );
       expect(groupCall.headers['ConsistencyLevel'], 'eventual');
     });
@@ -126,7 +127,12 @@ void main() {
       expect(created.id, 'g-new');
       expect(created.mail, 'GBS-2A@student.school.example');
       expect(created.mailNickname, 'GBS-2A');
+      // Graph's create echo leaves `groupTypes` out, and the record must still
+      // read back as the one shape this method writes (#331) — otherwise the
+      // group it just made would be filed as one whose membership Graph refuses
+      // and the chained roster write would never be proposed.
       expect(created.isUnified, isTrue);
+      expect(created.canManageMembership, isTrue);
       expect(created.memberIds, isEmpty,
           reason: 'membership is a separate write');
     });
@@ -209,7 +215,8 @@ void main() {
       expect(req.url.queryParameters[r'$count'], 'true');
       expect(
         req.url.queryParameters[r'$select'],
-        'id,displayName,securityEnabled,mail,mailNickname',
+        'id,displayName,securityEnabled,mailEnabled,groupTypes,mail,'
+        'mailNickname',
       );
       expect(req.headers['ConsistencyLevel'], 'eventual');
     });

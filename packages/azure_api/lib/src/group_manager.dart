@@ -199,6 +199,12 @@ class GroupManager {
       id: (json['id'] as String?) ?? '',
       displayName: (json['displayName'] as String?) ?? displayName,
       securityEnabled: (json['securityEnabled'] as bool?) ?? false,
+      mailEnabled: (json['mailEnabled'] as bool?) ?? true,
+      // The one shape this method ever writes, so the record it returns says so
+      // even when Graph's echo leaves `groupTypes` out (#331): a created class
+      // group must read back as one whose membership we manage.
+      groupTypes: ((json['groupTypes'] as List<dynamic>?) ?? const ['Unified'])
+          .cast<String>(),
       mail: json['mail'] as String?,
       mailNickname: (json['mailNickname'] as String?) ?? mailNickname,
     );

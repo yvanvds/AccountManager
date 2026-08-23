@@ -4428,6 +4428,121 @@ void main() {
   });
 
   testWidgets(
+      'a class group Graph will not manage is diagnosed, not proposed for a '
+      'write that always fails, end-to-end (#331)',
+      (WidgetTester tester) async {
+    // The reported bug, in the real app. `GBS-1A` is a mail-enabled security
+    // group — Exchange Online masters its membership, so Graph refuses every
+    // add and every remove. The class card offered "Werk het ledenbestand van
+    // GBS-1A bij", the operator pressed Toepassen, all 38 changes failed, and
+    // the identical proposal was back on the next pass. Forever.
+    //
+    // End-to-end because the claim spans surfaces a unit test sees one at a
+    // time: the class card in Klasgroepen (composed from the stored candidate
+    // document plus the live dispatch), the per-student row in Acties (a second
+    // projection of the same dispatch), and the Graph transport underneath —
+    // which must stay untouched even while the operator reads and expands.
+    useTallWindow(tester);
+    final harness = unmanageableClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // The doomed proposal is gone from the screen entirely — not merely failing
+    // more legibly than it used to (#330).
+    expect(
+        find.textContaining('Werk het ledenbestand van GBS-1A'), findsNothing,
+        reason: 'no write may be offered on a group Graph refuses');
+    expect(
+      find.textContaining(
+          'De Office 365-groep GBS-1A is een mail-enabled beveiligingsgroep'),
+      findsWidgets,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets);
+    expect(find.textContaining('(keuze)'), findsNothing,
+        reason: 'a lone notice is not a choice');
+
+    // The card states the shape, the address and how far the roster has drifted
+    // while nobody could write to it — and offers no apply of its own.
+    final Finder entry = find.byKey(const ValueKey('entry-group-1A'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(find.text('type: mail-enabled beveiligingsgroep'), findsOneWidget);
+    expect(find.textContaining('niet gesynchroniseerd: 1 toe te voegen'),
+        findsOneWidget);
+    final Finder apply = find.byKey(const ValueKey('entry-apply-1A'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull);
+
+    // Nothing anywhere in the app is willing to write to this group.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .where((a) => a.canApply)
+          .map((a) => a.kind)
+          .toList(),
+      isEmpty,
+    );
+    expect(harness.graph.batchedWrites, isEmpty);
+
+    // And the student who is missing from it is told where the remedy lives,
+    // instead of being sent to a class card that no longer offers one.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await selectAccount(tester, accountId(harness, 'Joe Sels'));
+    expect(
+      find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Die groep wordt in Exchange Online beheerd'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Werk het ledenbestand van klas 1A bij'),
+        findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the very same class on a Microsoft 365 group still gets its roster '
+      'write end-to-end (#331)', (WidgetTester tester) async {
+    // The control, and the reason the guard is narrow: one class, one student
+    // missing, one address — the *only* difference from the test above is
+    // `groupTypes: ["Unified"]` instead of `securityEnabled: true`. If the guard
+    // ever widened to "anything mail-enabled" or "anything security-enabled" it
+    // would silence the write on the 371 groups that work, and this is what
+    // would say so.
+    useTallWindow(tester);
+    final harness = unmanageableClassGroupHarness(manageable: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-1A bij (1 toevoegen'),
+      findsWidgets,
+    );
+    expect(find.textContaining('mail-enabled beveiligingsgroep'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a system cell means "work you can do on this screen": the class that '
       'carries the Office 365 roster write says so, the students it diagnoses '
       'do not, end-to-end (#298)', (WidgetTester tester) async {

@@ -2204,6 +2204,73 @@ ReconcileHarness azureClassGroupHarness({
       ourSchoolIds: const {1},
     );
 
+/// A harness for the class group Graph will not manage the membership of
+/// (#331) — the reported bug, in the smallest shape that reproduces it.
+///
+/// Our school 1 runs one class, `1A`, correct in WISA and Smartschool, with two
+/// students. Office 365 holds `GBS-1A` as a **mail-enabled security group**
+/// carrying only the first of them, so the roster genuinely differs — and every
+/// add Graph is asked to make on such a group is refused. Before #331 the class
+/// card offered "werk het ledenbestand bij", the apply failed wholesale, and the
+/// identical proposal was back on the next pass.
+///
+/// [manageable] flips the same fixture to an ordinary Microsoft 365 group: same
+/// name, same address, same roster diff, and the write is proposed again. It is
+/// the control that shows the group's *shape* is the only thing deciding.
+ReconcileHarness unmanageableClassGroupHarness({bool manageable = false}) =>
+    ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          // Named, so the account row can be told from Jane's on screen.
+          wisaStudent(
+              wisaId: '2', classGroup: '1A', firstName: 'Joe', name: 'Sels'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+          ssAccount(
+              uid: 'joe',
+              accountId: '2',
+              mail: 'a2@student.school.example',
+              givenName: 'Joe',
+              surname: 'Sels'),
+        ],
+        memberships: [member('jane', '1A'), member('joe', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+          azUser(
+              id: 'az2',
+              upn: 'a2@student.school.example',
+              employeeId: '2',
+              displayName: 'Joe Sels'),
+        ],
+        groups: [
+          if (manageable)
+            azClassGroup('1A', memberIds: const ['az1'])
+          else
+            azMailEnabledSecurityClassGroup('1A', memberIds: const ['az1']),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the stale Office 365 class groups of #271. Our school 1 runs
 /// exactly one class, `1A`, correct in all three systems — and Office 365 still
 /// holds `GBS-9Z` and `GBS-8Y`, the groups of two classes that stopped running.
@@ -3187,6 +3254,30 @@ az.AzureGroup azClassGroup(
       displayName: 'GBS-$className',
       mail: 'GBS-$className@student.school.example',
       mailNickname: 'GBS-$className',
+      mailEnabled: true,
+      groupTypes: const ['Unified'],
+      memberIds: memberIds,
+    );
+
+/// An Office 365 class group somebody made by hand as a **mail-enabled security
+/// group** (#331) — `SSM-1A` in the live tenant, the one shape among the
+/// school's 372 prefixed groups whose membership Graph refuses to write.
+///
+/// Identical to [azClassGroup] in everything the operator sees: same name, same
+/// nickname, same address. Only `securityEnabled` beside an empty `groupTypes`
+/// tells them apart, which is why a roster sync was proposed on it every pass
+/// and all 38 changes came back refused.
+az.AzureGroup azMailEnabledSecurityClassGroup(
+  String className, {
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: 'az-GBS-$className',
+      displayName: 'GBS-$className',
+      mail: 'GBS-$className@student.school.example',
+      mailNickname: 'GBS-$className',
+      mailEnabled: true,
+      securityEnabled: true,
       memberIds: memberIds,
     );
 

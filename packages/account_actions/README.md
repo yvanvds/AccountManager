@@ -95,11 +95,11 @@ the blacklist out of a bulk pass — and that job belongs to `canApplyToAll`,
 withheld since #293 and honoured by every bulk affordance since #326. A guard
 that holds only while a default holds is not a guard.
 
-The three informational actions that carry **no** `noticeFor`
+The four informational actions that carry **no** `noticeFor`
 (`AzureClassGroupMembership`, `DoNotImportFromSmartschool`,
-`AzureClassGroupWithoutClass`) each fire exactly where no decision can be
-raised, so the row *is* the notice and there is nothing for it to be context
-for.
+`AzureClassGroupWithoutClass`, `AzureClassGroupNotManageable`) each fire exactly
+where no decision can be raised, so the row *is* the notice and there is nothing
+for it to be context for.
 
 `canApplyToAll` ports legacy's `AccountAction.canBeAppliedToAll`, which the two
 account families carried and granted deliberately, action by action. The line it
@@ -191,10 +191,11 @@ numeric `wisaId` becomes the copy-code.
 
 `groupActions(snapshot)` walks the snapshot's class groups, ported from the
 legacy `GroupActionParser`. The split is on the WISA/Smartschool **pair** rather
-than all three systems; the Office 365 class-group actions added in #228/#271
-(`CreateAzureClassGroup`, `SyncAzureClassGroupMembers`,
-`AzureClassGroupWithoutClass`, `DeleteAzureClassGroup`) are orthogonal to a
-class's Smartschool state and ride alongside **both** branches:
+than all three systems; the Office 365 class-group actions added in
+#228/#271/#331 (`CreateAzureClassGroup`, `SyncAzureClassGroupMembers`,
+`AzureClassGroupNotManageable`, `AzureClassGroupWithoutClass`,
+`DeleteAzureClassGroup`) are orthogonal to a class's Smartschool state and ride
+alongside **both** branches:
 
 - **Missing from WISA or Smartschool** → the lifecycle-style actions, in legacy
   parser order: `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass`
@@ -240,10 +241,21 @@ class's Smartschool state and ride alongside **both** branches:
   non-decision. The delete takes the group's mailbox, Team and files with it, and
   what keeps it out of every bulk pass is `canApplyToAll == false` (#293), read
   by both bulk paths since #326, rather than the polarity of a pair.
-  `AzureClassGroupWithoutClass` survives as the lone `(manueel)` notice for the
-  one stale group the delete cannot address — a record naming no Azure object
-  id. A prefixed group whose remainder is *not* class-shaped (`SSM - GOK`,
-  `SSM-OKAN`) is not orphaned by the linker at all and so raises nothing.
+  `AzureClassGroupWithoutClass` survives as the lone `(manueel)` notice for a
+  stale group the delete cannot address — a record naming no Azure object id,
+  or (since #331) a group Exchange Online masters, where the notice states the
+  shape and sends the operator there. A prefixed group whose remainder is *not*
+  class-shaped (`SSM - GOK`, `SSM-OKAN`) is not orphaned by the linker at all
+  and so raises nothing.
+- **A class group Graph will not manage** (#331) → the informational
+  `AzureClassGroupNotManageable` in place of `SyncAzureClassGroupMembers`. A
+  mail-enabled security group or a distribution list is mastered by Exchange
+  Online, so every add and every remove is refused: `SSM-1A` in the live tenant
+  is one, and its 38 membership changes failed wholesale on every pass until the
+  proposal stopped being made. `AzureGroup.canManageMembership` is the whole
+  test, read off Graph's `mailEnabled` + `groupTypes` rather than inferred from
+  `securityEnabled` + `mail`. The two readings partition a class whose roster
+  differs, so exactly one row appears.
 - **Present in both** → only `ModifySmartschoolData` (sync institute number,
   Untis code, and description).
 
@@ -339,6 +351,14 @@ they cannot disagree — and a class whose group does not exist yet, or a group
 whose class has vanished, is deliberately silent per student: neither has a
 per-student remedy (`CreateAzureClassGroup` and `DeleteAzureClassGroup` own
 those).
+
+When the class row has no remedy either — every group this student's row names
+is mastered by Exchange Online (#331) — the diagnosis stands but the instruction
+changes: `AzureClassPlacement.unmanagedGroupNames` names those groups, and the
+summary sends the operator to Exchange Online instead of to a class card that no
+longer offers "werk het ledenbestand bij". Deliberately *every* and not *any*: a
+student missing from a group we manage while stuck in one we do not still has a
+write waiting on the class that can take it.
 
 ## Deferred (documented divergences)
 

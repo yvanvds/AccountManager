@@ -188,14 +188,19 @@ void main() {
         'id': 'g1',
         'displayName': 'GBS-2A',
         'securityEnabled': false,
+        'mailEnabled': true,
+        'groupTypes': ['Unified'],
         'mail': 'GBS-2A@student.school.example',
         'mailNickname': 'GBS-2A',
       });
       expect(group.mail, 'GBS-2A@student.school.example');
       expect(group.mailNickname, 'GBS-2A');
       expect(group.isUnified, isTrue);
+      expect(group.canManageMembership, isTrue);
       expect(AzureGroup.fromJson(group.toJson()), group);
       expect(group.withMembers(const ['m1']).mail, group.mail);
+      expect(group.withMembers(const ['m1']).isUnified, isTrue,
+          reason: 'the shape survives a local membership patch');
     });
 
     test('a security group is not unified, whatever it is named (#228)', () {
@@ -207,6 +212,109 @@ void main() {
       expect(group.isUnified, isFalse);
       // Nor is a mail-less group that merely is not security-enabled.
       expect(AzureGroup(id: 'g2', displayName: 'GBS-2A').isUnified, isFalse);
+    });
+
+    group('the four group shapes Graph distinguishes (#331)', () {
+      // The reported bug: `SSM-1A` is a mail-enabled security group, the one
+      // shape among the school's 372 `SSM-` groups whose membership Graph will
+      // not manage — and the app could not see it, because `graphSelectFields`
+      // asked for neither `mailEnabled` nor `groupTypes` and `isUnified` was
+      // inferred from `securityEnabled` + `mail`.
+      AzureGroup shape({
+        required bool mailEnabled,
+        required bool securityEnabled,
+        List<String> groupTypes = const [],
+        String? mail = 'SSM-1A@arcadiascholen.be',
+      }) =>
+          AzureGroup(
+            id: 'g',
+            displayName: 'SSM-1A',
+            securityEnabled: securityEnabled,
+            mailEnabled: mailEnabled,
+            groupTypes: groupTypes,
+            mail: mail,
+          );
+
+      test('a Microsoft 365 group is managed', () {
+        final group = shape(
+          mailEnabled: true,
+          securityEnabled: false,
+          groupTypes: const ['Unified'],
+        );
+        expect(group.isUnified, isTrue);
+        expect(group.isExchangeManaged, isFalse);
+        expect(group.canManageMembership, isTrue);
+      });
+
+      test('a plain security group is managed — the legacy class groups', () {
+        // `SSM-3ECO` and its 115 siblings: made by the WPF app, no address at
+        // all, and Graph writes their membership perfectly well (#312).
+        final group =
+            shape(mailEnabled: false, securityEnabled: true, mail: null);
+        expect(group.isUnified, isFalse);
+        expect(group.canManageMembership, isTrue);
+      });
+
+      test('a mail-enabled security group is not — the reported bug', () {
+        final group = shape(mailEnabled: true, securityEnabled: true);
+        expect(group.isUnified, isFalse);
+        expect(group.isExchangeManaged, isTrue);
+        expect(group.canManageMembership, isFalse);
+      });
+
+      test('nor is a distribution list, which used to read as unified', () {
+        // The other half of what the old inference got wrong: not
+        // security-enabled and carrying an address made a plain distribution
+        // list indistinguishable from a Microsoft 365 group.
+        final group = shape(mailEnabled: true, securityEnabled: false);
+        expect(group.isUnified, isFalse);
+        expect(group.canManageMembership, isFalse);
+      });
+
+      test('the shape round-trips through the stored snapshot', () {
+        final group = shape(mailEnabled: true, securityEnabled: true);
+        final restored = AzureGroup.fromJson(group.toJson());
+        expect(restored, group);
+        expect(restored.canManageMembership, isFalse,
+            reason: 'a stored snapshot must not forget why a class is stuck');
+      });
+
+      test('a snapshot written before #331 reads as a group we manage', () {
+        // Neither field was stored then. Defaulting them the other way would
+        // withhold every class group\'s roster sync until the next Azure pull;
+        // this way an old snapshot behaves exactly as it did.
+        final restored = AzureGroup.fromJson(const <String, dynamic>{
+          'id': 'g',
+          'displayName': 'GBS-2A',
+          'securityEnabled': false,
+          'mail': 'GBS-2A@student.school.example',
+          'mailNickname': 'GBS-2A',
+          'memberIds': <String>[],
+        });
+        expect(restored.canManageMembership, isTrue);
+        expect(restored.groupTypes, isEmpty);
+        expect(restored.mailEnabled, isFalse);
+      });
+
+      test('groupTypes is unmodifiable', () {
+        final group = shape(
+          mailEnabled: true,
+          securityEnabled: false,
+          groupTypes: const ['Unified'],
+        );
+        expect(() => group.groupTypes.add('Dynamic'), throwsUnsupportedError);
+      });
+
+      test('two groups differing only in shape are not equal', () {
+        expect(
+          shape(mailEnabled: true, securityEnabled: true),
+          isNot(shape(
+            mailEnabled: true,
+            securityEnabled: true,
+            groupTypes: const ['Unified'],
+          )),
+        );
+      });
     });
 
     test('two groups differing only in address are not equal (#228)', () {
