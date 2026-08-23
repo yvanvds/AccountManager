@@ -288,10 +288,15 @@ void main() {
       expect(delta.changed.single.displayName, 'Jane Doe');
     });
 
-    test('a sparse row moving someone out of our school is dropped', () async {
+    test('a sparse row moving someone out of our school is reported as such',
+        () async {
       // The merge is not a way to keep everybody: judged whole, this record no
-      // longer belongs to us, so it leaves the changed set (and the connector
-      // stops carrying it).
+      // longer belongs to us, so it leaves the changed set.
+      //
+      // Leaving it at that was the bug of #317. `changed` is upsert-only, so a
+      // caller told nothing keeps the copy it has — the one that still says
+      // `GBS` — and every later walk reaches the same verdict about the same
+      // row, so the contradiction never resolves. The id gets its own bucket.
       final transport = walkOf(<Map<String, dynamic>>[
         <String, dynamic>{'id': 'az1', 'companyName': 'OTHER'},
       ]);
@@ -303,6 +308,10 @@ void main() {
       );
 
       expect(delta.changed, isEmpty);
+      expect(delta.leftSchoolIds, <String>['az1']);
+      expect(delta.removedIds, isEmpty,
+          reason: 'the account still exists — it is simply not ours, which is '
+              'not what a Graph @removed row means');
     });
 
     test('a sparse row about a user we have never seen is still dropped',
@@ -317,6 +326,41 @@ void main() {
       final delta = await UserManager(clientWith(transport)).delta('T1', 'GBS');
 
       expect(delta.changed, isEmpty);
+      expect(delta.leftSchoolIds, isEmpty,
+          reason: 'there is no record of ours to reconcile a stranger against, '
+              'so reporting a departure would invent one');
+    });
+
+    test(
+        'a staff member dropped from the department list leaves; a reorder '
+        'does not (#317)', () async {
+      // `department` is the comma-separated list of every school the teacher is
+      // active at, maintained by other software, and #279 made `belongsToSchool`
+      // read it as a list. So the two shapes that look alike on the wire mean
+      // opposite things, and only the merged record can tell them apart.
+      const staff = AzureUser(
+        id: 'az-staff',
+        upn: 'anna.smit@school.example',
+        employeeId: 'W7',
+        displayName: 'Anna Smit',
+        department: 'SSM,GBS',
+      );
+
+      final reordered = await UserManager(clientWith(walkOf(
+        <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'az-staff', 'department': 'GBS,SSM'},
+        ],
+      ))).delta('T1', 'GBS', known: const {'az-staff': staff});
+      expect(reordered.leftSchoolIds, isEmpty);
+      expect(reordered.changed.single.department, 'GBS,SSM');
+
+      final departed = await UserManager(clientWith(walkOf(
+        <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'az-staff', 'department': 'SSM'},
+        ],
+      ))).delta('T1', 'GBS', known: const {'az-staff': staff});
+      expect(departed.changed, isEmpty);
+      expect(departed.leftSchoolIds, <String>['az-staff']);
     });
   });
 
@@ -825,6 +869,40 @@ void main() {
         contains('Azure: delta voor "GBS" — 0 gewijzigd, 0 verwijderd.'),
       );
       expect(log.messages, isNot(contains(contains('changed, '))));
+    });
+
+    test('a pass that lost accounts to another school says so, in Dutch (#317)',
+        () async {
+      // The count the report went without: the walk found a row, acted on it,
+      // and the line still read `0 gewijzigd, 0 verwijderd` — which is how the
+      // operator was left with no way to tell an uneventful pass from one that
+      // had just handed an account over. The clause only appears when there is
+      // something to say, so an ordinary pass stays the short line above.
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          '@odata.deltaLink':
+              'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=T',
+          'value': <Map<String, dynamic>>[
+            <String, dynamic>{'id': 'az1', 'companyName': 'OTHER'},
+          ],
+        }),
+      );
+      final log = RecordingLog();
+
+      await UserManager(clientWith(transport), log: log).delta(
+        'OLD',
+        'GBS',
+        known: const <String, AzureUser>{
+          'az1': AzureUser(id: 'az1', upn: 'jane@x', companyName: 'GBS'),
+        },
+      );
+
+      expect(
+        log.messages,
+        contains('Azure: delta voor "GBS" — 0 gewijzigd, 0 verwijderd, '
+            '1 niet langer van onze school.'),
+      );
+      expect(log.messages, isNot(contains(contains('no longer'))));
     });
 
     test('the employeeId back-fill lookup reports in Dutch', () async {

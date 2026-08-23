@@ -20,7 +20,15 @@ The legacy connector downloads roughly **6000** tenant users to keep the
   It also primes a delta token (`$deltatoken=latest`) for next time.
 - **Incremental sync** — `/users/delta` returns only the users that changed
   since the last token; the connector upserts and removes them on top of the
-  previous snapshot.
+  previous snapshot. `UserDelta` splits the walk three ways: `changed` (upsert),
+  `removedIds` (Graph's `@removed` — the object is gone from the directory) and
+  `leftSchoolIds` (#317 — a record we already held whose row, merged whole, no
+  longer names our school). The last two are dropped from the snapshot alike,
+  but they are kept apart because they are not the same news: a left-school
+  account still exists, and the `employeeId` back-fill re-adopts it with the
+  fresh Graph record when this pass still expects it. Reporting it at all is what
+  makes it actionable — `changed` only ever upserts, so a walk that stayed silent
+  left the contradicted record in place on every later pass too.
 
 `$select` is pinned to exactly the fields the port uses: `id`,
 `userPrincipalName`, `employeeId`, `displayName`, `givenName`, `surname`,

@@ -9046,6 +9046,180 @@ void main() {
   });
 
   testWidgets(
+      'a delta row that hands an account to another school stops the app '
+      'proposing writes against it (#317)', (WidgetTester tester) async {
+    // The report: Graph says an account moved out of our school and the snapshot
+    // goes on insisting it is ours. `_walkDelta` merges the sparse row onto the
+    // record we hold and then keeps it only if the merged record still passes
+    // the school test — and when it does not, the row was simply thrown away.
+    // Applied as an upsert, "thrown away" means *nothing happens*: our own copy
+    // survives with the `companyName` it had, and every later pass reaches the
+    // same verdict about the same row, so the contradiction never resolves.
+    //
+    // Two students in one pass, because the fix has two legs that have to agree:
+    //
+    // - **Jane** is gone from the group — no WISA anywhere, no Smartschool — and
+    //   another school has claimed her Office 365 account. While our stale copy
+    //   still carries `GBS`, `RemoveStudentFromAzure` evaluates true, so Acties
+    //   offers a **delete** against an account SSM now owns. That is the danger
+    //   the snapshot hygiene is really about.
+    // - **Tom** is still ours in WISA; the same claim landed on his account by
+    //   mistake. He leaves on the delta leg and comes straight back on the
+    //   `employeeId` back-fill (#224) — with the record as Graph holds it, so
+    //   what the operator is offered is putting *our* school back.
+    //
+    // Only this layer sees it: it needs the seeded snapshot and its token to make
+    // the pass incremental, the production Azure pull to run both legs in one
+    // pass, the linker to rebuild both records, and the action engine to turn the
+    // result into what Acties shows.
+    useTallWindow(tester);
+    final azureWire = SchoolMovedUserGraph(
+      // Exactly what Graph sends when other software rewrites one property.
+      rows: <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'az1', 'companyName': 'SSM'},
+        <String, dynamic>{'id': 'az2', 'companyName': 'SSM'},
+      ],
+      // Tom's account as Graph holds it — the answer to the targeted lookup the
+      // pass makes for the id WISA still places here.
+      backfill: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'az2',
+          'userPrincipalName': 'tom.peeters@student.school.example',
+          'employeeId': '2',
+          'displayName': 'Tom Peeters',
+          'givenName': 'Tom',
+          'surname': 'Peeters',
+          'companyName': 'SSM',
+          'accountEnabled': true,
+        },
+      ],
+    );
+    final tomAzure = azUser(
+      id: 'az2',
+      upn: 'tom.peeters@student.school.example',
+      employeeId: '2',
+      displayName: 'Tom Peeters',
+      givenName: 'Tom',
+      surname: 'Peeters',
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        // Jane is not here at all; Tom is, in 3C.
+        students: [
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '3C',
+            firstName: 'Tom',
+            name: 'Peeters',
+          ),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [
+          ssAccount(
+            uid: 'tom',
+            accountId: '2',
+            mail: 'tom.peeters@student.school.example',
+            givenName: 'Tom',
+            surname: 'Peeters',
+          ),
+        ],
+        memberships: [member('tom', '3C_ss')],
+      ),
+      azureTransport: azureWire,
+      // Last night's snapshot: both accounts still stamped with our school, and
+      // the token this pass resumes from.
+      azureInitial: azSnap(
+        deltaToken: 'AZ-TOKEN',
+        users: [azUser(displayName: 'Jane Doe'), tomAzure],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // Yesterday's session: the seeded Azure snapshot is reused untouched, its
+    // token unspent — so the linked view is built on the stale copies.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+
+    // And there is the dangerous one, on screen: a delete proposed for an
+    // account we no longer own. Tom has nothing to do — he is in step.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final phantom = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      phantom.choices.map((c) => c.selected.changes.summary),
+      <String>['Verwijder Azure account'],
+    );
+    await selectAccount(tester, phantom.targetId);
+    expect(find.text('Verwijder Azure account'), findsOneWidget);
+
+    // Today: the operator flips a school **beheerd** in Instellingen, so the next
+    // Synchroniseer re-pulls Azure (#259) — incrementally, from the stored token.
+    // Since #316 that is the pass which resumes a delta at all; Controleer op
+    // drift re-reads in full, and a full read never sees this row.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    harness.markSchoolManaged(1);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pass really was the incremental one, so the delta walk really was the
+    // only thing that could have carried the news — and the back-fill asked
+    // about exactly the id WISA still places here, never about Jane.
+    expect(azureWire.resumeTokens, <String>['AZ-TOKEN']);
+    expect(azureWire.bulkReads, 0);
+    expect(azureWire.employeeIdLookups, <String>["employeeId in ('2')"]);
+
+    // Jane is out of the snapshot; Tom is back in it, as Graph holds him.
+    expect(harness.app.azure.snapshot!.users.single,
+        tomAzure.copyWith(companyName: 'SSM'));
+
+    // Which is what the operator sees. The delete against SSM's account is gone
+    // — and it is gone because the record is, not because some other rule
+    // happened to mask it.
+    expect(
+        harness.controller.linked!.snapshot.accounts
+            .where((a) => a.azure?.id == 'az1'),
+        isEmpty);
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    expect(find.text('Verwijder Azure account'), findsNothing);
+
+    // And Tom's account, which Graph really did move, is now offered the repair
+    // it needs instead of being silently believed to be fine.
+    final repair = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      repair.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de school in Azure'],
+    );
+    await selectAccount(tester, repair.targetId);
+    expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+
+    // The Log panel counts what happened, so a pass that handed accounts over is
+    // distinguishable from an uneventful one afterwards.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains('Azure: delta voor "GBS" — 0 gewijzigd, 0 verwijderd, '
+          '2 niet langer van onze school.'),
+    );
+  });
+
+  testWidgets(
       'a staff member who left WISA still gets their Office 365 account '
       'proposed for deletion (#269)', (WidgetTester tester) async {
     // The other half of #268, and the worse one. Anna Smit has left the school:

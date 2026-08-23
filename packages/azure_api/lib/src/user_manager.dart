@@ -20,12 +20,30 @@ class UserDelta {
   /// reconciles these against the users it already knows.
   final List<String> removedIds;
 
+  /// Azure object ids of users the caller **already held** whose row, merged
+  /// whole, no longer passes the school test (#317) — a student whose
+  /// `companyName` now names a sibling school, a staff member other software
+  /// dropped from the comma-separated `department` list.
+  ///
+  /// These accounts still exist in the directory; they are simply not ours any
+  /// more, which is why they are not [removedIds]. Reporting them is what makes
+  /// the news actionable at all: [changed] is an upsert-only set, so a caller
+  /// told nothing keeps the record it had, and the snapshot goes on insisting
+  /// the account carries our prefix while Graph says otherwise — forever, since
+  /// every later walk drops the same row again.
+  ///
+  /// Only ids the caller passed in as `known` appear here. A sparse row about a
+  /// user we have never seen carries nothing to classify it by and stays
+  /// dropped, silently: there is no record to reconcile it against.
+  final List<String> leftSchoolIds;
+
   /// Token to resume the next incremental sync from.
   final String? deltaToken;
 
   const UserDelta({
     required this.changed,
     required this.removedIds,
+    required this.leftSchoolIds,
     this.deltaToken,
   });
 }
@@ -290,6 +308,11 @@ class UserManager {
   /// the row never spoke about. A sparse row about a user [known] does not hold
   /// stays unclassifiable and is dropped, exactly as before.
   ///
+  /// When the school test fails on a record [known] *does* hold, the id lands in
+  /// [UserDelta.leftSchoolIds] instead of being dropped (#317) — the account
+  /// moved out of our school, and a caller told nothing would keep upserting
+  /// nothing over a record Graph has just contradicted.
+  ///
   /// This is the one read whose caller (`AzureConnector.sync`) comes prepared
   /// for a refusal: a token Graph no longer accepts is recovered from with a
   /// full read (#213). The transport is told so, so it logs that reply as a
@@ -325,6 +348,7 @@ class UserManager {
     final result = await _graph.getDelta(url, expected: expected);
     final changed = <AzureUser>[];
     final removedIds = <String>[];
+    final leftSchoolIds = <String>[];
     for (final row in result.values) {
       if (AzureUser.isRemoved(row)) {
         final id = row['id'] as String?;
@@ -335,16 +359,27 @@ class UserManager {
       final user = previous == null
           ? AzureUser.fromGraphJson(row)
           : previous.mergeGraphJson(row);
-      if (_belongsToSchool(user, schoolPrefix)) changed.add(user);
+      if (_belongsToSchool(user, schoolPrefix)) {
+        changed.add(user);
+      } else if (previous != null) {
+        // Graph just told us this account is no longer ours. Saying nothing
+        // would leave the caller's own — now contradicted — record in place,
+        // because [UserDelta.changed] only ever upserts (#317). A row about a
+        // stranger stays dropped: there is nothing to reconcile it against.
+        leftSchoolIds.add(previous.id);
+      }
     }
     _log?.addMessage(
       core.Origin.azure,
       'Azure: delta voor "$schoolPrefix" — ${changed.length} gewijzigd, '
-      '${removedIds.length} verwijderd.',
+      '${removedIds.length} verwijderd'
+      '${leftSchoolIds.isEmpty ? '' : ', ${leftSchoolIds.length} niet langer '
+          'van onze school'}.',
     );
     return UserDelta(
       changed: changed,
       removedIds: removedIds,
+      leftSchoolIds: leftSchoolIds,
       deltaToken: result.deltaToken,
     );
   }

@@ -562,6 +562,89 @@ class HandEditedUserGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering a resumed `/users/delta` the way Graph
+/// answers it after another school's software claimed an account of ours
+/// (#317): a sparse row whose `companyName`/`department` now names somebody
+/// else.
+///
+/// Merged onto the record the app holds, such a row reads as an account that is
+/// no longer ours — and the walk used to drop it, silently. Because the delta is
+/// applied as an upsert, dropping meant the app's own copy (which still carries
+/// *our* prefix) survived untouched, on this pass and on every later one: the
+/// same row is dropped again for the same reason, forever. That is the state in
+/// which the app goes on proposing writes against an account another school now
+/// owns.
+///
+/// [backfill] is what a targeted `employeeId in (…)` lookup answers with, so a
+/// test can drive the other leg of the same pass: a student WISA still places
+/// here is re-adopted (#224) with the record straight off Graph, and the two
+/// legs have to agree rather than fight. The `$filter`-scoped bulk read answers
+/// empty and is counted, so a test can prove the pass really was the incremental
+/// one.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from and the accounts as the app
+/// still remembers them.
+class SchoolMovedUserGraph implements az.GraphTransport {
+  SchoolMovedUserGraph({
+    required this.rows,
+    this.backfill = const <Map<String, dynamic>>[],
+    this.freshToken = 'AZ-NEXT',
+  });
+
+  /// The sparse rows the resumed walk reports — `{id, <changed props>}`.
+  final List<Map<String, dynamic>> rows;
+
+  /// The full records a targeted `employeeId` lookup turns up.
+  final List<Map<String, dynamic>> backfill;
+
+  /// The token this walk leaves behind for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued, in order.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran — none, on an incremental pass.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value': token == 'latest' ? const <Object>[] : rows,
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': backfill});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [az.GraphTransport] answering the way the tenant answers when the app's
 /// stored copy of an account has drifted **past what any delta can report**
 /// (#315/#316).
