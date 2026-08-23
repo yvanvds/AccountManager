@@ -1637,7 +1637,13 @@ const String kTom3D = 'az-tom-3d';
 /// at once, alongside whatever else drifted on their record over the summer, so
 /// the operation the app most needs to do in one pass is the one the old
 /// grouping fragmented hardest.
-ReconcileHarness rolloverHarness() => ReconcileHarness(
+///
+/// [applyGate] is awaited before every action, as in [appliedClassWorkHarness]
+/// — a test that needs one write of a two-decision pass refused throws from it
+/// on the call it picks (#299).
+ReconcileHarness rolloverHarness({Future<void> Function()? applyGate}) =>
+    ReconcileHarness(
+      applyGate: applyGate,
       wisa: wisaSnap(
         students: [
           wisaStudent(

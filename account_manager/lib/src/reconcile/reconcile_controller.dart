@@ -131,6 +131,7 @@ class PendingActionOption {
     required this.target,
     required this.changes,
     required this.canApply,
+    this.canApplyToAll = false,
     this.unlockedSystems = const {},
   });
 
@@ -162,6 +163,19 @@ class PendingActionOption {
 
   /// Whether an apply pass would actually write this option.
   final bool canApply;
+
+  /// Whether this action is sanctioned for a **school-wide** apply (#293/#296)
+  /// — `StudentAction.canApplyToAll` et al., read off the action rather than
+  /// decided here.
+  ///
+  /// A different question from [canApply], which asks whether the action has an
+  /// automated write at all. This asks whether writing it to every record that
+  /// needs it, off one confirmation, is a thing the operator may do without
+  /// looking at each record: true for the rollover class move, false for the
+  /// destructive and judgement-call actions. The sanction presupposes the
+  /// mechanism — the action classes pin `canApplyToAll ⇒ canApply` — so nothing
+  /// here has to re-check it.
+  final bool canApplyToAll;
 
   /// The systems only a **chained follow-up** of this option would write to
   /// (`StudentAction.unlockedSystems` et al., #234) — never the option's own
@@ -282,6 +296,16 @@ class PendingChoice {
   /// routes a pass's verdict back to the decision it is the verdict of.
   String get situationId => alternatives.first.situationId;
 
+  /// Whether the resolution the operator has **picked here** is sanctioned for
+  /// a school-wide apply (#296).
+  ///
+  /// Read off the selected alternative rather than off the decision, because an
+  /// either/or can mix the two: the staff import decision offers "create in
+  /// Office 365" (sanctioned), "create in Smartschool" and "never import this
+  /// person" (both withheld). So the answer is a property of what this account
+  /// is set to do, which is also what a bulk pass would run for it.
+  bool get canApplyToAll => selected.canApplyToAll;
+
   /// A short human description of *this* decision (#292): both sides of an
   /// either/or, or the lone action's summary. What a [SituationCohort] leads
   /// with, so the header names the one decision it applies and nothing else.
@@ -343,6 +367,11 @@ class PendingDecision {
   /// applyable Office 365 group decision beside it, and a cohort of the former
   /// must not count itself as work.
   bool get canApply => choice.selected.canApply;
+
+  /// Whether this account's stake in the decision may be written by a
+  /// school-wide pass (#296) — [PendingChoice.canApplyToAll] of the resolution
+  /// it is set to.
+  bool get canApplyToAll => choice.canApplyToAll;
 }
 
 /// Every account that raises one and the same decision (#292) — the subset a
@@ -654,10 +683,6 @@ class ReconcileController extends ChangeNotifier {
 
   SyncState _syncState = SyncState.initial;
   List<Rollup> _rollups = const [];
-  Rollup? _selectedClassroom;
-  List<String> _expandedPath = const <String>[];
-  List<MaterializedAccount>? _classroomAccounts;
-  bool _loadingClassroom = false;
   List<MaterializedGroup>? _groupDocs;
   bool _loadingGroups = false;
   SyncLease? _lock;
@@ -677,11 +702,51 @@ class ReconcileController extends ChangeNotifier {
   /// several times per frame — recomputing it each time is what janks a large
   /// pending set. The cache is keyed on the identity of the linked view (a fresh
   /// `link()` / apply-refresh replaces it) and a version bumped on every
-  /// [chooseAlternative], so a stale entry can never be served.
+  /// [chooseAlternative], so a stale entry can never be served — except for the
+  /// span of a running apply pass, which pins it deliberately ([_holdDerived]).
   List<PendingAccountEntry>? _pendingEntriesCache;
   LinkedState? _pendingCacheKey;
   int _choicesVersion = 0;
   int _pendingCacheChoicesVersion = -1;
+
+  /// Memoized [linkedAccounts] (#295), keyed on the identity of the linked view
+  /// exactly as [_pendingEntriesCache] is. The operator's alternative picks do
+  /// **not** enter into it: a document says where an account lives and which
+  /// systems hold it, never which resolution was chosen for it.
+  List<MaterializedAccount>? _accountDocsCache;
+  LinkedState? _accountDocsKey;
+
+  /// Memoized school-wide cohorts by [SituationCohort.key] (#296), keyed on the
+  /// identity of the [pendingEntries] list they were grouped from — which is
+  /// itself invalidated by a relink and by every [chooseAlternative], so this
+  /// inherits both.
+  ///
+  /// A per-decision "Toepassen op alle" has to answer *how many accounts in the
+  /// school need this* while a details pane is being built, and a details pane
+  /// is rebuilt on every controller notification. Regrouping ~9.6k accounts'
+  /// decisions per block per frame is what that costs without a cache.
+  Map<String, SituationCohort>? _cohortIndexCache;
+  List<PendingAccountEntry>? _cohortIndexKey;
+
+  /// Whether the three caches above are pinned to the view the running apply
+  /// pass started from, rather than following [_linked] (#299).
+  ///
+  /// [_applyOne] swaps a freshly relinked view in after **every** write, and the
+  /// pass emits a notification per action to drive the progress dialog (#243).
+  /// Left to itself that means one full rebuild of the derived state per write:
+  /// `describeChanges()` over every pending action, and [materialize] over a
+  /// ~9.6k-account roster. A September rollover writes thousands of accounts in
+  /// one pass, so the screen behind the modal would spend the whole run
+  /// re-deriving a list nobody can read — quadratic in the size of the very
+  /// operation this app exists to do.
+  ///
+  /// So a pass answers from the view it began with and the screens refresh
+  /// **once**, when it ends and [_releaseDerived] drops the pinned lists. The
+  /// live [_linked] is never held back — [_refreshRollups], [_shareApplied] and
+  /// the applier itself all read it directly — and nothing the operator can
+  /// reach is interactive mid-pass anyway: every affordance is gated on [busy]
+  /// behind a modal dialog.
+  bool _holdDerived = false;
 
   /// The persisted operator decisions loaded from the shared store (#109/#110),
   /// used to tell which duplicate-mail collisions have been accepted. Refreshed
@@ -788,14 +853,28 @@ class ReconcileController extends ChangeNotifier {
   /// [applyOutcomesForChoice] gives the part that answers one decision, and
   /// [unroutedApplyOutcomesFor] the part no decision on the card can claim
   /// (#283).
-  List<ActionOutcomeEntry> applyOutcomesFor(PendingAccountEntry entry) {
+  List<ActionOutcomeEntry> applyOutcomesFor(PendingAccountEntry entry) =>
+      applyOutcomesForTarget(family: entry.family, targetId: entry.targetId);
+
+  /// [applyOutcomesFor] addressed by the identity the rows are stamped with,
+  /// for a target that no longer raises an entry at all (#299).
+  ///
+  /// An apply that lands settles the decision it wrote, so an account whose
+  /// last piece of work the pass finished raises nothing on the relink behind
+  /// it — and the details pane the operator applied from has no
+  /// [PendingAccountEntry] left to ask for the verdict. That verdict is the one
+  /// thing they were waiting for, so the pane reads it by `family` +
+  /// `targetId`: precisely what [ActionOutcomeEntry] carries, and all an entry
+  /// ever supplied here.
+  List<ActionOutcomeEntry> applyOutcomesForTarget({
+    required String family,
+    required String targetId,
+  }) {
     final results = _applyResults ?? _dryRunResults;
     if (results == null) return const <ActionOutcomeEntry>[];
     return <ActionOutcomeEntry>[
       for (final r in results)
-        if (r.identifiesEntry &&
-            r.family == entry.family &&
-            r.targetId == entry.targetId)
+        if (r.identifiesEntry && r.family == family && r.targetId == targetId)
           r,
     ];
   }
@@ -909,9 +988,10 @@ class ReconcileController extends ChangeNotifier {
   List<PendingAccountEntry> get pendingEntries {
     final l = _linked;
     if (l == null) return const [];
-    if (identical(_pendingCacheKey, l) &&
-        _pendingCacheChoicesVersion == _choicesVersion &&
-        _pendingEntriesCache != null) {
+    if (_pendingEntriesCache != null &&
+        (_holdDerived ||
+            (identical(_pendingCacheKey, l) &&
+                _pendingCacheChoicesVersion == _choicesVersion))) {
       return _pendingEntriesCache!;
     }
     final entries = <PendingAccountEntry>[];
@@ -927,6 +1007,9 @@ class ReconcileController extends ChangeNotifier {
       // (`AzureClassGroupMembership`), so the apply affordance is gated on the
       // action rather than assumed, exactly as the group family's is.
       canApply: (a) => a.canApply,
+      // The school-wide sanction of #293, carried here so #296's per-decision
+      // "Toepassen op alle" can read it off the pending list.
+      canApplyToAll: (a) => a.canApplyToAll,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
@@ -940,6 +1023,7 @@ class ReconcileController extends ChangeNotifier {
       // Read off the action like the other two families since #240: every staff
       // action is applyable today, but nothing here should assume it.
       canApply: (a) => a.canApply,
+      canApplyToAll: (a) => a.canApplyToAll,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
@@ -951,6 +1035,7 @@ class ReconcileController extends ChangeNotifier {
       isDefault: (a) => a.isDefaultAlternative,
       changes: (a) => a.describeChanges(),
       canApply: (a) => a.canApply,
+      canApplyToAll: (a) => a.canApplyToAll,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     _pendingCacheKey = l;
@@ -965,6 +1050,75 @@ class ReconcileController extends ChangeNotifier {
   /// while each account keeps its own chosen alternative.
   List<SituationCohort> get pendingSituations =>
       situationCohorts(pendingEntries);
+
+  /// The whole school's cohort for one decision, narrowed to the members a
+  /// **school-wide** apply may write (#296) — or `null` when this decision gets
+  /// no apply-all at all.
+  ///
+  /// Three narrowings, and each is load-bearing:
+  ///
+  /// - **The action must be sanctioned.** `null` unless the resolution
+  ///   [decision] is set to declares [PendingActionOption.canApplyToAll] (#293).
+  ///   That is what keeps the destructive and judgement-call actions — a delete,
+  ///   a rename, a blacklist — off this path entirely; they get checkbox
+  ///   multi-select instead (#297).
+  /// - **Every member must be sanctioned too**, not merely the one the operator
+  ///   is looking at. The staff import decision mixes the two in one either/or,
+  ///   so a colleague set to "never import" is not swept along by a cohort
+  ///   armed from a colleague set to "create in Office 365".
+  /// - **Non-applyable members are out**, exactly as they are everywhere else.
+  ///
+  /// So the returned cohort's members are precisely the actions the pass will
+  /// run: its length is the N on the button, the list the screen filters to, and
+  /// the change count the confirmation quotes, all from one resolution.
+  ///
+  /// This is the one cohort in the app that is deliberately **not** grouped from
+  /// the rows on screen (#252). It is school-wide by definition — that is the
+  /// September rollover it exists for — so the safety comes from the other
+  /// direction: the screen filters its list down to this cohort and makes the
+  /// operator look at it before the confirmation is offered.
+  SituationCohort? applyToAllCohort(PendingDecision decision) => decision
+          .canApplyToAll
+      ? applyToAllCohortFor('${decision.entry.family}|${decision.situationId}')
+      : null;
+
+  /// [applyToAllCohort] by [SituationCohort.key] — what a screen holding an
+  /// armed cohort re-reads it as on every build.
+  ///
+  /// The key rather than the members, deliberately. A cohort under review is
+  /// live: the operator can still switch an account's alternative while looking
+  /// at it, and a captured list would then apply the resolution they changed
+  /// their mind about. Re-reading means the rows on screen, the N on the button,
+  /// the confirmation's change count and the write are all one resolution of the
+  /// same key — which is the #252 guarantee, arrived at from the other side.
+  ///
+  /// `null` once the cohort has emptied — every member applied, or the last one
+  /// switched to a resolution that is not sanctioned — which is a screen's cue
+  /// to drop out of its review mode.
+  SituationCohort? applyToAllCohortFor(String key) {
+    final all = _cohortIndex[key];
+    if (all == null) return null;
+    final members = <PendingDecision>[
+      for (final d in all.decisions)
+        if (d.canApply && d.canApplyToAll) d,
+    ];
+    if (members.isEmpty) return null;
+    return SituationCohort(key: all.key, decisions: members);
+  }
+
+  /// [pendingSituations] as a lookup by [SituationCohort.key], memoized on the
+  /// entry list it was grouped from.
+  Map<String, SituationCohort> get _cohortIndex {
+    final entries = pendingEntries;
+    final cached = _cohortIndexCache;
+    if (cached != null && identical(_cohortIndexKey, entries)) return cached;
+    final index = <String, SituationCohort>{
+      for (final c in situationCohorts(entries)) c.key: c,
+    };
+    _cohortIndexKey = entries;
+    _cohortIndexCache = index;
+    return index;
+  }
 
   /// Groups the decisions of [entries] into cohorts in first-seen order — the
   /// shared grouping the global list and the per-classroom / per-group
@@ -1014,24 +1168,44 @@ class ReconcileController extends ChangeNotifier {
           for (final c in e.choices) PendingDecision(entry: e, choice: c),
       ];
 
-  /// The live pending entries for the accounts of the currently-open classroom
-  /// (#154): the interactive tiles the Actions drill-down builds for one class,
-  /// joined to the lazily-loaded classroom docs by account id. Empty before a
-  /// classroom is opened, or in a passive session with no live view to act on.
-  List<PendingAccountEntry> get classroomPendingEntries {
-    final accounts = _classroomAccounts;
-    if (accounts == null || _linked == null) return const [];
-    final ids = <String>{for (final a in accounts) a.id.value};
-    return [
-      for (final e in pendingEntries)
-        if (ids.contains(e.targetId)) e,
-    ];
+  /// Every account and staff member of the linked view as a document, derived
+  /// school-wide from the view in hand (#295) — the inventory the flat Acties
+  /// list renders its rows from, joined to [pendingEntries] by id.
+  ///
+  /// Derived rather than read: the store's own per-account documents are made by
+  /// exactly this [materialize] call, but [LinkedStore] only offers them one
+  /// classroom partition at a time — which is what the jaar → klas drill-down
+  /// was shaped around. Since #287 every session holds the linked view itself,
+  /// so the whole roster is already in memory and the school-wide list needs no
+  /// read at all. Deriving it here also keeps Acties, Klasgroepen and the
+  /// Synchronisatie overview reading one set of facts rather than three.
+  ///
+  /// Memoized on the identity of the linked view, for the reason
+  /// [pendingEntries] is: the screen reads it several times per frame, and a
+  /// September roster is ~9.6k accounts. A failed derivation answers empty and
+  /// says so once — the list is then simply not offered, which is honest.
+  List<MaterializedAccount> get linkedAccounts {
+    final linked = _linked;
+    if (linked == null) return const [];
+    if (_accountDocsCache != null &&
+        (_holdDerived || identical(_accountDocsKey, linked))) {
+      return _accountDocsCache!;
+    }
+    List<MaterializedAccount> docs;
+    try {
+      docs = materialize(
+        linked,
+        generation: _syncState.generation,
+        schoolLabels: _schoolLabels(),
+      ).accounts;
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Kon de accountlijst niet opbouwen: $e');
+      docs = const <MaterializedAccount>[];
+    }
+    _accountDocsKey = linked;
+    _accountDocsCache = docs;
+    return docs;
   }
-
-  /// [classroomPendingEntries] grouped into same-situation cohorts, so the
-  /// per-class list keeps the bulk-apply affordance of the old flat list (#154).
-  List<SituationCohort> get classroomPendingSituations =>
-      situationCohorts(classroomPendingEntries);
 
   /// The live group ("Klasgroepen") pending entries (#154): the interactive
   /// tiles the group drill-down builds. Empty in a passive session.
@@ -1102,6 +1276,7 @@ class ReconcileController extends ChangeNotifier {
     required bool Function(T) isDefault,
     required actions.ChangeSet Function(T) changes,
     required bool Function(T) canApply,
+    required bool Function(T) canApplyToAll,
     required Set<core.Origin> Function(T) unlockedSystems,
   }) {
     final order = <String>[];
@@ -1134,6 +1309,7 @@ class ReconcileController extends ChangeNotifier {
                   target: labels[id]!,
                   changes: changes(a),
                   canApply: canApply(a),
+                  canApplyToAll: canApplyToAll(a),
                   unlockedSystems: unlockedSystems(a),
                 ),
             ],
@@ -1577,20 +1753,24 @@ class ReconcileController extends ChangeNotifier {
     return null;
   }
 
-  /// The top-level nodes of the **student** drill-down (#210): one merged
-  /// grade-year node per year across *every* managed school, then the
-  /// "Niet toegewezen" bucket.
+  /// The **student** grade-year aggregates (#210): one merged node per year
+  /// across *every* managed school, then the "Niet toegewezen" bucket.
   ///
   /// The WISA school split is administrative, not operational — everyone running
   /// this software treats the managed schools as one school — so the school level
   /// carries no decision and is flattened away here. This is a **view**
   /// projection: the stored rollups keep their school → grade-year → classroom
   /// shape, which matters twice over. `school` is the Cosmos partition key of the
-  /// per-account documents, so a classroom node must keep its real school for
-  /// [openClassroom] to read exactly one partition; and [totalPendingCount],
+  /// per-account documents, so a classroom node keeps its real school and one
+  /// partition can still be read on its own; and [totalPendingCount],
   /// [staffPendingCount], [studentPendingCount], [schoolRollups] and the
   /// per-category summaries all aggregate over [RollupLevel.school], so a passive
   /// session's badges keep reading from data that is still there.
+  ///
+  /// Since #295 Acties no longer *browses* these: the flat account list renders
+  /// straight off the linked view. They stay as the counts every passive surface
+  /// reads, and as the per-class tallies #301 answers "how many other classes
+  /// need attention?" from.
   ///
   /// Ordering is pinned: Jaar 1 … Jaar 7 numerically, then the non-numeric years
   /// ([gradeNodeLabel] renders those as "Overige klassen" — `OKAN` and friends
@@ -1632,8 +1812,8 @@ class ReconcileController extends ChangeNotifier {
   /// A merged grade-year node collects that year's classrooms from **every**
   /// managed school; "Niet toegewezen" skips its always-synthetic grade level and
   /// lists its classrooms ("Zonder klas") directly. Every node returned is a real
-  /// stored classroom rollup, so it still carries the [Rollup.school] partition
-  /// [openClassroom] reads.
+  /// stored classroom rollup, so it still carries its own [Rollup.school]
+  /// partition.
   List<Rollup> studentChildrenOf(Rollup node) {
     final bool unassigned = node.school == unassignedPartition;
     final children = <Rollup>[
@@ -1674,9 +1854,8 @@ class ReconcileController extends ChangeNotifier {
   }
 
   /// The rollup nodes directly under [parentKey] (grade-years of a school, or
-  /// classrooms of a grade-year), alphabetical. The stored parent/child shape —
-  /// what the Personeel tab drills; the student tree flattens it away through
-  /// [studentRollups] / [studentChildrenOf] (#210).
+  /// classrooms of a grade-year), alphabetical — the stored parent/child shape
+  /// the per-class tallies are read from.
   List<Rollup> childrenOf(String parentKey) {
     final children = [
       for (final r in _rollups)
@@ -1685,47 +1864,16 @@ class ReconcileController extends ChangeNotifier {
     return children;
   }
 
-  /// The classroom whose accounts are currently open in the drill-down, or
-  /// `null` when none is selected.
-  Rollup? get selectedClassroom => _selectedClassroom;
-
-  /// The per-account docs of [selectedClassroom], lazily loaded from the store;
-  /// `null` until a classroom is opened.
-  List<MaterializedAccount>? get classroomAccounts => _classroomAccounts;
-
-  /// Whether a classroom drill-down read is in flight.
-  bool get loadingClassroom => _loadingClassroom;
-
-  /// Which accordion nodes the Acties drill-down has open, outermost first
-  /// (#235) — `['rollup-grade-grades|3']` on the flat Leerlingen tree, and
-  /// `['rollup-school-school|staff', 'rollup-grade-grade|staff|Personeel']` on
-  /// the nested Personeel one. Empty means a fully collapsed tree.
-  ///
-  /// It lives up here beside [selectedClassroom] for the reason the bug existed:
-  /// while a class is open the tree is not built at all, so expansion kept
-  /// inside the `ExpansionTile`s themselves died with them and **Overzicht**
-  /// came back fully collapsed. Held one level above the widgets it survives the
-  /// detail view — and a family tab change, which closes the drill-down but
-  /// leaves the other tab's path untouched, the two trees sharing no node key.
-  ///
-  /// One entry **per depth** is what makes it an accordion without breaking the
-  /// nested staff tree: opening a node replaces whichever sibling sat at its
-  /// depth and drops everything below, while its ancestors stay open.
-  List<String> get expandedPath => _expandedPath;
-
-  set expandedPath(List<String> path) {
-    if (_samePath(_expandedPath, path)) return;
-    _expandedPath = List<String>.unmodifiable(path);
-    notifyListeners();
-  }
-
-  static bool _samePath(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
+  // There is deliberately no open-classroom state here any more (#295). The
+  // Acties panel browsed jaar → klas → account because `LinkedStore` offers
+  // `readRollups()` and `readClassroom()` and nothing else, so a session could
+  // only hold one classroom partition at a time. Since #287 every session adopts
+  // the shared linked view at startup, so the whole roster is in `_linked`, and
+  // [linkedAccounts] + [pendingEntries] are both school-wide. `openClassroom`,
+  // `classroomAccounts`, `classroomPendingEntries`, `classroomPendingSituations`
+  // and the accordion's `expandedPath` went with the tree they existed for.
+  // `LinkedStore.readClassroom` itself stays: the store is shared, and the
+  // Synchronisatie overview still reads rollups.
 
   /// The three category summaries the Reconcile overview renders (#163), summed
   /// from the stored rollups so they read in a passive session too: students are
@@ -1784,6 +1932,55 @@ class ReconcileController extends ChangeNotifier {
 
   /// Whether a class-inventory read is in flight.
   bool get loadingGroups => _loadingGroups;
+
+  /// How many classes the **Klasgroepen** tab is holding work on (#301).
+  ///
+  /// Derived here rather than on the screen that shows it, because two screens
+  /// now quote it: Klasgroepen's own header, and the pointer Acties carries at
+  /// it. A pointer that counts differently from the list it points at is worse
+  /// than no pointer, so there is one derivation and both read it.
+  ///
+  /// Exactly the predicate that tab highlights a row on: a live entry in an
+  /// active session, [MaterializedGroup.needsAttention] in a passive one.
+  /// Informational notices therefore count — a class Smartschool already holds
+  /// is real work the operator does *there* (#225/#250), which is precisely why
+  /// it is not an Acties row and why this pointer has to exist at all.
+  ///
+  /// Zero until [loadGroups] has answered: a count the store has not been asked
+  /// for is not a count, and a header says nothing rather than guess.
+  int get classesNeedingAttention {
+    final docs = _groupDocs;
+    if (docs == null) return 0;
+    if (_linked == null) {
+      return docs.where((d) => d.needsAttention).length;
+    }
+    // The group family's entries are keyed by the class name, which is the
+    // document label — both come from the linker's cross-system match key.
+    final targets = <String>{for (final e in groupPendingEntries) e.targetId};
+    return docs.where((d) => targets.contains(d.label)).length;
+  }
+
+  /// How many accounts the **Acties** list is holding work on (#301) — the
+  /// mirror of [classesNeedingAttention], for the line Klasgroepen carries.
+  ///
+  /// Accounts rather than actions, so the two pointers are one sentence in two
+  /// nouns, and [totalPendingCount] is the wrong number for it twice over: it
+  /// counts cards of every family, class groups included, and an account with
+  /// three decisions on it is still one row of the list.
+  ///
+  /// Applyable rather than merely pending, which is the same predicate the flat
+  /// list filters on and the same one its indicators colour by (#245/#255/#298):
+  /// an informational candidate on an account diagnoses work that happens on
+  /// Klasgroepen, and counting it here would put it on the wrong side of this
+  /// very pointer.
+  int get accountsNeedingAttention {
+    if (_linked == null) return 0;
+    var total = 0;
+    for (final e in pendingEntries) {
+      if (e.family != 'group' && e.canApply) total++;
+    }
+    return total;
+  }
 
   /// How many pending actions an apply pass would actually write — the
   /// **selected** applyable option of each choice (#110). A departed student
@@ -2277,38 +2474,26 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
-  /// Re-reads the shared overview (sync state, rollups, lease) and any open
-  /// drill-down from the store — the refetch [onStoreChanged] and
+  /// Re-reads the shared overview (sync state, rollups, lease) and the class
+  /// inventory from the store — the refetch [onStoreChanged] and
   /// [resyncFromStore] share (no pull, no `link()`).
   ///
   /// The overview itself is always re-read: the rollups are the counts the nudge
-  /// was about, and they are small. The *drill-downs* are what [shard] narrows
-  /// (#254) — a one-classroom apply elsewhere in the school has nothing to say
-  /// about the class this session has open, or about the Klasgroepen inventory,
-  /// so those reads are skipped rather than paid for. A null shard (a sync's
+  /// was about, and they are small. The Klasgroepen inventory is what [shard]
+  /// narrows (#254) — an apply elsewhere in the school has nothing to say about
+  /// it, so the read is skipped rather than paid for. A null shard (a sync's
   /// whole-view rewrite, or a reconnect that cannot know what it missed) re-reads
   /// everything, exactly as before.
+  ///
+  /// The Acties list is **not** re-read here and has nothing to re-read (#295):
+  /// it renders off this session's linked view rather than off classroom
+  /// partitions, so the shared store moving under it changes the counts above it
+  /// and not the rows.
   Future<void> _refetchFromStore({ShardRef? shard}) async {
     _syncState = await store.readSyncState();
     _rollups = await store.readRollups();
     _decisions = await store.readDecisions();
     await _refreshLock();
-    final open = _selectedClassroom;
-    if (open != null &&
-        (shard == null ||
-            shard.touchesClassroom(
-              school: open.school,
-              classroom: open.classroom,
-            ))) {
-      try {
-        _classroomAccounts = await store.readClassroom(
-          school: open.school,
-          classroom: open.classroom,
-        );
-      } on Object catch (e) {
-        log.addError(core.Origin.all, 'Kon ${open.label} niet vernieuwen: $e');
-      }
-    }
     if (_groupDocs != null &&
         (shard == null || shard.touchesPartition(groupsPartition))) {
       try {
@@ -2320,44 +2505,15 @@ class ReconcileController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Opens a classroom in the drill-down, lazily reading its per-account docs
-  /// from the store (no pull, no `link()`).
-  Future<void> openClassroom(Rollup classroom) async {
-    _selectedClassroom = classroom;
-    _classroomAccounts = null;
-    _loadingClassroom = true;
-    notifyListeners();
-    try {
-      _classroomAccounts = await store.readClassroom(
-        school: classroom.school,
-        classroom: classroom.classroom,
-      );
-    } on Object catch (e) {
-      log.addError(core.Origin.all, 'Kon ${classroom.label} niet openen: $e');
-      _classroomAccounts = const [];
-    } finally {
-      _loadingClassroom = false;
-      notifyListeners();
-    }
-  }
-
-  /// Closes the classroom drill-down, back to the overview.
-  void closeClassroom() {
-    _selectedClassroom = null;
-    _classroomAccounts = null;
-    notifyListeners();
-  }
-
   /// Reads the **class inventory** — every stored class document — from the
   /// store (no pull, no `link()`). One partition read; there are a few hundred
   /// classes at most.
   ///
-  /// The group-family counterpart of [openClassroom], except that it is not a
-  /// drill-down any more: since #227 Klasgroepen is a top-level tab that lists
-  /// every class rather than a node listing the ones with work, so the read is
-  /// "load the inventory" and there is nothing to close. A second call while a
-  /// read is in flight is a no-op; a sync drops [groupDocs] so the tab re-reads
-  /// the generation it just wrote.
+  /// Since #227 Klasgroepen is a top-level tab that lists every class rather
+  /// than a node listing the ones with work, so the read is "load the inventory"
+  /// and there is nothing to close. A second call while a read is in flight is a
+  /// no-op; a sync drops [groupDocs] so the tab re-reads the generation it just
+  /// wrote.
   Future<void> loadGroups() async {
     if (_loadingGroups) return;
     _loadingGroups = true;
@@ -2379,6 +2535,11 @@ class ReconcileController extends ChangeNotifier {
   // scoped selection ([applyEntries]). A method that took "everything pending"
   // existed only to serve a header button that wrote every account in the
   // school on the strength of a dialog nobody could verify.
+  //
+  // #296's school-wide apply-all is not a return of it: it is
+  // [applyDecisions] over an [applyToAllCohort], which is one action the
+  // operator has read, over a list the screen has just filtered itself down to.
+  // The pass still receives the members themselves, never a key to re-resolve.
 
   /// Dry-runs one entry's chosen resolution (#110): the per-row preview.
   Future<void> dryRunEntry(PendingAccountEntry entry) =>
@@ -2465,6 +2626,11 @@ class ReconcileController extends ChangeNotifier {
         touched.add(d.entry);
       }
     }
+    // Pin the derived lists to the view this pass starts from (#299). A real
+    // pass relinks after every write and notifies once per action, so without
+    // this the screens re-derive the whole school between one write and the
+    // next; a dry run patches nothing, so there is nothing for it to pin.
+    _holdDerived = !dry;
     _begin(ReconcilePhase.applying);
 
     final options =
@@ -2524,6 +2690,7 @@ class ReconcileController extends ChangeNotifier {
         await _shareApplied(_refreshRollups(), touched);
       }
       _applyStep = null;
+      _releaseDerived();
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       // _applyOne swallows per-action failures; reaching here means the pass
@@ -2539,8 +2706,11 @@ class ReconcileController extends ChangeNotifier {
         await _persistEarnedWisaRules(earnedRules);
         await _shareApplied(_refreshRollups(), touched);
       }
-      // Nothing is in flight any more, however the pass ended (#243).
+      // Nothing is in flight any more, however the pass ended (#243), and the
+      // half of it that did run is as real as a whole one — so the screens get
+      // the view it left behind rather than the one it started from (#299).
       _applyStep = null;
+      _releaseDerived();
       _fail(e);
     }
   }
@@ -2685,23 +2855,19 @@ class ReconcileController extends ChangeNotifier {
     // This pass pulled and linked for itself, so the view is no longer somebody
     // else's to attribute (#287).
     _adoptedFrom = null;
-    // A re-link invalidates any open drill-down: the documents behind it were
-    // read for the view [_link] just replaced, and the live entries the screens
-    // join them against are the new one's. The remembered accordion path goes
-    // with them (#235), so it can never point at a node the fresh view no longer
-    // has, and the class inventory goes too — the Klasgroepen tab re-reads
-    // (#227).
+    // A re-link invalidates the cached class inventory: those documents were
+    // read for the view [_link] just replaced, and the live entries the
+    // Klasgroepen rows join them against are the new one's, so the tab re-reads
+    // (#227). The Acties list needs no such line since #295 — it holds no store
+    // documents of its own, and [linkedAccounts] is keyed on the identity of the
+    // linked view that has just been swapped out.
     //
     // Sits here, before [_persist], and not on the far side of the store write
-    // it used to (#289). These are invalidations of *this session's* derived
-    // caches; whether the shared write lands has nothing to do with them, and a
-    // write that timed out or threw used to skip them entirely — leaving the
-    // open classroom joining fresh entries against the previous generation's
-    // documents. Written straight to the fields: the pass notifies once when it
-    // finishes.
-    _selectedClassroom = null;
-    _expandedPath = const <String>[];
-    _classroomAccounts = null;
+    // it used to (#289). This is an invalidation of *this session's* derived
+    // cache; whether the shared write lands has nothing to do with it, and a
+    // write that timed out or threw used to skip it entirely — leaving the rows
+    // joining fresh entries against the previous generation's documents. Written
+    // straight to the field: the pass notifies once when it finishes.
     _groupDocs = null;
     _setProgress(0.9);
     await _persist(_linked!);
@@ -3185,6 +3351,25 @@ class ReconcileController extends ChangeNotifier {
         'Kon de WISA-importregel(s) niet opslaan in de instellingen: $e',
       );
     }
+  }
+
+  /// Unpins the derived caches after a pass and drops what they were pinned to
+  /// (#299), so the very next read rebuilds — once — from the settled view.
+  ///
+  /// Dropped rather than merely unpinned: the last write of the pass may well
+  /// have left [_linked] identical to the view a pinned list was keyed on, and
+  /// an identity check would then serve that list forever. Called before the
+  /// pass's closing notification, so the frame that learns the pass is over is
+  /// already the refreshed one — the same reason #289 moved the sibling
+  /// invalidation in [_relink] to the near side of the store write.
+  void _releaseDerived() {
+    _holdDerived = false;
+    _pendingEntriesCache = null;
+    _pendingCacheKey = null;
+    _accountDocsCache = null;
+    _accountDocsKey = null;
+    _cohortIndexCache = null;
+    _cohortIndexKey = null;
   }
 
   void _begin(ReconcilePhase phase) {

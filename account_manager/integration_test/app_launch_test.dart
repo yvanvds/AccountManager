@@ -149,6 +149,23 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// The linker's id of the account the flat Acties list shows as [label] —
+  /// what its row, its cells and its details pane are keyed by (#295).
+  String accountId(ReconcileHarness harness, String label) =>
+      harness.controller.linkedAccounts
+          .firstWhere((a) => a.label == label)
+          .id
+          .value;
+
+  /// Selects one account in the flat Acties list, which is what puts its
+  /// decisions in the details pane beside it (#295).
+  Future<void> selectAccount(WidgetTester tester, String id) async {
+    final Finder row = find.byKey(ValueKey('account-row-$id'));
+    await tester.ensureVisible(row);
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('the app launches into the Plink-themed Home shell',
       (WidgetTester tester) async {
     // The real main(): with no --dart-define config, AAD is not configured, so
@@ -315,8 +332,8 @@ void main() {
 
   testWidgets(
       'the reconcile flow runs end-to-end: sign-in → sync → overview on '
-      'Reconcile → actions via the Actions tab drill-down → dry-run → apply → '
-      'unchanged re-sync (#154)', (WidgetTester tester) async {
+      'Reconcile → actions via the Actions tab list → dry-run → apply → '
+      'unchanged re-sync (#154/#295)', (WidgetTester tester) async {
     // The real app composition — shell, navigation, theme — over the offline
     // reconcile harness (scripted syncers + recording transports), driven the
     // way the operator drives it.
@@ -359,20 +376,18 @@ void main() {
       reason: 'Reconcile no longer shows the flat pending-actions list',
     );
 
-    // Switch to the Actions tab: the actions are browsed by the year → class
-    // drill-down. Drill into 3C to build that class's action tile.
+    // Switch to the Actions tab: since #295 the actions are one flat,
+    // school-wide list of accounts — no jaar → klas tree to walk down.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
-    // Scoped to this screen: since #265 the Synchronisatie tab heads its own
-    // counts section "Overzicht" too, and the shell keeps a visited screen
-    // alive in the IndexedStack.
     expect(
       find.descendant(
         of: find.byType(ActionsScreen),
-        matching: find.text('Overzicht'),
+        matching: find.text('Jaar 3'),
       ),
-      findsOneWidget,
+      findsNothing,
+      reason: 'the drill-down it replaces is gone',
     );
     // The header states the workload and stops there (#294): the global
     // "Dry-run alles" / "Alles toepassen" pair that wrote every account in the
@@ -390,20 +405,21 @@ void main() {
     expect(find.text('Dry-run alles'), findsNothing);
     expect(find.text('Alles toepassen'), findsNothing);
 
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
+    // The one account with work is a row of the list, carrying its class and
+    // its three system indicators; selecting it puts its decisions in the
+    // details pane beside it, and dry-running from there writes nothing.
+    final String id = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-row-$id')),
+        matching: find.text('3C'),
+      ),
+      findsOneWidget,
+    );
+    await selectAccount(tester, id);
     expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
-
-    // Open the one account in 3C and dry-run it: the projected changes render,
-    // nothing writes.
-    final String id =
-        harness.controller.classroomPendingEntries.single.targetId;
-    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
-    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
-    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(ValueKey('entry-dry-run-$id')));
     await tester.tap(find.byKey(ValueKey('entry-dry-run-$id')));
     await tester.pumpAndSettle();
@@ -605,37 +621,6 @@ void main() {
     expect(harness.controller.busy, isFalse);
   });
 
-  /// Two departed Smartschool-only students with different names, each raising
-  /// the unregister/delete choice — a two-action pass whose steps are told
-  /// apart by the account they name. [gate] parks every action so the pass can
-  /// be observed frozen exactly where the operator waits (#243).
-  ReconcileHarness twoDepartedHarness(Future<void> Function() gate) =>
-      ReconcileHarness(
-        applyGate: gate,
-        wisa: wisaSnap(students: const []),
-        smartschool: ssSnap(
-          groups: const [],
-          accounts: [
-            ssAccount(
-              uid: 'user0',
-              accountId: '0',
-              mail: 'user0@student.school.example',
-              givenName: 'Jan',
-              surname: 'Peeters',
-            ),
-            ssAccount(
-              uid: 'user1',
-              accountId: '1',
-              mail: 'user1@student.school.example',
-              givenName: 'Sofie',
-              surname: 'Claes',
-            ),
-          ],
-          memberships: const [],
-        ),
-        azure: azSnap(users: const []),
-      );
-
   /// Syncs on Reconcile and lands on the Actions tab, the way the operator gets
   /// to the apply affordances.
   Future<void> syncThenOpenActions(WidgetTester tester) async {
@@ -647,29 +632,306 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  /// Drills the Actions overview into the leaver bucket, where the two departed
-  /// students of [twoDepartedHarness] sit as a single cohort.
-  Future<void> drillZonderKlas(WidgetTester tester) async {
-    await tester.tap(find.text('Niet toegewezen'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Zonder klas'));
-    await tester.tap(find.text('Zonder klas'));
-    await tester.pumpAndSettle();
-  }
+  // The bulk affordance that stood where the Acties header's global "Alles
+  // toepassen" used to (#294) comes in two shapes now: the Klasgroepen cohort
+  // headers, which the class-inventory scenarios below drive directly, and — on
+  // Acties since #296 — a per-decision "Toepassen op alle" that filters the flat
+  // list down to its cohort before offering a confirmation. The run below is
+  // that one, end to end.
 
-  /// Presses the open classroom's one cohort header — the bulk apply that
-  /// stands where the header's global "Alles toepassen" used to (#294). The
-  /// cohort is on screen above the button, which is the whole difference.
-  Future<void> tapCohortApply(
-    WidgetTester tester,
-    ReconcileHarness harness,
-  ) async {
-    final String key = harness.controller.classroomPendingSituations.single.key;
-    final Finder bulk = find.byKey(ValueKey('situation-apply-$key'));
-    await tester.ensureVisible(bulk);
-    await tester.tap(bulk);
+  testWidgets(
+      'a decision applied across the whole school shows its cohort first, and '
+      'writes that decision alone end-to-end (#296)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over the real Smartschool and
+    // Graph write paths. The September rollover in miniature: three students
+    // moved up into `4A` while Smartschool still has all three in last year's
+    // `3C`, so every one of them needs the same class change — and Sam alone
+    // also has a stale Office 365 display name.
+    //
+    // Only a full run puts the two halves of #296 on screen in the order that
+    // matters. The count on the button is resolved school-wide by the
+    // controller, the rows it promises are rendered by the screen out of a
+    // *filtered* list, and the write is decided a third time by the pass. This
+    // walks it the way the operator does: narrow the list to one student, arm
+    // the cohort from their card, and check that the other two are now on
+    // screen — before anything is confirmed, let alone written.
+    useTallWindow(tester);
+    final harness = rolloverHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
     await tester.pumpAndSettle();
-  }
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder row(String id) => find.byKey(ValueKey('account-row-$id'));
+
+    // The operator is looking at Sam alone.
+    await tester.enterText(find.byKey(const ValueKey('actions-search')), 'Sam');
+    await tester.pumpAndSettle();
+    expect(row(sam), findsOneWidget);
+    expect(row(sara), findsNothing);
+
+    await selectAccount(tester, sam);
+
+    // His card carries two decisions. Only the class move is sanctioned for a
+    // school-wide pass (#293) — a rename is a judgement call — and the button
+    // counts the school, not the search box.
+    final Finder rename = find.byKey(ValueKey('decision-apply-all-student-'
+        '$sam-0'));
+    final Finder moveAll = find.byKey(ValueKey('decision-apply-all-student-'
+        '$sam-1'));
+    expect(rename, findsNothing);
+    await tester.ensureVisible(moveAll);
+    expect(
+      find.descendant(
+          of: moveAll, matching: find.text('Toepassen op alle (3)')),
+      findsOneWidget,
+    );
+
+    // Pressing it writes nothing. It shows the cohort: the list is now the
+    // three accounts the pass would touch, and the search box that was hiding
+    // two of them has stood down.
+    await tester.tap(moveAll);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('actions-cohort-banner')), findsOneWidget);
+    expect(
+      find.text('Wijzig de klas in Smartschool — 3 account(s) in de hele '
+          'school'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('actions-search')), findsNothing);
+    for (final id in <String>[sam, sara, tom]) {
+      await tester.ensureVisible(row(id));
+      expect(row(id), findsOneWidget);
+    }
+    expect(
+        harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+        isEmpty);
+
+    // The confirmation names that one decision: three Smartschool writes, and
+    // no claim on Office 365. Scoped to the dialog, because the cards behind it
+    // lead each line with the system it writes to (#298).
+    await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
+    await tester.pumpAndSettle();
+    final Finder confirmation = find.byType(AlertDialog);
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('3 wijzigingen')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: confirmation, matching: find.textContaining('Office 365')),
+      findsNothing,
+      reason: "summing every decision on every card would quote Sam's rename "
+          'and then not write it',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Three class moves against the real SOAP transport, each with its own
+    // payload; not one Graph write, because the rename was never armed.
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+      hasLength(3),
+    );
+    expect(harness.graph.requests.where((r) => r.method == 'PATCH'), isEmpty);
+    expect(harness.controller.applyResults, hasLength(3));
+    expect(find.text('Resultaat van het toepassen'), findsWidgets);
+
+    // The review is over — what it was built from has been written — so the
+    // list has its own controls back.
+    expect(find.byKey(const ValueKey('actions-cohort-banner')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // The complement of the run above, for the kinds #293 deliberately withholds
+  // a school-wide apply from (#297). The operator ticks the accounts by hand,
+  // names the one decision, and the pass covers exactly the ticked accounts it
+  // stands open on. Worth a full run for the same reason #296 is: the count on
+  // the button, the rows the checkboxes sit on and the writes the pass makes are
+  // resolved in three different places, and only the real app composes all
+  // three — over real fonts, the real navigation shell and the real Graph and
+  // SOAP write paths.
+  testWidgets(
+      'ticked accounts run one decision that gets no apply-all, and the pass '
+      'skips the ones it does not stand open on (#297)',
+      (WidgetTester tester) async {
+    useTallWindow(tester);
+    // The same rollover fixture: three students share the sanctioned class
+    // move, and Sam alone also carries the Office 365 rename — a judgement call
+    // the sanction refuses, and therefore exactly the kind this exists for.
+    final harness = rolloverHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder check(String id) => find.byKey(ValueKey('account-check-$id'));
+
+    // The rename carries no school-wide affordance anywhere on Sam's card…
+    await selectAccount(tester, sam);
+    expect(
+      find.byKey(ValueKey('decision-apply-all-student-$sam-0')),
+      findsNothing,
+    );
+
+    // …so the bulk path is the ticks. Sam and Sara, by hand; Tom is left alone
+    // and stays that way.
+    for (final id in <String>[sam, sara]) {
+      await tester.ensureVisible(check(id));
+      await tester.tap(check(id));
+      await tester.pumpAndSettle();
+    }
+    expect(tester.widget<Checkbox>(check(tom)).value, isFalse);
+
+    final Finder rename =
+        find.byKey(const ValueKey('actions-decision-student|ModifyAzureName'));
+    await tester.ensureVisible(rename);
+    await tester.tap(rename);
+    await tester.pumpAndSettle();
+
+    // Sara raises the class move, not the rename. The bar says so rather than
+    // quietly passing over her.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('actions-selection-scope')))
+          .data,
+      'Wordt toegepast op 1 van de 2 geselecteerde account(s) — 1 '
+      'overgeslagen, want daar staat deze beslissing niet open.',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Toepassen op 1 geselecteerd(e) account(s)?'),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('1 wijziging naar Office 365'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // One real Graph PATCH, and not one class move — the pass is one decision
+    // deep whatever else the ticked cards carry (#292).
+    expect(
+      harness.graph.requests.where((r) => r.method == 'PATCH'),
+      hasLength(1),
+    );
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+      isEmpty,
+    );
+    expect(harness.controller.applyResults, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'an apply leaves the operator on the account they applied, reading its '
+      'verdict, and lets the row go when they move on end-to-end (#299)',
+      (WidgetTester tester) async {
+    // The complaint #299 is about is a *composition* one, which is why it gets
+    // a full run: the pass is the controller's, the refreshed rows and the
+    // details pane are the screen's, and the failure was the seam between them
+    // — an account settling its last decision fell out of the filtered list at
+    // the exact moment its verdict arrived, so the pane the operator applied
+    // from reverted to "kies een account" and a half-succeeded pass read like a
+    // clean one. Only the real app puts the pass, the list, the pane and the
+    // filters in one frame together.
+    //
+    // Three students each carry one stale Office 365 display name — work a real
+    // Graph write genuinely clears — so a pass really does empty an account's
+    // card, which is the whole precondition.
+    useTallWindow(tester);
+    final harness = crossClassSituationHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder row(String id) => find.byKey(ValueKey('account-row-$id'));
+
+    // Apply Sam's one decision from his open details pane.
+    await selectAccount(tester, sam);
+    final Finder apply = find.byKey(ValueKey('entry-apply-$sam'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // One real Graph PATCH, and it settled his card.
+    expect(
+        harness.graph.requests.where((r) => r.method == 'PATCH'), hasLength(1));
+    expect(harness.controller.pendingEntries.where((e) => e.targetId == sam),
+        isEmpty);
+
+    // He is still on the list, under the work filter that no longer matches
+    // him, marked as what just happened rather than as an account that was
+    // always fine — and his two colleagues are untouched beside him.
+    await tester.ensureVisible(row(sam));
+    expect(row(sam), findsOneWidget);
+    expect(find.byKey(ValueKey('account-done-$sam')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-done-$sara')), findsNothing);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-cell-$sam-${Origin.azure.name}')))
+          .state,
+      SystemIndicatorState.inOrder,
+      reason: 'the row re-rendered in place off the view the pass relinked',
+    );
+
+    // The pane is still his, with the verdict on the card — no re-selection,
+    // no sync, and not merely the page-level section that reports the pass.
+    expect(find.byKey(ValueKey('actions-detail-$sam')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-detail-empty')), findsNothing);
+    final Finder verdict = find.byKey(ValueKey('entry-outcomes-student-$sam'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de naam in Azure')),
+      findsOneWidget,
+    );
+
+    // Moving to an account the pass never touched is the operator done reading
+    // it, so the held row lets go and the list is the work list again.
+    await selectAccount(tester, sara);
+    expect(row(sam), findsNothing);
+    expect(row(sara), findsOneWidget);
+    expect(row(tom), findsOneWidget);
+    expect(find.byKey(ValueKey('actions-detail-$sara')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   /// Opens the Klasgroepen tab from the navigation rail (#227). The class
   /// inventory is a destination of its own now, not a node inside Acties.
@@ -696,18 +958,21 @@ void main() {
 
   testWidgets(
       'an apply pass holds the operator in a modal progress dialog naming the '
-      'account and action in flight, and clears when the pass ends (#243)',
+      'action in flight, and clears when the pass ends (#243)',
       (WidgetTester tester) async {
     // The real app over the offline harness, with the pass parked one action at
-    // a time. An "Apply to all" over a September situation group writes
-    // hundreds of accounts sequentially and runs for minutes; its only feedback
-    // used to be greyed-out buttons and an indeterminate bar in a page header
-    // the operator had scrolled past, and nothing stopped them navigating away
-    // mid-write. Composition is the point here: the dialog has to sit over the
-    // real shell, in the real font, above a page that is still scrollable.
+    // a time. A rollover pass writes hundreds of accounts sequentially and runs
+    // for minutes; its only feedback used to be greyed-out buttons and an
+    // indeterminate bar in a page header the operator had scrolled past, and
+    // nothing stopped them navigating away mid-write. Composition is the point
+    // here: the dialog has to sit over the real shell, in the real font.
+    //
+    // Driven from one account's two decisions, which since #295 is the longest
+    // pass Acties itself can start — the multi-account form lives on the
+    // Klasgroepen cohort header until #296 brings it back here.
     useTallWindow(tester);
     final gates = <Completer<void>>[];
-    final harness = twoDepartedHarness(() async {
+    final harness = ReconcileHarness(applyGate: () async {
       final gate = Completer<void>();
       gates.add(gate);
       await gate.future;
@@ -719,23 +984,33 @@ void main() {
     ));
     await tester.pumpAndSettle();
     await syncThenOpenActions(tester);
-    await drillZonderKlas(tester);
+
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    final steps = <String>[
+      for (final c in entry.choices)
+        '${entry.target} — ${c.selected.changes.summary}',
+    ];
+    expect(steps, hasLength(2));
+    await selectAccount(tester, entry.targetId);
 
     // Idle: no dialog.
     expect(progressDialog, findsNothing);
 
-    await tapCohortApply(tester, harness);
+    final Finder apply = find.byKey(ValueKey('entry-apply-${entry.targetId}'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
     // Parked on the first action: the dialog names how far along the pass is
-    // and whose account is being written right now.
+    // and what is being written right now.
     expect(progressDialog, findsOneWidget);
     expect(gates, hasLength(1));
     expect(find.text('Acties toepassen…'), findsOneWidget);
     expect(progressLine(tester, 'actions-progress-count'), 'Actie 1 van 2');
-    expect(progressLine(tester, 'actions-progress-step'),
-        startsWith('Jan Peeters —'));
+    expect(progressLine(tester, 'actions-progress-step'), steps[0]);
     expect(
       tester
           .widget<LinearProgressIndicator>(
@@ -752,12 +1027,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(progressDialog, findsOneWidget);
 
-    // The text follows the pass onto the second account.
+    // The text follows the pass onto the second decision.
     gates[0].complete();
     await tester.pumpAndSettle();
     expect(progressLine(tester, 'actions-progress-count'), 'Actie 2 van 2');
-    expect(progressLine(tester, 'actions-progress-step'),
-        startsWith('Sofie Claes —'));
+    expect(progressLine(tester, 'actions-progress-step'), steps[1]);
 
     // The pass finishes: the dialog closes by itself, leaving the results.
     gates[1].complete();
@@ -776,7 +1050,7 @@ void main() {
     // future rather than to anything observed about the results.
     useTallWindow(tester);
     final gate = Completer<void>();
-    final harness = twoDepartedHarness(() async {
+    final harness = ReconcileHarness(applyGate: () async {
       await gate.future;
       throw StateError('Smartschool weigerde de schrijfactie');
     });
@@ -787,9 +1061,14 @@ void main() {
     ));
     await tester.pumpAndSettle();
     await syncThenOpenActions(tester);
-    await drillZonderKlas(tester);
 
-    await tapCohortApply(tester, harness);
+    final String id = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    await selectAccount(tester, id);
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(progressDialog, findsOneWidget);
@@ -804,9 +1083,8 @@ void main() {
       findsWidgets,
       reason: 'the failure is reported on the page, not behind a stuck modal',
     );
-    // The app is usable again: the affordances are live and reachable.
-    final String key = harness.controller.classroomPendingSituations.single.key;
-    await tester.ensureVisible(find.byKey(ValueKey('situation-apply-$key')));
+    // The app is usable again: the affordance is live and reachable.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     expect(tester.takeException(), isNull);
   });
 
@@ -1320,15 +1598,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // The departed account is browsed on the Actions tab, under the
-    // "Niet toegewezen" → "Zonder klas" bucket (#210 dropped the always-empty
-    // grade level between them).
+    // The departed account is one row of the flat Actions list, filed under the
+    // "Zonder klas" bucket a leaver falls into.
     await tester.tap(find.text('Acties'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Niet toegewezen'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Zonder klas'));
-    await tester.tap(find.text('Zonder klas'));
     await tester.pumpAndSettle();
 
     // One entry for the departed account (not two independent rows).
@@ -1337,12 +1609,17 @@ void main() {
     final id = entry.targetId;
     expect(entry.choices.single.isChoice, isTrue,
         reason: 'unregister vs delete collapse into a single choice');
-    expect(find.byKey(ValueKey('entry-student-$id')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$id')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-row-$id')),
+        matching: find.text('Zonder klas'),
+      ),
+      findsOneWidget,
+    );
 
-    // Expand the entry, choose delete (the non-default), apply just this row.
-    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
-    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
-    await tester.pumpAndSettle();
+    // Select it, choose delete (the non-default), apply just this row.
+    await selectAccount(tester, id);
     await tester
         .tap(find.byKey(ValueKey('alt-$id-DeleteStudentFromSmartschool')));
     await tester.pumpAndSettle();
@@ -1396,27 +1673,20 @@ void main() {
         reason: 'the account is still in the group ⇒ Azure is kept');
 
     // Browse it on the Actions tab: because school 2 is one we do NOT manage,
-    // its node is kept out of the drill-down (#178). The departed student is
-    // re-bucketed to "Niet toegewezen" so its Smartschool cleanup stays
-    // actionable — never surfacing a non-managed school node.
+    // the student has no class of ours, so the row files them under "Zonder
+    // klas" and their Smartschool cleanup stays actionable (#178).
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     expect(find.text('School 2'), findsNothing,
         reason: 'a school we do not manage never appears in Actions (#178)');
-    await tester.tap(find.text('Niet toegewezen'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Zonder klas'));
-    await tester.tap(find.text('Zonder klas'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(ValueKey('entry-student-${entry.targetId}')),
+    final Finder row = find.byKey(ValueKey('account-row-${entry.targetId}'));
+    expect(row, findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('Zonder klas')),
         findsOneWidget);
 
     // Apply the row: the Smartschool departure writes against the recording
     // SOAP transport; Azure (Graph) is never called.
-    await tester
-        .ensureVisible(find.byKey(ValueKey('entry-student-${entry.targetId}')));
-    await tester.tap(find.byKey(ValueKey('entry-student-${entry.targetId}')));
-    await tester.pumpAndSettle();
+    await selectAccount(tester, entry.targetId);
     await tester
         .ensureVisible(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
     await tester.tap(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
@@ -1434,7 +1704,7 @@ void main() {
   });
 
   testWidgets(
-      'the Actions drill-down hides a school the operator does not manage in '
+      'the Actions list hides a school the operator does not manage in '
       'Settings, re-bucketing its student to the leaver group (#178)',
       (WidgetTester tester) async {
     // A student enrolled in school 2, fully present in our Smartschool + Azure.
@@ -1457,26 +1727,26 @@ void main() {
 
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    // Scoped to this screen — the Synchronisatie tab behind it has an
-    // "Overzicht" heading of its own since #265.
+    // The non-managed school is nowhere on the screen…
+    expect(find.text('School 2'), findsNothing,
+        reason: 'school 2 is not managed → its class never names a row');
+    // …but the departed student's cleanup stays actionable, filed under the
+    // leaver bucket rather than vanishing entirely.
+    final String leaver = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
     expect(
       find.descendant(
-        of: find.byType(ActionsScreen),
-        matching: find.text('Overzicht'),
+        of: find.byKey(ValueKey('account-row-$leaver')),
+        matching: find.text('Zonder klas'),
       ),
       findsOneWidget,
     );
-    // The non-managed school is not a node in the drill-down…
-    expect(find.text('School 2'), findsNothing,
-        reason: 'school 2 is not managed → no node in Actions');
-    // …but the departed student's cleanup stays actionable under the leaver
-    // bucket rather than vanishing entirely.
-    expect(find.text('Niet toegewezen'), findsOneWidget);
   });
 
   testWidgets(
       'marking that same school as managed in Settings surfaces its students in '
-      'the Actions drill-down end-to-end (#178)', (WidgetTester tester) async {
+      'the Actions list end-to-end (#178)', (WidgetTester tester) async {
     // The very same school-2 student, but now school 2 is one of ours: their
     // class must be browsable instead of sitting in the leaver bucket. Proves
     // the managed set from Settings drives which students show. The school
@@ -1497,13 +1767,16 @@ void main() {
 
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    expect(find.text('Niet toegewezen'), findsNothing,
+    final String id = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    final Finder row = find.byKey(ValueKey('account-row-$id'));
+    expect(find.descendant(of: row, matching: find.text('Zonder klas')),
+        findsNothing,
         reason: 'managing school 2 takes its student out of the leaver bucket');
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    expect(find.text('3C'), findsWidgets);
+    expect(find.descendant(of: row, matching: find.text('3C')), findsOneWidget);
     // The class the student reached still carries school 2's partition, which
-    // is what the per-class read targets.
+    // is what the stored documents are keyed by.
     expect(
       harness.controller
           .studentChildrenOf(harness.controller.studentRollups.single)
@@ -1515,7 +1788,7 @@ void main() {
 
   testWidgets(
       'the materialized view names a school by name and code end-to-end, never '
-      '"School <id>", while the drill-down shows no school at all (#204/#210)',
+      '"School <id>", while the list shows no school at all (#204/#210)',
       (WidgetTester tester) async {
     // The real app, real fonts, real navigation. This session's WISA snapshot
     // carries no schools at all, so the school's identity can only come from
@@ -1542,17 +1815,24 @@ void main() {
     expect(find.text('School 25'), findsNothing,
         reason: 'the numeric id is the last resort, not the rendering (#204)');
     expect(find.text('Instituut Sancta Maria-A (ISMAA)'), findsNothing,
-        reason: 'no school node survives in the student tree (#210)');
+        reason: 'the school level is nowhere in the Acties list (#210/#295)');
 
     // The stored school rollup — what the counters and the Cosmos documents are
     // keyed and labelled by — still carries the full identity.
     expect(harness.controller.schoolRollups.single.label,
         'Instituut Sancta Maria-A (ISMAA)');
 
-    // And the year drills straight to the student's class.
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    expect(find.text('3C'), findsWidgets);
+    // And the student's row names their class, straight away.
+    final String id = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-row-$id')),
+        matching: find.text('3C'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -1605,7 +1885,7 @@ void main() {
         reason: 'the inverted rendering #208 fixed must not come back');
     expect(find.text('School 25'), findsNothing);
     expect(find.text('Instituut Sancta Maria-A (ISMAA)'), findsNothing,
-        reason: 'no school node survives in the student tree (#210)');
+        reason: 'the school level is nowhere in the Acties list (#210/#295)');
   });
 
   testWidgets(
@@ -1692,20 +1972,18 @@ void main() {
 
     // Over on Acties: the virtual school's student is still imported and still
     // sits in the class their own WISA record names — dropping the class-group
-    // records moved nobody.
+    // records moved nobody. The list spans every managed school (#210/#295), so
+    // the virtual school's 1V student is a row beside our own school's.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    // The merged first year spans both managed schools (#210), so the virtual
-    // school's 1V sits beside our own 1A under it.
-    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
-    await tester.ensureVisible(yearNode);
-    await tester.tap(yearNode);
-    await tester.pumpAndSettle();
-    final classNode = find.byKey(const ValueKey('rollup-class-class|99|1|1V'));
-    await tester.ensureVisible(classNode);
-    await tester.tap(classNode);
-    await tester.pumpAndSettle();
-    expect(find.text('Jane Doe'), findsWidgets);
+    final String inVirtual = harness.controller.linkedAccounts
+        .firstWhere((a) => a.classroom == '1V')
+        .id
+        .value;
+    final Finder virtualRow = find.byKey(ValueKey('account-row-$inVirtual'));
+    expect(virtualRow, findsOneWidget);
+    expect(find.descendant(of: virtualRow, matching: find.text('Jane Doe')),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -2164,16 +2442,16 @@ void main() {
     expect(harness.controller.groupRollup!.pendingCount, isNot(6),
         reason: 'the badge used to count both halves of both choices');
 
-    // Each student's own class carries one action and is badged once, so the
+    // Each student's own row carries one action and is badged once, so the
     // collapse did not simply deflate every count.
-    final jaar1 = find.byKey(const ValueKey('rollup-grade-grades|1'));
-    await tester.ensureVisible(jaar1);
-    await tester.tap(jaar1);
-    await tester.pumpAndSettle();
-    final klas1A = find.byKey(const ValueKey('rollup-class-class|1|1|1A'));
-    await tester.ensureVisible(klas1A);
+    final String inOneA = harness.controller.linkedAccounts
+        .firstWhere((a) => a.classroom == '1A')
+        .id
+        .value;
+    final Finder rowOneA = find.byKey(ValueKey('account-row-$inOneA'));
+    await tester.ensureVisible(rowOneA);
     expect(
-        find.descendant(of: klas1A, matching: find.text('1')), findsOneWidget);
+        find.descendant(of: rowOneA, matching: find.text('1')), findsOneWidget);
 
     // The number on the aggregate is exactly what a confirmed apply of the
     // Klasgroepen list would write — the claim the badge and the dialog used to
@@ -2203,10 +2481,6 @@ void main() {
     // The staff twin of the class case, and the crisp version of the count: two
     // freshly hired teachers, each raising the provision-or-ignore either/or of
     // #248 and nothing else. Two people, two decisions — the node read 4.
-    //
-    // The Personeel tree is the deeper one (school → jaar → klas), so this also
-    // proves the collapse survives every level of the aggregation rather than
-    // only the leaf the operator drills into.
     useTallWindow(tester);
     final harness = newStaffChoiceHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -2220,24 +2494,18 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
 
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    expect(find.descendant(of: staffClass, matching: find.text('2')),
-        findsOneWidget,
-        reason: 'two hires, one either/or each');
-    expect(
-        find.descendant(of: staffClass, matching: find.text('4')), findsNothing,
-        reason: 'the opt-out is the alternative, never a second to-do');
+    // Each hire is one row, badged once — never twice for the two halves of the
+    // one either/or.
+    for (final e in harness.controller.pendingEntries
+        .where((e) => e.family == 'staff')) {
+      final Finder row = find.byKey(ValueKey('account-row-${e.targetId}'));
+      await tester.ensureVisible(row);
+      expect(find.descendant(of: row, matching: find.text('1')), findsOneWidget,
+          reason: 'one hire, one either/or');
+      expect(find.descendant(of: row, matching: find.text('2')), findsNothing,
+          reason: 'the opt-out is the alternative, never a second to-do');
+    }
 
     // The Personeel tab badge is derived the same way and agrees.
     expect(harness.controller.staffPendingCount, 2);
@@ -2975,11 +3243,82 @@ void main() {
     await tester.pumpAndSettle();
     expect(healthy, findsOneWidget);
 
-    // And the same list is not maintained in two places: the Klasgroepen node
-    // has left the Acties drill-down.
+    // And the same list is not maintained in two places: no class is a row of
+    // the Acties list, which holds accounts only.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
+    expect(find.byKey(const ValueKey('class-row-1A')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'each action tab says what the other one is holding, and following the '
+      'line lands there end-to-end (#301)', (WidgetTester tester) async {
+    // The real app, real rail, real navigation — which is the whole of this
+    // issue. Acties covers people and Klasgroepen covers classes, so "is
+    // everything as expected?" is only answerable by visiting both, and nothing
+    // prompted the operator to. The rollover is where that bites: the
+    // Smartschool class change is per student here while the Office 365 roster
+    // write is one action per class there, so a clean Acties list can sit above
+    // a pile of stale rosters.
+    //
+    // Only a full run can show it. The two counts are derived on the shared
+    // controller, rendered by two screens that never see each other, and the
+    // link has to reach across the shell that keeps both alive — three halves a
+    // widget test of either screen structurally cannot put together.
+    //
+    // The fixture in miniature: `3C` and `3D` both lack their Office 365 group
+    // (two classes), and of the two students only Sam's Office 365 display name
+    // is stale (one account).
+    useTallWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+    expect(find.byType(ActionsScreen), findsOneWidget);
+
+    // Acties names what the other tab is holding, on the first visit — it reads
+    // the inventory itself rather than waiting for the operator to go to the
+    // very tab the line exists to send them to.
+    final Finder toClasses =
+        find.byKey(const ValueKey('actions-class-attention'));
+    expect(toClasses, findsOneWidget);
+    expect(find.text('2 klas(sen) vragen ook aandacht op Klasgroepen.'),
+        findsOneWidget);
+
+    // Following it lands on Klasgroepen, where the count is the one that tab
+    // states for itself — one derivation, so the pointer cannot contradict the
+    // list it points at.
+    await tester.ensureVisible(toClasses);
+    await tester.tap(toClasses);
+    await tester.pumpAndSettle();
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+    expect(find.textContaining('2 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget);
+
+    // And the mirror of it, back the other way.
+    final Finder toAccounts =
+        find.byKey(const ValueKey('class-groups-account-attention'));
+    expect(toAccounts, findsOneWidget);
+    expect(find.text('1 account(s) vragen ook aandacht op Acties.'),
+        findsOneWidget);
+    await tester.ensureVisible(toAccounts);
+    await tester.tap(toAccounts);
+    await tester.pumpAndSettle();
+    expect(find.byType(ActionsScreen), findsOneWidget);
+
+    // The one account it counted is the list Acties comes back to, still under
+    // its own work filter.
+    final String sam = accountId(harness, 'Sam Sels');
+    final String tom = accountId(harness, 'Tom Tas');
+    expect(find.byKey(ValueKey('account-row-$sam')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -3306,45 +3645,28 @@ void main() {
     await tester.pumpAndSettle();
 
     // Nothing applyable hangs off either class's *students*, so the work list
-    // hides them — the switch is what turns the view into the inventory an
+    // holds neither — the switch is what turns the view into the inventory an
     // operator answering a phone call browses (#226).
-    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing);
+    final String samId = accountId(harness, 'Sam Sels');
+    final String janeId = accountId(harness, 'Jane Doe');
+    expect(find.byKey(ValueKey('account-row-$samId')), findsNothing);
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
 
-    // The year is opened once and stays open across both drill-downs: since
-    // #235 pressing Overzicht comes back to the grade-year it was opened from.
-    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
-    await tester.ensureVisible(yearNode);
-    await tester.tap(yearNode);
-    await tester.pumpAndSettle();
-
-    // Sam, in 1B: one line, naming both groups, and marked as a manual fix.
-    await tester
-        .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
-    await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1B')));
-    await tester.pumpAndSettle();
-    expect(find.text('Sam Sels'), findsOneWidget);
+    // Sam: one line, naming both groups, in the details pane beside his row.
+    await selectAccount(tester, samId);
     expect(
       find.textContaining(
           'Zit in de verkeerde Office 365-klasgroep: GBS-1A in plaats van '
           'GBS-1B'),
       findsOneWidget,
     );
-    expect(find.textContaining('(manueel)'), findsWidgets,
-        reason: 'the class row performs the write, so this one diagnoses');
 
-    // Jane, in 1A: the plain "missing from her own group" reading. Overzicht
-    // lands back on the still-open year, with her class already listed.
-    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
-    await tester.pumpAndSettle();
-    await tester
-        .ensureVisible(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
-    await tester.tap(find.byKey(const ValueKey('rollup-class-class|1|1|1A')));
-    await tester.pumpAndSettle();
-    expect(find.text('Jane Doe'), findsOneWidget);
+    // Jane: the plain "missing from her own group" reading, one row away — no
+    // going back out to an overview in between.
+    await selectAccount(tester, janeId);
     expect(
       find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
       findsOneWidget,
@@ -3430,29 +3752,29 @@ void main() {
     );
 
     // The students the same fact is reported on are informational only, so
-    // nothing over on Acties turns orange for them: their cards still carry the
-    // diagnosis, marked "(manueel)", and raise no applyable work at all.
+    // nothing over on Acties turns orange for them: their rows still carry the
+    // diagnosis in the details pane, and colour no cell at all.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
-    await tester.ensureVisible(yearNode);
-    await tester.tap(yearNode);
-    await tester.pumpAndSettle();
-    final classNode = find.byKey(const ValueKey('rollup-class-class|1|1|1A'));
-    await tester.ensureVisible(classNode);
-    await tester.tap(classNode);
-    await tester.pumpAndSettle();
+    final String janeId = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, janeId);
 
-    expect(find.text('Jane Doe'), findsOneWidget);
     expect(
       find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
       findsOneWidget,
     );
-    expect(find.textContaining('(manueel)'), findsWidgets);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-cell-$janeId-azure')))
+          .state,
+      SystemIndicatorState.inOrder,
+      reason: 'an informational candidate colours no indicator',
+    );
     final studentWork = harness.controller.pendingEntries
         .where((e) => e.family == 'student')
         .expand(workSystemsOfEntry)
@@ -3468,20 +3790,18 @@ void main() {
   });
 
   testWidgets(
-      'a passive session marks the same informational candidate "(manueel)" on '
-      'the account card end-to-end (#255)', (WidgetTester tester) async {
-    // The same #245 fixture, read the way most operators meet it: session 1
-    // syncs and materializes the shared view, session 2 is the real app over
-    // those stores and never syncs, so Acties renders stored documents as static
-    // cards (#214) instead of interactive tiles.
+      'a session that cannot seed gets one blocking notice on Acties and no '
+      'list to browse end-to-end (#214/#287/#295)',
+      (WidgetTester tester) async {
+    // Session 1 syncs and materializes the shared view; session 2 is the real
+    // app over those stores holding no seeded snapshot, so it cannot link and
+    // has nothing to act on.
     //
-    // This is the layer that sees the bug. The two renderings are different
-    // widgets fed by different pipelines — the interactive tile reads live
-    // `PendingChoice`s, the passive card reads `CandidateAction`s round-tripped
-    // through the store's JSON — and only a full-app run puts an operator in
-    // front of the passive one. There Sam's line used to read as ordinary due
-    // work beside a badge counting it 0, with no way to tell "the app will do
-    // this" from "you must do this by hand".
+    // Acties used to answer that by rendering the stored documents as inert
+    // account cards under the same drill-down (#214). That was a second way to
+    // browse the same data, one the operator can do nothing with — so since
+    // #295 the notice is the whole screen, and its Synchroniseer is the one
+    // thing on it.
     useTallWindow(tester);
     final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
@@ -3490,9 +3810,6 @@ void main() {
       linkedStore: linkedStore,
     ).controller.sync();
 
-    // Deliberately holding no seeded snapshot: since #287 a session that does
-    // adopts the shared state and gets the interactive tiles instead, and this
-    // scenario is about the passive card.
     final resumed = ReconcileHarness(linkedStore: linkedStore);
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
@@ -3504,50 +3821,38 @@ void main() {
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
 
-    // Nothing applyable hangs off the students, so the work list hides their
-    // classes until the inventory toggle is flipped (#226) — exactly the state
-    // in which the unmarked line was most misleading.
-    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
-    await tester.ensureVisible(toggle);
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-
-    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
-    await tester.ensureVisible(yearNode);
-    await tester.tap(yearNode);
-    await tester.pumpAndSettle();
-    final klas1B = find.byKey(const ValueKey('rollup-class-class|1|1|1B'));
-    await tester.ensureVisible(klas1B);
-    await tester.tap(klas1B);
-    await tester.pumpAndSettle();
-
-    // The card is the passive one — locked, no interactive entry tile — and
-    // Sam's one line now says the operator has to fix this by hand.
     expect(resumed.controller.linked, isNull,
-        reason: 'link() is never called in a passive session');
+        reason: 'link() is never called in a session with nothing to link');
     expect(find.byKey(const ValueKey('actions-read-only')), findsOneWidget);
-    expect(find.text('Sam Sels'), findsOneWidget);
+    expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
     expect(
-      find.textContaining('Zit in de verkeerde Office 365-klasgroep: GBS-1A '
-          'in plaats van GBS-1B'),
-      findsOneWidget,
+      tester
+          .widget<FilledButton>(
+              find.byKey(const ValueKey('actions-read-only-sync')))
+          .onPressed,
+      isNotNull,
     );
-    expect(find.textContaining('(manueel)'), findsOneWidget,
-        reason: 'the class row performs the write, so this card diagnoses');
+
+    // One notice, and nothing behind it: no list, no controls, no inert cards.
+    expect(find.byKey(const ValueKey('actions-list')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('actions-only-with-actions')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-search')), findsNothing);
+    expect(find.text('Sam Sels'), findsNothing);
     expect(resumed.wisaSyncs, 0);
     expect(resumed.ssSyncs, 0);
     expect(resumed.azSyncs, 0);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
-      'the Acties drill-down opens on grade-years merged across the managed '
-      'schools end-to-end, with no school level to guess at (#210)',
-      (WidgetTester tester) async {
+      'the flat Acties list spans every managed school end-to-end, with no '
+      'school level to guess at (#210/#295)', (WidgetTester tester) async {
     // The real app, real fonts, real navigation. Two managed schools whose
     // years overlap: school 1 holds 1A and 3C, school 2 holds 1B and the
     // non-numeric OKAN. The WISA school split is administrative — operators
-    // treat both as one school — so the overview must open on the years, and a
-    // class must be findable by name without first guessing its school.
+    // treat both as one school — so every student is in one list, each row
+    // naming their own class, and no school appears anywhere.
     useTallWindow(tester);
     final harness = twoSchoolHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -3563,47 +3868,51 @@ void main() {
 
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    expect(find.text('Jaar 1'), findsOneWidget);
-    expect(find.text('Jaar 3'), findsOneWidget);
+    expect(find.text('Jaar 1'), findsNothing);
     expect(find.text('School 1'), findsNothing);
     expect(find.text('School 2'), findsNothing);
-    // The synthetic non-numeric bucket is renamed rather than read as the
-    // nonsensical "Jaar Overig" next to the real years.
-    expect(find.text('Overige klassen'), findsOneWidget);
-    expect(find.text('Jaar Overig'), findsNothing);
+    expect(find.text('Overige klassen'), findsNothing);
 
-    // The merged first year carries both schools' first-year classes and their
-    // combined account count.
+    // One row per student, whichever school they are enrolled in, each naming
+    // their own class. Sorted by class, the two schools interleave — which is
+    // the point: the operator never has to guess a school first.
+    await tester.tap(find.byKey(const ValueKey('actions-sort-klas')));
+    await tester.pumpAndSettle();
+    for (final klas in const <String>['1A', '1B', '3C', 'OKAN']) {
+      final String id = harness.controller.linkedAccounts
+          .firstWhere((a) => a.classroom == klas)
+          .id
+          .value;
+      final Finder row = find.byKey(ValueKey('account-row-$id'));
+      await tester.ensureVisible(row);
+      expect(
+          find.descendant(of: row, matching: find.text(klas)), findsOneWidget);
+    }
+
+    // The stored rollups keep their school partitions all the same — the
+    // flattening is presentation only.
     expect(harness.controller.studentRollups.first.accountCount, 2);
-    await tester.tap(find.text('Jaar 1'));
-    await tester.pumpAndSettle();
-    expect(find.text('1A'), findsOneWidget);
-    expect(find.text('1B'), findsOneWidget);
-
-    // Opening the school-2 class still targets school 2's own partition — the
-    // flattening is presentation only, the documents stay partitioned by school.
-    await tester.ensureVisible(find.text('1B'));
-    await tester.tap(find.text('1B'));
-    await tester.pumpAndSettle();
-    expect(harness.controller.selectedClassroom?.school, '2');
-    expect(harness.controller.classroomAccounts, hasLength(1));
     expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+      harness.controller
+          .studentChildrenOf(harness.controller.studentRollups.first)
+          .map((r) => r.school),
+      <String>['1', '2'],
+    );
   });
 
   testWidgets(
-      'the Acties filter collapses the drill-down to the work list end-to-end: '
-      'ticked-off classes and whole ticked-off years are gone, the switch is '
-      'set once and survives a tab change (#226)', (WidgetTester tester) async {
+      'the Acties filter collapses the list to the work list end-to-end: the '
+      'accounts with nothing to do are gone, the switch is set once and '
+      'survives a tab change (#226/#295)', (WidgetTester tester) async {
     // The real app, real fonts, real navigation. Four students across three
     // classes of two managed schools; exactly one of them (Sam, in 3C) sits in
-    // the wrong Smartschool class, so exactly one class carries work.
+    // the wrong Smartschool class, so exactly one of them carries work.
     //
-    // This is the layer that sees it: the tree the operator browses is built
-    // from the stored rollups by two projections one tab apart, the switch
-    // lives above the family tab bar and has to outlive a tab change, and
-    // "which nodes render" is a whole-page composition question that a widget
-    // test of one section structurally cannot answer.
+    // This is the layer that sees it: the list is joined from the linked view
+    // and the derived account documents, the switch lives above the family tab
+    // bar and has to outlive a tab change, and "which rows render" is a
+    // whole-page composition question that a widget test of one section
+    // structurally cannot answer.
     useTallWindow(tester);
     final harness = ReconcileHarness(
       wisa: wisaSnap(
@@ -3663,8 +3972,8 @@ void main() {
       ),
       // Every Azure account already carries the WISA display name, so the only
       // student action the pass raises anywhere is Sam's class move. (The WISA
-      // fixture names every student "Jane Doe"; the tree is browsed by node,
-      // not by person, so only the class each of them sits in matters here.)
+      // fixture names every student "Jane Doe"; the rows are addressed by id,
+      // so only the class each of them sits in matters here.)
       azure: azSnap(users: [
         azUser(displayName: 'Jane Doe'),
         azUser(
@@ -3720,22 +4029,20 @@ void main() {
     expect(toggle, findsOneWidget);
     expect(tester.widget<Switch>(toggle).value, isTrue);
 
-    // Jaar 1's two classes are both done, so the whole year is gone; Jaar 3
-    // stays because one of its classes is not.
-    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
-    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing,
-        reason: 'both of Jaar 1\'s classes are done — the year goes with them');
-    // …and the operator is told why a year they expected is missing.
-    expect(find.byKey(const ValueKey('actions-filter-hidden')), findsOneWidget);
+    // The WISA fixture names every student "Jane Doe", so the rows are told
+    // apart by the class each of them sits in.
+    String rowOf(String klas) => harness.controller.linkedAccounts
+        .firstWhere((a) => a.classroom == klas)
+        .id
+        .value;
+    final String sam = rowOf('3C');
+    final String tom = rowOf('3D');
 
-    // Inside the surviving year, the ticked-off class is gone too.
-    await tester.tap(find.byKey(const ValueKey('rollup-grade-grades|3')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3C')),
-        findsOneWidget);
-    expect(
-        find.byKey(const ValueKey('rollup-class-class|1|3|3D')), findsNothing,
-        reason: 'a class with nothing to do is not rendered under the filter');
+    // The 3C student is the only account with work, so they are the whole list.
+    expect(find.byKey(ValueKey('account-row-$sam')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$tom')), findsNothing,
+        reason: 'an account with nothing to do is not in the work list');
+    expect(find.byKey(ValueKey('account-row-${rowOf('1C')}')), findsNothing);
 
     // The switch is a mode, not a per-list setting: it outlives a tab change.
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
@@ -3744,91 +4051,37 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-tab-leerlingen')));
     await tester.pumpAndSettle();
     expect(tester.widget<Switch>(toggle).value, isTrue);
-    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsNothing);
+    expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
 
-    // Switched off, the full inventory is back — every year, every class. Jaar
-    // 3 was left open above and, being visible under either filter setting,
-    // stays open across the switch (#235), so its ticked-off class simply
-    // reappears beside the one with work.
+    // Switched off, the whole school is back — every student, three green
+    // cells on the ones that need nothing.
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('rollup-grade-grades|1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
-    expect(find.byKey(const ValueKey('actions-filter-hidden')), findsNothing);
-    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3C')),
-        findsOneWidget);
-    expect(find.byKey(const ValueKey('rollup-class-class|1|3|3D')),
-        findsOneWidget);
+    for (final klas in const <String>['1C', '3C', '3D']) {
+      final Finder row = find.byKey(ValueKey('account-row-${rowOf(klas)}'));
+      await tester.ensureVisible(row);
+      expect(row, findsOneWidget);
+    }
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-cell-$tom-smartschool')))
+          .state,
+      SystemIndicatorState.inOrder,
+    );
   });
 
   testWidgets(
-      'the Acties tree is a single-open accordion whose grade-year survives a '
-      'drill into a class end-to-end (#235)', (WidgetTester tester) async {
-    // The real app, real fonts, real navigation. This bug is a composition one:
-    // while a class is open the drill-down is not built at all, so the
-    // expansion held inside the ExpansionTiles died with them and **Overzicht**
-    // came back to a fully collapsed tree. Only an end-to-end run navigates the
-    // way that breaks it — a widget test of the tree alone never leaves it.
-    useTallWindow(tester);
-    final harness = twoSchoolHarness();
-    await tester.pumpWidget(AccountManagerApp(
-      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
-      graph: graph,
-      reconcileBootstrap: harness.bootstrap,
-    ));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Acties'));
-    await tester.pumpAndSettle();
-
-    final jaar1 = find.byKey(const ValueKey('rollup-grade-grades|1'));
-    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
-    final klas1A = find.byKey(const ValueKey('rollup-class-class|1|1|1A'));
-    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
-
-    // Open Jaar 1…
-    await tester.ensureVisible(jaar1);
-    await tester.tap(jaar1);
-    await tester.pumpAndSettle();
-    expect(klas1A, findsOneWidget);
-
-    // …then Jaar 3: one open node per level, so Jaar 1 shuts behind it.
-    await tester.ensureVisible(jaar3);
-    await tester.tap(jaar3);
-    await tester.pumpAndSettle();
-    expect(klas3C, findsOneWidget);
-    expect(klas1A, findsNothing,
-        reason: 'several years could stand open at once before #235');
-
-    // Drill into 3C and press Overzicht: the year the operator came from is
-    // still open, with its class in view rather than behind a re-expand.
-    await tester.ensureVisible(klas3C);
-    await tester.tap(klas3C);
-    await tester.pumpAndSettle();
-    expect(harness.controller.selectedClassroom?.classroom, '3C');
-    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
-    await tester.pumpAndSettle();
-    expect(klas3C, findsOneWidget,
-        reason: 'the tree used to come back fully collapsed');
-    expect(klas1A, findsNothing);
-    expect(harness.controller.expandedPath, <String>['rollup-grade-grades|3']);
-  });
-
-  testWidgets(
-      'a sync whose shared write fails still closes the open class, so the '
-      'drill-down never pairs the previous generation with the fresh view '
-      'end-to-end (#289)', (WidgetTester tester) async {
-    // The real app, real navigation. The bug is a composition one: the four
-    // derived caches were dropped on the far side of the store write, so a
-    // Cosmos write that timed out or threw left the class the operator had open
-    // — its documents read for the generation before — standing in front of the
-    // freshly linked view. Only an end-to-end run navigates the way that shows
-    // it: sync, drill in, sync again over a store that refuses the write, and
-    // look at what is still on screen.
+      'a sync whose shared write fails still leaves Acties showing the view it '
+      'just linked, never the previous generation end-to-end (#289/#295)',
+      (WidgetTester tester) async {
+    // The real app, real navigation. The bug is a composition one: the derived
+    // caches were dropped on the far side of the store write, so a Cosmos write
+    // that timed out or threw left the operator looking at documents read for
+    // the generation before, standing in front of the freshly linked view.
+    // Only an end-to-end run navigates the way that shows it: sync, look,
+    // sync again over a store that refuses the write, and look again.
     useTallWindow(tester);
     final inner = InMemoryLinkedStore();
     final harness = ReconcileHarness(
@@ -3852,17 +4105,19 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // Drill into the class the shared view just materialized.
+    // The student the shared view just materialized, in the class it names.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget,
-        reason: 'the drill-down is open on 3C');
-    expect(harness.controller.selectedClassroom?.classroom, '3C');
+    final String id = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-row-$id')),
+        matching: find.text('3C'),
+      ),
+      findsOneWidget,
+    );
 
     // WISA moves the student out of 3C, and the operator re-syncs — but the
     // shared store refuses the write.
@@ -3881,32 +4136,37 @@ void main() {
       reason: 'the write really did fail',
     );
 
-    // Back on Acties: the class the operator had open is closed, because the
-    // view behind it was replaced. Before the fix the detail view was still
-    // there, joining the fresh entries to 3C's stale documents.
+    // Back on Acties: the row reads the class the fresh link gives it, not the
+    // one the generation before the failed write still says. Before the fix the
+    // screen was still joined to that previous generation's documents.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    expect(harness.controller.selectedClassroom, isNull);
-    expect(find.byKey(const ValueKey('actions-classroom-back')), findsNothing,
-        reason: 'a re-link closes the drill-down, write or no write');
-    expect(harness.controller.classroomPendingEntries, isEmpty);
+    final String moved = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    final Finder movedRow = find.byKey(ValueKey('account-row-$moved'));
+    await tester.ensureVisible(movedRow);
+    expect(find.descendant(of: movedRow, matching: find.text('3D')),
+        findsOneWidget);
+    expect(
+        find.descendant(of: movedRow, matching: find.text('3C')), findsNothing);
     // …and the session is still perfectly usable: it holds the view it linked.
     expect(harness.controller.linked, isNotNull);
   });
 
   testWidgets(
-      'applying a class\'s work updates its Acties badge on the way back to '
-      'the overview, without a re-sync end-to-end (#236)',
-      (WidgetTester tester) async {
-    // The real app, real fonts, real navigation. The badges are read from the
-    // materialized rollups, which only a sync used to rewrite, so a class whose
-    // work had just been applied kept advertising it — and since #226 that same
-    // stale count decides whether the class is in the tree at all.
+      'applying an account\'s work takes it off the counts and, once the '
+      'operator moves on, out of the Acties work list, without a re-sync '
+      'end-to-end (#236/#295/#299)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. The counts are re-derived from
+    // the materialized rollups, which only a sync used to rewrite, so work that
+    // had just been applied kept being advertised — and the work-list filter
+    // reads that same count.
     //
-    // This is the layer that sees it: the overview and the drilled-in list are
-    // two projections composed by different halves of the screen, and the bug is
-    // precisely that they disagree. Only a run that syncs, drills in, applies,
-    // and comes back out puts both on screen in that order.
+    // This is the layer that sees it: the header count, the tab badges and the
+    // list are three projections composed by different halves of the screen,
+    // and the bug is precisely that they disagree. Only a run that syncs,
+    // applies and looks again puts them all on screen in that order.
     useTallWindow(tester);
     final harness = appliedClassWorkHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -3918,60 +4178,66 @@ void main() {
     await syncThenOpenActions(tester);
     expect(harness.controller.error, isNull);
 
-    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
-    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
-
-    // Sam's stale Office 365 name is the only student work: 3C carries it,
-    // badged 1, and the class groups carry four writes of their own.
-    await tester.ensureVisible(jaar3);
-    await tester.tap(jaar3);
-    await tester.pumpAndSettle();
-    expect(
-        find.descendant(of: klas3C, matching: find.text('1')), findsOneWidget);
+    // Sam's stale Office 365 name is the only student work: he is the whole
+    // work list, and the class groups carry four writes of their own.
+    final String sam = accountId(harness, 'Sam Sels');
+    final String tom = accountId(harness, 'Tom Tas');
+    expect(find.byKey(ValueKey('account-row-$sam')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
     expect(harness.controller.groupRollup!.pendingCount, 4);
 
-    // Drill into 3C and apply that one entry, confirmation dialog and all.
-    await tester.ensureVisible(klas3C);
-    await tester.tap(klas3C);
-    await tester.pumpAndSettle();
-    final entry = harness.controller.classroomPendingEntries.single;
-    await tester.tap(find.byKey(ValueKey('entry-student-${entry.targetId}')));
-    await tester.pumpAndSettle();
-    final applyEntry = find.byKey(ValueKey('entry-apply-${entry.targetId}'));
+    // Select him and apply that one entry, confirmation dialog and all.
+    await selectAccount(tester, sam);
+    final applyEntry = find.byKey(ValueKey('entry-apply-$sam'));
     await tester.ensureVisible(applyEntry);
     await tester.tap(applyEntry);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
     expect(find.text('Resultaat van het toepassen'), findsWidgets);
-    expect(harness.controller.classroomPendingEntries, isEmpty,
-        reason: 'the live list drops the work immediately — it always did');
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+      reason: 'the live list drops the work immediately — it always did',
+    );
 
-    // Overzicht: the class is done, so under the work-list filter it is gone,
-    // and with 3D already clean the whole year goes with it.
-    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
+    // His badge is gone with the work behind it. The row itself is still on
+    // screen, and only because #299 holds a just-applied account there long
+    // enough for its verdict to be read — marked as what happened, not badged.
+    final Finder samRow = find.byKey(ValueKey('account-row-$sam'));
+    expect(samRow, findsOneWidget);
+    expect(find.byKey(ValueKey('account-done-$sam')), findsOneWidget);
+    expect(find.descendant(of: samRow, matching: find.text('1')), findsNothing,
+        reason: 'the row used to come back still badged 1');
+
+    // Reshaping the list is the operator moving on, so the hold lets go — and
+    // the work list is empty, with no sync between.
+    await tester.tap(find.byKey(const ValueKey('actions-sort-klas')));
     await tester.pumpAndSettle();
-    expect(klas3C, findsNothing,
-        reason: 'the class used to come back still badged 1');
-    expect(jaar3, findsNothing);
+    expect(samRow, findsNothing);
+    expect(find.text('Geen openstaande acties — alles staat in orde.'),
+        findsOneWidget);
     // …while the work nobody touched is untouched: a re-derivation of what
     // changed, not a blanket reset.
     expect(harness.controller.groupRollup!.pendingCount, 4);
 
-    // Off the filter, the class is back in the inventory — now ticked off
-    // rather than badged, with no sync between.
+    // Off the filter, Sam is back in the inventory — ticked off rather than
+    // badged, and his Office 365 cell is green.
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(jaar3);
-    if (klas3C.evaluate().isEmpty) {
-      await tester.tap(jaar3);
-      await tester.pumpAndSettle();
-    }
-    expect(find.descendant(of: klas3C, matching: find.text('1')), findsNothing);
-    expect(find.descendant(of: klas3C, matching: find.byIcon(Icons.check)),
+    await tester.ensureVisible(samRow);
+    expect(find.descendant(of: samRow, matching: find.text('1')), findsNothing);
+    expect(find.descendant(of: samRow, matching: find.byIcon(Icons.check)),
         findsOneWidget);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-cell-$sam-azure')))
+          .state,
+      SystemIndicatorState.inOrder,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -3986,8 +4252,11 @@ void main() {
     // Only a two-session run can see that: one session applies, and the bug is
     // what the *other* one is still showing. So operator A is an offline
     // session over the shared stores, and operator B is the real app — real
-    // fonts, real navigation, real rollup tree — reading the same shared view
-    // over the same realtime fan-out, and never syncing or linking at all.
+    // fonts, real navigation — reading the same shared view over the same
+    // realtime fan-out, and never syncing or linking at all. B cannot link, so
+    // since #295 Acties offers it one blocking notice; what it *does* still
+    // read passively is the Synchronisatie overview, and that is where the
+    // stale offer showed.
     useTallWindow(tester);
     final hub = InMemorySignalHub();
     final snapshots = InMemorySnapshotStore();
@@ -4013,19 +4282,14 @@ void main() {
       reconcileBootstrap: operatorB.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Acties'));
+    await tester.tap(find.text('Synchronisatie'));
     await tester.pumpAndSettle();
 
-    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
-    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
-
-    // B is offered the work, badged 1 — read from the shared documents, with no
-    // pull and no link() of its own.
-    await tester.ensureVisible(jaar3);
-    await tester.tap(jaar3);
-    await tester.pumpAndSettle();
-    expect(
-        find.descendant(of: klas3C, matching: find.text('1')), findsOneWidget);
+    // B is offered the work — read from the shared documents, with no pull and
+    // no link() of its own.
+    expect(find.byKey(const ValueKey('reconcile-category-students')),
+        findsOneWidget);
+    expect(find.text('1 openstaande actie'), findsOneWidget);
 
     // A applies it. B is nudged over the realtime fan-out and refetches the one
     // shard that moved.
@@ -4035,247 +4299,39 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Under the work-list filter the finished class is gone, and with 3D already
-    // clean the whole year goes with it — the panel has stopped offering work
-    // that is already done.
-    expect(klas3C, findsNothing,
+    // B has stopped offering work that is already done.
+    expect(find.text('1 openstaande actie'), findsNothing,
         reason: 'B used to keep advertising it until someone re-synced');
-    expect(jaar3, findsNothing);
     expect(operatorB.wisaSyncs, 0, reason: 'the nudge never triggers a pull');
     expect(operatorB.controller.linked, isNull,
         reason: 'link() is never called in a passive session');
 
-    // Off the filter the class is back on the inventory, ticked off rather than
-    // badged — B's drill-down agrees with the store it just re-read.
-    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
-    await tester.ensureVisible(toggle);
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(jaar3);
-    if (klas3C.evaluate().isEmpty) {
-      await tester.tap(jaar3);
-      await tester.pumpAndSettle();
-    }
-    expect(find.descendant(of: klas3C, matching: find.text('1')), findsNothing);
-    expect(find.descendant(of: klas3C, matching: find.byIcon(Icons.check)),
-        findsOneWidget);
+    // The stored document itself moved with the rollup — the write-back
+    // patched both, so the next session to adopt the shared state links a view
+    // with the work already gone.
+    expect(
+      (await linkedStore.readClassroom(school: '1', classroom: '3C'))
+          .expand((a) => a.candidates),
+      isEmpty,
+    );
 
-    // …and drilling in shows the card with nothing left to do on it.
-    await tester.ensureVisible(klas3C);
-    await tester.tap(klas3C);
+    // …and Acties gives B the one blocking notice it owes a session that
+    // cannot link, rather than a second, inert way to browse the same rows.
+    await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('actions-read-only')), findsOneWidget);
-    expect(find.text('Sam Sels'), findsOneWidget);
-    expect(
-      operatorB.controller.classroomAccounts!.expand((a) => a.candidates),
-      isEmpty,
-      reason: 'the stored document itself dropped the applied candidate',
-    );
+    expect(find.byKey(const ValueKey('actions-list')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-      'a classroom\'s bulk "Alles toepassen" writes only that classroom, '
-      'leaving the identical situation in another class pending (#252)',
-      (WidgetTester tester) async {
-    // The real app, real fonts, real navigation. Three students share one
-    // situation — a stale Office 365 display name — but they are split across
-    // two classes: Sam and Sara in 3C, Tom in 3D.
-    //
-    // This is the layer that sees it. The bulk header is built over *one*
-    // class's entries and counts them, while the pass behind it re-resolved the
-    // situation key against the whole linked view — so the operator drilled
-    // into 3C, read "Alles toepassen (2)", and wrote three accounts including
-    // one in a class they never opened. Only a run that drills into a class,
-    // presses the class's own bulk button, and then comes back out to look at
-    // the other class puts both sides on screen in that order.
-    useTallWindow(tester);
-    final harness = crossClassSituationHarness();
-    await tester.pumpWidget(AccountManagerApp(
-      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
-      graph: graph,
-      reconcileBootstrap: harness.bootstrap,
-    ));
-    await tester.pumpAndSettle();
-    await syncThenOpenActions(tester);
-    expect(harness.controller.error, isNull);
-
-    final jaar3 = find.byKey(const ValueKey('rollup-grade-grades|3'));
-    final klas3C = find.byKey(const ValueKey('rollup-class-class|1|3|3C'));
-    final klas3D = find.byKey(const ValueKey('rollup-class-class|1|3|3D'));
-
-    // Two classes, both carrying the same student work: 3C badged 2, 3D 1.
-    await tester.ensureVisible(jaar3);
-    await tester.tap(jaar3);
-    await tester.pumpAndSettle();
-    expect(
-        find.descendant(of: klas3C, matching: find.text('2')), findsOneWidget);
-    expect(
-        find.descendant(of: klas3D, matching: find.text('1')), findsOneWidget);
-
-    // Drill into 3C. Its bulk header counts this class, and only this class.
-    await tester.ensureVisible(klas3C);
-    await tester.tap(klas3C);
-    await tester.pumpAndSettle();
-    expect(harness.controller.selectedClassroom?.classroom, '3C');
-    expect(find.text('Sam Sels'), findsWidgets);
-    expect(find.text('Sara Segers'), findsWidgets);
-    expect(find.text('Tom Tas'), findsNothing,
-        reason: 'the operator is looking at 3C — Tom is not on this page');
-
-    final key = harness.controller.classroomPendingSituations.single.key;
-    final bulk = find.byKey(ValueKey('situation-apply-$key'));
-    await tester.ensureVisible(bulk);
-    // The header line the count sits on is Dutch, like the rest of the screen
-    // (#253) — the operator-facing language everywhere in this app.
-    expect(
-        find.textContaining('2 accounts in dezelfde situatie'), findsOneWidget);
-    expect(
-        find.descendant(of: bulk, matching: find.text('Alles toepassen (2)')),
-        findsOneWidget);
-
-    // The confirmation quotes the same two writes the label counts (#234) —
-    // the mismatch that surfaced this said "3 wijzigingen" here.
-    await tester.tap(bulk);
-    await tester.pumpAndSettle();
-    expect(find.textContaining('2 wijzigingen'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Resultaat van het toepassen'), findsWidgets);
-    expect(harness.controller.applyResults, hasLength(2));
-    final patched = harness.graph.requests
-        .where((r) => r.method == 'PATCH')
-        .map((r) => r.url.path)
-        .toList();
-    expect(patched, hasLength(2),
-        reason: 'two accounts written, not every account group-wide');
-    expect(patched.any((p) => p.endsWith(kSam3C)), isTrue);
-    expect(patched.any((p) => p.endsWith(kSara3C)), isTrue);
-    expect(patched.any((p) => p.endsWith(kTom3D)), isFalse,
-        reason: "Tom's class was never opened, so it must not be written");
-
-    // Overzicht: 3C is done and drops out under the work filter, while 3D still
-    // stands there badged 1 — its identical situation is untouched, waiting for
-    // someone to open it.
-    await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(jaar3);
-    if (klas3D.evaluate().isEmpty) {
-      await tester.tap(jaar3);
-      await tester.pumpAndSettle();
-    }
-    expect(klas3C, findsNothing, reason: 'the class the operator cleared');
-    expect(
-        find.descendant(of: klas3D, matching: find.text('1')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets(
-      'a bulk apply covers one decision everywhere it occurs, and writes '
-      'nothing else on the cards it touches end-to-end (#292)',
-      (WidgetTester tester) async {
-    // The real app, real fonts, real navigation, over the real Smartschool and
-    // Graph write paths. The September rollover in miniature: three students
-    // moved up into `4A` while Smartschool still has all three in last year's
-    // `3C`, so every one of them needs the same class change — and one of them,
-    // Sam, also has a stale Office 365 display name.
-    //
-    // Both halves of the defect are only visible here. The header's cohort is
-    // built by the controller, rendered by the shared tile library and scoped by
-    // the drill-down, and what the button behind it writes is decided a fourth
-    // place again: the old grouping keyed on the family plus the sorted set of
-    // *every* decision on a card, so Sam fell into a subset of his own and the
-    // operator read "2 accounts in dezelfde situatie" for work that three
-    // students needed. Pressing the other header then wrote Sam's Office 365
-    // rename along with his class change, under a label that named neither.
-    useTallWindow(tester);
-    final harness = rolloverHarness();
-    await tester.pumpWidget(AccountManagerApp(
-      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
-      graph: graph,
-      reconcileBootstrap: harness.bootstrap,
-    ));
-    await tester.pumpAndSettle();
-    await syncThenOpenActions(tester);
-    expect(harness.controller.error, isNull);
-
-    // Drill into 4A, where all three students now belong.
-    final jaar4 = find.byKey(const ValueKey('rollup-grade-grades|4'));
-    await tester.ensureVisible(jaar4);
-    await tester.tap(jaar4);
-    await tester.pumpAndSettle();
-    final klas4A = find.byKey(const ValueKey('rollup-class-class|1|4|4A'));
-    await tester.ensureVisible(klas4A);
-    await tester.tap(klas4A);
-    await tester.pumpAndSettle();
-    expect(harness.controller.selectedClassroom?.classroom, '4A');
-
-    // One header for the class change, and it counts all three — Sam included,
-    // whatever else his card carries.
-    expect(
-      find.text('Wijzig de klas in Smartschool — 3 accounts in dezelfde '
-          'situatie'),
-      findsOneWidget,
-    );
-    final moveKey = harness.controller.classroomPendingSituations
-        .firstWhere((c) => c.label == 'Wijzig de klas in Smartschool')
-        .key;
-    final moveBulk = find.byKey(ValueKey('situation-apply-$moveKey'));
-    await tester.ensureVisible(moveBulk);
-    expect(
-      find.descendant(of: moveBulk, matching: find.text('Alles toepassen (3)')),
-      findsOneWidget,
-    );
-    // Sam's second decision is on his card, and gets no bulk header of its own:
-    // he is the only student who needs it.
-    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
-    expect(find.textContaining('Wijzig de naam in Azure — '), findsNothing);
-
-    // The confirmation names the one decision: three Smartschool writes, and no
-    // claim on Office 365.
-    await tester.tap(moveBulk);
-    await tester.pumpAndSettle();
-    // Scoped to the dialog: since #298 the cards behind it lead each line with
-    // the system it writes to, so Sam's rename puts "Office 365 ·" on screen —
-    // which is the point of that issue and says nothing about this pass.
-    final confirmation = find.byType(AlertDialog);
-    expect(
-      find.descendant(
-          of: confirmation, matching: find.textContaining('3 wijzigingen')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-          of: confirmation, matching: find.textContaining('Office 365')),
-      findsNothing,
-      reason: "summing every decision on every card would quote Sam's "
-          'rename and then not write it',
-    );
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-
-    // Three class moves in Smartschool…
-    expect(
-      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
-      hasLength(3),
-      reason: 'one pass covered the whole class, Sam included',
-    );
-    expect(
-      harness.controller.applyResults!.map((r) => r.changes.summary),
-      everyElement('Wijzig de klas in Smartschool'),
-    );
-    // …and not a single Office 365 write. Sam's rename is a decision the
-    // operator never pressed.
-    expect(
-      harness.graph.requests.where((r) => r.method == 'PATCH'),
-      isEmpty,
-      reason: 'the bulk pass wrote the decision on the header and no other',
-    );
-    // It is still his to make, still on the screen.
-    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+  // The Acties bulk-apply end-to-end runs of #252 (a classroom's "Alles
+  // toepassen" stops at that classroom) and #292 (a bulk apply covers one
+  // decision everywhere it occurs) went with the affordance they drove: #295
+  // took bulk apply off the Acties screen, which lands with per-decision apply
+  // only, and #296 gives it back school-wide with its cohort visible first.
+  // Both rules still run end-to-end over the Klasgroepen cohort headers above
+  // — see the namesake-class scenario, where two cohorts of one decision each
+  // prove that a header writes the decision it names and no other.
 
   testWidgets(
       'a single-group class whose name another school shares raises no class '
@@ -4325,36 +4381,30 @@ void main() {
       reason: 'the "no sub-groups" sentinel is never part of a class name',
     );
 
-    // Browse it the way the operator does: the merged first year holds both
-    // schools' `1C`, each still keyed to its own school partition. The year is
-    // opened once — since #235 Overzicht comes back to it still open.
+    // Browse it the way the operator does: both schools' students are rows of
+    // the one list, each naming the class their own WISA record does.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-
-    final yearNode = find.byKey(const ValueKey('rollup-grade-grades|1'));
-    await tester.ensureVisible(yearNode);
-    await tester.tap(yearNode);
+    // Nobody has work, so the list is the whole school with the filter off.
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
     await tester.pumpAndSettle();
     expect(find.text('1C 00'), findsNothing,
-        reason: 'the sentinel never names a class in the drill-down either');
+        reason: 'the sentinel never names a class in the list either');
 
-    // Each school's class in turn: opened, and carrying no class-change row.
+    // Each school's student in turn: on screen, in `1C`, with no class-change
+    // row in their details pane.
     for (final school in <String>['1', '2']) {
-      if (harness.controller.selectedClassroom != null) {
-        await tester.tap(find.byKey(const ValueKey('actions-classroom-back')));
-        await tester.pumpAndSettle();
-      }
-      final classNode = find.byKey(ValueKey('rollup-class-class|$school|1|1C'));
-      expect(classNode, findsOneWidget);
-      await tester.ensureVisible(classNode);
-      await tester.tap(classNode);
-      await tester.pumpAndSettle();
-
-      // The drill-down really opened (both the populated and the empty branch
-      // render this header), so the absence assertions below mean something.
+      final String id = harness.controller.linkedAccounts
+          .firstWhere((a) => a.school == school)
+          .id
+          .value;
+      final Finder row = find.byKey(ValueKey('account-row-$id'));
+      expect(row, findsOneWidget);
+      await tester.ensureVisible(row);
       expect(
-          find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
-      expect(harness.controller.selectedClassroom?.school, school);
+          find.descendant(of: row, matching: find.text('1C')), findsOneWidget);
+
+      await selectAccount(tester, id);
       expect(find.text('Wijzig de klas in Smartschool'), findsNothing,
           reason: 'school $school\'s 1C is single-group — no move is due');
       expect(find.textContaining('1C 00'), findsNothing);
@@ -4363,12 +4413,12 @@ void main() {
 
   testWidgets(
       'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
-      'staff drill in one tab, students in the other (#179)',
+      'staff in one tab, students in the other (#179/#295)',
       (WidgetTester tester) async {
     // The real app, real fonts, real window: one student plus one WISA staff
-    // member so both families have a rollup node. The Actions view must browse
-    // them as two separate workflows — a horizontal tab bar with a per-family
-    // drill-down — not one combined rollup.
+    // member so both families have a row. The Actions view must browse them as
+    // two separate workflows — a horizontal tab bar with a per-family list —
+    // not one combined list.
     useTallWindow(tester);
     final harness = ReconcileHarness(
       wisa: wisaSnap(students: [wisaStudent()], staff: [wisaStaff()]),
@@ -4392,37 +4442,27 @@ void main() {
         find.byKey(const ValueKey('actions-tab-leerlingen')), findsOneWidget);
     expect(find.byKey(const ValueKey('actions-tab-personeel')), findsOneWidget);
 
-    // Default Leerlingen tab: the merged grade-year node drills (#210); the
-    // staff node does not appear here.
-    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsOneWidget);
-    expect(
-        find.byKey(const ValueKey('rollup-school-school|staff')), findsNothing);
+    // Default Leerlingen tab: the student is a row, the staff member is not.
+    final String student = accountId(harness, 'Jane Doe');
+    final String staff = accountId(harness, 'Anna Smit');
+    expect(find.byKey(ValueKey('account-row-$student')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$staff')), findsNothing);
 
-    // Switch to Personeel and drill down to the staff member — the drill-down
-    // is preserved within the tab, showing only staff.
+    // Switch to Personeel: only staff, and the class column names the
+    // synthetic Personeel bucket they sit in.
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('rollup-grade-grades|3')), findsNothing);
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    expect(staffSchool, findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$student')), findsNothing);
+    final Finder staffRow = find.byKey(ValueKey('account-row-$staff'));
+    expect(staffRow, findsOneWidget);
+    expect(find.descendant(of: staffRow, matching: find.text('Anna Smit')),
+        findsOneWidget);
+    expect(find.descendant(of: staffRow, matching: find.text('Personeel')),
+        findsOneWidget);
 
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
-
-    // The staff member's account is browsed inside the Personeel tab.
-    expect(find.text('Anna Smit'), findsWidgets);
-    expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    // And their decisions open in the details pane beside the list.
+    await selectAccount(tester, staff);
+    expect(find.byKey(ValueKey('actions-detail-$staff')), findsOneWidget);
   });
 
   testWidgets(
@@ -4721,39 +4761,29 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // Browse the student on the Actions tab, drilling into her class (3C).
+    // Browse the student on the Actions tab and select her row: the
+    // previously-hidden differing field shows in the details pane, and
+    // unchanged fields are not rendered as misleading "X → X" rows.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student');
+    await selectAccount(tester, entry.targetId);
 
     // The address action is present (postalCode really drifted).
     expect(find.text('Wijzig het adres in Smartschool'), findsWidgets);
-
-    // Expand the student entry: the previously-hidden differing field shows,
-    // and unchanged fields are not rendered as misleading "X → X" rows.
-    final entry = harness.controller.pendingEntries
-        .firstWhere((e) => e.family == 'student');
-    final entryKey = ValueKey('entry-student-${entry.targetId}');
-    await tester.ensureVisible(find.byKey(entryKey));
-    await tester.tap(find.byKey(entryKey));
-    await tester.pumpAndSettle();
-
     expect(find.textContaining('postalCode: 3270 → 3271'), findsOneWidget);
     expect(find.textContaining('country'), findsNothing);
     expect(find.textContaining('street:'), findsNothing);
   });
 
   testWidgets(
-      "a large class's actions virtualize in the real app: only a bounded "
-      'number of entry tiles build, and scrolling loads more (#111/#154)',
+      'the flat Acties list virtualizes in the real app: only a bounded number '
+      'of rows build, and scrolling loads more (#111/#295)',
       (WidgetTester tester) async {
     // A September-changeover-scale pending set (a thousand WISA-departed
-    // accounts, all in one bucket) in the real, laid-out app. Drilling into the
-    // class builds only the on-screen tiles through the lazy sliver list.
+    // accounts) in the real, laid-out app. The drill-down existed partly to
+    // avoid rendering this; the flat list builds only the on-screen rows.
     useTallWindow(tester);
     final harness = manyDepartedHarness(count: 1000);
     await tester.pumpWidget(AccountManagerApp(
@@ -4768,38 +4798,40 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    // Browse them on the Actions tab: drill into their "Zonder klas" bucket.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Niet toegewezen'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Zonder klas'));
-    await tester.tap(find.text('Zonder klas'));
-    await tester.pumpAndSettle();
 
-    // All 1000 accounts sit in this one class, but only a small window builds.
-    expect(harness.controller.classroomPendingEntries, hasLength(1000));
-    final entryTiles = find.byWidgetPredicate(
+    // All 1000 accounts are in this one school-wide list, but only a small
+    // window builds.
+    expect(harness.controller.pendingEntries, hasLength(1000));
+    final rows = find.byWidgetPredicate(
       (w) =>
           w.key is ValueKey<String> &&
-          (w.key! as ValueKey<String>).value.startsWith('entry-'),
+          (w.key! as ValueKey<String>).value.startsWith('account-row-'),
     );
-    final builtInitially = entryTiles.evaluate().length;
-    expect(builtInitially, greaterThan(0));
-    expect(builtInitially, lessThan(200),
-        reason: 'virtualized: on-screen tiles only, not all 1000');
+    List<String> built() => <String>[
+          for (final e in rows.evaluate())
+            (e.widget.key! as ValueKey<String>).value,
+        ];
+    final List<String> initial = built();
+    expect(initial, isNotEmpty);
+    expect(initial, hasLength(lessThan(200)),
+        reason: 'virtualized: on-screen rows only, not all 1000');
 
-    // A far-off entry is not built until scrolled to.
-    final entries = harness.controller.classroomPendingEntries;
-    final lastKey = ValueKey('entry-student-${entries.last.targetId}');
-    expect(find.byKey(lastKey), findsNothing);
-    await tester.scrollUntilVisible(
-      find.byKey(lastKey),
-      5000,
-      scrollable: find.byType(Scrollable).first,
-      maxScrolls: 200,
+    // Scrolling loads rows that were not built and unloads the ones that
+    // scrolled far off-screen.
+    await tester.drag(
+      find.byKey(const ValueKey('actions-list')),
+      const Offset(0, -20000),
     );
-    expect(find.byKey(lastKey), findsOneWidget);
+    await tester.pumpAndSettle();
+
+    final List<String> after = built();
+    expect(after, isNotEmpty);
+    expect(after, hasLength(lessThan(200)));
+    expect(after.toSet().intersection(initial.toSet()), isEmpty,
+        reason: 'a different window of the list is built now');
+    expect(find.byKey(ValueKey(initial.first)), findsNothing);
   });
 
   testWidgets(
@@ -4868,9 +4900,8 @@ void main() {
   });
 
   testWidgets(
-      'a passive session renders the materialized overview and drills into a '
-      'classroom with no pull and no link() (#115)',
-      (WidgetTester tester) async {
+      'a passive session renders the materialized overview with no pull and no '
+      'link() (#115/#295)', (WidgetTester tester) async {
     // Session 1 (offline harness) syncs and materializes the shared view into a
     // LinkedStore both sessions share.
     final snapshots = InMemorySnapshotStore();
@@ -4890,31 +4921,24 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // The overview lives on the Actions tab now — rendered straight from the
-    // store, no Synchronise tapped.
-    await tester.tap(find.text('Acties'));
+    // The stored rollups render on Synchronisatie, straight from the store and
+    // with no Synchronise tapped.
+    await tester.tap(find.text('Synchronisatie'));
     await tester.pumpAndSettle();
-    expect(find.text('Overzicht'), findsOneWidget);
-    // The stored view projects to the same school-less tree a syncing session
-    // renders (#210).
-    expect(find.text('Jaar 3'), findsOneWidget);
-    expect(find.text('School 1'), findsNothing);
-    expect(resumed.wisaSyncs, 0);
-    expect(resumed.ssSyncs, 0);
-    expect(resumed.azSyncs, 0);
+    expect(find.byKey(const ValueKey('reconcile-category-students')),
+        findsOneWidget);
+    expect(find.textContaining('openstaande actie'), findsWidgets);
+    expect(resumed.controller.hasOverview, isTrue);
     expect(resumed.controller.linked, isNull,
         reason: 'link() is never called in a passive session');
 
-    // Drill down: grade-year → classroom.
-    await tester.tap(find.text('Jaar 3'));
+    // Acties has nothing to act on, so it is the one blocking notice (#295) —
+    // never a second, inert way to browse the same documents.
+    await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
-
-    // The classroom's account doc renders — still with no connector pull.
-    expect(find.text('Jane Doe'), findsOneWidget);
-    expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-read-only')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-list')), findsNothing);
+    expect(find.text('Jane Doe'), findsNothing);
     expect(resumed.wisaSyncs, 0);
     expect(resumed.ssSyncs, 0);
     expect(resumed.azSyncs, 0);
@@ -4966,7 +4990,7 @@ void main() {
   });
 
   testWidgets(
-      'a passive session surfaces pending group actions in the drill-down '
+      'a passive session surfaces pending group actions on Klasgroepen '
       'with no pull and no link() (#119)', (WidgetTester tester) async {
     // Session 1 (offline harness) syncs and materializes the shared view. The
     // fixture's two Smartschool-only classes (2B, 3C) raise the informational
@@ -4988,14 +5012,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
-    await tester.pumpAndSettle();
-
-    // The account overview is there, straight from the store — no Synchronise
-    // tapped.
-    expect(find.text('Overzicht'), findsOneWidget);
-
-    // And so is the class inventory, on its own tab, listing the orphan
+    // The class inventory renders straight from the store — no Synchronise
+    // tapped — on its own tab, listing the orphan
     // Smartschool classes with their notice (#227).
     await openKlasgroepen(tester);
 
@@ -5011,15 +5029,15 @@ void main() {
   });
 
   testWidgets(
-      'a passive Acties drill-down says it is read-only in both trees, and its '
-      'Synchroniseer turns the very same class interactive end-to-end (#214)',
-      (WidgetTester tester) async {
+      'a passive session says it is read-only on both action screens, and its '
+      'Synchroniseer turns the very same accounts interactive end-to-end '
+      '(#214/#295)', (WidgetTester tester) async {
     // Session 1 syncs and materializes the shared view; session 2 is the real
     // app over the same stores and never syncs — the everyday passive session
-    // that opened Acties to look at the pending work. Both drill-downs used to
-    // swap their interactive tiles for static bullet text with no gesture
-    // handler and say nothing about it, which reads as an interactive screen
-    // whose taps stopped working rather than as a view of the shared state.
+    // that opened Acties to look at the pending work. Both screens used to swap
+    // their interactive tiles for static bullet text with no gesture handler
+    // and say nothing about it, which reads as an interactive screen whose taps
+    // stopped working rather than as a view of the shared state.
     useTallWindow(tester);
     final linkedStore = InMemoryLinkedStore();
     await ReconcileHarness(linkedStore: linkedStore).controller.sync();
@@ -5041,30 +5059,11 @@ void main() {
     expect(resumed.controller.linked, isNull);
 
     final readOnly = find.byKey(const ValueKey('actions-read-only'));
-    final pendingTiles = find.byWidgetPredicate((w) =>
+    final accountRows = find.byWidgetPredicate((w) =>
         w.key is ValueKey<String> &&
-        (w.key! as ValueKey<String>).value.startsWith('entry-'));
-    expect(readOnly, findsNothing,
-        reason: 'the browsable overview is not the read-only surface');
+        (w.key! as ValueKey<String>).value.startsWith('account-row-'));
 
-    // The Klasgroepen tab: static rows, and they say so — the same
-    // announcement, keyed per view since #227 put the two on different tabs.
-    await openKlasgroepen(tester);
-    final klasgroepenReadOnly =
-        find.byKey(const ValueKey('class-groups-read-only'));
-    expect(klasgroepenReadOnly, findsOneWidget);
-    expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
-    expect(pendingTiles, findsNothing);
-    await tester.tap(find.text('Acties'));
-    await tester.pumpAndSettle();
-
-    // The classroom tree: the same announcement, and the cards themselves carry
-    // the muted lock rather than passing for tappable rows.
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
+    // Acties: one blocking notice, and nothing behind it (#295).
     expect(readOnly, findsOneWidget);
     // Since #287 the notice names what is missing rather than reporting the
     // absence of a sync: there is no snapshot here to build a view from.
@@ -5072,30 +5071,38 @@ void main() {
       find.textContaining('Geen opgeslagen momentopname'),
       findsOneWidget,
     );
-    expect(find.byIcon(Icons.lock_outline), findsWidgets);
-    expect(pendingTiles, findsNothing,
-        reason: 'nothing in this class is actionable — that is the point');
+    expect(accountRows, findsNothing,
+        reason: 'nothing here is actionable — that is the point');
 
-    // Take the offered way out, from the banner itself: WISA is pulled, the
-    // session links, and the freshly persisted view closes the drill-down.
+    // The Klasgroepen tab: static rows, and they say so — the same
+    // announcement, keyed per view since #227 put the two on different tabs.
+    await openKlasgroepen(tester);
+    expect(
+        find.byKey(const ValueKey('class-groups-read-only')), findsOneWidget);
+    expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
+    expect(find.byIcon(Icons.lock_outline), findsWidgets);
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+
+    // Take the offered way out, from the notice itself: WISA is pulled and the
+    // session links.
     final sync = find.byKey(const ValueKey('actions-read-only-sync'));
     await tester.ensureVisible(sync);
     await tester.tap(sync);
     await tester.pumpAndSettle();
     expect(resumed.wisaSyncs, 1);
     expect(resumed.controller.linked, isNotNull);
-    expect(readOnly, findsNothing);
 
-    // The very same class is interactive now: real entry tiles, no notice, no
+    // The very same accounts are interactive now: a real list, no notice, no
     // locks — which is what the operator expected the first time round.
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
     expect(readOnly, findsNothing);
     expect(find.byIcon(Icons.lock_outline), findsNothing);
-    expect(pendingTiles, findsWidgets);
+    expect(accountRows, findsWidgets);
+    final String id = resumed.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    await selectAccount(tester, id);
+    expect(find.byKey(ValueKey('entry-apply-$id')), findsOneWidget);
   });
 
   testWidgets(
@@ -5152,23 +5159,19 @@ void main() {
         findsOneWidget);
     expect(find.text('Gedeelde synchronisatie'), findsOneWidget);
 
-    // Acties: drill into a class and the tiles are the interactive ones —
+    // Acties: the list is there and its rows are the interactive ones —
     // choices, dry-run, apply — with the same notice above them.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
+    final String seeded = operatorB.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    await selectAccount(tester, seeded);
 
     expect(find.byKey(const ValueKey('actions-read-only')), findsNothing);
     expect(find.byKey(const ValueKey('actions-shared-state')), findsOneWidget);
     expect(find.byIcon(Icons.lock_outline), findsNothing);
-    final pendingTiles = find.byWidgetPredicate((w) =>
-        w.key is ValueKey<String> &&
-        (w.key! as ValueKey<String>).value.startsWith('entry-'));
-    expect(pendingTiles, findsWidgets);
+    expect(find.byKey(ValueKey('entry-apply-$seeded')), findsOneWidget);
 
     // The whole of it without one connector round-trip, and without touching
     // the shared view: no generation bump, so no client is asked to refetch.
@@ -5345,7 +5348,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The overview rendered at generation 1 and the subscriber connected.
-    expect(find.text('Overzicht'), findsOneWidget);
+    expect(find.textContaining('Generatie 1'), findsOneWidget);
     expect(resumed.controller.syncState.generation, 1);
     final socket = connector.sockets.single;
     socket.serverSend('{}$signalRRecordSeparator'); // handshake ack
@@ -5372,10 +5375,10 @@ void main() {
 
     expect(resumed.controller.syncState.generation, 2,
         reason: 'the app caught up from the decoded wire signal alone');
-    // Drill down to prove the refreshed rollups reached the UI: 3D now exists.
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    expect(find.text('3D'), findsOneWidget);
+    // …and the refreshed shared state reached the UI: the freshness stamp above
+    // the list names the generation the nudge announced.
+    expect(find.textContaining('Generatie 2'), findsOneWidget);
+    expect(find.textContaining('Generatie 1'), findsNothing);
 
     await subscriber.close();
   });
@@ -5450,23 +5453,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(await harness.passwordQueue.load(), isEmpty);
 
-    // Browse the create on the Actions tab, in the student's class.
+    // Browse the create on the Actions tab and select the student's row.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
+    final String createId = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'student')
+        .targetId;
+    await selectAccount(tester, createId);
     expect(find.text('Maak een nieuw Smartschool account'), findsWidgets);
 
     // Apply the row for real (against the recording SOAP transport): the create
     // runs and its minted password is captured into the shared queue.
-    final String createId =
-        harness.controller.classroomPendingEntries.single.targetId;
-    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$createId')));
-    await tester.tap(find.byKey(ValueKey('entry-student-$createId')));
-    await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$createId')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$createId')));
     await tester.pumpAndSettle();
@@ -6218,31 +6215,68 @@ void main() {
   });
 
   testWidgets(
-      'the Actions Personeel classroom filters by any part of the name in any '
-      'order and by the top-level only-with-actions switch end-to-end, '
-      'combining both (#187/#217/#226)', (WidgetTester tester) async {
-    // The real app, real fonts, real window over a passive session: three staff
-    // seeded into the one synthetic Personeel class — two share the surname
-    // "Smit" (one carrying an action, one not) and one has a distinct voornaam.
-    // The operator narrows the list by name and by the has-actions switch, and
-    // the two filters combine.
+      'the Actions list filters by any part of the name in any order and by the '
+      'only-with-actions switch end-to-end, combining both '
+      '(#187/#217/#226/#295)', (WidgetTester tester) async {
+    // The real app, real fonts, real window, real keyboard. Three staff: two
+    // share the surname "Smit" — Anna is a fresh hire with work, Clara is
+    // already in every system — and Bram has a distinct voornaam. The operator
+    // narrows the list by name and by the has-actions switch, and the two
+    // filters combine.
+    //
+    // The search box used to live inside an opened Personeel classroom; since
+    // #295 it is the flat list's own lookup, on both family tabs.
     useTallWindow(tester);
-    final store = await seededLinkedStore([
-      matStaff(id: 't1', label: 'Anna Smit', withAction: true),
-      matStaff(id: 't2', label: 'Bram Jansen', withAction: false),
-      matStaff(id: 't3', label: 'Clara Smit', withAction: false),
-    ]);
-    final harness = ReconcileHarness(linkedStore: store);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [
+        wisaStaff(
+            code: 'SMIT', wisaId: '42', firstName: 'Anna', lastName: 'Smit'),
+        wisaStaff(
+            code: 'JANS', wisaId: '43', firstName: 'Bram', lastName: 'Jansen'),
+        wisaStaff(
+            code: 'CSMI', wisaId: '44', firstName: 'Clara', lastName: 'Smit'),
+      ]),
+      // Clara alone is fully provisioned, so she is the account the work-list
+      // filter has to drop while the name search keeps her.
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssStaffAccount(
+            uid: 'clara.smit',
+            accountId: 'CSMI',
+            mail: 'clara.smit@school.example',
+            givenName: 'Clara',
+            surname: 'Smit',
+            fax: '0044',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [
+        azStaffUser(
+          id: 'az-clara',
+          upn: 'clara.smit@school.example',
+          employeeId: '44',
+          displayName: 'Smit Clara',
+          givenName: 'Clara',
+          surname: 'Smit',
+        ),
+      ]),
+    );
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
       graph: graph,
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
 
-    // Open the Actions tab (passive overview from the store). The global filter
-    // is on by default since #226 and sits above the family tab bar; this test
-    // is about the name search, so start from the full inventory.
+    // Open the Actions tab. The work-list filter is on by default since #226
+    // and sits above the family tab bar; this test starts from the full list.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
@@ -6252,72 +6286,61 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
 
-    // Go to Personeel — the switch survives the tab change (#226) — and drill
-    // into the single staff class.
+    // Go to Personeel — the switch survives the tab change (#226).
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
     expect(tester.widget<Switch>(toggle).value, isFalse);
-    await tester.tap(find.byKey(const ValueKey('rollup-school-school|staff')));
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
 
-    // All three staff render, and the Personeel tab carries the name search.
-    expect(find.text('Anna Smit'), findsOneWidget);
-    expect(find.text('Bram Jansen'), findsOneWidget);
-    expect(find.text('Clara Smit'), findsOneWidget);
-    expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+    final String anna = accountId(harness, 'Anna Smit');
+    final String bram = accountId(harness, 'Bram Jansen');
+    final String clara = accountId(harness, 'Clara Smit');
+    Finder rowOf(String id) => find.byKey(ValueKey('account-row-$id'));
+
+    // All three staff render, under the list's own search box.
+    expect(rowOf(anna), findsOneWidget);
+    expect(rowOf(bram), findsOneWidget);
+    expect(rowOf(clara), findsOneWidget);
+    final search = find.byKey(const ValueKey('actions-search'));
+    expect(search, findsOneWidget);
 
     // Search on the surname "Smit": both Smits match, Jansen drops out.
-    await tester.enterText(
-        find.byKey(const ValueKey('actions-search')), 'smit');
-    await tester.pump();
-    expect(find.text('Anna Smit'), findsOneWidget);
-    expect(find.text('Clara Smit'), findsOneWidget);
-    expect(find.text('Bram Jansen'), findsNothing);
+    await tester.enterText(search, 'smit');
+    await tester.pumpAndSettle();
+    expect(rowOf(anna), findsOneWidget);
+    expect(rowOf(clara), findsOneWidget);
+    expect(rowOf(bram), findsNothing);
 
     // Both halves of one name, typed in the stored order and reversed (#217).
     // Reversed is the half of the time the operator misremembers which way
     // round the name is stored; it used to return an empty list, because the
     // needle was matched as one contiguous substring of "Voornaam Naam".
-    await tester.enterText(
-        find.byKey(const ValueKey('actions-search')), 'anna smit');
-    await tester.pump();
-    expect(find.text('Anna Smit'), findsOneWidget);
-    expect(find.text('Clara Smit'), findsNothing);
-    await tester.enterText(
-        find.byKey(const ValueKey('actions-search')), 'smit anna');
-    await tester.pump();
-    expect(find.text('Anna Smit'), findsOneWidget);
-    expect(find.text('Clara Smit'), findsNothing);
-    expect(find.text('Bram Jansen'), findsNothing);
+    await tester.enterText(search, 'anna smit');
+    await tester.pumpAndSettle();
+    expect(rowOf(anna), findsOneWidget);
+    expect(rowOf(clara), findsNothing);
+    await tester.enterText(search, 'smit anna');
+    await tester.pumpAndSettle();
+    expect(rowOf(anna), findsOneWidget);
+    expect(rowOf(clara), findsNothing);
+    expect(rowOf(bram), findsNothing);
 
     // Every part must occur, so parts taken from two different people match
     // neither — the operator sees the filter-empty line, not both of them.
-    await tester.enterText(
-        find.byKey(const ValueKey('actions-search')), 'anna jansen');
-    await tester.pump();
+    await tester.enterText(search, 'anna jansen');
+    await tester.pumpAndSettle();
     expect(
         find.text('Geen accounts die aan de filter voldoen.'), findsOneWidget);
 
-    // Back to "Smit", then combine with the global only-with-actions switch
-    // back on: only Anna keeps an action, so Clara (name-matched but
-    // action-free) drops too.
-    await tester.enterText(
-        find.byKey(const ValueKey('actions-search')), 'smit');
-    await tester.pump();
+    // Back to "Smit", then combine with the work-list switch back on: only
+    // Anna keeps an action, so Clara (name-matched but action-free) drops too.
+    await tester.enterText(search, 'smit');
+    await tester.pumpAndSettle();
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    expect(find.text('Anna Smit'), findsOneWidget);
-    expect(find.text('Clara Smit'), findsNothing);
-    expect(find.text('Bram Jansen'), findsNothing);
+    expect(rowOf(anna), findsOneWidget);
+    expect(rowOf(clara), findsNothing);
+    expect(rowOf(bram), findsNothing);
   });
 
   testWidgets(
@@ -6778,11 +6801,18 @@ void main() {
     await tester.pumpAndSettle();
 
     // School 2 is not ours yet, so its student is re-bucketed as a leaver and
-    // their class is nowhere in the tree.
+    // their row names no class of ours.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    expect(find.text('Niet toegewezen'), findsOneWidget);
-    expect(find.text('Jaar 3'), findsNothing);
+    String studentRowKey() =>
+        'account-row-${harness.controller.pendingEntries.firstWhere((e) => e.family == 'student').targetId}';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey(studentRowKey())),
+        matching: find.text('Zonder klas'),
+      ),
+      findsOneWidget,
+    );
 
     // Instellingen → Wisa → tick "beheerd" for Sint-Pieter → Opslaan.
     await tester.tap(find.text('Instellingen'));
@@ -6809,14 +6839,16 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
     await tester.pumpAndSettle();
 
-    // …and the student is out of the leaver bucket and browsable under their
-    // own class, with no relaunch anywhere in this test.
+    // …and the student is out of the leaver bucket, their row naming their own
+    // class, with no relaunch anywhere in this test.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    expect(find.text('Niet toegewezen'), findsNothing);
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    expect(find.text('3C'), findsWidgets);
+    final Finder studentRow = find.byKey(ValueKey(studentRowKey()));
+    await tester.ensureVisible(studentRow);
+    expect(find.descendant(of: studentRow, matching: find.text('Zonder klas')),
+        findsNothing);
+    expect(find.descendant(of: studentRow, matching: find.text('3C')),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -7663,22 +7695,17 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    /// Opens Acties → Jaar 3 → 3C and expands the student's pending row, which
-    /// is where the proposed `userPrincipalName` is written out.
+    /// Opens Acties and selects the student's row, which puts the proposed
+    /// `userPrincipalName` in the details pane beside it.
     Future<void> openStudentRow() async {
       await tester.tap(find.text('Acties'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Jaar 3'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('3C'));
-      await tester.pumpAndSettle();
-      final id = harness.controller.pendingEntries
-          .firstWhere((e) => e.family == 'student')
-          .targetId;
-      final row = find.byKey(ValueKey('entry-student-$id'));
-      await tester.ensureVisible(row);
-      await tester.tap(row);
-      await tester.pumpAndSettle();
+      await selectAccount(
+        tester,
+        harness.controller.pendingEntries
+            .firstWhere((e) => e.family == 'student')
+            .targetId,
+      );
     }
 
     // A first Synchroniseer, on the domain as it stands.
@@ -8194,12 +8221,12 @@ void main() {
     // they did when they reported this.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
-    expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    await selectAccount(
+      tester,
+      harness.controller.pendingEntries
+          .firstWhere((e) => e.family == 'student')
+          .targetId,
+    );
 
     expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
         reason: 'the account already exists — creating one duplicates it');
@@ -8286,29 +8313,20 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
-    expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
+    await selectAccount(
+      tester,
+      harness.controller.pendingEntries
+          .firstWhere((e) => e.family == 'staff')
+          .targetId,
+    );
 
     expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
         reason: 'the account already exists — creating one duplicates it');
     // The record is now WISA + Azure, so the only thing left to build is the
     // Smartschool side — the proposal the adoption unlocks, reading as the
     // create side of the #248 choice it shares with the WISA opt-out.
-    expect(find.text('Maak een nieuw Smartschool account (keuze)'),
-        findsOneWidget);
+    expect(find.text('Kies één oplossing:'), findsOneWidget);
+    expect(find.text('Maak een nieuw Smartschool account'), findsOneWidget);
   });
 
   testWidgets(
@@ -8479,19 +8497,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
+    await selectAccount(
+      tester,
+      harness.controller.pendingEntries
+          .firstWhere((e) => e.family == 'staff')
+          .targetId,
+    );
     expect(find.text('Wijzig het e-mailadres in Smartschool'), findsOneWidget);
   });
 
@@ -8598,11 +8609,7 @@ void main() {
       entry.choices.map((c) => c.selected.changes.summary),
       <String>['Wijzig de naam in Azure'],
     );
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
+    await selectAccount(tester, entry.targetId);
     expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
   });
 
@@ -8689,25 +8696,18 @@ void main() {
     expect(linked.smartschool, isNull);
     expect(linked.azure?.id, 'az-staff');
 
-    // And that is what the operator sees: Acties → Personeel, drilled the way
-    // they would.
+    // And that is what the operator sees: Acties → Personeel, the way they
+    // would look.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
+    await selectAccount(
+      tester,
+      harness.controller.pendingEntries
+          .firstWhere((e) => e.family == 'staff')
+          .targetId,
+    );
     expect(find.text('Verwijder Azure account'), findsOneWidget);
   });
 
@@ -8755,23 +8755,16 @@ void main() {
 
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('3C'));
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
 
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student');
     expect(
       entry.choices.map((c) => c.selected.changes.summary),
       <String>['Wijzig de naam in Azure'],
-      reason: 'the class holds exactly the action the report names',
+      reason: 'the account holds exactly the action the report names',
     );
     final id = entry.targetId;
-    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
-    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
-    await tester.pumpAndSettle();
+    await selectAccount(tester, id);
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
@@ -8853,26 +8846,22 @@ void main() {
     expect(harness.controller.error, isNull);
 
     // Browse Acties → Leerlingen the way the operator did when they reported
-    // this: the student is under their own year and class.
+    // this: the student's row names their own class.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jaar 3'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('3C'));
-    await tester.pumpAndSettle();
-    expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
-    expect(find.text('Jane Doe'), findsWidgets,
-        reason: 'a student with no downstream account is still listed');
-    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
-
-    // Apply that one row.
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student');
     final id = entry.targetId;
-    await tester.ensureVisible(find.byKey(ValueKey('entry-student-$id')));
-    await tester.tap(find.byKey(ValueKey('entry-student-$id')));
-    await tester.pumpAndSettle();
+    final Finder row = find.byKey(ValueKey('account-row-$id'));
+    expect(find.descendant(of: row, matching: find.text('Jane Doe')),
+        findsOneWidget,
+        reason: 'a student with no downstream account is still listed');
+    expect(find.descendant(of: row, matching: find.text('3C')), findsOneWidget,
+        reason: 'under their own class — not "Zonder klas", not nowhere');
+
+    // Apply that one row.
+    await selectAccount(tester, id);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
@@ -8964,43 +8953,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
-    // Browse Acties → Personeel: the staff member is under the synthetic staff
-    // school, with the first link of the chain offered and only that one.
+    // Browse Acties → Personeel: the staff member is a row of that tab's list,
+    // with the first link of the chain offered and only that one.
     await tester.tap(find.text('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
-    expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
-    expect(find.text('Anna Smit'), findsWidgets,
-        reason: 'a staff member with no downstream account is still listed');
-    // …reading as the create side of the either/or choice of #248: the WISA
-    // opt-out this family also raises is its alternative, not a second to-do.
-    expect(
-        find.text('Maak een nieuw Office 365 account (keuze)'), findsOneWidget);
-    expect(find.text('Maak een nieuw Smartschool account'), findsNothing,
-        reason: 'the dispatch can only see the first link of the chain');
-
-    // Apply that one row.
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'staff');
     final id = entry.targetId;
-    await tester.ensureVisible(find.byKey(ValueKey('entry-staff-$id')));
-    await tester.tap(find.byKey(ValueKey('entry-staff-$id')));
-    await tester.pumpAndSettle();
+    final Finder row = find.byKey(ValueKey('account-row-$id'));
+    expect(find.descendant(of: row, matching: find.text('Anna Smit')),
+        findsOneWidget,
+        reason: 'a staff member with no downstream account is still listed');
+
+    // Apply that one row. Its decision reads as the either/or of #248: the WISA
+    // opt-out this family also raises is its alternative, not a second to-do.
+    await selectAccount(tester, id);
+    expect(find.text('Kies één oplossing:'), findsOneWidget);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    expect(find.text('Maak een nieuw Smartschool account'), findsNothing,
+        reason: 'the dispatch can only see the first link of the chain');
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
@@ -9042,7 +9015,7 @@ void main() {
   });
 
   testWidgets(
-      'a new staff member offers one either/or choice, and "apply to all" '
+      'a new staff member offers one either/or choice, and applying it '
       'provisions every hire without blacklisting any end-to-end (#248)',
       (WidgetTester tester) async {
     // The real app, real fonts, real navigation, over the real Graph and
@@ -9078,70 +9051,53 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    final staffSchool =
-        find.byKey(const ValueKey('rollup-school-school|staff'));
-    await tester.ensureVisible(staffSchool);
-    await tester.tap(staffSchool);
-    await tester.pumpAndSettle();
-    await tester
-        .tap(find.byKey(const ValueKey('rollup-grade-grade|staff|Personeel')));
-    await tester.pumpAndSettle();
-    final staffClass = find
-        .byKey(const ValueKey('rollup-class-class|staff|Personeel|Personeel'));
-    await tester.ensureVisible(staffClass);
-    await tester.tap(staffClass);
-    await tester.pumpAndSettle();
-    expect(
-        find.byKey(const ValueKey('actions-classroom-back')), findsOneWidget);
 
-    // Both new hires are on the list, each reading as *one* choice…
-    expect(find.text('Anna Smit'), findsWidgets);
-    expect(find.text('Bram Jansen'), findsWidgets);
-    expect(find.text('Maak een nieuw Office 365 account (keuze)'),
-        findsNWidgets(2));
-    // …and no row carries the opt-out as a line of its own: it is the
-    // alternative the operator can switch to, not a second thing that also
-    // runs. (The bulk header below names both sides of the one choice.)
-    expect(find.text('Negeer dit account bij het importeren uit WISA'),
-        findsNothing);
-
-    // Expanding one offers both readings as radios, the create pre-selected.
+    // Both new hires are rows, each badged once — the either/or is one
+    // decision, never two independent to-dos.
     final entries = harness.controller.pendingEntries
         .where((e) => e.family == 'staff')
         .toList();
     expect(entries, hasLength(2));
-    final first = find.byKey(ValueKey('entry-staff-${entries.first.targetId}'));
-    await tester.ensureVisible(first);
-    await tester.tap(first);
-    await tester.pumpAndSettle();
+    for (final e in entries) {
+      final Finder row = find.byKey(ValueKey('account-row-${e.targetId}'));
+      await tester.ensureVisible(row);
+      expect(
+          find.descendant(of: row, matching: find.text('1')), findsOneWidget);
+    }
+
+    // Selecting one offers both readings as radios, the create pre-selected —
+    // and the opt-out is only ever the alternative, never a line of its own.
+    await selectAccount(tester, entries.first.targetId);
     expect(find.text('Kies één oplossing:'), findsOneWidget);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
     expect(find.text('Negeer dit account bij het importeren uit WISA'),
         findsOneWidget);
-    await tester.tap(first);
-    await tester.pumpAndSettle();
 
-    // The bulk header offers the one resolution for both hires.
-    final key = harness.controller.classroomPendingSituations.single.key;
-    final bulk = find.byKey(ValueKey('situation-apply-$key'));
-    await tester.ensureVisible(bulk);
-    expect(
-      find.textContaining('Maak een nieuw Office 365 account / Negeer dit '
-          'account bij het importeren uit WISA'),
-      findsOneWidget,
-      reason: 'the header names one either/or, not two independent to-dos',
-    );
-
+    // Provision both, one deliberate apply each — since #295 Acties applies per
+    // decision and nothing else, and #296 is what brings the school-wide bulk
+    // pass back with its cohort visible first.
     final pulls = harness.wisaSyncs;
-    await tester.tap(bulk);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
+    final summaries = <String>[];
+    final outcomes = <String>[];
+    for (final e in entries) {
+      await selectAccount(tester, e.targetId);
+      final Finder apply = find.byKey(ValueKey('entry-apply-${e.targetId}'));
+      await tester.ensureVisible(apply);
+      await tester.tap(apply);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+      // Each pass clears the previous one's results, so the verdicts are
+      // collected as they land.
+      summaries.addAll(
+          harness.controller.applyResults!.map((r) => r.changes.summary));
+      outcomes
+          .addAll(harness.controller.applyResults!.map((r) => r.outcome.name));
+    }
 
     // Both teachers were provisioned end to end — Office 365 and, off the #240
     // chain, Smartschool…
     expect(harness.graph.createdUsers, hasLength(2));
-    final summaries =
-        harness.controller.applyResults!.map((r) => r.changes.summary).toList();
     expect(summaries.where((s) => s == 'Maak een nieuw Office 365 account'),
         hasLength(2));
     expect(summaries.where((s) => s == 'Maak een nieuw Smartschool account'),
@@ -9155,10 +9111,7 @@ void main() {
       reason: 'the rule would drop the hires this same pass just provisioned',
     );
     expect(harness.wisaSyncs, pulls);
-    expect(
-      harness.controller.applyResults!.map((r) => r.outcome.name),
-      everyElement('applied'),
-    );
+    expect(outcomes, everyElement('applied'));
   });
 }
 

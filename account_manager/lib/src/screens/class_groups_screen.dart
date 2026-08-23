@@ -12,6 +12,12 @@ import '../reconcile/reconcile_controller.dart';
 import '../search/name_query.dart';
 import 'action_tiles.dart';
 
+// The class-name ordering moved to the shared tile library when the flat Acties
+// list grew a "sorteer op klas" of its own (#295) — both screens order a class
+// list the same way or neither is scannable. Re-exported so it stays importable
+// from here, exactly as it was before it moved.
+export 'action_tiles.dart' show compareClassNames;
+
 /// The **Klasgroepen** tab (#227): the full class inventory.
 ///
 /// Every class the last sync linked is a row here — not only the ones that
@@ -302,8 +308,11 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
   List<Widget> _slivers(BuildContext context) {
     final bool active = controller.linked != null;
     final rows = _rows();
-    final int attention =
-        rows.where((r) => r.attentionIn(active: active)).length;
+    // The same predicate the rows below key their highlight on, but derived on
+    // the controller since #301 — Acties quotes this number too, and a pointer
+    // that counted differently from the list it points at would be worse than
+    // none.
+    final int attention = controller.classesNeedingAttention;
     // The two filters compose rather than replace one another (#262): the
     // search narrows the inventory to the classes the operator is looking for,
     // and the switch — if they turned it on — keeps the ones asking something.
@@ -327,6 +336,7 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
         controller: controller,
         total: rows.length,
         attention: attention,
+        accountsNeedingAttention: controller.accountsNeedingAttention,
       )),
       _gap(PlinkSpacing.s4),
       _section(_ClassSearchBar(searchController: _search)),
@@ -508,37 +518,22 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
       ];
 }
 
-/// Orders class names the way an operator reads a class list: by year first and
-/// numerically (`2A` before `10A`), then alphabetically, so `2F` sorts beside
-/// its sub-groups rather than between `20A` and `21B`.
-int compareClassNames(String a, String b) {
-  final ya = _leadingYear(a);
-  final yb = _leadingYear(b);
-  if (ya != yb) {
-    // A non-numeric class (`OKAN`) sorts after every numbered year.
-    if (ya == null) return 1;
-    if (yb == null) return -1;
-    return ya - yb;
-  }
-  return a.toLowerCase().compareTo(b.toLowerCase());
-}
-
-int? _leadingYear(String name) {
-  final match = RegExp(r'^\s*(\d+)').firstMatch(name);
-  return match == null ? null : int.tryParse(match.group(1)!);
-}
-
 /// The tab title plus the one-line state of the inventory.
 class _ClassGroupsHeader extends StatelessWidget {
   const _ClassGroupsHeader({
     required this.controller,
     required this.total,
     required this.attention,
+    this.accountsNeedingAttention = 0,
   });
 
   final ReconcileController controller;
   final int total;
   final int attention;
+
+  /// How many accounts are waiting on the Acties tab (#301) — the mirror of the
+  /// line Acties carries about this one.
+  final int accountsNeedingAttention;
 
   @override
   Widget build(BuildContext context) {
@@ -563,6 +558,13 @@ class _ClassGroupsHeader extends StatelessWidget {
           },
           style: text.bodyMedium,
         ),
+        // The other half of "is everything as expected?" (#301) — the mirror of
+        // the pointer Acties carries at this tab, in the same place under the
+        // count line, and silent when Acties is holding nothing.
+        if (accountsNeedingAttention > 0) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s1),
+          OtherTabAttentionLine.accounts(count: accountsNeedingAttention),
+        ],
         if (freshness != null) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s1),
           Text(freshness, style: text.bodySmall),

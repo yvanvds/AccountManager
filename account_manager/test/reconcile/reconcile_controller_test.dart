@@ -366,8 +366,8 @@ void main() {
       final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
       await s1.controller.sync();
 
-      // Session 2 reads that view, opens a class and the Klasgroepen
-      // inventory — and its own writes fail.
+      // Session 2 reads that view and the Klasgroepen inventory — and its own
+      // writes fail.
       final s2 = await ReconcileHarness.resume(
         store: snapshots,
         linkedStore: linkedStore,
@@ -377,14 +377,7 @@ void main() {
         ),
       );
       await s2.controller.loadOverview();
-      final classroom = s2.controller.schoolRollups
-          .expand((s) => s2.controller.childrenOf(s.key))
-          .expand((g) => s2.controller.childrenOf(g.key))
-          .single;
-      await s2.controller.openClassroom(classroom);
       await s2.controller.loadGroups();
-      s2.controller.expandedPath = <String>[classroom.key];
-      expect(s2.controller.classroomAccounts, isNotEmpty);
       expect(s2.controller.groupDocs, isNotEmpty);
 
       await s2.controller.sync();
@@ -396,15 +389,10 @@ void main() {
       );
       // …and the session still holds the view it just linked.
       expect(s2.controller.linked, isNotNull);
-      // The caches derived from the *previous* generation went with the
-      // re-link, whether or not the shared write landed.
-      expect(s2.controller.selectedClassroom, isNull,
-          reason: 'the open class was read for the view that was replaced');
-      expect(s2.controller.classroomAccounts, isNull);
+      // The cache derived from the *previous* generation went with the re-link,
+      // whether or not the shared write landed. (The Acties list has no such
+      // cache since #295: it renders off the linked view itself.)
       expect(s2.controller.groupDocs, isNull);
-      expect(s2.controller.expandedPath, isEmpty);
-      // With nothing open, no live entry can be joined to a stale document.
-      expect(s2.controller.classroomPendingEntries, isEmpty);
     });
 
     test(
@@ -423,13 +411,8 @@ void main() {
         persistTimeout: const Duration(milliseconds: 50),
       );
       await s2.controller.loadOverview();
-      final classroom = s2.controller.schoolRollups
-          .expand((s) => s2.controller.childrenOf(s.key))
-          .expand((g) => s2.controller.childrenOf(g.key))
-          .single;
-      await s2.controller.openClassroom(classroom);
       await s2.controller.loadGroups();
-      expect(s2.controller.classroomAccounts, isNotEmpty);
+      expect(s2.controller.groupDocs, isNotEmpty);
 
       await s2.controller.checkDrift();
 
@@ -439,8 +422,6 @@ void main() {
           'Het opslaan van het gedeelde overzicht duurde langer dan',
         )),
       );
-      expect(s2.controller.selectedClassroom, isNull);
-      expect(s2.controller.classroomAccounts, isNull);
       expect(s2.controller.groupDocs, isNull);
     });
   });
@@ -1857,7 +1838,7 @@ void main() {
 
     test(
         'a merged year lists both schools\' classrooms, each keeping its own '
-        'partition so the drill-down still reads one partition', () async {
+        'partition', () async {
       final h = twoSchoolHarness();
       await h.controller.sync();
 
@@ -1866,13 +1847,14 @@ void main() {
       final classes = h.controller.studentChildrenOf(jaar1);
       expect(classes.map((r) => r.label), <String>['1A', '1B']);
       // The partition key of each class is its real school — what
-      // `readClassroom(partitionKey: school)` targets.
+      // `readClassroom(partitionKey: school)` targets. Acties stopped reading
+      // classroom partitions in #295, but the store still holds them that way
+      // and the counts are still summed per school.
       expect(classes.map((r) => r.school), <String>['1', '2']);
-
-      // Opening one reads exactly that school's partition.
-      await h.controller.openClassroom(classes.last);
-      expect(h.controller.classroomAccounts, hasLength(1));
-      expect(h.controller.classroomAccounts!.single.school, '2');
+      expect(
+        await h.linkedStore.readClassroom(school: '2', classroom: '1B'),
+        hasLength(1),
+      );
     });
 
     test('a non-numeric class group is never labelled "Jaar Overig"', () async {
@@ -2010,6 +1992,44 @@ void main() {
       await h.controller.loadGroups();
       expect(h.controller.groupDocs, isNotEmpty);
     });
+
+    test(
+        'the two attention counts are one derivation each, so the pointer one '
+        'action screen carries matches the list it points at (#301)', () async {
+      // `3C` and `3D` are both missing their Office 365 group; of the two
+      // students only Sam's Office 365 display name is stale.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+
+      // Nothing to count until the inventory has been read: a count the store
+      // was never asked for is not a count.
+      expect(h.controller.groupDocs, isNull);
+      expect(h.controller.classesNeedingAttention, 0);
+
+      await h.controller.loadGroups();
+      expect(h.controller.classesNeedingAttention, 2);
+
+      // Accounts, not actions. The view holds three pending cards — Sam plus
+      // the two classes — so neither the total nor the class half is the
+      // number the Klasgroepen pointer wants.
+      expect(h.controller.totalPendingCount, 3);
+      expect(h.controller.accountsNeedingAttention, 1);
+      expect(h.controller.groupPendingEntries, hasLength(2));
+    });
+
+    test(
+        'an informational candidate is class work, so it counts on Klasgroepen '
+        'and not against the accounts (#301)', () async {
+      // `2F` has no Office 365 group, which leaves each of its students with an
+      // `AzureClassGroupMembership` diagnosis of work that is done per class on
+      // the other tab. It must not turn them into accounts that need attention.
+      final h = azureClassGroupHarness();
+      await h.controller.sync();
+      await h.controller.loadGroups();
+
+      expect(h.controller.classesNeedingAttention, greaterThan(0));
+      expect(h.controller.accountsNeedingAttention, 0);
+    });
   });
 
   group('passive session reads the store (#115)', () {
@@ -2043,11 +2063,8 @@ void main() {
           .expand((s) => s2.controller.childrenOf(s.key))
           .expand((g) => s2.controller.childrenOf(g.key))
           .single;
+      expect(classroom.accountCount, 1);
 
-      await s2.controller.openClassroom(classroom);
-
-      expect(s2.controller.selectedClassroom, classroom);
-      expect(s2.controller.classroomAccounts, hasLength(1));
       // Still no pull.
       expect(s2.wisaSyncs, 0);
       expect(s2.ssSyncs, 0);
@@ -2252,8 +2269,7 @@ void main() {
       expect(passive.controller.linked, isNotNull);
     });
 
-    test('onStoreChanged refetches the overview and the open classroom',
-        () async {
+    test('onStoreChanged refetches the overview', () async {
       final linkedStore = InMemoryLinkedStore();
       final snapshots = InMemorySnapshotStore();
 
@@ -2261,18 +2277,19 @@ void main() {
       final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
       await s1.controller.sync();
 
-      // Session 2 renders the shared overview and drills into 3C.
+      // Session 2 renders the shared overview.
       final s2 = await ReconcileHarness.resume(
         store: snapshots,
         linkedStore: linkedStore,
       );
       await s2.controller.loadOverview();
-      final classroom3c = s2.controller.schoolRollups
-          .expand((s) => s2.controller.childrenOf(s.key))
-          .expand((g) => s2.controller.childrenOf(g.key))
-          .singleWhere((c) => c.classroom == '3C');
-      await s2.controller.openClassroom(classroom3c);
-      expect(s2.controller.classroomAccounts, hasLength(1));
+      expect(
+        s2.controller.schoolRollups
+            .expand((s) => s2.controller.childrenOf(s.key))
+            .expand((g) => s2.controller.childrenOf(g.key))
+            .map((c) => c.classroom),
+        contains('3C'),
+      );
 
       // Session 1 moves the student to 3D and re-syncs → generation 2.
       s1.wisaResult = wisaSnap(
@@ -2286,15 +2303,13 @@ void main() {
       await s2.controller.onStoreChanged(2);
 
       expect(s2.controller.syncState.generation, 2);
-      // The open 3C shard was refetched — the student has left it.
-      expect(s2.controller.classroomAccounts, isEmpty);
-      // …and 3D now exists in the refreshed rollups.
+      // 3D now exists in the refreshed rollups, and 3C is gone with it.
       expect(
         s2.controller.schoolRollups
             .expand((s) => s2.controller.childrenOf(s.key))
             .expand((g) => s2.controller.childrenOf(g.key))
             .map((c) => c.classroom),
-        contains('3D'),
+        <String>['3D'],
       );
     });
 
@@ -2318,18 +2333,19 @@ void main() {
       final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
       await s1.controller.sync();
 
-      // Session 2 renders the shared overview and drills into 3C.
+      // Session 2 renders the shared overview.
       final s2 = await ReconcileHarness.resume(
         store: snapshots,
         linkedStore: linkedStore,
       );
       await s2.controller.loadOverview();
-      final classroom3c = s2.controller.schoolRollups
-          .expand((s) => s2.controller.childrenOf(s.key))
-          .expand((g) => s2.controller.childrenOf(g.key))
-          .singleWhere((c) => c.classroom == '3C');
-      await s2.controller.openClassroom(classroom3c);
-      expect(s2.controller.classroomAccounts, hasLength(1));
+      expect(
+        s2.controller.schoolRollups
+            .expand((s) => s2.controller.childrenOf(s.key))
+            .expand((g) => s2.controller.childrenOf(g.key))
+            .map((c) => c.classroom),
+        contains('3C'),
+      );
 
       // Session 1 moves the student to 3D → generation 2. Session 2 was
       // "disconnected" and never saw the nudge.
@@ -2340,10 +2356,9 @@ void main() {
       await s1.controller.sync();
 
       // A reconnect drives the catch-up with no generation argument — it
-      // re-reads unconditionally and the open 3C shard refreshes to empty.
+      // re-reads unconditionally.
       await s2.controller.resyncFromStore();
       expect(s2.controller.syncState.generation, 2);
-      expect(s2.controller.classroomAccounts, isEmpty);
       expect(
         s2.controller.schoolRollups
             .expand((s) => s2.controller.childrenOf(s.key))
@@ -2411,14 +2426,20 @@ void main() {
 
       await s2.controller.openSession();
 
-      // The same pending work the syncing session derived — without an open
-      // classroom, which is what a flat school-wide list needs (#295).
-      expect(s2.controller.selectedClassroom, isNull);
+      // The same pending work the syncing session derived — with no classroom
+      // to open, which is what the flat school-wide list needs (#295).
       expect(
         s2.controller.pendingEntries.map((e) => e.targetId),
         s1.controller.pendingEntries.map((e) => e.targetId),
       );
       expect(s2.controller.pendingEntries, isNotEmpty);
+      // And the account documents behind the rows are derived school-wide from
+      // that same view, with no per-classroom read at all (#295).
+      expect(
+        s2.controller.linkedAccounts.map((a) => a.label),
+        s1.controller.linkedAccounts.map((a) => a.label),
+      );
+      expect(s2.controller.linkedAccounts, isNotEmpty);
     });
 
     test('adoption runs once however many screens open the session', () async {
@@ -2754,30 +2775,20 @@ void main() {
       expect(b.azSyncs, 0);
     });
 
-    test("a passive session's open classroom drops the applied entry",
+    test('the applied entry is dropped from the stored account document too',
         () async {
-      // The drill-down is read from the per-account documents, not the rollups,
-      // so the write-back has to move both or B opens 3C and still sees the
-      // work on the card.
-      final hub = InMemorySignalHub();
+      // The rollups are aggregates; the per-account documents are what a
+      // session adopting the shared state links from. The write-back has to
+      // move both, or the next session to open reads the work as still due.
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
       final a = appliedClassWorkHarness(
         store: snapshots,
         linkedStore: linkedStore,
-        hub: hub,
       );
       await a.controller.sync();
-
-      final b = await ReconcileHarness.resume(
-        store: snapshots,
-        linkedStore: linkedStore,
-        hub: hub,
-      );
-      await b.controller.loadOverview();
-      await b.controller.openClassroom(klas3C(b.controller)!);
       expect(
-        b.controller.classroomAccounts!
+        (await linkedStore.readClassroom(school: '1', classroom: '3C'))
             .expand((acc) => acc.candidates)
             .where((c) => c.canApply),
         hasLength(1),
@@ -2788,9 +2799,10 @@ void main() {
       await pumpEventQueue();
 
       expect(
-        b.controller.classroomAccounts!.expand((acc) => acc.candidates),
+        (await linkedStore.readClassroom(school: '1', classroom: '3C'))
+            .expand((acc) => acc.candidates),
         isEmpty,
-        reason: 'the open drill-down followed the shard it was told about',
+        reason: 'the write-back patched the document, not only the rollup',
       );
     });
 
@@ -2816,10 +2828,10 @@ void main() {
           reason: 'a one-row apply can name the very account it wrote');
     });
 
-    test('a shard rules an unrelated open classroom out of the refetch',
-        () async {
-      // What the shard is for: a session with 3D open is told about a change in
-      // 3C, and does not pay for a drill-down read it can prove is pointless.
+    test('a shard rules the class inventory out of the refetch', () async {
+      // What the shard is for: a session holding the Klasgroepen inventory is
+      // told about a change in one classroom, and does not pay for an inventory
+      // read it can prove is pointless.
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
       await appliedClassWorkHarness(store: snapshots, linkedStore: linkedStore)
@@ -2831,11 +2843,9 @@ void main() {
         linkedStore: linkedStore,
       );
       await b.controller.loadOverview();
-      final threeD = b.controller.studentRollups
-          .expand(b.controller.studentChildrenOf)
-          .singleWhere((r) => r.classroom == '3D');
-      await b.controller.openClassroom(threeD);
-      final opened = b.controller.classroomAccounts;
+      await b.controller.loadGroups();
+      final loaded = b.controller.groupDocs;
+      expect(loaded, isNotEmpty);
 
       await b.controller.onStoreChanged(
         99,
@@ -2844,15 +2854,15 @@ void main() {
 
       expect(b.controller.syncState.generation, 1,
           reason: 'the overview itself is always re-read');
-      expect(identical(b.controller.classroomAccounts, opened), isTrue,
-          reason: '3D was never re-read — the shard ruled it out');
+      expect(identical(b.controller.groupDocs, loaded), isTrue,
+          reason: 'the inventory was never re-read — the shard ruled it out');
 
       // …while a shard that cannot rule it out does re-read it.
       await b.controller.onStoreChanged(
         100,
-        shard: const ShardRef(school: '1'),
+        shard: const ShardRef(school: groupsPartition),
       );
-      expect(identical(b.controller.classroomAccounts, opened), isFalse);
+      expect(identical(b.controller.groupDocs, loaded), isFalse);
     });
 
     test('a class-group apply reaches the stored group document', () async {

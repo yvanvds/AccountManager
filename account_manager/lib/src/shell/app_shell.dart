@@ -9,14 +9,21 @@ import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
 import '../screens/settings_screen.dart';
 import '../settings/settings_bootstrap.dart';
+import 'shell_navigation.dart';
+
+export 'shell_navigation.dart';
 
 /// One navigable destination in the [AppShell].
 class ShellDestination {
   const ShellDestination({
+    required this.tab,
     required this.label,
     required this.icon,
     required this.builder,
   });
+
+  /// Which destination this is, so a screen can ask for it by name (#301).
+  final ShellTab tab;
 
   final String label;
   final IconData icon;
@@ -54,16 +61,19 @@ class _AppShellState extends State<AppShell> {
     // it (#257): the rail is read together with the heading it leads to, so a
     // rail saying "Actions" over a page titled "Acties" reads as two apps.
     ShellDestination(
+      tab: ShellTab.start,
       label: 'Start',
       icon: Icons.home_outlined,
       builder: (_) => const HomeScreen(),
     ),
     ShellDestination(
+      tab: ShellTab.synchronisatie,
       label: 'Synchronisatie',
       icon: Icons.sync_alt_outlined,
       builder: (_) => ReconcileScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
+      tab: ShellTab.acties,
       label: 'Acties',
       icon: Icons.checklist_outlined,
       builder: (_) => ActionsScreen(bootstrap: widget.reconcileBootstrap),
@@ -72,16 +82,19 @@ class _AppShellState extends State<AppShell> {
     // inside Acties: it lists *every* class, so it answers "is this right?",
     // which the action list structurally cannot.
     ShellDestination(
+      tab: ShellTab.klasgroepen,
       label: 'Klasgroepen',
       icon: Icons.groups_outlined,
       builder: (_) => ClassGroupsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
+      tab: ShellTab.wachtwoorden,
       label: 'Wachtwoorden',
       icon: Icons.password_outlined,
       builder: (_) => PasswordsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
+      tab: ShellTab.instellingen,
       label: 'Instellingen',
       icon: Icons.settings_outlined,
       builder: (_) => SettingsScreen(bootstrap: widget.settingsBootstrap),
@@ -89,6 +102,20 @@ class _AppShellState extends State<AppShell> {
   ];
 
   int _selected = 0;
+
+  /// Selects the destination named [tab] (#301) — how a screen follows its own
+  /// pointer at another one, rather than asking the operator to find the rail
+  /// entry themselves.
+  ///
+  /// Exactly what tapping the rail entry does, and nothing more: a destination
+  /// the operator has been to before is kept alive by the [IndexedStack] and
+  /// comes back as they left it; one they have not is built on the next frame,
+  /// as it would be either way.
+  void _go(ShellTab tab) {
+    final int index = _destinations.indexWhere((d) => d.tab == tab);
+    if (index < 0 || index == _selected) return;
+    setState(() => _selected = index);
+  }
 
   /// The reconcile stack is assembled once and kept across tab switches, so
   /// the screens are kept alive rather than rebuilt per selection.
@@ -100,6 +127,15 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     _built[_selected] ??= _destinations[_selected].builder(context);
+    // Above the rail *and* the views, so a screen can follow its own pointer at
+    // another tab (#301).
+    return ShellNavigation(
+      go: _go,
+      child: _scaffold(),
+    );
+  }
+
+  Widget _scaffold() {
     return Scaffold(
       // The per-product identity rule spans the top of the whole shell (its
       // intended placement — a full-width accent bar), with the navigation

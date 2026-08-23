@@ -209,6 +209,63 @@ void main() {
       expect(identical(before, after), isFalse,
           reason: 'a fresh linked view must not serve a stale cached list');
     });
+
+    test(
+        'an apply pass refreshes the derived lists once, not once per write '
+        '(#299)', () async {
+      // A pass relinks after every write and notifies once per action to drive
+      // the progress dialog (#243), so a screen listening to it re-derives the
+      // whole school between one write and the next: `describeChanges()` over
+      // every pending action, plus a materialize of every account. At the
+      // September rollover that is thousands of writes, and the list being
+      // re-derived is behind a modal nobody can read.
+      // Three students in one situation — a rename each, which a real write
+      // genuinely settles — so the pass makes three writes, three relinks and
+      // a settled view to land on.
+      final h = crossClassSituationHarness();
+      await h.controller.sync();
+
+      // Exactly what a rebuild reads, on exactly the notifications it rebuilds
+      // on — so this counts the refreshes the screen would really have paid
+      // for, not the cache misses in the abstract.
+      final accountLists = <Object>[];
+      final entryLists = <Object>[];
+      void record() {
+        final Object accounts = h.controller.linkedAccounts;
+        if (!accountLists.any((o) => identical(o, accounts))) {
+          accountLists.add(accounts);
+        }
+        final Object entries = h.controller.pendingEntries;
+        if (!entryLists.any((o) => identical(o, entries))) {
+          entryLists.add(entries);
+        }
+      }
+
+      final cohort = h.controller.pendingSituations
+          .firstWhere((c) => c.key == 'student|ModifyAzureName');
+      expect(cohort.decisions, hasLength(3),
+          reason: 'three students share the rename');
+
+      h.controller.addListener(record);
+      await h.controller.applyDecisions(cohort.decisions);
+      h.controller.removeListener(record);
+
+      const reason = 'the view the pass started from, then the settled one — '
+          'the three intermediate relinks are the ones nobody can read';
+      expect(accountLists, hasLength(2), reason: reason);
+      expect(entryLists, hasLength(2), reason: reason);
+
+      // …and the second of each really is the settled view: the pass released
+      // the pinned lists before it announced it was over.
+      expect(
+        h.controller.pendingSituations
+            .where((c) => c.key == 'student|ModifyAzureName'),
+        isEmpty,
+        reason: 'the three renames were written, so nothing raises them again',
+      );
+      expect(identical(h.controller.pendingEntries, entryLists.last), isTrue);
+      expect(identical(h.controller.linkedAccounts, accountLists.last), isTrue);
+    });
   });
 
   group('a new class is one choice, not two to-dos (#244)', () {
