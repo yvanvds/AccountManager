@@ -234,12 +234,88 @@ class SmartschoolNamesakeSkipped extends LinkWarning {
   });
 }
 
+/// What one of the records behind a [DuplicateLinkedId] holds — enough of each
+/// colliding record for an operator (or a log line) to tell them apart.
+///
+/// Deliberately flattened to the per-system keys rather than carrying the
+/// records themselves: a collision can be between two [LinkedAccount]s, two
+/// [LinkedStaff], or one of each, and a single shape lets every consumer render
+/// all three the same way.
+class LinkedIdHolding {
+  /// The role the colliding record was minted with.
+  final PersonRole role;
+
+  /// The WISA key — a student's `wisaId` or a staff member's `code`. Null when
+  /// the record has no WISA side.
+  final String? wisa;
+
+  /// The Smartschool `uid`, or null when the record has no Smartschool side.
+  final String? smartschool;
+
+  /// The Azure object id, or null when the record has no Azure side.
+  final String? azure;
+
+  const LinkedIdHolding({
+    required this.role,
+    this.wisa,
+    this.smartschool,
+    this.azure,
+  });
+
+  /// The holding of a colliding student record.
+  factory LinkedIdHolding.ofAccount(LinkedAccount a) => LinkedIdHolding(
+        role: a.role,
+        wisa: a.wisa?.wisaId.value,
+        smartschool: a.smartschool?.uid,
+        azure: a.azure?.id,
+      );
+
+  /// The holding of a colliding staff record.
+  factory LinkedIdHolding.ofStaff(LinkedStaff s) => LinkedIdHolding(
+        role: s.role,
+        wisa: s.wisa?.code.value,
+        smartschool: s.smartschool?.uid,
+        azure: s.azure?.id,
+      );
+}
+
+/// INV-24: two or more linker records resolved to the same [LinkedAccountId].
+///
+/// Every layer below the linker is keyed by that id and each one degrades
+/// differently and silently — the materializer hands both records the *union*
+/// of their candidate actions, the Acties list keeps whichever pending entry
+/// arrived last, and the shared store holds one document per id, so one record
+/// is what every other operator inherits. The first sign of trouble used to be
+/// an operator reading a card whose presence chips come from one record and
+/// whose actions come from another (#319).
+///
+/// So a collision is reported as what it is — a linker invariant violation —
+/// rather than merged away by each consumer's own assumption. Both records are
+/// kept in the [LinkedSnapshot]: dropping one silently is the very failure
+/// INV-23 exists to prevent. The tally counts the id once ([LinkCounts]), so
+/// the dashboard's linked/total ratio does not drift while the collision lasts.
+class DuplicateLinkedId extends LinkWarning {
+  /// The id the colliding records share.
+  final LinkedAccountId id;
+
+  /// What each record claiming [id] holds; at least two, in snapshot order
+  /// (students before staff).
+  final List<LinkedIdHolding> holdings;
+
+  const DuplicateLinkedId({required this.id, required this.holdings});
+}
+
 /// Per-system tally for one [LinkedSnapshot], mirroring the counters legacy
 /// `LinkedAccounts.DoRelink` exposed.
 ///
 /// A record counts toward [linked] when it is present in *every* system, and
 /// toward [unlinked] when it is present in this system but missing from at
 /// least one other. [total] == [linked] + [unlinked].
+///
+/// The unit is a **person**, not a record: [LinkedSnapshot.fromRecords] counts
+/// each [LinkedAccountId] once, so a colliding id (INV-24, #319) cannot inflate
+/// a system's total or skew the dashboard's linked/total ratio for as long as
+/// the collision lasts.
 class LinkCounts {
   final int total;
   final int linked;
@@ -287,6 +363,19 @@ class LinkedSnapshot {
   /// `LinkedAccounts.DoRelink`: a person counts toward a system's [total]
   /// when present there, and toward that system's [linked] only when present
   /// in all three systems. Groups are listed but not counted.
+  ///
+  /// This is also where [LinkedAccountId] uniqueness (INV-24) is enforced, so
+  /// the invariant lives with the type rather than in each consumer's
+  /// assumptions (#319). Every record — student or staff — is bucketed by its
+  /// id, and any id claimed more than once yields one [DuplicateLinkedId]
+  /// warning appended to [warnings], in first-seen order.
+  ///
+  /// The colliding records are **kept**, never deduped away: a silent drop is
+  /// what INV-23 exists to prevent, and one of the two is generally the record
+  /// carrying the actions an operator is about to apply. What changes is that
+  /// the collision is now loud, and that the tally below counts each id once —
+  /// counting per record inflated a system's [total] by one per collision and
+  /// skewed the dashboard's linked/total ratio.
   factory LinkedSnapshot.fromRecords({
     required List<LinkedAccount> accounts,
     required List<LinkedStaff> staff,
@@ -296,6 +385,12 @@ class LinkedSnapshot {
     var wisaTotal = 0, wisaLinked = 0;
     var ssTotal = 0, ssLinked = 0;
     var azTotal = 0, azLinked = 0;
+
+    // INV-24 bookkeeping: what each id is claimed by, in first-seen order so
+    // the warnings a given input produces are deterministic (INV-20).
+    final holdingsById = <String, List<LinkedIdHolding>>{};
+    final idOrder = <String>[];
+    final idByValue = <String, LinkedAccountId>{};
 
     void tally({
       required bool inWisa,
@@ -317,7 +412,23 @@ class LinkedSnapshot {
       }
     }
 
+    /// Registers a record's claim on [id] and reports whether it is the first —
+    /// the only claim that counts toward the tally, since the unit is a person.
+    bool claim(LinkedAccountId id, LinkedIdHolding holding) {
+      final key = id.value;
+      final existing = holdingsById[key];
+      if (existing == null) {
+        idOrder.add(key);
+        idByValue[key] = id;
+        holdingsById[key] = <LinkedIdHolding>[holding];
+        return true;
+      }
+      existing.add(holding);
+      return false;
+    }
+
     for (final a in accounts) {
+      if (!claim(a.id, LinkedIdHolding.ofAccount(a))) continue;
       tally(
         inWisa: a.wisa != null,
         inSmartschool: a.smartschool != null,
@@ -325,12 +436,22 @@ class LinkedSnapshot {
       );
     }
     for (final s in staff) {
+      if (!claim(s.id, LinkedIdHolding.ofStaff(s))) continue;
       tally(
         inWisa: s.wisa != null,
         inSmartschool: s.smartschool != null,
         inAzure: s.azure != null,
       );
     }
+
+    final collisions = <DuplicateLinkedId>[
+      for (final key in idOrder)
+        if (holdingsById[key]!.length > 1)
+          DuplicateLinkedId(
+            id: idByValue[key]!,
+            holdings: List<LinkedIdHolding>.unmodifiable(holdingsById[key]!),
+          ),
+    ];
 
     LinkCounts counts(int total, int linked) =>
         LinkCounts(total: total, linked: linked, unlinked: total - linked);
@@ -339,7 +460,11 @@ class LinkedSnapshot {
       accounts: accounts,
       staff: staff,
       groups: groups,
-      warnings: warnings,
+      // A fresh list rather than an append: `warnings` is the caller's own
+      // accumulator (and may be `const []`).
+      warnings: collisions.isEmpty
+          ? warnings
+          : <LinkWarning>[...warnings, ...collisions],
       wisa: counts(wisaTotal, wisaLinked),
       smartschool: counts(ssTotal, ssLinked),
       azure: counts(azTotal, azLinked),

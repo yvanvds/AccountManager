@@ -211,6 +211,57 @@ void main() {
     );
 
     Glados(_scenario).test(
+      'INV-24: a shared LinkedAccountId is always reported, never silent',
+      (specs) {
+        // This is the property #319 delivers, and it is deliberately *not* "ids
+        // never collide". They do: an INV-23 duplicate-mail pair keeps two
+        // records for one person, and both key on the same `accountId` — or,
+        // with no accountId, on the very mail that made them collide — so the
+        // resolver hands them one id. That is a live cause, independent of the
+        // one #318 fixed, and it is filed as #323. Asserting its absence would
+        // be asserting something false; what must hold is that no collision
+        // gets through quietly.
+        final linked = _build(specs, SeqResolver()).linked;
+
+        final claims = <String, int>{};
+        for (final a in linked.accounts) {
+          claims[a.id.value] = (claims[a.id.value] ?? 0) + 1;
+        }
+        for (final s in linked.staff) {
+          claims[s.id.value] = (claims[s.id.value] ?? 0) + 1;
+        }
+        final colliding = <String>{
+          for (final e in claims.entries)
+            if (e.value > 1) e.key,
+        };
+
+        final warnings =
+            linked.warnings.whereType<DuplicateLinkedId>().toList();
+        // Exactly one warning per colliding id: no misses, no false alarms, and
+        // one warning per *id* rather than one per extra claimant.
+        expect(warnings.map((w) => w.id.value).toSet(), colliding);
+        expect(warnings, hasLength(colliding.length));
+        for (final w in warnings) {
+          expect(w.holdings, hasLength(claims[w.id.value]),
+              reason: 'every record claiming ${w.id.value} must be listed');
+        }
+
+        // The tally counts people, so it can never exceed the distinct ids…
+        for (final counts in [linked.wisa, linked.smartschool, linked.azure]) {
+          expect(counts.total, lessThanOrEqualTo(claims.length));
+          expect(counts.total, counts.linked + counts.unlinked);
+        }
+        // …and on a collision-free scenario it is exactly the pre-#319 number,
+        // so the guard stays invisible on healthy data.
+        if (colliding.isEmpty) {
+          final wisa = linked.accounts.where((a) => a.wisa != null).length +
+              linked.staff.where((s) => s.wisa != null).length;
+          expect(linked.wisa.total, wisa);
+        }
+      },
+    );
+
+    Glados(_scenario).test(
       'INV-12: case/whitespace in mail and upn does not change linking',
       (specs) {
         final clean = _build(specs, SeqResolver()).linked;

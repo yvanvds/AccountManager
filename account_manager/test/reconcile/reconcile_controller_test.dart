@@ -2975,6 +2975,60 @@ void main() {
     });
   });
 
+  group('a LinkedAccountId claimed twice (INV-24, #319)', () {
+    test('the collision reaches the controller instead of vanishing', () async {
+      final h = idCollisionHarness();
+      await h.controller.sync();
+
+      final collisions = h.controller.linkIdCollisions;
+      expect(collisions, hasLength(1));
+      expect(collisions.single.id, 'p-shared');
+      // Two records, each named by what it holds so they can be told apart —
+      // which is the only thing that makes the collision actionable.
+      expect(collisions.single.records, hasLength(2));
+      expect(collisions.single.records.first, contains('WISA W1'));
+      expect(collisions.single.records.first, contains('Smartschool jane'));
+      expect(collisions.single.records.last, contains('WISA W2'));
+      expect(collisions.single.records.last, contains('Smartschool —'));
+    });
+
+    test('the sync log names it, so it is visible with no card at all',
+        () async {
+      final h = idCollisionHarness();
+      await h.controller.sync();
+
+      final lines = h.log.entries.map((e) => e.message).toList();
+      final named = lines.where((l) => l.contains('Koppelingsfout')).toList();
+      expect(named, hasLength(1));
+      expect(named.single, contains('p-shared'));
+      expect(named.single, contains('WISA W1'));
+      expect(named.single, contains('WISA W2'));
+    });
+
+    test('the tally counts the shared id once, so the overview is honest',
+        () async {
+      final h = idCollisionHarness();
+      await h.controller.sync();
+
+      // Two WISA students on one id ⇒ one person. Counting per record made the
+      // WISA total 2 and the dashboard's linked/total ratio wrong for as long
+      // as the collision lasted.
+      expect(h.controller.linked!.snapshot.wisa.total, 1);
+    });
+
+    test('an ordinary sync reports no collision', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+      expect(h.controller.linkIdCollisions, isEmpty);
+      expect(
+        h.log.entries
+            .map((e) => e.message)
+            .where((l) => l.contains('Koppelingsfout')),
+        isEmpty,
+      );
+    });
+  });
+
   group('a class entry that owes two writes (#272)', () {
     /// The Smartschool half: the recorded SOAP action is the fully-qualified
     /// `…V3#saveClass`.

@@ -1546,4 +1546,107 @@ void main() {
       expect(snapshot.accounts[1].wisaSchoolIds, {2});
     });
   });
+
+  group('INV-24 — a shared LinkedAccountId is reported, not merged (#319)', () {
+    // The collision is constructed with a [CollidingResolver]; see its doc for
+    // why it is not driven through the dual-enrolment path #318 fixed.
+    test('two records on one id raise a DuplicateLinkedId naming both', () {
+      final snapshot = link(
+        wisaSnap([wisaStudent('W1'), wisaStudent('W2')]),
+        ssSnap([ssAccount(uid: 'jane', accountId: 'W1', mail: 'jane@s.be')]),
+        azSnap(const []),
+        CollidingResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts, hasLength(2),
+          reason: 'both records are kept — a silent drop is INV-23\'s sin');
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.id.value, 'p-shared');
+      expect(warning.holdings.map((h) => h.wisa), ['W1', 'W2']);
+      expect(warning.holdings.first.smartschool, 'jane');
+      expect(warning.holdings.last.smartschool, isNull);
+    });
+
+    test('the shared id is counted once, so the WISA total is not inflated',
+        () {
+      final snapshot = link(
+        wisaSnap([wisaStudent('W1'), wisaStudent('W2')]),
+        ssSnap(const []),
+        azSnap(const []),
+        CollidingResolver(),
+        schoolPrefix: _prefix,
+      );
+      // Two WISA rows, one id ⇒ one person as far as the dashboard's
+      // linked/total ratio is concerned. Counting per record read 2.
+      expect(snapshot.wisa.total, 1);
+      expect(snapshot.wisa.unlinked, 1);
+    });
+
+    test('a student and a staff member colliding are both listed', () {
+      final snapshot = link(
+        wisaSnap([wisaStudent('W1')], staff: [wisaStaff('PEE')]),
+        ssSnap(const []),
+        azSnap(const []),
+        CollidingResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.holdings, hasLength(2));
+      expect(warning.holdings.map((h) => h.wisa), ['W1', 'PEE']);
+      expect(warning.holdings.map((h) => h.role),
+          [PersonRole.student, PersonRole.teacher]);
+    });
+
+    test('an INV-23 duplicate-mail pair collides on id too, and says so (#323)',
+        () {
+      // Not constructed: the ordinary resolver produces this. INV-23 keeps both
+      // Smartschool accounts of a colliding pair as separate records, and both
+      // key on the same `accountId`, so they resolve to one id. That makes the
+      // deliberate admin+user setup a live cause of the very card #319 is
+      // about — found by the property test, filed as #323, and left unfixed
+      // here on purpose: #319 makes collisions visible, it does not decide how
+      // the linker should merge them.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap([
+          ssAccount(uid: 'twin-a', accountId: 'W6', mail: 'twin@s.be'),
+          ssAccount(uid: 'twin-b', accountId: 'W6', mail: 'twin@s.be'),
+        ]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts.map((a) => a.id.value).toSet(), hasLength(1),
+          reason: 'the two records really do share one id');
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.holdings.map((h) => h.smartschool), ['twin-a', 'twin-b']);
+      // The duplicate-mail warning is still raised alongside it — the two
+      // invariants report different things about the same pair.
+      expect(snapshot.warnings.whereType<ResolveDuplicateMail>(), hasLength(1));
+      // And one person, not two, for the dashboard.
+      expect(snapshot.smartschool.total, 1);
+    });
+
+    test('the ordinary resolver keeps every snapshot collision-free', () {
+      // The guard must stay invisible on healthy data — nothing about it may
+      // change what an ordinary pass reports.
+      final snapshot = link(
+        wisaSnap([
+          wisaStudent('W1'),
+          wisaStudent('W2')
+        ], staff: [
+          wisaStaff('PEE'),
+        ]),
+        ssSnap([ssAccount(uid: 'jane', accountId: 'W1', mail: 'jane@s.be')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      expect(snapshot.warnings.whereType<DuplicateLinkedId>(), isEmpty);
+      expect(snapshot.wisa.total, 3);
+    });
+  });
 }

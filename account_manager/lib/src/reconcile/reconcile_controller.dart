@@ -462,6 +462,25 @@ class DuplicateMailWarning {
   List<String> get uids => sortedDuplicateUids(accounts.map((a) => a.uid));
 }
 
+/// A linker id collision (INV-24) shaped for the reconcile screen (#319): the
+/// [id] two or more records resolved to, and one already-rendered line per
+/// colliding record saying what it holds.
+///
+/// Unlike a duplicate mail there is nothing for the operator to *accept* — a
+/// shared [LinkedAccountId] is a linker bug, not a deliberate configuration —
+/// so this carries no decision state. It exists so the collision is visible
+/// while it lasts, instead of only showing up as a card whose presence chips
+/// and actions come from different records.
+class LinkIdCollision {
+  const LinkIdCollision({required this.id, required this.records});
+
+  /// The `LinkedAccountId` value the colliding records share.
+  final String id;
+
+  /// One line per colliding record; at least two, in snapshot order.
+  final List<String> records;
+}
+
 /// A per-category summary for the Reconcile overview (#163): how many accounts
 /// (or class groups) the category holds, and how many of them carry an applyable
 /// pending action. Derived from the stored [Rollup]s, so it is readable in a
@@ -1398,6 +1417,31 @@ class ReconcileController extends ChangeNotifier {
           ),
     ];
   }
+
+  /// The id collisions of the current linked view (INV-24, #319), each with its
+  /// colliding records flattened for display. Empty before a sync this session,
+  /// and — the normal case — empty afterwards too: a non-empty list means the
+  /// linker minted one id for two records, and every layer below it (the
+  /// materialized document, the pending entry, the stored account) has already
+  /// merged or dropped one of them.
+  List<LinkIdCollision> get linkIdCollisions {
+    final l = _linked;
+    if (l == null) return const [];
+    return [
+      for (final w in l.snapshot.warnings)
+        if (w is core.DuplicateLinkedId)
+          LinkIdCollision(
+            id: w.id.value,
+            records: [for (final h in w.holdings) _describeHolding(h)],
+          ),
+    ];
+  }
+
+  /// One colliding record as a single line: its role and the key it carries in
+  /// each system, so two records on one id can be told apart at a glance.
+  static String _describeHolding(core.LinkedIdHolding h) =>
+      '${h.role.toJson()} · WISA ${h.wisa ?? '—'} · '
+      'Smartschool ${h.smartschool ?? '—'} · Azure ${h.azure ?? '—'}';
 
   DuplicateAccountRow _duplicateRow(core.SmartschoolAccount account) {
     final concrete = account is ss.SmartschoolAccount ? account : null;
@@ -2878,6 +2922,7 @@ class ReconcileController extends ChangeNotifier {
       '${s.warnings.length} waarschuwing(en).',
     );
     _logSkippedNamesakes(s.warnings);
+    _logIdCollisions(s.warnings);
   }
 
   Future<void> _relink() async {
@@ -2929,6 +2974,33 @@ class ReconcileController extends ChangeNotifier {
         '"${ss.name}" (code ${ss.id.value}), '
         '${ss.official ? 'met een andere schrijfwijze' : 'maar geen '
             'officiële klas'}.',
+      );
+    }
+  }
+
+  /// Names every id two or more linker records resolved to (INV-24, #319).
+  ///
+  /// This should never fire. It gets a log line anyway because everything below
+  /// the linker is keyed by that id and each layer degrades differently and
+  /// without a word — the materialized document receives the union of both
+  /// records' candidates, the Acties list keeps whichever pending entry came
+  /// last, and the shared store holds one document per id, so one of the two is
+  /// what every other operator inherits. Left silent, the first sign of trouble
+  /// is a card that contradicts itself: presence chips off one record above a
+  /// choice that can only exist for the other.
+  ///
+  /// It is logged rather than hung on the account cards because the colliding
+  /// records share one card — the card is the symptom, not a place to report
+  /// from — and because a collision between two records with no Smartschool
+  /// account has no card at all.
+  void _logIdCollisions(List<core.LinkWarning> warnings) {
+    for (final w in warnings) {
+      if (w is! core.DuplicateLinkedId) continue;
+      log.addMessage(
+        core.Origin.all,
+        'Koppelingsfout: ${w.holdings.length} records delen id '
+        '"${w.id.value}", zodat hun acties op één kaart terechtkomen. '
+        'Records: ${w.holdings.map(_describeHolding).join(' | ')}.',
       );
     }
   }

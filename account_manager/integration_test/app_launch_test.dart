@@ -5805,6 +5805,68 @@ void main() {
   });
 
   testWidgets(
+      'an id collision is named on Synchronisatie and in the log, and the one '
+      'card it corrupts is still reachable (#319)',
+      (WidgetTester tester) async {
+    // Two records on one LinkedAccountId. Constructed through the resolver:
+    // #318 removed the one known way a snapshot produces this, and INV-24 is
+    // the guard for the cause nobody has found yet. Driven through the real
+    // app, on the real window, the way the operator meets it.
+    useTallWindow(tester);
+    final harness = idCollisionHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The overview names the collision, open, with a line per colliding record
+    // — no tap, because there is nothing here for the operator to decide.
+    final tile = find.byKey(const ValueKey('id-collision-p-shared'));
+    expect(tile, findsOneWidget);
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+          of: tile, matching: find.textContaining('Koppelingsfout')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: tile, matching: find.textContaining('WISA W1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: tile, matching: find.textContaining('WISA W2')),
+      findsOneWidget,
+    );
+
+    // …and the log panel says it too, which is the surface that still works
+    // when the colliding records have no Smartschool account to hang a card on.
+    expect(
+      harness.log.entries
+          .map((e) => e.message)
+          .where((m) => m.contains('Koppelingsfout') && m.contains('p-shared')),
+      hasLength(1),
+    );
+
+    // The damage itself: both records became one document id, so Acties shows
+    // the single card the warning is about. Left as-is deliberately — #319
+    // makes the collision visible, it does not decide how to merge the records.
+    expect(
+      harness.controller.linkedAccounts
+          .where((a) => a.id.value == 'p-shared')
+          .length,
+      2,
+    );
+  });
+
+  testWidgets(
       'creating an account captures its password into the shared queue, which '
       'the Passwords view surfaces as a printable sheet and drains on export '
       '(#105/#180)', (WidgetTester tester) async {

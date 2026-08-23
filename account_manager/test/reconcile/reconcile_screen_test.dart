@@ -615,6 +615,53 @@ void main() {
   });
 
   testWidgets(
+      'an id collision is named on the overview, open, with both records '
+      '(#319)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = idCollisionHarness();
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    final tile = find.byKey(const ValueKey('id-collision-p-shared'));
+    expect(tile, findsOneWidget);
+    await tester.ensureVisible(tile);
+    expect(
+      find.descendant(
+          of: tile, matching: find.textContaining('Koppelingsfout')),
+      findsOneWidget,
+    );
+
+    // Shown open, with no tap: there is nothing to decide, so the two records
+    // have to be readable straight away or the notice says nothing useful.
+    expect(
+      find.descendant(of: tile, matching: find.textContaining('WISA W1')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: tile, matching: find.textContaining('WISA W2')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('an ordinary sync shows no collision notice (#319)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await tester
+        .pumpWidget(_wrap(ReconcileScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Koppelingsfout'), findsNothing);
+  });
+
+  testWidgets(
       'dragging the divider handle grows the log panel and clamps to a min '
       '(#152)', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(800, 1000);

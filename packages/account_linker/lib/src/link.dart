@@ -47,6 +47,14 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 ///   case-insensitive (legacy `.Equals()` was case-sensitive).
 /// - **INV-23:** two Smartschool accounts sharing a `mail` are *both* kept and
 ///   a [ResolveDuplicateMail] warning is raised (legacy silently dropped one).
+/// - **INV-24:** two records that resolve to the same [LinkedAccountId] raise a
+///   [DuplicateLinkedId] warning (#319). The check is not written here: it lives
+///   in [LinkedSnapshot.fromRecords], which this function returns through, so it
+///   holds for every snapshot built that way rather than only for this pass. It
+///   is defence in depth — every *known* cause is fixed at its source (see
+///   INV-21 and [_buildStudentRecords]) — but the layers below the linker are
+///   all keyed by that id and every one of them unions or drops without a word,
+///   so a cause nobody has found yet must not be able to reach them quietly.
 ///
 /// [schoolPrefix] is the Azure `companyName` value the school stamps on its
 /// own users; an Azure-only user carrying it is a former student kept as an

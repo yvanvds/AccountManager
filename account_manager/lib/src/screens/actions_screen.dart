@@ -564,6 +564,16 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// Every account of the selected family, with its live entry joined on — the
   /// unfiltered list, in the chosen order.
   List<_AccountRow> _rows() {
+    // Keyed by target id, which is a `LinkedAccountId` — unique per person by
+    // INV-24. This map literal is last-wins, so on a collision it is the one
+    // place in this screen that loses an entry outright rather than merging it:
+    // the row keeps whichever entry the controller listed last and the other
+    // record's decisions never render. That is deliberate rather than defended
+    // against here, because a row can only show one entry and picking between
+    // two contradictory ones is not this screen's call. The collision itself is
+    // caught upstream, where it can be reported as the linker bug it is —
+    // `LinkedSnapshot.fromRecords` raises a `DuplicateLinkedId` warning, which
+    // the sync log and the Synchronisatie overview both name (#319).
     final byTarget = <String, PendingAccountEntry>{
       for (final e in controller.pendingEntries)
         if (e.family != 'group') e.targetId: e,

@@ -234,7 +234,7 @@ class LinkedSnapshot {
 }
 ```
 
-`LinkCounts` mirrors the legacy `LinkedAccounts` counters: a person counts toward a system's `linked` only when present in all three systems, otherwise `unlinked`. `LinkWarning` is a sealed type; its `ResolveDuplicateMail` variant carries the shared `mail` and every colliding Smartschool account (INV-23, PAIN-7).
+`LinkCounts` mirrors the legacy `LinkedAccounts` counters: a person counts toward a system's `linked` only when present in all three systems, otherwise `unlinked`. The unit is a **person**, so `LinkedSnapshot.fromRecords` counts each `LinkedAccountId` once — counting per record let one colliding id inflate a system's total and skew the dashboard ratio (INV-24). `LinkWarning` is a sealed type; its `ResolveDuplicateMail` variant carries the shared `mail` and every colliding Smartschool account (INV-23, PAIN-7), and its `DuplicateLinkedId` variant carries the shared id and a `LinkedIdHolding` per colliding record (INV-24).
 
 ### 3.10 `Action`
 
@@ -310,6 +310,7 @@ The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `Mark
 - **INV-21 [D]:** Every WISA **person** appears in **exactly one** `LinkedAccount` — per person, not per row (#318, and see INV-11). A person the aggregated pull returns twice merges into one record whose `wisaSchoolIds` holds *both* schools, so `WisaPresence` reads `ours` when either of them is ours; the record's `wisa` — the row the class placement is derived from — is the row of a managed school, never whichever school the pull happened to read first. Linking per row instead minted a second record for the same person, and since both rows key on `wisa:<wisaId>` the resolver handed the two records the **same** `LinkedAccountId`, putting two records' actions on one card.
 - **INV-22 [D]:** Every Azure user with `companyName == schoolPrefix` (students) or `department contains schoolPrefix` (staff) appears in **exactly one** `LinkedAccount`, even after the person has left the school (so the engine can raise a remove action). Both tests have a single implementation, `account_core`'s `studentBelongsToSchool` / `staffBelongsToSchool` (and their union `belongsToSchool`), which the linker, the Azure connector's client-side reads, and the staff-retention rule all call (#279). Blank prefix matches nobody. A connector read narrower than the linker is silently lossy — the linker never gets to ask about a row the read dropped — which is why the rule may not be re-implemented per package.
 - **INV-23 [D]:** When two Smartschool accounts collide on `mail`, **both** end up in some `LinkedAccount`, never silently dropped. A `ResolveDuplicateMail` warning action is raised.
+- **INV-24 [D]:** No two records in a `LinkedSnapshot` — `LinkedAccount` or `LinkedStaff` — share a `LinkedAccountId`. Enforced in `LinkedSnapshot.fromRecords` rather than in `link()`, so it holds for every snapshot built that way: a repeated id raises a `DuplicateLinkedId` warning naming the id and what each colliding record holds, and the id is counted once (#319). Every *known* cause is fixed at its source (INV-21), so this is defence in depth — but it earns its place because everything below the linker is keyed by that id and each layer degrades differently and silently: the materializer hands both records the **union** of their candidate actions, the Acties list is a last-wins map on `targetId`, and the shared store keeps one document per id, so one record is what every other operator inherits. The colliding records are **kept**, never deduped away — a silent drop is exactly what INV-23 exists to prevent.
 
 ### Membership
 
@@ -336,7 +337,7 @@ The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `Mark
 ### 6.2 `link(wisa, smartschool, azure) → LinkedSnapshot`
 
 - **Pre:** Three snapshots (any may be empty).
-- **Post:** `LinkedSnapshot` satisfying INV-20..23. Pure, deterministic.
+- **Post:** `LinkedSnapshot` satisfying INV-20..24. Pure, deterministic.
 - The algorithm is structurally the same as legacy [`LinkedAccounts.DoRelink`](../legacy-wpf/AccountManager/State/Linked/LinkedAccounts.cs) but extracted from WPF state and fixed for case-insensitive matching and duplicate-mail.
 
 ### 6.3 `evaluate(LinkedSnapshot) → List<Action>`
@@ -361,6 +362,7 @@ The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `Mark
 | Former member (Azure-only w/ school prefix) | Preserved as Azure-only `LinkedAccount` | **Fix**: surface as Azure-only `LinkedAccount` (`confidence: Medium`); the action engine raises a remove action — we don't keep alumni | Students who leave are deleted, not retained |
 | WISA-only student (no SS, no Azure) | Placeholder keyed by `WisaID` | **Keep**; surfaces "add" actions naturally | Drives onboarding |
 | Two Smartschool accounts share `mail` | First wins, second lost silently | **Fix**: both retained, raise `ResolveDuplicateMail` warning | INV-23 |
+| Two linked records share a `LinkedAccountId` | Consumers union or last-wins, silently | **Fix**: both retained, raise `DuplicateLinkedId` warning; the id is counted once | INV-24 |
 | Case-sensitive mail/UPN comparison | `.Equals()` | **Fix**: case-insensitive + trim | INV-12 — latent bug |
 | Smartschool multi-membership | Tree walk + skip-if-seen | **Fix**: first-class `Membership` | PAIN-1 |
 | Co-accounts (parents) | Implicit via `AccountType` enum | **Keep enum**; passwords managed separately | Minimal scope expansion |

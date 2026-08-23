@@ -1533,6 +1533,47 @@ ReconcileHarness dupMailHarness({
       syncedBy: syncedBy,
     );
 
+/// A [core.PersonIdResolver] that hands every natural key the same id — the way
+/// a test constructs the INV-24 collision (#319).
+///
+/// It has to be constructed. #318 removed the one known way two records ended up
+/// on one `LinkedAccountId`, and re-breaking that merge to get a collision back
+/// is not what the invariant is for: INV-24 is defence in depth against a cause
+/// nobody has found yet, and the resolver is the seam where any such cause
+/// ultimately expresses itself.
+class CollidingResolver implements core.PersonIdResolver {
+  CollidingResolver([this.id = 'p-shared']);
+
+  /// The id every key resolves to.
+  final String id;
+
+  @override
+  core.PersonId resolve(String naturalKey) => core.PersonId(id);
+}
+
+/// A reconcile harness whose linker puts two students on **one**
+/// `LinkedAccountId` (#319): two ordinary, unrelated WISA students and a
+/// [CollidingResolver], so the pass produces two records claiming one id.
+///
+/// Everything below the linker then behaves as the issue describes — one
+/// materialized document carrying the union of both records' candidates — which
+/// is exactly what the `DuplicateLinkedId` warning has to make visible.
+ReconcileHarness idCollisionHarness({InMemoryLinkedStore? linkedStore}) =>
+    ReconcileHarness(
+      resolver: CollidingResolver(),
+      linkedStore: linkedStore,
+      wisa: wisaSnap(students: [
+        wisaStudent(wisaId: 'W1', classGroup: '3A'),
+        wisaStudent(wisaId: 'W2', classGroup: '3A'),
+      ]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount(uid: 'jane', accountId: 'W1')],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+
 /// A reconcile harness over [count] WISA-departed, Smartschool-only active
 /// accounts (no WISA, no Azure): each raises the mutually-exclusive
 /// unregister/delete choice (#110), so the pending list holds [count] entries in
@@ -3604,7 +3645,9 @@ class ReconcileHarness {
     this.settingsStore,
     this.modelsSettings = true,
     LiveSettings? liveSettings,
-  })  : wisaResult = (wisa ?? wisaSnap()),
+    core.PersonIdResolver? resolver,
+  })  : resolver = resolver ?? SeqResolver(),
+        wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
         liveSettings = liveSettings ?? LiveSettings(),
@@ -3837,7 +3880,7 @@ class ReconcileHarness {
           transport: graph,
         ),
       ),
-      resolver: SeqResolver(),
+      resolver: this.resolver,
       wisaRules: wisaRules,
       passwordQueue: passwordQueue,
       // Every settings-derived input, read from the live document on each link
@@ -3932,6 +3975,12 @@ class ReconcileHarness {
   /// per-system sync-metadata author (#108). Vary it to model a second operator
   /// sharing the same [linkedStore].
   final String syncedBy;
+
+  /// The identity resolver the applier links with. Defaults to [SeqResolver],
+  /// the deterministic one-id-per-natural-key fixture; a test overrides it to
+  /// construct an INV-24 id collision (#319), which no snapshot can produce on
+  /// its own once #318 merged the dual-enrolment rows.
+  final core.PersonIdResolver resolver;
 
   /// When set, the Azure syncer parks on this completer until a test releases
   /// it — a seam to freeze a sync mid-pass (WISA + Smartschool already pulled)
