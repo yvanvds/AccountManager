@@ -9453,6 +9453,134 @@ void main() {
   });
 
   testWidgets(
+      'an ordinary Synchroniseer repairs an adopted transfer record, so the '
+      'phantom goes away without Controleer op drift (#322)',
+      (WidgetTester tester) async {
+    // The residue of #315, found while driving it. Jane transferred in from a
+    // sibling group school, so her Office 365 account carries *their* prefix and
+    // no prefix-scoped read of ours has ever returned it: the app holds her only
+    // because an earlier pass adopted her by `employeeId` (#224). Since then
+    // somebody put our school on the account in the Entra portal — before the
+    // token this session resumes from was minted — so `/users/delta` has nothing
+    // to say about her, on this pass and on every later one.
+    //
+    // The back-fill was the one leg that could still repair her, and it asked
+    // only about ids *no user in the snapshot carried* — so the record it had
+    // adopted marked its own id accounted for and it never asked again. A full
+    // read has no such blind spot (the record is simply absent from the bulk
+    // result, so it is re-read every pass), which is why **Controleer op drift**
+    // fixed it since #316 and the button the operator presses all day did not.
+    //
+    // Only this layer shows what that cost: the seeded snapshot and its token
+    // make the pass incremental, the production Azure pull decides which legs
+    // run, the linker rebuilds the record, and the action engine is what was
+    // offering `Wijzig de school in Azure` for a PATCH that would change nothing.
+    useTallWindow(tester);
+    final azureWire = SchoolMovedUserGraph(
+      // The resumed walk reports nothing at all — the correction is older than
+      // our token. This is the whole shape of the bug.
+      rows: const <Map<String, dynamic>>[],
+      // Her account as Graph holds it *now*, the answer to the targeted lookup.
+      backfill: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'az1',
+          'userPrincipalName': 'jane.doe@student.school.example',
+          'employeeId': '1',
+          'displayName': 'Jane Doe',
+          'companyName': 'GBS',
+          'accountEnabled': true,
+        },
+      ],
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azureTransport: azureWire,
+      // The adopted copy, as the pass that first took her in left it: the school
+      // she came from, and the token whose walks all missed the correction.
+      azureInitial: azSnap(
+        deltaToken: 'AZ-TOKEN',
+        users: [azUser(displayName: 'Jane Doe', companyName: 'SBE')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // The seeded Azure snapshot is reused untouched, its token unspent — so the
+    // linked view is built on the adopted copy, exactly as the operator's was.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(azureWire.resumeTokens, isEmpty);
+    expect(azureWire.bulkReads, 0);
+
+    // And there is the phantom, on screen, the way it was reported.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final stale = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      stale.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de school in Azure'],
+    );
+    await selectAccount(tester, stale.targetId);
+    expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+
+    // Now the ordinary pass. A saved Azure pull input moves (#259) — the
+    // operator flips a school beheerd — so Synchroniseer re-pulls Azure
+    // **incrementally**, which is the leg that used to be unable to help.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    harness.markSchoolManaged(1);
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // No full read anywhere: the stored token was spent and the `$filter` bulk
+    // read never ran, so the repair provably came from the back-fill asking
+    // about an id the snapshot already held.
+    expect(azureWire.resumeTokens, <String>['AZ-TOKEN']);
+    expect(azureWire.bulkReads, 0);
+    expect(azureWire.employeeIdLookups, <String>["employeeId in ('1')"]);
+
+    // …and what it brought back is Graph's record, not the one we adopted.
+    expect(harness.app.azure.snapshot!.users.single,
+        azUser(displayName: 'Jane Doe'));
+
+    // Which is the point: the action the operator was staring at is gone, from
+    // the button they press all day rather than the expensive one.
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+    );
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    expect(find.text('Wijzig de school in Azure'), findsNothing);
+
+    // The Log panel says which leg did it, so an adoption that repaired a record
+    // stays distinguishable from one that added a new one.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains('Azure: 1 account(s) bijgewerkt met de volledige gegevens uit '
+          'de employeeId-opzoeking.'),
+    );
+  });
+
+  testWidgets(
       'a staff member who left WISA still gets their Office 365 account '
       'proposed for deletion (#269)', (WidgetTester tester) async {
     // The other half of #268, and the worse one. Anna Smit has left the school:
