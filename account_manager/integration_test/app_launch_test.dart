@@ -754,6 +754,100 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // The complement of the run above, for the kinds #293 deliberately withholds
+  // a school-wide apply from (#297). The operator ticks the accounts by hand,
+  // names the one decision, and the pass covers exactly the ticked accounts it
+  // stands open on. Worth a full run for the same reason #296 is: the count on
+  // the button, the rows the checkboxes sit on and the writes the pass makes are
+  // resolved in three different places, and only the real app composes all
+  // three — over real fonts, the real navigation shell and the real Graph and
+  // SOAP write paths.
+  testWidgets(
+      'ticked accounts run one decision that gets no apply-all, and the pass '
+      'skips the ones it does not stand open on (#297)',
+      (WidgetTester tester) async {
+    useTallWindow(tester);
+    // The same rollover fixture: three students share the sanctioned class
+    // move, and Sam alone also carries the Office 365 rename — a judgement call
+    // the sanction refuses, and therefore exactly the kind this exists for.
+    final harness = rolloverHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder check(String id) => find.byKey(ValueKey('account-check-$id'));
+
+    // The rename carries no school-wide affordance anywhere on Sam's card…
+    await selectAccount(tester, sam);
+    expect(
+      find.byKey(ValueKey('decision-apply-all-student-$sam-0')),
+      findsNothing,
+    );
+
+    // …so the bulk path is the ticks. Sam and Sara, by hand; Tom is left alone
+    // and stays that way.
+    for (final id in <String>[sam, sara]) {
+      await tester.ensureVisible(check(id));
+      await tester.tap(check(id));
+      await tester.pumpAndSettle();
+    }
+    expect(tester.widget<Checkbox>(check(tom)).value, isFalse);
+
+    final Finder rename =
+        find.byKey(const ValueKey('actions-decision-student|ModifyAzureName'));
+    await tester.ensureVisible(rename);
+    await tester.tap(rename);
+    await tester.pumpAndSettle();
+
+    // Sara raises the class move, not the rename. The bar says so rather than
+    // quietly passing over her.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('actions-selection-scope')))
+          .data,
+      'Wordt toegepast op 1 van de 2 geselecteerde account(s) — 1 '
+      'overgeslagen, want daar staat deze beslissing niet open.',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Toepassen op 1 geselecteerd(e) account(s)?'),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('1 wijziging naar Office 365'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // One real Graph PATCH, and not one class move — the pass is one decision
+    // deep whatever else the ticked cards carry (#292).
+    expect(
+      harness.graph.requests.where((r) => r.method == 'PATCH'),
+      hasLength(1),
+    );
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
+      isEmpty,
+    );
+    expect(harness.controller.applyResults, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
   /// Opens the Klasgroepen tab from the navigation rail (#227). The class
   /// inventory is a destination of its own now, not a node inside Acties.
   Future<void> openKlasgroepen(WidgetTester tester) async {
