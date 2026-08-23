@@ -5867,6 +5867,81 @@ void main() {
   });
 
   testWidgets(
+      'an admin co-account gets its own card instead of merging its actions '
+      'onto the student\'s (#323)', (WidgetTester tester) async {
+    // The live cause of the #319 card, and nothing about it is constructed: the
+    // deliberate admin + normal account pair INV-23 keeps, both carrying the
+    // student's WISA id as `accountId`. Both records preferred the natural key
+    // `wisa:1`, so the resolver handed them one LinkedAccountId and the
+    // materializer gave the single surviving document the union of both
+    // records' candidates. Driven through the real app because the union is
+    // only legible as what the operator reads: one card claiming the student is
+    // in all three systems above a choice that only exists when they are gone.
+    useTallWindow(tester);
+    final harness = coAccountHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The mail collision is still reported — that one is real, and accepting it
+    // stays the operator's call (#109). The id collision is simply not there:
+    // no overview tile, no log line.
+    expect(
+      find.byKey(const ValueKey('dup-warning-jane.doe@student.school.example')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Koppelingsfout'), findsNothing);
+    expect(
+      harness.log.entries
+          .map((e) => e.message)
+          .where((m) => m.contains('Koppelingsfout')),
+      isEmpty,
+    );
+    expect(harness.controller.linkIdCollisions, isEmpty);
+
+    // Two cards on Acties, one per Smartschool account, each with its own id.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final String student = accountId(harness, 'Jane Doe');
+    final String coAccount = accountId(harness, 'Jane Doe-beheer');
+    expect(student, isNot(coAccount));
+    expect(find.byKey(ValueKey('account-row-$student')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$coAccount')), findsOneWidget);
+
+    // The presence chips now describe each record on its own: the student is in
+    // all three systems, the co-account exists in Smartschool alone.
+    SystemIndicatorState cell(String id, Origin system) => tester
+        .widget<SystemIndicatorCell>(
+            find.byKey(ValueKey('account-cell-$id-${system.name}')))
+        .state;
+    expect(cell(student, Origin.wisa), isNot(SystemIndicatorState.missing));
+    expect(cell(coAccount, Origin.wisa), SystemIndicatorState.missing);
+    expect(cell(coAccount, Origin.azure), SystemIndicatorState.missing);
+
+    // And the decisions are split the way the records are. The student's pane
+    // holds only her own Azure work; the leaver either/or — which can only
+    // exist for an account that is gone from WISA — is on the co-account's
+    // pane, where it belongs. That pairing on one card is the whole of #319.
+    await selectAccount(tester, student);
+    expect(find.byKey(ValueKey('actions-detail-$student')), findsOneWidget);
+    expect(find.text('Wijzig de naam in Azure'), findsWidgets);
+    expect(find.text('Verwijder dit account uit Smartschool'), findsNothing);
+
+    await selectAccount(tester, coAccount);
+    expect(find.byKey(ValueKey('actions-detail-$coAccount')), findsOneWidget);
+    expect(find.text('Verwijder dit account uit Smartschool'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'creating an account captures its password into the shared queue, which '
       'the Passwords view surfaces as a printable sheet and drains on export '
       '(#105/#180)', (WidgetTester tester) async {

@@ -11,6 +11,21 @@ const _prefix = 'Arcadia';
 /// often carries where the WISA name has a plain space (#225).
 const _nbsp = '\u00a0';
 
+/// A [PersonIdResolver] that mints the natural key itself as the id and records
+/// every key it was handed, in order \u2014 so a test can assert on *which* key each
+/// record was given, not just that the ids differ (#323).
+class _KeyRecordingResolver implements PersonIdResolver {
+  _KeyRecordingResolver(this.resolved);
+
+  final List<String> resolved;
+
+  @override
+  PersonId resolve(String naturalKey) {
+    resolved.add(naturalKey);
+    return PersonId(naturalKey);
+  }
+}
+
 void main() {
   group('link — student scenarios', () {
     test('fully linked across three systems → high confidence', () {
@@ -1599,15 +1614,13 @@ void main() {
           [PersonRole.student, PersonRole.teacher]);
     });
 
-    test('an INV-23 duplicate-mail pair collides on id too, and says so (#323)',
-        () {
-      // Not constructed: the ordinary resolver produces this. INV-23 keeps both
-      // Smartschool accounts of a colliding pair as separate records, and both
-      // key on the same `accountId`, so they resolve to one id. That makes the
-      // deliberate admin+user setup a live cause of the very card #319 is
-      // about — found by the property test, filed as #323, and left unfixed
-      // here on purpose: #319 makes collisions visible, it does not decide how
-      // the linker should merge them.
+    test('an INV-23 duplicate-mail pair no longer collides on id (#323)', () {
+      // The co-account setup INV-23 exists for: one person with an admin and a
+      // normal account, both carrying the same `accountId` by the operator's
+      // convention. Keeping both accounts (INV-23) means two records, and both
+      // preferred `wisa:w6`, so the resolver used to hand them one id — the
+      // self-contradicting card #319 describes, reached through an entirely
+      // ordinary setup. The second record now falls through to its own uid.
       final snapshot = link(
         wisaSnap(const []),
         ssSnap([
@@ -1619,15 +1632,88 @@ void main() {
         schoolPrefix: _prefix,
       );
 
-      expect(snapshot.accounts.map((a) => a.id.value).toSet(), hasLength(1),
-          reason: 'the two records really do share one id');
-      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
-      expect(warning.holdings.map((h) => h.smartschool), ['twin-a', 'twin-b']);
-      // The duplicate-mail warning is still raised alongside it — the two
-      // invariants report different things about the same pair.
+      expect(snapshot.accounts.map((a) => a.id.value).toSet(), hasLength(2),
+          reason: 'one id per record — no union, no last-wins, no shared card');
+      expect(snapshot.warnings.whereType<DuplicateLinkedId>(), isEmpty);
+      // The duplicate-mail warning is untouched: the *mail* collision is still
+      // real and still the operator's to accept (#109). Only the id is fixed.
       expect(snapshot.warnings.whereType<ResolveDuplicateMail>(), hasLength(1));
-      // And one person, not two, for the dashboard.
-      expect(snapshot.smartschool.total, 1);
+      // Both accounts are still there — a silent drop is INV-23's sin.
+      expect(snapshot.accounts.map((a) => a.smartschool?.uid),
+          ['twin-a', 'twin-b']);
+      expect(snapshot.smartschool.total, 2);
+    });
+
+    test('the pair keeps two ids with no accountId either (#323)', () {
+      // The other shape the issue names: neither account carries an accountId,
+      // so both prefer `mail:` — which is by definition identical, since the
+      // shared mail is what made them collide in the first place. The second
+      // ends on the `ss:<uid>` fall-through, unique per Smartschool account.
+      final recorder = <String>[];
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap([
+          ssAccount(uid: 'twin-a', accountId: '', mail: 'twin@s.be'),
+          ssAccount(uid: 'twin-b', accountId: '', mail: 'TWIN@s.be'),
+        ]),
+        azSnap(const []),
+        _KeyRecordingResolver(recorder),
+        schoolPrefix: _prefix,
+      );
+
+      expect(recorder, ['mail:twin@s.be', 'ss:twin-b']);
+      expect(snapshot.accounts.map((a) => a.id.value).toSet(), hasLength(2));
+      expect(snapshot.warnings.whereType<DuplicateLinkedId>(), isEmpty);
+      expect(snapshot.warnings.whereType<ResolveDuplicateMail>(), hasLength(1));
+    });
+
+    test('the fully-linked record of the pair keeps the wisa: key (#323)', () {
+      // Which record moves matters: the person's real record — the one WISA and
+      // Azure attached to — must keep the derived `wisa:<id>` key, so its stored
+      // document survives the extra co-account appearing next to it. Both passes
+      // are first-wins in record order, so the mover is the co-account, and it
+      // takes the next key its own fields offer (here the shared mail, which the
+      // first record did not need).
+      final recorder = <String>[];
+      final snapshot = link(
+        wisaSnap([wisaStudent('W6')]),
+        ssSnap([
+          ssAccount(uid: 'twin-a', accountId: 'W6', mail: 'twin@s.be'),
+          ssAccount(uid: 'twin-b', accountId: 'W6', mail: 'twin@s.be'),
+        ]),
+        azSnap([
+          azureUser(id: 'az6', upn: 'twin@s.be', employeeId: 'W6'),
+        ]),
+        _KeyRecordingResolver(recorder),
+        schoolPrefix: _prefix,
+      );
+
+      expect(recorder, ['wisa:w6', 'mail:twin@s.be']);
+      final linkedRecord = snapshot.accounts.singleWhere((a) => a.wisa != null);
+      expect(linkedRecord.smartschool?.uid, 'twin-a');
+      expect(linkedRecord.azure?.id, 'az6');
+      expect(linkedRecord.id.value, 'wisa:w6');
+      expect(snapshot.warnings.whereType<DuplicateLinkedId>(), isEmpty);
+    });
+
+    test('two staff accounts on one code get an id each too (#323)', () {
+      // The staff population raises INV-23 the same way, and two staff accounts
+      // sharing an `accountId` with no WISA `wisaId` to separate them keyed on
+      // one `staff:code:` before.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap([
+          ssStaffAccount(uid: 'pee-admin', accountId: 'PEE', mail: 'p@s.be'),
+          ssStaffAccount(uid: 'pee-user', accountId: 'PEE', mail: 'p@s.be'),
+        ]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.staff.map((s) => s.id.value).toSet(), hasLength(2));
+      expect(snapshot.warnings.whereType<DuplicateLinkedId>(), isEmpty);
+      expect(snapshot.warnings.whereType<ResolveDuplicateMail>(), hasLength(1));
     });
 
     test('the ordinary resolver keeps every snapshot collision-free', () {

@@ -101,6 +101,27 @@ void main() {
           keys, containsAll(<String>['ss:stagiair1', 'staff:ss:begeleider']));
     });
 
+    test('a duplicate-mail pair enumerates both of its keys (#323)', () {
+      // The keys are claimed as they are handed out, so the co-account's
+      // fall-through key has to be enumerated too — a DB-backed resolver primed
+      // from this set must find it prepared, not mint it mid-pass.
+      final coAccounts = ssSnap([
+        ssAccount(uid: 'jane', accountId: '1', mail: 'jane@school.example'),
+        ssAccount(
+            uid: 'jane-admin', accountId: '1', mail: 'jane@school.example'),
+      ]);
+      final recorder = _RecordingResolver();
+      link(wisa, coAccounts, azSnap(const []), recorder, schoolPrefix: 'SMA');
+
+      final keys = naturalKeysFor(wisa, coAccounts, azSnap(const []),
+          schoolPrefix: 'SMA');
+
+      expect(recorder.resolved.toSet(), hasLength(recorder.resolved.length),
+          reason: 'no key is handed out twice, so no two records share an id');
+      expect(keys, equals(recorder.resolved.toSet()));
+      expect(keys, containsAll(<String>['wisa:1', 'mail:jane@school.example']));
+    });
+
     test('is a pure function of the snapshots — no group keys, stable', () {
       // Groups carry no PersonId; the enumerated set is unchanged whether or not
       // the resolver would be called, and repeated calls agree.

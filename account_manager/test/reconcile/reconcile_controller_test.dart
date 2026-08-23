@@ -3093,6 +3093,49 @@ void main() {
         isEmpty,
       );
     });
+
+    test('an admin co-account gets a document of its own (#323)', () async {
+      // The live cause: the INV-23 co-account pair, no constructed resolver.
+      // Both records preferred `wisa:1`, so the materializer used to hand one
+      // document the union of both records' candidates.
+      final linkedStore = InMemoryLinkedStore();
+      final h = coAccountHarness(linkedStore: linkedStore);
+      await h.controller.sync();
+
+      expect(h.controller.linkIdCollisions, isEmpty);
+      final ids = h.controller.linkedAccounts.map((a) => a.id.value).toList();
+      expect(ids.toSet(), hasLength(2),
+          reason: 'one id per Smartschool account, not one for the pair');
+
+      // …and one stored document per id, which is what every other operator
+      // inherits. Two records on one id left a single document behind.
+      expect(linkedStore.accountCount, 2);
+
+      // The mail collision itself is untouched — still one warning, still the
+      // operator's to accept (#109).
+      expect(h.controller.duplicateWarnings, hasLength(1));
+      expect(
+        h.controller.duplicateWarnings.single.accounts
+            .map((a) => a.uid)
+            .toSet(),
+        {'jane', 'jane-beheer'},
+      );
+    });
+
+    test('accepting the co-account mail still works with two ids (#323)',
+        () async {
+      // The issue's own caveat: "accepted" must not become a way to silence an
+      // id problem. With the ids separated there is nothing left to silence —
+      // acceptance demotes the mail warning and no collision was ever raised.
+      final linkedStore = InMemoryLinkedStore();
+      final h = coAccountHarness(linkedStore: linkedStore);
+      await h.controller.sync();
+
+      await h.controller.acceptDuplicate('jane.doe@student.school.example');
+      expect(await linkedStore.readDecisions(), hasLength(1));
+      expect(h.controller.duplicateWarnings.single.accepted, isTrue);
+      expect(h.controller.linkIdCollisions, isEmpty);
+    });
   });
 
   group('a class entry that owes two writes (#272)', () {

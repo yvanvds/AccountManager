@@ -1533,6 +1533,38 @@ ReconcileHarness dupMailHarness({
       syncedBy: syncedBy,
     );
 
+/// The deliberate **co-account** pair INV-23 exists for (#323): one person with
+/// a normal Smartschool account and an admin one, both carrying the same
+/// `accountId` — the operator's convention is the student's WISA id — and the
+/// same [mail].
+///
+/// The default [wisaStudent] and [azUser] carry that same id, so they link to
+/// the *first* of the two: the shape is one fully-linked record plus one
+/// Smartschool-only co-account, which is what the operator really has. Both
+/// records preferred the natural key `wisa:1`, so before #323 the resolver
+/// handed them one `LinkedAccountId` and every layer below the linker merged
+/// them — the self-contradicting card #319 describes, reached with no
+/// constructed resolver at all.
+ss.SmartschoolSnapshot coAccountSnap({
+  String mail = 'jane.doe@student.school.example',
+}) =>
+    ssSnap(
+      accounts: [
+        ssAccount(mail: mail),
+        // Named apart so the two cards are distinguishable on screen; the ids
+        // and the mail are what the linker keys on and they are identical.
+        ssAccount(uid: 'jane-beheer', mail: mail, surname: 'Doe-beheer'),
+      ],
+    );
+
+/// A reconcile harness over the [coAccountSnap] co-account pair (#323), on the
+/// otherwise-default WISA/Azure fixtures so the person is fully linked.
+ReconcileHarness coAccountHarness({InMemoryLinkedStore? linkedStore}) =>
+    ReconcileHarness(
+      smartschool: coAccountSnap(),
+      linkedStore: linkedStore,
+    );
+
 /// A [core.PersonIdResolver] that hands every natural key the same id — the way
 /// a test constructs the INV-24 collision (#319).
 ///

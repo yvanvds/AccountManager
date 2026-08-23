@@ -47,14 +47,18 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 ///   case-insensitive (legacy `.Equals()` was case-sensitive).
 /// - **INV-23:** two Smartschool accounts sharing a `mail` are *both* kept and
 ///   a [ResolveDuplicateMail] warning is raised (legacy silently dropped one).
+///   Keeping both means keeping two *records* for one person, so the pair also
+///   has to end up on two distinct [LinkedAccountId]s — see [_firstUnclaimed]
+///   (#323).
 /// - **INV-24:** two records that resolve to the same [LinkedAccountId] raise a
 ///   [DuplicateLinkedId] warning (#319). The check is not written here: it lives
 ///   in [LinkedSnapshot.fromRecords], which this function returns through, so it
 ///   holds for every snapshot built that way rather than only for this pass. It
 ///   is defence in depth — every *known* cause is fixed at its source (see
-///   INV-21 and [_buildStudentRecords]) — but the layers below the linker are
-///   all keyed by that id and every one of them unions or drops without a word,
-///   so a cause nobody has found yet must not be able to reach them quietly.
+///   INV-21, [_buildStudentRecords] and [_firstUnclaimed]) — but the layers
+///   below the linker are all keyed by that id and every one of them unions or
+///   drops without a word, so a cause nobody has found yet must not be able to
+///   reach them quietly.
 ///
 /// [schoolPrefix] is the Azure `companyName` value the school stamps on its
 /// own users; an Azure-only user carrying it is a former student kept as an
@@ -121,10 +125,18 @@ LinkedSnapshot link(
   // Resolve a stable identity and confidence for each record — students first,
   // then staff, so [resolver.resolve] is called in the same order as before
   // (a sequential/minting resolver assigns ids in that order).
+  //
+  // The natural keys are claimed as they are handed out, so two records can
+  // never be given the same one (#323): see [_firstUnclaimed]. Students and
+  // staff share the claim set even though their key namespaces cannot overlap
+  // (`staff:` prefixes every staff key) — one set is simpler than two and costs
+  // nothing.
+  final claimedKeys = <String>{};
   final accounts = <LinkedAccount>[
     for (final rec in studentRecords)
       LinkedAccount(
-        id: LinkedAccountId(resolver.resolve(_naturalKey(rec)).value),
+        id: LinkedAccountId(
+            resolver.resolve(_naturalKey(rec, claimedKeys)).value),
         role: PersonRole.student,
         wisa: rec.wisa,
         smartschool: rec.smartschool,
@@ -137,7 +149,8 @@ LinkedSnapshot link(
   final staff = <LinkedStaff>[
     for (final rec in staffRecords)
       LinkedStaff(
-        id: LinkedAccountId(resolver.resolve(_naturalStaffKey(rec)).value),
+        id: LinkedAccountId(
+            resolver.resolve(_naturalStaffKey(rec, claimedKeys)).value),
         role: rec.smartschool?.role ?? PersonRole.teacher,
         wisa: rec.wisa,
         smartschool: rec.smartschool,
@@ -167,6 +180,11 @@ LinkedSnapshot link(
 /// The set of natural keys [link] will hand to the [PersonIdResolver] for the
 /// same three snapshots — every student and staff key, deduplicated — derived
 /// by running the identical record-building passes but minting nothing.
+///
+/// Since #323 a key is *claimed* as it is handed out, and this returns the claim
+/// set itself: [_firstUnclaimed] only ever adds the key it returns, so "the keys
+/// [link] resolves" and "the set returned here" are the same object built the
+/// same way, rather than two computations that have to be kept in step.
 ///
 /// A network-backed resolver cannot do I/O inside the synchronous
 /// `PersonIdResolver.resolve`, so it uses this to mint-or-fetch every id in one
@@ -206,10 +224,16 @@ Set<String> naturalKeysFor(
     schoolPrefix: schoolPrefix,
     warnings: warnings,
   );
-  return <String>{
-    for (final rec in studentRecords) _naturalKey(rec),
-    for (final rec in staffRecords) _naturalStaffKey(rec),
-  };
+  // Students first, then staff — the order [link] resolves in, which is the
+  // order the claims have to be made in for the two to agree.
+  final claimedKeys = <String>{};
+  for (final rec in studentRecords) {
+    _naturalKey(rec, claimedKeys);
+  }
+  for (final rec in staffRecords) {
+    _naturalStaffKey(rec, claimedKeys);
+  }
+  return claimedKeys;
 }
 
 /// Builds one student [_Record] per linked person from the three snapshots,
@@ -869,33 +893,78 @@ bool _seedsClassGroups(
     _isOurWisaSchool(schoolId, ourSchoolIds) &&
     !virtualSchoolIds.contains(schoolId);
 
-/// The natural key handed to the [PersonIdResolver]: `wisaId → mail → upn →
-/// azureId`, normalized and namespaced so the resolver mints a stable, derived
+/// The natural key handed to the [PersonIdResolver]: the first of
+/// `wisaId → mail → upn → azureId → uid` that no earlier record has [claimed],
+/// normalized and namespaced so the resolver mints a stable, derived
 /// [PersonId]. The wisaId is taken from whichever system carries it.
-String _naturalKey(_Record rec) {
+String _naturalKey(_Record rec, Set<String> claimed) {
   final wisaId = _norm(
     rec.wisa?.wisaId.value ??
         rec.smartschool?.accountId ??
         rec.azure?.employeeId,
   );
-  if (wisaId != null) return 'wisa:$wisaId';
-
   final mail = _norm(rec.smartschool?.mail);
-  if (mail != null) return 'mail:$mail';
-
   final upn = _norm(rec.azure?.upn);
-  if (upn != null) return 'upn:$upn';
-
   final azureId = _norm(rec.azure?.id);
-  if (azureId != null) return 'azure:$azureId';
-
   // A Smartschool-only account may carry neither an accountId nor a mail
   // (real data: e.g. intern accounts) — its uid is then the only identity.
   final uid = _norm(rec.smartschool?.uid);
-  if (uid != null) return 'ss:$uid';
 
-  // Unreachable: every record carries at least one identifying field.
-  throw StateError('LinkedAccount record has no identifying key: $rec');
+  final candidates = <String>[
+    if (wisaId != null) 'wisa:$wisaId',
+    if (mail != null) 'mail:$mail',
+    if (upn != null) 'upn:$upn',
+    if (azureId != null) 'azure:$azureId',
+    if (uid != null) 'ss:$uid',
+  ];
+  if (candidates.isEmpty) {
+    // Unreachable: every record carries at least one identifying field.
+    throw StateError('LinkedAccount record has no identifying key: $rec');
+  }
+  return _firstUnclaimed(candidates, claimed);
+}
+
+/// The first of [candidates] — one record's identifying keys in preference
+/// order — that no earlier record has taken, added to [claimed] as it is handed
+/// out.
+///
+/// This is what stops an **INV-23 duplicate-mail pair from landing two records
+/// on one [LinkedAccountId]** (#323). INV-23 deliberately keeps both Smartschool
+/// accounts of a colliding pair, so the deliberate admin+user co-account setup
+/// yields two records for one person — and by the operator's convention both
+/// carry the *same* `accountId` (the WISA id of that student), or neither
+/// carries one and both fall back to the very mail that made them collide.
+/// Either way the preferred key is identical, the resolver hands both records
+/// the same id, and every layer below the linker then unions or drops without a
+/// word. Falling through to the next key gives the second record an id of its
+/// own, ending on `ss:<uid>` / `azure:<id>`, which are unique per record.
+///
+/// First claim wins, in record order — the rule every other index in this file
+/// uses (`putIfAbsent`), so the outcome stays a deterministic function of
+/// snapshot order (INV-20). It also leaves the preferred key on the record the
+/// WISA and Azure passes attached to, because those passes are first-wins in
+/// that same order: the person's fully-linked record keeps `wisa:<id>` and the
+/// extra co-account is the one that moves.
+///
+/// Merging the pair into one record instead — the other option #323 weighs — is
+/// not available here: a [LinkedAccount] holds a single Smartschool account, so
+/// merging means dropping one, which is the exact silent loss INV-23 exists to
+/// prevent.
+///
+/// If *every* candidate is spoken for, the preferred key is returned anyway and
+/// the collision reaches [LinkedSnapshot.fromRecords], which reports it as
+/// INV-24. Any record with a Smartschool or Azure side ends on its unique
+/// `uid`/object id, so that leaves the WISA-only records: a WISA-only *student*
+/// is unique by `wisaId` (INV-21 merges the rows of one person), but two WISA
+/// *staff* rows sharing a `code` with no `wisaId` to tell them apart really do
+/// have one candidate between them. They stay a reported collision on purpose —
+/// WISA is claiming one identity for two rows, and inventing a second here would
+/// hide that rather than fix it.
+String _firstUnclaimed(List<String> candidates, Set<String> claimed) {
+  for (final key in candidates) {
+    if (claimed.add(key)) return key;
+  }
+  return candidates.first;
 }
 
 /// `high` only when all three systems are present *and* every bridge key
@@ -922,33 +991,40 @@ LinkConfidence _confidence(_Record rec) {
   return mailAgrees && idAgrees ? LinkConfidence.high : LinkConfidence.medium;
 }
 
-/// The natural key for a staff member: `wisaId → code → mail → upn → azureId`,
-/// normalized and namespaced under `staff:` so a staff member never collides
-/// with a student who happens to share a numeric id. `wisaId` (the Azure
-/// bridge) is preferred, then the Smartschool-side `code`.
-String _naturalStaffKey(_StaffRecord rec) {
+/// The natural key for a staff member: the first of
+/// `wisaId → code → mail → upn → azureId → uid` that no earlier record has
+/// [claimed], normalized and namespaced under `staff:` so a staff member never
+/// collides with a student who happens to share a numeric id. `wisaId` (the
+/// Azure bridge) is preferred, then the Smartschool-side `code`.
+///
+/// The fall-through is the student rule applied to the staff population
+/// ([_firstUnclaimed], #323): staff raise [ResolveDuplicateMail] on a shared
+/// mail exactly as students do, and two staff accounts sharing an `accountId`
+/// with no WISA `wisaId` to separate them collide on `staff:code:<code>` the
+/// same way.
+String _naturalStaffKey(_StaffRecord rec, Set<String> claimed) {
   final wisaId = _norm(rec.wisa?.wisaId?.value ?? rec.azure?.employeeId);
-  if (wisaId != null) return 'staff:wisa:$wisaId';
-
   final code = _norm(rec.wisa?.code.value ?? rec.smartschool?.accountId);
-  if (code != null) return 'staff:code:$code';
-
   final mail = _norm(rec.smartschool?.mail);
-  if (mail != null) return 'staff:mail:$mail';
-
   final upn = _norm(rec.azure?.upn);
-  if (upn != null) return 'staff:upn:$upn';
-
   final azureId = _norm(rec.azure?.id);
-  if (azureId != null) return 'staff:azure:$azureId';
-
   // A Smartschool-only account may carry neither an accountId nor a mail
   // (real data: e.g. intern accounts) — its uid is then the only identity.
   final uid = _norm(rec.smartschool?.uid);
-  if (uid != null) return 'staff:ss:$uid';
 
-  // Unreachable: every record carries at least one identifying field.
-  throw StateError('LinkedStaff record has no identifying key: $rec');
+  final candidates = <String>[
+    if (wisaId != null) 'staff:wisa:$wisaId',
+    if (code != null) 'staff:code:$code',
+    if (mail != null) 'staff:mail:$mail',
+    if (upn != null) 'staff:upn:$upn',
+    if (azureId != null) 'staff:azure:$azureId',
+    if (uid != null) 'staff:ss:$uid',
+  ];
+  if (candidates.isEmpty) {
+    // Unreachable: every record carries at least one identifying field.
+    throw StateError('LinkedStaff record has no identifying key: $rec');
+  }
+  return _firstUnclaimed(candidates, claimed);
 }
 
 /// `high` only when all three systems are present *and* both staff bridges
