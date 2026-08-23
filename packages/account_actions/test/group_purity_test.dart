@@ -121,6 +121,45 @@ void main() {
       );
     });
 
+    test(
+        'the namesake notice states the group\'s code instead of diffing it '
+        '(#306)', () {
+      // The last bare-`before` field left standing after #305. The notice tells
+      // the operator to repair a Smartschool group by hand, and names the code
+      // they will find it under. Through the transition template that read
+      //
+      //   code: G2G → ∅
+      //
+      // — the code being cleared, by an action that writes nothing at all
+      // (`canApply == false`). The two fields around it are genuine
+      // transitions: the rename and the make-it-official are what the operator
+      // is being asked to do.
+      final change = ClassExistsAsSmartschoolGroup(
+        linkedGroup(
+          wisa: wisaGroup(name: '2G'),
+          smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2 G'),
+        ),
+      ).describeChanges();
+
+      expect(change.system, Origin.smartschool);
+      expect(change.fields.map((f) => f.field),
+          ['name', 'code', 'officiële klas']);
+
+      final code = change.fields[1];
+      expect(code.shape, FieldChangeShape.statement,
+          reason: 'the code is how the operator finds the group, not a value '
+              'this notice moves anywhere');
+      expect(code.before, 'G2G');
+      expect(code.after, isNull, reason: 'a statement has no half to move to');
+
+      // Its neighbours still diff, because they really are transitions.
+      expect(
+        [change.fields[0], change.fields[2]]
+            .map((f) => '${f.shape.name}:${f.before}>${f.after}'),
+        ['transition:2 G>2G', 'transition:nee>ja'],
+      );
+    });
+
     test('DoNotImportFromWisa describes the rule it would add', () {
       final change =
           DoNotImportFromWisa(linkedGroup(wisa: wisaGroup(name: '3A')))

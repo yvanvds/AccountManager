@@ -556,7 +556,12 @@ class ClassExistsAsSmartschoolGroup extends GroupAction {
             before: _namesake.name,
             after: _wisa.name,
           ),
-          FieldChange('code', before: _namesake.id.value),
+          // A fact, not a transition (#306): the code is how the operator
+          // finds the group in Smartschool, and this notice writes nothing at
+          // all. As a transition it read `code: G2G → ∅` — the code being
+          // cleared. Its neighbours here *are* transitions: the rename and the
+          // make-it-official are the repair being asked for.
+          FieldChange.statement('code', _namesake.id.value),
           FieldChange(
             'officiële klas',
             before: _namesake.official ? 'ja' : 'nee',

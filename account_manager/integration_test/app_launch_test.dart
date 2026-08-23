@@ -2067,6 +2067,68 @@ void main() {
   });
 
   testWidgets(
+      'the Smartschool-namesake notice names the group\'s code end-to-end, it '
+      'does not diff it (#306)', (WidgetTester tester) async {
+    // The last bare-`before` field #305 left standing, in the real app. `2G` is
+    // a WISA class Smartschool already carries on a group that is not flagged
+    // official, so the app proposes no create and instead tells the operator to
+    // repair the group by hand — an informational notice that writes nothing
+    // (`canApply == false`). Under that heading its three fields read
+    //
+    //   name: 2G → 2G
+    //   code: G2G → ∅
+    //   officiële klas: nee → ja
+    //
+    // The outer two are the repair being asked for. The middle one is not a
+    // value moving at all: the code is how the operator finds the group in
+    // Smartschool, and through the before → after template it claims the notice
+    // clears it.
+    //
+    // End-to-end rather than on the action alone, because the line the operator
+    // reads is assembled across the whole path: the group dispatch's
+    // `ChangeSet`, the collapse of the notice and its "negeer deze klas" half
+    // into one either/or, the radio that decides whose fields are on screen, and
+    // only then `fieldChangeLine`. "No cleared field anywhere on this card" is
+    // also a claim about the page as composed — this tab renders the second
+    // namesake class and the two ordinary new classes beside it.
+    useTallWindow(tester);
+    final harness = namesakeClassChoiceHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final entry = find.byKey(const ValueKey('entry-group-2G'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    // The notice is the pre-selected half, and it states the code as a fact.
+    expect(
+      find.textContaining(
+          'Deze klas bestaat in Smartschool maar is geen officiële klas'),
+      findsWidgets,
+    );
+    expect(find.text('code: G2G'), findsOneWidget);
+
+    // The repair it *is* asking for still reads as the transition it is.
+    expect(find.text('officiële klas: nee → ja'), findsOneWidget);
+
+    // And nothing on this page claims a field is being emptied — least of all
+    // an action that cannot be applied.
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'a notice that writes nothing clears nothing');
+    expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        isEmpty,
+        reason: 'opening a card writes nothing');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the badges count one pending item per either/or, so the Klasgroepen '
       'rollup agrees with the list the tab renders end-to-end (#251)',
       (WidgetTester tester) async {
