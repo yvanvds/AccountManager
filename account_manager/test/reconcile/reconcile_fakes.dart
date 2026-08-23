@@ -3648,6 +3648,7 @@ class ReconcileHarness {
     InMemoryLinkedStore? linkedStore,
     this.controllerStore,
     this.persistTimeout,
+    this.azureRefreshAge,
     this.hub,
     SignalPublisher? publisher,
     SignalSubscriber? subscriber,
@@ -3959,6 +3960,7 @@ class ReconcileHarness {
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),
+      azureRefreshAge: azureRefreshAge ?? const Duration(minutes: 30),
       clock: () => kFixtureDate,
     );
   }
@@ -3972,6 +3974,17 @@ class ReconcileHarness {
   /// The controller's persist-step timeout (#168); defaults to 10 minutes when
   /// unset, and the stall tests inject a tiny value.
   final Duration? persistTimeout;
+
+  /// How old the Azure snapshot in hand may get before a smart sync refreshes
+  /// it with an incremental delta resume (#320); defaults to the production 30
+  /// minutes when unset.
+  ///
+  /// Because the harness clock is pinned to [kFixtureDate] and every fixture
+  /// snapshot is stamped there, the default leaves the age test false in every
+  /// test that does not opt in — a test wanting the refresh either seeds an
+  /// `azureInitial` stamped before [kFixtureDate] or collapses this to
+  /// [Duration.zero].
+  final Duration? azureRefreshAge;
 
   /// The shared materialized-view store (#115): a sync writes the derived
   /// per-account docs + rollups here, and a resumed session reads the overview
@@ -4173,9 +4186,11 @@ class ReconcileHarness {
   /// **Synchroniseer** re-pulls Azure instead of leaving the snapshot this
   /// session already holds alone.
   ///
-  /// Which is what a test about the **incremental** Azure pass has to reach for
-  /// since #316: **Controleer op drift** re-reads Azure in full by design, so
-  /// the smart sync is the pass that still resumes the stored delta token. The
+  /// Which is one of the two ways a test reaches the **incremental** Azure pass:
+  /// **Controleer op drift** re-reads Azure in full by design since #316, so the
+  /// smart sync is the pass that resumes the stored delta token. Since #320 an
+  /// aged snapshot ([azureRefreshAge]) arms the very same pass without any
+  /// settings change; this stays the way to arm it at a fixture-fresh age. The
   /// school is written with the name and code a [wisaSchool] fixture carries, so
   /// the school-profile back-fill (#207) finds nothing to repair afterwards.
   void markSchoolManaged(int schoolId) {

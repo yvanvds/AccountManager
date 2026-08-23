@@ -9074,6 +9074,104 @@ void main() {
   });
 
   testWidgets(
+      'an ordinary Synchroniseer spends the stored delta token once the Azure '
+      'copy has aged, so the incremental pull has a caller again (#320)',
+      (WidgetTester tester) async {
+    // #316 made **Controleer op drift** a full re-read — right for drift, and it
+    // left `/users/delta` with almost no caller. An ordinary Synchroniseer
+    // skipped Azure whenever a snapshot was in hand, so the only route left into
+    // the delta walk was a saved Azure pull input ("the operator flipped a
+    // school beheerd"). Every drift pass minted a resume token that nothing ever
+    // spent, and the machinery PAIN-2 exists for — the walk, the sparse-row
+    // merge (#288), the rejected-token recovery (#213) — ran in production only
+    // in that one corner.
+    //
+    // Only the end-to-end run proves the route is real: the aged seed has to
+    // reach the SystemState through bootstrap, the controller has to decide from
+    // its age, the production `azureSyncer` has to hand the *stored token* to a
+    // real AzureConnector, and what the walk brings back has to survive the link
+    // and land in Acties as a to-do the operator can read.
+    useTallWindow(tester);
+    final azureWire = HandEditedUserGraph(
+      // The hand-edit Graph reports as a sparse row: object id plus what
+      // changed. Only a resumed walk can carry it — the bulk read and the
+      // `employeeId` back-fill both answer empty on this wire.
+      row: <String, dynamic>{
+        'id': 'az1',
+        'displayName': 'Janneke Doe',
+        'givenName': 'Janneke',
+      },
+    );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azureTransport: azureWire,
+      // The cold seed this session opens on: last night's Azure, her account
+      // still in step with WISA, the resume token unspent — and old enough that
+      // the next Synchroniseer refreshes it.
+      azureInitial: azSnap(
+        fetchedAt: kFixtureDate.subtract(const Duration(hours: 12)),
+        deltaToken: 'AZ-TOKEN',
+        users: [azUser(displayName: 'Jane Doe')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    // No settings change, no drift button — the button the operator presses all
+    // day.
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The stored token was spent, and the pass really was the incremental one:
+    // no `$filter`-scoped bulk read ran.
+    expect(azureWire.resumeTokens, <String>['AZ-TOKEN']);
+    expect(azureWire.bulkReads, 0);
+
+    // …and the pass explains itself in the panel the operator reads, so a delta
+    // refresh and the drift button's full re-read stay distinguishable after the
+    // fact (#316's other half).
+    expect(find.textContaining('Azure AD wordt incrementeel bijgewerkt.'),
+        findsWidgets);
+    expect(find.textContaining('volledig opnieuw gelezen'), findsNothing);
+
+    // What the walk carried is in the snapshot, merged onto the record it
+    // updates rather than replacing it.
+    expect(
+      harness.app.azure.snapshot!.users.single,
+      azUser(displayName: 'Janneke Doe', givenName: 'Janneke'),
+    );
+
+    // And it reached the operator as the one to-do it means: put the WISA name
+    // back on the Office 365 account.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final aged = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      aged.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de naam in Azure'],
+    );
+    await selectAccount(tester, aged.targetId);
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
+  });
+
+  testWidgets(
       'Controleer op drift re-reads Azure in full, so a stale field no delta '
       'could ever report is repaired and the phantom action goes away (#316)',
       (WidgetTester tester) async {

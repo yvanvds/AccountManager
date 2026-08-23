@@ -146,6 +146,72 @@ void main() {
     });
   });
 
+  group('aged Azure refresh (#320)', () {
+    test('a pass that re-links refreshes an aged Azure snapshot incrementally',
+        () async {
+      // The seed a session opens on: last night's Azure from the cold store,
+      // carrying the resume token that pass left behind.
+      final h = ReconcileHarness(
+        azureInitial: azSnap(
+          fetchedAt: kFixtureDate.subtract(const Duration(hours: 12)),
+          deltaToken: 'AZ-TOKEN',
+        ),
+      );
+
+      await h.controller.sync();
+
+      // Before #320 this pass left Azure alone entirely — the snapshot was not
+      // null and no Azure setting had moved — so the stored token was minted by
+      // every drift pass and spent by none.
+      expect(h.azSyncs, 1);
+      expect(h.azFullReads, 0,
+          reason: 'the refresh is the cheap delta resume, never a re-read');
+      expect(h.controller.error, isNull);
+      // The pass says which kind of read the operator got, the way the drift
+      // pass's "volledig opnieuw gelezen" line does (#316).
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(allOf(
+          startsWith('De Azure-gegevens dateren van '),
+          endsWith('— Azure AD wordt incrementeel bijgewerkt.'),
+        )),
+      );
+    });
+
+    test('a fresh Azure snapshot is left alone, and says nothing about it',
+        () async {
+      final h = ReconcileHarness(azureInitial: azSnap(deltaToken: 'AZ-TOKEN'));
+
+      await h.controller.sync();
+
+      expect(h.azSyncs, 0, reason: 'the copy in hand is this minute old');
+      expect(
+        h.log.entries.map((e) => e.message),
+        everyElement(isNot(contains('incrementeel bijgewerkt'))),
+      );
+    });
+
+    test('an unchanged WISA re-sync still pulls nothing, however aged Azure is',
+        () async {
+      // The refresh window collapsed to nothing, so the age test is true on
+      // every pass: the only thing that can keep Azure unpulled below is the
+      // unchanged-WISA shortcut itself. It has to win — falling through it
+      // would re-link and rewrite the whole materialized view for every other
+      // operator merely because time passed.
+      final h = ReconcileHarness(azureRefreshAge: Duration.zero);
+      await h.controller.sync();
+      expect(h.azSyncs, 1, reason: 'the first pass holds no snapshot at all');
+
+      h.wisaResult =
+          wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+      await h.controller.sync();
+
+      expect(h.controller.noChangesNeeded, isTrue);
+      expect(h.azSyncs, 1, reason: 'the shortcut returns before the refresh');
+      expect(h.ssSyncs, 1);
+    });
+  });
+
   group('sync-complete log line (#162)', () {
     test('a completed sync logs a terminal ready line with the action count',
         () async {

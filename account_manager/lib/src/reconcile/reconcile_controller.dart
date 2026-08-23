@@ -514,6 +514,13 @@ class CategorySummary {
 /// default. The shortcut also stands down when a setting only the link consumes
 /// has moved ([linkAwaitingSettings], #264) — that falls through to the re-link
 /// without pulling anything.
+///
+/// Azure has one extra condition, and only on the fall-through path: a snapshot
+/// that has aged past [azureRefreshAge] is refreshed with the **incremental**
+/// `/users/delta` resume ([azureRefreshDue], #320). That is not a re-read — the
+/// expensive one stays [checkDrift]'s — it is the cheap pull PAIN-2 built the
+/// delta for, and after #316 it is what keeps a stored resume token from being
+/// minted every pass and spent by none.
 class ReconcileController extends ChangeNotifier {
   ReconcileController({
     required this.app,
@@ -527,6 +534,7 @@ class ReconcileController extends ChangeNotifier {
     this.publisher,
     this.subscriber,
     this.persistTimeout = const Duration(minutes: 10),
+    this.azureRefreshAge = const Duration(minutes: 30),
     DateTime Function()? clock,
   })  : _bootstrapSchoolProfiles = schoolProfiles,
         _now = clock ?? DateTime.now {
@@ -645,6 +653,18 @@ class ReconcileController extends ChangeNotifier {
   /// so a merely-slow (but progressing) write is never cut off in practice;
   /// tests inject a tiny value.
   final Duration persistTimeout;
+
+  /// How old the Azure snapshot in hand may get before a [sync] refreshes it
+  /// with an incremental `/users/delta` resume (#320) — see [azureRefreshDue].
+  ///
+  /// Thirty minutes is chosen against the two things that actually happen. A
+  /// sitting — sync, apply, sync again — stays well inside it, so the copy the
+  /// operator just pulled is not re-fetched for every press. A session that
+  /// opens on the cold seed a colleague wrote overnight, or that comes back to
+  /// the app after a break, is outside it, and gets a current Azure for the cost
+  /// of one delta request. Injected so a test can widen or collapse it; nothing
+  /// in production sets it.
+  final Duration azureRefreshAge;
 
   final DateTime Function() _now;
 
@@ -1657,6 +1677,39 @@ class ReconcileController extends ChangeNotifier {
           core.Origin.azure,
       };
 
+  /// Whether the Azure snapshot this session holds has aged past
+  /// [azureRefreshAge], so a [sync] that is going to re-link anyway should
+  /// refresh it first — **incrementally**, by resuming the stored delta token
+  /// (#320).
+  ///
+  /// This is what gives `/users/delta` a caller in ordinary operation. Since
+  /// #316 **Controleer op drift** re-reads Azure in full by design, and the only
+  /// other route into the delta walk was a saved Azure pull input
+  /// ([systemsAwaitingSettings]) — in practice "the operator flipped a school
+  /// beheerd", which almost never happens. Every drift pass therefore minted a
+  /// resume token that nothing ever spent, and the delta machinery PAIN-2 exists
+  /// for (`UserManager.delta`, the sparse-row merge of #288, the rejected-token
+  /// recovery of #213) ran in production only in that one corner.
+  ///
+  /// The trade the three passes now make is: **Synchroniseer** resumes the cheap
+  /// delta when the copy in hand has gone stale, **Controleer op drift** pays for
+  /// the full re-read, and an unchanged-WISA sync still pulls nothing at all —
+  /// that shortcut deliberately stays ahead of this test, because falling
+  /// through it would re-link and rewrite the whole ~9.6k-document materialized
+  /// view for every other operator merely because time passed.
+  ///
+  /// Smartschool has no equivalent: its syncer reads the whole site every pass,
+  /// so there is no cheap refresh to offer and re-reading it stays [checkDrift]'s
+  /// job. The asymmetry is the cost, not a rule about which system may drift.
+  ///
+  /// False before the first pull — a session with no snapshot at all is already
+  /// covered by the `snapshot == null` condition, which reads in full.
+  bool get azureRefreshDue {
+    final held = app.azure.snapshot;
+    if (held == null) return false;
+    return _now().difference(held.fetchedAt) >= azureRefreshAge;
+  }
+
   /// The [linkFingerprint] of the live document, or the empty sentinel when no
   /// [liveSettings] holder is wired — which makes every comparison equal and
   /// leaves [linkAwaitingSettings] false for the harnesses that model no
@@ -2179,7 +2232,14 @@ class ReconcileController extends ChangeNotifier {
       }
       _setProgress(0.45);
       final azStale = stale.contains(core.Origin.azure);
-      if (app.azure.snapshot == null || azStale) {
+      // …and whether the copy in hand has simply aged out (#320). This is the
+      // pass that spends the stored delta token in ordinary operation: it is
+      // reached only on the fall-through — the unchanged-WISA shortcut above
+      // still returns without pulling anything — so the cost is one resume on a
+      // pass that was going to re-link regardless.
+      final azHeld = app.azure.snapshot;
+      final azAged = azureRefreshDue;
+      if (azHeld == null || azStale || azAged) {
         await _renewLock();
         if (azStale) {
           // Worth naming: a moved prefix also drops the delta token (#246), so
@@ -2187,6 +2247,18 @@ class ReconcileController extends ChangeNotifier {
           log.addMessage(
             core.Origin.azure,
             'Azure-instellingen gewijzigd — Azure AD wordt opnieuw opgehaald.',
+          );
+        } else if (azAged && azHeld != null) {
+          // The counterpart of the drift pass's "volledig opnieuw gelezen" line
+          // (#316): both passes now touch Azure, and the log is where an
+          // operator works out afterwards which kind of read they got. Naming
+          // the age is what makes the pass explain itself rather than look like
+          // an unprompted extra pull.
+          log.addMessage(
+            core.Origin.azure,
+            'De Azure-gegevens dateren van '
+            '${formatFreshnessStamp(azHeld.fetchedAt, now: _now())} — '
+            'Azure AD wordt incrementeel bijgewerkt.',
           );
         }
         log.addMessage(core.Origin.azure, 'Azure AD ophalen…');
