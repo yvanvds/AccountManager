@@ -146,9 +146,11 @@ void main() {
 
     test('each member still contributes its own selected alternative',
         () async {
-      // A cohort of departed students where one is set to unregister and one to
-      // delete applies each as chosen — the #110 guarantee, unchanged by the
-      // move to per-decision passes.
+      // Two departed students, one set to unregister and one to delete, applied
+      // as cards — the #110 guarantee, unchanged by the move to per-decision
+      // passes. Read as *cards* rather than as a cohort because neither
+      // resolution is bulk-sanctioned: see the #326 test below, which is the
+      // other half of this pair.
       final h = departedHarness();
       await h.controller.sync();
       final departure =
@@ -160,17 +162,56 @@ void main() {
         group: actions.smartschoolDepartureAlternative,
         kind: 'DeleteStudentFromSmartschool',
       );
-      // Re-read after the pick, exactly as the header does: `chooseAlternative`
-      // notifies and the cohort is rebuilt from the entries on screen.
+      // Re-read after the pick, exactly as the screen does: `chooseAlternative`
+      // notifies and the entries are rebuilt.
       final chosen =
           cohort(h, 'student|${actions.smartschoolDepartureAlternative}');
 
-      await h.controller.applyDecisions(chosen.decisions);
+      await h.controller
+          .applyEntries(chosen.decisions.map((d) => d.entry).toList());
 
       expect(summariesOf(h), hasLength(2));
       expect(
           summariesOf(h), contains('Schrijf de leerling uit in Smartschool'));
       expect(summariesOf(h), contains('Verwijder dit account uit Smartschool'));
+    });
+
+    test('a bulk pass writes none of a situation #293 withholds (#326)',
+        () async {
+      // The same two departed students, through the bulk seam this time. Both
+      // resolutions of the departure either/or are withheld from a bulk pass —
+      // unregistering a student who merely fell out of a lagging WISA snapshot
+      // is as wrong as deleting them — so the pass must write neither, however
+      // the radios are set. It used to write both: the narrowing lived only in
+      // the situation header's count, which asked whether the *selected* option
+      // writes anything, and a flipped radio makes that true.
+      final h = departedHarness();
+      await h.controller.sync();
+      final departure =
+          cohort(h, 'student|${actions.smartschoolDepartureAlternative}');
+      h.controller.chooseAlternative(
+        entry: departure.decisions.last.entry,
+        group: actions.smartschoolDepartureAlternative,
+        kind: 'DeleteStudentFromSmartschool',
+      );
+      final chosen =
+          cohort(h, 'student|${actions.smartschoolDepartureAlternative}');
+      expect(chosen.decisions.every((d) => d.canApply), isTrue,
+          reason: 'both rows are set to a resolution that writes something — '
+              'the pre-#326 count would have read 2');
+      expect(chosen.applyableCount, 0,
+          reason: 'and not one of them may be written in bulk');
+      expect(chosen.bulkApplyable, isEmpty);
+
+      await h.controller.applyDecisions(chosen.decisions);
+
+      expect(h.controller.applyResults, isNull,
+          reason: 'the pass never started, so no verdict block appears');
+      expect(
+        h.soap.soapActions.where(
+            (a) => a.endsWith('#delUser') || a.endsWith('#unregisterStudent')),
+        isEmpty,
+      );
     });
 
     test('the whole-card apply still writes every decision on that card',

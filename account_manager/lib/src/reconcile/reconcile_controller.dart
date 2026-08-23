@@ -405,10 +405,34 @@ class SituationCohort {
   /// cohort answers the same question.
   String get label => decisions.first.choice.situationLabel;
 
+  /// The members a **bulk** affordance may write (#326) — the same narrowing
+  /// [ReconcileController.applyToAllCohortFor] applies, so the two bulk paths
+  /// answer one question instead of two.
+  ///
+  /// [PendingDecision.canApply] alone is not it. That asks "does the selected
+  /// option write anything", which every flipped radio makes true; the sanction
+  /// of #293 asks "may this be written to a whole cohort off one confirmation",
+  /// which the destructive and judgement-call actions refuse. Counting only the
+  /// first meant that flipping two rows of a stale Office 365 class group to
+  /// "delete" armed a header that took both groups — mailboxes, Teams and files
+  /// — on one press, on an action whose own class says no bulk affordance may
+  /// offer it. Both flags, because a cohort is a mix: the members of a
+  /// `classImportAlternative` cohort set to "create" are sanctioned, the ones
+  /// flipped to the blacklist beside it are not.
+  ///
+  /// (`canApplyToAll ⇒ canApply` is pinned on the action classes, so the second
+  /// test is redundant. It is written out anyway: a bulk write must not inherit
+  /// its whole guard from an invariant one layer away.)
+  List<PendingDecision> get bulkApplyable => <PendingDecision>[
+        for (final d in decisions)
+          if (d.canApply && d.canApplyToAll) d,
+      ];
+
   /// How many of them a bulk apply would actually write — the count the "Alles
-  /// toepassen (n)" button quotes. Zero for a cohort of informational notices,
-  /// which is what disables the button.
-  int get applyableCount => decisions.where((d) => d.canApply).length;
+  /// toepassen (n)" button quotes, and the length of [bulkApplyable]. Zero for a
+  /// cohort of informational notices *and* for one whose rows are all set to a
+  /// resolution #293 withholds, which is what drops the button.
+  int get applyableCount => bulkApplyable.length;
 }
 
 /// One colliding Smartschool account inside a [DuplicateMailWarning] (#109),
@@ -2737,14 +2761,64 @@ class ReconcileController extends ChangeNotifier {
   /// the header named one action and the pass ran whatever else was there.
   ///
   /// Each member still contributes its **own** selected alternative, exactly as
-  /// the whole-card pass does: a cohort of departed students where one is set to
-  /// unregister and one to delete applies each as chosen.
+  /// the whole-card pass does — among the resolutions #293 sanctions for a bulk
+  /// pass. A cohort of departed students where one is set to unregister and one
+  /// to delete writes neither: both resolutions are withheld, and this is the
+  /// bulk path. Their per-card **Toepassen** still applies each as chosen.
+  ///
+  /// That narrowing is [_bulkSanctioned], and it lives here rather than in the
+  /// affordances so the invariant survives a new one (#326).
   Future<void> applyDecisions(Iterable<PendingDecision> decisions) =>
-      _run(decisions, dry: false);
+      _runBulk(decisions, dry: false);
 
   /// Dry-runs [decisions] — [applyDecisions] with no writes.
   Future<void> dryRunDecisions(Iterable<PendingDecision> decisions) =>
-      _run(decisions, dry: true);
+      _runBulk(decisions, dry: true);
+
+  /// [_run] over the members of [decisions] a bulk pass may write (#326).
+  Future<void> _runBulk(
+    Iterable<PendingDecision> decisions, {
+    required bool dry,
+  }) async {
+    final sanctioned = _bulkSanctioned(decisions);
+    if (sanctioned.isEmpty) return;
+    return _run(sanctioned, dry: dry);
+  }
+
+  /// [decisions] narrowed to the ones a **bulk** pass is allowed to write
+  /// (#326): the resolution each is set to must declare
+  /// [PendingActionOption.canApplyToAll], the sanction of #293.
+  ///
+  /// The guard the situation header reads ([SituationCohort.bulkApplyable]) and
+  /// the guard the pass applies are deliberately the same rule stated twice.
+  /// Before #326 it was stated only in the header's count, and only *by
+  /// accident*: the destructive resolutions were kept off the bulk path by
+  /// their alternative group's polarity — the informational half is the default,
+  /// so nothing counted until the operator flipped a radio, and flipping two of
+  /// them armed the button. A guard that holds only while a default holds is
+  /// not a guard, and the defaults are exactly what #327–#329 take away.
+  ///
+  /// A skip here means an affordance offered something it must not have, so it
+  /// is stated in the log rather than swallowed.
+  List<PendingDecision> _bulkSanctioned(Iterable<PendingDecision> decisions) {
+    final kept = <PendingDecision>[];
+    var withheld = 0;
+    for (final d in decisions) {
+      if (d.canApply && d.canApplyToAll) {
+        kept.add(d);
+      } else if (d.canApply) {
+        withheld++;
+      }
+    }
+    if (withheld > 0) {
+      log.addMessage(
+        core.Origin.all,
+        'Overgeslagen in de groepsbewerking: $withheld actie(s) die enkel per '
+        'record toegepast mogen worden.',
+      );
+    }
+    return kept;
+  }
 
   /// Runs the selected, applyable option of every decision in [decisions]
   /// through the apply path (dry or real). Shared by the per-entry and

@@ -246,8 +246,14 @@ void main() {
       expect(cohort.decisions, hasLength(3),
           reason: 'three students share the rename');
 
+      // Run as cards rather than through the cohort seam: the rename is not
+      // bulk-sanctioned (#293), so since #326 `applyDecisions` writes none of
+      // it. What is under test here is the pinning of the derived lists across
+      // a multi-write pass, and the whole-card pass is one — each of these
+      // three cards carries the rename and nothing else.
       h.controller.addListener(record);
-      await h.controller.applyDecisions(cohort.decisions);
+      await h.controller
+          .applyEntries(cohort.decisions.map((d) => d.entry).toList());
       h.controller.removeListener(record);
 
       const reason = 'the view the pass started from, then the settled one — '

@@ -2336,30 +2336,26 @@ void main() {
         .key;
     expect(namesakeKey, isNot(newKey));
 
-    final namesakeBulk = find.byKey(ValueKey('situation-apply-$namesakeKey'));
-    await tester.ensureVisible(namesakeBulk);
+    final namesakeHeader = find.textContaining(
+        'dan wordt ze gekoppeld. / Negeer deze klas bij het importeren uit '
+        'WISA');
+    await tester.ensureVisible(namesakeHeader);
     expect(
-      find.textContaining('dan wordt ze gekoppeld. / Negeer deze klas bij '
-          'het importeren uit WISA'),
+      namesakeHeader,
       findsOneWidget,
       reason: 'the header names one either/or led by the hand-fix notice',
     );
 
-    // And it offers nothing to run, out loud. Since #292 the cohort is that one
-    // decision rather than the whole card, and that decision's pre-selected
-    // resolution is a hand repair the app cannot perform — so the button counts
-    // zero and is dead. Under the old grouping it was live, because the classes
-    // also need an Office 365 group (#228): pressing a header that said "this
-    // class is already there" wrote something else entirely.
+    // And it offers nothing to run. Since #292 the cohort is that one decision
+    // rather than the whole card, and neither of its resolutions may be written
+    // in bulk — the notice is a hand repair the app cannot perform, and the
+    // blacklist beside it is withheld by #293 — so since #326 the pair is not
+    // rendered at all. Under the old grouping the button was live, because the
+    // classes also need an Office 365 group (#228): pressing a header that said
+    // "this class is already there" wrote something else entirely.
     final pulls = harness.wisaSyncs;
-    expect(
-      find.descendant(
-          of: namesakeBulk,
-          matching: find.text('Alles toepassen '
-              '(0)')),
-      findsOneWidget,
-    );
-    expect(tester.widget<FilledButton>(namesakeBulk).onPressed, isNull,
+    expect(find.byKey(ValueKey('situation-apply-$namesakeKey')), findsNothing);
+    expect(find.byKey(ValueKey('situation-dry-run-$namesakeKey')), findsNothing,
         reason: 'nothing to write means nothing to press');
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
         isEmpty,
@@ -3656,22 +3652,12 @@ void main() {
         findsOneWidget);
 
     // Both stale groups share one situation, so the tab collects them under a
-    // bulk header — and it counts **zero** writes, because leaving the group
-    // standing is the default of the pair. A destructive default here would
+    // bulk header — and that header offers no bulk pass at all: neither half of
+    // the pair may be written that way (#293/#326). A bulk affordance here would
     // take two mailboxes, Teams and file libraries on one click.
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
-    final bulkApply = find.textContaining('Alles toepassen (');
-    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
-    expect(
-      tester
-          .widget<FilledButton>(find.ancestor(
-            of: bulkApply,
-            matching: find.byType(FilledButton),
-          ))
-          .onPressed,
-      isNull,
-      reason: 'a bulk pass over stale groups must write nothing at all',
-    );
+    expect(find.textContaining('Alles toepassen ('), findsNothing,
+        reason: 'a bulk pass over stale groups must write nothing at all');
 
     // The row itself carries the either/or, with the delete as the half the
     // operator has to reach for.
@@ -3719,6 +3705,92 @@ void main() {
   });
 
   testWidgets(
+      'flipping every stale group to its delete still arms no bulk pass, '
+      'end-to-end (#326)', (WidgetTester tester) async {
+    // The reported hole, in the real app. `GBS-9Z` and `GBS-8Y` are the Office
+    // 365 groups of two classes that stopped running, so Klasgroepen files them
+    // under one "same situation" header. That header counted
+    // `PendingDecision.canApply` — "does the selected option write anything" —
+    // and never the #293 sanction the action itself declares. So what kept a
+    // delete off the bulk path was not the sanction at all: it was the
+    // *polarity* of the pair, the notice being pre-selected. Two flipped radios
+    // and the header read "Alles toepassen (2)", one confirmation away from
+    // taking two mailboxes, two Teams and two file libraries.
+    //
+    // Only a full run can see it. The radios are rendered per row from the live
+    // dispatch; the header is a separate derivation over the whole tab, above
+    // the inventory rather than beside the rows it acts on; and the claim is
+    // about what that second surface does *after* the operator has touched the
+    // first. A widget test that renders the header in isolation is handed a
+    // cohort somebody else built, which is precisely the seam that drifted.
+    useTallWindow(tester);
+    final harness = staleClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // Untouched, the tab already offers no bulk pass: both rows default to the
+    // notice, which writes nothing. Since #326 the pair is *absent* rather than
+    // dead at (0) — a disabled button invites the operator to go and make it
+    // live, which is the very move this guards against.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget,
+        reason: 'the cohort is still named; only the bulk pair is withdrawn');
+    expect(find.textContaining('Alles toepassen ('), findsNothing);
+    expect(find.text('Dry-run alles'), findsNothing);
+
+    // Now make the delete the selected resolution of every row in the cohort —
+    // the four taps that used to arm it.
+    for (final String id in const <String>['GBS-9Z', 'GBS-8Y']) {
+      final Finder entry = find.byKey(ValueKey('entry-group-$id'));
+      await tester.ensureVisible(entry);
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+      final Finder delete =
+          find.byKey(ValueKey('alt-$id-DeleteAzureClassGroup'));
+      await tester.ensureVisible(delete);
+      await tester.tap(delete);
+      await tester.pumpAndSettle();
+      // Collapse again so the next row's radios are reachable on the same page.
+      await tester.ensureVisible(entry);
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+    }
+
+    // Both rows are set to a delete, and the header still offers nothing: the
+    // sanction is a property of the action, not of how many rows happen to be
+    // set to it.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    expect(find.textContaining('Alles toepassen ('), findsNothing,
+        reason: 'a flipped radio must never arm a bulk delete');
+    expect(find.text('Dry-run alles'), findsNothing);
+    expect(harness.graph.deletedGroups, isEmpty);
+
+    // What the operator kept is the per-row path: one group at a time, from the
+    // card that shows what the write would do.
+    final Finder entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    final Finder apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.graph.deletedGroups, ['az-GBS-9Z']);
+    expect(find.byKey(const ValueKey('class-row-GBS-8Y')), findsOneWidget,
+        reason: 'the group beside it was flipped too, and still stands');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the class groups the legacy app left behind offer their delete too, '
       'end-to-end (#312)', (WidgetTester tester) async {
     // The reported bug, in the real app. Our school runs `1A`; Office 365 still
@@ -3758,11 +3830,10 @@ void main() {
         findsOneWidget,
         reason: 'both leftovers now ask something instead of showing a ✓');
 
-    // Widened, not loosened: the notice is still the default of the pair, so a
-    // bulk pass over the whole tab writes nothing.
+    // Widened, not loosened: neither half of the pair is bulk-sanctioned, so
+    // the tab offers no bulk pass over these groups at all (#293/#326).
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
-    final bulkApply = find.textContaining('Alles toepassen (');
-    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+    expect(find.textContaining('Alles toepassen ('), findsNothing);
 
     // The renamed group is its class's group by the address it answers on
     // (#280), so its row carries the pair under the name somebody typed over
@@ -3860,11 +3931,10 @@ void main() {
     expect(find.textContaining('Verwijder ze manueel'), findsNothing,
         reason: 'the app has the API to act on this; it stops delegating');
 
-    // Widened, not loosened: the notice is still the default of the pair, so a
-    // bulk pass over the whole tab writes nothing.
+    // Widened, not loosened: neither half of the pair is bulk-sanctioned, so
+    // the tab offers no bulk pass over these classes at all (#293/#326).
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
-    final bulkApply = find.textContaining('Alles toepassen (');
-    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+    expect(find.textContaining('Alles toepassen ('), findsNothing);
 
     final entry = find.byKey(const ValueKey('entry-group-9Z'));
     await tester.ensureVisible(entry);

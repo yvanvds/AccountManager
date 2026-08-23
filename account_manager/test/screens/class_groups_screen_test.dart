@@ -1024,8 +1024,8 @@ void main() {
   });
 
   testWidgets(
-      'a bulk header over stale groups writes nothing by default, and is '
-      'narrowed by the search (#262/#271)', (WidgetTester tester) async {
+      'a bulk header over stale groups offers no bulk pass at all, and is '
+      'narrowed by the search (#262/#271/#326)', (WidgetTester tester) async {
     // `GBS-9Z` and `GBS-8Y` share the stale-group situation, so the tab collects
     // them into one header — the surface where a destructive default would do
     // the most damage.
@@ -1036,19 +1036,14 @@ void main() {
         .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
-    final bulk = find.textContaining('Alles toepassen (');
-    expect(tester.widget<Text>(bulk).data, 'Alles toepassen (0)',
-        reason: 'the default resolution of both rows writes nothing');
-    expect(
-      tester
-          .widget<FilledButton>(find.ancestor(
-            of: bulk,
-            matching: find.byType(FilledButton),
-          ))
-          .onPressed,
-      isNull,
-    );
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget,
+        reason: 'the cohort is still worth naming; only the pair is withdrawn');
+    // Neither half of this either/or may be written in bulk — the notice
+    // because it writes nothing, the delete because #293 withholds it — so the
+    // header carries no pair rather than a dead "Alles toepassen (0)" the
+    // operator can go and make live (#326).
+    expect(find.textContaining('Alles toepassen ('), findsNothing);
+    expect(find.text('Dry-run alles'), findsNothing);
 
     // Narrowed to one class, the bulk affordance is gone altogether — a delete
     // must not be able to reach a class the operator filtered off the screen.
@@ -1172,8 +1167,8 @@ void main() {
   });
 
   testWidgets(
-      'a bulk header over Smartschool leftovers writes nothing by default '
-      '(#293/#313)', (WidgetTester tester) async {
+      'a flipped radio never arms the bulk header over Smartschool leftovers '
+      '(#293/#313/#326)', (WidgetTester tester) async {
     // `9Z` and `8Y` share the situation, so the tab collects them into one
     // header — the surface where a destructive default would do the most
     // damage, and the reason the delete withholds `canApplyToAll`.
@@ -1185,39 +1180,36 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
-    final bulk = find.textContaining('Alles toepassen (');
-    expect(tester.widget<Text>(bulk).data, 'Alles toepassen (0)',
-        reason: 'the default resolution of both rows writes nothing');
-    expect(
-      tester
-          .widget<FilledButton>(find.ancestor(
-            of: bulk,
-            matching: find.byType(FilledButton),
-          ))
-          .onPressed,
-      isNull,
-    );
+    expect(find.textContaining('Alles toepassen ('), findsNothing,
+        reason: 'neither resolution of this situation is bulk-sanctioned');
 
-    // Flipping one row to the delete moves the header by exactly one: the
-    // classes beside it keep the notice they defaulted to, so a leftover is
-    // never swept into a delete somebody else's row asked for. That is what
-    // makes the label honest — "alles" is only ever the picks on screen.
-    const entry = ValueKey('entry-group-9Z');
-    await tester.ensureVisible(find.byKey(entry));
-    await tester.tap(find.byKey(entry));
-    await tester.pumpAndSettle();
-    final delete = find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass'));
-    await tester.ensureVisible(delete);
-    await tester.tap(delete);
-    await tester.pumpAndSettle();
+    // Flipping the rows to the delete used to *arm* the header: it counted the
+    // selected option's `canApply` and nothing else, so two flipped radios read
+    // "Alles toepassen (2)" and one press took both classes — every membership
+    // and subgroup with them — on an action whose own class says no bulk
+    // affordance may offer it (#326).
+    for (final String id in const <String>['9Z', '8Y']) {
+      final entry = find.byKey(ValueKey('entry-group-$id'));
+      await tester.ensureVisible(entry);
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+      final delete = find.byKey(ValueKey('alt-$id-DeleteSmartschoolClass'));
+      await tester.ensureVisible(delete);
+      await tester.tap(delete);
+      await tester.pumpAndSettle();
+    }
 
-    expect(tester.widget<Text>(find.textContaining('Alles toepassen (')).data,
-        'Alles toepassen (1)');
-    expect(find.byKey(const ValueKey('alt-8Y-DeleteSmartschoolClass')),
-        findsNothing,
-        reason: 'the row beside it was never opened, let alone flipped');
-    expect(harness.soap.deletedClasses, isEmpty,
-        reason: 'nothing is written until the operator confirms');
+    expect(find.textContaining('Alles toepassen ('), findsNothing,
+        reason: 'the sanction is a property of the action, not of how many '
+            'rows happen to be set to it');
+    expect(find.text('Dry-run alles'), findsNothing);
+    expect(harness.soap.deletedClasses, isEmpty);
+
+    // …and the per-row apply is untouched: one class at a time, from the card
+    // that shows what the write would do.
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
   });
 
   testWidgets('a class WISA still has is offered no Smartschool delete (#313)',

@@ -2186,9 +2186,9 @@ ReconcileHarness azureClassGroupHarness({
 ///
 /// Two of them, deliberately: one stale group is a row, **two** are a "same
 /// situation" bulk subset, which is where a destructive action would do its
-/// worst. The notice is the default of the pair, so the header's "Alles
-/// toepassen" counts zero and the delete is only ever the pick an operator made
-/// on one row.
+/// worst. Neither half of the pair is bulk-sanctioned (#293), so since #326 the
+/// header offers no bulk pass at all — whichever way the radios are set — and
+/// the delete is only ever the pick an operator made on one row.
 ///
 /// The four prefixed non-class groups are here too — they must not appear in the
 /// inventory at all, let alone in that subset.

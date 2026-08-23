@@ -795,6 +795,18 @@ class MessagePanel extends StatelessWidget {
 /// email fix one of them happens to need. That is what makes the claim on the
 /// button verifiable at all — the operator can read one action's description and
 /// know what the button does to everyone in the cohort.
+///
+/// And since #326 the pair is offered only over resolutions #293 sanctions for
+/// a bulk pass ([SituationCohort.bulkApplyable]) — never merely over the ones
+/// that write *something*. The two questions came apart the moment an operator
+/// flipped two rows of one situation to a destructive alternative: the header
+/// counted them, armed, and took both Office 365 groups off one press, on an
+/// action whose own class says no bulk affordance may offer it. When nothing in
+/// the cohort survives that narrowing the buttons are gone rather than dead,
+/// because a disabled "Alles toepassen (0)" invites the operator to go and make
+/// it enabled — which is precisely the move this guards against. The line
+/// naming the cohort stays: "2 klassen in dezelfde situatie" is worth reading
+/// even when there is nothing to press.
 class SituationHeader extends StatelessWidget {
   const SituationHeader({
     super.key,
@@ -814,7 +826,11 @@ class SituationHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final String key = cohort.key;
-    final int applyable = cohort.applyableCount;
+    // The members a bulk pass may write — [PendingDecision.canApply] *and* the
+    // #293 sanction (#326). The pair below is built from this list, quotes its
+    // length, confirms its scope and hands it to the pass, so the four cannot
+    // drift apart; when it is empty there is no pair at all.
+    final List<PendingDecision> writable = cohort.bulkApplyable;
 
     return Padding(
       padding: const EdgeInsets.only(
@@ -830,37 +846,38 @@ class SituationHeader extends StatelessWidget {
               style: text.titleSmall,
             ),
           ),
-          const SizedBox(width: PlinkSpacing.s2),
-          OutlinedButton(
-            key: ValueKey('situation-dry-run-$key'),
-            onPressed: controller.busy || applyable == 0
-                ? null
-                : () => runWithProgress(
-                      context,
-                      controller: controller,
-                      dry: true,
-                      run: () => controller.dryRunDecisions(cohort.decisions),
-                    ),
-            child: const Text('Dry-run alles'),
-          ),
-          const SizedBox(width: PlinkSpacing.s2),
-          FilledButton(
-            key: ValueKey('situation-apply-$key'),
-            onPressed: controller.busy || applyable == 0
-                ? null
-                : () => confirmAndApply(
-                      context,
-                      controller: controller,
-                      title: 'Toepassen op ${cohort.length} $noun?',
-                      // The dialog is scoped to the very decisions the pass
-                      // below runs — the ones this header counted (#234/#252),
-                      // and only those (#292).
-                      scope:
-                          controller.applyScopeForDecisions(cohort.decisions),
-                      apply: () => controller.applyDecisions(cohort.decisions),
-                    ),
-            child: Text('Alles toepassen ($applyable)'),
-          ),
+          if (writable.isNotEmpty) ...<Widget>[
+            const SizedBox(width: PlinkSpacing.s2),
+            OutlinedButton(
+              key: ValueKey('situation-dry-run-$key'),
+              onPressed: controller.busy
+                  ? null
+                  : () => runWithProgress(
+                        context,
+                        controller: controller,
+                        dry: true,
+                        run: () => controller.dryRunDecisions(writable),
+                      ),
+              child: const Text('Dry-run alles'),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            FilledButton(
+              key: ValueKey('situation-apply-$key'),
+              onPressed: controller.busy
+                  ? null
+                  : () => confirmAndApply(
+                        context,
+                        controller: controller,
+                        title: 'Toepassen op ${writable.length} $noun?',
+                        // The dialog is scoped to the very decisions the pass
+                        // below runs — the ones this header counted
+                        // (#234/#252), and only those (#292/#326).
+                        scope: controller.applyScopeForDecisions(writable),
+                        apply: () => controller.applyDecisions(writable),
+                      ),
+              child: Text('Alles toepassen (${writable.length})'),
+            ),
+          ],
         ],
       ),
     );

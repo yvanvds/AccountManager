@@ -1057,9 +1057,12 @@ void main() {
       // fakes really *settle* is one of those. (The Smartschool fake takes a
       // write without folding it back into its snapshot, so the sanctioned
       // class move of #296 leaves its accounts pending and never reaches the
-      // state this test is about.) What #299 pins here is what the screen does
-      // once a pass has written several accounts, whichever button began it;
-      // the cohort review's own path is covered in the #296 group above.
+      // state this test is about.) It is the whole-card seam for the same
+      // reason: since #326 the per-decision one refuses what #293 withholds,
+      // and each of these three cards carries the rename alone. What #299 pins
+      // here is what the screen does once a pass has written several accounts,
+      // whichever button began it; the cohort review's own path is covered in
+      // the #296 group above.
       final harness = crossClassSituationHarness();
       await open(tester, harness);
 
@@ -1073,7 +1076,8 @@ void main() {
       ]).single;
       expect(cohort.key, 'student|ModifyAzureName');
       expect(cohort.length, 3, reason: 'one decision, three accounts');
-      await harness.controller.applyDecisions(cohort.decisions);
+      await harness.controller
+          .applyEntries(cohort.decisions.map((d) => d.entry).toList());
       await tester.pumpAndSettle();
 
       expect(harness.controller.applyResults, hasLength(3));
