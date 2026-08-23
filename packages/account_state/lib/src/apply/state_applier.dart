@@ -327,6 +327,7 @@ class StateApplier {
     final result = await action.apply(connectors, options);
     return _refresh(
       result,
+      // The Smartschool class `DeleteSmartschoolClass` removes (#313).
       removedGroupId: action.target.smartschool?.id,
       // The Office 365 group `DeleteAzureClassGroup` removes (#271). A delete
       // carries no record back, so the key comes off the bound target — and it
@@ -709,9 +710,12 @@ ss.SmartschoolSnapshot _dropFromSmartschool(
 }) {
   return ss.SmartschoolSnapshot(
     fetchedAt: current.fetchedAt,
-    // Drop the group by id (no group-delete action ships yet, so this is a
-    // defensive branch), else drop the account and its now-dangling
-    // memberships by uid.
+    // Drop the group by id — the class `DeleteSmartschoolClass` removes
+    // (#313), so the relink sees the leftover gone instead of re-raising the
+    // very pair the operator just resolved — else drop the account and its
+    // now-dangling memberships by uid. A deleted class's memberships are left
+    // where they are: `PlacementResolver` resolves each one through the group
+    // list and skips the ones that no longer land anywhere.
     groups: groupId == null
         ? current.groups
         : [

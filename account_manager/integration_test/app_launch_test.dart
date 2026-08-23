@@ -1095,7 +1095,7 @@ void main() {
     // The terminal ready line is logged (newest-first in the log panel) so the
     // operator knows the pass finished, and it names the pending-action count.
     expect(
-      find.textContaining('Sync voltooid — 4 openstaande actie(s). Klaar.'),
+      find.textContaining('Sync voltooid — 6 openstaande actie(s). Klaar.'),
       findsOneWidget,
     );
     // The last-sync freshness now renders as a dedicated box headed "Last sync"
@@ -3748,6 +3748,91 @@ void main() {
   });
 
   testWidgets(
+      'a Smartschool class WISA does not have offers its delete too, '
+      'end-to-end (#313)', (WidgetTester tester) async {
+    // The reported bug, in the real app. Our school runs `1A`; Smartschool
+    // still carries `9Z` and `8Y`, two official classes WISA has no counterpart
+    // for. Each row's whole content used to be
+    //
+    //   Deze klas bestaat in Smartschool maar niet in WISA. Verwijder ze
+    //   manueel als ze niet meer nodig is. (manueel)
+    //
+    // — an instruction to go and repeat the same judgement by hand in
+    // Smartschool's own UI, with `Toepassen` dead on the row. That is the dead
+    // end #271 removed on the Office 365 side, and at a September changeover
+    // there is a screenful of it.
+    //
+    // Only a full run shows the fix: the inventory is composed from the
+    // *stored* documents while the either/or radios come from the live
+    // dispatch, the same-situation bulk header from a third derivation, and
+    // "the tab still writes nothing by default" is a claim about the page as
+    // composed. The write itself has to travel the real Smartschool connector
+    // — a `delClass` addressed to the class **code**, not the name on screen.
+    useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+    expect(row('1A'), findsOneWidget);
+    expect(row('9Z'), findsOneWidget);
+    expect(row('8Y'), findsOneWidget);
+    expect(find.textContaining('Verwijder ze manueel'), findsNothing,
+        reason: 'the app has the API to act on this; it stops delegating');
+
+    // Widened, not loosened: the notice is still the default of the pair, so a
+    // bulk pass over the whole tab writes nothing.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    final bulkApply = find.textContaining('Alles toepassen (');
+    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+
+    final entry = find.byKey(const ValueKey('entry-group-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat deze klas staan — ze bestaat in Smartschool maar niet '
+          'in WISA'),
+      findsWidgets,
+    );
+    expect(find.text('code: C9Z'), findsOneWidget);
+    expect(find.text('omschrijving: Zesde jaar Z'), findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing');
+
+    final delete = find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass'));
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    expect(find.text('lidmaatschappen en subgroepen: verdwijnen mee'),
+        findsOneWidget);
+
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Exactly the one class the operator picked, addressed by its code, and its
+    // row goes with it.
+    expect(harness.soap.deletedClasses, ['C9Z']);
+    expect(row('9Z'), findsNothing);
+    expect(row('8Y'), findsOneWidget,
+        reason: 'the class beside it was never selected');
+    expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the "laat de groep staan" notice states its facts end-to-end, it does '
       'not diff them (#305)', (WidgetTester tester) async {
     // The reported card, in the real app. `GBS-9Z` is the group of a class that
@@ -5210,8 +5295,9 @@ void main() {
       'a passive session surfaces pending group actions on Klasgroepen '
       'with no pull and no link() (#119)', (WidgetTester tester) async {
     // Session 1 (offline harness) syncs and materializes the shared view. The
-    // fixture's two Smartschool-only classes (2B, 3C) raise the informational
-    // orphan-class notice — the group-action family.
+    // fixture's two Smartschool-only classes (2B, 3C) raise the orphan-class
+    // either/or of #313 — the group-action family — whose pre-selected half is
+    // the notice that leaves the class standing.
     final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
     await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
@@ -5236,8 +5322,8 @@ void main() {
 
     expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('class-row-2B')), findsOneWidget);
-    expect(
-        find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
+    expect(find.textContaining('ze bestaat in Smartschool maar niet in WISA'),
+        findsWidgets);
     // …all without a single connector pull or link().
     expect(resumed.wisaSyncs, 0);
     expect(resumed.ssSyncs, 0);

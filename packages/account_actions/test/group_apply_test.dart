@@ -123,6 +123,155 @@ void main() {
         throwsUnsupportedError,
       );
     });
+
+    test('it no longer sends the operator into Smartschool by hand (#313)', () {
+      // The dead end #271 removed on the Office 365 side: a row whose whole
+      // content was "go and do this somewhere else". The applyable delete now
+      // sits beside it, so the notice states the class instead of instructing.
+      final change =
+          DoNotImportFromSmartschool(linkedGroup(smartschool: ssGroup()))
+              .describeChanges();
+
+      expect(change.summary,
+          'Laat deze klas staan — ze bestaat in Smartschool maar niet in WISA');
+      expect(change.summary, isNot(contains('Verwijder ze manueel')));
+      expect(change.system, Origin.smartschool);
+      // Stated, never diffed: this half writes nothing, so nothing moves.
+      expect(change.fields.map((f) => '${f.field}:${f.before}'),
+          ['code:3A', 'omschrijving:Klas 3A']);
+      expect(
+        change.fields.every((f) => f.shape == FieldChangeShape.statement),
+        isTrue,
+      );
+      expect(change.fields.every((f) => f.after == null), isTrue);
+    });
+
+    test('a class with no description states only the facts it has (#313)', () {
+      final change = DoNotImportFromSmartschool(
+        linkedGroup(smartschool: ssGroup(description: '')),
+      ).describeChanges();
+      expect(change.fields.map((f) => f.field), ['code'],
+          reason: 'an empty statement renders as a bare `omschrijving: `');
+    });
+  });
+
+  group('a Smartschool class WISA does not have is one choice (#313)', () {
+    test('the notice and the delete are raised as one either/or', () {
+      final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
+
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromSmartschool, DeleteSmartschoolClass],
+        reason: 'the notice leads, so the delete is never the fallback pick',
+      );
+      expect(
+        actions.map((a) => a.alternativeGroup),
+        everyElement(staleSmartschoolClassAlternative),
+        reason: 'both halves fire on the one predicate, or the delete is a '
+            'lone reading with no safe default beside it',
+      );
+      expect(
+        actions.where((a) => a.isDefaultAlternative).single,
+        isA<DoNotImportFromSmartschool>(),
+      );
+    });
+
+    test('the delete describes what goes with the class', () {
+      final change = DeleteSmartschoolClass(linkedGroup(smartschool: ssGroup()))
+          .describeChanges();
+
+      expect(change.system, Origin.smartschool);
+      expect(change.summary,
+          'Verwijder de klas 3A uit Smartschool — ze bestaat niet in WISA');
+      expect(
+        change.fields.map((f) => f.field),
+        ['code', 'omschrijving', 'lidmaatschappen en subgroepen'],
+      );
+      expect(
+        change.fields.every((f) => f.shape == FieldChangeShape.statement),
+        isTrue,
+        reason: 'an inventory of what goes, not three fields being cleared',
+      );
+    });
+
+    test('apply calls delClass with the class code and reports it removed',
+        () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = DeleteSmartschoolClass(
+        // The code differs from the name on purpose: `delClass` takes the code.
+        linkedGroup(smartschool: ssGroup(code: 'C3A', name: '3A')),
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.system, Origin.smartschool);
+      expect(result.removed, isTrue,
+          reason: 'the State layer drops it from the snapshot');
+      expect(result.group, isNull, reason: 'a delete carries no record back');
+      expect(transport.calledMethod('delClass'), isTrue);
+      expect(transport.envelopes.single, contains('C3A'));
+      expect(transport.envelopes.single, isNot(contains('>3A<')),
+          reason: 'the class is addressed by its code, not its name');
+    });
+
+    test('a dry run of the delete writes nothing (PAIN-3)', () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = DeleteSmartschoolClass(
+        linkedGroup(smartschool: ssGroup(code: 'C3A')),
+      );
+
+      final result = await action.apply(connectors, ApplyOptions.dry);
+
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect(result.removed, isTrue);
+      expect(transport.soapActions, isEmpty);
+    });
+
+    test('a refused delClass surfaces as a failure (INV-41)', () async {
+      final transport = RecordingSmartschoolTransport(resultCode: 1);
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = DeleteSmartschoolClass(
+        linkedGroup(smartschool: ssGroup(code: 'C3A')),
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.error, isNotNull);
+      expect(result.removed, isFalse,
+          reason: 'nothing was removed, so nothing may be dropped');
+    });
+
+    test('a record naming no class code raises no delete', () {
+      final actions =
+          groupActionsFor(linkedGroup(smartschool: ssGroup(code: ' ')));
+      expect(actions.whereType<DoNotImportFromSmartschool>(), hasLength(1));
+      expect(actions.whereType<DeleteSmartschoolClass>(), isEmpty,
+          reason: 'there is nothing to address the delClass to');
+    });
+
+    test('an organisational group is never offered for deletion', () {
+      // The linker only ever seeds an orphan from an *official* class, so this
+      // shape does not reach the dispatch — but a delete must not inherit its
+      // whole scope from a filter one layer away.
+      final actions = groupActionsFor(
+        linkedGroup(smartschool: ssGroupNode(code: 'leerlingen')),
+      );
+      expect(actions.whereType<DeleteSmartschoolClass>(), isEmpty);
+    });
+
+    test('a class WISA still has is offered no delete', () {
+      expect(
+        groupActionsFor(fullySyncedGroup()).whereType<DeleteSmartschoolClass>(),
+        isEmpty,
+      );
+    });
   });
 
   group('ModifySmartschoolData converges a drifted Untis code (#65)', () {

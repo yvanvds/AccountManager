@@ -461,6 +461,10 @@ class RecordingSmartschoolTransport implements ss.SmartschoolSoapTransport {
   /// name). Empty after a dry run.
   final List<String> soapActions = [];
 
+  /// The request envelope of every call, in order — so a test can assert which
+  /// record a write was addressed to, not merely that a write happened.
+  final List<String> envelopes = [];
+
   /// When set, the integer result to return (non-zero = failure). Applied to
   /// every write for which [resultFor] returns null.
   final int resultCode;
@@ -483,6 +487,7 @@ class RecordingSmartschoolTransport implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
+    envelopes.add(envelope);
     final code = resultFor?.call(soapAction) ?? resultCode;
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '
