@@ -245,7 +245,7 @@ void main() {
           smartschool: ssAccount(status: 'actief'),
           azure: azureUser(companyName: 'SSM'),
           wisaPresence: WisaPresence.groupOnly,
-          wisaSchoolIds: const {2},
+          wisaClassGroups: const {2: '3A'},
         ),
         cfg,
       );
@@ -271,7 +271,7 @@ void main() {
           wisa: wisaStudent(),
           azure: azureUser(companyName: 'SSM'),
           wisaPresence: WisaPresence.groupOnly,
-          wisaSchoolIds: const {2},
+          wisaClassGroups: const {2: '3A'},
         ),
         cfg,
       );
@@ -317,7 +317,7 @@ void main() {
         linked(
           wisa: wisaStudent(),
           wisaPresence: WisaPresence.groupOnly,
-          wisaSchoolIds: const {2},
+          wisaClassGroups: const {2: '3A'},
         ),
         cfg,
       );

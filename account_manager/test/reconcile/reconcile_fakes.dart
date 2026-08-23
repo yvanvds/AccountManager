@@ -1235,10 +1235,21 @@ wapi.WisaStudent wisaStudent({
 ///
 /// A school carries no ownership flag (#286): which schools we manage is the
 /// harness's `ourSchoolIds` — the persisted Settings path, and the only one.
-wapi.WisaSchool wisaSchool(int id, {bool virtual = false}) => wapi.WisaSchool(
+///
+/// [name] and [code] are the two halves WISA answers with (#208) and the only
+/// source a view may name a school from (#204). The default stands in for a
+/// school nobody has fetched the halves of, which is what most fixtures want; a
+/// fixture that renders a school name on screen gives it the real pair.
+wapi.WisaSchool wisaSchool(
+  int id, {
+  bool virtual = false,
+  String? name,
+  String code = '',
+}) =>
+    wapi.WisaSchool(
       id: id,
-      name: 'School $id',
-      code: '',
+      name: name ?? 'School $id',
+      code: code,
       isVirtual: virtual,
     );
 
@@ -1770,7 +1781,12 @@ ReconcileHarness dualEnrolledClassMoveHarness({bool siblingFirst = true}) {
         wisaClassGroup('3MWW1', adminCode: 'a1'),
         wisaClassGroup('3HWa', adminCode: 'b1', schoolCode: '222', schoolId: 2),
       ],
-      schools: [wisaSchool(1), wisaSchool(2)],
+      // Both schools carry their real WISA halves, because since #334 the card
+      // names the sibling school out loud and it must be named from this list.
+      schools: [
+        wisaSchool(1, name: 'Instituut Sancta Maria-A', code: 'ISMAA'),
+        wisaSchool(2, name: 'Instituut Sancta Maria-B', code: 'ISMAB'),
+      ],
     ),
     smartschool: ssSnap(
       groups: [ssGroup('3MWW1', code: '3MWW1_ss', untis: '3MWW1')],
@@ -1780,6 +1796,91 @@ ReconcileHarness dualEnrolledClassMoveHarness({bool siblingFirst = true}) {
     azure: azSnap(users: [azUser(displayName: 'Jane Doe')]),
   );
 }
+
+/// A harness for saying the dual enrolment out loud (#334): two students whose
+/// cards must read differently, and neither of whom has any work.
+///
+/// - **Lies Vermeulen** is enrolled in both group schools — one `wisaId`, two
+///   rows. Ours puts her in `3MWW1`, where Smartschool already has her; the
+///   sibling school 2 holds her in `3HWa`. Her card is in order in all three
+///   systems, so the only thing on it to read is the second enrolment: "Ook
+///   ingeschreven in Instituut Sancta Maria-B (ISMAB), klas 3HWa".
+/// - **Nele Peeters** is the ordinary single-school student, identical in every
+///   other way. Her card must render exactly as it did before the line existed.
+///
+/// Both schools carry their real WISA halves (long name + short code), because
+/// the school on the line is named from the WISA school list and never invented
+/// from an id (#204/#208). The sibling's row arrives *first*, as it does when
+/// that school is configured first: pull order decides nothing (INV-21).
+ReconcileHarness dualEnrolmentDisplayHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+            wisaId: '1',
+            classGroup: '3HWa',
+            schoolId: 2,
+            firstName: 'Lies',
+            name: 'Vermeulen',
+          ),
+          wisaStudent(
+            wisaId: '1',
+            classGroup: '3MWW1',
+            firstName: 'Lies',
+            name: 'Vermeulen',
+          ),
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '3MWW1',
+            firstName: 'Nele',
+            name: 'Peeters',
+          ),
+        ],
+        classGroups: [
+          wisaClassGroup('3MWW1', adminCode: 'a1'),
+          wisaClassGroup('3HWa',
+              adminCode: 'b1', schoolCode: '222', schoolId: 2),
+        ],
+        schools: [
+          wisaSchool(1, name: 'Instituut Sancta Maria-A', code: 'ISMAA'),
+          wisaSchool(2, name: 'Instituut Sancta Maria-B', code: 'ISMAB'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3MWW1', code: '3MWW1_ss', untis: '3MWW1')],
+        accounts: [
+          ssAccount(
+            uid: 'lies',
+            accountId: '1',
+            mail: 'lies.vermeulen@student.school.example',
+            givenName: 'Lies',
+            surname: 'Vermeulen',
+          ),
+          ssAccount(
+            uid: 'nele',
+            accountId: '2',
+            mail: 'nele.peeters@student.school.example',
+            givenName: 'Nele',
+            surname: 'Peeters',
+          ),
+        ],
+        memberships: [member('lies', '3MWW1_ss'), member('nele', '3MWW1_ss')],
+      ),
+      azure: azSnap(users: [
+        azUser(
+          id: 'az-lies',
+          upn: 'lies.vermeulen@student.school.example',
+          employeeId: '1',
+          displayName: 'Lies Vermeulen',
+        ),
+        azUser(
+          id: 'az-nele',
+          upn: 'nele.peeters@student.school.example',
+          employeeId: '2',
+          displayName: 'Nele Peeters',
+        ),
+      ]),
+    );
 
 /// A harness for a card that owes **two Azure writes on one account** (#321).
 ///

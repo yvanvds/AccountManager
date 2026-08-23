@@ -281,7 +281,7 @@ void main() {
         smartschool: ssAccount(status: 'actief'),
         azure: azureUser(companyName: 'SSM'),
         wisaPresence: WisaPresence.groupOnly,
-        wisaSchoolIds: const {2},
+        wisaClassGroups: const {2: '3A'},
       );
       final dispatched = studentActionsFor(account, cfg);
 

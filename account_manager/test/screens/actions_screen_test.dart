@@ -1670,6 +1670,49 @@ void main() {
     );
   });
 
+  // --- The second group school a student is enrolled in (#334) -------------
+
+  testWidgets(
+      'a dual-enrolled student\'s card states the other school and its class, '
+      'and a single-school card is untouched (#334)',
+      (WidgetTester tester) async {
+    _useWideWindow(tester);
+    // Lies is in both group schools; Nele is in ours alone. Neither has any
+    // work, so the line is the only difference between the two cards.
+    final harness = dualEnrolmentDisplayHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+
+    final lies = _idOf(harness.controller, 'Lies Vermeulen');
+    final nele = _idOf(harness.controller, 'Nele Peeters');
+
+    await _select(tester, lies);
+    // The school is named as the WISA school list names it — long name and
+    // short code — never invented from the id (#204/#208).
+    expect(
+      find.text('Ook ingeschreven in Instituut Sancta Maria-B (ISMAB), '
+          'klas 3HWa'),
+      findsOneWidget,
+    );
+    // Beside the class facts of the card, which stay our school's (INV-25).
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('actions-detail-$lies')),
+        matching: find.text('3MWW1'),
+      ),
+      findsOneWidget,
+    );
+
+    await _select(tester, nele);
+    expect(
+        find.byKey(ValueKey('account-other-enrolment-$nele-0')), findsNothing,
+        reason: 'one school, so there is nothing to say');
+    expect(find.textContaining('Ook ingeschreven'), findsNothing);
+  });
+
   // --- The list / detail split on a narrow window (#295) -------------------
 
   testWidgets(

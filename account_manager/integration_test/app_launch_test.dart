@@ -1959,8 +1959,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
       await tester.pumpAndSettle();
       expect(find.textContaining('3HWa'), findsNothing,
-          reason:
-              'school 2 is not managed — its class names nothing on screen');
+          reason: 'school 2 is not managed — its class names no row in the '
+              'list, which shows the class each student is ours in');
 
       final String id = harness.controller.linkedAccounts.single.id.value;
       final Finder row = find.byKey(ValueKey('account-row-$id'));
@@ -1971,9 +1971,86 @@ void main() {
 
       await selectAccount(tester, id);
       expect(find.text('Wijzig de klas in Smartschool'), findsNothing);
-      expect(find.textContaining('3HWa'), findsNothing);
+      // Since #334 the sibling's class *is* on the card — as the statement that
+      // explains the second enrolment, and as nothing else. The two issues are
+      // the same rule from both sides: the class we write comes from our row
+      // (pinned above, over the whole pass), and the class we merely say comes
+      // from theirs (INV-25).
+      expect(
+        find.text('Ook ingeschreven in Instituut Sancta Maria-B (ISMAB), '
+            'klas 3HWa'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('3HWa'), findsOneWidget,
+          reason: 'that one line is the whole of what it says on screen');
     });
   }
+
+  testWidgets(
+      'a card states the other group school a student is enrolled in, and a '
+      'single-school card is untouched, end-to-end (#334)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Two students, neither with any
+    // work: `Lies` is enrolled in both group schools (ours holds her in
+    // `3MWW1`, the sibling in `3HWa`), `Nele` in ours alone.
+    //
+    // Only a full run shows what the line is for. It has to survive the whole
+    // pipeline — the linker keeping both rows on one record, the materializer
+    // naming the school off the WISA school list, the document, the card — and
+    // it has to land where an operator reading a strange card will find it,
+    // under the class facts it explains. A widget test renders the pane with a
+    // document handed to it; it cannot show that the document ever carries this.
+    useTallWindow(tester);
+    final harness = dualEnrolmentDisplayHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Neither of them has anything to do, so the list is the whole school.
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+    final String lies = accountId(harness, 'Lies Vermeulen');
+    final String nele = accountId(harness, 'Nele Peeters');
+
+    await selectAccount(tester, lies);
+    // Named as the WISA school list names it — the long name with its short
+    // code — never invented from the school id (#204/#208).
+    expect(
+      find.text(
+          'Ook ingeschreven in Instituut Sancta Maria-B (ISMAB), klas 3HWa'),
+      findsOneWidget,
+    );
+    // Beside the class facts it qualifies, which stay our school's: the card
+    // still leads with the class she is ours in (INV-25).
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('actions-detail-$lies')),
+        matching: find.text('3MWW1'),
+      ),
+      findsOneWidget,
+    );
+    // And it stays a statement: the sibling's class reaches no proposal, no
+    // projected value, nothing to apply anywhere in the pass.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .expand((a) => a.changes.fields)
+          .expand((f) => <String?>[f.before, f.after]),
+      isNot(contains('3HWa')),
+    );
+
+    // The ordinary student — same class, same three systems in step — reads
+    // exactly as she did before the line existed.
+    await selectAccount(tester, nele);
+    expect(find.textContaining('Ook ingeschreven'), findsNothing);
+    expect(find.textContaining('3HWa'), findsNothing);
+  });
 
   testWidgets(
       'the Actions list hides a school the operator does not manage in '

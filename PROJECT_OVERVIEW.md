@@ -270,6 +270,12 @@ The linking algorithm
 Equivalent logic exists for `LinkedGroups` (class group linker) and
 `LinkedStaffMembers` (staff linker).
 
+Legacy links one school's pull at a time, so it has no rule for a person who is
+enrolled in more than one school of the group. The port pulls every group school
+with shared credentials and does: which of that person's WISA rows is
+authoritative, and what a sibling school's row is allowed to decide, is
+**INV-25** in [docs/domain-model.md](docs/domain-model.md#5-invariants).
+
 ### 6.3 ViewModels and Views
 
 The application uses MVVM with Fody auto-`PropertyChanged` weaving and
