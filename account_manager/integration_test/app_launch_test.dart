@@ -1767,6 +1767,92 @@ void main() {
     expect(find.text('Verwijder dit account uit Smartschool'), findsNothing);
   });
 
+  for (final MapEntry<String, bool> order in <String, bool>{
+    'the sibling school\'s row first': true,
+    'our own row first': false,
+  }.entries) {
+    testWidgets(
+        'a dual-enrolled student keeps our Smartschool class, never the '
+        'sibling school\'s, with ${order.key} end-to-end (#332)',
+        (WidgetTester tester) async {
+      // The real app, real fonts, real navigation. `Lies` is enrolled in both
+      // group schools — one `wisaId`, two rows — and only school 1 is ours. Our
+      // row puts her in `3MWW1`, where Smartschool already has her, so a correct
+      // pass proposes no class move at all. The sibling's row names `3HWa`, a
+      // class our school does not have.
+      //
+      // Before the fix the placement resolver ignored the row the linker had
+      // chosen (#318) and re-read the student out of a first-wins id index over
+      // the pooled snapshot: the card offered "Wijzig de klas in Smartschool —
+      // class: 3MWW1 → 3HWa", and the cohort behind "Toepassen op alle" would
+      // have carried that write along with a legitimate rollover pass.
+      //
+      // Both orderings run, because with our row read first a first-wins index
+      // happens to answer correctly — only the pair proves the placement follows
+      // the linker's choice rather than the pull order's luck.
+      useTallWindow(tester);
+      final harness = dualEnrolledClassMoveHarness(siblingFirst: order.value);
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Synchronisatie'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+      await tester.pumpAndSettle();
+      expect(harness.controller.error, isNull);
+
+      // One person, both schools on the record — which is what makes her read
+      // `ours` rather than `groupOnly`, so no departure competes for the card.
+      expect(
+        harness.controller.linked!.snapshot.accounts.single.wisaSchoolIds,
+        const {1, 2},
+      );
+
+      // Not one class move is proposed anywhere in the pass, and the sibling's
+      // class never reaches a projected value.
+      final alternatives = harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives);
+      expect(
+        alternatives.map((a) => a.kind),
+        isNot(contains('MoveToSmartschoolClassGroup')),
+        reason: 'she is already in our 3MWW1 — nobody moves',
+      );
+      expect(
+        alternatives
+            .expand((a) => a.changes.fields)
+            .expand((f) => <String?>[f.before, f.after]),
+        isNot(contains('3HWa')),
+        reason: 'a sibling school\'s class is never written into our systems',
+      );
+
+      // Browse it the way the operator does. She has no work of her own, so the
+      // list is the whole school with the filter off.
+      await tester.tap(find.text('Acties'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('3HWa'), findsNothing,
+          reason:
+              'school 2 is not managed — its class names nothing on screen');
+
+      final String id = harness.controller.linkedAccounts.single.id.value;
+      final Finder row = find.byKey(ValueKey('account-row-$id'));
+      expect(row, findsOneWidget);
+      await tester.ensureVisible(row);
+      expect(find.descendant(of: row, matching: find.text('3MWW1')),
+          findsOneWidget);
+
+      await selectAccount(tester, id);
+      expect(find.text('Wijzig de klas in Smartschool'), findsNothing);
+      expect(find.textContaining('3HWa'), findsNothing);
+    });
+  }
+
   testWidgets(
       'the Actions list hides a school the operator does not manage in '
       'Settings, re-bucketing its student to the leaver group (#178)',

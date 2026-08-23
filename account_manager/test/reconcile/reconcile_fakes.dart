@@ -1728,6 +1728,46 @@ ReconcileHarness dualEnrolledHarness() => ReconcileHarness(
       azure: azSnap(users: const []),
     );
 
+/// A harness for the sibling school's class deciding *our* Smartschool move
+/// (#332). The dual enrolment of [dualEnrolledHarness], now on a student who is
+/// fully in step: one `wisaId`, two rows, only school 1 ours. Our row puts
+/// `Lies` in `3MWW1` and Smartschool already has her there, so a correct pass
+/// proposes no class move at all. The sibling's row names `3HWa` — a class our
+/// school does not have and our Smartschool has never held.
+///
+/// Before the fix the placement resolver ignored the row the linker had chosen
+/// (#318) and looked the student up again by `wisaId` in a first-wins index over
+/// the pooled snapshot, so the sibling's row answered: the card offered "Wijzig
+/// de klas in Smartschool — class: 3MWW1 → 3HWa", and its "Toepassen op alle"
+/// cohort would have carried that write along with a rollover pass.
+///
+/// [siblingFirst] flips the order the two rows arrive in. The WISA pull runs
+/// once per group school and concatenates, so which row lands first is an
+/// accident of how the schools are configured — and it must decide nothing.
+ReconcileHarness dualEnrolledClassMoveHarness({bool siblingFirst = true}) {
+  final ours = wisaStudent(wisaId: '1', classGroup: '3MWW1');
+  final sibling = wisaStudent(wisaId: '1', classGroup: '3HWa', schoolId: 2);
+  return ReconcileHarness(
+    ourSchoolIds: const {1},
+    wisa: wisaSnap(
+      students: siblingFirst
+          ? <wapi.WisaStudent>[sibling, ours]
+          : <wapi.WisaStudent>[ours, sibling],
+      classGroups: [
+        wisaClassGroup('3MWW1', adminCode: 'a1'),
+        wisaClassGroup('3HWa', adminCode: 'b1', schoolCode: '222', schoolId: 2),
+      ],
+      schools: [wisaSchool(1), wisaSchool(2)],
+    ),
+    smartschool: ssSnap(
+      groups: [ssGroup('3MWW1', code: '3MWW1_ss', untis: '3MWW1')],
+      accounts: [ssAccount()],
+      memberships: [member('jane', '3MWW1_ss')],
+    ),
+    azure: azSnap(users: [azUser(displayName: 'Jane Doe')]),
+  );
+}
+
 /// A harness for a card that owes **two Azure writes on one account** (#321).
 ///
 /// One student, fully linked and already in step with Smartschool, whose

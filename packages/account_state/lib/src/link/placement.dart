@@ -122,11 +122,8 @@ class PlacementResolver {
       _currentClassByUid.putIfAbsent(uid, () => group);
     }
 
-    // WISA students, indexed by wisaId so [classPlacementFor] can recover the
-    // concrete record (class group / sub-group) from a [LinkedAccount], which
-    // only carries the `wisaId` linking key. Also collect the class names that
-    // currently hold a student — legacy `WisaClassGroup.ContainsStudents`
-    // (`student.ClassGroup == Name`).
+    // The class names that currently hold a student — legacy
+    // `WisaClassGroup.ContainsStudents` (`student.ClassGroup == Name`).
     //
     // Only students of a school we manage are tallied (#222). The snapshot
     // pools every school the shared WISA credentials reach, so a sibling
@@ -135,13 +132,11 @@ class PlacementResolver {
     // students) instead of the informational `CreateInSmartschool`. Filtering at
     // the tally rather than at the lookup is deliberate: a [LinkedGroup] carries
     // no school, so [groupPlacementFor] has nothing to scope by (see there).
-    // The index itself stays unfiltered — a `groupOnly` student still gets their
-    // own class placement.
+    //
+    // No per-student index is built here (#332). [classPlacementFor] reads the
+    // row off the [LinkedAccount] itself — see there for why looking one up by
+    // id was wrong.
     for (final student in wisa.students) {
-      final wisaId = _norm(student.wisaId.value);
-      if (wisaId != null) {
-        _wisaStudentByWisaId.putIfAbsent(wisaId, () => student);
-      }
       final classGroup = normalizeGroupName(student.classGroup);
       if (classGroup != null && _isOurSchool(student.schoolId)) {
         _classGroupsWithStudents.add(classGroup);
@@ -197,7 +192,6 @@ class PlacementResolver {
   final Map<String, Group> _groupsByName = {};
   final Map<String, Group> _groupsByCode = {};
   final Map<String, Group> _currentClassByUid = {};
-  final Map<String, wapi.WisaStudent> _wisaStudentByWisaId = {};
 
   /// The `(schoolId, normalized class name)` pairs whose class carries more
   /// than one admin code — i.e. the classes that really are split into
@@ -227,10 +221,22 @@ class PlacementResolver {
   ///   student has no Smartschool account or no official class membership.
   /// - [ClassPlacement.resolveClass] resolves a class name against the whole
   ///   Smartschool tree (legacy `GroupManager.Root.Find`).
+  ///
+  /// The class is read off **the row the linker put on the record** (#332), the
+  /// same downcast `AzureClassGroupResolver.placementFor` makes — never a row
+  /// looked up again by `wisaId`. A student enrolled in two group schools has
+  /// one `wisaId` and two rows in the pooled snapshot, so an id-keyed index
+  /// answered with whichever school the concatenated pull happened to read
+  /// first: `Lies Van Noten`, ours in `3MWW1`, was offered a move to the
+  /// sibling school's `3HWa`. The linker already chose between those rows
+  /// (#318, `_prefersWisaRow`); reading its choice is what makes the Office 365
+  /// class group and the Smartschool class agree about one student.
+  ///
+  /// A record whose `wisa` is not a concrete WISA row carries no class, so the
+  /// placement names none — exactly as an unmatched id-lookup used to.
   ClassPlacement classPlacementFor(LinkedAccount account) {
-    final wisaId = _norm(account.wisa?.wisaId.value);
-    final student = wisaId == null ? null : _wisaStudentByWisaId[wisaId];
-    final className = _classNameFor(student);
+    final student = account.wisa;
+    final className = student is wapi.WisaStudent ? _classNameFor(student) : '';
 
     final uid = _norm(account.smartschool?.uid);
     final currentClass = uid == null ? null : _currentClassByUid[uid];
@@ -254,8 +260,11 @@ class PlacementResolver {
   ///   [wapi.WisaClassGroup.fullName] applies on the class-group side, without
   ///   which a student's `KLASGROEP` of `00` produced the class `'1C 00'` and
   ///   proposed moving their whole class into it.
-  String _classNameFor(wapi.WisaStudent? student) {
-    if (student == null) return '';
+  ///
+  /// Since #332 [student] is the row the linker chose, so the `schoolId` this
+  /// scopes by is **our** school's for a dual-enrolled student — which is what
+  /// #221 intended all along.
+  String _classNameFor(wapi.WisaStudent student) {
     final classGroup = student.classGroup;
     final subGroup = student.classSubGroup.trim();
     if (subGroup.isEmpty || subGroup == _noSubGroupSentinel) return classGroup;
