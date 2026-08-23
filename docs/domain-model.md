@@ -170,8 +170,20 @@ class names carry no spaces, so the name is used verbatim as the `mailNickname`
 — a name that would not survive as one yields no proposal rather than a mangled
 slug. Because `LinkedGroup` is keyed on the `fullName`, the bare name is carried
 alongside it as `LinkedGroup.className`, which is also what the Azure side of
-the group link matches on after stripping the prefix. Groups are never deleted
-automatically; a class that vanished leaves an informational notice.
+the group link matches on after stripping the prefix.
+
+**A class that stopped running is deleted where the app can act on it**
+(#271/#313). `DeleteAzureClassGroup` removes the Office 365 group of a class
+WISA no longer runs; `DeleteSmartschoolClass` removes an `official` Smartschool
+class WISA does not have. Since #327/#328 each delete is the **whole** of what
+such a row proposes — there is no "leave it standing" no-op paired against it,
+because a no-op is not an answer the app can write. An informational notice
+survives only where the delete cannot fire at all: the record names no Azure
+object id, or the Smartschool leftover is not an official class naming a class
+code. Such a notice stands alone, marked "(manueel)"; it is never one half of
+an either/or (#329). What keeps a delete out of a bulk pass
+is `canApplyToAll` (#293/#326), not the polarity of a pair; see
+[packages/account_actions/README.md](../packages/account_actions/README.md).
 
 ### 3.8 `Snapshot`
 
