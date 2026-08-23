@@ -24,11 +24,18 @@
 ///
 /// The two screens look like they disagree, and they do not. Klasgroepen keys
 /// its row **highlight** on `MaterializedGroup.needsAttention`, informational
-/// notices included (#225/#250), because there the manual notice *is* the work
-/// the operator does on that screen — a class Smartschool already holds, or an
-/// Office 365 group left behind by a class that is gone, is answered right
-/// there. In Acties an informational candidate is a diagnosis of work that
-/// happens somewhere else, so it colours nothing.
+/// notices included (#327/#328), because there the manual notice *is* the work
+/// the operator does on that screen — a leftover class or group this app cannot
+/// address a delete to is answered right there. In Acties an informational
+/// candidate is a diagnosis of work that happens somewhere else, so it colours
+/// nothing.
+///
+/// A notice attached to a decision (#329) does not enter into this at all: it
+/// is context, and the decision beside it is what the cell answers for. A
+/// namesake or empty class therefore colours its **WISA** cell, because "negeer
+/// deze klas" is a live decision about the WISA side of that class — the same
+/// consequence #327/#328 had on the other two systems when their no-op halves
+/// went.
 ///
 /// Both are the same rule: **a coloured cell means work you can do here.** The
 /// next reader will otherwise see two rules and assume one is a bug.

@@ -15,15 +15,26 @@ import 'group_placement.dart';
 ///   [CreateInSmartschool], [DoNotImportFromWisa],
 ///   [DoNotImportFromSmartschool], [DeleteSmartschoolClass]) are considered, so
 ///   a WISA-only class raises [DoNotImportFromWisa] *and* exactly one of
-///   [AddToSmartschool] / [CreateInSmartschool]. Those two are not two to-dos:
-///   they share the [classImportAlternative] key, so the pending list renders
-///   them as one either/or choice and an apply runs only the picked one (#244).
-///   Legacy ordered [DoNotImportFromWisa] first; it now trails the create it is
-///   an alternative to, so the create leads the radio pair. A **Smartschool-only**
-///   class is the mirror image: it yields [DeleteSmartschoolClass] (#313) —
-///   **one action, no radio pair** since #328 — where the class is official and
-///   names a code, and the informational [DoNotImportFromSmartschool] as a lone
-///   "(manueel)" row where it is not.
+///   [AddToSmartschool] / [CreateInSmartschool] / [ClassExistsAsSmartschoolGroup].
+///   Those are never two to-dos, but they are not all the same relationship
+///   either (#329):
+///   - a class **with students** and no namesake gets a genuine either/or —
+///     [AddToSmartschool] and [DoNotImportFromWisa] share the
+///     [classImportAlternative] key, both write, and an apply runs only the
+///     picked one (#244);
+///   - an **empty** class and a **namesake** class get one decision and a
+///     notice: there is nothing for this app to create, so
+///     [DoNotImportFromWisa] stands alone under its key and the informational
+///     action declares [GroupAction.noticeFor] on that same key, riding along
+///     as context rather than as an answer.
+///
+///   Legacy ordered [DoNotImportFromWisa] first; it now trails the reading it
+///   is weighed against, so a create leads the radio pair and a notice is read
+///   before the proposal it explains. A **Smartschool-only** class is the mirror
+///   image: it yields [DeleteSmartschoolClass] (#313) — **one action, no radio
+///   pair** since #328 — where the class is official and names a code, and the
+///   informational [DoNotImportFromSmartschool] as a lone "(manueel)" row where
+///   it is not.
 /// - If it is present in both, only [ModifySmartschoolData] is considered.
 ///
 /// [ClassExistsAsSmartschoolGroup] (#225) sits where the two create actions
@@ -34,13 +45,16 @@ import 'group_placement.dart';
 /// raised whether or not [placementFor] is wired, and a WISA-only class is
 /// never left with a create proposal as its only reading.
 ///
-/// Taking the create's place means taking its side of the either/or too (#250):
-/// the notice and [DoNotImportFromWisa] share [namesakeClassAlternative], a key
-/// of their own so the namesake classes are not bulk-applied together with the
-/// genuinely new ones. Without it the blacklist was the *lone* member of
-/// [classImportAlternative] on such a class, hence always selected, and "Apply
-/// to all" wrote a `DontImportClass` rule on the class the notice beside it had
-/// just said to fix by hand.
+/// It keeps a key of its own, [namesakeClassAlternative], so the namesake
+/// classes are not bulk-applied together with the genuinely new ones (#250) —
+/// "create this class" and "this class is already there, go fix its flag" are
+/// different situations and get different headers. What has changed since #250
+/// is only *how* the notice occupies that key: it was the pre-selected half of
+/// a radio pair until #329 and is the decision's [GroupAction.noticeFor] context
+/// now. The bug the pair was built for — "Apply to all" writing a
+/// `DontImportClass` rule on the class the notice had just said to fix by hand —
+/// is held by [GroupAction.canApplyToAll], which the blacklist withholds (#293)
+/// and both bulk paths honour (#326).
 ///
 /// [placementFor] wires the membership-dependent creation actions (#65). When
 /// supplied it is called for each WISA-only class (`wisa != null &&
@@ -94,11 +108,13 @@ List<GroupAction> groupActionsFor(
     if (both)
       ModifySmartschoolData(group)
     else ...[
-      // Whichever reading of the class fires — the namesake notice (#250) or a
-      // create (#244) — it leads the [DoNotImportFromWisa] it is mutually
-      // exclusive with: the order is the order the operator reads the radio
-      // pair in, and the fallback the grouping uses if a default is ever
-      // forgotten, so the blacklist is never first.
+      // Whichever reading of the class fires — the namesake notice (#250), the
+      // empty-class notice, or a create (#244) — it leads the
+      // [DoNotImportFromWisa] it is weighed against. For a create that is the
+      // order the operator reads the radio pair in, and the fallback the
+      // grouping uses if a default is ever forgotten, so the blacklist is never
+      // first. For a notice it is the order the card states things in: the
+      // situation, then what the app proposes about it (#329).
       ClassExistsAsSmartschoolGroup(group),
       if (placement != null) AddToSmartschool(group, placement),
       if (placement != null) CreateInSmartschool(group, placement),

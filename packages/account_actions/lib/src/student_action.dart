@@ -56,12 +56,39 @@ sealed class StudentAction {
   /// must never run both (e.g. unregister *vs* delete a departed student). A
   /// `null` key (the default) means the action stands on its own. Pure; lets the
   /// UI group alternatives without pattern-matching on concrete action types.
+  ///
+  /// **Every member of a group writes** (#329). An informational action — one
+  /// whose [canApply] is `false` — may never join one: "here is what is wrong,
+  /// go fix it by hand" and "here is the one thing the app can do about it" are
+  /// not comparable answers to a single question, and offering them as radios
+  /// asked the operator to choose between a diagnosis and a resolution. Such an
+  /// action declares [noticeFor] instead and rides along as context. A dispatch
+  /// test pins the rule over all three families.
   String? get alternativeGroup => null;
 
   /// Within an [alternativeGroup], whether this action is the sensible default
   /// pre-selection. Exactly one alternative in a group should return `true`;
   /// ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
+
+  /// The situation this **informational** action is context for (#329) — the
+  /// [alternativeGroup] key of the decision it belongs beside, or `null` (the
+  /// default) when this action is not a notice.
+  ///
+  /// A notice is not a decision and never an option: the collapse
+  /// ([collapseAlternatives]) lifts it out of the option list and hands it to
+  /// the decision it names, which renders it as context above its own action —
+  /// no radio, no apply button, still marked "(manueel)" so it stays scannable.
+  ///
+  /// Only ever non-null where [canApply] is `false`, and never together with a
+  /// non-null [alternativeGroup]: a notice writes nothing, so it cannot be one
+  /// of the things a decision picks between.
+  ///
+  /// No student action carries one today — the family's one informational
+  /// member, [AzureClassGroupMembership], stands on its own rather than beside a
+  /// decision — but the member lives here so the rule is stated once for all
+  /// three families instead of in the family that happened to need it first.
+  String? get noticeFor => null;
 
   /// Whether [apply] can perform a change. `false` for an informational action
   /// (the legacy `CanBeApplied == false` case): it surfaces a diagnosis on the

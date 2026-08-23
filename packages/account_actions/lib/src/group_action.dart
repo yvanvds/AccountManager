@@ -93,20 +93,54 @@ sealed class GroupAction {
   /// carries under a group the linker could not adopt (#250). See
   /// [StudentAction.alternativeGroup].
   ///
-  /// The two **leftovers** — an Office 365 group whose class is gone, and a
-  /// Smartschool class WISA does not have — each had a key of their own until
-  /// #327 and #328. Both lost it for the same reason: their conservative half
-  /// was a no-op. "Laat de groep staan" / "laat deze klas staan" and "doe
-  /// niets" are the same act, and the operator performs the second one by not
-  /// pressing **Toepassen**, so the pair asked them to record a non-decision.
-  /// [DeleteAzureClassGroup] and [DeleteSmartschoolClass] now stand alone where
-  /// they can fire, and [AzureClassGroupWithoutClass] /
-  /// [DoNotImportFromSmartschool] alone where they cannot.
+  /// **Every member of a group writes** (#329). The rule the whole mechanism
+  /// rests on: an informational action is *context*, not an alternative. It
+  /// declares [noticeFor] and rides along beside the decision it explains,
+  /// instead of standing in it as an answer that resolves nothing.
+  ///
+  /// This family is where the rule was learned, at four sites in a row:
+  /// - the two **leftovers** — an Office 365 group whose class is gone, and a
+  ///   Smartschool class WISA does not have — each had a key of their own until
+  ///   #327 and #328. Both lost it because their conservative half was a no-op:
+  ///   "laat de groep staan" / "laat deze klas staan" and "doe niets" are the
+  ///   same act, which the operator performs by not pressing **Toepassen**.
+  ///   [DeleteAzureClassGroup] and [DeleteSmartschoolClass] now stand alone
+  ///   where they can fire, and [AzureClassGroupWithoutClass] /
+  ///   [DoNotImportFromSmartschool] alone where they cannot;
+  /// - the two **notices** — [ClassExistsAsSmartschoolGroup] and
+  ///   [CreateInSmartschool] — were paired with [DoNotImportFromWisa] until
+  ///   #329. Their content is not a no-op but genuine instruction ("go make
+  ///   this group official", "delete this empty WISA class by hand"), so they
+  ///   survive as [noticeFor] context on the very decision they used to be one
+  ///   radio of.
+  ///
+  /// What kept the blacklist and the two deletes off a bulk pass was, until
+  /// then, the *polarity* of those pairs — the informational half is the
+  /// pre-selected default, so nothing counted. A guard that holds only while a
+  /// default holds is not a guard; it is [canApplyToAll], honoured by every bulk
+  /// path since #326.
   String? get alternativeGroup => null;
 
   /// Whether this action is the default alternative within its
   /// [alternativeGroup]. Ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
+
+  /// The situation this **informational** action is context for (#329) — the
+  /// [alternativeGroup] key of the decision it belongs beside, or `null` (the
+  /// default) when this action is not a notice. See [StudentAction.noticeFor]
+  /// for the mechanism.
+  ///
+  /// Two members carry one, and they are the reason it exists:
+  /// [ClassExistsAsSmartschoolGroup] on [namesakeClassAlternative] and
+  /// [CreateInSmartschool] on [classImportAlternative]. In both the app can do
+  /// exactly one thing — stop importing the class — and the notice says what
+  /// the operator should do *instead*, by hand, in the other system.
+  ///
+  /// The family's other two informational members
+  /// ([DoNotImportFromSmartschool] and [AzureClassGroupWithoutClass]) declare
+  /// nothing here: each fires exactly where its delete cannot, so there is no
+  /// decision beside it to be context for and the row *is* the notice.
+  String? get noticeFor => null;
 
   /// The action types this one **unlocks** on the same target (#245) — the
   /// group family's half of the chaining [StudentAction.unlocks] introduced for
@@ -168,10 +202,8 @@ sealed class GroupAction {
 // Actions for when the group is missing from one system (§6.3).
 // ---------------------------------------------------------------------------
 
-/// The [GroupAction.alternativeGroup] key shared by the mutually exclusive
-/// readings of a WISA class Smartschool does not have (#244): import the class
-/// ([AddToSmartschool] when it holds students, [CreateInSmartschool]'s
-/// wait-or-delete notice when it does not) *or* stop offering it
+/// The situation key for a WISA class Smartschool does not have (#244): import
+/// the class ([AddToSmartschool]) *or* stop offering it
 /// ([DoNotImportFromWisa]).
 ///
 /// They are opposite decisions, so they are one choice and never two to-dos.
@@ -181,21 +213,22 @@ sealed class GroupAction {
 /// while the group survived downstream, unmanaged. "Apply to all" did that to
 /// every new class of the year at once.
 ///
-/// The two create actions never fire together (the [GroupPlacement] membership
-/// signal picks exactly one), so all three can share the single key and exactly
-/// one default is ever offered — except when Smartschool already carries the
-/// name, where both creates step aside and the pair moves to
-/// [namesakeClassAlternative] instead (#250). This key therefore always has a
-/// create in it, and the blacklist is never left alone in it.
-///
 /// **The default is the create action, deliberately the opposite polarity from
 /// [smartschoolDepartureAlternative]**, where the conservative "keep the
 /// account" option leads. Adding new classes is the normal start-of-year bulk
 /// operation; a mis-defaulted bulk apply that silently blacklists a year's
-/// worth of classes is far worse than one that creates them. For an empty class
-/// the default is the informational [CreateInSmartschool], so the bulk apply
-/// writes nothing at all and the operator has to pick "ignore this class"
-/// deliberately.
+/// worth of classes is far worse than one that creates them.
+///
+/// **An empty class has no create to weigh the blacklist against** — there is
+/// nothing to create yet — so the decision there is a lone
+/// [DoNotImportFromWisa], with [CreateInSmartschool]'s wait-or-delete notice
+/// beside it as [GroupAction.noticeFor] context (#329). It stood *in* this
+/// group as its pre-selected default until then, which made a bulk apply write
+/// nothing for an empty class by polarity alone. That job is
+/// [GroupAction.canApplyToAll]'s — the blacklist withholds it (#293) and every
+/// bulk path has honoured it since #326 — while the notice's actual content
+/// ("delete the WISA class by hand, or wait until it has students") is
+/// instruction the operator still has to read, and reads on the card.
 ///
 /// The mechanism itself is family-agnostic: the pending-list grouping reads
 /// [alternativeGroup] / [isDefaultAlternative] off whatever action it is given,
@@ -207,11 +240,11 @@ sealed class GroupAction {
 /// default is ever forgotten.
 const String classImportAlternative = 'class-import';
 
-/// The [GroupAction.alternativeGroup] key shared by the mutually exclusive
-/// readings of a WISA class Smartschool **already carries**, on a group the
-/// linker could not adopt (#225): repair it in Smartschool by hand
-/// ([ClassExistsAsSmartschoolGroup]) *or* stop offering the class altogether
-/// ([DoNotImportFromWisa]).
+/// The situation key for a WISA class Smartschool **already carries**, on a
+/// group the linker could not adopt (#225/#250): the app can do exactly one
+/// thing about it — stop offering the class ([DoNotImportFromWisa]) — while
+/// [ClassExistsAsSmartschoolGroup] states the repair the operator makes by hand
+/// instead, as [GroupAction.noticeFor] context on that decision.
 ///
 /// **Why a second key and not a third member of [classImportAlternative].** The
 /// pending list keys a "same situation" bulk-apply subset on this very string
@@ -221,17 +254,25 @@ const String classImportAlternative = 'class-import';
 /// "this class is already there, go fix its flag" — so they get different keys
 /// and each keeps its own bulk pass.
 ///
-/// **The default is the notice**, the same polarity [CreateInSmartschool] has
-/// inside [classImportAlternative]: it is informational, so a bulk apply writes
-/// **nothing** for a namesake class and blacklisting one stays a deliberate
-/// pick. That is the whole of #250. Before it, the create actions refused a
-/// namesake class (they would ask Smartschool for a duplicate name) while
-/// [DoNotImportFromWisa] still declared [classImportAlternative], so the choice
-/// collapsed to a single member — and a lone option is always the selected one.
-/// "Apply to all" therefore wrote a [wapi.DontImportClass] rule on the very
-/// class the notice beside it had just told the operator to align by hand: the
-/// class dropped out of the next WISA snapshot while the Smartschool group
-/// stayed, which is exactly the failure mode #244 fixed for the create case.
+/// **The notice was the pre-selected half of a radio pair here from #250 to
+/// #329.** That was never a resolution: an operator cannot "apply" *go and make
+/// the group official in Smartschool*, so the pair asked them to choose between
+/// a diagnosis and the one write the app has. What being the default did do was
+/// keep the blacklist off a bulk pass — and that is [GroupAction.canApplyToAll],
+/// which [DoNotImportFromWisa] withholds (#293) and which every bulk path reads
+/// since #326.
+///
+/// The original bug is worth keeping in view, because this key is what fixed it
+/// and the polarity was only ever half the fix: before #250 the create actions
+/// refused a namesake class (they would ask Smartschool for a duplicate name)
+/// while [DoNotImportFromWisa] still declared [classImportAlternative], so the
+/// choice collapsed to a single member — and a lone option is always the
+/// selected one. "Apply to all" therefore wrote a [wapi.DontImportClass] rule on
+/// the very class the notice beside it had just told the operator to align by
+/// hand: the class dropped out of the next WISA snapshot while the Smartschool
+/// group stayed, which is exactly the failure mode #244 fixed for the create
+/// case. The blacklist is a lone decision again today, deliberately — and it is
+/// the sanction, not the polarity, that keeps a bulk pass off it.
 const String namesakeClassAlternative = 'class-namesake';
 
 /// Stop importing a class from WISA. Ported from `Action\Group\DoNotImportFromWisa`:
@@ -255,20 +296,25 @@ class DoNotImportFromWisa extends GroupAction {
   @override
   bool evaluate() => group.wisa != null && group.smartschool == null;
 
-  /// Blacklisting the class is never a to-do beside the reading it contradicts
-  /// — it is one half of a choice. *Which* choice depends on what Smartschool
-  /// already holds:
+  /// Blacklisting the class is never a to-do beside the reading it contradicts.
+  /// *Which* situation it resolves depends on what Smartschool already holds:
   /// - **no namesake** (#244): the class is genuinely absent downstream, so the
-  ///   either/or is [classImportAlternative] — create it ([AddToSmartschool] /
-  ///   [CreateInSmartschool]'s wait-or-delete notice) or stop offering it;
+  ///   situation is [classImportAlternative]. On a class **with students** that
+  ///   is a real either/or — create it ([AddToSmartschool]) or stop offering it
+  ///   — and it keeps its radios. On an **empty** class there is nothing to
+  ///   create, so this is the lone decision and [CreateInSmartschool]'s
+  ///   wait-or-delete instruction rides beside it as context (#329);
   /// - **a namesake** ([LinkedGroup.smartschoolNamesake], #250): the class is
-  ///   already there under a group the linker could not adopt, so the either/or
-  ///   is [namesakeClassAlternative] — repair it by hand
-  ///   ([ClassExistsAsSmartschoolGroup]) or stop offering it.
+  ///   already there under a group the linker could not adopt, so the situation
+  ///   is [namesakeClassAlternative]. The repair is a hand edit in Smartschool,
+  ///   which no API call here can make, so this is again the lone decision with
+  ///   [ClassExistsAsSmartschoolGroup] as its context.
   ///
   /// The two keys are deliberately distinct: they are different situations, and
-  /// the pending list bulk-applies per situation key. Either way this half is
-  /// never the default — an operator has to pick it.
+  /// the pending list bulk-applies per situation key. A key held by this action
+  /// alone is not the #250 bug returning — that was a *bulk* pass writing the
+  /// rule off a lone-and-therefore-selected option, and what refuses it now is
+  /// [canApplyToAll], read by every bulk path since #326.
   @override
   String? get alternativeGroup => group.smartschoolNamesake != null
       ? namesakeClassAlternative
@@ -278,10 +324,17 @@ class DoNotImportFromWisa extends GroupAction {
   /// class, and the failure it causes is silent and hard to undo: the class
   /// drops out of the next WISA snapshot while whatever exists downstream
   /// survives, unmanaged. That is precisely what #244 and #250 were filed for
-  /// after "Alles toepassen" did it to a year's worth of classes at once. The
-  /// polarity of its alternative group already keeps it off the selected path;
-  /// withholding the flag means it cannot be bulk-applied even when an operator
-  /// deliberately switches to it.
+  /// after "Alles toepassen" did it to a year's worth of classes at once.
+  ///
+  /// Since #329 this flag is the **whole** of that guard. It used to have the
+  /// polarity of an alternative group in front of it — an informational default
+  /// meant nothing counted until an operator flipped a radio — and a guard that
+  /// holds only while a default holds is not a guard: flipping two of them armed
+  /// the header. Both notices are context now rather than pre-selected halves,
+  /// so this blacklist is the selected resolution of every namesake and every
+  /// empty class from the moment the tab opens, and the sanction is what stands
+  /// between them and one press. Per-card **Toepassen** still writes it, on the
+  /// card that shows exactly what the rule would do.
   @override
   bool get canApplyToAll => false;
 
@@ -477,16 +530,25 @@ class CreateInSmartschool extends GroupAction {
       group.smartschoolNamesake == null &&
       !placement.containsStudents;
 
-  /// The empty-class reading stands in for [AddToSmartschool] inside the
-  /// [classImportAlternative] choice (#244), and is the default in its place —
-  /// the two never fire together, so exactly one default is ever offered. Being
-  /// informational, that default makes a bulk apply write **nothing** for an
-  /// empty class: blacklisting it stays a deliberate pick.
+  /// **Context on the import decision, not one of its answers** (#329). It
+  /// stood *inside* [classImportAlternative] as its pre-selected default from
+  /// #244 until then, standing in for [AddToSmartschool] on a class with no
+  /// students — so the card offered "wait, or delete the WISA class by hand"
+  /// beside "never import this class" and asked the operator to pick one. Only
+  /// the second is something this app can do; the first is an instruction to go
+  /// elsewhere, and an instruction is not a resolution.
+  ///
+  /// It is instruction worth keeping, though — which is why this is a
+  /// [noticeFor] rather than the outright removal #327/#328 gave the two no-op
+  /// halves. "Delete it by hand if it is not needed, or wait until it holds
+  /// students" is what the operator does about an empty class in nearly every
+  /// case, and they read it above the one write the card proposes.
+  ///
+  /// The job being the default *also* did — making a bulk apply write nothing
+  /// for an empty class — is [DoNotImportFromWisa.canApplyToAll]'s, withheld
+  /// since #293 and honoured by every bulk path since #326.
   @override
-  String? get alternativeGroup => classImportAlternative;
-
-  @override
-  bool get isDefaultAlternative => true;
+  String? get noticeFor => classImportAlternative;
 
   @override
   bool get canApply => false;
@@ -534,16 +596,24 @@ class ClassExistsAsSmartschoolGroup extends GroupAction {
       group.smartschool == null &&
       group.smartschoolNamesake != null;
 
-  /// The notice leads — and is the default of — the [namesakeClassAlternative]
-  /// choice (#250). [DoNotImportFromWisa] is its other half: the two are
-  /// opposite readings of one class, so they are one either/or and never two
-  /// to-dos. Being informational, the default makes a bulk apply write nothing
-  /// for a class the app has just told the operator to repair in Smartschool.
+  /// **Context on the namesake decision, not one of its answers** (#329). It
+  /// was the pre-selected half of a radio pair with [DoNotImportFromWisa] from
+  /// #250 until then — but "go and make this group official in Smartschool" is
+  /// not something an apply can run, so the card asked the operator to choose
+  /// between a diagnosis and the single write the app has for the situation.
+  ///
+  /// The instruction is the whole value of this action and survives intact: it
+  /// is stated above [DoNotImportFromWisa]'s own proposal on the card, marked
+  /// "(manueel)", with the namesake group's code and official flag beside it so
+  /// the operator can go and find it. What it no longer does is claim to be a
+  /// resolution.
+  ///
+  /// Keeping the blacklist out of a bulk pass was the pair's other job, and it
+  /// belongs to [DoNotImportFromWisa.canApplyToAll] — withheld since #293,
+  /// honoured by every bulk path since #326. That is what holds #250 fixed now
+  /// that the polarity is gone.
   @override
-  String? get alternativeGroup => namesakeClassAlternative;
-
-  @override
-  bool get isDefaultAlternative => true;
+  String? get noticeFor => namesakeClassAlternative;
 
   @override
   bool get canApply => false;

@@ -2051,8 +2051,8 @@ void main() {
   });
 
   testWidgets(
-      'an empty class beside a sibling school\'s populated namesake stays the '
-      'read-only empty notice end-to-end (#222)', (WidgetTester tester) async {
+      'an empty class beside a sibling school\'s populated namesake keeps its '
+      'empty-class notice end-to-end (#222/#329)', (WidgetTester tester) async {
     // The real app, real fonts, real navigation. Our school 1 has an empty
     // `1A`; the sibling school 2 we do not manage has its own populated `1A`,
     // pulled by the same shared WISA credentials. Only ours is linked (#205), so
@@ -2089,45 +2089,62 @@ void main() {
         find.textContaining('Voeg deze klas toe aan Smartschool'), findsNothing,
         reason: 'nobody of ours is in 1A — creating + enrolling is not due');
 
-    // The notice leads the either/or choice of #244 — the "ignore this class"
-    // opt-out is its alternative, not a second to-do — so the collapsed row
-    // reads as a choice, and the opt-out is not on it.
-    expect(find.textContaining('(keuze)'), findsOneWidget);
-    expect(find.textContaining('(manueel)'), findsNothing);
-    expect(find.textContaining('Negeer deze klas bij het importeren uit WISA'),
-        findsNothing,
-        reason: 'blacklisting is the alternative, not a second to-do');
+    // The notice is **context**, not one of two answers (#329): there is
+    // nothing for this app to create, so the row states the instruction —
+    // marked "(manueel)" — above the single thing it can do about the class.
+    // It was the pre-selected half of a radio pair until then, which asked the
+    // operator to choose between "delete this by hand" and "never import it".
+    expect(find.textContaining('(keuze)'), findsNothing,
+        reason: 'a diagnosis and a write are not two solutions');
+    expect(find.textContaining('wacht tot ze leerlingen bevat. (manueel)'),
+        findsOneWidget);
+    expect(find.text('Negeer deze klas bij het importeren uit WISA'),
+        findsOneWidget,
+        reason: 'the lone proposal, stated plainly under the notice');
 
-    // Expanding it offers both readings as radios, the notice pre-selected —
-    // and the entry has nothing to apply until the operator picks the opt-out.
+    // Expanding it shows the same two, in the same order, and no radios.
     await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
     await tester.pumpAndSettle();
-    expect(find.text('Kies één oplossing:'), findsOneWidget);
+    expect(find.text('Kies één oplossing:'), findsNothing,
+        reason: 'nothing to choose between');
+    expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+    expect(find.byIcon(Icons.radio_button_unchecked), findsNothing);
+    expect(find.textContaining('wacht tot ze leerlingen bevat. (manueel)'),
+        findsOneWidget,
+        reason: 'the instruction survives the removal of the radio');
     expect(find.text('Negeer deze klas bij het importeren uit WISA'),
         findsOneWidget);
-    // The pre-selected notice writes nothing, and the detail under the radios
-    // says so in Dutch (#253) — it used to read "(manual — not applied
-    // automatically)" on an otherwise Dutch screen.
-    expect(
-      find.textContaining('(manueel — wordt niet automatisch toegepast)'),
-      findsOneWidget,
-    );
+    expect(find.text('DontImportClass: ∅ → 1A'), findsOneWidget,
+        reason: 'and the card shows exactly what pressing would write');
+
+    // The card proposes; it does not interrogate. Toepassen is live because
+    // there genuinely is a write here — what keeps it out of a *bulk* pass is
+    // `canApplyToAll`, not the polarity of a pair (#293/#326).
     expect(
       tester
           .widget<FilledButton>(find.byKey(const ValueKey('entry-apply-1A')))
           .onPressed,
-      isNull,
-      reason: 'there is nothing to write for an empty class',
+      isNotNull,
     );
+    expect(
+        harness.controller.groupPendingSituations
+            .firstWhere((c) => c.key == 'group|class-import')
+            .bulkApplyable,
+        isEmpty);
 
     // And the pass itself never constructed the create-and-enrol action for it.
-    final kinds = harness.controller.pendingEntries
-        .expand((e) => e.choices)
-        .expand((c) => c.alternatives)
-        .map((a) => a.kind)
-        .toList();
-    expect(kinds, contains('CreateInSmartschool'));
+    final decisions =
+        harness.controller.pendingEntries.expand((e) => e.choices);
+    final kinds = decisions.expand((c) => c.alternatives).map((a) => a.kind);
+    expect(kinds, contains('DoNotImportFromWisa'));
     expect(kinds, isNot(contains('AddToSmartschool')));
+    expect(kinds, isNot(contains('CreateInSmartschool')),
+        reason: 'the notice is never an alternative');
+    expect(
+      decisions.expand((c) => c.notices).map((a) => a.kind),
+      contains('CreateInSmartschool'),
+      reason: 'it is context on the decision instead',
+    );
   });
 
   testWidgets(
@@ -2177,15 +2194,18 @@ void main() {
         reason: 'the empty-class advice is wrong for a provisioned class');
 
     // The pass never constructed either create action for it, and the notice
-    // is manual — there is nothing here for the app to write.
-    final kinds = harness.controller.pendingEntries
-        .expand((e) => e.choices)
-        .expand((c) => c.alternatives)
-        .map((a) => a.kind)
-        .toList();
-    expect(kinds, contains('ClassExistsAsSmartschoolGroup'));
+    // it raised instead is context on the one decision there is (#329) — never
+    // an alternative, because the app cannot perform a hand edit in Smartschool.
+    final decisions =
+        harness.controller.pendingEntries.expand((e) => e.choices);
+    final kinds = decisions.expand((c) => c.alternatives).map((a) => a.kind);
     expect(kinds, isNot(contains('AddToSmartschool')));
     expect(kinds, isNot(contains('CreateInSmartschool')));
+    expect(kinds, isNot(contains('ClassExistsAsSmartschoolGroup')));
+    expect(
+      decisions.expand((c) => c.notices).map((a) => a.kind),
+      contains('ClassExistsAsSmartschoolGroup'),
+    );
 
     // The subgroup keeps its own, correct Smartschool-only notice: it is an
     // official class WISA has no counterpart for.
@@ -2281,7 +2301,7 @@ void main() {
 
   testWidgets(
       'a class the #225 notice says to fix by hand survives "Alles toepassen" '
-      'untouched end-to-end (#250)', (WidgetTester tester) async {
+      'untouched end-to-end (#250/#329)', (WidgetTester tester) async {
     // The real app, real fonts, real navigation, over the real Smartschool
     // write path. Four WISA classes: `1A`/`1B` are genuinely new, while `2G`
     // and `2H` already exist in Smartschool on groups that are not flagged as
@@ -2295,11 +2315,19 @@ void main() {
     // beside them had just said to align by hand: they dropped out of the next
     // WISA snapshot while the Smartschool groups stayed behind, unmanaged.
     //
-    // This is the layer that sees it. Which half of a choice is pre-selected,
-    // which bulk subset a class lands in, and what the button on that subset
-    // writes are three different halves of the screen, composed by the
-    // dispatch, the entry grouping and the drill-down — only a full run puts
-    // the notice and the button that acts on it on screen together.
+    // #250 fixed it by making the notice the pre-selected half of a pair, and
+    // #329 took that pair away again — an instruction to go and edit something
+    // in Smartschool is not a resolution an apply can run, so it is context on
+    // the card rather than one of two answers. The blacklist is therefore the
+    // selected resolution of both rows once more, which makes this run the
+    // proof that the *replacement* guard holds: `canApplyToAll == false`,
+    // refused by every bulk affordance since #326.
+    //
+    // This is the layer that sees it. What a card states, which bulk subset a
+    // class lands in, and what the button on that subset writes are three
+    // different halves of the screen, composed by the dispatch, the entry
+    // grouping and the drill-down — only a full run puts the notice and the
+    // button that acts on it on screen together.
     useTallWindow(tester);
     final harness = namesakeClassChoiceHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -2310,61 +2338,74 @@ void main() {
     await tester.pumpAndSettle();
     await syncThenOpenKlasgroepen(tester);
 
-    // Every class is on the list, and each namesake one reads as the hand-fix
-    // notice — the resolution that is pre-selected for it.
+    // Every class is on the list, and each namesake one still states the
+    // hand-fix instruction — now marked "(manueel)", above the one thing this
+    // app can actually do about the class.
     for (final id in const ['2G', '2H']) {
+      final row = find.byKey(ValueKey('entry-group-$id'));
       expect(
         find.descendant(
-          of: find.byKey(ValueKey('entry-group-$id')),
+          of: row,
           matching: find.textContaining(
               'Deze klas bestaat in Smartschool maar is geen officiële klas'),
         ),
         findsOneWidget,
       );
+      expect(
+        find.descendant(of: row, matching: find.textContaining('(manueel)')),
+        findsOneWidget,
+        reason: 'the notice reads as write-free from the inventory row',
+      );
+      expect(
+        find.descendant(
+          of: row,
+          matching: find.text('Negeer deze klas bij het importeren uit WISA'),
+        ),
+        findsOneWidget,
+        reason: 'and the single proposal is stated plainly, not as "(keuze)"',
+      );
     }
     expect(find.text('Voeg deze klas toe aan Smartschool (keuze)'),
         findsNWidgets(2),
-        reason: '1A and 1B are the ordinary new-class case');
-    expect(
-        find.text('Negeer deze klas bij het importeren uit WISA'), findsNothing,
-        reason: 'the opt-out is an alternative to pick, never a to-do that '
-            'also runs');
+        reason: '1A and 1B are the ordinary new-class case, and keep their '
+            'either/or: both halves of it write');
 
     // The namesake classes form a bulk cohort of their own. Pooling them with
     // the new classes would have filed them under a header offering to create
     // classes that already exist.
+    const String namesakeKey = 'group|class-namesake';
+    const String newKey = 'group|class-import';
     final cohorts = harness.controller.groupPendingSituations;
-    final namesakeKey = cohorts
-        .firstWhere((c) => c.label.startsWith('Deze klas bestaat in '
-            'Smartschool'))
-        .key;
-    final newKey = cohorts
-        .firstWhere((c) => c.label.startsWith('Voeg deze klas toe aan '
-            'Smartschool'))
-        .key;
-    expect(namesakeKey, isNot(newKey));
+    expect(
+      cohorts.firstWhere((c) => c.key == namesakeKey).decisions.length,
+      2,
+    );
+    expect(cohorts.firstWhere((c) => c.key == newKey).decisions.length, 2);
 
-    final namesakeHeader = find.textContaining(
-        'dan wordt ze gekoppeld. / Negeer deze klas bij het importeren uit '
-        'WISA');
+    // Exact, not a substring: the new classes' own header ends in the same
+    // words, because the blacklist is one half of *their* either/or.
+    final namesakeHeader = find.text(
+        'Negeer deze klas bij het importeren uit WISA — 2 klassen in dezelfde '
+        'situatie');
     await tester.ensureVisible(namesakeHeader);
     expect(
       namesakeHeader,
       findsOneWidget,
-      reason: 'the header names one either/or led by the hand-fix notice',
+      reason: 'the header names the one decision these two classes share',
     );
 
     // And it offers nothing to run. Since #292 the cohort is that one decision
-    // rather than the whole card, and neither of its resolutions may be written
-    // in bulk — the notice is a hand repair the app cannot perform, and the
-    // blacklist beside it is withheld by #293 — so since #326 the pair is not
-    // rendered at all. Under the old grouping the button was live, because the
-    // classes also need an Office 365 group (#228): pressing a header that said
-    // "this class is already there" wrote something else entirely.
+    // rather than the whole card, and its resolution is withheld from every
+    // bulk pass by #293 — so since #326 the pair is not rendered at all. Under
+    // the old grouping the button was live, because the classes also need an
+    // Office 365 group (#228): pressing a header that said "this class is
+    // already there" wrote something else entirely.
     final pulls = harness.wisaSyncs;
-    expect(find.byKey(ValueKey('situation-apply-$namesakeKey')), findsNothing);
-    expect(find.byKey(ValueKey('situation-dry-run-$namesakeKey')), findsNothing,
-        reason: 'nothing to write means nothing to press');
+    expect(find.byKey(const ValueKey('situation-apply-$namesakeKey')),
+        findsNothing);
+    expect(find.byKey(const ValueKey('situation-dry-run-$namesakeKey')),
+        findsNothing,
+        reason: 'nothing a bulk pass may write means nothing to press');
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
         isEmpty,
         reason: 'Smartschool already holds 2G and 2H');
@@ -2383,7 +2424,7 @@ void main() {
 
     // And the fix did not simply silence the list: the other cohort still
     // creates the genuinely new classes, and blacklists neither.
-    final newBulk = find.byKey(ValueKey('situation-apply-$newKey'));
+    final newBulk = find.byKey(const ValueKey('situation-apply-$newKey'));
     await tester.ensureVisible(newBulk);
     await tester.tap(newBulk);
     await tester.pumpAndSettle();
@@ -2424,11 +2465,12 @@ void main() {
     //
     // End-to-end rather than on the action alone, because the line the operator
     // reads is assembled across the whole path: the group dispatch's
-    // `ChangeSet`, the collapse of the notice and its "negeer deze klas" half
-    // into one either/or, the radio that decides whose fields are on screen, and
-    // only then `fieldChangeLine`. "No cleared field anywhere on this card" is
-    // also a claim about the page as composed — this tab renders the second
-    // namesake class and the two ordinary new classes beside it.
+    // `ChangeSet`, the collapse that lifts the notice onto the "negeer deze
+    // klas" decision it is context for (#329), the block that states it above
+    // that decision, and only then `fieldChangeLine`. "No cleared field
+    // anywhere on this card" is also a claim about the page as composed — this
+    // tab renders the second namesake class and the two ordinary new classes
+    // beside it.
     useTallWindow(tester);
     final harness = namesakeClassChoiceHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -2445,7 +2487,7 @@ void main() {
     await tester.tap(entry);
     await tester.pumpAndSettle();
 
-    // The notice is the pre-selected half, and it states the code as a fact.
+    // The notice is context on the card, and it states the code as a fact.
     expect(
       find.textContaining(
           'Deze klas bestaat in Smartschool maar is geen officiële klas'),
@@ -2455,6 +2497,38 @@ void main() {
 
     // The repair it *is* asking for still reads as the transition it is.
     expect(find.text('officiële klas: nee → ja'), findsOneWidget);
+
+    // And the open card asks no question (#329): the instruction is stated,
+    // marked "(manueel)", above the single write this app has for the class.
+    final Finder card = find.byKey(const ValueKey('entry-group-2G'));
+    expect(
+        find.descendant(of: card, matching: find.text('Kies één oplossing:')),
+        findsNothing);
+    expect(
+      find.descendant(
+          of: card, matching: find.byIcon(Icons.radio_button_checked)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+          of: card, matching: find.byIcon(Icons.radio_button_unchecked)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.textContaining('dan wordt ze gekoppeld. (manueel)'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: card,
+        matching: find.text('Negeer deze klas bij het importeren uit WISA'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('DontImportClass: ∅ → 2G'), findsOneWidget);
 
     // And nothing on this page claims a field is being emptied — least of all
     // an action that cannot be applied.

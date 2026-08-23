@@ -50,18 +50,26 @@ export 'action_tiles.dart' show compareClassNames;
 ///   inventory right?", which only the full list can. The name search (#262) is
 ///   what makes those few hundred rows navigable without shortening them, and it
 ///   composes with the switch rather than replacing it.
-/// - **Informational notices are not buried.** A class Smartschool already
-///   holds, or an Office 365 group left behind by a class that is gone, is real
-///   manual work with no automated write, so it contributes nothing to a pending
-///   count (#225/#250). The filter and the row **highlight** therefore key on
-///   [MaterializedGroup.needsAttention], never on the pending count — and that
-///   stays true under #298, which is not the contradiction it looks like. The
-///   reconciling principle is *colour by work that can be done on this screen*:
-///   here the manual notice is the work you do on this screen, so it lights the
-///   row; in Acties an informational candidate diagnoses work that happens
-///   somewhere else, so it colours nothing there. The system **cells** are the
-///   narrower reading — they promise a write, so they count only applyable
-///   work. See the library doc of `system_indicator.dart`.
+/// - **Informational notices are not buried.** A row whose only content is a
+///   diagnosis — a leftover class or group this app cannot address a delete to
+///   (#327/#328) — is real manual work with no automated write, so it
+///   contributes nothing to a pending count. The filter and the row
+///   **highlight** therefore key on [MaterializedGroup.needsAttention], never on
+///   the pending count — and that stays true under #298, which is not the
+///   contradiction it looks like. The reconciling principle is *colour by work
+///   that can be done on this screen*: here the manual notice is the work you do
+///   on this screen, so it lights the row; in Acties an informational candidate
+///   diagnoses work that happens somewhere else, so it colours nothing there.
+///   The system **cells** are the narrower reading — they promise a write, so
+///   they count only applyable work. See the library doc of
+///   `system_indicator.dart`.
+///
+///   A notice that sits *beside* a decision is a different thing again (#329):
+///   a class Smartschool already holds, and an empty WISA class, each carry an
+///   instruction the operator acts on elsewhere **and** the one write this app
+///   has for them ("negeer deze klas"). The row previews both, the notice first
+///   and marked "(manueel)", and it counts and colours on the write — because
+///   there is one.
 ///
 /// A class that needs work is inspected — and, where it is applyable, dry-run
 /// and applied — right here, through the same tiles Acties uses
@@ -782,19 +790,35 @@ class _ClassRow extends StatelessWidget {
   ///
   /// A preview, and only that: an open card renders the decisions themselves
   /// and these lines stand down (#300).
+  ///
+  /// A decision's notices (#329) are previewed above it, in both sessions. They
+  /// are not decisions and are counted nowhere, but the row is what an operator
+  /// scans the inventory by: "Negeer deze klas bij het importeren uit WISA" on
+  /// its own does not say that the class already exists in Smartschool under a
+  /// group nobody flagged official, which is the whole reason that is the only
+  /// thing on offer.
   List<({core.Origin system, String text})> _lines(
     PendingAccountEntry? entry,
     MaterializedGroup group,
   ) {
     if (entry != null) {
       return <({core.Origin system, String text})>[
-        for (final c in entry.choices)
+        for (final c in entry.choices) ...<({core.Origin system, String text})>[
+          for (final n in c.notices)
+            (system: n.changes.system, text: pendingNoticeLine(n)),
           (system: c.selected.changes.system, text: pendingChoiceLine(c)),
+        ],
       ];
     }
     return <({core.Origin system, String text})>[
-      for (final c in candidateChoices(group.candidates))
+      for (final c in candidateChoices(group.candidates)) ...<({
+        core.Origin system,
+        String text
+      })>[
+        for (final n in c.notices)
+          (system: n.system, text: '${n.summary} (manueel)'),
         (system: c.selected.system, text: readOnlyCandidateLine(c)),
+      ],
     ];
   }
 

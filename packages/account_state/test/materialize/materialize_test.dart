@@ -805,6 +805,7 @@ void main() {
       String? group,
       bool isDefault = false,
       bool canApply = true,
+      String? noticeFor,
     }) =>
         CandidateAction(
           family: 'group',
@@ -814,6 +815,7 @@ void main() {
           canApply: canApply,
           alternativeGroup: group,
           isDefaultAlternative: isDefault,
+          noticeFor: noticeFor,
         );
 
     test('two alternatives of one choice count once', () {
@@ -830,15 +832,43 @@ void main() {
       expect(pendingDecisionCount(candidates), 1);
     });
 
-    test('a choice whose default is informational counts nothing', () {
-      // The empty-class reading of #244: the pre-selected half has no write, so
-      // a bulk apply writes nothing here — blacklisting stays a deliberate pick.
+    test('a choice whose selected half is informational counts nothing', () {
+      // The generic property, and the only shape that still produces it since
+      // #329: a lone informational candidate. (An either/or can no longer be in
+      // this state — every alternative writes — and the empty-class reading of
+      // #244 that used to be the example is the test below.)
+      expect(
+        pendingDecisionCount(
+            [candidate('DoNotImportFromSmartschool', canApply: false)]),
+        0,
+      );
+    });
+
+    test('a notice is not a decision, and the write beside it is (#329)', () {
+      // The empty-class reading of #244, as it stands now. The notice used to
+      // be the pre-selected half of this pair, so the badge read zero: nothing
+      // would be written unless the operator flipped a radio. It is context on
+      // the blacklist now, so the badge counts the blacklist — which genuinely
+      // is a write the operator can press. Keeping it off a *bulk* pass is
+      // `canApplyToAll`'s job (#293/#326), not the badge's.
       final candidates = [
         candidate('CreateInSmartschool',
-            group: 'class-import', isDefault: true, canApply: false),
+            canApply: false, noticeFor: 'class-import'),
         candidate('DoNotImportFromWisa', group: 'class-import'),
       ];
-      expect(pendingDecisionCount(candidates), 0);
+
+      final choices = candidateChoices(candidates);
+      expect(choices, hasLength(1));
+      expect(choices.single.isChoice, isFalse,
+          reason:
+              'a diagnosis and a write are not two answers to one question');
+      expect(choices.single.selected.kind, 'DoNotImportFromWisa');
+      expect(
+        choices.single.notices.map((c) => c.kind),
+        <String>['CreateInSmartschool'],
+        reason: 'the instruction is still on the card, as context',
+      );
+      expect(pendingDecisionCount(candidates), 1);
     });
 
     test('independent actions still count one each, informational ones zero',
@@ -873,6 +903,38 @@ void main() {
           group: 'smartschool-departure', isDefault: true);
       final restored = CandidateAction.fromJson(original.toJson());
       expect(restored.alternativeGroup, 'smartschool-departure');
+      expect(restored.isDefaultAlternative, isTrue);
+      expect(restored.noticeFor, isNull);
+    });
+
+    test('the notice key survives a candidate JSON round-trip (#329)', () {
+      // Dropped on the way through Cosmos, the namesake instruction reads back
+      // as a decision of its own in a passive session — a second bullet the
+      // operator is asked to resolve and a badge counting work nobody can do,
+      // which is the very #251 split this key exists to close.
+      final original = candidate('ClassExistsAsSmartschoolGroup',
+          canApply: false, noticeFor: 'class-namesake');
+      final restored = CandidateAction.fromJson(original.toJson());
+
+      expect(restored.noticeFor, 'class-namesake');
+      expect(restored.alternativeGroup, isNull);
+      expect(restored.canApply, isFalse);
+    });
+
+    test('a candidate written before #329 carries no notice key', () {
+      final restored = CandidateAction.fromJson(<String, dynamic>{
+        'family': 'group',
+        'kind': 'ClassExistsAsSmartschoolGroup',
+        'system': core.Origin.smartschool.toJson(),
+        'summary': 'Deze klas bestaat in Smartschool',
+        'canApply': false,
+        'alternativeGroup': 'class-namesake',
+        'isDefaultAlternative': true,
+      });
+      // It reads back exactly as it was written — the pre-#329 pair, which the
+      // next sync replaces wholesale.
+      expect(restored.noticeFor, isNull);
+      expect(restored.alternativeGroup, 'class-namesake');
       expect(restored.isDefaultAlternative, isTrue);
     });
 

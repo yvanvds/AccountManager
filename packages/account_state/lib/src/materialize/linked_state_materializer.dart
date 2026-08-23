@@ -47,6 +47,7 @@ MaterializedView materialize(
       canApply: a.canApply,
       alternativeGroup: a.alternativeGroup,
       isDefaultAlternative: a.isDefaultAlternative,
+      noticeFor: a.noticeFor,
     ));
   }
   final byStaff = <String, List<CandidateAction>>{};
@@ -60,6 +61,7 @@ MaterializedView materialize(
       canApply: a.canApply,
       alternativeGroup: a.alternativeGroup,
       isDefaultAlternative: a.isDefaultAlternative,
+      noticeFor: a.noticeFor,
     ));
   }
 
@@ -171,6 +173,10 @@ List<MaterializedGroup> _materializeGroups(
       canApply: a.canApply,
       alternativeGroup: a.alternativeGroup,
       isDefaultAlternative: a.isDefaultAlternative,
+      // The group family is the only one with notices today (#329) — the
+      // namesake and empty-class instructions, which are context on the
+      // blacklist beside them rather than decisions of their own.
+      noticeFor: a.noticeFor,
     ));
     targets.putIfAbsent(key, () => a.target);
   }
@@ -570,6 +576,7 @@ CandidateAction _candidate(
   required bool canApply,
   required String? alternativeGroup,
   required bool isDefaultAlternative,
+  String? noticeFor,
 }) =>
     CandidateAction(
       family: family,
@@ -580,6 +587,7 @@ CandidateAction _candidate(
       canApply: canApply,
       alternativeGroup: alternativeGroup,
       isDefaultAlternative: isDefaultAlternative,
+      noticeFor: noticeFor,
     );
 
 // The core linked records carry only linking keys; human names live on the

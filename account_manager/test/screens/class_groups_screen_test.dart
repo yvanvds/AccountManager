@@ -211,12 +211,15 @@ void main() {
     // names no class code — so there is nothing to address a `delClass` to and
     // its lone reading is the "laat deze klas staan" notice (#328). Nothing is
     // written, so the Smartschool cell stays green — while the row itself is
-    // highlighted, because `needsAttention` counts the notice and on this
-    // screen the notice *is* the work (#225/#250).
+    // highlighted, because `needsAttention` counts the notice and on this row
+    // the notice *is* the whole of what the screen has to say.
     //
-    // (This claim has moved twice. It was made on a stale Office 365 group
-    // until #327 and on any Smartschool leftover until #328; both of those rows
-    // now propose a delete outright — see the two tests below.)
+    // (This claim has moved twice, and this is where it settles. It was made on
+    // a stale Office 365 group until #327 and on any Smartschool leftover until
+    // #328 — both of those now propose a delete outright — while the namesake
+    // and empty-class rows of #225/#244 stopped being informational-only at
+    // #329, where their notice became context beside a blacklist that writes.
+    // What is left is exactly the rows no decision can be raised on at all.)
     _useTallWindow(tester);
     final harness = smartschoolLeftoverClassHarness(codelessLeftover: true);
     await harness.controller.sync();
@@ -1382,6 +1385,162 @@ void main() {
     expect(find.textContaining('Verwijder de klas 1A uit Smartschool'),
         findsNothing,
         reason: '1A is a running class — deleting it is not on offer');
+  });
+
+  // --- A notice is context, not an alternative (#329) ------------------------
+
+  testWidgets(
+      'a namesake class states the Smartschool repair as context and proposes '
+      'the blacklist alone (#225/#250/#329)', (WidgetTester tester) async {
+    // `2G` exists in Smartschool on a group nobody flagged official, so the
+    // linker cannot adopt it and this app can do exactly one thing about the
+    // class: stop importing it. The repair — make the group official over
+    // there — is an instruction, not a resolution an apply can run, so it is
+    // stated above the proposal rather than offered as the other radio of a
+    // pair the operator was asked to resolve.
+    _useTallWindow(tester);
+    final harness = namesakeClassChoiceHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Collapsed, the row previews both lines: the situation, then what the app
+    // proposes about it. "(manueel)" is what makes the first scannable.
+    final row = _row('2G');
+    expect(
+      find.descendant(
+        of: row,
+        matching: find.textContaining('dan wordt ze gekoppeld. (manueel)'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: row,
+        matching: find.text('Negeer deze klas bij het importeren uit WISA'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: row, matching: find.textContaining('(keuze)')),
+        findsNothing);
+
+    final entry = find.byKey(const ValueKey('entry-group-2G'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    // Open, there is nothing to choose: no radios, no "Kies één oplossing:".
+    expect(find.byKey(const ValueKey('alt-2G-ClassExistsAsSmartschoolGroup')),
+        findsNothing);
+    expect(
+        find.byKey(const ValueKey('alt-2G-DoNotImportFromWisa')), findsNothing);
+    expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+    expect(find.byIcon(Icons.radio_button_unchecked), findsNothing);
+    expect(find.text('Kies één oplossing:'), findsNothing);
+
+    // The notice keeps the facts that let the operator find the group, and the
+    // repair it asks for still reads as the transition it is.
+    expect(find.text('code: G2G'), findsOneWidget);
+    expect(find.text('officiële klas: nee → ja'), findsOneWidget);
+    // …and the proposal shows exactly what pressing would write.
+    expect(find.text('DontImportClass: ∅ → 2G'), findsOneWidget);
+    final apply = find.byKey(const ValueKey('entry-apply-2G'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull,
+        reason: 'the card proposes one write, and the operator may press it');
+  });
+
+  testWidgets(
+      'a namesake class colours its WISA cell, because the blacklist is work '
+      'this screen can do (#298/#329)', (WidgetTester tester) async {
+    // The twin of the #327/#328 consequence on the other two systems. The
+    // decision used to default to a notice that wrote nothing, so every cell
+    // read green while the card carried a blacklist one radio away. It is the
+    // card's single proposal now, and the cell says so — a decision about the
+    // WISA side of this class is pending on this very screen.
+    _useTallWindow(tester);
+    final harness = namesakeClassChoiceHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(
+        _cell(tester, '2G', core.Origin.wisa), SystemIndicatorState.needsWork);
+    expect(_cell(tester, '2G', core.Origin.smartschool),
+        SystemIndicatorState.missing,
+        reason: 'the namesake group is not the class — that is the whole '
+            'situation');
+  });
+
+  testWidgets(
+      'no bulk affordance is offered over the namesake classes (#250/#329)',
+      (WidgetTester tester) async {
+    // `2G` and `2H` share the situation, so the tab collects them into one
+    // header. The blacklist is what both rows are set to now that the notice is
+    // context, so the #293 sanction is the whole of what keeps "Alles
+    // toepassen" from writing a DontImportClass rule on two classes the app has
+    // just told the operator to repair by hand.
+    _useTallWindow(tester);
+    final harness = namesakeClassChoiceHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Negeer deze klas bij het importeren uit WISA — 2 klassen in '
+          'dezelfde situatie'),
+      findsOneWidget,
+      reason: 'the cohort is still worth naming; only the pair is withdrawn',
+    );
+    expect(
+      find.byKey(const ValueKey('situation-apply-group|class-namesake')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('situation-dry-run-group|class-namesake')),
+      findsNothing,
+    );
+    expect(
+      harness.controller.groupPendingSituations
+          .firstWhere((c) => c.key == 'group|class-namesake')
+          .bulkApplyable,
+      isEmpty,
+      reason: 'the header has nothing it may write, so it renders no pair',
+    );
+  });
+
+  testWidgets(
+      'an empty WISA class states its wait-or-delete notice as context '
+      '(#244/#329)', (WidgetTester tester) async {
+    // The other site the pair was removed from. There is nothing to create for
+    // an empty class, so the blacklist is the lone decision and "delete it by
+    // hand, or wait until it has students" is what the operator reads above it.
+    _useTallWindow(tester);
+    final harness = siblingPopulatedClassHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('wacht tot ze leerlingen bevat. (manueel)'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('(keuze)'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Kies één oplossing:'), findsNothing);
+    expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+    expect(
+        find.byKey(const ValueKey('alt-1A-CreateInSmartschool')), findsNothing);
+    expect(find.text('Negeer deze klas bij het importeren uit WISA'),
+        findsOneWidget);
+    expect(find.text('DontImportClass: ∅ → 1A'), findsOneWidget);
   });
 
   testWidgets('classes sort by year, numerically (#227)',

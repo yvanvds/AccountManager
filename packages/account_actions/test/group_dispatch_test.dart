@@ -174,7 +174,7 @@ void main() {
       expect(actions.indexOf(create), lessThan(actions.indexOf(ignore)));
     });
 
-    test('an empty class defaults to the informational wait-or-delete notice',
+    test('an empty class states the wait-or-delete notice as context (#329)',
         () {
       final actions = groupActionsFor(
         linkedGroup(wisa: wisaGroup()),
@@ -183,32 +183,39 @@ void main() {
       final empty = actions.whereType<CreateInSmartschool>().single;
       final ignore = actions.whereType<DoNotImportFromWisa>().single;
 
-      expect(empty.alternativeGroup, classImportAlternative);
-      expect(ignore.alternativeGroup, classImportAlternative);
-      // It stands in for the create, so it takes the default with it — and it
-      // cannot be applied, so a bulk apply writes nothing for an empty class.
-      expect(empty.isDefaultAlternative, isTrue);
+      // There is nothing to create for an empty class, so the blacklist is the
+      // lone decision and the notice rides beside it as context — never as the
+      // other half of a radio pair, which is what it was until #329.
       expect(empty.canApply, isFalse);
+      expect(empty.noticeFor, classImportAlternative);
+      expect(empty.alternativeGroup, isNull);
+      expect(empty.isDefaultAlternative, isFalse);
+
+      expect(ignore.alternativeGroup, classImportAlternative);
       expect(ignore.isDefaultAlternative, isFalse);
+      // The polarity is gone, so this flag is the whole of what keeps a bulk
+      // pass off an empty class (#293/#326).
+      expect(ignore.canApplyToAll, isFalse);
     });
 
-    test('exactly one default is ever offered — the creates never co-occur',
+    test('a populated class keeps its two-writes either/or, and one default',
         () {
-      for (final hasStudents in const [true, false]) {
-        final actions = groupActionsFor(
-          linkedGroup(wisa: wisaGroup()),
-          placementFor: (_) => groupPlacement(containsStudents: hasStudents),
-        );
-        final alternatives = actions
-            .where((a) => a.alternativeGroup == classImportAlternative)
-            .toList();
-        expect(alternatives, hasLength(2));
-        expect(
-          alternatives.where((a) => a.isDefaultAlternative),
-          hasLength(1),
-          reason: 'containsStudents picks exactly one of the two creates',
-        );
-      }
+      // The genuine choice: both halves write, so the radios stay and exactly
+      // one of them is pre-selected.
+      final actions = groupActionsFor(
+        linkedGroup(wisa: wisaGroup()),
+        placementFor: (_) => groupPlacement(containsStudents: true),
+      );
+      final alternatives = actions
+          .where((a) => a.alternativeGroup == classImportAlternative)
+          .toList();
+
+      expect(
+        alternatives.map((a) => a.runtimeType),
+        [AddToSmartschool, DoNotImportFromWisa],
+      );
+      expect(alternatives.every((a) => a.canApply), isTrue);
+      expect(alternatives.where((a) => a.isDefaultAlternative), hasLength(1));
     });
 
     test('a class present in both systems carries no alternatives', () {
@@ -253,12 +260,14 @@ void main() {
           reason: 'the two readings partition the leftovers — never both');
     });
 
-    test('the namesake notice (#225) leads a choice of its own (#250)', () {
+    test('the namesake notice (#225) is context on a choice of its own (#329)',
+        () {
       // The notice takes the create's place for a class Smartschool already
-      // carries, so it takes the create's side of the either/or too — under its
-      // own key, because "this class is already there, go fix its flag" is a
-      // different situation from "create this class" and must not share a bulk
-      // apply with it.
+      // carries — but not the create's *side*: "go and make that group
+      // official" is not something an apply can run. The blacklist is the lone
+      // decision, under its own key, because "this class is already there, go
+      // fix its flag" is a different situation from "create this class" and
+      // must not share a bulk apply with it.
       final actions = groupActionsFor(
         linkedGroup(
           wisa: wisaGroup(name: '2G'),
@@ -269,27 +278,32 @@ void main() {
       final notice = actions.whereType<ClassExistsAsSmartschoolGroup>().single;
       final ignore = actions.whereType<DoNotImportFromWisa>().single;
 
-      expect(notice.alternativeGroup, namesakeClassAlternative);
+      expect(notice.canApply, isFalse);
+      expect(notice.noticeFor, namesakeClassAlternative);
+      expect(notice.alternativeGroup, isNull);
+      expect(notice.isDefaultAlternative, isFalse);
+
       expect(ignore.alternativeGroup, namesakeClassAlternative);
       expect(
-        notice.alternativeGroup,
+        ignore.alternativeGroup,
         isNot(classImportAlternative),
         reason: 'a namesake class is not bulk-applied with the new classes',
       );
-
-      // Polarity: the informational notice leads and is the default, so a bulk
-      // apply writes *nothing* for a class the operator was told to repair by
-      // hand — blacklisting it stays a deliberate pick (#250).
-      expect(notice.isDefaultAlternative, isTrue);
-      expect(notice.canApply, isFalse);
       expect(ignore.isDefaultAlternative, isFalse);
+      // What holds #250 now that the polarity is gone.
+      expect(ignore.canApplyToAll, isFalse);
+      // Dispatch order still puts the situation before the proposal: it is the
+      // order the card states them in.
       expect(actions.indexOf(notice), lessThan(actions.indexOf(ignore)));
     });
 
-    test('the blacklist is never the lone member of a choice (#250)', () {
-      // The bug: the creates refuse a namesake class, so `class-import` was
-      // left holding only `DoNotImportFromWisa` — and a lone option is always
-      // the selected one, which made "Apply to all" blacklist the class.
+    test('the blacklist stands alone with its notice beside it (#250/#329)',
+        () {
+      // #250's shape: the creates refuse a namesake class, so `class-import`
+      // was left holding only `DoNotImportFromWisa` — and a lone option is
+      // always the selected one, which made "Apply to all" blacklist the class.
+      // The lone-ness is back on purpose; the sanction is what refuses the bulk
+      // pass now, and the reading the operator needs is still on the card.
       for (final hasStudents in const [true, false]) {
         final actions = groupActionsFor(
           linkedGroup(
@@ -302,17 +316,162 @@ void main() {
         final siblings = actions
             .where((a) => a.alternativeGroup == ignore.alternativeGroup)
             .toList();
+        final notices = actions
+            .where((a) => a.noticeFor == ignore.alternativeGroup)
+            .toList();
 
-        expect(siblings, hasLength(2),
-            reason: 'the blacklist always has the reading it contradicts '
-                'beside it');
-        expect(siblings.where((a) => a.isDefaultAlternative), hasLength(1));
+        expect(siblings, hasLength(1),
+            reason: 'nothing this app can do competes with the blacklist here');
+        expect(ignore.canApplyToAll, isFalse,
+            reason: 'no bulk pass may write it — the whole of #250 now');
         expect(
-          siblings.singleWhere((a) => a.isDefaultAlternative).canApply,
-          isFalse,
-          reason: 'nothing is written for a namesake class by default',
+          notices.map((a) => a.runtimeType),
+          [ClassExistsAsSmartschoolGroup],
+          reason: 'the reading it contradicts is still on the card, as context',
         );
       }
+    });
+  });
+
+  group('a notice is context, never an alternative (#329)', () {
+    // The rule the whole alternative-group mechanism rests on, asserted over
+    // the dispatch itself rather than over the widget that renders it: an
+    // action with no automated write may not stand in an either/or, because
+    // "here is what is wrong" and "here is the one thing the app can do" are
+    // not comparable answers to one question. Such an action declares
+    // `noticeFor` and rides along as context instead.
+    //
+    // Every fixture below is one that raises an informational action, so the
+    // assertion has something to bite on in all three families.
+
+    void expectNoNoOpAlternatives(Iterable<Object> actions) {
+      for (final a in actions) {
+        final (String? group, String? notice, bool canApply, bool isDefault) =
+            switch (a) {
+          GroupAction() => (
+              a.alternativeGroup,
+              a.noticeFor,
+              a.canApply,
+              a.isDefaultAlternative
+            ),
+          StudentAction() => (
+              a.alternativeGroup,
+              a.noticeFor,
+              a.canApply,
+              a.isDefaultAlternative
+            ),
+          StaffAction() => (
+              a.alternativeGroup,
+              a.noticeFor,
+              a.canApply,
+              a.isDefaultAlternative
+            ),
+          _ => throw StateError('unclassified action ${a.runtimeType}'),
+        };
+        final String what = a.runtimeType.toString();
+
+        if (group != null) {
+          expect(canApply, isTrue,
+              reason: '$what stands in the "$group" either/or, so it must '
+                  'write something');
+        }
+        if (notice != null) {
+          expect(canApply, isFalse,
+              reason: '$what is context, so it must have no automated write');
+          expect(group, isNull,
+              reason: '$what is context, so it is not one of the answers');
+          expect(isDefault, isFalse,
+              reason: '$what is not an option and cannot be the default one');
+        }
+      }
+    }
+
+    test('the group family', () {
+      final populations = <List<GroupAction>>[
+        // A namesake class, with and without students (#225/#250).
+        for (final hasStudents in const [true, false])
+          groupActionsFor(
+            linkedGroup(
+              wisa: wisaGroup(name: '2G'),
+              smartschoolNamesake: ssGroupNode(code: 'G2G', name: '2G'),
+            ),
+            placementFor: (_) => groupPlacement(containsStudents: hasStudents),
+          ),
+        // A new class, empty and populated (#244).
+        for (final hasStudents in const [true, false])
+          groupActionsFor(
+            linkedGroup(wisa: wisaGroup()),
+            placementFor: (_) => groupPlacement(containsStudents: hasStudents),
+          ),
+        // The two leftovers, deletable and not (#327/#328).
+        groupActionsFor(linkedGroup(smartschool: ssGroup())),
+        groupActionsFor(linkedGroup(smartschool: ssGroup(code: ' '))),
+      ];
+
+      for (final actions in populations) {
+        expectNoNoOpAlternatives(actions);
+      }
+      expect(
+        populations.expand((a) => a).where((a) => !a.canApply),
+        isNotEmpty,
+        reason: 'the fixtures must actually raise informational actions',
+      );
+    });
+
+    test('the student family', () {
+      final populations = <List<StudentAction>>[
+        // The family's informational member (#245): a student missing from
+        // their own Office 365 class group.
+        studentActionsFor(
+          fullySynced(),
+          config(),
+          placementFor: (_) => classPlacement(),
+          azurePlacementFor: (_) => const AzureClassPlacement(
+            className: '3A',
+            groupName: 'SSM-3A',
+            groupExists: true,
+          ),
+        ),
+        // The family's one either/or (#110): a departed student, unregister or
+        // delete — two real writes.
+        studentActionsFor(
+          linked(smartschool: ssAccount(), azure: azureUser()),
+          config(),
+          placementFor: (_) => classPlacement(),
+        ),
+      ];
+
+      for (final actions in populations) {
+        expectNoNoOpAlternatives(actions);
+      }
+      expect(
+        populations.expand((a) => a).where((a) => !a.canApply),
+        isNotEmpty,
+        reason: 'the fixtures must actually raise an informational action',
+      );
+      expect(
+        populations.expand((a) => a).where(
+            (a) => a.alternativeGroup == smartschoolDepartureAlternative),
+        isNotEmpty,
+        reason: 'and an either/or, so both halves of the rule are exercised',
+      );
+    });
+
+    test('the staff family', () {
+      // Every staff action is applyable today, so this asserts the other half
+      // of the rule: an either/or made only of writes is exactly what the staff
+      // import decision is, and it keeps its radios.
+      final actions = staffActionsFor(
+        linkedStaff(wisa: wisaStaff()),
+        staffConfig(),
+      );
+
+      expectNoNoOpAlternatives(actions);
+      expect(
+        actions.where((a) => a.alternativeGroup == staffImportAlternative),
+        isNotEmpty,
+        reason: 'the fixture must actually raise an either/or',
+      );
     });
   });
 

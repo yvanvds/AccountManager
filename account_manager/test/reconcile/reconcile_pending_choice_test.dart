@@ -379,11 +379,13 @@ void main() {
     });
 
     test(
-        'an empty class defaults to its notice, so a bulk apply writes '
-        'nothing for it', () async {
-      // The empty-class reading takes the create's place inside the same
-      // choice. It is informational, so the entry offers no apply at all until
-      // the operator deliberately picks "ignore this class".
+        'an empty class states its notice as context, with the blacklist as '
+        'the lone action (#329)', () async {
+      // There is nothing to create for an empty class, so the card proposes
+      // exactly one thing and says why: "delete it by hand, or wait until it
+      // has students". Until #329 that instruction was the pre-selected half of
+      // a radio pair, which asked the operator to choose between a diagnosis
+      // and the one write there is.
       final h = siblingPopulatedClassHarness();
       await h.controller.sync();
 
@@ -393,15 +395,49 @@ void main() {
         (c) => c.situationId == actions.classImportAlternative,
       );
 
-      expect(choice.selected.kind, 'CreateInSmartschool');
-      expect(choice.selected.canApply, isFalse);
-      expect(entry.canApply, isFalse,
-          reason: 'nothing to write for an empty class until the operator '
-              'picks the opt-out');
+      expect(choice.isChoice, isFalse, reason: 'no radio group');
+      expect(choice.alternatives.map((a) => a.kind),
+          <String>['DoNotImportFromWisa']);
+      expect(choice.selected.kind, 'DoNotImportFromWisa');
       expect(
-        choice.alternatives.map((a) => a.kind),
-        containsAll(<String>['CreateInSmartschool', 'DoNotImportFromWisa']),
+        choice.notices.map((a) => a.kind),
+        <String>['CreateInSmartschool'],
+        reason: 'the instruction survives as context on the decision',
       );
+      expect(choice.notices.single.canApply, isFalse);
+      expect(
+        choice.notices.single.changes.summary,
+        contains('bevat nog geen leerlingen'),
+      );
+    });
+
+    test('no bulk pass writes DontImportClass on an empty class (#250/#329)',
+        () async {
+      // What replaces the polarity that used to keep the blacklist off this
+      // path: the #293 sanction, which every bulk affordance reads since #326.
+      // The blacklist is the *selected* resolution of an empty class now, so
+      // this is the only thing standing between it and one press.
+      final h = siblingPopulatedClassHarness();
+      await h.controller.sync();
+      final pulls = h.wisaSyncs;
+
+      final cohort = h.controller.groupPendingSituations.firstWhere(
+          (c) => c.key == 'group|${actions.classImportAlternative}');
+      expect(cohort.decisions.map((d) => d.entry.targetId), contains('1A'));
+      expect(
+        cohort.bulkApplyable.map((d) => d.entry.targetId),
+        isNot(contains('1A')),
+        reason: 'the header offers this class nothing (#326)',
+      );
+
+      await h.controller.applyDecisions(cohort.decisions);
+
+      expect(
+        (h.controller.applyResults ?? const []).map((r) => r.changes.summary),
+        isNot(contains(ignore)),
+      );
+      expect(h.wisaSyncs, pulls,
+          reason: 'no import rule was added, so WISA was never re-pulled');
     });
   });
 
@@ -422,24 +458,33 @@ void main() {
           (c) => c.alternatives.any((a) => a.kind == 'DoNotImportFromWisa'),
         );
 
-    test('the notice and the blacklist collapse into one choice, notice first',
+    test('the notice is context on the blacklist, not a radio beside it (#329)',
         () async {
       final h = namesakeClassChoiceHarness();
       await h.controller.sync();
       final choice = importChoiceOf(entryFor(h, '2G'));
 
       expect(choice.situationId, actions.namesakeClassAlternative);
-      expect(choice.isChoice, isTrue,
-          reason: 'repair it by hand or stop offering it — never both, and '
-              'never a choice of one');
+      expect(choice.isChoice, isFalse,
+          reason: '"go and make it official in Smartschool" is not something '
+              'an apply can run, so it is not one of the answers');
       expect(
         choice.alternatives.map((a) => a.kind),
-        ['ClassExistsAsSmartschoolGroup', 'DoNotImportFromWisa'],
-        reason: 'the notice leads the radio pair',
+        <String>['DoNotImportFromWisa'],
       );
-      expect(choice.selected.kind, 'ClassExistsAsSmartschoolGroup');
-      expect(choice.selected.canApply, isFalse,
-          reason: 'the default writes nothing: the repair is a hand edit');
+      expect(choice.selected.kind, 'DoNotImportFromWisa');
+      expect(
+        choice.notices.map((a) => a.kind),
+        <String>['ClassExistsAsSmartschoolGroup'],
+        reason: 'the repair instruction is still on the card, as context',
+      );
+      expect(choice.notices.single.canApply, isFalse);
+      expect(choice.notices.single.changes.summary, contains(notice));
+      expect(
+        choice.notices.single.changes.fields.map((f) => f.field),
+        contains('code'),
+        reason: 'the group code is how the operator finds it in Smartschool',
+      );
     });
 
     test('a namesake class is not pooled with the new classes for bulk apply',
@@ -467,58 +512,82 @@ void main() {
       expect(
           fresh.decisions.map((d) => d.entry.targetId), <String>['1A', '1B']);
       expect(namesake.applyableCount, 0,
-          reason: 'the hand-fix notice writes nothing, so its cohort offers '
-              'nothing to apply — the Office 365 group beside it on the same '
-              'cards is a cohort of its own (#292)');
+          reason: 'the blacklist withholds the #293 sanction, so this cohort '
+              'offers nothing to apply in bulk even though it is now the '
+              'selected resolution of both its rows (#326/#329)');
+      expect(namesake.bulkApplyable, isEmpty);
     });
 
-    test('"apply to all" creates the new classes and blacklists no namesake',
-        () async {
+    test('no bulk pass blacklists a namesake class (#250/#329)', () async {
       // The report's headline: Apply to all wrote a DontImportClass rule on
       // every class the #225 notice had just told the operator to repair by
       // hand.
+      //
+      // What refused it then was the *polarity* of a radio pair — the notice
+      // was the pre-selected half, so nothing was written unless the operator
+      // flipped a radio, and flipping two of them armed the header anyway. The
+      // notice is context now, so the blacklist is what every namesake row is
+      // set to, and this pins the replacement guard directly: the #293 sanction
+      // the blacklist withholds, refused at the bulk seam itself since #326.
       final h = namesakeClassChoiceHarness();
       await h.controller.sync();
       final pulls = h.wisaSyncs;
 
-      await h.controller.applyEntries(h.controller.groupPendingEntries);
+      final cohorts = h.controller.groupPendingSituations;
+      final namesake = cohorts.firstWhere(
+        (c) => c.key == 'group|${actions.namesakeClassAlternative}',
+      );
+      final fresh = cohorts.firstWhere(
+        (c) => c.key == 'group|${actions.classImportAlternative}',
+      );
 
-      final summaries = summariesOf(h);
-      expect(summaries, isNot(contains(ignore)),
-          reason: 'the rule would drop the classes the notice says to repair');
-      expect(summaries.where((s) => s == create), hasLength(2),
-          reason: 'the genuinely new classes are still created');
+      await h.controller.applyDecisions(namesake.decisions);
+      expect(h.controller.applyResults, isNull,
+          reason: 'every member is withheld, so the pass never starts');
       expect(
         h.soap.soapActions.where((a) => a.endsWith('#saveClass')),
-        hasLength(2),
-        reason: '2G and 2H already exist downstream — never created again',
+        isEmpty,
       );
       expect(h.wisaSyncs, pulls,
           reason: 'no import rule was added, so WISA was never re-pulled');
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(contains('Overgeslagen in de groepsbewerking')),
+        reason: 'a refused bulk write is stated, not swallowed (#326)',
+      );
+
+      // And the fix did not simply silence the list: the genuinely new classes
+      // beside them are still created by their own cohort's bulk pass.
+      await h.controller.applyDecisions(fresh.decisions);
+      final summaries = summariesOf(h);
+      expect(summaries.where((s) => s == create), hasLength(2));
+      expect(summaries, isNot(contains(ignore)));
     });
 
-    test('the operator can still blacklist a namesake class deliberately',
+    test('the per-card Toepassen writes the blacklist, and only that (#329)',
         () async {
+      // The card proposes; it does not interrogate. The operator reads the
+      // notice above it — "this class already exists in Smartschool, make it
+      // official there" — and either presses Toepassen, which blacklists the
+      // class, or ignores the card, which is a complete answer. What they are
+      // no longer asked to do is record which of the two they meant.
       final h = namesakeClassChoiceHarness();
       await h.controller.sync();
       final entry = entryFor(h, '2G');
-      expect(importChoiceOf(entry).selected.canApply, isFalse,
-          reason: 'the import decision writes nothing until the operator '
-              'picks the opt-out (the class\'s Office 365 group is a '
-              'separate, orthogonal decision)');
 
-      h.controller.chooseAlternative(
-        entry: entry,
-        group: actions.namesakeClassAlternative,
-        kind: 'DoNotImportFromWisa',
-      );
-      final chosen = entryFor(h, '2G');
-      expect(chosen.canApply, isTrue);
+      expect(importChoiceOf(entry).selected.kind, 'DoNotImportFromWisa');
+      expect(entry.canApply, isTrue);
 
-      await h.controller.applyEntry(chosen);
+      await h.controller.applyEntry(entry);
 
       expect(summariesOf(h), contains(ignore));
-      expect(summariesOf(h), isNot(contains(notice)));
+      expect(summariesOf(h), isNot(contains(notice)),
+          reason: 'a notice is never dispatched — its apply throws');
+      expect(
+        h.soap.soapActions.where((a) => a.endsWith('#saveClass')),
+        isEmpty,
+        reason: '2G already exists downstream — never created',
+      );
     });
   });
 

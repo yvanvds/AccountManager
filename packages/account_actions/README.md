@@ -64,6 +64,43 @@ Two independent flags, on all three families:
 presupposes the mechanism — `canApplyToAll` is never `true` where `canApply` is
 `false`.
 
+### A notice is context, not an alternative (#329)
+
+The rule the whole alternative mechanism rests on, and the third flag on all
+three families:
+
+| Flag | Question | Default |
+|---|---|---|
+| `alternativeGroup` | Which either/or is this action one **answer** to? | `null` |
+| `noticeFor` | Which decision is this informational action **context** for? | `null` |
+
+**Every member of an `alternativeGroup` writes.** An action whose `canApply` is
+`false` may never join one: "here is what is wrong, go fix it by hand over
+there" and "here is the one thing this app can do about it" are not comparable
+answers to a single question, so offering them as radios asks the operator to
+choose between a diagnosis and a resolution — and makes every such card
+ambiguous about whether a decision is owed at all. Such an action declares
+`noticeFor` instead; `collapseAlternatives` lifts it out of the option list and
+hands it to the decision it names, which the UI states above its own proposal,
+marked `(manueel)`, with no radio and no apply of its own.
+
+`noticeFor` is therefore non-null only where `canApply` is `false`, and never
+together with a non-null `alternativeGroup`. `test/group_dispatch_test.dart`
+asserts both over the student, staff and group dispatches.
+
+Two group actions carry one: `ClassExistsAsSmartschoolGroup` (#225/#250) and
+`CreateInSmartschool` (#244). Both were the pre-selected half of a pair with
+`DoNotImportFromWisa` until #329. Being the default did a second job — it kept
+the blacklist out of a bulk pass — and that job belongs to `canApplyToAll`,
+withheld since #293 and honoured by every bulk affordance since #326. A guard
+that holds only while a default holds is not a guard.
+
+The three informational actions that carry **no** `noticeFor`
+(`AzureClassGroupMembership`, `DoNotImportFromSmartschool`,
+`AzureClassGroupWithoutClass`) each fire exactly where no decision can be
+raised, so the row *is* the notice and there is nothing for it to be context
+for.
+
 `canApplyToAll` ports legacy's `AccountAction.canBeAppliedToAll`, which the two
 account families carried and granted deliberately, action by action. The line it
 draws: **mechanical corrections and provisioning** may go in bulk;
@@ -171,13 +208,17 @@ class's Smartschool state and ride alongside **both** branches:
   group the linker could not adopt (#225), the informational
   `ClassExistsAsSmartschoolGroup` in place of both creates.
 
-  These are never independent to-dos: `DoNotImportFromWisa` shares an
-  `alternativeGroup` key with the reading it contradicts, so the pending list
-  renders one either/or and an apply runs only the picked half. The key is
-  `classImportAlternative` for a genuinely new class (#244) and
-  `namesakeClassAlternative` for one Smartschool already has (#250), which keeps
-  the two situations in separate bulk-apply subsets. The default is always the
-  provisioning/diagnosis half, never the blacklist.
+  These are never independent to-dos, but they are not all the same relation
+  either. A **populated** new class is a genuine either/or: `AddToSmartschool`
+  and `DoNotImportFromWisa` share the `classImportAlternative` key, both write,
+  and an apply runs only the picked half (#244). An **empty** class and a
+  **namesake** class have nothing for this app to create, so
+  `DoNotImportFromWisa` is the lone decision under its key — `classImportAlternative`
+  and `namesakeClassAlternative` respectively, still distinct so the two
+  situations keep separate bulk-apply subsets (#250) — and the informational
+  action beside it declares `noticeFor` on that same key and rides along as
+  card context (#329). The default of a real either/or is always the
+  provisioning half, never the blacklist.
 
   The **Smartschool leftovers** had a third such key until #328. It went for the
   reason the Office 365 one did (see below): its default half was an
@@ -214,7 +255,9 @@ for the two creation actions, an injected `GroupPlacement` (see below).
 returns a `WisaImportRule` via `ActionResult.wisaRule`. `DoNotImportFromSmartschool`
 and `CreateInSmartschool` are **informational** (`canApply == false`, legacy
 `CanBeApplied == false`): they surface a diagnosis and their `apply` throws
-`UnsupportedError`. The two deletes — `DeleteAzureClassGroup` and
+`UnsupportedError`. `CreateInSmartschool` and `ClassExistsAsSmartschoolGroup`
+are the two that declare `noticeFor` (see above), so they are read as context on
+the blacklist beside them rather than offered as answers. The two deletes — `DeleteAzureClassGroup` and
 `DeleteSmartschoolClass` — carry no record back at all: they set
 `ActionResult.removed`, and the State layer drops the record from the owning
 snapshot rather than patching it.
