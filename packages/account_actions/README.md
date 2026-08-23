@@ -316,8 +316,9 @@ injectable, `ClassPlacement`, alongside `StudentActionConfig`:
   chained `MoveToSmartschoolClassGroup.Move`).
 
 `ClassPlacement` carries the student's `currentClass`, their target `className`
-(the caller computes the sub-group suffix, `Student.ClassName`), and a
-`resolveClass(name)` tree lookup. It is **opt-in**: `studentActions` /
+(the caller computes the sub-group suffix, `Student.ClassName`), a
+`resolveClass(name)` tree lookup, and an `isOurClass(name)` predicate. It is
+**opt-in**: `studentActions` /
 `studentActionsFor` take a `placementFor` callback; without it the dispatch is
 exactly as it shipped in #46 (account created but not placed, no class move).
 The future State layer builds a `ClassPlacement` per student from the Smartschool
@@ -326,6 +327,16 @@ placement guard the target the way legacy `MoveUserToClass` does — only an
 **official** class node is a valid destination (the ported `moveUserToClass`
 connector leaves that guard to the caller), so an ANS/BNS student whose
 "Leerlingen" target is non-official is correctly not moved.
+
+Both also refuse a class that is **not ours** (#333): `isOurClass(name)` answers
+from the managed schools' WISA class inventory, so a placement naming a sibling
+school's class — or any class our own school does not have — raises no move and
+enrols no new account, rather than producing a proposal an operator can apply to
+the whole school. The question is asked of WISA, not of the Smartschool tree: at
+the September rollover the target class legitimately does not exist in
+Smartschool yet, so gating on `resolveClass != null` would suppress the very
+moves the action exists for. A class that is ours but missing from Smartschool
+still fails loudly at apply time.
 
 ## Office 365 class placement (#245)
 

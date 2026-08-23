@@ -180,17 +180,26 @@ Group ssGroupNode({
 /// [ClassPlacement.resolveClass] searches by name (default: the official `3A`
 /// class). [currentClass] is the student's current official class — omit for a
 /// student in no class yet (a fresh account).
+///
+/// [ourClasses] is the WISA class inventory [ClassPlacement.isOurClass] answers
+/// from (#333). It defaults to `{className}` — the placement's own target is
+/// one of ours — so a test that is not about the guard reads as it did before
+/// the guard existed. Pass it explicitly (`const {}`, or another school's
+/// classes) to build a placement naming a class we do not have.
 ClassPlacement classPlacement({
   String className = '3A',
   Group? currentClass,
   List<Group> tree = const [],
+  Set<String>? ourClasses,
 }) {
   final resolved = tree.isEmpty ? [ssGroup(code: '3A', name: '3A')] : tree;
   final byName = {for (final g in resolved) g.name: g};
+  final ours = ourClasses ?? {className};
   return ClassPlacement(
     className: className,
     currentClass: currentClass,
     resolveClass: (name) => byName[name],
+    isOurClass: ours.contains,
   );
 }
 

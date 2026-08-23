@@ -121,6 +121,79 @@ void main() {
   });
 
   // -------------------------------------------------------------------------
+  // The ours-classes guard (#333). The widest bulk action in the app must never
+  // propose a class our own WISA school does not have — whatever named it.
+  // -------------------------------------------------------------------------
+  group('dispatch — a move only ever targets one of our own classes', () {
+    test('a target our WISA school does not have raises nothing at all', () {
+      // The class is in the Smartschool tree, so the write would go through:
+      // only the WISA inventory says this is another school's class.
+      final actions = studentActionsFor(
+        completeStudent(classGroup: '3HWa'),
+        cfg,
+        placementFor: (_) => classPlacement(
+          className: '3HWa',
+          currentClass: ssGroup(code: '3MWW1', name: '3MWW1'),
+          tree: [
+            ssGroup(code: '3MWW1', name: '3MWW1'),
+            ssGroup(code: '3HWa', name: '3HWa'),
+          ],
+          ourClasses: const {'3MWW1'},
+        ),
+      );
+      expect(actions.whereType<MoveToSmartschoolClassGroup>(), isEmpty);
+    });
+
+    test(
+        'a target that is ours but not in Smartschool yet still fires — the '
+        'September rollover the action exists for', () {
+      // The over-tightening guard: gating on `resolveClass != null` instead
+      // would suppress every move made before the new classes are created.
+      final actions = studentActionsFor(
+        completeStudent(classGroup: '4B'),
+        cfg,
+        placementFor: (_) => classPlacement(
+          className: '4B',
+          currentClass: ssGroup(code: '3C', name: '3C'),
+          tree: [ssGroup(code: '3C', name: '3C')],
+          ourClasses: const {'4B'},
+        ),
+      );
+      expect(types(actions), [MoveToSmartschoolClassGroup]);
+    });
+
+    test('a sub-grouped class is matched in the widened form it will write',
+        () {
+      // `1A A` is what the placement names and what the move would write, so it
+      // is the form the guard has to recognize — the bare `1A` is a different
+      // class as far as this write is concerned.
+      final actions = studentActionsFor(
+        completeStudent(classGroup: '1A'),
+        cfg,
+        placementFor: (_) => classPlacement(
+          className: '1A A',
+          currentClass: ssGroup(code: '1A B', name: '1A B'),
+          ourClasses: const {'1A', '1A A', '1A B'},
+        ),
+      );
+      expect(types(actions), [MoveToSmartschoolClassGroup]);
+    });
+
+    test('a widened name our inventory does not carry is still refused', () {
+      final actions = studentActionsFor(
+        completeStudent(classGroup: '1A'),
+        cfg,
+        placementFor: (_) => classPlacement(
+          className: '1A A',
+          currentClass: ssGroup(code: '1A', name: '1A'),
+          ourClasses: const {'1A'},
+        ),
+      );
+      expect(actions.whereType<MoveToSmartschoolClassGroup>(), isEmpty);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Purity (INV-40/42).
   // -------------------------------------------------------------------------
   group('MoveToSmartschoolClassGroup — evaluate / describeChanges are pure',
@@ -317,6 +390,31 @@ void main() {
       ).apply(connectors, const ApplyOptions());
       expect(result.outcome, ActionOutcome.applied);
       // Leerlingen is not an official class, so the move is (correctly) skipped.
+      expect(transport.calledMethod('saveUserToClass'), isFalse);
+    });
+
+    test('a class our WISA school does not have is never enrolled into (#333)',
+        () async {
+      // The create's own placement step needs the same guard as the standalone
+      // move: a create must not be the way a foreign class name gets written.
+      // The class resolves in Smartschool and is official, so nothing else
+      // here would have stopped it.
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+
+      final result = await add(
+        classGroup: '3HWa',
+        placement: classPlacement(
+          className: '3HWa',
+          tree: [ssGroup(code: '3HWa', name: '3HWa')],
+          ourClasses: const {'3A'},
+        ),
+      ).apply(connectors, const ApplyOptions());
+
+      // The create is still the action's success criterion (INV-41).
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.smartschool, isNotNull);
       expect(transport.calledMethod('saveUserToClass'), isFalse);
     });
 

@@ -47,7 +47,14 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// reason: "a write happened" is not "this record was written".
   final List<String> deletedClasses = <String>[];
 
+  /// The class codes of every `saveUserToClass` this transport accepted, in
+  /// order — the Smartschool class each move actually wrote a student into
+  /// (#333). Read off the envelope for the same reason [deletedClasses] is:
+  /// "a move happened" is not "this class is the one it wrote".
+  final List<String> movedToClasses = <String>[];
+
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
+  static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
 
   @override
   Future<String> send({
@@ -59,6 +66,12 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.contains('delClass')) {
       final match = _codeArg.firstMatch(envelope);
       if (match != null) deletedClasses.add(match.group(1)!);
+    }
+    // `saveUserToClassesAndGroups` is a different write (non-official groups),
+    // so match the method exactly rather than by prefix.
+    if (soapAction.endsWith('#saveUserToClass')) {
+      final match = _classArg.firstMatch(envelope);
+      if (match != null) movedToClasses.add(match.group(1)!);
     }
     // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'
@@ -2098,6 +2111,109 @@ ReconcileHarness rolloverHarness({Future<void> Function()? applyGate}) =>
 const String kSamRollover = 'az-sam-4a';
 const String kSaraRollover = 'az-sara-4a';
 const String kTomRollover = 'az-tom-4a';
+
+/// A harness for the ours-classes guard on the class move (#333): the same
+/// September rollover as [rolloverHarness], with one student whose WISA row
+/// names a class **our own school does not have**.
+///
+/// The three students are the three cases the guard has to tell apart, and all
+/// three sit in last year's `3C` in Smartschool:
+/// - **Sam → `4A`** — ours, and Smartschool already has the class. The ordinary
+///   rollover move.
+/// - **Sara → `4B`** — ours in WISA, but Smartschool has no `4B` yet, because
+///   creating it is another action on another card. She must still be proposed:
+///   gating the move on the Smartschool tree instead of on our WISA inventory
+///   would suppress the very moves the action exists for, every September.
+/// - **Tom → `3HWa`** — a class only the sibling group school (2, unmanaged)
+///   has. Nothing here is dual enrolment, so #332's fix does not reach it: his
+///   is a single row, ours, naming a foreign class the way a WISA quirk or a
+///   hand-edited rule would. He must raise no move at all.
+///
+/// `3HWa` is deliberately present in the Smartschool tree, so `resolveClass`
+/// finds it and the write would go through: the only thing standing between a
+/// foreign class name and a live Smartschool account is the WISA guard.
+ReconcileHarness foreignClassMoveHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '1', classGroup: '4A', firstName: 'Sam', name: 'Sels'),
+          wisaStudent(
+              wisaId: '2', classGroup: '4B', firstName: 'Sara', name: 'Segers'),
+          wisaStudent(
+              wisaId: '3', classGroup: '3HWa', firstName: 'Tom', name: 'Tas'),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+        classGroups: [
+          wisaClassGroup('4A', adminCode: 'a4', schoolCode: '111'),
+          wisaClassGroup('4B', adminCode: 'b4', schoolCode: '111'),
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+          // The foreign class: it exists, but in a school we do not manage.
+          wisaClassGroup('3HWa',
+              adminCode: 'h3', schoolCode: '222', schoolId: 2),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('4A', code: '4A_ss', untis: '4A'),
+          ssGroup('3C', code: '3C_ss', untis: '3C'),
+          // …and our Smartschool holds it too, so nothing but the WISA guard
+          // can stop a write into it.
+          ssGroup('3HWa', code: '3HWa_ss', untis: '3HWa'),
+          // No `4B`: Sara's new class has yet to be created.
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'sam',
+            accountId: '1',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'sara',
+            accountId: '2',
+            mail: 'sara.segers@student.school.example',
+            givenName: 'Sara',
+            surname: 'Segers',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '3',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        memberships: [
+          member('sam', '3C_ss'),
+          member('sara', '3C_ss'),
+          member('tom', '3C_ss'),
+        ],
+      ),
+      // Every Office 365 account is in step, so the class move is the only
+      // decision any of these cards can carry.
+      azure: azSnap(users: [
+        azUser(
+          id: kSamRollover,
+          upn: 'sam.sels@student.school.example',
+          employeeId: '1',
+          displayName: 'Sam Sels',
+        ),
+        azUser(
+          id: kSaraRollover,
+          upn: 'sara.segers@student.school.example',
+          employeeId: '2',
+          displayName: 'Sara Segers',
+        ),
+        azUser(
+          id: kTomRollover,
+          upn: 'tom.tas@student.school.example',
+          employeeId: '3',
+          displayName: 'Tom Tas',
+        ),
+      ]),
+    );
 
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive

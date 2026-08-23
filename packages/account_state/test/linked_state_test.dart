@@ -496,6 +496,99 @@ void main() {
       expect(placement.className, '3C');
     });
 
+    test(
+        'isOurClass answers from the managed schools\' WISA inventory, not '
+        'from the pooled one (#333)', () {
+      // The class inventory pools every school the shared credentials reach.
+      // Only school 1 is ours, so `3HWa` — a real class, in a real group school
+      // — is not something we may ever write into our own Smartschool.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '3MWW1')],
+          classGroups: [
+            _wClass('3MWW1', adminCode: 'a1'),
+            _wClass('3HWa', adminCode: 'b1', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(groups: [_ssGroup('3HWa', code: '3HWa_ss')]),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+
+      expect(placement.isOurClass('3MWW1'), isTrue);
+      expect(placement.isOurClass('3HWa'), isFalse,
+          reason: 'in the Smartschool tree, but not one of our WISA classes');
+      expect(placement.isOurClass('3mww1  '), isTrue,
+          reason: 'names match case- and whitespace-insensitively (INV-12)');
+      expect(placement.isOurClass(''), isFalse,
+          reason: 'a blank name is not a class, so it is never ours');
+    });
+
+    test('isOurClass carries the bare and the sub-grouped form (#333)', () {
+      // A sub-grouped class is written as `1A A`, so that is the form the
+      // guard is asked about — it has to know the class by both its names.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '1A')],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+          ],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+
+      expect(placement.isOurClass('1A'), isTrue);
+      expect(placement.isOurClass('1A A'), isTrue);
+      expect(placement.isOurClass('1A B'), isTrue);
+      expect(placement.isOurClass('1A C'), isFalse,
+          reason: 'that sub-group is nobody\'s class');
+    });
+
+    test(
+        'a snapshot carrying no class inventory forbids nothing — silence is '
+        'not evidence (#333)', () {
+      // The same reading an empty `ourSchoolIds` gets: unconfigured, not
+      // "everything is foreign". A pull without class groups must not silently
+      // suppress every class move in the school.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(students: [_wStudent(wisaId: '1', classGroup: '3C')]),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+
+      expect(placement.isOurClass('3C'), isTrue);
+      expect(placement.isOurClass('anything'), isTrue);
+      expect(placement.isOurClass(''), isFalse);
+    });
+
+    test('a student\'s own row never vouches for the class it names (#333)',
+        () {
+      // The set is built from the class inventory, deliberately: a student row
+      // naming a class our school does not have is the very input the guard
+      // exists to refuse, so it must not be what makes that name ours.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '3HWa')],
+          classGroups: [_wClass('3MWW1', adminCode: 'a1')],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver
+          .classPlacementFor(_linkedStudent(wisaId: '1', classGroup: '3HWa'));
+
+      expect(placement.className, '3HWa');
+      expect(placement.isOurClass('3HWa'), isFalse);
+    });
+
     test('resolveClass finds any group by name across the whole tree', () {
       final resolver = PlacementResolver(
         wisa: _wSnap(),

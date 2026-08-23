@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:account_actions/account_actions.dart' show ActionOutcome;
 import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
@@ -759,6 +760,127 @@ void main() {
     // list has its own controls back.
     expect(find.byKey(const ValueKey('actions-cohort-banner')), findsNothing);
     expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a class our own WISA school does not have never becomes a move, and '
+      'never joins the rollover cohort, end-to-end (#333)',
+      (WidgetTester tester) async {
+    // The same rollover as above, with the case the guard exists for mixed in.
+    // Three students still sitting in last year's `3C` in Smartschool:
+    //   Sam  → `4A`    ours, and Smartschool has the class already.
+    //   Sara → `4B`    ours, and Smartschool has yet to be given the class.
+    //   Tom  → `3HWa`  a class only the sibling group school has.
+    //
+    // Only a full run shows what the guard is actually protecting: the count on
+    // "Toepassen op alle", the cohort the operator reviews behind it, and the
+    // writes the confirmation then makes. A foreign class name that survives
+    // `evaluate` does not merely produce one wrong row — it rides along with
+    // every legitimate move on the same button.
+    //
+    // Tom's is a single WISA row, ours, naming another school's class, so #332
+    // (which taught the resolver to read the row the linker chose) cannot help
+    // here; and `3HWa` is in the Smartschool tree, so `resolveClass` finds it
+    // and the write would go straight through. The WISA guard is the only thing
+    // between it and a live account.
+    useTallWindow(tester);
+    final harness = foreignClassMoveHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder row(String id) => find.byKey(ValueKey('account-row-$id'));
+
+    List<String> kindsFor(String id) => harness.controller.pendingEntries
+        .where((e) => e.family == 'student' && e.targetId == id)
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+
+    // The two ours-classes moves stand, including the one Smartschool cannot
+    // satisfy yet — suppressing *that* one is what over-tightening this guard
+    // would look like, and it would gut the action every September.
+    expect(kindsFor(sam), contains('MoveToSmartschoolClassGroup'));
+    expect(
+      kindsFor(sara),
+      contains('MoveToSmartschoolClassGroup'),
+      reason: '`4B` is ours; Smartschool simply has not been given it yet',
+    );
+    // The foreign one raises nothing at all — not a failing proposal, silence.
+    expect(
+      kindsFor(tom),
+      isEmpty,
+      reason: 'our WISA school has no `3HWa`, so there is nothing to propose',
+    );
+
+    // Nowhere in the pass does the foreign class reach a projected value.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .expand((a) => a.changes.fields)
+          .expand((f) => <String?>[f.before, f.after]),
+      isNot(contains('3HWa')),
+    );
+
+    // On screen, from Sam's card: the button counts the school, and it counts
+    // two — the third student is not one short of a write, he is not in the
+    // cohort at all.
+    await selectAccount(tester, sam);
+    final Finder moveAll =
+        find.byKey(ValueKey('decision-apply-all-student-$sam-0'));
+    await tester.ensureVisible(moveAll);
+    expect(
+      find.descendant(
+          of: moveAll, matching: find.text('Toepassen op alle (2)')),
+      findsOneWidget,
+    );
+
+    // Pressing it reviews before it writes: the cohort is Sam and Sara.
+    await tester.tap(moveAll);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Wijzig de klas in Smartschool — 2 account(s) in de hele '
+          'school'),
+      findsOneWidget,
+    );
+    for (final String id in <String>[sam, sara]) {
+      await tester.ensureVisible(row(id));
+      expect(row(id), findsOneWidget);
+    }
+    expect(row(tom), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // One real Smartschool write, into `4A` and nothing else. Sara's class does
+    // not exist in Smartschool yet, so hers fails loudly where an operator can
+    // see it — which is the point of gating on WISA rather than on the tree:
+    // the move is owed, and the missing class is a card of its own.
+    expect(harness.soap.movedToClasses, <String>['4A_ss']);
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome),
+      containsAll(<ActionOutcome>[ActionOutcome.applied, ActionOutcome.failed]),
+    );
+    expect(
+      harness.controller.applyResults!
+          .firstWhere((r) => r.outcome == ActionOutcome.failed)
+          .error
+          .toString(),
+      contains('does not exist'),
+    );
     expect(tester.takeException(), isNull);
   });
 

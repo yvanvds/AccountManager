@@ -168,6 +168,21 @@ class PlacementResolver {
       }
       final fullName = normalizeGroupName(group.fullName);
       if (fullName != null) _wisaByFullName.putIfAbsent(fullName, () => group);
+
+      // The classes *we* have (#333) — the set [ClassPlacement.isOurClass]
+      // answers from. Scoped to the schools we manage, the same way the tally
+      // above is (#222) and the linker's group seeding is (#205), so a sibling
+      // school's class can never vouch for a name we would then write into our
+      // own Smartschool.
+      //
+      // Both forms go in: the bare `name` and the sub-grouped `fullName`
+      // (`1A A`), because a placement widens the class name exactly when the
+      // class carries sub-groups (see [_classNameFor]) and the guard must
+      // recognize the widened form it will be asked about.
+      if (_isOurSchool(group.schoolId)) {
+        if (name != null) _ourClassNames.add(name);
+        if (fullName != null) _ourClassNames.add(fullName);
+      }
     }
     for (final entry in adminCodesByClass.entries) {
       if (entry.value.length > 1) _subGroupClasses.add(entry.key);
@@ -203,11 +218,39 @@ class PlacementResolver {
   /// manage** (#222) — legacy `WisaClassGroup.ContainsStudents`, scoped.
   final Set<String> _classGroupsWithStudents = {};
 
+  /// Normalized names of the classes our managed schools have in WISA (#333),
+  /// in both their bare and sub-grouped forms — the set behind
+  /// [ClassPlacement.isOurClass].
+  ///
+  /// Built from the class-group inventory, **not** from the students' own
+  /// `classGroup`: a student row naming a class our school does not have is
+  /// exactly the input this guard exists to refuse, so it must never be the
+  /// thing that vouches for it.
+  final Set<String> _ourClassNames = {};
+
   /// Whether [schoolId] is one of the schools we manage. Mirrors the linker's
   /// `_isOurWisaSchool`: an empty [_ourSchoolIds] means ownership is
   /// unconfigured, so every school counts as ours.
   bool _isOurSchool(int schoolId) =>
       _ourSchoolIds.isEmpty || _ourSchoolIds.contains(schoolId);
+
+  /// Whether [name] is one of our managed schools' WISA classes (#333) — the
+  /// predicate every [ClassPlacement] carries as [ClassPlacement.isOurClass].
+  ///
+  /// A blank name is never a class, so it is never ours — a record whose `wisa`
+  /// is not a concrete student row names no class, and "move this student to
+  /// nothing" is not a proposal worth making.
+  ///
+  /// An **empty** [_ourClassNames] means the class inventory is unavailable
+  /// (a snapshot pulled without class groups), not that every class is foreign:
+  /// silence about our classes is not evidence against one. It therefore reads
+  /// as unconfigured and every name passes — the same reading [_isOurSchool]
+  /// gives an empty [_ourSchoolIds], and the same one `link()` gives its own.
+  bool _isOurClass(String name) {
+    final key = normalizeGroupName(name);
+    if (key == null) return false;
+    return _ourClassNames.isEmpty || _ourClassNames.contains(key);
+  }
 
   /// Builds the [ClassPlacement] for one student (the dispatcher only calls
   /// this for `account.wisa != null` records; a WISA-less lifecycle account
@@ -221,6 +264,8 @@ class PlacementResolver {
   ///   student has no Smartschool account or no official class membership.
   /// - [ClassPlacement.resolveClass] resolves a class name against the whole
   ///   Smartschool tree (legacy `GroupManager.Root.Find`).
+  /// - [ClassPlacement.isOurClass] answers whether a class name is one our
+  ///   managed schools have in WISA at all (#333) — see [_isOurClass].
   ///
   /// The class is read off **the row the linker put on the record** (#332), the
   /// same downcast `AzureClassGroupResolver.placementFor` makes — never a row
@@ -245,6 +290,7 @@ class PlacementResolver {
       className: className,
       currentClass: currentClass,
       resolveClass: (name) => _groupsByName[normalizeGroupName(name)],
+      isOurClass: _isOurClass,
     );
   }
 
