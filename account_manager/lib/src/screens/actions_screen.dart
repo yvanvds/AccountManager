@@ -2,8 +2,7 @@ import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
-import 'package:account_state/account_state.dart'
-    show LinkedState, MaterializedAccount;
+import 'package:account_state/account_state.dart' show MaterializedAccount;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -111,50 +110,30 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 /// it out of the cohort instead of being written as the resolution the operator
 /// changed their mind about.
 ///
-/// ## Ticking the accounts a risky action runs on (#297)
+/// ## Why there is no selection here any more (#311)
 ///
-/// The complement of the above, for the actions the sanction deliberately
-/// withholds. The September leavers sweep is the case: filter to "rood in WISA",
-/// read down the list, and the accounts resolve to unregister / delete / remove
-/// — a judgement call per person, but dozens of them in one sitting. There is no
-/// apply-all for those and there should not be; without a selection the operator
-/// opens each account and presses **Toepassen**, which is slow enough that it
-/// does not get done.
+/// #297 answered the same need from the other side: a checkbox on every row
+/// carrying work, and a **Selecteer alle zichtbare (N)** bar above the list, so
+/// one decision could be run over a hand-picked set — the affordance for the
+/// destructive kinds #293 withholds a school-wide apply from. Both are gone.
 ///
-/// So a row with applyable work carries a checkbox, and a ticked selection gets
-/// [_SelectionBar]: it names **one** decision the ticked accounts raise, says how
-/// many of them raise it and how many are skipped, and offers a dry-run and an
-/// apply over exactly those. The pass behind it is the same per-decision
-/// [ReconcileController.applyDecisions] the cohort review and the Klasgroepen
-/// cohort headers run, so a bulk write is one decision deep wherever it starts
-/// (#292).
+/// Select-all is what took it down. It was one press to stage a write across
+/// every account the current filter happened to be showing — four hundred and
+/// more on an ordinary visit — which is the objection that removed the global
+/// "Alles toepassen" in #294, with a filter standing in front of it. The count
+/// beside it was whatever the filter was showing, which is not a set anybody has
+/// read, and "the operator has looked at every row they ticked" stops being true
+/// the moment one press ticks all of them. The bar also cost a bordered block
+/// standing between the filter chips and the list on every visit, ticks or no
+/// ticks — 126 logical pixels with its gap, on the view whose whole point is the
+/// list.
 ///
-/// Where it and #296 are the same, and where they must not be:
-///
-/// - **Same.** Both are "one decision, over a set of accounts". Both group with
-///   [ReconcileController.situationCohorts], scope their confirmation with
-///   [ReconcileController.applyScopeForDecisions] and write with
-///   [ReconcileController.applyDecisions]. Neither shows the operator a number
-///   whose members are off screen.
-/// - **Not the same.** #296's cohort is *computed* — the whole school, resolved
-///   by the controller, which is why the action must be sanctioned for it. This
-///   set is *chosen*, account by account, precisely because the action is one
-///   that must never sweep. The ticking is the consent, so this is offered
-///   whatever `canApplyToAll` says (#293): withholding it here would leave the
-///   risky kinds with no bulk path at all, which is the whole of #297.
-///
-/// Two rules keep "tick everything" from quietly becoming a school-wide apply.
-/// Select-all is scoped to the **visible** rows, and the effective selection is
-/// re-intersected with them on every build — the same rule the details pane's
-/// selection already follows, because an account the filters have hidden is one
-/// the operator cannot see themselves acting on. And the confirmation quotes the
-/// count of that intersection, so the number in the dialog is the number of rows
-/// on the screen behind it.
-///
-/// Ticks are keyed by account id, so they survive a sort change and a rebuild;
-/// they are dropped when the linked view is replaced — a sync, or an apply that
-/// settled them — and when the family tab changes, because both make the set
-/// name accounts that are no longer the list.
+/// So bulk on this screen is #296's cohort and nothing else: one *sanctioned*
+/// decision, the list narrowed to exactly the accounts the pass will write, and
+/// the confirmation offered over rows the operator is scrolling. What the
+/// sanction withholds — the deletes, the unregisters, the renames — is applied
+/// one account at a time from the details pane, which is the pace those actions
+/// were always meant to run at.
 ///
 /// ## Where an apply leaves the operator (#299)
 ///
@@ -197,9 +176,9 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 ///
 /// Nothing here applies an action the operator has not seen. The header's global
 /// "Dry-run alles" / "Alles toepassen" pair went in #294 for exactly that
-/// reason, and it is not coming back: every apply is started from a list that is
-/// on screen — a cohort the screen filtered itself down to (#296), or a set the
-/// operator ticked row by row (#297).
+/// reason, and the select-all bar of #297 followed it in #311 for the same one.
+/// Every bulk apply is started from a list that is on screen: the cohort the
+/// screen filtered itself down to (#296), and no other.
 ///
 /// A running pass cannot be cancelled and is never concurrent — a rollover over
 /// ~3000 accounts takes a long time, and is resumable in practice because every
@@ -458,31 +437,6 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// [ReconcileController.applyToAllCohortFor].
   String? _cohortKey;
 
-  /// The ticked accounts (#297), by id — the set one decision may be applied to
-  /// when there is no apply-all for it.
-  ///
-  /// Ids rather than rows, for the reason [_selectedId] is an id: a row is
-  /// rebuilt from the live view on every notification, and a captured one would
-  /// carry the resolution the operator has since changed their mind about. It
-  /// also makes the set survive a sort and a filter change untouched, while what
-  /// the buttons act on is re-intersected with the visible rows every build.
-  final Set<String> _ticked = <String>{};
-
-  /// The [SituationCohort.key] of the decision the selection bar is set to, or
-  /// `null` to take whichever decision the most ticked accounts raise. Re-checked
-  /// against the live candidates on every build, so unticking the last account
-  /// that raised the chosen decision falls back rather than going inert.
-  String? _decisionKey;
-
-  /// The linked view the ticks were made against, so a replaced one retires them
-  /// — a sync, or an apply whose writes settled the very decisions they named.
-  ///
-  /// Reconciled in [_body] rather than from a controller listener: the build is
-  /// where the cleared set is needed, the comparison is an identity check, and a
-  /// listener that calls `setState` would have to defend against firing while a
-  /// frame is already building.
-  LinkedState? _tickedView;
-
   /// The accounts the last apply pass wrote to, by id — the rows the list holds
   /// on screen for a moment longer than the filter would (#299).
   ///
@@ -544,38 +498,17 @@ class _ActionsBodyState extends State<_ActionsBody>
       _shownIndex = index;
       _selectedId = null;
       _cohortKey = null;
-      // The ticks name accounts of the family being left behind, and a pass is
-      // single-family anyway (#297).
-      _clearTicks();
       // …as do the rows the last pass is holding on screen (#299).
       _forgetSettled();
     }
     if (mounted) setState(() {});
   }
 
-  /// Drops the multi-select (#297) — the ticks and the decision they were
-  /// pointed at, which means nothing without them.
-  void _clearTicks() {
-    _ticked.clear();
-    _decisionKey = null;
-  }
-
-  /// Retires the ticks when the linked view underneath them has been replaced
-  /// (#297) — a sync, or an apply whose writes settled the decisions they named.
-  ///
-  /// Called at the top of [_body] rather than from a controller listener: this
-  /// is a reconciliation of state against what the build is about to read, it is
-  /// idempotent, and the frame that follows renders the cleared set — so there is
-  /// no `setState` to schedule and no chance of scheduling one mid-frame.
-  void _retireStaleTicks() {
-    final LinkedState? view = controller.linked;
-    if (identical(_tickedView, view)) return;
-    _tickedView = view;
-    _clearTicks();
-  }
-
   /// Re-reads [_settled] off the last pass's results (#299), at the top of
-  /// [_body] and for the same reasons [_retireStaleTicks] sits there.
+  /// [_body] — a reconciliation of state against what the build is about to
+  /// read, rather than a controller listener: it is idempotent, the build is
+  /// where the re-read set is needed, and a listener calling `setState` would
+  /// have to defend against firing while a frame is already building.
   ///
   /// The whole pass, not only the accounts that came out clean: one that failed
   /// still has work and stays visible on its own, and one whose card now shows
@@ -617,34 +550,6 @@ class _ActionsBodyState extends State<_ActionsBody>
   // partition read on every cold visit that no pixel on this screen depended
   // on. Klasgroepen still reads it, through its own identical guard, on the tab
   // where the classes actually are.
-
-  /// Ticks or unticks one account (#297).
-  void _setTicked(String id, bool ticked) => setState(() {
-        if (ticked) {
-          _ticked.add(id);
-        } else {
-          _ticked.remove(id);
-        }
-      });
-
-  /// Select-all / clear, scoped to [tickable] — the rows on screen that carry
-  /// applyable work, and nothing else (#297).
-  ///
-  /// The scoping is the safety: an operator who ticks everything after filtering
-  /// to "rood in WISA" has selected the leavers, not the school. Ticks made
-  /// against another filter are left alone rather than cleared, because they are
-  /// still the operator's — what the buttons act on is the intersection with the
-  /// visible rows, which [_SelectionBar] recomputes every build.
-  void _selectAll(List<_AccountRow> tickable, bool ticked) => setState(() {
-        for (final row in tickable) {
-          if (ticked) {
-            _ticked.add(row.id);
-          } else {
-            _ticked.remove(row.id);
-          }
-        }
-        if (_ticked.isEmpty) _decisionKey = null;
-      });
 
   /// Whether the Personeel family tab is the selected one.
   bool get _staffTab => _tabs.index == _ActionFamilyTab.personeel.index;
@@ -745,18 +650,13 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// Arms the school-wide review of [decision]: the list narrows to its cohort
   /// and the banner takes over from the list controls. Nothing is written.
   ///
-  /// The two bulk modes are exclusive, so this drops the multi-select (#297).
-  /// A review's list *is* its cohort, resolved school-wide — ticks made against
-  /// the list before it would name a different set of accounts than the rows
-  /// now on screen, which is precisely the mismatch both affordances exist to
-  /// avoid.
+  /// Since #311 this is the only bulk path on the screen, so there is no second
+  /// set of accounts to reconcile it against: the review's list *is* its cohort,
+  /// resolved school-wide.
   void _armCohort(PendingDecision decision) {
     final cohort = controller.applyToAllCohort(decision);
     if (cohort == null) return;
-    setState(() {
-      _cohortKey = cohort.key;
-      _clearTicks();
-    });
+    setState(() => _cohortKey = cohort.key);
   }
 
   @override
@@ -776,7 +676,6 @@ class _ActionsBodyState extends State<_ActionsBody>
       EdgeInsets.symmetric(horizontal: PlinkSpacing.s6);
 
   Widget _body(BuildContext context, BoxConstraints constraints) {
-    _retireStaleTicks();
     _holdSettled();
     final bool wide = constraints.maxWidth >= _splitBreakpoint;
     final bool active = controller.linked != null;
@@ -788,15 +687,6 @@ class _ActionsBodyState extends State<_ActionsBody>
     final _AccountRow? selected = _selectedRow(visible);
     // In one pane the details take the whole width, so the list stands down.
     final bool showList = wide || selected == null;
-    // What may be ticked right now (#297): the visible rows carrying applyable
-    // work, which is also what select-all covers. None while a cohort is under
-    // review — that list is the review's own, and the two modes are exclusive.
-    final List<_AccountRow> tickable = cohort != null
-        ? const <_AccountRow>[]
-        : <_AccountRow>[
-            for (final r in visible)
-              if (r.hasWork) r,
-          ];
 
     final Widget head = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -860,22 +750,6 @@ class _ActionsBodyState extends State<_ActionsBody>
                         onDisarm: () => setState(() => _cohortKey = null),
                       ),
               ),
-              if (tickable.isNotEmpty) ...<Widget>[
-                const SizedBox(height: PlinkSpacing.s3),
-                Padding(
-                  padding: _hPad,
-                  child: _SelectionBar(
-                    controller: controller,
-                    tickable: tickable,
-                    ticked: _ticked,
-                    decisionKey: _decisionKey,
-                    onSelectAll: (v) => _selectAll(tickable, v),
-                    onClear: () => setState(_clearTicks),
-                    onDecisionChanged: (key) =>
-                        setState(() => _decisionKey = key),
-                  ),
-                ),
-              ],
               const SizedBox(height: PlinkSpacing.s3),
               Padding(
                 padding: _hPad,
@@ -896,7 +770,6 @@ class _ActionsBodyState extends State<_ActionsBody>
                     rows: rows,
                     visible: visible,
                     selected: selected,
-                    ticking: cohort == null,
                   ),
                 ),
               if (wide) const VerticalDivider(width: 1, thickness: 1),
@@ -976,7 +849,6 @@ class _ActionsBodyState extends State<_ActionsBody>
     required List<_AccountRow> rows,
     required List<_AccountRow> visible,
     required _AccountRow? selected,
-    required bool ticking,
   }) {
     if (rows.isEmpty) {
       return Padding(
@@ -1013,8 +885,6 @@ class _ActionsBodyState extends State<_ActionsBody>
             if (!_settled.contains(row.id)) _forgetSettled();
             _selectedId = row.id;
           }),
-          ticked: _ticked.contains(row.id),
-          onTicked: ticking ? (v) => _setTicked(row.id, v) : null,
           justApplied: _settled.contains(row.id),
         );
       },
@@ -1371,270 +1241,6 @@ class _CohortReviewBanner extends StatelessWidget {
   }
 }
 
-/// The multi-select bar (#297): tick the accounts, name the one decision, run it
-/// over exactly them.
-///
-/// The affordance for the actions #293 refuses a school-wide apply — the
-/// deletes, the unregisters, the renames. The refusal is right: nobody should
-/// press one button that deletes every account the app believes has left. But
-/// the *work* is still bulk work, and the September leavers sweep is dozens of
-/// those judgement calls in one sitting. Ticking is what keeps the judgement and
-/// drops the repetition: the operator has looked at every row they ticked, and
-/// the ticking is the consent.
-///
-/// So, unlike [_CohortReviewBanner], this is offered whatever `canApplyToAll`
-/// says. The two are otherwise deliberately the same machine — one decision,
-/// grouped with [ReconcileController.situationCohorts], confirmed through
-/// [ReconcileController.applyScopeForDecisions], written by
-/// [ReconcileController.applyDecisions] — because a bulk write that resolved its
-/// work a second way is exactly how a button comes to mean something other than
-/// what it says (#252).
-///
-/// Three things it is careful to state:
-///
-/// - **Which decision.** A ticked set is not "everything on those cards": the
-///   pass is one decision deep (#292), so the decision is picked explicitly from
-///   the ones the selection actually raises, defaulting to whichever the most of
-///   them share.
-/// - **How many it skips.** Ticking twenty leavers and applying the Smartschool
-///   unregister must not silently pass over the three who are Azure-only. The
-///   line under the chips says how many of the ticked accounts the decision does
-///   not stand open on.
-/// - **That the count is the rows on screen.** [tickable] is the *visible* work
-///   rows, the effective selection is its intersection with [ticked], and the
-///   confirmation quotes that number — so select-all under a filter is a
-///   selection of what the filter shows, never of the school.
-class _SelectionBar extends StatelessWidget {
-  const _SelectionBar({
-    required this.controller,
-    required this.tickable,
-    required this.ticked,
-    required this.decisionKey,
-    required this.onSelectAll,
-    required this.onClear,
-    required this.onDecisionChanged,
-  });
-
-  final ReconcileController controller;
-
-  /// The rows that may be ticked right now: visible, and carrying applyable
-  /// work. Select-all covers exactly these.
-  final List<_AccountRow> tickable;
-
-  /// Every ticked id the screen is holding — including ones the current filter
-  /// has taken off screen, which is why this is intersected with [tickable]
-  /// rather than counted.
-  final Set<String> ticked;
-
-  /// The [SituationCohort.key] the operator picked, or `null` for the default.
-  final String? decisionKey;
-
-  final ValueChanged<bool> onSelectAll;
-  final VoidCallback onClear;
-  final ValueChanged<String> onDecisionChanged;
-
-  /// The decisions a selection raises that a pass could actually write, most
-  /// widely shared first — the chips, in the order they are offered.
-  ///
-  /// Grouped from the rows on screen with the same public
-  /// [ReconcileController.situationCohorts] the Klasgroepen headers use, which
-  /// is the point of it being public (#252): a bulk button's cohort is resolved
-  /// from the very list it was built over, never re-derived from the whole view.
-  ///
-  /// A cohort with no applyable member is dropped — an informational notice is a
-  /// diagnosis, not work this screen can do — so every chip offered leads to a
-  /// pass that writes something.
-  static List<SituationCohort> candidateDecisions(
-    List<_AccountRow> selection,
-  ) {
-    final entries = <PendingAccountEntry>[
-      for (final r in selection)
-        if (r.entry != null) r.entry!,
-    ];
-    final cohorts = <SituationCohort>[
-      for (final c in ReconcileController.situationCohorts(entries))
-        if (c.applyableCount > 0) c,
-    ];
-    // Widest first, so the decision the selection was probably made for is the
-    // default. Keyed tie-break because `List.sort` is not stable and the chips
-    // must not reshuffle between builds.
-    cohorts.sort((a, b) {
-      final byCount = b.applyableCount - a.applyableCount;
-      return byCount != 0 ? byCount : a.key.compareTo(b.key);
-    });
-    return cohorts;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme colors = Theme.of(context).colorScheme;
-
-    final List<_AccountRow> selection = <_AccountRow>[
-      for (final r in tickable)
-        if (ticked.contains(r.id)) r,
-    ];
-    final List<SituationCohort> candidates = candidateDecisions(selection);
-    final SituationCohort? decision = candidates.isEmpty
-        ? null
-        : candidates.firstWhere(
-            (c) => c.key == decisionKey,
-            orElse: () => candidates.first,
-          );
-    // What the pass runs: this one decision, for the ticked accounts it stands
-    // open on. Non-applyable members are out for the same reason they are out of
-    // every other cohort — they write nothing.
-    final List<PendingDecision> members = decision == null
-        ? const <PendingDecision>[]
-        : <PendingDecision>[
-            for (final d in decision.decisions)
-              if (d.canApply) d,
-          ];
-    final Set<String> covered = <String>{
-      for (final d in members) d.entry.targetId,
-    };
-    final int skipped = selection.length - covered.length;
-    final bool? allValue = selection.isEmpty
-        ? false
-        : selection.length == tickable.length
-            ? true
-            : null;
-
-    return Container(
-      key: const ValueKey('actions-selection-bar'),
-      padding: const EdgeInsets.all(PlinkSpacing.s4),
-      decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).dividerColor),
-        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Checkbox(
-                key: const ValueKey('actions-select-all'),
-                // Tristate for the reading, not for the cycle: a partial
-                // selection has to look partial. The press itself is decided
-                // here — everything ticked clears, anything else selects — so it
-                // never lands the operator on the dash.
-                tristate: true,
-                value: allValue,
-                onChanged: (_) => onSelectAll(allValue != true),
-              ),
-              const SizedBox(width: PlinkSpacing.s2),
-              Expanded(
-                child: Text(
-                  'Selecteer alle zichtbare (${tickable.length})',
-                  style: text.bodyMedium,
-                ),
-              ),
-              if (selection.isNotEmpty)
-                TextButton(
-                  key: const ValueKey('actions-selection-clear'),
-                  onPressed: controller.busy ? null : onClear,
-                  child: const Text('Wis selectie'),
-                ),
-            ],
-          ),
-          if (selection.isEmpty)
-            Text(
-              'Vink accounts aan om één beslissing op meerdere tegelijk toe te '
-              'passen — ook de beslissingen die geen "toepassen op alle" '
-              'krijgen.',
-              style: text.bodySmall,
-            )
-          else ...<Widget>[
-            const SizedBox(height: PlinkSpacing.s2),
-            Text(
-              '${selection.length} account(s) geselecteerd. Kies de beslissing '
-              'die je toepast:',
-              style: text.bodySmall,
-            ),
-            const SizedBox(height: PlinkSpacing.s2),
-            if (decision == null)
-              Text(
-                'Geen van de geselecteerde accounts heeft een beslissing die '
-                'automatisch geschreven kan worden.',
-                key: const ValueKey('actions-selection-no-decision'),
-                style: text.bodySmall,
-              )
-            else ...<Widget>[
-              Wrap(
-                spacing: PlinkSpacing.s2,
-                runSpacing: PlinkSpacing.s2,
-                children: <Widget>[
-                  for (final c in candidates)
-                    ChoiceChip(
-                      key: ValueKey('actions-decision-${c.key}'),
-                      label: Text('${c.label} (${c.applyableCount})'),
-                      selected: c.key == decision.key,
-                      onSelected: controller.busy
-                          ? null
-                          : (_) => onDecisionChanged(c.key),
-                    ),
-                ],
-              ),
-              const SizedBox(height: PlinkSpacing.s2),
-              Text(
-                key: const ValueKey('actions-selection-scope'),
-                skipped == 0
-                    ? 'Wordt toegepast op alle ${covered.length} '
-                        'geselecteerde account(s).'
-                    : 'Wordt toegepast op ${covered.length} van de '
-                        '${selection.length} geselecteerde account(s) — '
-                        '$skipped overgeslagen, want daar staat deze '
-                        'beslissing niet open.',
-                style: text.bodySmall?.copyWith(color: colors.primary),
-              ),
-              const SizedBox(height: PlinkSpacing.s3),
-              Wrap(
-                spacing: PlinkSpacing.s2,
-                runSpacing: PlinkSpacing.s2,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: <Widget>[
-                  OutlinedButton(
-                    key: const ValueKey('actions-selection-dry-run'),
-                    onPressed: controller.busy || members.isEmpty
-                        ? null
-                        : () => runWithProgress(
-                              context,
-                              controller: controller,
-                              dry: true,
-                              run: () => controller.dryRunDecisions(members),
-                            ),
-                    child: const Text('Dry-run selectie'),
-                  ),
-                  FilledButton(
-                    key: const ValueKey('actions-selection-apply'),
-                    onPressed: controller.busy || members.isEmpty
-                        ? null
-                        : () => confirmAndApply(
-                              context,
-                              controller: controller,
-                              // The count of the rows on screen behind the
-                              // dialog, so "alles aanvinken" can never read as a
-                              // school-wide apply.
-                              title: 'Toepassen op ${covered.length} '
-                                  'geselecteerd(e) account(s)?',
-                              // One decision deep (#292), over exactly the
-                              // ticked members — the same list the button counts
-                              // and the pass writes.
-                              scope: controller.applyScopeForDecisions(members),
-                              apply: () => controller.applyDecisions(members),
-                            ),
-                    child: Text('Toepassen op selectie (${covered.length})'),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 /// The horizontal family tab bar (#179): switches the list below between the
 /// Leerlingen (student) and Personeel (staff) action families, each carrying a
 /// pending-count badge so the operator sees where the work sits without opening
@@ -1699,17 +1305,12 @@ class _AccountListRow extends StatelessWidget {
     required this.row,
     required this.selected,
     required this.onTap,
-    this.ticked = false,
-    this.onTicked,
     this.justApplied = false,
   });
 
   final _AccountRow row;
   final bool selected;
   final VoidCallback onTap;
-
-  /// Whether this row is in the multi-select (#297).
-  final bool ticked;
 
   /// Whether the last apply pass wrote to this account (#299) — which is why
   /// the row may be here at all with nothing left to do.
@@ -1719,19 +1320,6 @@ class _AccountListRow extends StatelessWidget {
   /// the difference between "nothing to do here" and "this is what you just
   /// did" is the whole reason the row is being held.
   final bool justApplied;
-
-  /// Ticks/unticks the row, or `null` when this list offers no ticking at all —
-  /// which is what a cohort under review is, its list being the review's own.
-  final ValueChanged<bool>? onTicked;
-
-  /// The width the tick column reserves, so a row without a checkbox still
-  /// lines its name up with the rows that have one.
-  ///
-  /// The measure a [Checkbox] takes at [VisualDensity.compact] with a
-  /// shrink-wrapped tap target — pinned rather than left to the theme, because
-  /// the blank has to match it exactly or every settled row's name sits a few
-  /// pixels off the ones above it.
-  static const double _checkboxColumn = 32.0;
 
   @override
   Widget build(BuildContext context) {
@@ -1757,26 +1345,6 @@ class _AccountListRow extends StatelessWidget {
             children: <Widget>[
               Row(
                 children: <Widget>[
-                  // Only a row with applyable work can be ticked — ticking a
-                  // settled account would add nothing to a pass and inflate the
-                  // "overgeslagen" count with accounts that were never work. The
-                  // blank keeps the names in one column either way.
-                  if (onTicked != null) ...<Widget>[
-                    SizedBox(
-                      width: _checkboxColumn,
-                      child: row.hasWork
-                          ? Checkbox(
-                              key: ValueKey('account-check-${row.id}'),
-                              value: ticked,
-                              visualDensity: VisualDensity.compact,
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              onChanged: (v) => onTicked!(v ?? false),
-                            )
-                          : null,
-                    ),
-                    const SizedBox(width: PlinkSpacing.s3),
-                  ],
                   Expanded(
                     child: Text(
                       row.account.label,

@@ -754,22 +754,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // The complement of the run above, for the kinds #293 deliberately withholds
-  // a school-wide apply from (#297). The operator ticks the accounts by hand,
-  // names the one decision, and the pass covers exactly the ticked accounts it
-  // stands open on. Worth a full run for the same reason #296 is: the count on
-  // the button, the rows the checkboxes sit on and the writes the pass makes are
-  // resolved in three different places, and only the real app composes all
-  // three — over real fonts, the real navigation shell and the real Graph and
-  // SOAP write paths.
+  // The complement of the run above went the other way (#311). #297 put a
+  // checkbox on every row carrying work and a "Selecteer alle zichtbare (N)"
+  // bar above the list, so one decision could be run over a hand-picked set —
+  // and select-all made that set whatever the filter happened to be showing,
+  // which is the objection that removed the global "Alles toepassen" in #294.
+  // Worth a full run for the same reason its arrival was: the bar, the row
+  // checkboxes and the vertical budget they cost are three different places,
+  // and only the real app composes them — in the real fonts, in the real shell,
+  // at a real window size.
   testWidgets(
-      'ticked accounts run one decision that gets no apply-all, and the pass '
-      'skips the ones it does not stand open on (#297)',
-      (WidgetTester tester) async {
-    useTallWindow(tester);
-    // The same rollover fixture: three students share the sanctioned class
-    // move, and Sam alone also carries the Office 365 rename — a judgement call
-    // the sanction refuses, and therefore exactly the kind this exists for.
+      'Acties offers no selection at all, and the list starts higher for it '
+      'end-to-end (#311)', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // The rollover roster: three students each carrying applyable work, which
+    // is precisely when the bar rendered and every one of those rows carried a
+    // tick.
     final harness = rolloverHarness();
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
@@ -783,68 +786,44 @@ void main() {
     final String sam = accountId(harness, 'Sam Sels');
     final String sara = accountId(harness, 'Sara Segers');
     final String tom = accountId(harness, 'Tom Tas');
-    Finder check(String id) => find.byKey(ValueKey('account-check-$id'));
 
-    // The rename carries no school-wide affordance anywhere on Sam's card…
-    await selectAccount(tester, sam);
+    // Three rows with work on them, and not one tick between them.
+    for (final String id in <String>[sam, sara, tom]) {
+      expect(find.byKey(ValueKey('account-row-$id')), findsOneWidget);
+      expect(find.byKey(ValueKey('account-check-$id')), findsNothing);
+    }
+    expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-select-all')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-selection-apply')), findsNothing);
+    expect(find.textContaining('Selecteer alle zichtbare'), findsNothing);
+    // No checkbox anywhere on the screen: those were the only ones Acties ever
+    // rendered, so the whole affordance is gone rather than merely unreachable.
     expect(
-      find.byKey(ValueKey('decision-apply-all-student-$sam-0')),
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.byType(Checkbox),
+      ),
       findsNothing,
     );
 
-    // …so the bulk path is the ticks. Sam and Sara, by hand; Tom is left alone
-    // and stays that way.
-    for (final id in <String>[sam, sara]) {
-      await tester.ensureVisible(check(id));
-      await tester.tap(check(id));
-      await tester.pumpAndSettle();
-    }
-    expect(tester.widget<Checkbox>(check(tom)).value, isFalse);
+    // What the removal buys, measured where it was spent. The bar was a
+    // bordered block between the filter chips and the family tabs on every
+    // visit, ticks or no ticks; with it gone nothing but the tabs and their
+    // spacing stands between the last chip and the first row.
+    final Finder list = find.byKey(const ValueKey('actions-list'));
+    final double chipsBottom = tester
+        .getRect(find.byKey(const ValueKey('actions-system-azure')))
+        .bottom;
+    expect(tester.getTopLeft(list).dy - chipsBottom, lessThan(80),
+        reason: 'the bordered block alone was 126 logical pixels tall');
+    // And the window it gives back: two thirds of a 1080p screen is the list
+    // itself, on the view whose whole purpose is the list.
+    expect(tester.getSize(list).height, greaterThan(1080 * 0.7));
 
-    final Finder rename =
-        find.byKey(const ValueKey('actions-decision-student|ModifyAzureName'));
-    await tester.ensureVisible(rename);
-    await tester.tap(rename);
-    await tester.pumpAndSettle();
-
-    // Sara raises the class move, not the rename. The bar says so rather than
-    // quietly passing over her.
-    expect(
-      tester
-          .widget<Text>(find.byKey(const ValueKey('actions-selection-scope')))
-          .data,
-      'Wordt toegepast op 1 van de 2 geselecteerde account(s) — 1 '
-      'overgeslagen, want daar staat deze beslissing niet open.',
-    );
-
-    await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Toepassen op 1 geselecteerd(e) account(s)?'),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.textContaining('1 wijziging naar Office 365'),
-      ),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-
-    // One real Graph PATCH, and not one class move — the pass is one decision
-    // deep whatever else the ticked cards carry (#292).
-    expect(
-      harness.graph.requests.where((r) => r.method == 'PATCH'),
-      hasLength(1),
-    );
-    expect(
-      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
-      isEmpty,
-    );
-    expect(harness.controller.applyResults, hasLength(1));
+    // And a row still does the one thing a row is for.
+    await selectAccount(tester, sam);
+    expect(find.byKey(ValueKey('actions-detail-$sam')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -3340,8 +3319,9 @@ void main() {
     // has one line but not where the list ends up for the operator. This runs
     // the real app in the real fonts at the real window size and measures it:
     // the list top moved from 575 to 373 of 1080, from below the halfway mark
-    // to inside the top third — and to 325 once #310 folded the work-list
-    // switch onto the search box's own row.
+    // to inside the top third — to 325 once #310 folded the work-list switch
+    // onto the search box's own row, and to 218 once #311 took the select-all
+    // bar out from between the chips and the list.
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -3371,14 +3351,14 @@ void main() {
     expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
     expect(find.textContaining('Generatie'), findsNothing);
 
-    // The list starts inside the top third of the window instead of below the
+    // The list starts inside the top quarter of the window instead of below the
     // middle of it — measured in the real font, in the real shell, with the
     // real rail beside it.
     final Finder list = find.byKey(const ValueKey('actions-list'));
-    expect(tester.getTopLeft(list).dy, lessThan(1080 / 3));
+    expect(tester.getTopLeft(list).dy, lessThan(1080 / 4));
     // Which is the same statement from the operator's side: the list, not the
     // preamble above it, gets the majority of the window it is the point of.
-    expect(tester.getSize(list).height, greaterThan(1080 / 2));
+    expect(tester.getSize(list).height, greaterThan(1080 * 0.7));
     expect(tester.takeException(), isNull);
   });
 

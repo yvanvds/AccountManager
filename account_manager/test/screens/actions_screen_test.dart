@@ -404,13 +404,14 @@ void main() {
         reason: 'nothing but spacing stands between the eyebrow and the box');
     // And a pin on the whole block above the list — eyebrow, search box, work
     // switch, sort and system chips, family tabs. It measured 422 when #309
-    // landed and measures 366 since #310 put the box and the switch on one
-    // row; every line put back into the header adds some 30 to that, which is
-    // what this number is guarding. What the operator actually gains from it is
-    // asserted at a real 1080p window in the integration suite, in rows on
-    // screen.
+    // landed, 366 once #310 put the box and the switch on one row, and 240
+    // since #311 took the select-all bar out from under them; every line put
+    // back into the header adds some 30 to that, and the bar alone was worth
+    // 126, which is what this number is guarding. What the operator actually
+    // gains from it is asserted at a real 1080p window in the integration
+    // suite, in rows on screen.
     expect(tester.getTopLeft(find.byKey(const ValueKey('actions-list'))).dy,
-        lessThan(390));
+        lessThan(260));
   });
 
   // --- The name box and the work-list switch on one row (#310) -------------
@@ -705,247 +706,95 @@ void main() {
     });
   });
 
-  // --- Ticking the accounts a risky action runs on (#297) -------------------
+  // --- No selection anywhere on the list (#311) ----------------------------
 
-  group('a decision can be applied to the accounts the operator ticked (#297)',
-      () {
-    Finder check(String id) => find.byKey(ValueKey('account-check-$id'));
-
-    Finder chip(String key) => find.byKey(ValueKey('actions-decision-$key'));
-
-    /// The line under the chips: how much of the selection the chosen decision
-    /// covers, and how much of it it does not.
-    String scopeLine(WidgetTester tester) => tester
-        .widget<Text>(find.byKey(const ValueKey('actions-selection-scope')))
-        .data!;
-
-    Future<void> tick(WidgetTester tester, String id) async {
-      await tester.ensureVisible(check(id));
-      await tester.tap(check(id));
-      await tester.pumpAndSettle();
-    }
-
-    Future<void> selectAll(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('actions-select-all')));
-      await tester.pumpAndSettle();
-    }
-
-    int classMoves(ReconcileHarness harness) => harness.soap.soapActions
-        .where((a) => a.endsWith('#saveUserToClass'))
-        .length;
-
-    /// The September rollover in miniature (see the #296 group): three students
-    /// share the sanctioned class move, and Sam alone also carries the Office
-    /// 365 rename that #293 withholds from any school-wide pass.
-    Future<ReconcileHarness> openRollover(WidgetTester tester) async {
+  group('the list offers no selection at all (#311)', () {
+    /// Opens Acties over [harness] with the flat list on screen.
+    Future<void> open(WidgetTester tester, ReconcileHarness harness) async {
       _useWideWindow(tester);
-      final harness = rolloverHarness();
       await harness.controller.sync();
       await tester
           .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
-      return harness;
+    }
+
+    /// Everything #297 put on the screen, asserted absent in one place.
+    void expectNoSelection(WidgetTester tester) {
+      expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
+      expect(find.byKey(const ValueKey('actions-select-all')), findsNothing);
+      expect(
+          find.byKey(const ValueKey('actions-selection-clear')), findsNothing);
+      expect(
+          find.byKey(const ValueKey('actions-selection-scope')), findsNothing);
+      expect(find.byKey(const ValueKey('actions-selection-dry-run')),
+          findsNothing);
+      expect(
+          find.byKey(const ValueKey('actions-selection-apply')), findsNothing);
+      expect(find.textContaining('Selecteer alle zichtbare'), findsNothing);
+      expect(find.textContaining('geselecteerd'), findsNothing);
+      // And no checkbox anywhere on the screen — the bar's select-all and the
+      // per-row ticks were the only ones this view ever rendered.
+      expect(find.byType(Checkbox), findsNothing);
     }
 
     testWidgets(
-        'only a row with applyable work can be ticked, and select-all covers '
-        'the visible rows and no others', (WidgetTester tester) async {
-      _useWideWindow(tester);
-      // Sam's Office 365 display name is stale; Tom is in order everywhere.
+        'no bar above the list and no checkbox on a row that carries work',
+        (WidgetTester tester) async {
+      // The state #297's bar was loudest in: rows with applyable work, which is
+      // when it rendered at all. Sam's Office 365 display name is stale; Tom is
+      // in order everywhere.
       final harness = appliedClassWorkHarness();
-      await harness.controller.sync();
-      await tester
-          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-      await tester.pumpAndSettle();
+      await open(tester, harness);
 
       final sam = _idOf(harness.controller, 'Sam Sels');
-      final tom = _idOf(harness.controller, 'Tom Tas');
+      expect(_row(sam), findsOneWidget, reason: 'he does carry work');
+      expect(find.byKey(ValueKey('account-check-$sam')), findsNothing);
+      expectNoSelection(tester);
 
-      expect(
-          find.byKey(const ValueKey('actions-selection-bar')), findsOneWidget);
-      expect(find.text('Selecteer alle zichtbare (1)'), findsOneWidget);
-      expect(check(sam), findsOneWidget);
-
-      // Off the work list Tom appears with nothing to tick: ticking a settled
-      // account adds nothing to a pass and would only inflate the skipped
-      // count. Select-all still covers one row.
+      // Off the work list the settled accounts come back, and they have nothing
+      // to tick either — nor a blank column where a checkbox used to be.
       await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
       await tester.pumpAndSettle();
-      expect(_row(tom), findsOneWidget);
-      expect(check(tom), findsNothing);
-      expect(find.text('Selecteer alle zichtbare (1)'), findsOneWidget);
-
-      await selectAll(tester);
-      expect(tester.widget<Checkbox>(check(sam)).value, isTrue);
-      expect(find.textContaining('1 account(s) geselecteerd'), findsOneWidget);
-    });
-
-    testWidgets(
-        'the bar names one decision and applies exactly it across the '
-        'selection (#292)', (WidgetTester tester) async {
-      final harness = await openRollover(tester);
-      await selectAll(tester);
-
-      expect(find.textContaining('3 account(s) geselecteerd'), findsOneWidget);
-      // Both decisions the ticked accounts raise are on offer, and the one the
-      // most of them share is the default — that is what the selection was
-      // almost certainly made for.
-      expect(chip('student|MoveToSmartschoolClassGroup'), findsOneWidget);
-      expect(chip('student|ModifyAzureName'), findsOneWidget);
-      expect(
-        tester
-            .widget<ChoiceChip>(chip('student|MoveToSmartschoolClassGroup'))
-            .selected,
-        isTrue,
-      );
-      expect(scopeLine(tester),
-          'Wordt toegepast op alle 3 geselecteerde account(s).');
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Toepassen op 3 geselecteerd(e) account(s)?'),
-          findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.textContaining('3 wijzigingen naar Smartschool'),
-        ),
-        findsOneWidget,
-        reason: 'the dialog names the systems and the change count of this '
-            'selection, not of everything on those three cards',
-      );
-
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-      await tester.pumpAndSettle();
-
-      expect(classMoves(harness), 3);
-      expect(harness.graph.requests.where((r) => r.method == 'PATCH'), isEmpty,
-          reason: "Sam's rename shares his card but not this decision");
-      // The writes settled what the ticks named, so the selection is gone with
-      // the view it was made against.
-      expect(
-          find.byKey(const ValueKey('actions-selection-scope')), findsNothing);
-    });
-
-    testWidgets(
-        'the kinds that get no apply-all get this instead, and it says how '
-        'many of the selection it skips (#293)', (WidgetTester tester) async {
-      final harness = await openRollover(tester);
-      final sam = _idOf(harness.controller, 'Sam Sels');
-      final sara = _idOf(harness.controller, 'Sara Segers');
-
-      // A rename over the whole school is exactly what the sanction refuses…
-      await _select(tester, sam);
-      expect(find.byKey(ValueKey('decision-apply-all-student-$sam-0')),
-          findsNothing);
-
-      // …yet it is on offer here, because the ticking is the consent.
-      await tick(tester, sam);
-      await tick(tester, sara);
-      await tester.tap(chip('student|ModifyAzureName'));
-      await tester.pumpAndSettle();
-
-      expect(
-        scopeLine(tester),
-        'Wordt toegepast op 1 van de 2 geselecteerde account(s) — 1 '
-        'overgeslagen, want daar staat deze beslissing niet open.',
-        reason: 'Sara raises the class move, not the rename, and a pass that '
-            'quietly passed over her would be the whole risk of a multi-select',
-      );
-      expect(find.text('Toepassen op selectie (1)'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-      expect(find.text('Toepassen op 1 geselecteerd(e) account(s)?'),
-          findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-      await tester.pumpAndSettle();
-
-      expect(harness.graph.requests.where((r) => r.method == 'PATCH'),
-          hasLength(1));
-      expect(classMoves(harness), 0,
-          reason: 'the pass is one decision deep, whatever else the ticked '
-              'cards carry (#292)');
-    });
-
-    testWidgets(
-        'ticking every visible row selects what the filter shows, and the '
-        'dialog quotes that count', (WidgetTester tester) async {
-      final harness = await openRollover(tester);
       final tom = _idOf(harness.controller, 'Tom Tas');
-
-      await tester.enterText(
-          find.byKey(const ValueKey('actions-search')), 'Sa');
-      await tester.pumpAndSettle();
-      expect(_row(tom), findsNothing);
-      expect(find.text('Selecteer alle zichtbare (2)'), findsOneWidget);
-
-      await selectAll(tester);
-      expect(find.text('Toepassen op selectie (2)'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-      expect(find.text('Toepassen op 2 geselecteerd(e) account(s)?'),
-          findsOneWidget,
-          reason: 'select-all under a filter must never read as school-wide');
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-      await tester.pumpAndSettle();
-
-      expect(classMoves(harness), 2,
-          reason: 'Tom needs the very same move and was never on the screen');
+      expect(_row(tom), findsOneWidget);
+      expect(find.byKey(ValueKey('account-check-$tom')), findsNothing);
+      expectNoSelection(tester);
     });
 
-    testWidgets('a dry-run covers the selection and leaves it standing',
+    testWidgets('nor over a whole rollover roster',
         (WidgetTester tester) async {
-      final harness = await openRollover(tester);
-      await selectAll(tester);
+      // Three students sharing one decision is the case the bar was built for,
+      // and the one where "Selecteer alle zichtbare (3)" was one press away from
+      // staging every row the filter happened to be showing.
+      final harness = rolloverHarness();
+      await open(tester, harness);
 
-      await tester.tap(find.byKey(const ValueKey('actions-selection-dry-run')));
-      await tester.pumpAndSettle();
+      for (final label in <String>['Sam Sels', 'Sara Segers', 'Tom Tas']) {
+        final id = _idOf(harness.controller, label);
+        expect(_row(id), findsOneWidget);
+        expect(find.byKey(ValueKey('account-check-$id')), findsNothing);
+      }
+      expectNoSelection(tester);
 
-      expect(harness.controller.dryRunResults, hasLength(3));
-      expect(classMoves(harness), 0);
-      expect(find.text('Resultaat van de dry-run'), findsOneWidget);
-      expect(scopeLine(tester),
-          'Wordt toegepast op alle 3 geselecteerde account(s).',
-          reason: 'the dry-run is what the operator reads before pressing the '
-              'button beside it, so it must not dissolve the selection');
+      // Selecting a row still opens its pane, which is the one thing a row was
+      // ever meant to do.
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+      expect(find.byKey(ValueKey('actions-detail-$sam')), findsOneWidget);
+      expectNoSelection(tester);
     });
 
     testWidgets(
-        'the ticks survive a sort change and are retired by a refreshed view',
-        (WidgetTester tester) async {
-      final harness = await openRollover(tester);
+        'the cohort review is the only bulk path left, and it still works '
+        '(#296)', (WidgetTester tester) async {
+      // #311 removes the *chosen* set, not the computed one. The sanctioned
+      // decision still arms its school-wide review, still shows the cohort
+      // before confirming, and still writes exactly it.
+      final harness = rolloverHarness();
+      await open(tester, harness);
+
       final sam = _idOf(harness.controller, 'Sam Sels');
-      await tick(tester, sam);
-      expect(find.textContaining('1 account(s) geselecteerd'), findsOneWidget);
-
-      // A sort describes the list, not the row, so it leaves the set alone.
-      await tester.tap(find.byKey(const ValueKey('actions-sort-klas')));
-      await tester.pumpAndSettle();
-      expect(tester.widget<Checkbox>(check(sam)).value, isTrue);
-      expect(find.textContaining('1 account(s) geselecteerd'), findsOneWidget);
-
-      // A refreshed linked view does not: the accounts under the ticks may no
-      // longer raise what they were ticked for.
-      await harness.controller.checkDrift();
-      await tester.pumpAndSettle();
-      expect(tester.widget<Checkbox>(check(sam)).value, isFalse);
-      expect(
-          find.byKey(const ValueKey('actions-selection-scope')), findsNothing);
-    });
-
-    testWidgets('a school-wide review takes the ticks and the checkboxes away',
-        (WidgetTester tester) async {
-      // The two bulk modes are exclusive: a review's list is its own cohort, so
-      // ticks made against the ordinary list would name a different set than
-      // the rows now on screen.
-      final harness = await openRollover(tester);
-      final sam = _idOf(harness.controller, 'Sam Sels');
-      await tick(tester, sam);
       await _select(tester, sam);
-
       final Finder moveAll =
           find.byKey(ValueKey('decision-apply-all-student-$sam-1'));
       await tester.ensureVisible(moveAll);
@@ -954,29 +803,32 @@ void main() {
 
       expect(
           find.byKey(const ValueKey('actions-cohort-banner')), findsOneWidget);
-      expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
-      expect(check(sam), findsNothing);
+      expectNoSelection(tester);
 
-      await tester.tap(find.byKey(const ValueKey('actions-cohort-cancel')));
+      await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
       await tester.pumpAndSettle();
-      expect(check(sam), findsOneWidget);
-      expect(tester.widget<Checkbox>(check(sam)).value, isFalse,
-          reason: 'the review dropped the set; restoring one the operator has '
-              'not looked at since is exactly what must not happen');
+      expect(find.text('Toepassen op 3 account(s)?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.soap.soapActions
+            .where((a) => a.endsWith('#saveUserToClass'))
+            .length,
+        3,
+      );
     });
 
     testWidgets(
-        'the September leavers sweep: tick the departed and resolve them in '
-        'one pass', (WidgetTester tester) async {
-      _useWideWindow(tester);
-      // The case the issue is written for. Three Smartschool-only accounts, no
-      // WISA record: each resolves to the unregister/delete either-or, which is
-      // as far from a school-wide apply-all as an action gets.
+        'the September leavers sweep runs one account at a time from the pane',
+        (WidgetTester tester) async {
+      // The workflow #297 was written for, and what it costs now that the ticks
+      // are gone: three Smartschool-only accounts, each raising the
+      // unregister/delete either-or, resolved one pane at a time. Slower on
+      // purpose — the safety of a destructive action is that it is never
+      // applied to a set nobody opened.
       final harness = departedHarness(count: 3);
-      await harness.controller.sync();
-      await tester
-          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-      await tester.pumpAndSettle();
+      await open(tester, harness);
 
       final ids = <String>[
         for (final e in harness.controller.pendingEntries)
@@ -989,23 +841,29 @@ void main() {
           reason: 'nobody presses one button that deletes every account the '
               'app believes has left');
 
-      await selectAll(tester);
-      expect(chip('student|smartschool-departure'), findsOneWidget);
-      expect(scopeLine(tester),
-          'Wordt toegepast op alle 3 geselecteerde account(s).');
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
+      // The risky-action confirmation path from the pane is untouched: it names
+      // the write, and only on Annuleer-free confirmation does anything happen.
+      final Finder apply = find.byKey(ValueKey('entry-apply-${ids.first}'));
+      await tester.ensureVisible(apply);
+      await tester.tap(apply);
       await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
       await tester.pumpAndSettle();
 
-      expect(harness.controller.applyResults, hasLength(3));
+      expect(harness.controller.applyResults, hasLength(1),
+          reason: 'one account, because one account is what was opened');
+      expect(harness.controller.applyResults!.single.targetId, ids.first);
       expect(
         harness.controller.applyResults!.map((r) => r.changes.summary).toSet(),
         <String>{'Schrijf de leerling uit in Smartschool'},
-        reason: 'each account still runs its own chosen alternative, and the '
-            'default of that either/or is the non-destructive one',
+        reason: 'the default of that either/or is the non-destructive one',
       );
+      // The other two are on the list beside him, each still its own decision
+      // to make — which is exactly what removing the sweep costs, and buys.
+      for (final id in ids.skip(1)) {
+        expect(_row(id), findsOneWidget);
+      }
     });
   });
 
@@ -1192,6 +1050,16 @@ void main() {
       // The pass a rollover really runs: one decision over a set of accounts,
       // all of them settling at once. Opening the second of them must not
       // delete the first out from under the tap that opened it.
+      //
+      // The pass is started on the controller rather than from a button,
+      // because since #311 no affordance on this screen starts a multi-account
+      // pass over a decision #293 withholds — and every decision the offline
+      // fakes really *settle* is one of those. (The Smartschool fake takes a
+      // write without folding it back into its snapshot, so the sanctioned
+      // class move of #296 leaves its accounts pending and never reaches the
+      // state this test is about.) What #299 pins here is what the screen does
+      // once a pass has written several accounts, whichever button began it;
+      // the cohort review's own path is covered in the #296 group above.
       final harness = crossClassSituationHarness();
       await open(tester, harness);
 
@@ -1199,11 +1067,13 @@ void main() {
       final sara = _idOf(harness.controller, 'Sara Segers');
       final tom = _idOf(harness.controller, 'Tom Tas');
 
-      await tester.tap(find.byKey(const ValueKey('actions-select-all')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      final cohort = ReconcileController.situationCohorts(<PendingAccountEntry>[
+        for (final e in harness.controller.pendingEntries)
+          if (e.family == 'student') e,
+      ]).single;
+      expect(cohort.key, 'student|ModifyAzureName');
+      expect(cohort.length, 3, reason: 'one decision, three accounts');
+      await harness.controller.applyDecisions(cohort.decisions);
       await tester.pumpAndSettle();
 
       expect(harness.controller.applyResults, hasLength(3));
