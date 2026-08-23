@@ -562,6 +562,174 @@ class HandEditedUserGraph implements az.GraphTransport {
       );
 }
 
+/// A [az.GraphTransport] answering a resumed `/users/delta` the way Graph
+/// answers it after another school's software claimed an account of ours
+/// (#317): a sparse row whose `companyName`/`department` now names somebody
+/// else.
+///
+/// Merged onto the record the app holds, such a row reads as an account that is
+/// no longer ours — and the walk used to drop it, silently. Because the delta is
+/// applied as an upsert, dropping meant the app's own copy (which still carries
+/// *our* prefix) survived untouched, on this pass and on every later one: the
+/// same row is dropped again for the same reason, forever. That is the state in
+/// which the app goes on proposing writes against an account another school now
+/// owns.
+///
+/// [backfill] is what a targeted `employeeId in (…)` lookup answers with, so a
+/// test can drive the other leg of the same pass: a student WISA still places
+/// here is re-adopted (#224) with the record straight off Graph, and the two
+/// legs have to agree rather than fight. The `$filter`-scoped bulk read answers
+/// empty and is counted, so a test can prove the pass really was the incremental
+/// one.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from and the accounts as the app
+/// still remembers them.
+class SchoolMovedUserGraph implements az.GraphTransport {
+  SchoolMovedUserGraph({
+    required this.rows,
+    this.backfill = const <Map<String, dynamic>>[],
+    this.freshToken = 'AZ-NEXT',
+  });
+
+  /// The sparse rows the resumed walk reports — `{id, <changed props>}`.
+  final List<Map<String, dynamic>> rows;
+
+  /// The full records a targeted `employeeId` lookup turns up.
+  final List<Map<String, dynamic>> backfill;
+
+  /// The token this walk leaves behind for the next pass.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued, in order.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran — none, on an incremental pass.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value': token == 'latest' ? const <Object>[] : rows,
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': backfill});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{'value': const <Object>[]});
+  }
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
+/// A [az.GraphTransport] answering the way the tenant answers when the app's
+/// stored copy of an account has drifted **past what any delta can report**
+/// (#315/#316).
+///
+/// Graph holds the account as it stands now — that is [user], and the
+/// `$filter`-scoped bulk read returns it. A resumed `/users/delta` reports
+/// **nothing**: the edit predates the token the session holds, which is the
+/// whole point. So an incremental pass, however many times it is run, can only
+/// ever confirm the stale copy the app already has, while a re-read repairs it
+/// in one.
+///
+/// Wire it into [ReconcileHarness.azureTransport] together with an
+/// `azureInitial` carrying the token to resume from and the account as the app
+/// wrongly remembers it.
+class DriftedUserGraph implements az.GraphTransport {
+  DriftedUserGraph({az.AzureUser? user, this.freshToken = 'AZ-NEXT'})
+      : user = user ?? azUser();
+
+  /// The account exactly as Graph holds it — what a full read returns.
+  final az.AzureUser user;
+
+  /// The token a pass leaves behind, whichever leg it took.
+  final String freshToken;
+
+  final List<az.GraphRequest> requests = <az.GraphRequest>[];
+
+  /// Every delta token Graph was asked to resume from, in order — empty on a
+  /// pass that re-read instead.
+  final List<String> resumeTokens = <String>[];
+
+  /// Every `employeeId in (…)` filter the connector issued.
+  final List<String> employeeIdLookups = <String>[];
+
+  /// How many `$filter`-scoped bulk reads ran.
+  int bulkReads = 0;
+
+  @override
+  Future<az.GraphResponse> send(az.GraphRequest request) async {
+    requests.add(request);
+    final String path = request.url.path;
+    if (path.contains('/members') || path.contains('groups')) {
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    if (path.contains('users/delta')) {
+      final String token = request.url.queryParameters[r'$deltatoken'] ?? '';
+      if (token != 'latest') resumeTokens.add(token);
+      // Nothing changed *since the token*, which is not the same thing as
+      // nothing being wrong.
+      return _ok(<String, dynamic>{
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken='
+                '$freshToken',
+        'value': const <Object>[],
+      });
+    }
+    final String filter = request.url.queryParameters[r'$filter'] ?? '';
+    if (filter.startsWith('employeeId in')) {
+      employeeIdLookups.add(filter);
+      return _ok(<String, dynamic>{'value': const <Object>[]});
+    }
+    bulkReads++;
+    return _ok(<String, dynamic>{
+      'value': <Map<String, dynamic>>[_row(user)],
+    });
+  }
+
+  static Map<String, dynamic> _row(az.AzureUser u) => <String, dynamic>{
+        'id': u.id,
+        'userPrincipalName': u.upn,
+        if (u.employeeId != null) 'employeeId': u.employeeId,
+        'displayName': u.displayName,
+        'givenName': u.givenName,
+        'surname': u.surname,
+        if (u.companyName != null) 'companyName': u.companyName,
+        if (u.department != null) 'department': u.department,
+        'accountEnabled': u.accountEnabled,
+      };
+
+  static az.GraphResponse _ok(Map<String, dynamic> body) => az.GraphResponse(
+        statusCode: 200,
+        headers: const <String, String>{'content-type': 'application/json'},
+        body: jsonEncode(body),
+      );
+}
+
 /// A [az.GraphTransport] answering the way the tenant answers on the pass that
 /// has to notice a staff member **left** WISA (#269).
 ///
@@ -1158,6 +1326,10 @@ az.AzureUser azUser({
   String displayName = '',
   String givenName = '',
   String surname = '',
+  // The school stamped on a student account. The harness prefix by default, so
+  // the account is in step; a fixture about a *stale* copy of it (#315/#316)
+  // names another school here.
+  String companyName = 'GBS',
 }) =>
     az.AzureUser(
       id: id,
@@ -1166,7 +1338,7 @@ az.AzureUser azUser({
       displayName: displayName,
       givenName: givenName,
       surname: surname,
-      companyName: 'GBS',
+      companyName: companyName,
     );
 
 /// An Azure **staff** account. Staff carry no `companyName`; their school lives
@@ -1361,6 +1533,47 @@ ReconcileHarness dupMailHarness({
       syncedBy: syncedBy,
     );
 
+/// A [core.PersonIdResolver] that hands every natural key the same id — the way
+/// a test constructs the INV-24 collision (#319).
+///
+/// It has to be constructed. #318 removed the one known way two records ended up
+/// on one `LinkedAccountId`, and re-breaking that merge to get a collision back
+/// is not what the invariant is for: INV-24 is defence in depth against a cause
+/// nobody has found yet, and the resolver is the seam where any such cause
+/// ultimately expresses itself.
+class CollidingResolver implements core.PersonIdResolver {
+  CollidingResolver([this.id = 'p-shared']);
+
+  /// The id every key resolves to.
+  final String id;
+
+  @override
+  core.PersonId resolve(String naturalKey) => core.PersonId(id);
+}
+
+/// A reconcile harness whose linker puts two students on **one**
+/// `LinkedAccountId` (#319): two ordinary, unrelated WISA students and a
+/// [CollidingResolver], so the pass produces two records claiming one id.
+///
+/// Everything below the linker then behaves as the issue describes — one
+/// materialized document carrying the union of both records' candidates — which
+/// is exactly what the `DuplicateLinkedId` warning has to make visible.
+ReconcileHarness idCollisionHarness({InMemoryLinkedStore? linkedStore}) =>
+    ReconcileHarness(
+      resolver: CollidingResolver(),
+      linkedStore: linkedStore,
+      wisa: wisaSnap(students: [
+        wisaStudent(wisaId: 'W1', classGroup: '3A'),
+        wisaStudent(wisaId: 'W2', classGroup: '3A'),
+      ]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount(uid: 'jane', accountId: 'W1')],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+
 /// A reconcile harness over [count] WISA-departed, Smartschool-only active
 /// accounts (no WISA, no Azure): each raises the mutually-exclusive
 /// unregister/delete choice (#110), so the pending list holds [count] entries in
@@ -1426,6 +1639,60 @@ ReconcileHarness managedSchoolsHarness({required Set<int> ourSchoolIds}) =>
       ),
       azure: azSnap(users: [azUser()]),
       ourSchoolIds: ourSchoolIds,
+    );
+
+/// A harness for the dual-enrolled student (#318). One person — WISA id `1`,
+/// the Smartschool account [ssAccount] already carries — enrolled in **two**
+/// group schools, of which only school 1 is ours. The shared WISA credentials
+/// pull one school at a time and concatenate, so that person arrives as two
+/// rows sharing a `wisaId`: the sibling school's `4ECO` first, our own `3BO`
+/// second. There is no Azure account yet, so the only work owed is the
+/// provisioning.
+///
+/// Before #318 the second row spawned a *second* record, both keyed
+/// `wisa:1` and so handed the same `LinkedAccountId`: one card offering "Maak
+/// een nieuw Office 365 account" (the ours record) next to the Smartschool
+/// unregister/delete either/or (the sibling record) — a proposal to unregister
+/// a student who is enrolled with us right now.
+ReconcileHarness dualEnrolledHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '4ECO', schoolId: 2),
+          wisaStudent(wisaId: '1', classGroup: '3BO', schoolId: 1),
+        ],
+        classGroups: [wisaClassGroup('3BO')],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+
+/// A harness for a card that owes **two Azure writes on one account** (#321).
+///
+/// One student, fully linked and already in step with Smartschool, whose
+/// Office 365 account is wrong in two independent ways: its `displayName` is
+/// blank (so `ModifyAzureName` raises) and its `companyName` names another
+/// school (so `ModifyAzureSchool` does). Applying her card is therefore a pass
+/// of two Azure PATCHes against one record — the shape whose second snapshot
+/// splice used to revert the first one's, because every action was resolved
+/// once, up front, off the pre-apply view.
+ReconcileHarness twoAzureWritesHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(users: [azUser(companyName: 'SBE')]),
     );
 
 /// A harness for the school-less Actions drill-down (#210). Two managed schools
@@ -3401,7 +3668,9 @@ class ReconcileHarness {
     this.settingsStore,
     this.modelsSettings = true,
     LiveSettings? liveSettings,
-  })  : wisaResult = (wisa ?? wisaSnap()),
+    core.PersonIdResolver? resolver,
+  })  : resolver = resolver ?? SeqResolver(),
+        wisaResult = (wisa ?? wisaSnap()),
         ssResult = (smartschool ?? ssSnap()),
         azResult = (azure ?? azSnap()),
         liveSettings = liveSettings ?? LiveSettings(),
@@ -3452,14 +3721,14 @@ class ReconcileHarness {
         log: log,
         clock: () => kFixtureDate,
       );
-      wisaSync = (previous) async {
+      wisaSync = (previous, {bool fullRead = false}) async {
         wisaSyncs++;
         final error = wisaError;
         if (error != null) throw error;
-        return inner(previous);
+        return inner(previous, fullRead: fullRead);
       };
     } else {
-      wisaSync = (_) async {
+      wisaSync = (_, {bool fullRead = false}) async {
         wisaSyncs++;
         final error = wisaError;
         if (error != null) throw error;
@@ -3483,7 +3752,7 @@ class ReconcileHarness {
         transport: ssTransport,
         log: log,
       );
-      ssSync = (_) async {
+      ssSync = (_, {bool fullRead = false}) async {
         ssSyncs++;
         // The live document's rules win when it carries any (#246), exactly as
         // `bootstrapReconcile` reads `live.current.smartschoolRules` at pull
@@ -3494,7 +3763,7 @@ class ReconcileHarness {
         );
       };
     } else {
-      ssSync = (_) async {
+      ssSync = (_, {bool fullRead = false}) async {
         ssSyncs++;
         return ssResult;
       };
@@ -3547,13 +3816,18 @@ class ReconcileHarness {
           return prefix.isEmpty ? 'GBS' : prefix;
         },
       );
-      azSync = (previous) async {
+      azSync = (previous, {bool fullRead = false}) async {
         azSyncs++;
-        return inner(previous);
+        // Forwarded, so a test can press **Controleer op drift** and see the
+        // production syncer take the full-read branch it forces (#316).
+        return inner(previous, fullRead: fullRead);
       };
     } else {
-      azSync = (_) async {
+      azSync = (_, {bool fullRead = false}) async {
         azSyncs++;
+        // What the pass asked for, so a test with a scripted Azure pull can
+        // still assert that a drift check asks for a re-read (#316).
+        azFullReads += fullRead ? 1 : 0;
         // When a test wires a gate, the Azure pull parks here until released,
         // so a widget test can hold a sync mid-flight and observe the busy
         // progress bar the earlier stages have already advanced (#176).
@@ -3629,7 +3903,7 @@ class ReconcileHarness {
           transport: graph,
         ),
       ),
-      resolver: SeqResolver(),
+      resolver: this.resolver,
       wisaRules: wisaRules,
       passwordQueue: passwordQueue,
       // Every settings-derived input, read from the live document on each link
@@ -3724,6 +3998,12 @@ class ReconcileHarness {
   /// per-system sync-metadata author (#108). Vary it to model a second operator
   /// sharing the same [linkedStore].
   final String syncedBy;
+
+  /// The identity resolver the applier links with. Defaults to [SeqResolver],
+  /// the deterministic one-id-per-natural-key fixture; a test overrides it to
+  /// construct an INV-24 id collision (#319), which no snapshot can produce on
+  /// its own once #318 merged the dual-enrolment rows.
+  final core.PersonIdResolver resolver;
 
   /// When set, the Azure syncer parks on this completer until a test releases
   /// it — a seam to freeze a sync mid-pass (WISA + Smartschool already pulled)
@@ -3881,6 +4161,37 @@ class ReconcileHarness {
   int wisaSyncs = 0;
   int ssSyncs = 0;
   int azSyncs = 0;
+
+  /// How many of those [azSyncs] were asked for as a **re-read** rather than an
+  /// incremental resume (#316) — what **Controleer op drift** forces. Counted on
+  /// the scripted pull, so a test that models no Graph at all can still prove
+  /// which kind of pass ran.
+  int azFullReads = 0;
+
+  /// Models the operator flipping a WISA school **beheerd** in Instellingen —
+  /// a saved *Azure pull input* (`azurePullFingerprint`, #259), so the next
+  /// **Synchroniseer** re-pulls Azure instead of leaving the snapshot this
+  /// session already holds alone.
+  ///
+  /// Which is what a test about the **incremental** Azure pass has to reach for
+  /// since #316: **Controleer op drift** re-reads Azure in full by design, so
+  /// the smart sync is the pass that still resumes the stored delta token. The
+  /// school is written with the name and code a [wisaSchool] fixture carries, so
+  /// the school-profile back-fill (#207) finds nothing to repair afterwards.
+  void markSchoolManaged(int schoolId) {
+    final profiles = <WisaSchoolProfile>[
+      for (final p in liveSettings.current.wisaSchools)
+        if (p.schoolId != schoolId) p,
+      WisaSchoolProfile(
+        schoolId: schoolId,
+        name: 'School $schoolId',
+        ours: true,
+      ),
+    ]..sort((a, b) => a.schoolId.compareTo(b.schoolId));
+    liveSettings.publish(
+      liveSettings.current.copyWith(wisaSchools: profiles),
+    );
+  }
 
   final RecordingSoap soap = RecordingSoap();
   final RecordingGraph graph = RecordingGraph();

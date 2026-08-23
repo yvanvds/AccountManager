@@ -24,8 +24,11 @@ Syncer<S> persistingSyncer<S extends core.Snapshot>({
   String? Function(S snapshot)? deltaTokenOf,
   void Function(Object error)? onError,
 }) {
-  return (previous) async {
-    final fresh = await inner(previous);
+  return (previous, {bool fullRead = false}) async {
+    // Forwarded rather than swallowed: whether the pass is a re-read is the
+    // caller's decision (#316), and this wrapper only adds persistence to
+    // whatever [inner] produces.
+    final fresh = await inner(previous, fullRead: fullRead);
     try {
       await store.save(
         system,

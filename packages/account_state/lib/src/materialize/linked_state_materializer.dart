@@ -530,6 +530,21 @@ Map<String, List<String>> _warningsByUid(List<core.LinkWarning> warnings) {
         // `ClassExistsAsSmartschoolGroup` candidate on its group document, and
         // the sync log names every skipped namesake (#225).
         break;
+      case core.DuplicateLinkedId():
+        // Names an *id*, not an account (#319). Deliberately not hung on a uid,
+        // for two reasons. The colliding records materialize onto the same
+        // document, so the card a per-uid string would land on is itself the
+        // symptom — the thing the operator cannot trust. And `decisions_merge`
+        // reads `MaterializedAccount.warnings` type-blind: any warning string
+        // there is taken as evidence that an accepted duplicate-*mail*
+        // collision still exists, so hanging an unrelated warning on an account
+        // would quietly keep a stale acceptance alive.
+        //
+        // It is surfaced snapshot-wide instead: the sync log names every
+        // collision and the Synchronisatie overview lists what each colliding
+        // record holds. Both are reachable with no Smartschool account at all,
+        // which a uid-keyed message would not be.
+        break;
     }
   }
   return byUid;

@@ -384,6 +384,121 @@ void main() {
     });
   });
 
+  group('a delta row that moves a user out of our school (#317)', () {
+    /// The student as our snapshot holds her: ours, in step with WISA.
+    const stored = AzureUser(
+      id: 'az1',
+      upn: 'jane.doe@student.school.example',
+      employeeId: 'W1',
+      displayName: 'Jane Doe',
+      givenName: 'Jane',
+      surname: 'Doe',
+      companyName: 'GBS',
+      department: '3C',
+    );
+
+    AzureSnapshot previousWith(List<AzureUser> users) => AzureSnapshot(
+          fetchedAt: DateTime.utc(2026, 6, 1),
+          deltaToken: 'OLDTOKEN',
+          users: users,
+          groups: const [],
+        );
+
+    GraphResponse Function(GraphRequest) walkOf(
+      List<Map<String, dynamic>> rows, {
+      List<Map<String, dynamic>> backfill = const [],
+    }) =>
+        (req) {
+          final path = req.url.path;
+          if (path.contains('/members') || path.contains('groups')) {
+            return jsonOk({'value': const <Object>[]});
+          }
+          if (path.contains('users/delta')) {
+            return jsonOk({
+              '@odata.deltaLink':
+                  'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=T2',
+              'value': rows,
+            });
+          }
+          final filter = req.url.queryParameters[r'$filter'] ?? '';
+          if (filter.startsWith('employeeId in')) {
+            return jsonOk({'value': backfill});
+          }
+          return jsonOk({'value': const <Object>[]});
+        };
+
+    test('the account we held is dropped instead of surviving stale', () async {
+      // The report: Graph says the account moved to a sibling school and the
+      // snapshot goes on insisting it is ours. The walk dropped the row, and
+      // `_applyDelta` only ever upserts what the walk kept — so nothing touched
+      // the record, and nothing ever would: every later pass drops the same row
+      // for the same reason.
+      final connector = connectorWith(FakeGraphTransport(walkOf(
+        <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'az1', 'companyName': 'OTHER'},
+        ],
+      )));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [stored]),
+      );
+
+      expect(snapshot.users, isEmpty);
+    });
+
+    test('a student WISA still places here comes back, from Graph', () async {
+      // The #224 leg and this one have to agree rather than fight. The record
+      // leaves on the delta leg and the back-fill re-adopts it on the same pass
+      // — with the account exactly as Graph holds it, so what the snapshot ends
+      // up asserting is Graph's version and not the one we had.
+      final connector = connectorWith(FakeGraphTransport(walkOf(
+        <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'az1', 'companyName': 'OTHER'},
+        ],
+        backfill: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'az1',
+            'userPrincipalName': 'jane.doe@student.school.example',
+            'employeeId': 'W1',
+            'displayName': 'Jane Doe',
+            'givenName': 'Jane',
+            'surname': 'Doe',
+            'companyName': 'OTHER',
+            'department': '3C',
+            'accountEnabled': true,
+          },
+        ],
+      )));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [stored]),
+        expectedEmployeeIds: const ['W1'],
+      );
+
+      expect(snapshot.users.single, stored.copyWith(companyName: 'OTHER'));
+    });
+
+    test('a row about a stranger still changes nothing', () async {
+      // Unchanged behaviour, and the reason the bucket is keyed on what we
+      // already hold: a sparse row we cannot classify is not evidence that
+      // somebody left, and there is no record of ours to take away anyway.
+      final connector = connectorWith(FakeGraphTransport(walkOf(
+        <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'az-unknown', 'displayName': 'Someone Else'},
+        ],
+      )));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [stored]),
+      );
+
+      expect(snapshot.users.single, stored);
+    });
+  });
+
   group('rejected delta token (#213)', () {
     /// Routes a delta *resume* to [rejection] while the full-read path
     /// (`$deltatoken=latest` + the `$filter` bulk read) succeeds.

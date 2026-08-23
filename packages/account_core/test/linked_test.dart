@@ -314,4 +314,149 @@ void main() {
     expect(snapshot.warnings, hasLength(1));
     expect(snapshot.warnings.single, isA<ResolveDuplicateMail>());
   });
+
+  group('INV-24: LinkedAccountId uniqueness (#319)', () {
+    // Two records that resolve to the same id. Constructed rather than driven
+    // through the dual-enrolment path #318 fixed: the point of this invariant
+    // is to catch a cause nobody has found yet, so it must not be tied to the
+    // one cause that is already fixed at its source.
+    const first = LinkedAccount(
+      id: LinkedAccountId('la-same'),
+      role: PersonRole.student,
+      wisa: _FakeWisaStudent(WisaId('w-1')),
+      smartschool: _FakeSmartschoolAccount(
+        uid: 'jan.peeters',
+        mail: 'jan@school.be',
+        accountId: 'w-1',
+        accountType: AccountType.student,
+      ),
+      confidence: LinkConfidence.high,
+    );
+    const second = LinkedAccount(
+      id: LinkedAccountId('la-same'),
+      role: PersonRole.student,
+      wisa: _FakeWisaStudent(WisaId('w-1')),
+      azure: _FakeAzureUser(id: 'az-9', upn: 'jan@school.be'),
+      confidence: LinkConfidence.medium,
+    );
+    const other = LinkedAccount(
+      id: LinkedAccountId('la-other'),
+      role: PersonRole.student,
+      wisa: _FakeWisaStudent(WisaId('w-2')),
+      confidence: LinkConfidence.medium,
+    );
+
+    test('a repeated id raises one DuplicateLinkedId naming both records', () {
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [first, second, other],
+        staff: const [],
+        groups: const [],
+      );
+
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.id, equals(const LinkedAccountId('la-same')));
+      expect(warning.holdings, hasLength(2));
+
+      // What each record holds — the whole point of the payload is that an
+      // operator can tell the two apart.
+      expect(warning.holdings.first.smartschool, equals('jan.peeters'));
+      expect(warning.holdings.first.azure, isNull);
+      expect(warning.holdings.last.smartschool, isNull);
+      expect(warning.holdings.last.azure, equals('az-9'));
+      for (final h in warning.holdings) {
+        expect(h.wisa, equals('w-1'));
+        expect(h.role, equals(PersonRole.student));
+      }
+    });
+
+    test('both colliding records are kept — never silently deduped', () {
+      // A silent drop is exactly what INV-23 exists to prevent, so the
+      // invariant reports the collision instead of resolving it.
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [first, second, other],
+        staff: const [],
+        groups: const [],
+      );
+      expect(snapshot.accounts, hasLength(3));
+    });
+
+    test('the colliding id is counted once, so no total is inflated', () {
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [first, second, other],
+        staff: const [],
+        groups: const [],
+      );
+      // Two people, both in WISA — not three records' worth. Counting per
+      // record made this 3 and skewed the dashboard's linked/total ratio.
+      expect(snapshot.wisa.total, equals(2));
+      expect(snapshot.wisa.linked, equals(0));
+      expect(snapshot.wisa.unlinked, equals(2));
+      // Only the first claim on the id counts, so the second record's Azure
+      // side does not quietly add a person Azure does not separately have.
+      expect(snapshot.smartschool.total, equals(1));
+      expect(snapshot.azure.total, equals(0));
+    });
+
+    test('a student and a staff record can collide too', () {
+      const staff = LinkedStaff(
+        id: LinkedAccountId('la-other'),
+        role: PersonRole.teacher,
+        wisa: _FakeWisaStaff(WisaStaffCode('PEE'), WisaId('w-100')),
+        confidence: LinkConfidence.medium,
+      );
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [other],
+        staff: const [staff],
+        groups: const [],
+      );
+
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.id, equals(const LinkedAccountId('la-other')));
+      expect(warning.holdings.map((h) => h.role),
+          equals([PersonRole.student, PersonRole.teacher]));
+      // The staff holding carries the WISA *code*, which is the staff key.
+      expect(warning.holdings.last.wisa, equals('PEE'));
+      // And still only two people, not three.
+      expect(snapshot.wisa.total, equals(1));
+    });
+
+    test('collisions are appended after the caller\'s own warnings', () {
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [first, second],
+        staff: const [],
+        groups: const [],
+        warnings: const [
+          ResolveDuplicateMail(mail: 'dup@school.be', accounts: []),
+        ],
+      );
+      expect(snapshot.warnings, hasLength(2));
+      expect(snapshot.warnings.first, isA<ResolveDuplicateMail>());
+      expect(snapshot.warnings.last, isA<DuplicateLinkedId>());
+    });
+
+    test('unique ids raise nothing and count exactly as before', () {
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [first, other],
+        staff: const [],
+        groups: const [],
+      );
+      expect(snapshot.warnings, isEmpty);
+      expect(snapshot.wisa.total, equals(2));
+    });
+
+    test('three records on one id yield one warning listing all three', () {
+      const third = LinkedAccount(
+        id: LinkedAccountId('la-same'),
+        role: PersonRole.student,
+        confidence: LinkConfidence.medium,
+      );
+      final snapshot = LinkedSnapshot.fromRecords(
+        accounts: const [first, second, third],
+        staff: const [],
+        groups: const [],
+      );
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.holdings, hasLength(3));
+    });
+  });
 }

@@ -20,7 +20,8 @@ import 'package:wisa_api/wisa_api.dart';
 /// final importRules = WisaImportRules();
 /// final wisa = SystemState<WisaSnapshot>(
 ///   system: Origin.wisa,
-///   syncer: (_) => connector.sync(
+///   // `fullRead` is ignored: WISA is read whole on every pass (#316).
+///   syncer: (_, {bool fullRead = false}) => connector.sync(
 ///     schools: schools,
 ///     workDate: workDate,
 ///     // read live, so a later add() — and a later save — takes effect

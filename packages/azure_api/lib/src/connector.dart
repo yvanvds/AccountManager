@@ -393,16 +393,36 @@ class AzureConnector {
     return '${age.inMinutes}m';
   }
 
-  /// Upserts [delta.changed] and drops [delta.removedIds] over [base], keeping
-  /// the result keyed by Azure object id.
+  /// Upserts [delta.changed] and drops both [delta.removedIds] and
+  /// [delta.leftSchoolIds] over [base], keeping the result keyed by Azure object
+  /// id.
   ///
   /// A whole-record upsert is only safe because [UserManager.delta] was handed
   /// the same [base] and has already merged each sparse Graph row onto the
   /// record it updates (#288); the entries here are complete users, not
   /// fragments.
+  ///
+  /// The two removal buckets mean different things and land in the same place
+  /// here (#317). A `@removed` id is an object that is gone from the directory;
+  /// a [UserDelta.leftSchoolIds] id is an account that still exists but whose
+  /// `companyName`/`department` no longer names our school. Either way the
+  /// record we hold is one this snapshot has no business asserting: because the
+  /// upsert set is the *only* thing that would have touched it, keeping it would
+  /// leave a row that contradicts Graph and does so permanently — every later
+  /// walk reaches the same verdict about the same row.
+  ///
+  /// Dropping is not the last word on a left-school account: [_adoptByEmployeeId]
+  /// runs after this and re-adopts any id the caller still expects (#224), with
+  /// the whole record straight off Graph. So a student WISA still places here
+  /// comes back correct rather than stale, and one WISA has let go stays gone.
+  /// The upserts run last so a walk that reported an id in both buckets — a row
+  /// that left and a later row that came back — ends up keeping the account.
   static List<AzureUser> _applyDelta(List<AzureUser> base, UserDelta delta) {
     final byId = {for (final u in base) u.id: u};
     for (final id in delta.removedIds) {
+      byId.remove(id);
+    }
+    for (final id in delta.leftSchoolIds) {
       byId.remove(id);
     }
     for (final u in delta.changed) {

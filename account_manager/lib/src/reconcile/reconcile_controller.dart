@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_state/account_state.dart';
+import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter/foundation.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
@@ -459,6 +460,25 @@ class DuplicateMailWarning {
 
   /// The colliding uids, sorted — the stable key an acceptance covers.
   List<String> get uids => sortedDuplicateUids(accounts.map((a) => a.uid));
+}
+
+/// A linker id collision (INV-24) shaped for the reconcile screen (#319): the
+/// [id] two or more records resolved to, and one already-rendered line per
+/// colliding record saying what it holds.
+///
+/// Unlike a duplicate mail there is nothing for the operator to *accept* — a
+/// shared [LinkedAccountId] is a linker bug, not a deliberate configuration —
+/// so this carries no decision state. It exists so the collision is visible
+/// while it lasts, instead of only showing up as a card whose presence chips
+/// and actions come from different records.
+class LinkIdCollision {
+  const LinkIdCollision({required this.id, required this.records});
+
+  /// The `LinkedAccountId` value the colliding records share.
+  final String id;
+
+  /// One line per colliding record; at least two, in snapshot order.
+  final List<String> records;
 }
 
 /// A per-category summary for the Reconcile overview (#163): how many accounts
@@ -1398,6 +1418,31 @@ class ReconcileController extends ChangeNotifier {
     ];
   }
 
+  /// The id collisions of the current linked view (INV-24, #319), each with its
+  /// colliding records flattened for display. Empty before a sync this session,
+  /// and — the normal case — empty afterwards too: a non-empty list means the
+  /// linker minted one id for two records, and every layer below it (the
+  /// materialized document, the pending entry, the stored account) has already
+  /// merged or dropped one of them.
+  List<LinkIdCollision> get linkIdCollisions {
+    final l = _linked;
+    if (l == null) return const [];
+    return [
+      for (final w in l.snapshot.warnings)
+        if (w is core.DuplicateLinkedId)
+          LinkIdCollision(
+            id: w.id.value,
+            records: [for (final h in w.holdings) _describeHolding(h)],
+          ),
+    ];
+  }
+
+  /// One colliding record as a single line: its role and the key it carries in
+  /// each system, so two records on one id can be told apart at a glance.
+  static String _describeHolding(core.LinkedIdHolding h) =>
+      '${h.role.toJson()} · WISA ${h.wisa ?? '—'} · '
+      'Smartschool ${h.smartschool ?? '—'} · Azure ${h.azure ?? '—'}';
+
   DuplicateAccountRow _duplicateRow(core.SmartschoolAccount account) {
     final concrete = account is ss.SmartschoolAccount ? account : null;
     final name = concrete == null
@@ -2196,6 +2241,18 @@ class ReconcileController extends ChangeNotifier {
   /// through other tools) and re-links. WISA is not re-pulled — that is what
   /// [sync] is for.
   ///
+  /// "Re-reads" is meant literally on both systems since #316. Smartschool
+  /// always was one — its syncer reads the whole site — but Azure ran the
+  /// ordinary incremental pull, resuming `/users/delta` from the stored token,
+  /// so the pass could only surface what Graph reported *since that token*.
+  /// Anything older, or anything an earlier walk dropped, was invisible to every
+  /// later pass, and the only things that ever forced a full read were accidents
+  /// (a token Graph refused, #213; a changed school prefix, #246). This pass now
+  /// asks for the full read outright. It is materially more expensive than a
+  /// delta — the whole school, though still `$filter`-bounded — and that is the
+  /// trade: the delta path stays what [sync] uses, and the operator pays for the
+  /// re-read only on the button whose job is to repair drift.
+  ///
   /// Refuses outright while [driftBlockedReason] is set: because WISA is not
   /// re-pulled here, a pass run after a werkdatum change would reconcile against
   /// the roster the change never reached and publish that to the whole team
@@ -2239,8 +2296,27 @@ class ReconcileController extends ChangeNotifier {
       await _renewLock();
       log.addMessage(core.Origin.azure, 'Azure AD controleren op drift…');
       final azPulledWith = _settingsFingerprint(core.Origin.azure);
-      _recordPull(core.Origin.azure, await app.sync(core.Origin.azure));
+      // **In full**, not as an incremental resume (#316). `/users/delta` reports
+      // what Graph chose to send since our stored token, which is precisely not
+      // "what does Azure hold right now": an edit older than the token — or one
+      // an earlier walk dropped — survives every later delta, so the pass whose
+      // whole job is to repair drift could never see the drift it was run for.
+      // Only the *token* is dropped; the snapshot in hand still goes to the
+      // syncer, which remembers from it the staff ids the back-fill must keep
+      // asking about (#269).
+      final azure =
+          await app.sync(core.Origin.azure, fullRead: true) as az.AzureSnapshot;
+      _recordPull(core.Origin.azure, azure);
       _stampPull(core.Origin.azure, azPulledWith);
+      // Says which kind of pass this was, in the panel the operator reads: a
+      // delta pass leaves `Azure: delta voor "…" — N gewijzigd` behind, this one
+      // leaves the size of the whole read. Without it the two are
+      // indistinguishable after the fact, which is what made #315 so hard to
+      // pin down.
+      log.addMessage(
+        core.Origin.azure,
+        'Azure AD volledig opnieuw gelezen — ${azure.users.length} account(s).',
+      );
       _setProgress(0.6);
 
       if (app.wisa.snapshot == null) {
@@ -2651,8 +2727,35 @@ class ReconcileController extends ChangeNotifier {
       'openstaande actie(s).',
     );
 
+    // The view [selected] is bound to, and the actions the view in hand raises
+    // (#321). Both stay null-ish until a write replaces the view — a dry run
+    // patches nothing, so it never re-resolves anything.
+    var boundTo = _linked;
+    Map<String, Object>? relinked;
+
     try {
-      for (final (index, option) in selected.indexed) {
+      for (final (index, planned) in selected.indexed) {
+        // Re-resolve this decision against the view the **previous** write
+        // produced (#321).
+        //
+        // Every action of a pass is resolved once, up front, from the pre-apply
+        // linked view, and an Azure modify projects its mutated record as
+        // `_az.copyWith(…)` off the record it was bound to. So a pass with two
+        // Azure writes on one account had its second snapshot splice put the
+        // pre-apply value of the first write's field back: Graph held both
+        // PATCHes, the in-memory record held one, and the relink behind it
+        // re-raised an action for a change Azure already had — which is also
+        // what [_shareApplied] then published to the other operators.
+        //
+        // [_chainFollowUps] never had the problem, because it takes each link
+        // off the freshly relinked view's own dispatch; this gives the pass
+        // loop the same treatment.
+        final current = _linked;
+        if (current != null && !identical(current, boundTo)) {
+          relinked = _actionsByIdentity(current);
+          boundTo = current;
+        }
+        final option = relinked == null ? planned : _rebind(planned, relinked);
         // Name the action *before* it runs, so the modal progress dialog says
         // what is in flight rather than what just finished (#243). `results`
         // already holds one row per write performed, so anything in it beyond
@@ -2725,6 +2828,82 @@ class ReconcileController extends ChangeNotifier {
       return applier.applyStaff(action, options: options);
     }
     return applier.applyGroup(action as actions.GroupAction, options: options);
+  }
+
+  /// Every pending action of [linked] under the identity a
+  /// [PendingActionOption] carries — `family|targetId|kind` (#321).
+  ///
+  /// Keyed with the very values [_entriesFor] stamps its options with, so a
+  /// lookup answers with the action the pending list *would* offer for that
+  /// decision had it been rebuilt from this view. First-seen wins, matching the
+  /// entry list's own grouping; a kind that names more than one decision on a
+  /// card is already ambiguous there (#283).
+  ///
+  /// Rebuilt once per write rather than per remaining decision: the relink it
+  /// follows already walks the whole roster, so this is a constant factor on
+  /// top of something the pass pays anyway.
+  Map<String, Object> _actionsByIdentity(LinkedState linked) {
+    final index = <String, Object>{};
+    for (final a in linked.studentActions) {
+      index.putIfAbsent(
+        'student|${a.target.id.value}|${a.runtimeType}',
+        () => a,
+      );
+    }
+    for (final a in linked.staffActions) {
+      index.putIfAbsent('staff|${a.target.id.value}|${a.runtimeType}', () => a);
+    }
+    for (final a in linked.groupActions) {
+      index.putIfAbsent(
+        'group|${_groupLabel(a.target)}|${a.runtimeType}',
+        () => a,
+      );
+    }
+    return index;
+  }
+
+  /// [planned] re-bound to the action [index] holds for the same decision, with
+  /// its diff re-read off that action (#321).
+  ///
+  /// Only the live action and its [PendingActionOption.changes] move. The
+  /// identity stamps are what route the pass's verdict back to the card and the
+  /// decision it answers (#272/#283), the operator's pick is what the pass
+  /// agreed to run, and the label is the one they read on the confirmation —
+  /// none of which a write may re-decide underneath them.
+  ///
+  /// A decision the relinked view no longer raises keeps the binding it was
+  /// planned with. That is what this pass has always run, and it is the safe
+  /// side of the trade: a target can change identity under a write (a class
+  /// entry is keyed by its label), so treating "not found" as "no longer
+  /// needed" would silently drop the rest of an operator's card.
+  PendingActionOption _rebind(
+    PendingActionOption planned,
+    Map<String, Object> index,
+  ) {
+    final fresh =
+        index['${planned.family}|${planned.targetId}|${planned.kind}'];
+    if (fresh == null || identical(fresh, planned.action)) return planned;
+    return PendingActionOption(
+      action: fresh,
+      kind: planned.kind,
+      group: planned.group,
+      isDefault: planned.isDefault,
+      family: planned.family,
+      targetId: planned.targetId,
+      target: planned.target,
+      changes: _describeAny(fresh),
+      canApply: planned.canApply,
+      canApplyToAll: planned.canApplyToAll,
+      unlockedSystems: planned.unlockedSystems,
+    );
+  }
+
+  /// One action's pure diff, whichever family it belongs to — the read half of
+  /// [_applyAny]'s dispatch.
+  static actions.ChangeSet _describeAny(Object action) {
+    if (action is actions.StudentAction) return action.describeChanges();
+    if (action is actions.StaffAction) return action.describeChanges();
+    return (action as actions.GroupAction).describeChanges();
   }
 
   /// Runs one selected option and returns a result row per **write it
@@ -2846,6 +3025,7 @@ class ReconcileController extends ChangeNotifier {
       '${s.warnings.length} waarschuwing(en).',
     );
     _logSkippedNamesakes(s.warnings);
+    _logIdCollisions(s.warnings);
   }
 
   Future<void> _relink() async {
@@ -2897,6 +3077,33 @@ class ReconcileController extends ChangeNotifier {
         '"${ss.name}" (code ${ss.id.value}), '
         '${ss.official ? 'met een andere schrijfwijze' : 'maar geen '
             'officiële klas'}.',
+      );
+    }
+  }
+
+  /// Names every id two or more linker records resolved to (INV-24, #319).
+  ///
+  /// This should never fire. It gets a log line anyway because everything below
+  /// the linker is keyed by that id and each layer degrades differently and
+  /// without a word — the materialized document receives the union of both
+  /// records' candidates, the Acties list keeps whichever pending entry came
+  /// last, and the shared store holds one document per id, so one of the two is
+  /// what every other operator inherits. Left silent, the first sign of trouble
+  /// is a card that contradicts itself: presence chips off one record above a
+  /// choice that can only exist for the other.
+  ///
+  /// It is logged rather than hung on the account cards because the colliding
+  /// records share one card — the card is the symptom, not a place to report
+  /// from — and because a collision between two records with no Smartschool
+  /// account has no card at all.
+  void _logIdCollisions(List<core.LinkWarning> warnings) {
+    for (final w in warnings) {
+      if (w is! core.DuplicateLinkedId) continue;
+      log.addMessage(
+        core.Origin.all,
+        'Koppelingsfout: ${w.holdings.length} records delen id '
+        '"${w.id.value}", zodat hun acties op één kaart terechtkomen. '
+        'Records: ${w.holdings.map(_describeHolding).join(' | ')}.',
       );
     }
   }

@@ -594,6 +594,7 @@ class _OverviewSection extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
     final duplicates = controller.duplicateWarnings;
+    final collisions = controller.linkIdCollisions;
     final students = controller.studentSummary;
     final staff = controller.staffSummary;
     final groups = controller.groupSummary;
@@ -639,7 +640,69 @@ class _OverviewSection extends StatelessWidget {
           for (final w in duplicates)
             _DuplicateWarningTile(controller: controller, warning: w),
         ],
+        // Above nothing and below everything: an id collision (#319) is rarer
+        // and more serious than a duplicate mail — it means the view itself is
+        // wrong, not that two accounts need tidying — so it is never folded
+        // into the duplicate list.
+        if (collisions.isNotEmpty) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          for (final c in collisions) _IdCollisionTile(collision: c),
+        ],
       ],
+    );
+  }
+}
+
+/// An id collision as a plain, always-expanded notice (#319): the headline says
+/// how many records share the id, and each colliding record gets a line naming
+/// what it holds in each system.
+///
+/// Not an [ExpansionTile] like the duplicate-mail warning next to it, and with
+/// no accept/revoke: there is nothing here for the operator to decide. The one
+/// useful thing is that they can see the collision at all — and can tell support
+/// exactly which id and which records are involved — so it is shown open.
+class _IdCollisionTile extends StatelessWidget {
+  const _IdCollisionTile({required this.collision});
+
+  final LinkIdCollision collision;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return Container(
+      key: ValueKey('id-collision-${collision.id}'),
+      margin: const EdgeInsets.only(top: PlinkSpacing.s2),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.error),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.error_outline, size: 20, color: colors.error),
+          const SizedBox(width: PlinkSpacing.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'Koppelingsfout: ${collision.records.length} records delen '
+                  'id "${collision.id}", zodat hun acties op één kaart '
+                  'terechtkomen.',
+                  style: text.bodyMedium,
+                ),
+                for (final r in collision.records) ...<Widget>[
+                  const SizedBox(height: PlinkSpacing.s2),
+                  Text(r, style: text.bodySmall),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -21,10 +21,18 @@ const Address _blankAddress = Address(
 /// A WISA student carrying only the fields the linker reads (`wisaId`,
 /// `schoolId`); the rest are inert defaults. [schoolId] selects which group
 /// school the student sits in (the ours-vs-group join, #134).
-wapi.WisaStudent wisaStudent(String wisaId, {int schoolId = 1}) =>
+///
+/// [classGroup] is otherwise inert to the linker, but it is what tells two rows
+/// of the *same* person apart when they come from two group schools (#318) —
+/// the class is the payload the ours-school row has to win with.
+wapi.WisaStudent wisaStudent(
+  String wisaId, {
+  int schoolId = 1,
+  String classGroup = '',
+}) =>
     wapi.WisaStudent(
       wisaId: WisaId(wisaId),
-      classGroup: '',
+      classGroup: classGroup,
       classSubGroup: '',
       name: 'Doe',
       firstName: 'Jane',
@@ -272,6 +280,27 @@ class SeqResolver implements PersonIdResolver {
   }
 }
 
+/// A [PersonIdResolver] that hands every natural key the **same** [id] — the
+/// simplest way to construct the INV-24 collision (#319).
+///
+/// It has to be constructed rather than provoked through the data: #318 removed
+/// the one known way two records ended up on one id (a student the aggregated
+/// WISA pull returns from two group schools now merges into a single record), so
+/// reproducing it that way is impossible, and re-breaking the merge to get it
+/// back is not what the invariant is for. INV-24 exists for the cause nobody has
+/// found yet, and a resolver is exactly the seam where any such cause would
+/// eventually express itself: `link` mints identity through this interface and
+/// nothing about the contract stops two keys from mapping to one id.
+class CollidingResolver implements PersonIdResolver {
+  CollidingResolver([this.id = 'p-shared']);
+
+  /// The id every key resolves to.
+  final String id;
+
+  @override
+  PersonId resolve(String naturalKey) => PersonId(id);
+}
+
 /// A stable, order-sensitive textual signature of a [LinkedSnapshot] for
 /// equality assertions (the type has no `==`). Captures every account's id,
 /// confidence, and which systems are present (plus their keys), the warnings,
@@ -307,12 +336,21 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
         'a:${g.azure?.id ?? '-'}',
       ].join('|');
 
+  String holding(LinkedIdHolding h) =>
+      '${h.role.name}/w:${h.wisa ?? '-'}/s:${h.smartschool ?? '-'}'
+      '/a:${h.azure ?? '-'}';
+
   String warning(LinkWarning w) => switch (w) {
         ResolveDuplicateMail(:final mail, :final accounts) =>
           'dupmail:$mail:${(accounts.map((x) => x.uid).toList()..sort()).join(',')}',
         SmartschoolNamesakeSkipped(:final wisaName, :final smartschool) =>
           'namesake:$wisaName:${smartschool.id.value}:'
               '${smartschool.official ? 'official' : 'group'}',
+        // INV-24 (#319). The holdings are already in a deterministic order
+        // (snapshot order, students before staff), so they are not re-sorted:
+        // a shift in *which* record claimed the id first is a real difference.
+        DuplicateLinkedId(:final id, :final holdings) =>
+          'dupid:${id.value}:${holdings.map(holding).join(',')}',
       };
 
   return [

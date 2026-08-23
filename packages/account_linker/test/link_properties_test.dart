@@ -133,14 +133,27 @@ void main() {
     });
 
     Glados(_scenario).test(
-      'INV-21: every WISA student appears in exactly one account',
+      'INV-21: every WISA person appears in exactly one account',
       (specs) {
+        // Per **person**, not per row (#318). The shared WISA credentials pull
+        // one school at a time and concatenate, and `schoolId` is a single int,
+        // so one person enrolled in two group schools arrives as two rows
+        // sharing a `wisaId`. Read per row — as this property was until #318 —
+        // the invariant demanded a record for each of them, which is exactly
+        // the second record that collapsed onto the first's `LinkedAccountId`.
+        // What must hold is that the person links **once**, holding one of
+        // their own rows; the tag pool is small enough that these scenarios
+        // generate repeated wisaIds routinely.
         final built = _build(specs, SeqResolver());
+        final rowsOf = <String, List<wapi.WisaStudent>>{};
         for (final student in built.students) {
+          (rowsOf[student.wisaId.value] ??= <wapi.WisaStudent>[]).add(student);
+        }
+        for (final entry in rowsOf.entries) {
           final hits = built.linked.accounts
-              .where((a) => identical(a.wisa, student))
+              .where((a) => entry.value.any((row) => identical(a.wisa, row)))
               .length;
-          expect(hits, 1, reason: 'student ${student.wisaId} appeared $hits×');
+          expect(hits, 1, reason: 'person ${entry.key} appeared $hits×');
         }
       },
     );
@@ -193,6 +206,57 @@ void main() {
             warning.accounts.map((a) => a.uid).toSet(),
             entry.value.toSet(),
           );
+        }
+      },
+    );
+
+    Glados(_scenario).test(
+      'INV-24: a shared LinkedAccountId is always reported, never silent',
+      (specs) {
+        // This is the property #319 delivers, and it is deliberately *not* "ids
+        // never collide". They do: an INV-23 duplicate-mail pair keeps two
+        // records for one person, and both key on the same `accountId` — or,
+        // with no accountId, on the very mail that made them collide — so the
+        // resolver hands them one id. That is a live cause, independent of the
+        // one #318 fixed, and it is filed as #323. Asserting its absence would
+        // be asserting something false; what must hold is that no collision
+        // gets through quietly.
+        final linked = _build(specs, SeqResolver()).linked;
+
+        final claims = <String, int>{};
+        for (final a in linked.accounts) {
+          claims[a.id.value] = (claims[a.id.value] ?? 0) + 1;
+        }
+        for (final s in linked.staff) {
+          claims[s.id.value] = (claims[s.id.value] ?? 0) + 1;
+        }
+        final colliding = <String>{
+          for (final e in claims.entries)
+            if (e.value > 1) e.key,
+        };
+
+        final warnings =
+            linked.warnings.whereType<DuplicateLinkedId>().toList();
+        // Exactly one warning per colliding id: no misses, no false alarms, and
+        // one warning per *id* rather than one per extra claimant.
+        expect(warnings.map((w) => w.id.value).toSet(), colliding);
+        expect(warnings, hasLength(colliding.length));
+        for (final w in warnings) {
+          expect(w.holdings, hasLength(claims[w.id.value]),
+              reason: 'every record claiming ${w.id.value} must be listed');
+        }
+
+        // The tally counts people, so it can never exceed the distinct ids…
+        for (final counts in [linked.wisa, linked.smartschool, linked.azure]) {
+          expect(counts.total, lessThanOrEqualTo(claims.length));
+          expect(counts.total, counts.linked + counts.unlinked);
+        }
+        // …and on a collision-free scenario it is exactly the pre-#319 number,
+        // so the guard stays invisible on healthy data.
+        if (colliding.isEmpty) {
+          final wisa = linked.accounts.where((a) => a.wisa != null).length +
+              linked.staff.where((s) => s.wisa != null).length;
+          expect(linked.wisa.total, wisa);
         }
       },
     );

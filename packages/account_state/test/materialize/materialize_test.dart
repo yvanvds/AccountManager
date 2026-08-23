@@ -107,6 +107,38 @@ class _SeqResolver implements core.PersonIdResolver {
       core.PersonId(_seen.putIfAbsent(naturalKey, () => 'p${_seen.length}'));
 }
 
+/// Hands every natural key one id, to construct the INV-24 collision (#319).
+class _CollidingResolver implements core.PersonIdResolver {
+  @override
+  core.PersonId resolve(String naturalKey) => const core.PersonId('p-shared');
+}
+
+/// Two unrelated students on **one** `LinkedAccountId` — the id collision
+/// INV-24 reports (#319). Constructed through the resolver rather than through
+/// the data: #318 removed the one known way a snapshot produced this.
+LinkedState _idCollisionLinked() => LinkedState.recompute(
+      wisa: wapi.WisaSnapshot(
+        fetchedAt: _d,
+        students: [
+          _wStudent(wisaId: '1', classGroup: '3C'),
+          _wStudent(wisaId: '2', classGroup: '3C'),
+        ],
+        staff: const [],
+        classGroups: const [],
+        schools: const [],
+      ),
+      smartschool: ss.SmartschoolSnapshot(
+        fetchedAt: _d,
+        groups: const [],
+        accounts: [_ssAccount()],
+        memberships: const [],
+      ),
+      azure: az.AzureSnapshot(fetchedAt: _d, users: const [], groups: const []),
+      resolver: _CollidingResolver(),
+      studentConfig: _studentConfig,
+      staffConfig: _staffConfig,
+    );
+
 /// A fully-linked student whose WISA class (3C) differs from her Smartschool
 /// membership (2B), so the dispatch yields exactly one pending action
 /// (`MoveToSmartschoolClassGroup`) — the shared fixture scenario.
@@ -297,6 +329,37 @@ void main() {
       );
       expect(account.candidates.every((c) => c.canApply), isTrue);
       expect(account.hasPending, isTrue);
+    });
+
+    group('a LinkedAccountId claimed twice (INV-24, #319)', () {
+      test('the linker reports it rather than the materializer swallowing it',
+          () {
+        final linked = _idCollisionLinked();
+        final warning =
+            linked.snapshot.warnings.whereType<core.DuplicateLinkedId>().single;
+        expect(warning.id.value, 'p-shared');
+        expect(warning.holdings.map((h) => h.wisa), ['1', '2']);
+      });
+
+      test('the collision does not become an account warning string', () {
+        // Deliberate. `decisions_merge._situationExists` reads
+        // `MaterializedAccount.warnings` type-blind: for an
+        // `acceptedDuplicate` decision, *any* warning string there is taken as
+        // proof the duplicate-mail collision still exists. Hanging an
+        // unrelated warning on an account would quietly keep a stale
+        // acceptance alive, so this one is reported snapshot-wide instead.
+        final view = materialize(_idCollisionLinked(), generation: 1);
+        expect(view.accounts.every((a) => a.warnings.isEmpty), isTrue);
+      });
+
+      test('both records still materialize, onto the one document id', () {
+        // Documents the damage the warning exists to make visible: the store
+        // keeps one document per id, so one of these two is what every other
+        // operator inherits.
+        final view = materialize(_idCollisionLinked(), generation: 1);
+        expect(view.accounts, hasLength(2));
+        expect(view.accounts.map((a) => a.id.value).toSet(), {'p-shared'});
+      });
     });
 
     test('rollup counts match the accounts beneath them', () {

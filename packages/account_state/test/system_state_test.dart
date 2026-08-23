@@ -24,7 +24,8 @@ void main() {
       final fetchedAt = DateTime.utc(2026, 7, 3, 9);
       final state = SystemState<_FakeSnapshot>(
         system: core.Origin.wisa,
-        syncer: (_) async => _FakeSnapshot(fetchedAt, tag: 'fresh'),
+        syncer: (_, {bool fullRead = false}) async =>
+            _FakeSnapshot(fetchedAt, tag: 'fresh'),
       );
 
       expect(state.snapshot, isNull);
@@ -42,7 +43,7 @@ void main() {
       var calls = 0;
       final state = SystemState<_FakeSnapshot>(
         system: core.Origin.azure,
-        syncer: (previous) async {
+        syncer: (previous, {bool fullRead = false}) async {
           seen = previous;
           return _FakeSnapshot(DateTime.utc(2026, 7, calls += 1));
         },
@@ -58,13 +59,38 @@ void main() {
               'second sync threads the stored snapshot back in (delta seam)');
     });
 
+    test('forwards fullRead to the syncer, defaulting to an ordinary sync',
+        () async {
+      // The seam **Controleer op drift** threads down to the Azure syncer
+      // (#316): the pass says whether it may build on the resume point the
+      // stored snapshot carries. The snapshot itself goes in either way.
+      final asked = <bool>[];
+      final seen = <String?>[];
+      final state = SystemState<_FakeSnapshot>(
+        system: core.Origin.azure,
+        initial: _FakeSnapshot(DateTime.utc(2026), tag: 'held'),
+        syncer: (previous, {bool fullRead = false}) async {
+          asked.add(fullRead);
+          seen.add(previous?.tag);
+          return _FakeSnapshot(DateTime.utc(2026, 7), tag: 'fresh');
+        },
+      );
+
+      await state.sync();
+      await state.sync(fullRead: true);
+
+      expect(asked, <bool>[false, true]);
+      expect(seen, <String?>['held', 'fresh'],
+          reason: 'a re-read still gets the snapshot in hand as `previous`');
+    });
+
     test('a failed sync leaves the previous snapshot and lastSync intact',
         () async {
       final good = DateTime.utc(2026, 7, 1);
       var shouldFail = false;
       final state = SystemState<_FakeSnapshot>(
         system: core.Origin.smartschool,
-        syncer: (_) async {
+        syncer: (_, {bool fullRead = false}) async {
           if (shouldFail) throw const _SyncFailure();
           return _FakeSnapshot(good, tag: 'good');
         },
@@ -85,7 +111,8 @@ void main() {
       final at = DateTime.utc(2025, 12, 31);
       final state = SystemState<_FakeSnapshot>(
         system: core.Origin.wisa,
-        syncer: (_) async => _FakeSnapshot(DateTime.utc(2026)),
+        syncer: (_, {bool fullRead = false}) async =>
+            _FakeSnapshot(DateTime.utc(2026)),
         initial: _FakeSnapshot(at, tag: 'cached'),
       );
       expect(state.snapshot?.tag, 'cached');
@@ -97,7 +124,7 @@ void main() {
       final gate = Completer<void>();
       final state = SystemState<_FakeSnapshot>(
         system: core.Origin.wisa,
-        syncer: (_) async {
+        syncer: (_, {bool fullRead = false}) async {
           await gate.future;
           return _FakeSnapshot(DateTime.utc(2026));
         },
@@ -116,7 +143,8 @@ void main() {
   group('SystemState.test (transient connection state)', () {
     SystemState<_FakeSnapshot> make() => SystemState<_FakeSnapshot>(
           system: core.Origin.wisa,
-          syncer: (_) async => _FakeSnapshot(DateTime.utc(2026)),
+          syncer: (_, {bool fullRead = false}) async =>
+              _FakeSnapshot(DateTime.utc(2026)),
         );
 
     test('starts unknown on a fresh state (never persisted)', () {

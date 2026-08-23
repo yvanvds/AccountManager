@@ -47,6 +47,14 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 ///   case-insensitive (legacy `.Equals()` was case-sensitive).
 /// - **INV-23:** two Smartschool accounts sharing a `mail` are *both* kept and
 ///   a [ResolveDuplicateMail] warning is raised (legacy silently dropped one).
+/// - **INV-24:** two records that resolve to the same [LinkedAccountId] raise a
+///   [DuplicateLinkedId] warning (#319). The check is not written here: it lives
+///   in [LinkedSnapshot.fromRecords], which this function returns through, so it
+///   holds for every snapshot built that way rather than only for this pass. It
+///   is defence in depth — every *known* cause is fixed at its source (see
+///   INV-21 and [_buildStudentRecords]) — but the layers below the linker are
+///   all keyed by that id and every one of them unions or drops without a word,
+///   so a cause nobody has found yet must not be able to reach them quietly.
 ///
 /// [schoolPrefix] is the Azure `companyName` value the school stamps on its
 /// own users; an Azure-only user carrying it is a former student kept as an
@@ -57,11 +65,13 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// one who is genuinely present here. It comes from Settings and nowhere else
 /// (#286): null and empty both mean ownership is unconfigured, in which case
 /// every WISA-present student is treated as ours, preserving the pre-#134
-/// behaviour. For students
-/// and staff, membership never changes which records exist or their identity
-/// keys, only how each is classified ([WisaPresence]); for **groups** it is a
-/// filter (#205), because a class of a school we do not manage has no business
-/// reaching the action engine at all (see [_linkGroups]).
+/// behaviour. For students and staff, membership never changes which records
+/// exist or their identity keys, only how each is classified
+/// ([WisaPresence]) — and, for a student the shared pull returns *twice*
+/// because they are enrolled in two group schools, which of those two rows
+/// supplies the class placement (#318, see [_prefersWisaRow]). For **groups**
+/// it is a filter (#205), because a class of a school we do not manage has no
+/// business reaching the action engine at all (see [_linkGroups]).
 ///
 /// A second group-only filter composes with it: the class groups of a school
 /// flagged [wapi.WisaSchool.isVirtual] are skipped too (#209). A virtual school
@@ -97,6 +107,7 @@ LinkedSnapshot link(
     smartschoolSnapshot,
     azureSnapshot,
     schoolPrefix: schoolPrefix,
+    ourSchoolIds: effectiveOurSchoolIds,
     warnings: warnings,
   );
   final staffRecords = _buildStaffRecords(
@@ -164,11 +175,19 @@ LinkedSnapshot link(
 /// the key set and the resolve calls from ever drifting: any key returned here
 /// is exactly one [link] will resolve, and vice versa. Group records carry no
 /// [PersonId] (a group is keyed by name), so groups contribute nothing.
+///
+/// [ourSchoolIds] is passed through to the student pass for the same reason
+/// [schoolPrefix] is — so the two entry points run the *identical* build. It
+/// cannot move a key on its own (ownership only picks which of one person's
+/// WISA rows supplies the class placement, #318, and every row of a person
+/// carries the same `wisaId`), but leaving it out would make "identical passes"
+/// a claim rather than a fact.
 Set<String> naturalKeysFor(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
   az.AzureSnapshot azureSnapshot, {
   required String schoolPrefix,
+  Set<int>? ourSchoolIds,
 }) {
   // The duplicate-mail warnings are a byproduct of building; discarded here.
   final warnings = <LinkWarning>[];
@@ -177,6 +196,7 @@ Set<String> naturalKeysFor(
     smartschoolSnapshot,
     azureSnapshot,
     schoolPrefix: schoolPrefix,
+    ourSchoolIds: ourSchoolIds ?? const <int>{},
     warnings: warnings,
   );
   final staffRecords = _buildStaffRecords(
@@ -197,11 +217,17 @@ Set<String> naturalKeysFor(
 /// identity resolution to the caller. Records are returned in creation order so
 /// the output is a deterministic function of the input order (INV-20).
 /// Duplicate-mail warnings (INV-23) are appended to [warnings].
+///
+/// [ourSchoolIds] is read for one decision only (#318): when the WISA pull
+/// returns the same person from two group schools, which of those rows sits on
+/// [_Record.wisa]. It never changes which records exist or what they are keyed
+/// by — see [_prefersWisaRow].
 List<_Record> _buildStudentRecords(
   wapi.WisaSnapshot wisaSnapshot,
   ss.SmartschoolSnapshot smartschoolSnapshot,
   az.AzureSnapshot azureSnapshot, {
   required String schoolPrefix,
+  required Set<int> ourSchoolIds,
   required List<LinkWarning> warnings,
 }) {
   // Records in creation order; the output preserves this order so the result
@@ -242,18 +268,34 @@ List<_Record> _buildStudentRecords(
   }
 
   // 2. Attach WISA students by wisaId; unmatched ones become WISA-only
-  //    placeholders. INV-21: every WISA student lands in exactly one record.
+  //    placeholders. INV-21: every WISA student lands in exactly one record —
+  //    one record per **person**, not per row (#318). The two are not the same
+  //    thing: the WISA pull runs once per group school and concatenates the
+  //    results, and `WisaStudent.schoolId` is a single int, so a student
+  //    enrolled in two group schools arrives as *two rows sharing one wisaId*.
+  //    Both rows are the same person, so the second merges its school id into
+  //    the record the first made. Spawning a second record instead (what this
+  //    did before) put two records on one `LinkedAccountId` — `_naturalKey`
+  //    returns `wisa:<wisaId>` for either of them — and the action engine then
+  //    offered one card the actions of both: create the Office 365 account of
+  //    the ours-school record next to the Smartschool departure of the
+  //    sibling-school one. The placeholder branch stays for the genuinely
+  //    unmatched student, who is the first row of their own record.
   for (final student in wisaSnapshot.students) {
     final key = _norm(student.wisaId.value);
     final match = key == null ? null : byWisaId[key];
-    if (match != null && match.wisa == null) {
-      match.wisa = student;
-      match.wisaSchoolIds.add(student.schoolId);
-    } else {
+    if (match == null) {
       final placeholder = _Record(wisa: student)
         ..wisaSchoolIds.add(student.schoolId);
       records.add(placeholder);
       if (key != null) byWisaId.putIfAbsent(key, () => placeholder);
+      continue;
+    }
+    // Every school this person was found in, so `_presence` can see that one
+    // of them is ours even when another is not.
+    match.wisaSchoolIds.add(student.schoolId);
+    if (_prefersWisaRow(match.wisa, student, ourSchoolIds)) {
+      match.wisa = student;
     }
   }
 
@@ -691,7 +733,13 @@ Group _wisaToCoreGroup(wapi.WisaClassGroup g) => Group(
 /// an immutable [LinkedAccount] at the end.
 class _Record {
   ss.SmartschoolAccount? smartschool;
+
+  /// The WISA row this person's class placement is read from. A person enrolled
+  /// in two group schools has two rows (#318); the one from a school we manage
+  /// wins, see [_prefersWisaRow]. Every school they were found in is on
+  /// [wisaSchoolIds] regardless of which row this holds.
   wapi.WisaStudent? wisa;
+
   az.AzureUser? azure;
 
   /// The WISA school ids this record's student was found in — accumulated as
@@ -754,6 +802,32 @@ String? _norm(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed.toLowerCase();
+}
+
+/// Whether [candidate] should displace [held] as the WISA row a record carries
+/// on [_Record.wisa], when both rows are the *same person* read from two
+/// different group schools (#318).
+///
+/// The rows agree on identity — one `wisaId` — but not on `schoolId`, and with
+/// it not on `classGroup`/`classSubGroup`. That class is what every downstream
+/// placement is derived from (the Smartschool class to enrol into, the Office
+/// 365 class group to join), and it must come from **our** school's row, not
+/// from whichever school the concatenated pull happened to read first. So a row
+/// of a managed school displaces one of a sibling school, and nothing else
+/// displaces anything: ours-vs-ours and sibling-vs-sibling both keep the row
+/// already held, so the result stays a deterministic function of snapshot order
+/// (INV-20). With ownership unconfigured ([ourSchoolIds] empty) every school
+/// counts as ours — the same fallback [_presence] applies — so the first row
+/// stands, exactly as it did before #318.
+bool _prefersWisaRow(
+  wapi.WisaStudent? held,
+  wapi.WisaStudent candidate,
+  Set<int> ourSchoolIds,
+) {
+  if (held == null) return true;
+  if (ourSchoolIds.isEmpty) return false;
+  return ourSchoolIds.contains(candidate.schoolId) &&
+      !ourSchoolIds.contains(held.schoolId);
 }
 
 /// Classifies a student's WISA presence (#134) from the [wisaSchoolIds] its

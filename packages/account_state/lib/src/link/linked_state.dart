@@ -133,8 +133,9 @@ class LinkedState {
   ///
   /// A network-backed resolver cannot mint inside the synchronous pure `link()`,
   /// so its id map is populated up front: this computes the exact key set with
-  /// `naturalKeysFor` (over the same snapshots and `schoolPrefix` the linker
-  /// uses) and awaits `resolver.prepare(keys)` before delegating to the
+  /// `naturalKeysFor` (over the same snapshots, `schoolPrefix` and
+  /// managed-school set the linker uses) and awaits
+  /// `resolver.prepare(keys)` before delegating to the
   /// synchronous [recompute]. A plain [PersonIdResolver] (file/in-memory) is not
   /// preparable and mints lazily, so it skips the prepare step and this behaves
   /// exactly like [recompute].
@@ -154,6 +155,9 @@ class LinkedState {
         smartschool,
         azure,
         schoolPrefix: studentConfig.schoolPrefix,
+        // Same managed-school set `link()` gets below, so both entry points run
+        // the identical record-building pass (#318).
+        ourSchoolIds: ourSchoolIds,
       );
       await resolver.prepare(keys);
     }

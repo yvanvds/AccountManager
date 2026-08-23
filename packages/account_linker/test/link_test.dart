@@ -1389,4 +1389,264 @@ void main() {
       expect(a.hasLeftGroup, isTrue);
     });
   });
+
+  group('link — a student enrolled in two WISA schools (#318)', () {
+    /// The shared WISA credentials pull one school at a time and concatenate,
+    /// and `WisaStudent.schoolId` is a single int — so a student enrolled in
+    /// two group schools arrives as **two rows sharing one `wisaId`**, in
+    /// whatever order the schools were read. [rows] is that pair (or more), in
+    /// arrival order.
+    LinkedSnapshot linkRows(
+      List<wapi.WisaStudent> rows, {
+      Set<int>? ourSchoolIds,
+      bool inSmartschool = true,
+    }) =>
+        link(
+          wisaSnap(rows,
+              schools: [wisaSchool(1), wisaSchool(2), wisaSchool(3)]),
+          ssSnap(inSmartschool
+              ? [ssAccount(uid: 'jane', accountId: 'W1', mail: 'jane@s.be')]
+              : const []),
+          azSnap(const []),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    /// The connector-typed WISA row a record ended up carrying.
+    /// [LinkedAccount.wisa] is the `account_core` interface, which exposes only
+    /// the `wisaId` — and the whole question here is which *row* won, so the
+    /// test has to look at `schoolId` / `classGroup`.
+    wapi.WisaStudent? rowOf(LinkedAccount a) => a.wisa as wapi.WisaStudent?;
+
+    test('links to one record holding both school ids, and reads ours', () {
+      // The reported card: our school's row said "create the Office 365
+      // account", the sibling school's row said "unregister in Smartschool",
+      // and both records carried the same id. One person, one record.
+      final snapshot = linkRows(
+        [
+          wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+          wisaStudent('W1', schoolId: 1, classGroup: '3BO'),
+        ],
+        ourSchoolIds: {1},
+      );
+
+      expect(snapshot.accounts, hasLength(1));
+      final a = snapshot.accounts.single;
+      expect(a.wisaSchoolIds, {1, 2});
+      expect(a.wisaPresence, WisaPresence.ours);
+      expect(a.isInOurWisa, isTrue);
+      // The half that made the card contradict itself: the departure predicate
+      // both Smartschool departure actions gate on must stay false.
+      expect(a.hasLeftOurSchool, isFalse);
+      expect(a.hasLeftGroup, isFalse);
+    });
+
+    test('never mints two records onto one LinkedAccountId', () {
+      // Both rows produce the natural key `wisa:w1`, so two records would have
+      // been handed the *same* id — which is what put two records' actions on
+      // one card. Assert the property, not just the count.
+      final snapshot = linkRows(
+        [
+          wisaStudent('W1', schoolId: 1, classGroup: '3BO'),
+          wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+        ],
+        ourSchoolIds: {1},
+      );
+      final ids = snapshot.accounts.map((a) => a.id).toSet();
+      expect(ids, hasLength(snapshot.accounts.length));
+    });
+
+    test('the class comes from our school, whichever row was read first', () {
+      // The placement every downstream action derives — the Smartschool class
+      // to enrol into, the Office 365 class group to join — must not depend on
+      // which school the concatenated pull happened to reach first.
+      final sibfirst = linkRows(
+        [
+          wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+          wisaStudent('W1', schoolId: 1, classGroup: '3BO'),
+        ],
+        ourSchoolIds: {1},
+      );
+      expect(rowOf(sibfirst.accounts.single)?.classGroup, '3BO');
+      expect(rowOf(sibfirst.accounts.single)?.schoolId, 1);
+
+      final oursFirst = linkRows(
+        [
+          wisaStudent('W1', schoolId: 1, classGroup: '3BO'),
+          wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+        ],
+        ourSchoolIds: {1},
+      );
+      expect(rowOf(oursFirst.accounts.single)?.classGroup, '3BO');
+      expect(rowOf(oursFirst.accounts.single)?.schoolId, 1);
+    });
+
+    test('merges onto a WISA-only record too, with no Smartschool anchor', () {
+      // The merge target is normally the record a Smartschool account seeded;
+      // when there is none, the first row's own placeholder is the target.
+      final snapshot = linkRows(
+        [
+          wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+          wisaStudent('W1', schoolId: 1, classGroup: '3BO'),
+        ],
+        ourSchoolIds: {1},
+        inSmartschool: false,
+      );
+      final a = snapshot.accounts.single;
+      expect(a.smartschool, isNull);
+      expect(a.wisaSchoolIds, {1, 2});
+      expect(rowOf(a)?.classGroup, '3BO');
+    });
+
+    test('two sibling schools, neither ours → one record, still groupOnly', () {
+      final snapshot = linkRows(
+        [
+          wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+          wisaStudent('W1', schoolId: 3, classGroup: '5WE'),
+        ],
+        ourSchoolIds: {1},
+      );
+      final a = snapshot.accounts.single;
+      expect(a.wisaSchoolIds, {2, 3});
+      expect(a.wisaPresence, WisaPresence.groupOnly);
+      expect(a.hasLeftOurSchool, isTrue);
+      // Nothing is ours, so nothing displaces the first row (INV-20).
+      expect(rowOf(a)?.classGroup, '4ECO');
+    });
+
+    test('ownership unconfigured → one record, and the first row stands', () {
+      // Every school counts as ours, the same fallback `_presence` applies, so
+      // there is no "ours row" to prefer and arrival order decides.
+      final snapshot = linkRows([
+        wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+        wisaStudent('W1', schoolId: 1, classGroup: '3BO'),
+      ]);
+      final a = snapshot.accounts.single;
+      expect(a.wisaSchoolIds, {1, 2});
+      expect(a.wisaPresence, WisaPresence.ours);
+      expect(rowOf(a)?.classGroup, '4ECO');
+    });
+
+    test('two genuinely different students still get a record each', () {
+      // The merge keys on `wisaId`; distinct people are untouched by it.
+      final snapshot = link(
+        wisaSnap(
+          [wisaStudent('W1', schoolId: 1), wisaStudent('W2', schoolId: 2)],
+          schools: [wisaSchool(1), wisaSchool(2)],
+        ),
+        ssSnap(const []),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+        ourSchoolIds: {1},
+      );
+      expect(snapshot.accounts, hasLength(2));
+      expect(snapshot.accounts[0].wisaSchoolIds, {1});
+      expect(snapshot.accounts[1].wisaSchoolIds, {2});
+    });
+  });
+
+  group('INV-24 — a shared LinkedAccountId is reported, not merged (#319)', () {
+    // The collision is constructed with a [CollidingResolver]; see its doc for
+    // why it is not driven through the dual-enrolment path #318 fixed.
+    test('two records on one id raise a DuplicateLinkedId naming both', () {
+      final snapshot = link(
+        wisaSnap([wisaStudent('W1'), wisaStudent('W2')]),
+        ssSnap([ssAccount(uid: 'jane', accountId: 'W1', mail: 'jane@s.be')]),
+        azSnap(const []),
+        CollidingResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts, hasLength(2),
+          reason: 'both records are kept — a silent drop is INV-23\'s sin');
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.id.value, 'p-shared');
+      expect(warning.holdings.map((h) => h.wisa), ['W1', 'W2']);
+      expect(warning.holdings.first.smartschool, 'jane');
+      expect(warning.holdings.last.smartschool, isNull);
+    });
+
+    test('the shared id is counted once, so the WISA total is not inflated',
+        () {
+      final snapshot = link(
+        wisaSnap([wisaStudent('W1'), wisaStudent('W2')]),
+        ssSnap(const []),
+        azSnap(const []),
+        CollidingResolver(),
+        schoolPrefix: _prefix,
+      );
+      // Two WISA rows, one id ⇒ one person as far as the dashboard's
+      // linked/total ratio is concerned. Counting per record read 2.
+      expect(snapshot.wisa.total, 1);
+      expect(snapshot.wisa.unlinked, 1);
+    });
+
+    test('a student and a staff member colliding are both listed', () {
+      final snapshot = link(
+        wisaSnap([wisaStudent('W1')], staff: [wisaStaff('PEE')]),
+        ssSnap(const []),
+        azSnap(const []),
+        CollidingResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.holdings, hasLength(2));
+      expect(warning.holdings.map((h) => h.wisa), ['W1', 'PEE']);
+      expect(warning.holdings.map((h) => h.role),
+          [PersonRole.student, PersonRole.teacher]);
+    });
+
+    test('an INV-23 duplicate-mail pair collides on id too, and says so (#323)',
+        () {
+      // Not constructed: the ordinary resolver produces this. INV-23 keeps both
+      // Smartschool accounts of a colliding pair as separate records, and both
+      // key on the same `accountId`, so they resolve to one id. That makes the
+      // deliberate admin+user setup a live cause of the very card #319 is
+      // about — found by the property test, filed as #323, and left unfixed
+      // here on purpose: #319 makes collisions visible, it does not decide how
+      // the linker should merge them.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap([
+          ssAccount(uid: 'twin-a', accountId: 'W6', mail: 'twin@s.be'),
+          ssAccount(uid: 'twin-b', accountId: 'W6', mail: 'twin@s.be'),
+        ]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts.map((a) => a.id.value).toSet(), hasLength(1),
+          reason: 'the two records really do share one id');
+      final warning = snapshot.warnings.whereType<DuplicateLinkedId>().single;
+      expect(warning.holdings.map((h) => h.smartschool), ['twin-a', 'twin-b']);
+      // The duplicate-mail warning is still raised alongside it — the two
+      // invariants report different things about the same pair.
+      expect(snapshot.warnings.whereType<ResolveDuplicateMail>(), hasLength(1));
+      // And one person, not two, for the dashboard.
+      expect(snapshot.smartschool.total, 1);
+    });
+
+    test('the ordinary resolver keeps every snapshot collision-free', () {
+      // The guard must stay invisible on healthy data — nothing about it may
+      // change what an ordinary pass reports.
+      final snapshot = link(
+        wisaSnap([
+          wisaStudent('W1'),
+          wisaStudent('W2')
+        ], staff: [
+          wisaStaff('PEE'),
+        ]),
+        ssSnap([ssAccount(uid: 'jane', accountId: 'W1', mail: 'jane@s.be')]),
+        azSnap(const []),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+      expect(snapshot.warnings.whereType<DuplicateLinkedId>(), isEmpty);
+      expect(snapshot.wisa.total, 3);
+    });
+  });
 }
