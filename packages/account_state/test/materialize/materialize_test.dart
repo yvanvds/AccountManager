@@ -777,6 +777,41 @@ void main() {
       expect(restored.isDefaultAlternative, isTrue);
     });
 
+    test('a count field survives a candidate JSON round-trip (#300)', () {
+      // A stored candidate is what a passive session renders. If the count
+      // shape is dropped on the way through Cosmos, that session shows
+      // "leden toevoegen: ∅ → 21" again while the live one no longer does.
+      final original = CandidateAction(
+        family: 'group',
+        kind: 'SyncAzureClassGroupMembers',
+        system: core.Origin.azure,
+        summary: 'Werk het ledenbestand van GBS-1A bij',
+        fields: [
+          FieldChange.count('leden toevoegen', 21),
+          const FieldChange('mail', after: 'GBS-1A@student.school.example'),
+        ],
+      );
+      final restored = CandidateAction.fromJson(original.toJson());
+      expect(restored.fields.first.isCount, isTrue);
+      expect(restored.fields.first.after, '21');
+      expect(restored.fields.first.before, isNull);
+      expect(restored.fields.last.isCount, isFalse,
+          reason: 'an ordinary transition is unaffected');
+    });
+
+    test('a field written before #300 reads back as a transition', () {
+      final restored = CandidateAction.fromJson(<String, dynamic>{
+        'family': 'group',
+        'kind': 'SyncAzureClassGroupMembers',
+        'system': core.Origin.azure.toJson(),
+        'summary': 'Werk het ledenbestand bij',
+        'fields': [
+          {'field': 'leden toevoegen', 'after': '21'},
+        ],
+      });
+      expect(restored.fields.single.isCount, isFalse);
+    });
+
     test('buildRollups counts the choice once at every level', () {
       final account = _account(candidates: [
         candidate('UnregisterStudentFromSmartschool',

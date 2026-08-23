@@ -86,6 +86,10 @@ class CandidateAction {
                 'field': f.field,
                 if (f.before != null) 'before': f.before,
                 if (f.after != null) 'after': f.after,
+                // Which of the two shapes this is (#300). A count read back as
+                // a transition renders as "∅ → 21" again, so a passive session
+                // would show the very thing the live one no longer does.
+                if (f.isCount) 'count': true,
               },
           ],
         'canApply': canApply,
@@ -105,6 +109,9 @@ class CandidateAction {
               (f as Map<String, dynamic>)['field'] as String,
               before: f['before'] as String?,
               after: f['after'] as String?,
+              // Absent in documents written before #300, which read back as
+              // the transitions they were.
+              isCount: f['count'] as bool? ?? false,
             ),
         ],
         canApply: json['canApply'] as bool? ?? true,

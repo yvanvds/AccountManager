@@ -147,6 +147,63 @@ void main() {
     expect(find.byKey(ValueKey('entry-dry-run-$id')), findsOneWidget);
   });
 
+  testWidgets('an open account card states its summary once (#300)',
+      (WidgetTester tester) async {
+    // The same duplication the class rows had, on the tile this screen owns.
+    // The collapsed card previews its decisions; since #281 the expanded body
+    // leads each of them with the very same sentence, so opening the card
+    // printed every summary twice, one line directly above the other. Jane
+    // raises two — an Azure rename and a Smartschool class move — so this also
+    // pins that the preview goes as a whole rather than per decision.
+    _useTallWindow(tester);
+    final harness = ReconcileHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+    await _drill(tester, node: 'Jaar 3', classroom: '3C');
+
+    final id = harness.controller.classroomPendingEntries.single.targetId;
+    final Finder tile = find.byKey(ValueKey('entry-student-$id'));
+    const List<String> summaries = <String>[
+      'Wijzig de naam in Azure',
+      'Wijzig de klas in Smartschool',
+    ];
+
+    for (final summary in summaries) {
+      expect(find.descendant(of: tile, matching: find.text(summary)),
+          findsOneWidget,
+          reason: 'collapsed, $summary is previewed once');
+    }
+
+    await tester.ensureVisible(tile);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+
+    for (final (index, summary) in summaries.indexed) {
+      expect(
+        find.descendant(of: tile, matching: find.text(summary)),
+        findsOneWidget,
+        reason: 'the decision heading takes the preview line\'s place rather '
+            'than joining it',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey('entry-choice-student-$id-$index')),
+          matching: find.text(summary),
+        ),
+        findsOneWidget,
+        reason: 'and the half that survives is the heading, which groups the '
+            'diff below it',
+      );
+    }
+    // Still led by the system it writes to (#298): with the preview gone, the
+    // headings are the only place on an open card that says so.
+    expect(find.descendant(of: tile, matching: find.text('Smartschool ·')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('Office 365 ·')),
+        findsOneWidget);
+  });
+
   testWidgets('cancelling the apply dialog writes nothing (#154)',
       (WidgetTester tester) async {
     _useTallWindow(tester);

@@ -421,6 +421,62 @@ void main() {
   });
 
   testWidgets(
+      'an open row states its summary once, and its member counts as counts '
+      '(#300)', (WidgetTester tester) async {
+    // Class `1A` raises one decision: the Office 365 roster write. Collapsed,
+    // the row previews it; since #281 the expanded body leads that decision
+    // with the very same sentence, so opening the row printed it twice, one
+    // line directly above the other. And the roster numbers went through the
+    // before/after template — "leden toevoegen: ∅ → 1" — which claims a field
+    // used to be empty and is becoming 1, true of nothing that happens here.
+    _useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    const String summary =
+        'Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)';
+    const ValueKey<String> block = ValueKey('entry-choice-group-1A-0');
+
+    // Collapsed, the preview says it — once.
+    expect(find.descendant(of: _row('1A'), matching: find.text(summary)),
+        findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-1A')));
+    await tester.pumpAndSettle();
+
+    // Open, it is still said once: the decision's heading takes the preview's
+    // place rather than joining it.
+    expect(
+      find.descendant(of: _row('1A'), matching: find.text(summary)),
+      findsOneWidget,
+      reason: 'the heading replaces the collapsed preview, it does not repeat '
+          'it',
+    );
+    expect(
+      find.descendant(of: find.byKey(block), matching: find.text(summary)),
+      findsOneWidget,
+      reason: 'and the surviving half is the heading, which groups the diff '
+          'below it',
+    );
+    // It is still led by the system it writes to (#298) — with the preview
+    // gone, this heading is the only thing on the card that says so.
+    expect(
+      find.descendant(
+          of: find.byKey(block), matching: find.text('Office 365 ·')),
+      findsOneWidget,
+    );
+
+    // And the numbers read as the quantities they are.
+    expect(find.text('leden toevoegen: 1'), findsOneWidget);
+    expect(find.text('leden verwijderen: 1'), findsOneWidget);
+    expect(find.textContaining('∅ →'), findsNothing,
+        reason: 'a count is not a field whose old value was empty');
+  });
+
+  testWidgets(
       'a row with two decisions puts each one\'s fields under its own heading '
       '(#281)', (WidgetTester tester) async {
     // `5WW1` is new to Smartschool *and* has no Office 365 group, so its row

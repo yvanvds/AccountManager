@@ -228,6 +228,33 @@ void main() {
       );
     });
 
+    test('the member numbers are counts, not before/after transitions (#300)',
+        () {
+      // The reported card read "leden toevoegen: ∅ → 21" — the diff template
+      // claiming a field used to be empty and is becoming 21, which is not
+      // what happens to anything. The numbers are quantities this write acts
+      // on, and the description has to say so or every renderer repeats it.
+      final fields = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(),
+          azure: azureClassGroup('3A', memberIds: const ['az-old']),
+        ),
+        azurePlanFor: (_) => azurePlan(
+          membersToAdd: const ['az-new', 'az-second'],
+          membersToRemove: const ['az-old'],
+        ),
+      ).single.describeChanges().fields;
+
+      expect(
+          fields.map((f) => f.field), ['leden toevoegen', 'leden verwijderen']);
+      expect(fields.every((f) => f.isCount), isTrue);
+      expect(fields.map((f) => f.after), ['2', '1']);
+      expect(fields.every((f) => f.before == null), isTrue,
+          reason: 'a count has no "before" half to diff against');
+      expect(fields.first.toString(), 'FieldChange(leden toevoegen: 2)');
+    });
+
     test('membership in sync raises nothing', () {
       final actions = groupActionsFor(
         linkedGroup(

@@ -657,11 +657,12 @@ class _SectionTitle extends StatelessWidget {
 
 /// One class of the inventory.
 ///
-/// A class with live work is an [ExpansionTile] keyed exactly as the Acties
+/// A class with live work is a [PendingCardTile] keyed exactly as the Acties
 /// entry tiles are (`entry-group-<klas>`), so opening it offers the same
-/// radios, the same per-field diff and the same dry-run / apply pair. A class
-/// with nothing to do — the majority, and the reason this tab exists — is a
-/// plain card: name, description, three system cells.
+/// radios, the same per-field diff and the same dry-run / apply pair — and
+/// gives way with the same preview lines (#300). A class with nothing to do —
+/// the majority, and the reason this tab exists — is a plain card: name,
+/// description, three system cells.
 class _ClassRow extends StatelessWidget {
   const _ClassRow({
     required this.controller,
@@ -707,27 +708,33 @@ class _ClassRow extends StatelessWidget {
       ],
     );
 
-    final Widget body = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        if (group.description.isNotEmpty)
-          Text(group.description, style: text.bodySmall),
-        const SizedBox(height: PlinkSpacing.s2),
-        _SystemRow(group: group, work: _workSystems()),
-        for (final line in _lines(entry, group)) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s1),
-          ActionLine(
-            system: line.system,
-            line: line.text,
-            style: entry == null
-                ? text.bodySmall
-                    ?.copyWith(color: Theme.of(context).disabledColor)
-                : text.bodySmall,
-          ),
-        ],
-      ],
-    );
+    // The row's own body: what the class *is* (description, three system
+    // cells), and — while [showLines] — a preview of what it owes. The preview
+    // is dropped on an open card, because the expanded body leads every
+    // decision with the same sentence (#300); the cells and the description are
+    // facts about the class and stay either way.
+    Widget body({required bool showLines}) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (group.description.isNotEmpty)
+              Text(group.description, style: text.bodySmall),
+            const SizedBox(height: PlinkSpacing.s2),
+            _SystemRow(group: group, work: _workSystems()),
+            if (showLines)
+              for (final line in _lines(entry, group)) ...<Widget>[
+                const SizedBox(height: PlinkSpacing.s1),
+                ActionLine(
+                  system: line.system,
+                  line: line.text,
+                  style: entry == null
+                      ? text.bodySmall
+                          ?.copyWith(color: Theme.of(context).disabledColor)
+                      : text.bodySmall,
+                ),
+              ],
+          ],
+        );
 
     // Every row is addressable by its class name, whether or not it has work —
     // the inventory is the thing being verified, so a test (and the element
@@ -745,7 +752,9 @@ class _ClassRow extends StatelessWidget {
           children: <Widget>[
             title,
             const SizedBox(height: PlinkSpacing.s2),
-            body,
+            // Nothing to expand, so nothing repeats it: a passive row keeps its
+            // candidate lines.
+            body(showLines: true),
           ],
         ),
       );
@@ -755,19 +764,10 @@ class _ClassRow extends StatelessWidget {
       key: rowKey,
       margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
       decoration: decoration,
-      child: ExpansionTile(
-        key: ValueKey('entry-group-${entry.targetId}'),
-        shape: const Border(),
-        collapsedShape: const Border(),
+      child: PendingCardTile(
+        tileKey: ValueKey('entry-group-${entry.targetId}'),
         title: title,
-        subtitle: body,
-        childrenPadding: const EdgeInsets.fromLTRB(
-          PlinkSpacing.s5,
-          0,
-          PlinkSpacing.s5,
-          PlinkSpacing.s4,
-        ),
-        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        subtitle: (context, expanded) => body(showLines: !expanded),
         children: entryDetail(context, controller: controller, entry: entry),
       ),
     );
@@ -777,6 +777,9 @@ class _ClassRow extends StatelessWidget {
   /// stored candidates in a passive one — each worded exactly as Acties words
   /// it, so an either/or reads as the one decision it is (#251), and each
   /// carrying the system it writes to so [ActionLine] can lead with it (#298).
+  ///
+  /// A preview, and only that: an open card renders the decisions themselves
+  /// and these lines stand down (#300).
   List<({core.Origin system, String text})> _lines(
     PendingAccountEntry? entry,
     MaterializedGroup group,

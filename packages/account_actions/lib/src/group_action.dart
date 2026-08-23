@@ -928,13 +928,15 @@ class SyncAzureClassGroupMembers extends GroupAction {
         summary: 'Werk het ledenbestand van ${plan.displayName} bij '
             '(${plan.membersToAdd.length} toevoegen, '
             '${plan.membersToRemove.length} verwijderen)',
+        // Counts, not transitions (#300): "21 members will be added" is a
+        // quantity this write acts on, and describing it as a field whose old
+        // value was empty and whose new value is 21 describes nothing that
+        // happens to this group.
         fields: [
           if (plan.membersToAdd.isNotEmpty)
-            FieldChange('leden toevoegen',
-                after: '${plan.membersToAdd.length}'),
+            FieldChange.count('leden toevoegen', plan.membersToAdd.length),
           if (plan.membersToRemove.isNotEmpty)
-            FieldChange('leden verwijderen',
-                after: '${plan.membersToRemove.length}'),
+            FieldChange.count('leden verwijderen', plan.membersToRemove.length),
         ],
       );
 

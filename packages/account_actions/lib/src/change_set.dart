@@ -1,19 +1,53 @@
 import 'package:account_core/account_core.dart' show Origin;
 
-/// One field-level change an action would make, for the diff UI.
+/// One field-level detail of an action's diff, in one of two shapes.
 ///
-/// [before] and [after] are the human-readable current and proposed values;
-/// either may be null (a field being set for the first time, or cleared).
+/// **A transition** — the default constructor. [before] and [after] are the
+/// human-readable current and proposed values; either may be null (a field
+/// being set for the first time, or cleared).
+///
+/// **A quantity** — [FieldChange.count]. Some actions describe themselves with
+/// a number rather than with a value moving from one thing to another: a class
+/// group's roster write adds 21 members and removes 17, and neither number is
+/// the new value of a field. Rendered through the transition template that read
+/// `leden toevoegen: ∅ → 21` — a claim that a field used to be empty and is
+/// becoming 21, which is not what happened to anything (#300). [isCount] is how
+/// a description says which of the two it is, so the UI can state a quantity
+/// instead of diffing it.
 class FieldChange {
   final String field;
+
+  /// The current value — always null for a count, which has no "before" half.
   final String? before;
+
+  /// The proposed value, or — when [isCount] — the quantity itself.
   final String? after;
 
-  const FieldChange(this.field, {this.before, this.after});
+  /// Whether [after] is a quantity this action acts on rather than the value
+  /// the field is moving to (#300).
+  final bool isCount;
+
+  const FieldChange(
+    this.field, {
+    this.before,
+    this.after,
+    this.isCount = false,
+  }) : assert(
+          !isCount || before == null,
+          'a count states one number; it has no "before" half',
+        );
+
+  /// [amount] things this action will act on — members added, members removed.
+  ///
+  /// The number lands in [after] so every consumer that reads a field's value
+  /// keeps working; [isCount] is what stops it being read as a transition.
+  FieldChange.count(String field, int amount)
+      : this(field, after: '$amount', isCount: true);
 
   @override
-  String toString() =>
-      'FieldChange($field: ${before ?? '∅'} → ${after ?? '∅'})';
+  String toString() => isCount
+      ? 'FieldChange($field: $after)'
+      : 'FieldChange($field: ${before ?? '∅'} → ${after ?? '∅'})';
 }
 
 /// A pure description of what an action would change, produced by

@@ -2676,6 +2676,76 @@ void main() {
   });
 
   testWidgets(
+      'an expanded card states its summary once and its member counts as '
+      'counts end-to-end (#300)', (WidgetTester tester) async {
+    // The reported card, in the real app: `1A` exists everywhere and carries
+    // one decision, the Office 365 roster write. It read
+    //
+    //   Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)
+    //   **Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)**
+    //   leden toevoegen: ∅ → 1
+    //   leden verwijderen: ∅ → 1
+    //
+    // — the collapsed preview and the #281 decision heading saying the same
+    // sentence one line apart, and two quantities pushed through the
+    // before/after diff template.
+    //
+    // Asserted end-to-end rather than on the widget alone, because both halves
+    // are claims about *composition*. "Once" is a count over the whole card as
+    // the inventory builds it, and this tab also renders a same-situation bulk
+    // header carrying that identical summary — a widget test scoped to one row
+    // cannot see that the page as a whole still reads correctly. And the count
+    // shape starts in the dispatch's `ChangeSet`, travels through the
+    // alternative collapse, and only becomes a line of text in the tile.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    const String summary =
+        'Werk het ledenbestand van GBS-1A bij (1 toevoegen, 1 verwijderen)';
+    final Finder row = find.byKey(const ValueKey('class-row-1A'));
+    expect(
+        find.descendant(of: row, matching: find.text(summary)), findsOneWidget);
+
+    final Finder tile = find.byKey(const ValueKey('entry-group-1A'));
+    await tester.ensureVisible(tile);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+
+    // Once, still — the decision's heading replaced the preview instead of
+    // joining it, and it is the heading that stayed: it groups the diff under
+    // it and it still names the system the write lands in (#281/#298).
+    expect(
+      find.descendant(of: row, matching: find.text(summary)),
+      findsOneWidget,
+      reason: 'the card said it twice, one line above the other',
+    );
+    final Finder block = find.byKey(const ValueKey('entry-choice-group-1A-0'));
+    expect(find.descendant(of: block, matching: find.text(summary)),
+        findsOneWidget);
+    expect(find.descendant(of: block, matching: find.text('Office 365 ·')),
+        findsOneWidget);
+
+    // The numbers under it read as the quantities they are.
+    expect(
+        find.descendant(of: block, matching: find.text('leden toevoegen: 1')),
+        findsOneWidget);
+    expect(
+        find.descendant(of: block, matching: find.text('leden verwijderen: 1')),
+        findsOneWidget);
+    expect(find.textContaining('∅ →'), findsNothing,
+        reason: 'a count is not a field whose old value was empty');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an Office 365 group Graph already holds under our address is adopted, '
       'and the create stops being offered end-to-end (#280)',
       (WidgetTester tester) async {

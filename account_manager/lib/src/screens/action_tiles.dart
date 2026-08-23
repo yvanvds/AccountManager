@@ -805,6 +805,87 @@ String pendingChoiceLine(PendingChoice c) {
   return c.selected.canApply ? summary : '$summary (manueel)';
 }
 
+/// The expandable card both action screens build a record with pending work on
+/// — the Acties [PendingEntryTile] and the Klasgroepen class row.
+///
+/// It exists for one rule neither screen can hold on its own (#300). A
+/// collapsed card previews its decisions as summary lines; since #281 the
+/// expanded body *leads every decision with the very same sentence*, because
+/// that heading is what tells the operator which diff belongs to which
+/// decision. So on a card carrying one action the operator read it twice, one
+/// line directly above the other:
+///
+/// > Werk het ledenbestand van SSM-1A bij (21 toevoegen, 17 verwijderen)
+/// > **Werk het ledenbestand van SSM-1A bij (21 toevoegen, 17 verwijderen)**
+///
+/// The heading is the one that has to stay: it groups the block under it, it is
+/// uniform across every decision (#281), and it is what #295's details pane —
+/// which has no collapsed row at all — will read [entryDetail] for. So the
+/// *preview* gives way instead. [subtitle] is therefore built with whether the
+/// card is open, which is the one thing an [ExpansionTile] does not hand its
+/// own subtitle.
+class PendingCardTile extends StatefulWidget {
+  const PendingCardTile({
+    super.key,
+    required this.tileKey,
+    this.leading,
+    required this.title,
+    required this.subtitle,
+    required this.children,
+  });
+
+  /// Names the tile itself (`entry-<family>-<targetId>`). Deliberately not this
+  /// widget's own [key]: the screens' tests and #295's row builder address the
+  /// [ExpansionTile], and two widgets answering to one key would make
+  /// `find.byKey` ambiguous.
+  final Key tileKey;
+
+  final Widget? leading;
+  final Widget title;
+
+  /// The collapsed body, told whether the card is open so it can drop what the
+  /// expanded body now says. `null` renders no subtitle at all.
+  final Widget? Function(BuildContext context, bool expanded) subtitle;
+
+  final List<Widget> children;
+
+  @override
+  State<PendingCardTile> createState() => _PendingCardTileState();
+}
+
+class _PendingCardTileState extends State<PendingCardTile> {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(PendingCardTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A new [tileKey] builds a fresh [ExpansionTile], which starts collapsed.
+    // Without this the two would drift apart — an open card recycled onto
+    // another record would hide its preview while showing nothing instead.
+    if (oldWidget.tileKey != widget.tileKey) _expanded = false;
+  }
+
+  @override
+  Widget build(BuildContext context) => ExpansionTile(
+        key: widget.tileKey,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: widget.leading,
+        title: widget.title,
+        subtitle: widget.subtitle(context, _expanded),
+        onExpansionChanged: (bool expanded) =>
+            setState(() => _expanded = expanded),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          PlinkSpacing.s5,
+          0,
+          PlinkSpacing.s5,
+          PlinkSpacing.s4,
+        ),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        children: widget.children,
+      );
+}
+
 /// One account's pending resolution (#110): a single expandable row showing the
 /// selected summary, the mutually-exclusive choice (as radios) when there is
 /// one, the per-field diff, and per-entry dry-run / apply.
@@ -829,33 +910,28 @@ class PendingEntryTile extends StatelessWidget {
         border: Border.all(color: hairline),
         borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
       ),
-      child: ExpansionTile(
-        key: ValueKey('entry-${entry.family}-${entry.targetId}'),
-        shape: const Border(),
-        collapsedShape: const Border(),
+      child: PendingCardTile(
+        tileKey: ValueKey('entry-${entry.family}-${entry.targetId}'),
         leading: PlinkBadge(entry.family),
         title: Text(entry.target, style: text.bodyLarge),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            // Each line led by the system it writes to (#298): one card can
-            // raise work in two systems and the summaries do not always say
-            // where they land.
-            for (final c in entry.choices)
-              ActionLine(
-                system: c.selected.changes.system,
-                line: pendingChoiceLine(c),
+        // The whole subtitle here is the preview, so an open card has none:
+        // every line it holds is repeated as a heading below (#300).
+        subtitle: (context, expanded) => expanded
+            ? null
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  // Each line led by the system it writes to (#298): one card
+                  // can raise work in two systems and the summaries do not
+                  // always say where they land.
+                  for (final c in entry.choices)
+                    ActionLine(
+                      system: c.selected.changes.system,
+                      line: pendingChoiceLine(c),
+                    ),
+                ],
               ),
-          ],
-        ),
-        childrenPadding: const EdgeInsets.fromLTRB(
-          PlinkSpacing.s5,
-          0,
-          PlinkSpacing.s5,
-          PlinkSpacing.s4,
-        ),
-        expandedCrossAxisAlignment: CrossAxisAlignment.start,
         children: entryDetail(context, controller: controller, entry: entry),
       ),
     );
@@ -955,6 +1031,13 @@ String choiceHeading(PendingChoice choice) =>
 /// was on the card. Under its own heading each diff belongs to something, and a
 /// card with two decisions reads as two.
 ///
+/// That heading is also why an open card drops its collapsed preview (#300):
+/// the two say the same sentence, and on a card carrying one decision the
+/// operator read it twice in a row. The heading is the half that stays — it
+/// groups the block under it, and [entryDetail] has to stand on its own in
+/// #295's details pane, where there is no collapsed row to have previewed
+/// anything.
+///
 /// The verdict lines pooled the same way and for the same reason (#283): one
 /// apply on that card produces two of them, and below both decisions they said
 /// what happened without saying to which question. So the block carries the part
@@ -993,8 +1076,14 @@ class EntryChoiceBlock extends StatelessWidget {
           Divider(height: 1, color: Theme.of(context).dividerColor),
           const SizedBox(height: PlinkSpacing.s3),
         ],
-        Text(
-          choiceHeading(choice),
+        // Led by the system it writes to, exactly as the collapsed preview is
+        // (#298). Since #300 that preview gives way while the card is open, so
+        // this heading is the only thing left saying where the write lands —
+        // and a summary that names a group ("Werk het ledenbestand van GBS-1A
+        // bij") does not say it.
+        ActionLine(
+          system: choice.selected.changes.system,
+          line: choiceHeading(choice),
           style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: PlinkSpacing.s1),
@@ -1243,6 +1332,18 @@ class ChoiceControl extends StatelessWidget {
   }
 }
 
+/// How one [actions.FieldChange] reads on a card.
+///
+/// Two shapes, because a `ChangeSet` describes two kinds of thing (#300). A
+/// **transition** is a value moving, and reads as one: `mail: ∅ → 1a@…`. A
+/// **count** is a quantity the action acts on, and reads as the number it is:
+/// `leden toevoegen: 21`. Put through the transition template a count claimed
+/// the field used to be empty and is becoming 21 — a sentence about nothing
+/// that happens to the group.
+String fieldChangeLine(actions.FieldChange f) => f.isCount
+    ? '${f.field}: ${f.after}'
+    : '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}';
+
 /// The per-field diff (or a lifecycle note) for a single option — the one that
 /// stands alone, or the one selected inside a [ChoiceControl].
 class OptionDetail extends StatelessWidget {
@@ -1270,10 +1371,7 @@ class OptionDetail extends StatelessWidget {
               for (final f in fields)
                 Padding(
                   padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
-                  child: Text(
-                    '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}',
-                    style: text.bodySmall,
-                  ),
+                  child: Text(fieldChangeLine(f), style: text.bodySmall),
                 ),
             ],
     );
