@@ -168,9 +168,10 @@ String systemIndicatorTooltip(core.Origin system, SystemIndicatorState state) =>
 /// One system cell of a row: the icon in its state's colour, the system's Dutch
 /// name, and optionally the thing that is (or is not) there.
 ///
-/// Shared so Klasgroepen's inventory rows and the flat Acties list of #295 mean
+/// Shared so Klasgroepen's inventory rows and the flat Acties list (#295) mean
 /// the same thing by a coloured cell — the point of #298. Callers give it a
-/// [key] so a test (and #295's row builder) can address one cell of one row.
+/// [key] — `class-cell-<klas>-<systeem>`, `account-cell-<id>-<systeem>` — so a
+/// test can address one cell of one row.
 class SystemIndicatorCell extends StatelessWidget {
   const SystemIndicatorCell({
     super.key,

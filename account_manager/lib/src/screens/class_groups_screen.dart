@@ -12,6 +12,12 @@ import '../reconcile/reconcile_controller.dart';
 import '../search/name_query.dart';
 import 'action_tiles.dart';
 
+// The class-name ordering moved to the shared tile library when the flat Acties
+// list grew a "sorteer op klas" of its own (#295) — both screens order a class
+// list the same way or neither is scannable. Re-exported so it stays importable
+// from here, exactly as it was before it moved.
+export 'action_tiles.dart' show compareClassNames;
+
 /// The **Klasgroepen** tab (#227): the full class inventory.
 ///
 /// Every class the last sync linked is a row here — not only the ones that
@@ -506,26 +512,6 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
           ),
         ),
       ];
-}
-
-/// Orders class names the way an operator reads a class list: by year first and
-/// numerically (`2A` before `10A`), then alphabetically, so `2F` sorts beside
-/// its sub-groups rather than between `20A` and `21B`.
-int compareClassNames(String a, String b) {
-  final ya = _leadingYear(a);
-  final yb = _leadingYear(b);
-  if (ya != yb) {
-    // A non-numeric class (`OKAN`) sorts after every numbered year.
-    if (ya == null) return 1;
-    if (yb == null) return -1;
-    return ya - yb;
-  }
-  return a.toLowerCase().compareTo(b.toLowerCase());
-}
-
-int? _leadingYear(String name) {
-  final match = RegExp(r'^\s*(\d+)').firstMatch(name);
-  return match == null ? null : int.tryParse(match.group(1)!);
 }
 
 /// The tab title plus the one-line state of the inventory.

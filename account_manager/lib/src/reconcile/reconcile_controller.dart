@@ -654,10 +654,6 @@ class ReconcileController extends ChangeNotifier {
 
   SyncState _syncState = SyncState.initial;
   List<Rollup> _rollups = const [];
-  Rollup? _selectedClassroom;
-  List<String> _expandedPath = const <String>[];
-  List<MaterializedAccount>? _classroomAccounts;
-  bool _loadingClassroom = false;
   List<MaterializedGroup>? _groupDocs;
   bool _loadingGroups = false;
   SyncLease? _lock;
@@ -682,6 +678,13 @@ class ReconcileController extends ChangeNotifier {
   LinkedState? _pendingCacheKey;
   int _choicesVersion = 0;
   int _pendingCacheChoicesVersion = -1;
+
+  /// Memoized [linkedAccounts] (#295), keyed on the identity of the linked view
+  /// exactly as [_pendingEntriesCache] is. The operator's alternative picks do
+  /// **not** enter into it: a document says where an account lives and which
+  /// systems hold it, never which resolution was chosen for it.
+  List<MaterializedAccount>? _accountDocsCache;
+  LinkedState? _accountDocsKey;
 
   /// The persisted operator decisions loaded from the shared store (#109/#110),
   /// used to tell which duplicate-mail collisions have been accepted. Refreshed
@@ -1014,24 +1017,43 @@ class ReconcileController extends ChangeNotifier {
           for (final c in e.choices) PendingDecision(entry: e, choice: c),
       ];
 
-  /// The live pending entries for the accounts of the currently-open classroom
-  /// (#154): the interactive tiles the Actions drill-down builds for one class,
-  /// joined to the lazily-loaded classroom docs by account id. Empty before a
-  /// classroom is opened, or in a passive session with no live view to act on.
-  List<PendingAccountEntry> get classroomPendingEntries {
-    final accounts = _classroomAccounts;
-    if (accounts == null || _linked == null) return const [];
-    final ids = <String>{for (final a in accounts) a.id.value};
-    return [
-      for (final e in pendingEntries)
-        if (ids.contains(e.targetId)) e,
-    ];
+  /// Every account and staff member of the linked view as a document, derived
+  /// school-wide from the view in hand (#295) — the inventory the flat Acties
+  /// list renders its rows from, joined to [pendingEntries] by id.
+  ///
+  /// Derived rather than read: the store's own per-account documents are made by
+  /// exactly this [materialize] call, but [LinkedStore] only offers them one
+  /// classroom partition at a time — which is what the jaar → klas drill-down
+  /// was shaped around. Since #287 every session holds the linked view itself,
+  /// so the whole roster is already in memory and the school-wide list needs no
+  /// read at all. Deriving it here also keeps Acties, Klasgroepen and the
+  /// Synchronisatie overview reading one set of facts rather than three.
+  ///
+  /// Memoized on the identity of the linked view, for the reason
+  /// [pendingEntries] is: the screen reads it several times per frame, and a
+  /// September roster is ~9.6k accounts. A failed derivation answers empty and
+  /// says so once — the list is then simply not offered, which is honest.
+  List<MaterializedAccount> get linkedAccounts {
+    final linked = _linked;
+    if (linked == null) return const [];
+    if (identical(_accountDocsKey, linked) && _accountDocsCache != null) {
+      return _accountDocsCache!;
+    }
+    List<MaterializedAccount> docs;
+    try {
+      docs = materialize(
+        linked,
+        generation: _syncState.generation,
+        schoolLabels: _schoolLabels(),
+      ).accounts;
+    } on Object catch (e) {
+      log.addError(core.Origin.all, 'Kon de accountlijst niet opbouwen: $e');
+      docs = const <MaterializedAccount>[];
+    }
+    _accountDocsKey = linked;
+    _accountDocsCache = docs;
+    return docs;
   }
-
-  /// [classroomPendingEntries] grouped into same-situation cohorts, so the
-  /// per-class list keeps the bulk-apply affordance of the old flat list (#154).
-  List<SituationCohort> get classroomPendingSituations =>
-      situationCohorts(classroomPendingEntries);
 
   /// The live group ("Klasgroepen") pending entries (#154): the interactive
   /// tiles the group drill-down builds. Empty in a passive session.
@@ -1577,20 +1599,24 @@ class ReconcileController extends ChangeNotifier {
     return null;
   }
 
-  /// The top-level nodes of the **student** drill-down (#210): one merged
-  /// grade-year node per year across *every* managed school, then the
-  /// "Niet toegewezen" bucket.
+  /// The **student** grade-year aggregates (#210): one merged node per year
+  /// across *every* managed school, then the "Niet toegewezen" bucket.
   ///
   /// The WISA school split is administrative, not operational — everyone running
   /// this software treats the managed schools as one school — so the school level
   /// carries no decision and is flattened away here. This is a **view**
   /// projection: the stored rollups keep their school → grade-year → classroom
   /// shape, which matters twice over. `school` is the Cosmos partition key of the
-  /// per-account documents, so a classroom node must keep its real school for
-  /// [openClassroom] to read exactly one partition; and [totalPendingCount],
+  /// per-account documents, so a classroom node keeps its real school and one
+  /// partition can still be read on its own; and [totalPendingCount],
   /// [staffPendingCount], [studentPendingCount], [schoolRollups] and the
   /// per-category summaries all aggregate over [RollupLevel.school], so a passive
   /// session's badges keep reading from data that is still there.
+  ///
+  /// Since #295 Acties no longer *browses* these: the flat account list renders
+  /// straight off the linked view. They stay as the counts every passive surface
+  /// reads, and as the per-class tallies #301 answers "how many other classes
+  /// need attention?" from.
   ///
   /// Ordering is pinned: Jaar 1 … Jaar 7 numerically, then the non-numeric years
   /// ([gradeNodeLabel] renders those as "Overige klassen" — `OKAN` and friends
@@ -1632,8 +1658,8 @@ class ReconcileController extends ChangeNotifier {
   /// A merged grade-year node collects that year's classrooms from **every**
   /// managed school; "Niet toegewezen" skips its always-synthetic grade level and
   /// lists its classrooms ("Zonder klas") directly. Every node returned is a real
-  /// stored classroom rollup, so it still carries the [Rollup.school] partition
-  /// [openClassroom] reads.
+  /// stored classroom rollup, so it still carries its own [Rollup.school]
+  /// partition.
   List<Rollup> studentChildrenOf(Rollup node) {
     final bool unassigned = node.school == unassignedPartition;
     final children = <Rollup>[
@@ -1674,9 +1700,8 @@ class ReconcileController extends ChangeNotifier {
   }
 
   /// The rollup nodes directly under [parentKey] (grade-years of a school, or
-  /// classrooms of a grade-year), alphabetical. The stored parent/child shape —
-  /// what the Personeel tab drills; the student tree flattens it away through
-  /// [studentRollups] / [studentChildrenOf] (#210).
+  /// classrooms of a grade-year), alphabetical — the stored parent/child shape
+  /// the per-class tallies are read from.
   List<Rollup> childrenOf(String parentKey) {
     final children = [
       for (final r in _rollups)
@@ -1685,47 +1710,16 @@ class ReconcileController extends ChangeNotifier {
     return children;
   }
 
-  /// The classroom whose accounts are currently open in the drill-down, or
-  /// `null` when none is selected.
-  Rollup? get selectedClassroom => _selectedClassroom;
-
-  /// The per-account docs of [selectedClassroom], lazily loaded from the store;
-  /// `null` until a classroom is opened.
-  List<MaterializedAccount>? get classroomAccounts => _classroomAccounts;
-
-  /// Whether a classroom drill-down read is in flight.
-  bool get loadingClassroom => _loadingClassroom;
-
-  /// Which accordion nodes the Acties drill-down has open, outermost first
-  /// (#235) — `['rollup-grade-grades|3']` on the flat Leerlingen tree, and
-  /// `['rollup-school-school|staff', 'rollup-grade-grade|staff|Personeel']` on
-  /// the nested Personeel one. Empty means a fully collapsed tree.
-  ///
-  /// It lives up here beside [selectedClassroom] for the reason the bug existed:
-  /// while a class is open the tree is not built at all, so expansion kept
-  /// inside the `ExpansionTile`s themselves died with them and **Overzicht**
-  /// came back fully collapsed. Held one level above the widgets it survives the
-  /// detail view — and a family tab change, which closes the drill-down but
-  /// leaves the other tab's path untouched, the two trees sharing no node key.
-  ///
-  /// One entry **per depth** is what makes it an accordion without breaking the
-  /// nested staff tree: opening a node replaces whichever sibling sat at its
-  /// depth and drops everything below, while its ancestors stay open.
-  List<String> get expandedPath => _expandedPath;
-
-  set expandedPath(List<String> path) {
-    if (_samePath(_expandedPath, path)) return;
-    _expandedPath = List<String>.unmodifiable(path);
-    notifyListeners();
-  }
-
-  static bool _samePath(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
+  // There is deliberately no open-classroom state here any more (#295). The
+  // Acties panel browsed jaar → klas → account because `LinkedStore` offers
+  // `readRollups()` and `readClassroom()` and nothing else, so a session could
+  // only hold one classroom partition at a time. Since #287 every session adopts
+  // the shared linked view at startup, so the whole roster is in `_linked`, and
+  // [linkedAccounts] + [pendingEntries] are both school-wide. `openClassroom`,
+  // `classroomAccounts`, `classroomPendingEntries`, `classroomPendingSituations`
+  // and the accordion's `expandedPath` went with the tree they existed for.
+  // `LinkedStore.readClassroom` itself stays: the store is shared, and the
+  // Synchronisatie overview still reads rollups.
 
   /// The three category summaries the Reconcile overview renders (#163), summed
   /// from the stored rollups so they read in a passive session too: students are
@@ -2277,38 +2271,26 @@ class ReconcileController extends ChangeNotifier {
     }
   }
 
-  /// Re-reads the shared overview (sync state, rollups, lease) and any open
-  /// drill-down from the store — the refetch [onStoreChanged] and
+  /// Re-reads the shared overview (sync state, rollups, lease) and the class
+  /// inventory from the store — the refetch [onStoreChanged] and
   /// [resyncFromStore] share (no pull, no `link()`).
   ///
   /// The overview itself is always re-read: the rollups are the counts the nudge
-  /// was about, and they are small. The *drill-downs* are what [shard] narrows
-  /// (#254) — a one-classroom apply elsewhere in the school has nothing to say
-  /// about the class this session has open, or about the Klasgroepen inventory,
-  /// so those reads are skipped rather than paid for. A null shard (a sync's
+  /// was about, and they are small. The Klasgroepen inventory is what [shard]
+  /// narrows (#254) — an apply elsewhere in the school has nothing to say about
+  /// it, so the read is skipped rather than paid for. A null shard (a sync's
   /// whole-view rewrite, or a reconnect that cannot know what it missed) re-reads
   /// everything, exactly as before.
+  ///
+  /// The Acties list is **not** re-read here and has nothing to re-read (#295):
+  /// it renders off this session's linked view rather than off classroom
+  /// partitions, so the shared store moving under it changes the counts above it
+  /// and not the rows.
   Future<void> _refetchFromStore({ShardRef? shard}) async {
     _syncState = await store.readSyncState();
     _rollups = await store.readRollups();
     _decisions = await store.readDecisions();
     await _refreshLock();
-    final open = _selectedClassroom;
-    if (open != null &&
-        (shard == null ||
-            shard.touchesClassroom(
-              school: open.school,
-              classroom: open.classroom,
-            ))) {
-      try {
-        _classroomAccounts = await store.readClassroom(
-          school: open.school,
-          classroom: open.classroom,
-        );
-      } on Object catch (e) {
-        log.addError(core.Origin.all, 'Kon ${open.label} niet vernieuwen: $e');
-      }
-    }
     if (_groupDocs != null &&
         (shard == null || shard.touchesPartition(groupsPartition))) {
       try {
@@ -2320,44 +2302,15 @@ class ReconcileController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Opens a classroom in the drill-down, lazily reading its per-account docs
-  /// from the store (no pull, no `link()`).
-  Future<void> openClassroom(Rollup classroom) async {
-    _selectedClassroom = classroom;
-    _classroomAccounts = null;
-    _loadingClassroom = true;
-    notifyListeners();
-    try {
-      _classroomAccounts = await store.readClassroom(
-        school: classroom.school,
-        classroom: classroom.classroom,
-      );
-    } on Object catch (e) {
-      log.addError(core.Origin.all, 'Kon ${classroom.label} niet openen: $e');
-      _classroomAccounts = const [];
-    } finally {
-      _loadingClassroom = false;
-      notifyListeners();
-    }
-  }
-
-  /// Closes the classroom drill-down, back to the overview.
-  void closeClassroom() {
-    _selectedClassroom = null;
-    _classroomAccounts = null;
-    notifyListeners();
-  }
-
   /// Reads the **class inventory** — every stored class document — from the
   /// store (no pull, no `link()`). One partition read; there are a few hundred
   /// classes at most.
   ///
-  /// The group-family counterpart of [openClassroom], except that it is not a
-  /// drill-down any more: since #227 Klasgroepen is a top-level tab that lists
-  /// every class rather than a node listing the ones with work, so the read is
-  /// "load the inventory" and there is nothing to close. A second call while a
-  /// read is in flight is a no-op; a sync drops [groupDocs] so the tab re-reads
-  /// the generation it just wrote.
+  /// Since #227 Klasgroepen is a top-level tab that lists every class rather
+  /// than a node listing the ones with work, so the read is "load the inventory"
+  /// and there is nothing to close. A second call while a read is in flight is a
+  /// no-op; a sync drops [groupDocs] so the tab re-reads the generation it just
+  /// wrote.
   Future<void> loadGroups() async {
     if (_loadingGroups) return;
     _loadingGroups = true;
@@ -2685,23 +2638,19 @@ class ReconcileController extends ChangeNotifier {
     // This pass pulled and linked for itself, so the view is no longer somebody
     // else's to attribute (#287).
     _adoptedFrom = null;
-    // A re-link invalidates any open drill-down: the documents behind it were
-    // read for the view [_link] just replaced, and the live entries the screens
-    // join them against are the new one's. The remembered accordion path goes
-    // with them (#235), so it can never point at a node the fresh view no longer
-    // has, and the class inventory goes too — the Klasgroepen tab re-reads
-    // (#227).
+    // A re-link invalidates the cached class inventory: those documents were
+    // read for the view [_link] just replaced, and the live entries the
+    // Klasgroepen rows join them against are the new one's, so the tab re-reads
+    // (#227). The Acties list needs no such line since #295 — it holds no store
+    // documents of its own, and [linkedAccounts] is keyed on the identity of the
+    // linked view that has just been swapped out.
     //
     // Sits here, before [_persist], and not on the far side of the store write
-    // it used to (#289). These are invalidations of *this session's* derived
-    // caches; whether the shared write lands has nothing to do with them, and a
-    // write that timed out or threw used to skip them entirely — leaving the
-    // open classroom joining fresh entries against the previous generation's
-    // documents. Written straight to the fields: the pass notifies once when it
-    // finishes.
-    _selectedClassroom = null;
-    _expandedPath = const <String>[];
-    _classroomAccounts = null;
+    // it used to (#289). This is an invalidation of *this session's* derived
+    // cache; whether the shared write lands has nothing to do with it, and a
+    // write that timed out or threw used to skip it entirely — leaving the rows
+    // joining fresh entries against the previous generation's documents. Written
+    // straight to the field: the pass notifies once when it finishes.
     _groupDocs = null;
     _setProgress(0.9);
     await _persist(_linked!);

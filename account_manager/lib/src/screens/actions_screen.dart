@@ -1,13 +1,8 @@
 import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
-import 'package:account_state/account_state.dart'
-    show
-        MaterializedAccount,
-        Rollup,
-        RollupLevel,
-        candidateChoices,
-        pendingDecisionCount;
+import 'package:account_core/account_core.dart' as core;
+import 'package:account_state/account_state.dart' show MaterializedAccount;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -20,67 +15,99 @@ import 'action_tiles.dart';
 // a screen of its own (#227); re-exported so they stay importable from here.
 export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 
-/// The Actions view (#154): the pending-actions browser, split off the
-/// Reconcile screen so a September changeover's hundreds/thousands of tiles no
-/// longer render inline on one very long page.
+/// The Actions view (#154/#295): one flat, sortable list of accounts on the
+/// left and the selected account's decisions on the right.
 ///
-/// Instead of one flat list, actions are browsed through the rollup drill-down
-/// (#119) — grade-year → classroom for students since #210 dropped the
-/// administrative school level, school → grade-year → classroom for staff: the
-/// tree loads only the aggregate counts, and one classroom's actions are lazily
-/// loaded (via `LinkedStore.readClassroom`) and built only when the operator
-/// drills into it.
-/// The per-class list itself renders through a lazy [SliverList] so only the
-/// on-screen tiles build. Every apply starts from something the operator has
-/// opened — one card, or one decision across the cohort shown above it; the
-/// header's global "Dry-run alles" / "Alles toepassen" pair was removed in #294
-/// precisely because it did not.
+/// ## Why it is flat
 ///
-/// One view-wide switch above the family tab bar — "toon enkel accounts met
-/// acties", on by default — collapses all of that to the work list (#226):
-/// grade-years and classrooms with nothing pending are not rendered, and an
-/// opened classroom lists only accounts with a pending action. What it holds
-/// back is counted and named, so a year the operator expected is explained
-/// rather than merely absent.
+/// It used to browse jaar → klas → account (#119/#210), for two reasons, and
+/// neither survives. The first was rendering cost — a September changeover
+/// produces thousands of tiles — which a lazy [ListView] answers just as well as
+/// a tree does. The second was the read strategy: `LinkedStore` offers
+/// `readRollups()` and `readClassroom()` and nothing else, so a session that had
+/// not synced genuinely could only hold one classroom partition at a time.
+/// Since #287 every session adopts the shared linked view at startup, so the
+/// whole roster is in memory and `pendingEntries` / `linkedAccounts` are both
+/// school-wide.
 ///
-/// The tree is a single-open accordion whose open path outlives the detail view
-/// (#235): drilling into a class and pressing **Overzicht** comes back to the
-/// grade-year it was opened from, and opening another year closes the one that
-/// was open. The path is held on the [ReconcileController], because while a
-/// class is open the tree is not built at all.
+/// What was left was a browsing structure costing two clicks per class to answer
+/// questions that are not per-class: *who is leaving?*, *who is missing from
+/// Office 365?*, *who needs the class change?* Sorting and filtering answer
+/// those; a tree does not.
 ///
-/// Class groups are **not** here. The "Klasgroepen" node used to hang under the
-/// Leerlingen tree and open the classes that raised something; since #227 that
-/// is a top-level tab listing every class, which is a superset of what this node
-/// showed — so it left rather than being maintained in two places.
+/// ## The two questions #295 left open, and how they were settled
 ///
-/// A session with no linked view — passive, or one whose pass failed before it
-/// linked — can only show the stored documents, so both drill-downs say so out
-/// loud rather than quietly swapping in static cards (#214).
+/// **"Sort by system" is a filter, not a sort.** A tri-state indicator has no
+/// meaningful order — green before orange before red is one arbitrary ranking of
+/// six, and sorting by it buries the rows the operator was looking for among the
+/// ones they were not. What they actually mean is *show me everyone with
+/// Smartschool work*, so that is what [_SystemFilter] does: it keeps the rows
+/// whose cell for that one system is **not** green, which answers "who is
+/// missing from Office 365?" and "who has Smartschool work?" with the same
+/// control. Sorting is therefore by name or by class ([_ActionSort]) — the two
+/// orders that really do order — and both the sort and the filter outlive a
+/// selection, because they describe the list and not the row.
 ///
-/// Every action line names the system it writes to (#298): one card can raise
-/// work in two systems and the summaries do not always say where they land. The
-/// three-way system indicator that reads *needs work* rather than *exists*
-/// arrives with the flat list of #295; its vocabulary — and the principle it
-/// shares with Klasgroepen — already lives in `system_indicator.dart`.
+/// **The split folds at [_splitBreakpoint].** Above it the list and the details
+/// sit side by side, which is the layout the screen is for. Below it there is
+/// not enough width for two readable columns — the details pane carries field
+/// diffs and radio labels, so squeezing it wraps every line — so the panes
+/// become one: the list fills the width, selecting a row replaces it with the
+/// details, and **Overzicht** comes back. Measured off the pane's own
+/// constraints rather than the window's, so the navigation rail is already
+/// accounted for.
+///
+/// ## What a row says
+///
+/// The display name, the class, a pending badge, and the three system
+/// indicators — WISA · Smartschool · Office 365 — in the shared vocabulary of
+/// #298: red missing, orange work pending, green in order. That vocabulary lives
+/// in `system_indicator.dart` and is the same one Klasgroepen's rows speak, so a
+/// coloured cell means one thing across the app.
 ///
 /// **Colour by work that can be done on this screen.** Klasgroepen highlights a
 /// row on `MaterializedGroup.needsAttention`, informational notices included
-/// (#225/#250), because there the manual notice *is* the work the operator
-/// does on that screen. Here an informational candidate is a diagnosis of work
-/// that happens elsewhere, so it colours nothing, raises no badge and puts no
-/// row in the work list — `pendingDecisionCount` has counted it zero since
-/// #245/#255, and the indicators apply that same predicate. The case that
-/// forces the rule is `AzureClassGroupMembership`: Office 365 class membership
-/// is a property of the group, so the write is one `SyncAzureClassGroupMembers`
-/// per class on Klasgroepen. Colouring it here would paint ~3000 student rows
-/// orange at the rollover for work this screen structurally cannot do. (#290
-/// proposed the opposite and was closed; the action still declares
-/// `canApply => false`.)
+/// (#225/#250), because there the manual notice *is* the work the operator does
+/// on that screen. Here an informational candidate is a diagnosis of work that
+/// happens elsewhere, so it colours nothing, raises no badge and puts no row in
+/// the work list — `pendingDecisionCount` has counted it zero since #245/#255,
+/// and the indicators apply that same predicate. The case that forces the rule
+/// is `AzureClassGroupMembership`: Office 365 class membership is a property of
+/// the group, so the write is one `SyncAzureClassGroupMembers` per class on
+/// Klasgroepen. Colouring it here would paint ~3000 student rows orange at the
+/// rollover for work this screen structurally cannot do. (#290 proposed the
+/// opposite and was closed; the action still declares `canApply => false`.)
+///
+/// ## What the details pane shows
+///
+/// [entryDetail] — the very blocks #281/#283 built and #300 made self-sufficient
+/// — so every decision on the account leads with its own heading, then its field
+/// diff (or radios), then the verdict of the last pass that answers *that*
+/// decision. Reused rather than reinvented: Klasgroepen renders the identical
+/// blocks inside its expandable rows, and two screens wording one decision two
+/// ways is how an operator stops trusting either.
+///
+/// ## What it deliberately does not do
+///
+/// Nothing here applies an action the operator has not seen. The header's global
+/// "Dry-run alles" / "Alles toepassen" pair went in #294 for exactly that
+/// reason, and the flat list adds no replacement: the only apply is the per-card
+/// pair inside the open details pane. School-wide bulk apply with its cohort
+/// visible first is #296, and checkbox multi-select is #297.
+///
+/// A session that #287 refuses to seed gets one blocking [ReadOnlyNotice] and no
+/// list at all. The old screen offered a read-only browse of the stored
+/// documents instead (#214); that was a second, inert way to browse the same
+/// data, and the whole point of the notice is that there is one thing to do
+/// about it.
+///
+/// Class groups are **not** here. They are a top-level Klasgroepen tab since
+/// #227 — a full class inventory, which is a superset of what an Acties node
+/// could show.
 ///
 /// Shares the one memoized [ReconcileServices] (and so the one
-/// [ReconcileController]) with the Reconcile and Passwords screens, so a sync
-/// run on Reconcile populates the actions shown here.
+/// [ReconcileController]) with the Reconcile, Klasgroepen and Passwords screens,
+/// so a sync run on Reconcile populates the actions shown here.
 class ActionsScreen extends StatefulWidget {
   const ActionsScreen({super.key, required this.bootstrap});
 
@@ -167,50 +194,96 @@ class _ActionsScreenState extends State<ActionsScreen> {
 
 /// The two family tabs (#179): staff and student actions are reviewed as
 /// separate workflows, so the Actions view splits them across a horizontal tab
-/// bar rather than one combined rollup. Index order matches the Reconcile
+/// bar rather than one combined list. Index order matches the Reconcile
 /// overview's category order (Leerlingen, then Personeel).
 enum _ActionFamilyTab { leerlingen, personeel }
 
-/// One family tab's drill-down after the global "toon enkel accounts met acties"
-/// filter has been applied (#226): the nodes that survive, plus a count of what
-/// it removed so the tree can say why a year is missing rather than silently
-/// shrinking.
-class _FilteredTree {
-  const _FilteredTree({
-    required this.roots,
-    required this.hidden,
-  });
+/// How the flat list is ordered (#295).
+///
+/// Two orders, because two things about an account order meaningfully: who they
+/// are, and where they sit. "By system" is not a third — see the class doc of
+/// [ActionsScreen] and [_SystemFilter].
+enum _ActionSort {
+  naam('Naam'),
+  klas('Klas');
 
-  /// The top-level accordion nodes still worth rendering.
-  final List<Rollup> roots;
+  const _ActionSort(this.label);
 
-  /// How many nodes disappeared from what the tree would otherwise show —
-  /// counted as the operator would browse it, so a hidden year counts once
-  /// rather than once per classroom inside it.
-  final int hidden;
+  final String label;
 }
 
-/// The seam the drill-down's expandable nodes are driven through (#235): where
-/// a node's persistent [ExpansibleController] comes from, whether it is the open
-/// one at its depth, and where a tap on it is recorded.
+/// Which system's trouble the list is narrowed to (#295) — the half of "sort by
+/// system" that is actually useful, expressed as what it is.
 ///
-/// Passed down rather than reached for, so [_DrillDownSection] and [_GradeNode]
-/// stay the stateless projections of the rollups they already were — the open
-/// path itself lives on the [ReconcileController], one level above the tree.
-class _Accordion {
-  const _Accordion({
-    required this.controllerFor,
-    required this.isOpen,
-    required this.onToggled,
-  });
+/// A row survives when its cell for that system is not green: it is missing
+/// there, or this screen has applyable work against it. That is one control for
+/// both of the questions the drill-down could not answer — *who is missing from
+/// Office 365?* and *who has Smartschool work?*
+enum _SystemFilter {
+  alle('Alle', null),
+  wisa('WISA', core.Origin.wisa),
+  smartschool('Smartschool', core.Origin.smartschool),
+  azure('Office 365', core.Origin.azure);
 
-  final ExpansibleController Function(String node) controllerFor;
+  const _SystemFilter(this.label, this.origin);
 
-  /// Whether [node] is the open node at that depth of the tree — 0 for a
-  /// top-level node, 1 for a grade-year nested under the staff school.
-  final bool Function(String node, int depth) isOpen;
+  final String label;
 
-  final void Function(String node, int depth, bool open) onToggled;
+  /// The system this filter is about, or `null` for "narrow nothing".
+  final core.Origin? origin;
+}
+
+/// One row of the flat list: the account as a document, plus the live pending
+/// entry for it when it has one.
+///
+/// Both halves, and each answers something the other cannot. The document says
+/// who the account is, which class it sits in and which systems hold it — facts
+/// that are true of an account with nothing to do, which is most of them. The
+/// entry is the work, and is `null` for exactly those.
+class _AccountRow {
+  const _AccountRow({required this.account, this.entry});
+
+  final MaterializedAccount account;
+
+  /// The interactive entry for this account, or `null` when nothing is pending.
+  final PendingAccountEntry? entry;
+
+  String get id => account.id.value;
+
+  /// Whether an apply pass would write anything here — the predicate the
+  /// "toon enkel accounts met acties" switch keeps rows on, and the same one the
+  /// badge counts and the indicators colour by (#245/#255/#298). An entry that
+  /// carries only an informational diagnosis is not work this screen can do.
+  bool get hasWork => entry?.canApply ?? false;
+
+  /// How many applyable decisions the badge quotes.
+  int get pendingCount => entry == null
+      ? 0
+      : entry!.choices.where((c) => c.selected.canApply).length;
+
+  /// The systems this row has applyable work in (#298) — what turns a cell
+  /// orange. Read off the live dispatch, which drops a decision the moment it
+  /// is applied.
+  Set<core.Origin> get workSystems =>
+      entry == null ? const <core.Origin>{} : workSystemsOfEntry(entry!);
+
+  bool presentIn(core.Origin system) => switch (system) {
+        core.Origin.wisa => account.inWisa,
+        core.Origin.smartschool => account.inSmartschool,
+        core.Origin.azure => account.inAzure,
+        _ => true,
+      };
+
+  /// What this row's cell for [system] reads as.
+  SystemIndicatorState stateFor(core.Origin system) => systemIndicatorState(
+        present: presentIn(system),
+        hasWork: workSystems.contains(system),
+      );
+
+  /// What the name search matches against — the display name alone. The class
+  /// has its own control (the sort) and its own column, so folding it into the
+  /// haystack would make "3" match every third-year student.
+  String get searchText => account.label;
 }
 
 class _ActionsBody extends StatefulWidget {
@@ -224,40 +297,46 @@ class _ActionsBody extends StatefulWidget {
 
 class _ActionsBodyState extends State<_ActionsBody>
     with SingleTickerProviderStateMixin {
+  /// Below this many logical pixels of pane width the list and the details stop
+  /// fitting side by side and become one pane with a back button.
+  static const double _splitBreakpoint = 900.0;
+
   late final TabController _tabs;
   int _shownIndex = 0;
 
-  /// The **global** Acties filter (#226), promoted out of the per-classroom bar
-  /// it was born in (#187): with the switch on, everything below it shows only
-  /// what carries an applyable action — grade-year and classroom nodes with a
-  /// zero pending count are not rendered, a grade-year left with no visible
-  /// classroom goes with them, and an opened classroom lists only accounts with
-  /// a pending action.
+  /// The **global** Acties filter (#226): with the switch on, the list holds
+  /// only the accounts carrying an applyable action.
   ///
-  /// One decision per session rather than one per class, so it is deliberately
-  /// **not** reset by a family tab change ([_onTabChanged]): the operator's mode
-  /// outlives whichever tab they happen to be on. Defaults on — the Acties view
-  /// exists to answer "what needs doing?", and the full inventory is the
-  /// exception, not the starting point.
+  /// Defaults on — the Acties view exists to answer "what needs doing?", and the
+  /// full inventory is the exception, not the starting point. Deliberately not
+  /// reset by a family tab change: since #226 it is the view-wide mode, and the
+  /// operator's mode outlives whichever tab they happen to be on.
+  ///
+  /// Since #295 turning it **off** means something it never could before: the
+  /// list then holds every account of the school, in order, three green cells
+  /// each. The drill-down could only ever show the classes and accounts that had
+  /// raised something, because that is all a rollup knew.
   bool _onlyWithActions = true;
 
-  /// The Personeel name search (#187/#217). Unlike [_onlyWithActions] this is a
-  /// per-list lookup, not a mode, so it stays inside the opened classroom and is
-  /// cleared on every family tab change.
+  /// The name search (#187/#217), promoted out of the Personeel classroom list
+  /// it was born in.
+  ///
+  /// It is the list's own lookup now rather than one class's, so — unlike its
+  /// ancestor — it is **not** cleared on a family tab change: the box stays on
+  /// screen across the change, and text vanishing out of a visible box reads as
+  /// a bug rather than as a fresh start.
   final TextEditingController _search = TextEditingController();
 
-  /// One [ExpansibleController] per accordion node the operator has met this
-  /// session, keyed by [_rollupNodeKey] (#235).
+  _ActionSort _sort = _ActionSort.naam;
+  _SystemFilter _system = _SystemFilter.alle;
+
+  /// The selected account's id, or `null` when nothing is selected.
   ///
-  /// An `ExpansionTile` reads [ExpansionTile.initiallyExpanded] once, in its
-  /// `initState`, and thereafter owns its own open/closed state — so nothing
-  /// declarative can close the year that was open when another is tapped, and
-  /// nothing survives the tile being disposed. Both halves of #235 need a handle
-  /// that outlives the tile, which is exactly what an injected controller is:
-  /// held here, it carries a node's expansion across the detail view, and it is
-  /// the one thing that can collapse a sibling on demand.
-  final Map<String, ExpansibleController> _tiles =
-      <String, ExpansibleController>{};
+  /// Held here rather than on the controller — where the drill-down's open
+  /// classroom used to live — because nothing outside this screen needs to know
+  /// it, and because a selection must survive every controller notification a
+  /// running pass emits.
+  String? _selectedId;
 
   ReconcileController get controller => widget.controller;
 
@@ -267,18 +346,10 @@ class _ActionsBodyState extends State<_ActionsBody>
     _tabs = TabController(length: _ActionFamilyTab.values.length, vsync: this)
       ..addListener(_onTabChanged);
     _search.addListener(_onSearchChanged);
-    // Anything that moves the open path without going through a tap — a re-sync
-    // clearing it (#235) — is picked up here and pushed into the tiles.
-    controller.addListener(_syncExpansion);
   }
 
   @override
   void dispose() {
-    controller.removeListener(_syncExpansion);
-    for (final ExpansibleController tile in _tiles.values) {
-      tile.dispose();
-    }
-    _tiles.clear();
     _tabs
       ..removeListener(_onTabChanged)
       ..dispose();
@@ -292,480 +363,345 @@ class _ActionsBodyState extends State<_ActionsBody>
     if (mounted) setState(() {});
   }
 
-  /// The drill-down tree's accordion seam (#235), handed to the widgets that
-  /// build the expandable nodes.
-  _Accordion get _accordion => _Accordion(
-        controllerFor: _tileFor,
-        isOpen: _isNodeOpen,
-        onToggled: _onNodeToggled,
-      );
-
-  /// The persistent controller of one accordion node, created on first render.
-  /// Safe to call from `build`: a controller nobody is listening to yet cannot
-  /// schedule a rebuild.
-  ExpansibleController _tileFor(String node) => _tiles.putIfAbsent(node, () {
-        final ExpansibleController tile = ExpansibleController();
-        if (_isNodeOpenKey(node)) tile.expand();
-        return tile;
-      });
-
-  /// Whether [node] is the open node at [depth] of
-  /// [ReconcileController.expandedPath].
-  bool _isNodeOpen(String node, int depth) {
-    final List<String> path = controller.expandedPath;
-    return path.length > depth && path[depth] == node;
-  }
-
-  bool _isNodeOpenKey(String node) => controller.expandedPath.contains(node);
-
-  /// Records the operator opening or closing one accordion node.
-  ///
-  /// Opening replaces whatever sat at that depth — which is what makes the tree
-  /// single-open — and truncates everything below it, since a node's children
-  /// go away with it. Closing truncates from that depth. The path setter
-  /// notifies, so [_syncExpansion] does the actual collapsing of the sibling
-  /// that just lost its place.
-  void _onNodeToggled(String node, int depth, bool open) {
-    final List<String> path = controller.expandedPath;
-    if (open) {
-      controller.expandedPath = <String>[...path.take(depth), node];
-    } else if (_isNodeOpen(node, depth)) {
-      controller.expandedPath = path.take(depth).toList();
-    }
-  }
-
-  /// Brings every tile controller back in line with the open path. Idempotent —
-  /// [ExpansibleController.expand] / [ExpansibleController.collapse] are no-ops
-  /// on a controller that already agrees — so it is safe to run on every
-  /// controller notification.
-  void _syncExpansion() {
-    if (!mounted) return;
-    final Set<String> open = controller.expandedPath.toSet();
-    for (final MapEntry<String, ExpansibleController> tile in _tiles.entries) {
-      if (open.contains(tile.key)) {
-        tile.value.expand();
-      } else {
-        tile.value.collapse();
-      }
-    }
-  }
-
-  /// Forgets the tail of the open path the global filter has just stopped
-  /// rendering (#226/#235).
-  ///
-  /// Without this, a year the operator opened with the filter off would come
-  /// back open — and, having been invisible in between, unexpectedly so — the
-  /// next time they switched the filter off again.
-  void _pruneExpansion() {
-    final List<String> path = controller.expandedPath;
-    if (path.isEmpty) return;
-    final Set<String> visible = _visibleNodeKeys();
-    var keep = 0;
-    while (keep < path.length && visible.contains(path[keep])) {
-      keep++;
-    }
-    if (keep < path.length) controller.expandedPath = path.take(keep).toList();
-  }
-
-  /// The keys of every accordion node either family tree would render under the
-  /// current filter — both tabs, because the open path outlives a tab change.
-  Set<String> _visibleNodeKeys() {
-    final keys = <String>{
-      for (final root in _studentTree().roots) _rollupNodeKey(root),
-    };
-    for (final root in _staffTree().roots) {
-      keys.add(_rollupNodeKey(root));
-      for (final grade in controller.childrenOf(root.key)) {
-        if (_keepGrade(grade)) keys.add(_rollupNodeKey(grade));
-      }
-    }
-    return keys;
-  }
-
-  /// Whether the Personeel family tab is the selected one — the only tab that
-  /// carries a name search (#187).
-  bool get _staffTab => _tabs.index == _ActionFamilyTab.personeel.index;
-
-  /// The active name search, parsed (empty on any non-Personeel tab, which
-  /// carries no search box).
-  ///
-  /// A single searchbox matches the person's display name ("Voornaam Naam"),
-  /// and since #217 the needle is split on whitespace with every part required
-  /// — the same [NameQuery] the Wachtwoorden → Personeel box uses (#215), so
-  /// the two Personeel searches one tab apart behave identically. Per-part
-  /// matching is what makes either name order work: "peeters jan" finds
-  /// "Jan Peeters", which as one contiguous substring found nobody.
-  NameQuery get _query => NameQuery(_staffTab ? _search.text : '');
-
-  /// The passive-session classroom accounts narrowed by the active filters: the
-  /// "only with actions" toggle keeps just the accounts with an applyable
-  /// candidate (the same `hasPending` predicate the rollup pending counts and
-  /// the tile badge use), and the name search keeps matching display names.
-  List<MaterializedAccount> _filterAccounts(
-      List<MaterializedAccount> accounts) {
-    final query = _query;
-    return [
-      for (final a in accounts)
-        if ((!_onlyWithActions || a.hasPending) && query.matches(a.label)) a,
-    ];
-  }
-
-  /// The active-session pending entries narrowed by the name search. The "only
-  /// with actions" toggle is a no-op here — every pending entry already carries
-  /// an action — so only the search filters (#187).
-  ///
-  /// The cohorts are grouped *from this result* rather than filtered afterwards
-  /// (#292), so a bulk header can only ever cover accounts the search left on
-  /// screen: label, confirmation scope and write come from one list, which is
-  /// the standing rule since #252.
-  List<PendingAccountEntry> _filterEntries(
-    List<PendingAccountEntry> entries,
-  ) {
-    final query = _query;
-    if (query.isEmpty) return entries;
-    return <PendingAccountEntry>[
-      for (final e in entries)
-        if (query.matches(e.target)) e,
-    ];
-  }
-
-  /// Rebuilds the sliver content for the newly-selected family, and — when the
-  /// selected family actually changed — closes any open drill-down so each tab
-  /// opens at its own overview rather than showing the other family's detail.
-  ///
-  /// The name search is cleared, because it is a lookup inside the list that is
-  /// being left behind. [_onlyWithActions] is **not**: since #226 it is the
-  /// view-wide mode, set once above the tab bar, and resetting it here would put
-  /// the switch and the tree it governs out of step on every tab change.
+  /// Rebuilds for the newly-selected family and — when the family actually
+  /// changed — drops the selection, which belongs to the list being left behind.
   void _onTabChanged() {
     final index = _tabs.index;
     if (index != _shownIndex) {
       _shownIndex = index;
-      _search.clear();
-      if (controller.selectedClassroom != null) controller.closeClassroom();
+      _selectedId = null;
     }
     if (mounted) setState(() {});
+  }
+
+  /// Whether the Personeel family tab is the selected one.
+  bool get _staffTab => _tabs.index == _ActionFamilyTab.personeel.index;
+
+  /// The typed needle, parsed. Matching is per whitespace-separated part and
+  /// order-independent — the same [NameQuery] the Wachtwoorden and Klasgroepen
+  /// boxes use (#215/#217/#262), so every search in this app behaves the same.
+  /// Per-part matching is what makes either name order work: "peeters jan"
+  /// finds "Jan Peeters", which as one contiguous substring found nobody.
+  NameQuery get _query => NameQuery(_search.text);
+
+  /// Every account of the selected family, with its live entry joined on — the
+  /// unfiltered list, in the chosen order.
+  List<_AccountRow> _rows() {
+    final byTarget = <String, PendingAccountEntry>{
+      for (final e in controller.pendingEntries)
+        if (e.family != 'group') e.targetId: e,
+    };
+    final rows = <_AccountRow>[
+      for (final doc in controller.linkedAccounts)
+        if (doc.isStaff == _staffTab)
+          _AccountRow(account: doc, entry: byTarget[doc.id.value]),
+    ];
+    rows.sort(_compare);
+    return rows;
+  }
+
+  /// The chosen order, with the name as the tie-break under either and the
+  /// account's own id under that.
+  ///
+  /// Both tie-breaks earn their place: a class of twenty must not reshuffle
+  /// between rebuilds, and `List.sort` is **not** stable — two namesakes (or a
+  /// September intake still carrying a placeholder name) would otherwise come
+  /// back in a different order every build.
+  int _compare(_AccountRow a, _AccountRow b) {
+    if (_sort == _ActionSort.klas) {
+      final byClass =
+          compareClassNames(a.account.classroom, b.account.classroom);
+      if (byClass != 0) return byClass;
+    }
+    final byName =
+        a.account.label.toLowerCase().compareTo(b.account.label.toLowerCase());
+    return byName != 0 ? byName : a.id.compareTo(b.id);
+  }
+
+  /// [_rows] narrowed by the three controls, which compose rather than replace
+  /// one another: the switch keeps the accounts with work, the search keeps the
+  /// names asked for, the system filter keeps the rows that system has something
+  /// to say about.
+  List<_AccountRow> _visibleRows(List<_AccountRow> rows) {
+    final NameQuery query = _query;
+    final core.Origin? origin = _system.origin;
+    return <_AccountRow>[
+      for (final r in rows)
+        if ((!_onlyWithActions || r.hasWork) &&
+            query.matches(r.searchText) &&
+            (origin == null ||
+                r.stateFor(origin) != SystemIndicatorState.inOrder))
+          r,
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: controller,
-      builder: (context, _) {
-        return Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 960),
-            child: CustomScrollView(slivers: _slivers(context)),
-          ),
-        );
-      },
+      builder: (context, _) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1400),
+          child: LayoutBuilder(builder: _body),
+        ),
+      ),
     );
   }
 
   static const EdgeInsets _hPad =
       EdgeInsets.symmetric(horizontal: PlinkSpacing.s6);
 
-  static Widget _section(Widget child) => SliverPadding(
-        padding: _hPad,
-        sliver: SliverToBoxAdapter(child: child),
-      );
+  Widget _body(BuildContext context, BoxConstraints constraints) {
+    final bool wide = constraints.maxWidth >= _splitBreakpoint;
+    final bool active = controller.linked != null;
+    final rows = active ? _rows() : const <_AccountRow>[];
+    final visible = _visibleRows(rows);
+    // A selection the current filters have hidden is not a selection any more:
+    // the operator cannot see what they would be acting on.
+    final _AccountRow? selected = _selectedRow(visible);
+    // In one pane the details take the whole width, so the list stands down.
+    final bool showList = wide || selected == null;
 
-  static SliverToBoxAdapter _gap(double height) =>
-      SliverToBoxAdapter(child: SizedBox(height: height));
+    final Widget head = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        const SizedBox(height: PlinkSpacing.s6),
+        Padding(
+          padding: _hPad,
+          child: _ActionsHeader(
+            controller: controller,
+            onlyWithActions: _onlyWithActions,
+          ),
+        ),
+        const SizedBox(height: PlinkSpacing.s4),
+        Padding(padding: _hPad, child: _stateNotice()),
+      ],
+    );
 
-  /// Whether a grade-year or classroom node survives the global filter (#226).
-  ///
-  /// [Rollup.pendingCount] is already "how many applyable actions sit under this
-  /// node", so hiding is a pure render-time projection of the stored overview —
-  /// no store or materializer change is involved.
-  bool _keepNode(Rollup r) => !_onlyWithActions || r.pendingCount > 0;
+    // A refused session is the header and one blocking notice, and nothing
+    // else. It scrolls as a whole rather than being pinned above a pane that is
+    // not there: on a short window the notice — which carries the sync button
+    // the operator needs — would otherwise be the part that overflows.
+    if (!active) return SingleChildScrollView(child: head);
 
-  /// Whether a nested grade-year node (the Personeel tab's middle level) keeps
-  /// at least one visible classroom. A grade that would open onto nothing is
-  /// hidden as a whole rather than left as an empty accordion.
-  bool _keepGrade(Rollup grade) =>
-      !_onlyWithActions || controller.childrenOf(grade.key).any(_keepNode);
-
-  /// The Leerlingen drill-down after the global filter (#226): the merged
-  /// grade-years that still hold a visible classroom, and how many nodes went
-  /// missing so the tree can say so.
-  ///
-  /// The "Klasgroepen" node used to hang below these roots and open a list of
-  /// the classes with work. It is a top-level tab of its own since #227 — a full
-  /// class inventory, not just the ones that raised something — so it is not
-  /// rendered here any more: the same list must not be maintained in two places,
-  /// and the tab is the superset.
-  _FilteredTree _studentTree() {
-    final roots = <Rollup>[];
-    var hidden = 0;
-    for (final root in controller.studentRollups) {
-      final classrooms = controller.studentChildrenOf(root);
-      final kept = classrooms.where(_keepNode).length;
-      if (_onlyWithActions && kept == 0) {
-        // The year itself disappears rather than opening onto an empty list.
-        hidden++;
-        continue;
-      }
-      roots.add(root);
-      hidden += classrooms.length - kept;
-    }
-    return _FilteredTree(roots: roots, hidden: hidden);
-  }
-
-  /// The Personeel drill-down after the global filter (#226): the staff school
-  /// node, kept only while some grade below it still holds a visible classroom.
-  _FilteredTree _staffTree() {
-    final root = controller.staffSchoolRollup;
-    if (root == null) return const _FilteredTree(roots: <Rollup>[], hidden: 0);
-    var hidden = 0;
-    var keptGrades = 0;
-    for (final grade in controller.childrenOf(root.key)) {
-      final classrooms = controller.childrenOf(grade.key);
-      final kept = classrooms.where(_keepNode).length;
-      if (_onlyWithActions && kept == 0) {
-        hidden++;
-        continue;
-      }
-      keptGrades++;
-      hidden += classrooms.length - kept;
-    }
-    if (_onlyWithActions && keptGrades == 0) {
-      return const _FilteredTree(roots: <Rollup>[], hidden: 1);
-    }
-    return _FilteredTree(roots: <Rollup>[root], hidden: hidden);
-  }
-
-  List<Widget> _slivers(BuildContext context) {
-    final slivers = <Widget>[
-      _gap(PlinkSpacing.s6),
-      _section(_ActionsHeader(
-        controller: controller,
-        onlyWithActions: _onlyWithActions,
-      )),
-      _gap(PlinkSpacing.s4),
-      // The one place the filter is set (#226): above the family tab bar, so it
-      // governs both tabs, the drill-down, and every classroom opened from it.
-      _section(_ActionsFilterBar(
-        onlyWithActions: _onlyWithActions,
-        onChanged: (v) {
-          setState(() => _onlyWithActions = v);
-          // Pruned after the flag has flipped, against the tree the operator is
-          // about to see (#235).
-          _pruneExpansion();
-        },
-      )),
-      _gap(PlinkSpacing.s4),
-      _section(_FamilyTabBar(controller: controller, tabs: _tabs)),
-      _gap(PlinkSpacing.s4),
-    ];
-    final staffTab = _tabs.index == _ActionFamilyTab.personeel.index;
-    if (controller.selectedClassroom != null) {
-      slivers.addAll(_classroomSlivers(context));
-    } else if (controller.hasOverview) {
-      // Partition the drill-down by family: the Personeel tab shows only the
-      // synthetic staff school node (school → grade → classroom, unchanged); the
-      // Leerlingen tab opens straight on the merged grade-years. Class groups
-      // are a tab of their own since #227.
-      final tree = staffTab ? _staffTree() : _studentTree();
-      slivers.add(_section(staffTab
-          ? _DrillDownSection(
-              controller: controller,
-              accordion: _accordion,
-              roots: tree.roots,
-              hidden: tree.hidden,
-              filtering: _onlyWithActions,
-              emptyLabel: 'Geen openstaande personeelsacties.',
-              childrenOf: (root) => <Widget>[
-                for (final grade in controller.childrenOf(root.key))
-                  if (_keepGrade(grade))
-                    _GradeNode(
-                      controller: controller,
-                      accordion: _accordion,
-                      grade: grade,
-                      onlyWithActions: _onlyWithActions,
-                    ),
-              ],
-            )
-          : _DrillDownSection(
-              controller: controller,
-              accordion: _accordion,
-              roots: tree.roots,
-              hidden: tree.hidden,
-              filtering: _onlyWithActions,
-              emptyLabel: 'Nog geen gematerialiseerd overzicht.',
-              childrenOf: (root) => <Widget>[
-                for (final classroom in controller.studentChildrenOf(root))
-                  if (_keepNode(classroom))
-                    _ClassroomTile(
-                      controller: controller,
-                      classroom: classroom,
-                      indent: PlinkSpacing.s5,
-                    ),
-              ],
-            )));
-    } else {
-      slivers.add(_section(_EmptyState(controller: controller)));
-    }
-    slivers
-      ..addAll(_resultsSlivers())
-      ..add(_gap(PlinkSpacing.s6));
-    return slivers;
-  }
-
-  /// The drilled-into classroom: a back header, then either the live
-  /// interactive entry tiles for that class (active session) or the read-only
-  /// materialized account docs (passive session) — both through a lazy
-  /// [SliverList] so only the on-screen tiles build (#154).
-  ///
-  /// The read-only half announces itself (#214): without a linked view there is
-  /// nothing to choose, dry-run or apply, and the static account cards are
-  /// otherwise indistinguishable from an interactive list whose taps stopped
-  /// working.
-  List<Widget> _classroomSlivers(BuildContext context) {
-    final classroom = controller.selectedClassroom;
-    final slivers = <Widget>[
-      _section(_DetailHeader(
-        backKey: const ValueKey('actions-classroom-back'),
-        title: classroom?.label ?? '',
-        onBack: controller.closeClassroom,
-      )),
-      _gap(PlinkSpacing.s3),
-    ];
-    if (controller.loadingClassroom) {
-      return slivers..add(_section(const LinearProgressIndicator()));
-    }
-    slivers.addAll(_stateNoticeSlivers());
-
-    // Only the Personeel tab carries a per-list lookup; the mode switch that
-    // used to sit beside it now lives once, at the top of the view (#226).
-    final searchSlivers = _staffTab
-        ? <Widget>[
-            _section(_ClassroomSearchBar(searchController: _search)),
-            _gap(PlinkSpacing.s3),
-          ]
-        : const <Widget>[];
-
-    if (controller.linked != null) {
-      final all = controller.classroomPendingEntries;
-      if (all.isEmpty) {
-        return slivers
-          ..add(_section(const EmptyLine('Geen openstaande acties in deze '
-              'klas.')));
-      }
-      final shown = _filterEntries(all);
-      final rows =
-          pendingRows(ReconcileController.situationCohorts(shown), shown);
-      slivers
-        ..addAll(searchSlivers)
-        ..add(rows.isEmpty
-            ? _section(const EmptyLine(_noMatchLabel))
-            : _rowsSliver(rows));
-    } else {
-      final accounts = controller.classroomAccounts;
-      if (accounts == null || accounts.isEmpty) {
-        return slivers
-          ..add(_section(const EmptyLine('Geen accounts in deze klas.')));
-      }
-      final filtered = _filterAccounts(accounts);
-      slivers
-        ..addAll(searchSlivers)
-        ..add(filtered.isEmpty
-            ? _section(const EmptyLine(_noMatchLabel))
-            : SliverPadding(
+    return Column(
+      // Stretch, not start: the panes below have to fill the measured width
+      // rather than shrink to their content.
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _capped(
+          constraints,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              head,
+              Padding(
                 padding: _hPad,
-                sliver: SliverList.builder(
-                  itemCount: filtered.length,
-                  itemBuilder: (context, index) =>
-                      _AccountTile(account: filtered[index]),
+                child: _ListControls(
+                  searchController: _search,
+                  onlyWithActions: _onlyWithActions,
+                  onOnlyWithActionsChanged: (v) =>
+                      setState(() => _onlyWithActions = v),
+                  sort: _sort,
+                  onSortChanged: (v) => setState(() => _sort = v),
+                  system: _system,
+                  onSystemChanged: (v) => setState(() => _system = v),
                 ),
-              ));
-    }
-    return slivers;
+              ),
+              const SizedBox(height: PlinkSpacing.s3),
+              Padding(
+                padding: _hPad,
+                child: _FamilyTabBar(controller: controller, tabs: _tabs),
+              ),
+              const SizedBox(height: PlinkSpacing.s3),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              if (showList)
+                Expanded(
+                  flex: 5,
+                  child: _listPane(
+                    rows: rows,
+                    visible: visible,
+                    selected: selected,
+                  ),
+                ),
+              if (wide) const VerticalDivider(width: 1, thickness: 1),
+              if (wide || !showList)
+                Expanded(
+                  flex: 6,
+                  child: _detailPane(selected: selected, wide: wide),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
-  /// The line shown when the active filters (toggle and/or search) hide every
-  /// account in the open classroom (#187) — distinct from the "no accounts at
-  /// all" empty state so the operator knows to relax the filter.
-  static const String _noMatchLabel =
-      'Geen accounts die aan de filter voldoen.';
+  /// How much of a short window the fixed block above the panes may take before
+  /// it starts scrolling inside itself.
+  static const double _headShare = 0.65;
 
-  /// The announcement shown above either drill-down about where this session's
-  /// view comes from.
+  /// Bounds the block above the panes so it can never overflow a short window.
+  ///
+  /// It is a fixed header at any ordinary window height — the content is well
+  /// under [_headShare] of it, so the [SingleChildScrollView] simply sizes to
+  /// its child and the panes below take the rest. Squeeze the window and the
+  /// header scrolls within its share instead of pushing the list off the bottom,
+  /// which is what a plain [Column] would do: the panes' [Expanded] can only
+  /// give back space that is left, and here there is none.
+  Widget _capped(BoxConstraints constraints, Widget child) {
+    if (!constraints.hasBoundedHeight) return child;
+    return ConstrainedBox(
+      constraints:
+          BoxConstraints(maxHeight: constraints.maxHeight * _headShare),
+      child: SingleChildScrollView(child: child),
+    );
+  }
+
+  /// The row the selection names, or `null` — including when the filters have
+  /// taken it off the screen.
+  _AccountRow? _selectedRow(List<_AccountRow> visible) {
+    final id = _selectedId;
+    if (id == null) return null;
+    for (final r in visible) {
+      if (r.id == id) return r;
+    }
+    return null;
+  }
+
+  /// The announcement above the list about where this session's view comes
+  /// from.
   ///
   /// Two of them, and never both: [ReadOnlyNotice] when there is no linked view
-  /// to act on (#214) — a session refused the shared seed, or one whose
-  /// sync/drift pass failed before it could link — and [SharedStateNotice] when
-  /// the tiles below *are* interactive but were built from the cold seed a
-  /// colleague's sync left behind (#287). Empty only in a session that pulled
-  /// for itself.
-  List<Widget> _stateNoticeSlivers() {
+  /// at all — a session refused the shared seed (#287), or one whose sync/drift
+  /// pass failed before it could link (#214) — and [SharedStateNotice] when the
+  /// list below *is* interactive but was built from the cold seed a colleague's
+  /// sync left behind (#287). Nothing at all in a session that pulled for
+  /// itself.
+  ///
+  /// A refused session gets the notice and no list: since #295 there is no
+  /// read-only browse of the stored documents to fall back on, because a second
+  /// inert way to browse the same data is not what a blocking notice is for.
+  Widget _stateNotice() {
     final Widget? notice = controller.linked == null
         ? ReadOnlyNotice(controller: controller)
         : controller.adoptedFrom == null
             ? null
             : SharedStateNotice(controller: controller);
-    if (notice == null) return const <Widget>[];
-    return <Widget>[_section(notice), _gap(PlinkSpacing.s3)];
+    if (notice == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s4),
+      child: notice,
+    );
   }
 
-  /// A lazy sliver over pending [rows] (situation headers + entry tiles) — the
-  /// carried-over virtualized list from the old flat pending section (#111).
-  Widget _rowsSliver(List<PendingRow> rows) => SliverPadding(
+  /// The left pane: the flat list itself, lazily built so a September roster of
+  /// thousands costs only the rows on screen (#111/#154).
+  Widget _listPane({
+    required List<_AccountRow> rows,
+    required List<_AccountRow> visible,
+    required _AccountRow? selected,
+  }) {
+    if (rows.isEmpty) {
+      return Padding(
         padding: _hPad,
-        sliver: SliverList.builder(
-          itemCount: rows.length,
-          itemBuilder: (context, index) {
-            final row = rows[index];
-            return switch (row) {
-              SituationHeaderRow(:final cohort) =>
-                SituationHeader(controller: controller, cohort: cohort),
-              EntryRow(:final entry) =>
-                PendingEntryTile(controller: controller, entry: entry),
-            };
-          },
-        ),
+        child: EmptyLine(_staffTab
+            ? 'Geen personeelsleden in het gedeelde overzicht.'
+            : 'Geen leerlingen in het gedeelde overzicht.'),
       );
+    }
+    if (visible.isEmpty) {
+      return Padding(
+        padding: _hPad,
+        child: EmptyLine(
+            _onlyWithActions && _query.isEmpty && _system == _SystemFilter.alle
+                ? 'Geen openstaande acties — alles staat in orde.'
+                : _noMatchLabel),
+      );
+    }
+    return ListView.builder(
+      key: const ValueKey('actions-list'),
+      padding: _hPad,
+      itemCount: visible.length,
+      itemBuilder: (context, index) {
+        final row = visible[index];
+        return _AccountListRow(
+          row: row,
+          selected: identical(row, selected),
+          onTap: () => setState(() => _selectedId = row.id),
+        );
+      },
+    );
+  }
 
-  List<Widget> _resultsSlivers() {
+  /// The line shown when the active controls hide every account of a non-empty
+  /// list — distinct from the "nothing pending at all" line, which is a
+  /// statement about the school rather than about the filters.
+  static const String _noMatchLabel =
+      'Geen accounts die aan de filter voldoen.';
+
+  /// The right pane (or, on a narrow window, the only one): the selected
+  /// account's decisions, and below them what the last pass did.
+  Widget _detailPane({required _AccountRow? selected, required bool wide}) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return SingleChildScrollView(
+      padding: _hPad,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (!wide && selected != null) ...<Widget>[
+            _DetailBackHeader(onBack: () => setState(() => _selectedId = null)),
+            const SizedBox(height: PlinkSpacing.s3),
+          ],
+          if (selected == null)
+            Text(
+              key: const ValueKey('actions-detail-empty'),
+              'Kies een account in de lijst om de openstaande beslissingen te '
+              'zien.',
+              style: text.bodyMedium,
+            )
+          else
+            _AccountDetail(controller: controller, row: selected),
+          ..._resultSections(),
+          const SizedBox(height: PlinkSpacing.s6),
+        ],
+      ),
+    );
+  }
+
+  /// The page-level verdict of the last pass, rendered in the details pane.
+  ///
+  /// It reports the *pass*, which is a different thing from the per-decision
+  /// verdicts [entryDetail] renders on the card that raised the work (#272/
+  /// #283). It sits here rather than under the list because every apply on this
+  /// screen is started from an open details pane, so this is where the operator
+  /// already is when the pass ends.
+  List<Widget> _resultSections() {
     final dry = controller.dryRunResults;
     final applied = controller.applyResults;
-    final slivers = <Widget>[];
-    if (dry != null) {
-      slivers
-        ..add(_gap(PlinkSpacing.s5))
-        ..addAll(_resultSectionSlivers(
+    return <Widget>[
+      if (dry != null)
+        _ResultSection(
           title: 'Resultaat van de dry-run',
           subtitle: 'Er is niets geschreven. Dit is wat toepassen zou doen.',
           results: dry,
-        ));
-    }
-    if (applied != null) {
-      slivers
-        ..add(_gap(PlinkSpacing.s5))
-        ..addAll(_resultSectionSlivers(
+        ),
+      if (applied != null)
+        _ResultSection(
           title: 'Resultaat van het toepassen',
           subtitle: applyResultsSubtitle(applied),
           results: applied,
-        ));
-    }
-    return slivers;
-  }
-
-  List<Widget> _resultSectionSlivers({
-    required String title,
-    required String subtitle,
-    required List<ActionOutcomeEntry> results,
-  }) =>
-      <Widget>[
-        _section(_ResultsHeader(title: title, subtitle: subtitle)),
-        SliverPadding(
-          padding: _hPad,
-          sliver: SliverList.builder(
-            itemCount: results.length,
-            itemBuilder: (context, index) => _ResultRow(result: results[index]),
-          ),
         ),
-      ];
+    ];
+  }
 }
 
 /// The Actions title and how much work is pending — and, since #294, nothing
@@ -773,12 +709,11 @@ class _ActionsBodyState extends State<_ActionsBody>
 ///
 /// It used to carry a global "Dry-run alles" / "Alles toepassen" pair that ran
 /// every pending action of every family in every class in one pass. There is no
-/// safe reading of that: the drill-down below is collapsed, so the operator had
-/// seen none of the changes, and at a September changeover the count behind the
-/// button is in the thousands. Its confirmation named systems and a number,
-/// which is not the same as having looked. Bulk itself is not gone — it lives on
-/// the per-decision cohort header, where the cohort is on screen and one action
-/// deep — but the affordance that applied what nobody had read is.
+/// safe reading of that: the operator had seen none of the changes, and at a
+/// September changeover the count behind the button is in the thousands. Its
+/// confirmation named systems and a number, which is not the same as having
+/// looked. Bulk itself is not gone for good — #296 gives it back with the cohort
+/// on screen first — but the affordance that applied what nobody had read is.
 ///
 /// The count line stays. It states how much work exists; it is not a button.
 class _ActionsHeader extends StatelessWidget {
@@ -789,9 +724,8 @@ class _ActionsHeader extends StatelessWidget {
 
   final ReconcileController controller;
 
-  /// Whether the global filter is on, so the sub-line describes the tree the
-  /// operator is actually looking at (#226) — with the filter on there are no
-  /// ticked-off classes left to explain.
+  /// Whether the work-list filter is on, so the sub-line describes the list the
+  /// operator is actually looking at.
   final bool onlyWithActions;
 
   @override
@@ -799,6 +733,9 @@ class _ActionsHeader extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final bool ink = Theme.of(context).brightness == Brightness.dark;
     final count = controller.totalPendingCount;
+    // The shared stamp both action views carry (#247), so Acties and
+    // Klasgroepen name the same generation the same way.
+    final freshness = sharedViewFreshness(controller);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -810,59 +747,127 @@ class _ActionsHeader extends StatelessWidget {
         Text(
           switch ((count, onlyWithActions)) {
             (0, _) => 'Geen openstaande acties.',
-            (_, true) =>
-              '$count openstaande actie(s) — enkel jaren en klassen met '
-                  'acties worden getoond.',
-            (_, false) => '$count openstaande actie(s) — blader per jaar en '
-                'klas. Klassen zonder acties tonen een vinkje.',
+            (_, true) => '$count openstaande actie(s) — de lijst toont enkel '
+                'accounts met werk.',
+            (_, false) => '$count openstaande actie(s) — de lijst toont elk '
+                'account. Drie groene vinkjes betekent dat het account overal '
+                'juist staat.',
           },
           style: text.bodyMedium,
         ),
+        if (freshness != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s1),
+          Text(freshness, style: text.bodySmall),
+        ],
       ],
     );
   }
 }
 
-/// The one, view-wide "toon enkel accounts met acties" switch (#226).
+/// Everything that shapes the list: the name search, the work-list switch, the
+/// sort and the system filter.
 ///
-/// It sits above the family tab bar, so the single decision it records governs
-/// both families, the whole jaar → klas drill-down, and every classroom opened
-/// from it. Its per-classroom ancestor (#187) had to be re-flipped in every
-/// class the operator opened and was reset on every tab change, which is why it
-/// never actually collapsed the tree to the work list.
-class _ActionsFilterBar extends StatelessWidget {
-  const _ActionsFilterBar({
+/// Collected in one block above the family tabs, because each of them governs
+/// both families and every one of them is a property of *the list* rather than
+/// of a row. The switch in particular is set in exactly one place (#226); its
+/// per-classroom ancestor had to be re-flipped in every class the operator
+/// opened, which is why it never actually collapsed anything to the work list.
+class _ListControls extends StatelessWidget {
+  const _ListControls({
+    required this.searchController,
     required this.onlyWithActions,
-    required this.onChanged,
+    required this.onOnlyWithActionsChanged,
+    required this.sort,
+    required this.onSortChanged,
+    required this.system,
+    required this.onSystemChanged,
   });
 
+  final TextEditingController searchController;
   final bool onlyWithActions;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool> onOnlyWithActionsChanged;
+  final _ActionSort sort;
+  final ValueChanged<_ActionSort> onSortChanged;
+  final _SystemFilter system;
+  final ValueChanged<_SystemFilter> onSystemChanged;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    return Row(
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Switch(
-          key: const ValueKey('actions-only-with-actions'),
-          value: onlyWithActions,
-          onChanged: onChanged,
+        TextField(
+          key: const ValueKey('actions-search'),
+          controller: searchController,
+          decoration: InputDecoration(
+            isDense: true,
+            prefixIcon: const Icon(Icons.search, size: 18),
+            // Same wording as the Wachtwoorden → Personeel box, which matches
+            // the same way (#217): any part of the name, in any order.
+            hintText: 'Zoek op naam…',
+            border: const OutlineInputBorder(),
+            suffixIcon: searchController.text.isEmpty
+                ? null
+                : IconButton(
+                    key: const ValueKey('actions-search-clear'),
+                    icon: const Icon(Icons.close, size: 18),
+                    tooltip: 'Wis zoekopdracht',
+                    onPressed: searchController.clear,
+                  ),
+          ),
         ),
-        const SizedBox(width: PlinkSpacing.s2),
-        Expanded(
-          child: Text('Toon enkel accounts met acties', style: text.bodyMedium),
+        const SizedBox(height: PlinkSpacing.s2),
+        Row(
+          children: <Widget>[
+            Switch(
+              key: const ValueKey('actions-only-with-actions'),
+              value: onlyWithActions,
+              onChanged: onOnlyWithActionsChanged,
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Expanded(
+              child: Text('Toon enkel accounts met acties',
+                  style: text.bodyMedium),
+            ),
+          ],
+        ),
+        const SizedBox(height: PlinkSpacing.s2),
+        Wrap(
+          spacing: PlinkSpacing.s2,
+          runSpacing: PlinkSpacing.s2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            Text('Sorteer op', style: text.bodySmall),
+            for (final option in _ActionSort.values)
+              ChoiceChip(
+                key: ValueKey('actions-sort-${option.name}'),
+                label: Text(option.label),
+                selected: sort == option,
+                onSelected: (_) => onSortChanged(option),
+              ),
+            const SizedBox(width: PlinkSpacing.s3),
+            Text('Systeem', style: text.bodySmall),
+            for (final option in _SystemFilter.values)
+              ChoiceChip(
+                key: ValueKey('actions-system-${option.name}'),
+                label: Text(option.label),
+                selected: system == option,
+                onSelected: (_) => onSystemChanged(option),
+              ),
+          ],
         ),
       ],
     );
   }
 }
 
-/// The horizontal family tab bar (#179): switches the drill-down below between
-/// the Leerlingen (student + class-group) and Personeel (staff) action
-/// families, each carrying a pending-count badge so the operator sees where the
-/// work sits without opening both. Staff and student actions are reviewed as
-/// separate workflows, mirroring the legacy WPF app.
+/// The horizontal family tab bar (#179): switches the list below between the
+/// Leerlingen (student) and Personeel (staff) action families, each carrying a
+/// pending-count badge so the operator sees where the work sits without opening
+/// both. Staff and student actions are reviewed as separate workflows,
+/// mirroring the legacy WPF app.
 class _FamilyTabBar extends StatelessWidget {
   const _FamilyTabBar({required this.controller, required this.tabs});
 
@@ -910,412 +915,216 @@ class _FamilyTabBar extends StatelessWidget {
       );
 }
 
-/// The empty state before any sync/overview exists: nothing to browse yet.
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.controller});
+/// One account in the flat list: who they are, where they sit, and what each of
+/// the three systems says about them.
+///
+/// A line rather than an expandable card, which is the whole shape change of
+/// #295: the decisions live in the details pane beside it, so a row stays one
+/// scannable height whatever it is carrying, and a list of three thousand is a
+/// list of three thousand rows rather than of three thousand collapsed cards.
+class _AccountListRow extends StatelessWidget {
+  const _AccountListRow({
+    required this.row,
+    required this.selected,
+    required this.onTap,
+  });
 
-  final ReconcileController controller;
+  final _AccountRow row;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    return Text(
-      'Nog geen gematerialiseerd overzicht. Synchroniseer op het tabblad '
-      'Synchronisatie om openstaande acties per klas te zien.',
-      style: text.bodyMedium,
-    );
-  }
-}
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final Color hairline = Theme.of(context).dividerColor;
 
-/// The stable widget key of one rollup node, by level — so a test (and the
-/// element tree) names a node the same way wherever it is rendered.
-String _rollupNodeKey(Rollup r) => switch (r.level) {
-      RollupLevel.school => 'rollup-school-${r.key}',
-      RollupLevel.gradeYear => 'rollup-grade-${r.key}',
-      RollupLevel.classroom => 'rollup-class-${r.key}',
-      RollupLevel.groups => 'rollup-groups',
-    };
-
-/// The materialized overview (#115/#119): the drill-down driven by the stored
-/// rollups, so it renders from the shared state even in a passive session that
-/// never pulled or re-linked. Tapping a classroom lazily loads just that node's
-/// actions (#154).
-///
-/// The "Klasgroepen" node used to sit below the student roots and open the
-/// classes with work. It became a top-level tab of its own in #227 — the full
-/// class inventory rather than a list of changes — so it is gone from here: the
-/// same list must not be maintained in two places.
-///
-/// The tree is two levels deep on the Leerlingen tab (#210): merged grade-year →
-/// classroom, with no school node — the WISA school split is administrative, so
-/// drilling through it never presented a choice. The Personeel tab keeps its
-/// stored school → grade-year → classroom shape; both are driven from the very
-/// same rollups, only projected differently by [childrenOf].
-class _DrillDownSection extends StatelessWidget {
-  const _DrillDownSection({
-    required this.controller,
-    required this.accordion,
-    required this.roots,
-    required this.emptyLabel,
-    required this.childrenOf,
-    required this.hidden,
-    required this.filtering,
-  });
-
-  final ReconcileController controller;
-
-  /// Drives the top-level nodes as a single-open accordion whose open node
-  /// outlives a drill-down (#235).
-  final _Accordion accordion;
-
-  /// The top-level accordion nodes: the merged grade-years plus
-  /// "Niet toegewezen" on the Leerlingen tab, the single staff school node on
-  /// the Personeel tab (#179/#210).
-  final List<Rollup> roots;
-
-  /// Builds the expanded children of one root — classroom tiles under a merged
-  /// grade-year, the nested grade nodes under the staff school.
-  final List<Widget> Function(Rollup root) childrenOf;
-
-  /// The message shown when this tab has nothing to browse.
-  final String emptyLabel;
-
-  /// How many nodes the global filter removed from this tab's tree (#226).
-  final int hidden;
-
-  /// Whether the global filter is on — the difference between "there is nothing
-  /// here" and "the filter is holding it back", which is what tells an operator
-  /// why a year they expected is missing.
-  final bool filtering;
-
-  /// The footnote under a tree the filter has thinned out, so a missing year is
-  /// explained rather than merely absent.
-  String get _hiddenNote =>
-      'Verborgen door de filter: $hidden zonder openstaande acties.';
-
-  /// The stand-in for the tree when the filter hid every last node — distinct
-  /// from [emptyLabel], which means the shared view holds nothing at all.
-  String get _allHiddenNote =>
-      'Alles is verborgen door de filter: $hidden zonder openstaande acties. '
-      'Zet de filter af voor het volledige overzicht.';
-
-  /// One top-level accordion node (depth 0), driven by [accordion] rather than
-  /// by the `ExpansionTile`'s own state (#235) — so the year the operator drilled
-  /// a class out of is still open when they come back, and opening another one
-  /// closes it.
-  Widget _rootTile(BuildContext context, Rollup root, Color hairline) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final String node = _rollupNodeKey(root);
     return Container(
+      key: ValueKey('account-row-${row.id}'),
       margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
       decoration: BoxDecoration(
-        border: Border.all(color: hairline),
+        color: selected ? colors.primary.withValues(alpha: 0.06) : null,
+        border: Border.all(color: selected ? colors.primary : hairline),
         borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
       ),
-      child: ExpansionTile(
-        key: ValueKey(node),
-        controller: accordion.controllerFor(node),
-        initiallyExpanded: accordion.isOpen(node, 0),
-        onExpansionChanged: (open) => accordion.onToggled(node, 0, open),
-        shape: const Border(),
-        collapsedShape: const Border(),
-        title: Text(root.label, style: text.bodyLarge),
-        trailing: PendingBadge(count: root.pendingCount),
-        children: childrenOf(root),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+        child: Padding(
+          padding: const EdgeInsets.all(PlinkSpacing.s4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      row.account.label,
+                      style: text.bodyLarge,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: PlinkSpacing.s2),
+                  Text(row.account.classroom, style: text.bodySmall),
+                  const SizedBox(width: PlinkSpacing.s2),
+                  PendingBadge(count: row.pendingCount),
+                ],
+              ),
+              const SizedBox(height: PlinkSpacing.s2),
+              _SystemRow(row: row),
+            ],
+          ),
+        ),
       ),
     );
   }
+}
+
+/// The three system cells of one account: WISA · Smartschool · Office 365, in
+/// the shared vocabulary of #298 — red missing, orange work pending, green in
+/// order.
+class _SystemRow extends StatelessWidget {
+  const _SystemRow({required this.row, this.keyPrefix = 'account-cell'});
+
+  final _AccountRow row;
+
+  /// What names these three cells. The details pane repeats the row's cells, so
+  /// the two sets must not answer to one key: `find.byKey` would be ambiguous
+  /// exactly when a row is selected, which is every interesting case.
+  final String keyPrefix;
 
   @override
   Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final Color hairline = Theme.of(context).dividerColor;
-    // The shared stamp both views carry (#247), so Acties and Klasgroepen name
-    // the same generation the same way.
-    final freshness = sharedViewFreshness(controller);
+    // Each cell is addressable on its own — `account-cell-<id>-<systeem>` —
+    // exactly as a Klasgroepen row's cells are (`class-cell-<klas>-<systeem>`),
+    // so a test can ask one row what it says about one system rather than
+    // counting icons across three.
+    Widget cell(core.Origin system) => Expanded(
+          child: SystemIndicatorCell(
+            key: ValueKey('$keyPrefix-${row.id}-${system.name}'),
+            system: system,
+            state: row.stateFor(system),
+          ),
+        );
 
-    return Column(
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Overzicht', style: text.titleMedium),
-        if (freshness != null) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s1),
-          Text(freshness, style: text.bodySmall),
+        cell(core.Origin.wisa),
+        cell(core.Origin.smartschool),
+        cell(core.Origin.azure),
+      ],
+    );
+  }
+}
+
+/// The details pane's content for one account: who it is, what each system says
+/// about it, and every decision it raises.
+///
+/// The decisions are [entryDetail] verbatim — one block per decision, each led
+/// by its own heading and its system, then the radios or the field diff, then
+/// the verdict of the last pass that answers *that* decision (#281/#283). #300
+/// made those blocks stand on their own precisely so this pane could reuse them
+/// with no collapsed row above to have previewed anything.
+class _AccountDetail extends StatelessWidget {
+  const _AccountDetail({required this.controller, required this.row});
+
+  final ReconcileController controller;
+  final _AccountRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final PendingAccountEntry? entry = row.entry;
+
+    return Column(
+      key: ValueKey('actions-detail-${row.id}'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(child: Text(row.account.label, style: text.titleMedium)),
+            const SizedBox(width: PlinkSpacing.s2),
+            PendingBadge(count: row.pendingCount),
+          ],
+        ),
+        const SizedBox(height: PlinkSpacing.s1),
+        Text(row.account.classroom, style: text.bodySmall),
+        const SizedBox(height: PlinkSpacing.s3),
+        // Repeated from the row on purpose: on a narrow window the list is not
+        // on screen at all, so the pane has to be able to say what the account's
+        // three systems look like.
+        _SystemRow(row: row, keyPrefix: 'account-detail-cell'),
+        for (final w in row.account.warnings) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s2),
+          Text(w, style: text.bodySmall),
         ],
         const SizedBox(height: PlinkSpacing.s3),
-        if (roots.isEmpty)
-          filtering && hidden > 0
-              ? Text(
-                  _allHiddenNote,
-                  key: const ValueKey('actions-filter-all-hidden'),
-                  style: text.bodyMedium,
-                )
-              : Text(emptyLabel, style: text.bodyMedium)
-        else ...<Widget>[
-          for (final root in roots) _rootTile(context, root, hairline),
-          if (filtering && hidden > 0) ...<Widget>[
-            const SizedBox(height: PlinkSpacing.s1),
-            Text(
-              _hiddenNote,
-              key: const ValueKey('actions-filter-hidden'),
-              style: text.bodySmall,
-            ),
-          ],
-        ],
+        if (entry == null)
+          Text(
+            'Geen openstaande beslissingen voor dit account.',
+            style: text.bodyMedium,
+          )
+        else
+          ...entryDetail(context, controller: controller, entry: entry),
       ],
     );
   }
 }
 
-/// A nested grade-year node inside a school node — the middle level of the
-/// Personeel tab's stored tree, which #210 left as it was. The student tree has
-/// no school to nest under, so its grade-years are [_DrillDownSection] roots and
-/// carry their "Jaar N" label from [ReconcileController.gradeNodeLabel] instead.
-class _GradeNode extends StatelessWidget {
-  const _GradeNode({
-    required this.controller,
-    required this.accordion,
-    required this.grade,
-    required this.onlyWithActions,
-  });
+/// The back affordance of the one-pane layout: on a window too narrow for two
+/// columns the details replace the list, so there has to be a way back to it.
+class _DetailBackHeader extends StatelessWidget {
+  const _DetailBackHeader({required this.onBack});
 
-  final ReconcileController controller;
-
-  /// Drives this node at depth 1 (#235). The depth is what keeps the staff tree
-  /// usable: opening a grade-year replaces its *sibling* year, never the school
-  /// node above it — which single-open on one flat key would have collapsed out
-  /// from under the year the operator just opened.
-  final _Accordion accordion;
-
-  final Rollup grade;
-
-  /// Whether the global filter is on, in which case only the classrooms of this
-  /// year that carry an applyable action are listed (#226).
-  final bool onlyWithActions;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final String node = _rollupNodeKey(grade);
-    return ExpansionTile(
-      key: ValueKey(node),
-      controller: accordion.controllerFor(node),
-      initiallyExpanded: accordion.isOpen(node, 1),
-      onExpansionChanged: (open) => accordion.onToggled(node, 1, open),
-      shape: const Border(),
-      collapsedShape: const Border(),
-      tilePadding: const EdgeInsets.only(left: PlinkSpacing.s5, right: 16),
-      title: Text('Jaar ${grade.label}', style: text.bodyMedium),
-      trailing: PendingBadge(count: grade.pendingCount),
-      children: <Widget>[
-        for (final classroom in controller.childrenOf(grade.key))
-          if (!onlyWithActions || classroom.pendingCount > 0)
-            _ClassroomTile(
-              controller: controller,
-              classroom: classroom,
-              indent: PlinkSpacing.s6,
-            ),
-      ],
-    );
-  }
-}
-
-/// A leaf classroom node: tapping it opens that class's accounts, which reads
-/// exactly one Cosmos partition ([Rollup.school]). Indented to whatever depth the
-/// enclosing tree puts it at — one level under a merged grade-year on the
-/// Leerlingen tab, two under school → grade-year on the Personeel tab.
-class _ClassroomTile extends StatelessWidget {
-  const _ClassroomTile({
-    required this.controller,
-    required this.classroom,
-    required this.indent,
-  });
-
-  final ReconcileController controller;
-  final Rollup classroom;
-  final double indent;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    return ListTile(
-      key: ValueKey(_rollupNodeKey(classroom)),
-      contentPadding: EdgeInsets.only(left: indent, right: 16),
-      title: Text(classroom.label, style: text.bodyMedium),
-      subtitle:
-          Text('${classroom.accountCount} account(s)', style: text.bodySmall),
-      trailing: PendingBadge(count: classroom.pendingCount),
-      onTap: () => controller.openClassroom(classroom),
-    );
-  }
-}
-
-/// The back-to-overview header of a drilled-into classroom / group node.
-class _DetailHeader extends StatelessWidget {
-  const _DetailHeader({
-    required this.backKey,
-    required this.title,
-    required this.onBack,
-  });
-
-  final Key backKey;
-  final String title;
   final VoidCallback onBack;
 
   @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    return Row(
-      children: <Widget>[
-        TextButton.icon(
-          key: backKey,
+  Widget build(BuildContext context) => Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          key: const ValueKey('actions-detail-back'),
           onPressed: onBack,
           icon: const Icon(Icons.arrow_back, size: 16),
           label: const Text('Overzicht'),
         ),
-        const SizedBox(width: PlinkSpacing.s2),
-        Text(title, style: text.titleMedium),
-      ],
-    );
-  }
+      );
 }
 
-/// The name search above a drilled-into classroom's account list, on the
-/// Personeel tab only (#187/#217).
-///
-/// The "toon enkel accounts met acties" toggle that used to sit beside it moved
-/// to the top of the view in #226 — it is a mode, and the filter must not be
-/// settable in two places. A name search is the opposite: a lookup inside *this*
-/// list, so it stays here.
-class _ClassroomSearchBar extends StatelessWidget {
-  const _ClassroomSearchBar({required this.searchController});
-
-  final TextEditingController searchController;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      key: const ValueKey('actions-search'),
-      controller: searchController,
-      decoration: InputDecoration(
-        isDense: true,
-        prefixIcon: const Icon(Icons.search, size: 18),
-        // Same wording as the Wachtwoorden → Personeel box, which matches the
-        // same way (#217): any part of the name, in any order.
-        hintText: 'Zoek op naam…',
-        border: const OutlineInputBorder(),
-        suffixIcon: searchController.text.isEmpty
-            ? null
-            : IconButton(
-                key: const ValueKey('actions-search-clear'),
-                icon: const Icon(Icons.close, size: 18),
-                tooltip: 'Wis zoekopdracht',
-                onPressed: searchController.clear,
-              ),
-      ),
-    );
-  }
-}
-
-/// One account's read-only summary in a passive-session classroom drill-down:
-/// the systems it lives in and its candidate action summaries (no live actions
-/// to apply without a sync this session).
-///
-/// Styled as the inert card it is (#214): a muted lock beside the pending
-/// badge, and the candidate lines in the disabled colour, so a card that offers
-/// no choice, dry-run or apply does not sit next to the interactive
-/// [PendingEntryTile] looking identical to it. [ReadOnlyNotice] above the
-/// list carries the explanation.
-class _AccountTile extends StatelessWidget {
-  const _AccountTile({required this.account});
-
-  final MaterializedAccount account;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final Color hairline = Theme.of(context).dividerColor;
-    final Color muted = Theme.of(context).disabledColor;
-    final systems = <String>[
-      if (account.inWisa) 'WISA',
-      if (account.inSmartschool) 'Smartschool',
-      if (account.inAzure) 'Azure',
-    ];
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
-      padding: const EdgeInsets.all(PlinkSpacing.s4),
-      decoration: BoxDecoration(
-        border: Border.all(color: hairline),
-        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(child: Text(account.label, style: text.bodyLarge)),
-              const ReadOnlyLock(),
-              const SizedBox(width: PlinkSpacing.s2),
-              PendingBadge(count: pendingDecisionCount(account.candidates)),
-            ],
-          ),
-          const SizedBox(height: PlinkSpacing.s2),
-          Wrap(
-            spacing: PlinkSpacing.s2,
-            children: <Widget>[for (final s in systems) PlinkBadge(s)],
-          ),
-          for (final w in account.warnings)
-            Padding(
-              padding: const EdgeInsets.only(top: PlinkSpacing.s1),
-              child: Text(w, style: text.bodySmall),
-            ),
-          // One line per *decision* (#251), worded exactly as the interactive
-          // tile words it: a departed student's unregister / delete pair is one
-          // either/or, so it reads as the single choice the interactive tile
-          // shows — never as two bullets that both look due — and an
-          // informational candidate is marked "(manueel)" (#255).
-          for (final c in candidateChoices(account.candidates))
-            Padding(
-              padding: const EdgeInsets.only(top: PlinkSpacing.s1),
-              child: ActionLine(
-                system: c.selected.system,
-                line: readOnlyCandidateLine(c),
-                style: text.bodySmall?.copyWith(color: muted),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The header of a dry-run/apply result set: its title and subtitle, above the
-/// lazy list of outcome rows.
-class _ResultsHeader extends StatelessWidget {
-  const _ResultsHeader({required this.title, required this.subtitle});
+/// One dry-run/apply results block: its title, its subtitle, and one row per
+/// outcome.
+class _ResultSection extends StatelessWidget {
+  const _ResultSection({
+    required this.title,
+    required this.subtitle,
+    required this.results,
+  });
 
   final String title;
   final String subtitle;
+  final List<ActionOutcomeEntry> results;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(title, style: text.titleMedium),
-        const SizedBox(height: PlinkSpacing.s1),
-        Text(subtitle, style: text.bodySmall),
-        const SizedBox(height: PlinkSpacing.s3),
-      ],
+    return Padding(
+      padding: const EdgeInsets.only(top: PlinkSpacing.s5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(title, style: text.titleMedium),
+          const SizedBox(height: PlinkSpacing.s1),
+          Text(subtitle, style: text.bodySmall),
+          const SizedBox(height: PlinkSpacing.s3),
+          for (final result in results) _ResultRow(result: result),
+        ],
+      ),
     );
   }
 }
 
 /// One outcome row of a dry-run/apply pass: the check/cross plus the target and
-/// its change summary (or the failure cause). Built lazily by the results
-/// [SliverList].
+/// its change summary (or the failure cause).
 class _ResultRow extends StatelessWidget {
   const _ResultRow({required this.result});
 

@@ -40,49 +40,38 @@ import 'system_indicator.dart';
 export 'system_indicator.dart';
 
 // ---------------------------------------------------------------------------
-// Rows.
+// Ordering.
 // ---------------------------------------------------------------------------
 
-/// One row of a per-classroom (or per-group) pending list: a same-situation
-/// bulk header or a single account entry. Flattening the cohorts → entries tree
-/// into a linear list lets a lazy [SliverList] build only the on-screen rows
-/// (#111/#154).
-sealed class PendingRow {
-  const PendingRow();
-}
-
-class SituationHeaderRow extends PendingRow {
-  const SituationHeaderRow(this.cohort);
-
-  final SituationCohort cohort;
-}
-
-class EntryRow extends PendingRow {
-  const EntryRow(this.entry);
-
-  final PendingAccountEntry entry;
-}
-
-/// Flattens [cohorts] and [entries] into the linear [PendingRow] list a lazy
-/// sliver builds from: the bulk headers, then one tile per account.
+/// Orders class names the way an operator reads a class list: by year first and
+/// numerically (`2A` before `10A`), then alphabetically, so `2F` sorts beside
+/// its sub-groups rather than between `20A` and `21B`.
 ///
-/// The headers lead rather than each sitting above its own run of rows, and
-/// since #292 they have to. A cohort is one decision, so an account with three
-/// decisions belongs to three of them; interleaving would mean rendering its
-/// card three times, once under each. Klasgroepen already collects its bulk
-/// affordances above the inventory for the same reason (its rows are sorted by
-/// class name, so a cohort was never contiguous there either), and this is that
-/// shape. Both lists therefore read the same way: what can be done in bulk on
-/// top, the accounts themselves below, each exactly once.
-List<PendingRow> pendingRows(
-  List<SituationCohort> cohorts,
-  List<PendingAccountEntry> entries,
-) =>
-    <PendingRow>[
-      for (final cohort in cohorts)
-        if (cohort.length > 1) SituationHeaderRow(cohort),
-      for (final entry in entries) EntryRow(entry),
-    ];
+/// Shared since #295: the Klasgroepen inventory is class-ordered, and the flat
+/// Acties list orders by class too. Two screens listing the same classes in two
+/// different orders is the kind of difference an operator reads as a bug.
+int compareClassNames(String a, String b) {
+  final ya = _leadingYear(a);
+  final yb = _leadingYear(b);
+  if (ya != yb) {
+    // A non-numeric class (`OKAN`) sorts after every numbered year.
+    if (ya == null) return 1;
+    if (yb == null) return -1;
+    return ya - yb;
+  }
+  return a.toLowerCase().compareTo(b.toLowerCase());
+}
+
+int? _leadingYear(String name) {
+  final match = RegExp(r'^\s*(\d+)').firstMatch(name);
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
+
+// The `PendingRow` / `pendingRows` flattening that interleaved a classroom's
+// bulk headers with its entry tiles is gone with the drill-down it served
+// (#295). Klasgroepen collects its [SituationHeader]s above the inventory
+// directly, and the flat Acties list has no cohort headers at all until #296
+// gives school-wide bulk apply its own cohort-first affordance.
 
 // ---------------------------------------------------------------------------
 // Wording.
@@ -805,8 +794,9 @@ String pendingChoiceLine(PendingChoice c) {
   return c.selected.canApply ? summary : '$summary (manueel)';
 }
 
-/// The expandable card both action screens build a record with pending work on
-/// — the Acties [PendingEntryTile] and the Klasgroepen class row.
+/// The expandable card the Klasgroepen inventory builds a class with pending
+/// work on. (Acties built one too until #295 moved its decisions into a details
+/// pane of their own; the rule below is what made that move possible.)
 ///
 /// It exists for one rule neither screen can hold on its own (#300). A
 /// collapsed card previews its decisions as summary lines; since #281 the
@@ -819,9 +809,9 @@ String pendingChoiceLine(PendingChoice c) {
 /// > **Werk het ledenbestand van SSM-1A bij (21 toevoegen, 17 verwijderen)**
 ///
 /// The heading is the one that has to stay: it groups the block under it, it is
-/// uniform across every decision (#281), and it is what #295's details pane —
-/// which has no collapsed row at all — will read [entryDetail] for. So the
-/// *preview* gives way instead. [subtitle] is therefore built with whether the
+/// uniform across every decision (#281), and it is what the Acties details pane
+/// — which has no collapsed row at all — reads [entryDetail] for since #295. So
+/// the *preview* gives way instead. [subtitle] is therefore built with whether the
 /// card is open, which is the one thing an [ExpansionTile] does not hand its
 /// own subtitle.
 class PendingCardTile extends StatefulWidget {
@@ -834,10 +824,9 @@ class PendingCardTile extends StatefulWidget {
     required this.children,
   });
 
-  /// Names the tile itself (`entry-<family>-<targetId>`). Deliberately not this
-  /// widget's own [key]: the screens' tests and #295's row builder address the
-  /// [ExpansionTile], and two widgets answering to one key would make
-  /// `find.byKey` ambiguous.
+  /// Names the tile itself (`entry-group-<klas>`). Deliberately not this
+  /// widget's own [key]: the screen's tests address the [ExpansionTile], and two
+  /// widgets answering to one key would make `find.byKey` ambiguous.
   final Key tileKey;
 
   final Widget? leading;
@@ -886,57 +875,13 @@ class _PendingCardTileState extends State<PendingCardTile> {
       );
 }
 
-/// One account's pending resolution (#110): a single expandable row showing the
-/// selected summary, the mutually-exclusive choice (as radios) when there is
-/// one, the per-field diff, and per-entry dry-run / apply.
-class PendingEntryTile extends StatelessWidget {
-  const PendingEntryTile({
-    super.key,
-    required this.controller,
-    required this.entry,
-  });
-
-  final ReconcileController controller;
-  final PendingAccountEntry entry;
-
-  @override
-  Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final Color hairline = Theme.of(context).dividerColor;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: PlinkSpacing.s2),
-      decoration: BoxDecoration(
-        border: Border.all(color: hairline),
-        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
-      ),
-      child: PendingCardTile(
-        tileKey: ValueKey('entry-${entry.family}-${entry.targetId}'),
-        leading: PlinkBadge(entry.family),
-        title: Text(entry.target, style: text.bodyLarge),
-        // The whole subtitle here is the preview, so an open card has none:
-        // every line it holds is repeated as a heading below (#300).
-        subtitle: (context, expanded) => expanded
-            ? null
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  // Each line led by the system it writes to (#298): one card
-                  // can raise work in two systems and the summaries do not
-                  // always say where they land.
-                  for (final c in entry.choices)
-                    ActionLine(
-                      system: c.selected.changes.system,
-                      line: pendingChoiceLine(c),
-                    ),
-                ],
-              ),
-        children: entryDetail(context, controller: controller, entry: entry),
-      ),
-    );
-  }
-}
+// `PendingEntryTile` — the expandable Acties card that previewed its decisions
+// collapsed and rendered [entryDetail] open — retired with the drill-down that
+// listed it (#295). An Acties row is now a selectable line in a flat list and
+// its decisions live in the details pane beside it, which is exactly the
+// standing-on-its-own [entryDetail] #300 prepared. Klasgroepen still builds its
+// own card from [PendingCardTile] + [entryDetail], because there a row *is* the
+// class inventory and there is no second pane to put the detail in.
 
 /// The expanded body of one pending entry: one block per decision, each with
 /// its own verdict (#281/#283), then the verdicts of the last pass that no
@@ -1034,9 +979,9 @@ String choiceHeading(PendingChoice choice) =>
 /// That heading is also why an open card drops its collapsed preview (#300):
 /// the two say the same sentence, and on a card carrying one decision the
 /// operator read it twice in a row. The heading is the half that stays — it
-/// groups the block under it, and [entryDetail] has to stand on its own in
-/// #295's details pane, where there is no collapsed row to have previewed
-/// anything.
+/// groups the block under it, and [entryDetail] has to stand on its own in the
+/// Acties details pane (#295), where there is no collapsed row to have
+/// previewed anything.
 ///
 /// The verdict lines pooled the same way and for the same reason (#283): one
 /// apply on that card produces two of them, and below both decisions they said
