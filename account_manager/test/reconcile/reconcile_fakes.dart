@@ -41,6 +41,14 @@ const core.Address _addr = core.Address(
 class RecordingSoap implements ss.SmartschoolSoapTransport {
   final List<String> soapActions = <String>[];
 
+  /// The class codes of every `delClass` this transport accepted, in order —
+  /// the Smartschool classes a delete action actually removed (#313). The twin
+  /// of [RecordingGraph.deletedGroups], and read off the envelope for the same
+  /// reason: "a write happened" is not "this record was written".
+  final List<String> deletedClasses = <String>[];
+
+  static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
+
   @override
   Future<String> send({
     required Uri endpoint,
@@ -48,6 +56,10 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
+    if (soapAction.contains('delClass')) {
+      final match = _codeArg.firstMatch(envelope);
+      if (match != null) deletedClasses.add(match.group(1)!);
+    }
     // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '
@@ -1926,6 +1938,119 @@ ReconcileHarness staleClassGroupHarness() => ReconcileHarness(
       ourSchoolIds: const {1},
     );
 
+/// A harness for the stale Office 365 class groups the port used to say nothing
+/// about (#312) — the same situation [staleClassGroupHarness] sets up, but with
+/// neither leftover group shaped the way *this* port creates one.
+///
+/// Our school 1 runs exactly one class, `1A`, correct in all three systems.
+/// Office 365 still holds two groups of classes that stopped running:
+///
+/// - `GBS-9Z`, a plain security group with no address and its 21 members still
+///   in it — the shape the legacy WPF app made every class group in;
+/// - `Klas van juf An`, renamed by hand in the portal, still answering on the
+///   address `GBS-8Y@…`.
+///
+/// The linker orphans both — the `<PREFIX>-` namespace plus a class-shaped
+/// remainder is its whole rule — yet the action engine used to demand a
+/// mail-enabled group whose nickname equalled its display name, so both rows
+/// reached Klasgroepen carrying a grey ✓ and nothing anybody could do.
+ReconcileHarness legacyStaleClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '1A')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+        ],
+        memberships: [member('jane', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1']),
+          azLegacyClassGroup('9Z',
+              memberIds: List<String>.generate(21, (int i) => 'az-oud-$i')),
+          azRenamedClassGroup('8Y', displayName: 'Klas van juf An'),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the Smartschool classes WISA does not have (#313) — the
+/// mirror image of [staleClassGroupHarness], on the system the app can actually
+/// delete a class in.
+///
+/// Our school 1 runs exactly one class, `1A`, correct in all three systems.
+/// Smartschool additionally carries two official classes that stopped running,
+/// each under the code the operator would have to hunt for by hand:
+///
+/// - `9Z` (`C9Z`), and
+/// - `8Y` (`C8Y`).
+///
+/// Two of them, deliberately: one leftover is a row, **two** are a "same
+/// situation" bulk subset, and that is where a destructive default would do its
+/// worst. Before #313 each row's whole content was "Verwijder ze manueel als ze
+/// niet meer nodig is" — an instruction to go elsewhere, and a screenful of them
+/// at a September changeover.
+ReconcileHarness smartschoolLeftoverClassHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '1A')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+          ssGroup('9Z',
+              code: 'C9Z',
+              description: 'Zesde jaar Z',
+              instituteNumber: '123',
+              untis: '9Z'),
+          ssGroup('8Y',
+              code: 'C8Y',
+              description: 'Achtste jaar Y',
+              instituteNumber: '123',
+              untis: '8Y'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+        ],
+        memberships: [member('jane', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1'])
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the **per-student** view of Office 365 class-group membership
 /// (#245). Both classes already have their group, and both classes are in sync
 /// between WISA and Smartschool, so the only work anywhere is the Azure roster:
@@ -2720,6 +2845,42 @@ az.AzureGroup azClassGroup(
     az.AzureGroup(
       id: 'az-GBS-$className',
       displayName: 'GBS-$className',
+      mail: 'GBS-$className@student.school.example',
+      mailNickname: 'GBS-$className',
+      memberIds: memberIds,
+    );
+
+/// An Office 365 class group as the **legacy WPF app** created one (#312): a
+/// plain security group, `GBS-<class>` in both display name and nickname, and
+/// no address at all.
+///
+/// This is what the live tenant is full of — `SSM-3ECO`, `SSM-3MRP`, `SSM-3MWW`
+/// are each `securityEnabled: true, mail: null` — and `isUnified` is false for
+/// every one of them, which is what used to silence the stale-group either/or
+/// on exactly the rows that needed it most.
+az.AzureGroup azLegacyClassGroup(
+  String className, {
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: 'az-GBS-$className',
+      displayName: 'GBS-$className',
+      mailNickname: 'GBS-$className',
+      securityEnabled: true,
+      memberIds: memberIds,
+    );
+
+/// An Office 365 class group somebody **renamed by hand** in the portal (#280):
+/// the display name says nothing about the class, and only the address it still
+/// answers on identifies it as ours.
+az.AzureGroup azRenamedClassGroup(
+  String className, {
+  required String displayName,
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: 'az-GBS-$className',
+      displayName: displayName,
       mail: 'GBS-$className@student.school.example',
       mailNickname: 'GBS-$className',
       memberIds: memberIds,

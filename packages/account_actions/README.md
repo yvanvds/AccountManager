@@ -163,9 +163,11 @@ class's Smartschool state and ride alongside **both** branches:
   parser order: `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass`
   rule), `AddToSmartschool` (WISA-only class **with students**; creates the
   official class in Smartschool), `CreateInSmartschool` (WISA-only class with
-  **no** students; informational), and `DoNotImportFromSmartschool` (orphan
-  Smartschool class; informational). A WISA-only class therefore raises
-  `DoNotImportFromWisa` plus exactly one of `AddToSmartschool` /
+  **no** students; informational), and the `staleSmartschoolClassAlternative`
+  pair of #313 for an orphan Smartschool class — the informational
+  `DoNotImportFromSmartschool` (leave it standing) and the applyable
+  `DeleteSmartschoolClass` (`delClass` on the class code). A WISA-only class
+  therefore raises `DoNotImportFromWisa` plus exactly one of `AddToSmartschool` /
   `CreateInSmartschool` — or, when Smartschool already carries the name on a
   group the linker could not adopt (#225), the informational
   `ClassExistsAsSmartschoolGroup` in place of both creates.
@@ -176,7 +178,10 @@ class's Smartschool state and ride alongside **both** branches:
   `classImportAlternative` for a genuinely new class (#244) and
   `namesakeClassAlternative` for one Smartschool already has (#250), which keeps
   the two situations in separate bulk-apply subsets. The default is always the
-  provisioning/diagnosis half, never the blacklist.
+  provisioning/diagnosis half, never the blacklist — and the same holds for the
+  Smartschool leftovers, where the notice is the default so a bulk pass writes
+  nothing and the delete is a per-row pick a bulk affordance may never reach
+  (#293).
 - **Azure-only, class-shaped** (a group whose class stopped running) → the
   `staleClassGroupAlternative` pair of #271: the informational
   `AzureClassGroupWithoutClass` (leave it standing) and the applyable
@@ -196,7 +201,10 @@ for the two creation actions, an injected `GroupPlacement` (see below).
 returns a `WisaImportRule` via `ActionResult.wisaRule`. `DoNotImportFromSmartschool`
 and `CreateInSmartschool` are **informational** (`canApply == false`, legacy
 `CanBeApplied == false`): they surface a diagnosis and their `apply` throws
-`UnsupportedError`.
+`UnsupportedError`. The two deletes — `DeleteAzureClassGroup` and
+`DeleteSmartschoolClass` — carry no record back at all: they set
+`ActionResult.removed`, and the State layer drops the record from the owning
+snapshot rather than patching it.
 
 ### Group placement (#65)
 

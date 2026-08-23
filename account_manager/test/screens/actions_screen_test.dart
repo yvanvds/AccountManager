@@ -112,7 +112,9 @@ void main() {
 
     expect(attempts, 2);
     expect(find.text('Kan het Acties-scherm niet openen'), findsNothing);
-    expect(find.text('Acties'), findsOneWidget);
+    // The screen behind the panel, named by the one line its header still
+    // carries since #309 — the eyebrow, in the design system's own upper case.
+    expect(find.text('ARCADIA · ACTIES'), findsOneWidget);
   });
 
   // --- The flat list itself (#295) -----------------------------------------
@@ -336,24 +338,37 @@ void main() {
   });
 
   testWidgets(
-      'the header states the workload and offers nothing that acts on all of '
-      'it (#294)', (WidgetTester tester) async {
-    // The global "Dry-run alles" / "Alles toepassen" pair used to sit here and
-    // write every pending action in every class off one dialog, over a list the
-    // operator had not looked at. What replaces it is nothing: the count is a
-    // statement of how much work exists, and every way to act on that work is
-    // reached by looking at it first.
+      'the header is the eyebrow and nothing else, and still offers nothing '
+      'that acts on the whole list (#309/#294)', (WidgetTester tester) async {
+    // #309: the account list is the view, and everything stacked above it was
+    // preamble charged to every visit. The title restated the eyebrow, the
+    // count was four digits nobody can act on, the pointer at Klasgroepen
+    // belonged on Klasgroepen and the freshness stamp describes the shared
+    // state rather than this list.
+    //
+    // #294's half of the same header still holds: the global "Dry-run alles" /
+    // "Alles toepassen" pair that wrote every pending action in every class off
+    // one dialog is gone, and nothing replaces it. Every way to act on the work
+    // is reached by opening it first.
     _useWideWindow(tester);
     final harness = ReconcileHarness();
     await harness.controller.sync();
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining(
-          '${harness.controller.totalPendingCount} openstaande actie(s)'),
-      findsOneWidget,
-    );
+    // The one line that stays.
+    expect(find.text('ARCADIA · ACTIES'), findsOneWidget);
+    // …and the four that came off.
+    expect(find.text('Acties'), findsNothing,
+        reason: 'the title restated the eyebrow one line above it');
+    expect(find.textContaining('openstaande actie'), findsNothing,
+        reason: 'the count line is gone from this header');
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing,
+        reason: 'what Klasgroepen is holding is stated on Klasgroepen');
+    expect(find.textContaining('Generatie'), findsNothing,
+        reason:
+            'the freshness stamp describes the shared state, not this list');
+
     expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
     expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
     expect(find.text('Dry-run alles'), findsNothing);
@@ -361,6 +376,125 @@ void main() {
     // And the flat list adds no cohort header of its own — school-wide bulk
     // apply with its cohort visible first is #296's, not this layout's.
     expect(find.textContaining('in dezelfde situatie'), findsNothing);
+  });
+
+  testWidgets('the stripped header lifts the list toward the top (#309)',
+      (WidgetTester tester) async {
+    // The point of the removal, measured rather than asserted about: with the
+    // title, the count, the pointer and the stamp gone, the search box and the
+    // list start materially higher than the four lines they used to sit under.
+    // The fixture carries class work as well, so the pointer at Klasgroepen
+    // would have rendered under the old header — this is the worst case, not
+    // the best one.
+    _useWideWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    final double eyebrowBottom =
+        tester.getBottomLeft(find.text('ARCADIA · ACTIES')).dy;
+    final double searchTop =
+        tester.getTopLeft(find.byKey(const ValueKey('actions-search'))).dy;
+
+    // One `PlinkSpacing.s4` gap (the state notice is absent in this session)
+    // rather than four text lines plus their spacing — which is what "the list
+    // starts materially higher" concretely means.
+    expect(searchTop - eyebrowBottom, lessThan(40),
+        reason: 'nothing but spacing stands between the eyebrow and the box');
+    // And a pin on the whole block above the list — eyebrow, search box, work
+    // switch, sort and system chips, family tabs. It measured 422 when #309
+    // landed, 366 once #310 put the box and the switch on one row, and 240
+    // since #311 took the select-all bar out from under them; every line put
+    // back into the header adds some 30 to that, and the bar alone was worth
+    // 126, which is what this number is guarding. What the operator actually
+    // gains from it is asserted at a real 1080p window in the integration
+    // suite, in rows on screen.
+    expect(tester.getTopLeft(find.byKey(const ValueKey('actions-list'))).dy,
+        lessThan(260));
+  });
+
+  // --- The name box and the work-list switch on one row (#310) -------------
+
+  testWidgets(
+      'the name box and the work-list switch share one row, and the box is '
+      'bounded rather than full-bleed (#310)', (WidgetTester tester) async {
+    // Two controls that shape the same list, stacked as two full-width rows:
+    // the box claimed the whole content width — well over 1200px here — for a
+    // field that holds a name, and the switch cost a row of its own under it.
+    _useWideWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    final Rect search =
+        tester.getRect(find.byKey(const ValueKey('actions-search')));
+    final Rect toggle =
+        tester.getRect(find.byKey(const ValueKey('actions-only-with-actions')));
+    final Rect label =
+        tester.getRect(find.text('Toon enkel accounts met acties'));
+
+    // One row: the switch and its label stand to the right of the box, and
+    // every one of the three overlaps the others vertically instead of
+    // stacking under them.
+    expect(toggle.left, greaterThan(search.right));
+    expect(label.left, greaterThan(toggle.right));
+    expect(toggle.top, lessThan(search.bottom));
+    expect(search.top, lessThan(toggle.bottom));
+    expect(label.top, lessThan(search.bottom));
+
+    // Bounded, not full-bleed: a fraction of the width it used to fill.
+    final double paneWidth = tester.getSize(find.byType(ActionsScreen)).width;
+    expect(paneWidth, greaterThan(1000), reason: 'a genuinely wide window');
+    expect(search.width, lessThanOrEqualTo(380));
+    expect(search.width, lessThan(paneWidth / 3));
+
+    // And the row it saved: the filter chips follow the box by one spacing gap,
+    // where a whole switch row used to stand between them.
+    final Rect chips =
+        tester.getRect(find.byKey(const ValueKey('actions-system-azure')));
+    expect(chips.top - search.bottom, lessThan(24),
+        reason: 'nothing but spacing separates the box from the chips');
+  });
+
+  testWidgets(
+      'a window too narrow for both wraps the row instead of overflowing '
+      '(#310)', (WidgetTester tester) async {
+    // The failure mode a fixed-width box would have introduced. At 700px the
+    // box, the switch and a 30-character label do not fit side by side, so the
+    // switch takes a second run — and the box shrinks to what there is rather
+    // than holding its cap and spilling.
+    _useNarrowWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final Rect search =
+        tester.getRect(find.byKey(const ValueKey('actions-search')));
+    final Rect toggle =
+        tester.getRect(find.byKey(const ValueKey('actions-only-with-actions')));
+
+    expect(toggle.top, greaterThanOrEqualTo(search.bottom),
+        reason: 'the switch wrapped onto its own run');
+    // Still capped, even on the run it now has to itself — a narrow window is
+    // not a reason to give a name field 636px.
+    expect(search.width, lessThanOrEqualTo(380));
+    // Both stay inside the 700px window: nothing is clipped off the right.
+    expect(search.right, lessThanOrEqualTo(700));
+    expect(toggle.right, lessThanOrEqualTo(700));
+    // Still one switch and one box, still operable.
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<Switch>(
+              find.byKey(const ValueKey('actions-only-with-actions')))
+          .value,
+      isFalse,
+    );
   });
 
   // --- School-wide apply-all, cohort first (#296) ---------------------------
@@ -482,12 +616,10 @@ void main() {
       expect(find.byKey(const ValueKey('actions-search')), findsNothing);
       expect(find.byKey(const ValueKey('actions-only-with-actions')),
           findsNothing);
-      // …and the header stops describing the list as the work list, which it
-      // no longer is.
-      expect(
-        find.textContaining('de lijst toont de accounts van één beslissing'),
-        findsOneWidget,
-      );
+      // The header used to restate that the list is one decision's cohort. It
+      // says nothing at all since #309 — the banner above the list, asserted on
+      // just above, is what describes the list the operator is confirming.
+      expect(find.textContaining('de lijst toont'), findsNothing);
 
       // And nothing has been written.
       expect(
@@ -574,247 +706,95 @@ void main() {
     });
   });
 
-  // --- Ticking the accounts a risky action runs on (#297) -------------------
+  // --- No selection anywhere on the list (#311) ----------------------------
 
-  group('a decision can be applied to the accounts the operator ticked (#297)',
-      () {
-    Finder check(String id) => find.byKey(ValueKey('account-check-$id'));
-
-    Finder chip(String key) => find.byKey(ValueKey('actions-decision-$key'));
-
-    /// The line under the chips: how much of the selection the chosen decision
-    /// covers, and how much of it it does not.
-    String scopeLine(WidgetTester tester) => tester
-        .widget<Text>(find.byKey(const ValueKey('actions-selection-scope')))
-        .data!;
-
-    Future<void> tick(WidgetTester tester, String id) async {
-      await tester.ensureVisible(check(id));
-      await tester.tap(check(id));
-      await tester.pumpAndSettle();
-    }
-
-    Future<void> selectAll(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('actions-select-all')));
-      await tester.pumpAndSettle();
-    }
-
-    int classMoves(ReconcileHarness harness) => harness.soap.soapActions
-        .where((a) => a.endsWith('#saveUserToClass'))
-        .length;
-
-    /// The September rollover in miniature (see the #296 group): three students
-    /// share the sanctioned class move, and Sam alone also carries the Office
-    /// 365 rename that #293 withholds from any school-wide pass.
-    Future<ReconcileHarness> openRollover(WidgetTester tester) async {
+  group('the list offers no selection at all (#311)', () {
+    /// Opens Acties over [harness] with the flat list on screen.
+    Future<void> open(WidgetTester tester, ReconcileHarness harness) async {
       _useWideWindow(tester);
-      final harness = rolloverHarness();
       await harness.controller.sync();
       await tester
           .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
-      return harness;
+    }
+
+    /// Everything #297 put on the screen, asserted absent in one place.
+    void expectNoSelection(WidgetTester tester) {
+      expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
+      expect(find.byKey(const ValueKey('actions-select-all')), findsNothing);
+      expect(
+          find.byKey(const ValueKey('actions-selection-clear')), findsNothing);
+      expect(
+          find.byKey(const ValueKey('actions-selection-scope')), findsNothing);
+      expect(find.byKey(const ValueKey('actions-selection-dry-run')),
+          findsNothing);
+      expect(
+          find.byKey(const ValueKey('actions-selection-apply')), findsNothing);
+      expect(find.textContaining('Selecteer alle zichtbare'), findsNothing);
+      expect(find.textContaining('geselecteerd'), findsNothing);
+      // And no checkbox anywhere on the screen — the bar's select-all and the
+      // per-row ticks were the only ones this view ever rendered.
+      expect(find.byType(Checkbox), findsNothing);
     }
 
     testWidgets(
-        'only a row with applyable work can be ticked, and select-all covers '
-        'the visible rows and no others', (WidgetTester tester) async {
-      _useWideWindow(tester);
-      // Sam's Office 365 display name is stale; Tom is in order everywhere.
+        'no bar above the list and no checkbox on a row that carries work',
+        (WidgetTester tester) async {
+      // The state #297's bar was loudest in: rows with applyable work, which is
+      // when it rendered at all. Sam's Office 365 display name is stale; Tom is
+      // in order everywhere.
       final harness = appliedClassWorkHarness();
-      await harness.controller.sync();
-      await tester
-          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-      await tester.pumpAndSettle();
+      await open(tester, harness);
 
       final sam = _idOf(harness.controller, 'Sam Sels');
-      final tom = _idOf(harness.controller, 'Tom Tas');
+      expect(_row(sam), findsOneWidget, reason: 'he does carry work');
+      expect(find.byKey(ValueKey('account-check-$sam')), findsNothing);
+      expectNoSelection(tester);
 
-      expect(
-          find.byKey(const ValueKey('actions-selection-bar')), findsOneWidget);
-      expect(find.text('Selecteer alle zichtbare (1)'), findsOneWidget);
-      expect(check(sam), findsOneWidget);
-
-      // Off the work list Tom appears with nothing to tick: ticking a settled
-      // account adds nothing to a pass and would only inflate the skipped
-      // count. Select-all still covers one row.
+      // Off the work list the settled accounts come back, and they have nothing
+      // to tick either — nor a blank column where a checkbox used to be.
       await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
       await tester.pumpAndSettle();
-      expect(_row(tom), findsOneWidget);
-      expect(check(tom), findsNothing);
-      expect(find.text('Selecteer alle zichtbare (1)'), findsOneWidget);
-
-      await selectAll(tester);
-      expect(tester.widget<Checkbox>(check(sam)).value, isTrue);
-      expect(find.textContaining('1 account(s) geselecteerd'), findsOneWidget);
-    });
-
-    testWidgets(
-        'the bar names one decision and applies exactly it across the '
-        'selection (#292)', (WidgetTester tester) async {
-      final harness = await openRollover(tester);
-      await selectAll(tester);
-
-      expect(find.textContaining('3 account(s) geselecteerd'), findsOneWidget);
-      // Both decisions the ticked accounts raise are on offer, and the one the
-      // most of them share is the default — that is what the selection was
-      // almost certainly made for.
-      expect(chip('student|MoveToSmartschoolClassGroup'), findsOneWidget);
-      expect(chip('student|ModifyAzureName'), findsOneWidget);
-      expect(
-        tester
-            .widget<ChoiceChip>(chip('student|MoveToSmartschoolClassGroup'))
-            .selected,
-        isTrue,
-      );
-      expect(scopeLine(tester),
-          'Wordt toegepast op alle 3 geselecteerde account(s).');
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Toepassen op 3 geselecteerd(e) account(s)?'),
-          findsOneWidget);
-      expect(
-        find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.textContaining('3 wijzigingen naar Smartschool'),
-        ),
-        findsOneWidget,
-        reason: 'the dialog names the systems and the change count of this '
-            'selection, not of everything on those three cards',
-      );
-
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-      await tester.pumpAndSettle();
-
-      expect(classMoves(harness), 3);
-      expect(harness.graph.requests.where((r) => r.method == 'PATCH'), isEmpty,
-          reason: "Sam's rename shares his card but not this decision");
-      // The writes settled what the ticks named, so the selection is gone with
-      // the view it was made against.
-      expect(
-          find.byKey(const ValueKey('actions-selection-scope')), findsNothing);
-    });
-
-    testWidgets(
-        'the kinds that get no apply-all get this instead, and it says how '
-        'many of the selection it skips (#293)', (WidgetTester tester) async {
-      final harness = await openRollover(tester);
-      final sam = _idOf(harness.controller, 'Sam Sels');
-      final sara = _idOf(harness.controller, 'Sara Segers');
-
-      // A rename over the whole school is exactly what the sanction refuses…
-      await _select(tester, sam);
-      expect(find.byKey(ValueKey('decision-apply-all-student-$sam-0')),
-          findsNothing);
-
-      // …yet it is on offer here, because the ticking is the consent.
-      await tick(tester, sam);
-      await tick(tester, sara);
-      await tester.tap(chip('student|ModifyAzureName'));
-      await tester.pumpAndSettle();
-
-      expect(
-        scopeLine(tester),
-        'Wordt toegepast op 1 van de 2 geselecteerde account(s) — 1 '
-        'overgeslagen, want daar staat deze beslissing niet open.',
-        reason: 'Sara raises the class move, not the rename, and a pass that '
-            'quietly passed over her would be the whole risk of a multi-select',
-      );
-      expect(find.text('Toepassen op selectie (1)'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-      expect(find.text('Toepassen op 1 geselecteerd(e) account(s)?'),
-          findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-      await tester.pumpAndSettle();
-
-      expect(harness.graph.requests.where((r) => r.method == 'PATCH'),
-          hasLength(1));
-      expect(classMoves(harness), 0,
-          reason: 'the pass is one decision deep, whatever else the ticked '
-              'cards carry (#292)');
-    });
-
-    testWidgets(
-        'ticking every visible row selects what the filter shows, and the '
-        'dialog quotes that count', (WidgetTester tester) async {
-      final harness = await openRollover(tester);
       final tom = _idOf(harness.controller, 'Tom Tas');
-
-      await tester.enterText(
-          find.byKey(const ValueKey('actions-search')), 'Sa');
-      await tester.pumpAndSettle();
-      expect(_row(tom), findsNothing);
-      expect(find.text('Selecteer alle zichtbare (2)'), findsOneWidget);
-
-      await selectAll(tester);
-      expect(find.text('Toepassen op selectie (2)'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-      expect(find.text('Toepassen op 2 geselecteerd(e) account(s)?'),
-          findsOneWidget,
-          reason: 'select-all under a filter must never read as school-wide');
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-      await tester.pumpAndSettle();
-
-      expect(classMoves(harness), 2,
-          reason: 'Tom needs the very same move and was never on the screen');
+      expect(_row(tom), findsOneWidget);
+      expect(find.byKey(ValueKey('account-check-$tom')), findsNothing);
+      expectNoSelection(tester);
     });
 
-    testWidgets('a dry-run covers the selection and leaves it standing',
+    testWidgets('nor over a whole rollover roster',
         (WidgetTester tester) async {
-      final harness = await openRollover(tester);
-      await selectAll(tester);
+      // Three students sharing one decision is the case the bar was built for,
+      // and the one where "Selecteer alle zichtbare (3)" was one press away from
+      // staging every row the filter happened to be showing.
+      final harness = rolloverHarness();
+      await open(tester, harness);
 
-      await tester.tap(find.byKey(const ValueKey('actions-selection-dry-run')));
-      await tester.pumpAndSettle();
+      for (final label in <String>['Sam Sels', 'Sara Segers', 'Tom Tas']) {
+        final id = _idOf(harness.controller, label);
+        expect(_row(id), findsOneWidget);
+        expect(find.byKey(ValueKey('account-check-$id')), findsNothing);
+      }
+      expectNoSelection(tester);
 
-      expect(harness.controller.dryRunResults, hasLength(3));
-      expect(classMoves(harness), 0);
-      expect(find.text('Resultaat van de dry-run'), findsOneWidget);
-      expect(scopeLine(tester),
-          'Wordt toegepast op alle 3 geselecteerde account(s).',
-          reason: 'the dry-run is what the operator reads before pressing the '
-              'button beside it, so it must not dissolve the selection');
+      // Selecting a row still opens its pane, which is the one thing a row was
+      // ever meant to do.
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+      expect(find.byKey(ValueKey('actions-detail-$sam')), findsOneWidget);
+      expectNoSelection(tester);
     });
 
     testWidgets(
-        'the ticks survive a sort change and are retired by a refreshed view',
-        (WidgetTester tester) async {
-      final harness = await openRollover(tester);
+        'the cohort review is the only bulk path left, and it still works '
+        '(#296)', (WidgetTester tester) async {
+      // #311 removes the *chosen* set, not the computed one. The sanctioned
+      // decision still arms its school-wide review, still shows the cohort
+      // before confirming, and still writes exactly it.
+      final harness = rolloverHarness();
+      await open(tester, harness);
+
       final sam = _idOf(harness.controller, 'Sam Sels');
-      await tick(tester, sam);
-      expect(find.textContaining('1 account(s) geselecteerd'), findsOneWidget);
-
-      // A sort describes the list, not the row, so it leaves the set alone.
-      await tester.tap(find.byKey(const ValueKey('actions-sort-klas')));
-      await tester.pumpAndSettle();
-      expect(tester.widget<Checkbox>(check(sam)).value, isTrue);
-      expect(find.textContaining('1 account(s) geselecteerd'), findsOneWidget);
-
-      // A refreshed linked view does not: the accounts under the ticks may no
-      // longer raise what they were ticked for.
-      await harness.controller.checkDrift();
-      await tester.pumpAndSettle();
-      expect(tester.widget<Checkbox>(check(sam)).value, isFalse);
-      expect(
-          find.byKey(const ValueKey('actions-selection-scope')), findsNothing);
-    });
-
-    testWidgets('a school-wide review takes the ticks and the checkboxes away',
-        (WidgetTester tester) async {
-      // The two bulk modes are exclusive: a review's list is its own cohort, so
-      // ticks made against the ordinary list would name a different set than
-      // the rows now on screen.
-      final harness = await openRollover(tester);
-      final sam = _idOf(harness.controller, 'Sam Sels');
-      await tick(tester, sam);
       await _select(tester, sam);
-
       final Finder moveAll =
           find.byKey(ValueKey('decision-apply-all-student-$sam-1'));
       await tester.ensureVisible(moveAll);
@@ -823,29 +803,32 @@ void main() {
 
       expect(
           find.byKey(const ValueKey('actions-cohort-banner')), findsOneWidget);
-      expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
-      expect(check(sam), findsNothing);
+      expectNoSelection(tester);
 
-      await tester.tap(find.byKey(const ValueKey('actions-cohort-cancel')));
+      await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
       await tester.pumpAndSettle();
-      expect(check(sam), findsOneWidget);
-      expect(tester.widget<Checkbox>(check(sam)).value, isFalse,
-          reason: 'the review dropped the set; restoring one the operator has '
-              'not looked at since is exactly what must not happen');
+      expect(find.text('Toepassen op 3 account(s)?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.soap.soapActions
+            .where((a) => a.endsWith('#saveUserToClass'))
+            .length,
+        3,
+      );
     });
 
     testWidgets(
-        'the September leavers sweep: tick the departed and resolve them in '
-        'one pass', (WidgetTester tester) async {
-      _useWideWindow(tester);
-      // The case the issue is written for. Three Smartschool-only accounts, no
-      // WISA record: each resolves to the unregister/delete either-or, which is
-      // as far from a school-wide apply-all as an action gets.
+        'the September leavers sweep runs one account at a time from the pane',
+        (WidgetTester tester) async {
+      // The workflow #297 was written for, and what it costs now that the ticks
+      // are gone: three Smartschool-only accounts, each raising the
+      // unregister/delete either-or, resolved one pane at a time. Slower on
+      // purpose — the safety of a destructive action is that it is never
+      // applied to a set nobody opened.
       final harness = departedHarness(count: 3);
-      await harness.controller.sync();
-      await tester
-          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-      await tester.pumpAndSettle();
+      await open(tester, harness);
 
       final ids = <String>[
         for (final e in harness.controller.pendingEntries)
@@ -858,23 +841,29 @@ void main() {
           reason: 'nobody presses one button that deletes every account the '
               'app believes has left');
 
-      await selectAll(tester);
-      expect(chip('student|smartschool-departure'), findsOneWidget);
-      expect(scopeLine(tester),
-          'Wordt toegepast op alle 3 geselecteerde account(s).');
-
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
+      // The risky-action confirmation path from the pane is untouched: it names
+      // the write, and only on Annuleer-free confirmation does anything happen.
+      final Finder apply = find.byKey(ValueKey('entry-apply-${ids.first}'));
+      await tester.ensureVisible(apply);
+      await tester.tap(apply);
       await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
       await tester.pumpAndSettle();
 
-      expect(harness.controller.applyResults, hasLength(3));
+      expect(harness.controller.applyResults, hasLength(1),
+          reason: 'one account, because one account is what was opened');
+      expect(harness.controller.applyResults!.single.targetId, ids.first);
       expect(
         harness.controller.applyResults!.map((r) => r.changes.summary).toSet(),
         <String>{'Schrijf de leerling uit in Smartschool'},
-        reason: 'each account still runs its own chosen alternative, and the '
-            'default of that either/or is the non-destructive one',
+        reason: 'the default of that either/or is the non-destructive one',
       );
+      // The other two are on the list beside him, each still its own decision
+      // to make — which is exactly what removing the sweep costs, and buys.
+      for (final id in ids.skip(1)) {
+        expect(_row(id), findsOneWidget);
+      }
     });
   });
 
@@ -1061,6 +1050,16 @@ void main() {
       // The pass a rollover really runs: one decision over a set of accounts,
       // all of them settling at once. Opening the second of them must not
       // delete the first out from under the tap that opened it.
+      //
+      // The pass is started on the controller rather than from a button,
+      // because since #311 no affordance on this screen starts a multi-account
+      // pass over a decision #293 withholds — and every decision the offline
+      // fakes really *settle* is one of those. (The Smartschool fake takes a
+      // write without folding it back into its snapshot, so the sanctioned
+      // class move of #296 leaves its accounts pending and never reaches the
+      // state this test is about.) What #299 pins here is what the screen does
+      // once a pass has written several accounts, whichever button began it;
+      // the cohort review's own path is covered in the #296 group above.
       final harness = crossClassSituationHarness();
       await open(tester, harness);
 
@@ -1068,11 +1067,13 @@ void main() {
       final sara = _idOf(harness.controller, 'Sara Segers');
       final tom = _idOf(harness.controller, 'Tom Tas');
 
-      await tester.tap(find.byKey(const ValueKey('actions-select-all')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      final cohort = ReconcileController.situationCohorts(<PendingAccountEntry>[
+        for (final e in harness.controller.pendingEntries)
+          if (e.family == 'student') e,
+      ]).single;
+      expect(cohort.key, 'student|ModifyAzureName');
+      expect(cohort.length, 3, reason: 'one decision, three accounts');
+      await harness.controller.applyDecisions(cohort.decisions);
       await tester.pumpAndSettle();
 
       expect(harness.controller.applyResults, hasLength(3));
@@ -1940,72 +1941,20 @@ void main() {
         reason: 'a dead button needs its reason on screen too');
   });
 
-  // --- The freshness stamp above the list ----------------------------------
+  // --- The freshness stamp -------------------------------------------------
+  //
+  // It used to sit above this list too. #309 took it off Acties — it is a
+  // property of the shared state, not of this account list — so the four tests
+  // that pinned its wording (#108/#192/#247) moved with it, to
+  // `class_groups_screen_test.dart`, where the stamp still renders. What Acties
+  // owes the removal is the assertion that it is gone, which is in the header
+  // test above.
 
-  testWidgets(
-      "a generation bump refetches the passive Actions overview's freshness "
-      '(#108)', (WidgetTester tester) async {
-    final linkedStore = InMemoryLinkedStore();
-    final snapshots = InMemorySnapshotStore();
-
-    final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
-    await s1.controller.sync();
-
-    final s2 = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Generatie 1'), findsOneWidget);
-
-    s1.wisaResult = wisaSnap(
-      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
-      students: [wisaStudent(classGroup: '3D')],
-    );
-    await s1.controller.sync();
-    await s2.controller.onStoreChanged(2);
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Generatie 2'), findsOneWidget);
-    expect(find.textContaining('Generatie 1'), findsNothing);
-  });
-
-  testWidgets(
-      "the freshness stamp carries the date once the shared state is no longer "
-      'from today (#192)', (WidgetTester tester) async {
-    // The shared view was materialized at kFixtureDate, a past day. Time-only
-    // rendered that as "Generatie 1 · 02:00 door …" —
-    // indistinguishable from a view materialized minutes ago, the same
-    // confusion #192 fixes on the Reconcile last-sync box.
-    final store = await seededLinkedStore(<MaterializedAccount>[
-      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
-    ]);
-    final harness = ReconcileHarness(linkedStore: store);
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
-    // Derived here rather than through the production formatter, so this pins
-    // the rendered text instead of restating the implementation.
-    final DateTime t = kFixtureDate.toLocal();
-    final String dm = '${t.day.toString().padLeft(2, '0')}/'
-        '${t.month.toString().padLeft(2, '0')}';
-    final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
-        '${t.minute.toString().padLeft(2, '0')}';
-
-    expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
-    expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
-        reason: 'a stamp from a past day is never rendered as bare time');
-  });
-
-  testWidgets(
-      'the freshness stamp names the werkdatum the roster was pulled with '
-      '(#247)', (WidgetTester tester) async {
-    // "Wie synchroniseerde, wanneer" says when the pass ran, never which school
-    // year it describes — and WISA answers *as of* a date, so a pull made on
-    // the wrong side of the rollover reads here exactly like a class that went
-    // missing (#239). The stamp comes off the shared per-system record, so this
-    // passive session reads the date without having run the pull.
+  testWidgets('the header carries no freshness stamp at all (#309)',
+      (WidgetTester tester) async {
+    // The worst case for the removal: a shared view stamped with everything the
+    // line could have said — a generation, an operator, a werkdatum. None of it
+    // reaches this screen.
     final store = await seededLinkedStore(
       <MaterializedAccount>[
         matAccount(id: 's1', label: 'Jane Doe', withAction: true),
@@ -2022,68 +1971,9 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    // In the wire's own dd/MM/yyyy, the way the Log panel's pull line and the
-    // `Werkdatum` SOAP parameter both spell it.
-    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
-  });
-
-  testWidgets(
-      'a shared view synced before the werkdatum was recorded renders the '
-      'stamp unchanged (#247)', (WidgetTester tester) async {
-    // The store in production already holds views written without it, and a
-    // Smartschool/Azure-only stamp never has one. Neither may invent a date,
-    // and neither may lose the "wie, wanneer" half over its absence.
-    final store = await seededLinkedStore(<MaterializedAccount>[
-      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
-    ]);
-    final harness = ReconcileHarness(linkedStore: store);
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
+    expect(find.textContaining('Generatie'), findsNothing);
     expect(find.textContaining('werkdatum'), findsNothing);
-    expect(
-      find.textContaining('Generatie 1'),
-      findsOneWidget,
-      reason: 'the who/when half stands on its own',
-    );
-  });
-
-  testWidgets(
-      'the stamp names the werkdatum the stored view was pulled with, not the '
-      'one Instellingen now holds (#247)', (WidgetTester tester) async {
-    // The disagreement the issue is about. #238 made the werkdatum live, so
-    // between a save and the next Synchroniseer the setting says one school
-    // year and the installed roster is another. Driven over the *production*
-    // WISA pull, so the date on screen is the one that really went out.
-    _useWideWindow(tester);
-    final live = LiveSettings(AppSettings(
-      wisa: WisaConnection(
-        server: 'wisa.example',
-        port: '9000',
-        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
-      ),
-    ));
-    final wire = RecordingWisaSoap();
-    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
-    await harness.controller.sync();
-    expect(wire.werkdatums, <String>['01/09/2025']);
-
-    // The operator moves the werkdatum to the new school year and saves. Until
-    // they sync, the overview below is still the old year's.
-    live.publish(AppSettings(
-      wisa: WisaConnection(
-        server: 'wisa.example',
-        port: '9000',
-        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
-      ),
-    ));
-
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
-    expect(find.textContaining('01/09/2026'), findsNothing,
-        reason: 'a saved werkdatum describes the next pull, not this view');
+    expect(find.textContaining('operator@school.example'), findsNothing);
   });
 
   group('a pass runs behind a modal progress dialog (#243)', () {
@@ -2257,58 +2147,38 @@ void main() {
     });
   });
 
-  // --- The pointer at Klasgroepen (#301) ------------------------------------
+  // --- No pointer at Klasgroepen any more (#301 → #309) ---------------------
 
   testWidgets(
-      'the Acties header says how many classes are waiting on Klasgroepen '
-      '(#301)', (WidgetTester tester) async {
-    // Acties covers people and Klasgroepen covers classes, and nothing on this
-    // screen said the second half existed. The fixture is the rollover shape in
-    // miniature: `3C` and `3D` are both missing their Office 365 group, which is
-    // work that can only be done on the other tab.
+      'the header never points at Klasgroepen, however much that tab is '
+      'holding (#309)', (WidgetTester tester) async {
+    // #301 put the pointer on both action tabs so each said what the other was
+    // holding. The Acties half is gone: what Klasgroepen is holding is stated
+    // on Klasgroepen, where the mirror line — how many accounts Acties is
+    // holding — stays (see `class_groups_screen_test.dart`). The asymmetry is
+    // deliberate: that tab has the room, this one is a list of thousands.
+    //
+    // The fixture is the case that used to render the line: `3C` and `3D` are
+    // both missing their Office 365 group, which is work only the other tab can
+    // do.
     _useWideWindow(tester);
     final harness = appliedClassWorkHarness();
     await harness.controller.sync();
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    // The screen reads the inventory itself, so the line is there on the first
-    // visit rather than only after the operator has been to the tab it points
-    // at — which is the one case it is not needed.
-    expect(harness.controller.groupDocs, isNotNull);
-    expect(harness.controller.classesNeedingAttention, 2);
-    expect(
-      find.text('2 klas(sen) vragen ook aandacht op Klasgroepen.'),
-      findsOneWidget,
-    );
-    // Pumped outside the shell there is no tab to switch to, and the sentence is
-    // true anyway — so it degrades to prose instead of vanishing.
-    expect(
-      find.byKey(const ValueKey('actions-class-attention')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('actions-class-attention')),
-        matching: find.byType(InkWell),
-      ),
-      findsNothing,
-      reason: 'no shell above it, so there is nothing to follow the line to',
-    );
-  });
+    // With nothing left on this screen reading the class inventory, it no
+    // longer schedules the partition read that only ever fed the pointer.
+    expect(harness.controller.groupDocs, isNull);
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
 
-  testWidgets('…and says nothing at all when no class needs anything (#301)',
-      (WidgetTester tester) async {
-    // A line reading "0 klas(sen)" is noise in the one case where the operator
-    // is done. This fixture has departed Smartschool accounts and no class at
-    // all, so Acties has work and Klasgroepen has none.
-    _useWideWindow(tester);
-    final harness = departedHarness();
-    await harness.controller.sync();
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    // …and once the inventory *is* loaded — the operator visited Klasgroepen,
+    // which reads it through the same controller — the count is there to be
+    // rendered and this screen still renders none of it.
+    await harness.controller.loadGroups();
     await tester.pumpAndSettle();
 
-    expect(harness.controller.classesNeedingAttention, 0);
+    expect(harness.controller.classesNeedingAttention, 2);
     expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
     expect(find.textContaining('aandacht op Klasgroepen'), findsNothing);
   });

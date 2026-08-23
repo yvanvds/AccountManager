@@ -213,13 +213,26 @@ wapi.WisaSnapshot _wSnap({
       schools: const [],
     );
 
-ss.SmartschoolSnapshot _sSnap(
-        {List<ss.SmartschoolAccount> accounts = const []}) =>
+ss.SmartschoolSnapshot _sSnap({
+  List<ss.SmartschoolAccount> accounts = const [],
+  List<core.Group> groups = const [],
+}) =>
     ss.SmartschoolSnapshot(
       fetchedAt: _d,
-      groups: const [],
+      groups: groups,
       accounts: accounts,
       memberships: const [],
+    );
+
+/// An **official** Smartschool class, the only shape the linker ever seeds a
+/// Smartschool orphan record from.
+core.Group _ssClass(String name, {String? code}) => core.Group(
+      id: core.GroupId(code ?? name),
+      name: name,
+      description: 'Klas $name',
+      type: core.GroupType.classGroup,
+      official: true,
+      origin: core.Origin.smartschool,
     );
 
 az.AzureSnapshot _aSnap({
@@ -1033,6 +1046,80 @@ void main() {
           everyElement(contains('ledenbestand')),
         );
       });
+    });
+  });
+
+  group('Smartschool classes WISA does not have (#313)', () {
+    /// Two official Smartschool classes and a WISA snapshot that only knows one
+    /// of them: `9Z` is the leftover, and the relink raises the
+    /// leave-it/delete-it pair on it.
+    _Harness leftoverHarness() => _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1', classGroup: '2A')],
+            classGroups: [
+              const wapi.WisaClassGroup(
+                name: '2A',
+                groupName: '00',
+                description: 'Klas 2A',
+                adminCode: '',
+                schoolCode: '123',
+                schoolId: 1,
+              ),
+            ],
+          ),
+          smartschool: _sSnap(
+            groups: [_ssClass('2A'), _ssClass('9Z', code: 'C9Z')],
+          ),
+        );
+
+    test('deleting a leftover class drops it from the snapshot', () async {
+      // The Smartschool twin of the #271 delete: applying it has to remove the
+      // *group* from the Smartschool snapshot, or the relink re-raises the very
+      // pair the operator just resolved.
+      final harness = leftoverHarness();
+      final before = await harness.applier.link();
+      final delete =
+          before.groupActions.whereType<DeleteSmartschoolClass>().single;
+
+      final applied = await harness.applier.applyGroup(delete);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.refreshed, isTrue);
+      expect(harness.soap.soapActions.single, contains('delClass'));
+      expect(
+        harness.app.smartschool.snapshot!.groups.map((g) => g.id.value),
+        ['2A'],
+        reason: 'only the leftover goes — no re-sync (#72)',
+      );
+      expect(applied.followUps, isEmpty, reason: 'nothing follows a delete');
+      expect(
+        applied.linked!.groupActions.whereType<DeleteSmartschoolClass>(),
+        isEmpty,
+        reason: 'the leftover is gone from the relinked view',
+      );
+      expect(
+        applied.linked!.groupActions.whereType<DoNotImportFromSmartschool>(),
+        isEmpty,
+        reason: 'and so is the notice that was its alternative',
+      );
+      expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
+    });
+
+    test('a dry run writes nothing and patches nothing', () async {
+      final harness = leftoverHarness();
+      final before = await harness.applier.link();
+      final delete =
+          before.groupActions.whereType<DeleteSmartschoolClass>().single;
+
+      final applied = await harness.applier.applyGroup(
+        delete,
+        options: const ApplyOptions(dryRun: true),
+      );
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(applied.refreshed, isFalse);
+      expect(harness.soap.soapActions, isEmpty);
+      expect(harness.app.smartschool.snapshot!.groups, hasLength(2));
     });
   });
 

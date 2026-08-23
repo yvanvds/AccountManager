@@ -13,13 +13,16 @@ import 'group_placement.dart';
 /// - If the class is missing from WISA **or** Smartschool, the lifecycle-style
 ///   actions ([ClassExistsAsSmartschoolGroup], [AddToSmartschool],
 ///   [CreateInSmartschool], [DoNotImportFromWisa],
-///   [DoNotImportFromSmartschool]) are considered, so a WISA-only class raises
-///   [DoNotImportFromWisa] *and* exactly one of [AddToSmartschool] /
-///   [CreateInSmartschool]. Those two are not two to-dos: they share the
-///   [classImportAlternative] key, so the pending list renders them as one
-///   either/or choice and an apply runs only the picked one (#244). Legacy
-///   ordered [DoNotImportFromWisa] first; it now trails the create it is an
-///   alternative to, so the create leads the radio pair.
+///   [DoNotImportFromSmartschool], [DeleteSmartschoolClass]) are considered, so
+///   a WISA-only class raises [DoNotImportFromWisa] *and* exactly one of
+///   [AddToSmartschool] / [CreateInSmartschool]. Those two are not two to-dos:
+///   they share the [classImportAlternative] key, so the pending list renders
+///   them as one either/or choice and an apply runs only the picked one (#244).
+///   Legacy ordered [DoNotImportFromWisa] first; it now trails the create it is
+///   an alternative to, so the create leads the radio pair. A **Smartschool-only**
+///   class is the mirror image: it raises the [staleSmartschoolClassAlternative]
+///   pair of #313 — the informational [DoNotImportFromSmartschool] (leave it
+///   standing, the default) and the applyable [DeleteSmartschoolClass].
 /// - If it is present in both, only [ModifySmartschoolData] is considered.
 ///
 /// [ClassExistsAsSmartschoolGroup] (#225) sits where the two create actions
@@ -97,7 +100,12 @@ List<GroupAction> groupActionsFor(
       if (placement != null) AddToSmartschool(group, placement),
       if (placement != null) CreateInSmartschool(group, placement),
       DoNotImportFromWisa(group),
+      // The Smartschool-leftover either/or (#313), notice first for the same
+      // reason the create leads the blacklist above: the order is the order the
+      // operator reads the radios in, and the fallback the grouping uses if a
+      // default is ever forgotten — so the delete is never first.
       DoNotImportFromSmartschool(group),
+      DeleteSmartschoolClass(group),
     ],
     // The Office 365 group of a class is orthogonal to its Smartschool state,
     // so these ride alongside both branches (#228).

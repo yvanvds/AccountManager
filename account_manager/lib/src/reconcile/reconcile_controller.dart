@@ -1060,8 +1060,9 @@ class ReconcileController extends ChangeNotifier {
   /// - **The action must be sanctioned.** `null` unless the resolution
   ///   [decision] is set to declares [PendingActionOption.canApplyToAll] (#293).
   ///   That is what keeps the destructive and judgement-call actions — a delete,
-  ///   a rename, a blacklist — off this path entirely; they get checkbox
-  ///   multi-select instead (#297).
+  ///   a rename, a blacklist — off this path entirely. They get no bulk path at
+  ///   all since #311 withdrew the ticked selection of #297: one account at a
+  ///   time, from the details pane that shows what the write would do.
   /// - **Every member must be sanctioned too**, not merely the one the operator
   ///   is looking at. The staff import decision mixes the two in one either/or,
   ///   so a colleague set to "never import" is not swept along by a cohort

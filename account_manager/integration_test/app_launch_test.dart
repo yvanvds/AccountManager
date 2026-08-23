@@ -389,16 +389,16 @@ void main() {
       findsNothing,
       reason: 'the drill-down it replaces is gone',
     );
-    // The header states the workload and stops there (#294): the global
-    // "Dry-run alles" / "Alles toepassen" pair that wrote every account in the
-    // school off one dialog is gone, and nothing on the overview replaces it.
-    // Whatever the operator applies, they reach by opening it first.
+    // The header is one eyebrow and stops there (#309/#294): the count line is
+    // gone, and so is the global "Dry-run alles" / "Alles toepassen" pair that
+    // wrote every account in the school off one dialog. Whatever the operator
+    // applies, they reach by opening it first.
     expect(
       find.descendant(
         of: find.byType(ActionsScreen),
         matching: find.textContaining('openstaande actie(s)'),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
     expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
@@ -754,22 +754,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // The complement of the run above, for the kinds #293 deliberately withholds
-  // a school-wide apply from (#297). The operator ticks the accounts by hand,
-  // names the one decision, and the pass covers exactly the ticked accounts it
-  // stands open on. Worth a full run for the same reason #296 is: the count on
-  // the button, the rows the checkboxes sit on and the writes the pass makes are
-  // resolved in three different places, and only the real app composes all
-  // three — over real fonts, the real navigation shell and the real Graph and
-  // SOAP write paths.
+  // The complement of the run above went the other way (#311). #297 put a
+  // checkbox on every row carrying work and a "Selecteer alle zichtbare (N)"
+  // bar above the list, so one decision could be run over a hand-picked set —
+  // and select-all made that set whatever the filter happened to be showing,
+  // which is the objection that removed the global "Alles toepassen" in #294.
+  // Worth a full run for the same reason its arrival was: the bar, the row
+  // checkboxes and the vertical budget they cost are three different places,
+  // and only the real app composes them — in the real fonts, in the real shell,
+  // at a real window size.
   testWidgets(
-      'ticked accounts run one decision that gets no apply-all, and the pass '
-      'skips the ones it does not stand open on (#297)',
-      (WidgetTester tester) async {
-    useTallWindow(tester);
-    // The same rollover fixture: three students share the sanctioned class
-    // move, and Sam alone also carries the Office 365 rename — a judgement call
-    // the sanction refuses, and therefore exactly the kind this exists for.
+      'Acties offers no selection at all, and the list starts higher for it '
+      'end-to-end (#311)', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // The rollover roster: three students each carrying applyable work, which
+    // is precisely when the bar rendered and every one of those rows carried a
+    // tick.
     final harness = rolloverHarness();
     await tester.pumpWidget(AccountManagerApp(
       session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
@@ -783,68 +786,44 @@ void main() {
     final String sam = accountId(harness, 'Sam Sels');
     final String sara = accountId(harness, 'Sara Segers');
     final String tom = accountId(harness, 'Tom Tas');
-    Finder check(String id) => find.byKey(ValueKey('account-check-$id'));
 
-    // The rename carries no school-wide affordance anywhere on Sam's card…
-    await selectAccount(tester, sam);
+    // Three rows with work on them, and not one tick between them.
+    for (final String id in <String>[sam, sara, tom]) {
+      expect(find.byKey(ValueKey('account-row-$id')), findsOneWidget);
+      expect(find.byKey(ValueKey('account-check-$id')), findsNothing);
+    }
+    expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-select-all')), findsNothing);
+    expect(find.byKey(const ValueKey('actions-selection-apply')), findsNothing);
+    expect(find.textContaining('Selecteer alle zichtbare'), findsNothing);
+    // No checkbox anywhere on the screen: those were the only ones Acties ever
+    // rendered, so the whole affordance is gone rather than merely unreachable.
     expect(
-      find.byKey(ValueKey('decision-apply-all-student-$sam-0')),
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.byType(Checkbox),
+      ),
       findsNothing,
     );
 
-    // …so the bulk path is the ticks. Sam and Sara, by hand; Tom is left alone
-    // and stays that way.
-    for (final id in <String>[sam, sara]) {
-      await tester.ensureVisible(check(id));
-      await tester.tap(check(id));
-      await tester.pumpAndSettle();
-    }
-    expect(tester.widget<Checkbox>(check(tom)).value, isFalse);
+    // What the removal buys, measured where it was spent. The bar was a
+    // bordered block between the filter chips and the family tabs on every
+    // visit, ticks or no ticks; with it gone nothing but the tabs and their
+    // spacing stands between the last chip and the first row.
+    final Finder list = find.byKey(const ValueKey('actions-list'));
+    final double chipsBottom = tester
+        .getRect(find.byKey(const ValueKey('actions-system-azure')))
+        .bottom;
+    expect(tester.getTopLeft(list).dy - chipsBottom, lessThan(80),
+        reason: 'the bordered block alone was 126 logical pixels tall');
+    // And the window it gives back: two thirds of a 1080p screen is the list
+    // itself, on the view whose whole purpose is the list.
+    expect(tester.getSize(list).height, greaterThan(1080 * 0.7));
 
-    final Finder rename =
-        find.byKey(const ValueKey('actions-decision-student|ModifyAzureName'));
-    await tester.ensureVisible(rename);
-    await tester.tap(rename);
-    await tester.pumpAndSettle();
-
-    // Sara raises the class move, not the rename. The bar says so rather than
-    // quietly passing over her.
-    expect(
-      tester
-          .widget<Text>(find.byKey(const ValueKey('actions-selection-scope')))
-          .data,
-      'Wordt toegepast op 1 van de 2 geselecteerde account(s) — 1 '
-      'overgeslagen, want daar staat deze beslissing niet open.',
-    );
-
-    await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Toepassen op 1 geselecteerd(e) account(s)?'),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.textContaining('1 wijziging naar Office 365'),
-      ),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
-    await tester.pumpAndSettle();
-
-    // One real Graph PATCH, and not one class move — the pass is one decision
-    // deep whatever else the ticked cards carry (#292).
-    expect(
-      harness.graph.requests.where((r) => r.method == 'PATCH'),
-      hasLength(1),
-    );
-    expect(
-      harness.soap.soapActions.where((a) => a.endsWith('#saveUserToClass')),
-      isEmpty,
-    );
-    expect(harness.controller.applyResults, hasLength(1));
+    // And a row still does the one thing a row is for.
+    await selectAccount(tester, sam);
+    expect(find.byKey(ValueKey('actions-detail-$sam')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-selection-bar')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -1116,7 +1095,7 @@ void main() {
     // The terminal ready line is logged (newest-first in the log panel) so the
     // operator knows the pass finished, and it names the pending-action count.
     expect(
-      find.textContaining('Sync voltooid — 4 openstaande actie(s). Klaar.'),
+      find.textContaining('Sync voltooid — 6 openstaande actie(s). Klaar.'),
       findsOneWidget,
     );
     // The last-sync freshness now renders as a dedicated box headed "Last sync"
@@ -1264,12 +1243,16 @@ void main() {
   });
 
   testWidgets(
-      "the Actions overview's freshness stamp carries the date once the shared "
-      'state is no longer from today end-to-end (#192)',
+      "the Klasgroepen overview's freshness stamp carries the date once the "
+      'shared state is no longer from today end-to-end (#192)',
       (WidgetTester tester) async {
     // A passive session over a shared view that was materialized in the past.
     // The header line used to read "Generatie 1 · 02:00 door …",
     // which is exactly as reassuring as a stamp from five minutes ago.
+    //
+    // Read on Klasgroepen since #309 took the stamp off Acties: it describes
+    // the shared state rather than either list, and this is the action view
+    // that still carries it.
     useTallWindow(tester);
     final store = await seededLinkedStore(<MaterializedAccount>[
       matAccount(id: 's1', label: 'Jane Doe', withAction: true),
@@ -1282,7 +1265,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
 
     // Derived independently of the production formatter: the store was stamped
@@ -3253,17 +3236,24 @@ void main() {
   });
 
   testWidgets(
-      'each action tab says what the other one is holding, and following the '
-      'line lands there end-to-end (#301)', (WidgetTester tester) async {
-    // The real app, real rail, real navigation — which is the whole of this
-    // issue. Acties covers people and Klasgroepen covers classes, so "is
-    // everything as expected?" is only answerable by visiting both, and nothing
-    // prompted the operator to. The rollover is where that bites: the
-    // Smartschool class change is per student here while the Office 365 roster
-    // write is one action per class there, so a clean Acties list can sit above
-    // a pile of stale rosters.
+      'Klasgroepen says what Acties is holding and following the line lands '
+      'there, while Acties points back at nothing end-to-end (#301/#309)',
+      (WidgetTester tester) async {
+    // The real app, real rail, real navigation — which is the whole of #301.
+    // Acties covers people and Klasgroepen covers classes, so "is everything as
+    // expected?" is only answerable by visiting both, and nothing prompted the
+    // operator to. The rollover is where that bites: the Smartschool class
+    // change is per student on Acties while the Office 365 roster write is one
+    // action per class here, so a clean Acties list can sit above a pile of
+    // stale rosters.
     //
-    // Only a full run can show it. The two counts are derived on the shared
+    // #309 made the pointer one-way. Acties is a list of thousands whose header
+    // was five lines of preamble before anything actionable, so the line about
+    // the *other* tab came off it; Klasgroepen has the room and keeps the
+    // mirror. The asymmetry is the decision, and this run pins both halves of
+    // it.
+    //
+    // Only a full run can show either. The two counts are derived on the shared
     // controller, rendered by two screens that never see each other, and the
     // link has to reach across the shell that keeps both alive — three halves a
     // widget test of either screen structurally cannot put together.
@@ -3279,46 +3269,171 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await syncThenOpenActions(tester);
+    await syncThenOpenKlasgroepen(tester);
     expect(harness.controller.error, isNull);
-    expect(find.byType(ActionsScreen), findsOneWidget);
-
-    // Acties names what the other tab is holding, on the first visit — it reads
-    // the inventory itself rather than waiting for the operator to go to the
-    // very tab the line exists to send them to.
-    final Finder toClasses =
-        find.byKey(const ValueKey('actions-class-attention'));
-    expect(toClasses, findsOneWidget);
-    expect(find.text('2 klas(sen) vragen ook aandacht op Klasgroepen.'),
-        findsOneWidget);
-
-    // Following it lands on Klasgroepen, where the count is the one that tab
-    // states for itself — one derivation, so the pointer cannot contradict the
-    // list it points at.
-    await tester.ensureVisible(toClasses);
-    await tester.tap(toClasses);
-    await tester.pumpAndSettle();
     expect(find.byType(ClassGroupsScreen), findsOneWidget);
+
+    // The tab states its own inventory, and beside it what the other one is
+    // holding — one derivation on the shared controller, so the pointer cannot
+    // contradict the list it points at.
     expect(find.textContaining('2 klas(sen), waarvan 2 aandacht vragen'),
         findsOneWidget);
-
-    // And the mirror of it, back the other way.
     final Finder toAccounts =
         find.byKey(const ValueKey('class-groups-account-attention'));
     expect(toAccounts, findsOneWidget);
     expect(find.text('1 account(s) vragen ook aandacht op Acties.'),
         findsOneWidget);
+
+    // Following it lands on Acties, on the one account it counted, still under
+    // that screen's own work filter.
     await tester.ensureVisible(toAccounts);
     await tester.tap(toAccounts);
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
-
-    // The one account it counted is the list Acties comes back to, still under
-    // its own work filter.
     final String sam = accountId(harness, 'Sam Sels');
     final String tom = accountId(harness, 'Tom Tas');
     expect(find.byKey(ValueKey('account-row-$sam')), findsOneWidget);
     expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
+
+    // …and there is no line back. Two classes really are waiting — the shared
+    // controller says so, on this very session, with the inventory already read
+    // by the tab we came from — and Acties states none of it.
+    expect(harness.controller.classesNeedingAttention, 2);
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
+    expect(find.textContaining('aandacht op Klasgroepen'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Acties header is one line, and the account list starts near the top '
+      'of a real window end-to-end (#309)', (WidgetTester tester) async {
+    // The reason the header was stripped, at the size it was costing something.
+    // On a 1080p window the eyebrow, the title, the count line, the pointer at
+    // Klasgroepen and the freshness stamp — plus the search box, the work
+    // switch and the filter chips under them — pushed the list into the lower
+    // half of the screen: two or three accounts at a time, on the view whose
+    // whole purpose is the list.
+    //
+    // A widget test cannot answer this. It renders the screen at whatever
+    // viewport it likes, in Ahem, outside the shell — so it can say the header
+    // has one line but not where the list ends up for the operator. This runs
+    // the real app in the real fonts at the real window size and measures it:
+    // the list top moved from 575 to 373 of 1080, from below the halfway mark
+    // to inside the top third — to 325 once #310 folded the work-list switch
+    // onto the search box's own row, and to 218 once #311 took the select-all
+    // bar out from between the chips and the list.
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // The header is the eyebrow, and the four lines that used to follow it are
+    // nowhere on the screen.
+    expect(find.text('ARCADIA · ACTIES'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.text('Acties'),
+      ),
+      findsNothing,
+      reason: 'the title restated the eyebrow; the rail label is not it',
+    );
+    expect(find.textContaining('openstaande actie(s)'), findsNothing);
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
+    expect(find.textContaining('Generatie'), findsNothing);
+
+    // The list starts inside the top quarter of the window instead of below the
+    // middle of it — measured in the real font, in the real shell, with the
+    // real rail beside it.
+    final Finder list = find.byKey(const ValueKey('actions-list'));
+    expect(tester.getTopLeft(list).dy, lessThan(1080 / 4));
+    // Which is the same statement from the operator's side: the list, not the
+    // preamble above it, gets the majority of the window it is the point of.
+    expect(tester.getSize(list).height, greaterThan(1080 * 0.7));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Acties name box is a name-sized box beside the work-list switch on '
+      'a real window, and folds instead of overflowing when the window '
+      'narrows end-to-end (#310)', (WidgetTester tester) async {
+    // A widget test renders these controls at whatever viewport it likes, in a
+    // test font, outside the shell. Both halves of #310 are about the real
+    // thing: how much of a *1920px window with the rail beside it* a name field
+    // was claiming, and whether the row folds or spills when that window is
+    // dragged narrow. The fold in particular runs through the real text metrics
+    // of a 30-character Dutch label — the exact place a fixed-width box would
+    // have overflowed in the app but not in Ahem.
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final Finder searchFinder = find.byKey(const ValueKey('actions-search'));
+    final Finder toggleFinder =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    Rect search = tester.getRect(searchFinder);
+    Rect toggle = tester.getRect(toggleFinder);
+
+    // One row: the switch and its label stand to the right of the box and
+    // overlap it vertically, rather than sitting on a row of their own.
+    expect(toggle.left, greaterThan(search.right));
+    expect(toggle.top, lessThan(search.bottom));
+    expect(search.top, lessThan(toggle.bottom));
+    final Rect label =
+        tester.getRect(find.text('Toon enkel accounts met acties'));
+    expect(label.left, greaterThan(toggle.right));
+    expect(label.top, lessThan(search.bottom));
+
+    // Name-sized, not window-sized. The Acties pane is the full 1920 minus the
+    // navigation rail, and the box used to be exactly that wide.
+    final double paneWidth = tester.getSize(find.byType(ActionsScreen)).width;
+    expect(paneWidth, greaterThan(1500),
+        reason: 'the rail leaves the pane most of a 1920px window');
+    expect(search.width, lessThanOrEqualTo(380));
+    expect(search.width, lessThan(paneWidth / 4),
+        reason: 'the box stops a long way short of the content width');
+
+    // Now drag the window narrow — narrower than the box, the switch and the
+    // label side by side. The switch takes a second run and nothing overflows.
+    tester.view.physicalSize = const Size(900, 1080);
+    await tester.pumpAndSettle();
+    search = tester.getRect(searchFinder);
+    toggle = tester.getRect(toggleFinder);
+    expect(toggle.top, greaterThanOrEqualTo(search.bottom),
+        reason: 'the row folded rather than spilling off the right');
+    expect(search.width, lessThanOrEqualTo(380));
+    expect(search.right, lessThanOrEqualTo(900));
+    expect(toggle.right, lessThanOrEqualTo(900));
+    expect(tester.takeException(), isNull);
+
+    // And it is still the working switch, not a decoration that survived the
+    // fold: flipping it here gives the whole school back (#226).
+    final String tom = accountId(harness, 'Tom Tas');
+    expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
+    await tester.ensureVisible(toggleFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(toggleFinder);
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('account-row-$tom')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -3527,6 +3642,193 @@ void main() {
     // And a class that still runs is offered no delete at all.
     expect(find.byKey(const ValueKey('alt-1A-DeleteAzureClassGroup')),
         findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the class groups the legacy app left behind offer their delete too, '
+      'end-to-end (#312)', (WidgetTester tester) async {
+    // The reported bug, in the real app. Our school runs `1A`; Office 365 still
+    // holds two groups of classes that stopped running, and neither is shaped
+    // the way *this* port creates one:
+    //
+    //   GBS-9Z            a plain security group with no address — how the
+    //                     legacy WPF app made every class group, and how
+    //                     `SSM-3ECO`, `SSM-3MRP`, `SSM-3MWW` … sit in the live
+    //                     tenant today;
+    //   Klas van juf An   renamed by hand in the portal, still answering on
+    //                     `GBS-8Y@…`.
+    //
+    // The linker orphans both, so both were Klasgroepen rows — each with a grey
+    // ✓ and no action anybody could take, the exact state #271 set out to
+    // remove. Only a full run shows that: the inventory is composed from the
+    // *stored* documents while the either/or radios come from the live
+    // dispatch, the bulk header from a third derivation, and "the tab still
+    // writes nothing by default" is a claim about the page as composed.
+    useTallWindow(tester);
+    final harness = legacyStaleClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+    expect(row('1A'), findsOneWidget);
+    expect(row('GBS-9Z'), findsOneWidget);
+    expect(row('Klas van juf An'), findsOneWidget);
+    expect(find.textContaining('3 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget,
+        reason: 'both leftovers now ask something instead of showing a ✓');
+
+    // Widened, not loosened: the notice is still the default of the pair, so a
+    // bulk pass over the whole tab writes nothing.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    final bulkApply = find.textContaining('Alles toepassen (');
+    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+
+    // The renamed group is its class's group by the address it answers on
+    // (#280), so its row carries the pair under the name somebody typed over
+    // it.
+    final renamed = find.byKey(const ValueKey('entry-group-Klas van juf An'));
+    await tester.ensureVisible(renamed);
+    await tester.tap(renamed);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat de Office 365-groep Klas van juf An staan — klas 8Y '
+          'bestaat niet meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    expect(
+      find.byKey(const ValueKey('alt-Klas van juf An-DeleteAzureClassGroup')),
+      findsOneWidget,
+    );
+    await tester.tap(renamed);
+    await tester.pumpAndSettle();
+
+    // The security group's own row: 21 members still in it, and no line
+    // claiming an address, because it has none.
+    final entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
+          'meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.text('mail: '), findsNothing,
+        reason: 'a security group has no address, so no line states one');
+
+    final delete =
+        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Exactly the one group the operator picked, and its row goes with it.
+    expect(harness.graph.deletedGroups, ['az-GBS-9Z']);
+    expect(row('GBS-9Z'), findsNothing);
+    expect(row('Klas van juf An'), findsOneWidget,
+        reason: 'the group beside it was never selected');
+    expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a Smartschool class WISA does not have offers its delete too, '
+      'end-to-end (#313)', (WidgetTester tester) async {
+    // The reported bug, in the real app. Our school runs `1A`; Smartschool
+    // still carries `9Z` and `8Y`, two official classes WISA has no counterpart
+    // for. Each row's whole content used to be
+    //
+    //   Deze klas bestaat in Smartschool maar niet in WISA. Verwijder ze
+    //   manueel als ze niet meer nodig is. (manueel)
+    //
+    // — an instruction to go and repeat the same judgement by hand in
+    // Smartschool's own UI, with `Toepassen` dead on the row. That is the dead
+    // end #271 removed on the Office 365 side, and at a September changeover
+    // there is a screenful of it.
+    //
+    // Only a full run shows the fix: the inventory is composed from the
+    // *stored* documents while the either/or radios come from the live
+    // dispatch, the same-situation bulk header from a third derivation, and
+    // "the tab still writes nothing by default" is a claim about the page as
+    // composed. The write itself has to travel the real Smartschool connector
+    // — a `delClass` addressed to the class **code**, not the name on screen.
+    useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+    expect(row('1A'), findsOneWidget);
+    expect(row('9Z'), findsOneWidget);
+    expect(row('8Y'), findsOneWidget);
+    expect(find.textContaining('Verwijder ze manueel'), findsNothing,
+        reason: 'the app has the API to act on this; it stops delegating');
+
+    // Widened, not loosened: the notice is still the default of the pair, so a
+    // bulk pass over the whole tab writes nothing.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    final bulkApply = find.textContaining('Alles toepassen (');
+    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+
+    final entry = find.byKey(const ValueKey('entry-group-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat deze klas staan — ze bestaat in Smartschool maar niet '
+          'in WISA'),
+      findsWidgets,
+    );
+    expect(find.text('code: C9Z'), findsOneWidget);
+    expect(find.text('omschrijving: Zesde jaar Z'), findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing');
+
+    final delete = find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass'));
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    expect(find.text('lidmaatschappen en subgroepen: verdwijnen mee'),
+        findsOneWidget);
+
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Exactly the one class the operator picked, addressed by its code, and its
+    // row goes with it.
+    expect(harness.soap.deletedClasses, ['C9Z']);
+    expect(row('9Z'), findsNothing);
+    expect(row('8Y'), findsOneWidget,
+        reason: 'the class beside it was never selected');
+    expect(row('1A'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -4993,8 +5295,9 @@ void main() {
       'a passive session surfaces pending group actions on Klasgroepen '
       'with no pull and no link() (#119)', (WidgetTester tester) async {
     // Session 1 (offline harness) syncs and materializes the shared view. The
-    // fixture's two Smartschool-only classes (2B, 3C) raise the informational
-    // orphan-class notice — the group-action family.
+    // fixture's two Smartschool-only classes (2B, 3C) raise the orphan-class
+    // either/or of #313 — the group-action family — whose pre-selected half is
+    // the notice that leaves the class standing.
     final snapshots = InMemorySnapshotStore();
     final linkedStore = InMemoryLinkedStore();
     await ReconcileHarness(store: snapshots, linkedStore: linkedStore)
@@ -5019,8 +5322,8 @@ void main() {
 
     expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(find.byKey(const ValueKey('class-row-2B')), findsOneWidget);
-    expect(
-        find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
+    expect(find.textContaining('ze bestaat in Smartschool maar niet in WISA'),
+        findsWidgets);
     // …all without a single connector pull or link().
     expect(resumed.wisaSyncs, 0);
     expect(resumed.ssSyncs, 0);
@@ -5344,7 +5647,9 @@ void main() {
       reconcileBootstrap: resumed.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Acties'));
+    // Read on Klasgroepen: since #309 that is the action view carrying the
+    // shared state's freshness stamp, which is what this run watches move.
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
 
     // The overview rendered at generation 1 and the subscriber connected.
@@ -7931,8 +8236,8 @@ void main() {
   });
 
   testWidgets(
-      "the Acties overview's freshness stamp names the werkdatum the shared "
-      'view was pulled with, and holds it across a settings save (#247)',
+      "the Klasgroepen overview's freshness stamp names the werkdatum the "
+      'shared view was pulled with, and holds it across a settings save (#247)',
       (WidgetTester tester) async {
     // #239 put the werkdatum in the Log panel, which is a *session* diagnostic:
     // it is gone when the app closes, and a passive operator reading the shared
@@ -7969,8 +8274,9 @@ void main() {
     expect(wire.werkdatums, <String>['01/09/2025']);
 
     // The overview names the school year it describes, in the wire's own
-    // dd/MM/yyyy, on the same line as the generation and the operator.
-    await tester.tap(find.text('Acties'));
+    // dd/MM/yyyy, on the same line as the generation and the operator. Read on
+    // Klasgroepen since #309 took the stamp off Acties.
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('Generatie 1 · ', skipOffstage: false),
@@ -7982,8 +8288,8 @@ void main() {
     );
 
     // The operator moves the werkdatum in Instellingen and saves. That is the
-    // *next* pull's input; the view on Acties is still the one pulled as of
-    // 01/09/2025 and must keep saying so.
+    // *next* pull's input; the view on Klasgroepen is still the one pulled as
+    // of 01/09/2025 and must keep saying so.
     await tester.tap(find.text('Instellingen'));
     await tester.pumpAndSettle();
     final pick = find.byKey(const ValueKey('settings-workdate-pick'));
@@ -8005,7 +8311,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('· werkdatum 01/09/2025', skipOffstage: false),
@@ -8024,7 +8330,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(wire.werkdatums, <String>['01/09/2025', '15/09/2025']);
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('· werkdatum 15/09/2025', skipOffstage: false),

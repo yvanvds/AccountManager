@@ -154,17 +154,19 @@ void main() {
       await h.controller.sync();
 
       // The count mirrors the relink summary's pendingActions.length (the
-      // fixture derives four pending actions across the families), and the line
-      // names the operator who ran the pass (#169).
+      // fixture derives six pending actions across the families — its two
+      // Smartschool-only classes each carry the #313 either/or, which is two
+      // actions and one decision), and the line names the operator who ran the
+      // pass (#169).
       expect(
         h.log.entries.map((e) => e.message),
-        contains('Sync voltooid — 4 openstaande actie(s). Klaar. '
+        contains('Sync voltooid — 6 openstaande actie(s). Klaar. '
             'Operator: operator@school.example.'),
       );
       // It is the *last* line — the operator sees it closing the pass.
       expect(
           h.log.entries.last.message,
-          'Sync voltooid — 4 openstaande actie(s). Klaar. '
+          'Sync voltooid — 6 openstaande actie(s). Klaar. '
           'Operator: operator@school.example.');
     });
 
@@ -175,7 +177,7 @@ void main() {
       await h.controller.sync();
 
       expect(h.log.entries.last.message,
-          'Sync voltooid — 4 openstaande actie(s). Klaar.');
+          'Sync voltooid — 6 openstaande actie(s). Klaar.');
     });
 
     test('the "no changes needed" path also logs a ready line', () async {
@@ -213,7 +215,7 @@ void main() {
       // actually ran, because a drift check is not a sync.
       expect(
           h.log.entries.last.message,
-          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar. '
+          'Driftcontrole voltooid — 6 openstaande actie(s). Klaar. '
           'Operator: operator@school.example.');
       expect(
         h.log.entries.where((e) => e.message.startsWith('Sync voltooid')),
@@ -231,7 +233,7 @@ void main() {
       await h.controller.checkDrift();
 
       expect(h.log.entries.last.message,
-          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar.');
+          'Driftcontrole voltooid — 6 openstaande actie(s). Klaar.');
     });
   });
 

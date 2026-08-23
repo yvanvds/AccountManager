@@ -128,9 +128,15 @@ void main() {
       expect(actions, isEmpty);
     });
 
-    test('Smartschool only → DoNotImportFromSmartschool (informational)', () {
+    test('Smartschool only → the leave-it/delete-it pair (#313)', () {
+      // The notice used to stand alone and tell the operator to go and delete
+      // the class by hand in Smartschool — a row whose whole content was an
+      // instruction to go elsewhere.
       final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
-      expect(actions.map((a) => a.runtimeType), [DoNotImportFromSmartschool]);
+      expect(
+        actions.map((a) => a.runtimeType),
+        [DoNotImportFromSmartschool, DeleteSmartschoolClass],
+      );
     });
 
     test('orphan group with neither WISA nor Smartschool → no action', () {
@@ -209,9 +215,28 @@ void main() {
       expect(actions.single.alternativeGroup, isNull);
     });
 
-    test('the Smartschool-only orphan notice stands on its own', () {
+    test('the Smartschool-only orphan notice leads a choice of its own (#313)',
+        () {
+      // A key of its own, for the reason the namesake pair has one: the pending
+      // list bulk-applies per situation key, and "this Smartschool class is not
+      // in WISA" is not the situation "this WISA class is not in Smartschool".
       final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
-      expect(actions.single.alternativeGroup, isNull);
+      final notice = actions.whereType<DoNotImportFromSmartschool>().single;
+      final delete = actions.whereType<DeleteSmartschoolClass>().single;
+
+      expect(notice.alternativeGroup, staleSmartschoolClassAlternative);
+      expect(delete.alternativeGroup, staleSmartschoolClassAlternative);
+      expect(notice.alternativeGroup, isNot(classImportAlternative));
+      expect(notice.alternativeGroup, isNot(staleClassGroupAlternative));
+
+      // Polarity: the informational notice leads and is the default, so a bulk
+      // apply writes *nothing* for a Smartschool leftover and the delete stays
+      // a deliberate, per-row pick.
+      expect(notice.isDefaultAlternative, isTrue);
+      expect(notice.canApply, isFalse);
+      expect(delete.isDefaultAlternative, isFalse);
+      expect(delete.canApplyToAll, isFalse);
+      expect(actions.indexOf(notice), lessThan(actions.indexOf(delete)));
     });
 
     test('the namesake notice (#225) leads a choice of its own (#250)', () {

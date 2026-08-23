@@ -1,7 +1,15 @@
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/screens/class_groups_screen.dart';
 import 'package:account_manager/src/screens/system_indicator.dart';
-import 'package:account_state/account_state.dart' show InMemoryLinkedStore;
+import 'package:account_state/account_state.dart'
+    show
+        AppSettings,
+        InMemoryLinkedStore,
+        LiveSettings,
+        MaterializedAccount,
+        SystemSyncMeta,
+        WisaConnection,
+        WorkDateSetting;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -711,9 +719,12 @@ void main() {
     // The stored classes are there, with their stored candidates marked exactly
     // as Acties marks them (#255).
     expect(find.byKey(const ValueKey('class-row-2B')), findsOneWidget);
-    expect(
-        find.textContaining('Deze klas bestaat in Smartschool'), findsWidgets);
-    expect(find.textContaining('(manueel)'), findsWidgets);
+    // A Smartschool class WISA does not have is an either/or since #313, so the
+    // stored row reads as the choice it is — on its pre-selected half, which is
+    // the notice that writes nothing.
+    expect(find.textContaining('ze bestaat in Smartschool maar niet in WISA'),
+        findsWidgets);
+    expect(find.textContaining('(keuze)'), findsWidgets);
     // Nothing interactive: a passive session has nothing to apply.
     expect(find.byKey(const ValueKey('entry-group-2B')), findsNothing);
   });
@@ -1088,6 +1099,144 @@ void main() {
     expect(find.textContaining('→ ∅'), findsNothing);
   });
 
+  // --- The Smartschool leftovers (#313) --------------------------------------
+
+  testWidgets(
+      'a Smartschool class WISA does not have offers a delete, and leaving it '
+      'alone is the default (#313)', (WidgetTester tester) async {
+    // Until #313 this row's whole content was "Verwijder ze manueel als ze niet
+    // meer nodig is" — an instruction to go and do it by hand in Smartschool,
+    // the dead end #271 removed on the Office 365 side.
+    _useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    const entry = ValueKey('entry-group-9Z');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+
+    // Two radios, one choice — never two independent to-dos.
+    final leave =
+        find.byKey(const ValueKey('alt-9Z-DoNotImportFromSmartschool'));
+    final delete = find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass'));
+    expect(leave, findsOneWidget);
+    expect(delete, findsOneWidget);
+    expect(
+      find.text('Laat deze klas staan — ze bestaat in Smartschool maar niet '
+          'in WISA'),
+      findsWidgets,
+    );
+    expect(find.textContaining('Verwijder ze manueel'), findsNothing);
+    // The notice states the class instead of instructing; the code is how the
+    // operator finds it in Smartschool.
+    expect(find.text('code: C9Z'), findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing');
+
+    // The default is the informational half, so nothing is applyable until the
+    // operator deliberately picks the delete.
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
+        reason: 'a delete must never be the pre-selected resolution');
+
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Verwijder de klas 9Z uit Smartschool — ze bestaat niet in '
+          'WISA'),
+      findsWidgets,
+    );
+    expect(find.text('lidmaatschappen en subgroepen: verdwijnen mee'),
+        findsOneWidget);
+
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.soap.deletedClasses, ['C9Z'],
+        reason: 'addressed by the class code, not its name');
+    expect(_row('9Z'), findsNothing,
+        reason: 'the relink drops the class the operator just removed');
+    expect(_row('8Y'), findsOneWidget,
+        reason: 'the class beside it was never selected');
+    expect(_row('1A'), findsOneWidget, reason: 'no other class was touched');
+  });
+
+  testWidgets(
+      'a bulk header over Smartschool leftovers writes nothing by default '
+      '(#293/#313)', (WidgetTester tester) async {
+    // `9Z` and `8Y` share the situation, so the tab collects them into one
+    // header — the surface where a destructive default would do the most
+    // damage, and the reason the delete withholds `canApplyToAll`.
+    _useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    final bulk = find.textContaining('Alles toepassen (');
+    expect(tester.widget<Text>(bulk).data, 'Alles toepassen (0)',
+        reason: 'the default resolution of both rows writes nothing');
+    expect(
+      tester
+          .widget<FilledButton>(find.ancestor(
+            of: bulk,
+            matching: find.byType(FilledButton),
+          ))
+          .onPressed,
+      isNull,
+    );
+
+    // Flipping one row to the delete moves the header by exactly one: the
+    // classes beside it keep the notice they defaulted to, so a leftover is
+    // never swept into a delete somebody else's row asked for. That is what
+    // makes the label honest — "alles" is only ever the picks on screen.
+    const entry = ValueKey('entry-group-9Z');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final delete = find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass'));
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<Text>(find.textContaining('Alles toepassen (')).data,
+        'Alles toepassen (1)');
+    expect(find.byKey(const ValueKey('alt-8Y-DeleteSmartschoolClass')),
+        findsNothing,
+        reason: 'the row beside it was never opened, let alone flipped');
+    expect(harness.soap.deletedClasses, isEmpty,
+        reason: 'nothing is written until the operator confirms');
+  });
+
+  testWidgets('a class WISA still has is offered no Smartschool delete (#313)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_row('1A'), findsOneWidget);
+    expect(find.byKey(const ValueKey('alt-1A-DeleteSmartschoolClass')),
+        findsNothing);
+    expect(find.textContaining('Verwijder de klas 1A uit Smartschool'),
+        findsNothing,
+        reason: '1A is a running class — deleting it is not on offer');
+  });
+
   testWidgets('classes sort by year, numerically (#227)',
       (WidgetTester tester) async {
     expect(compareClassNames('2A', '10A'), lessThan(0));
@@ -1140,5 +1289,164 @@ void main() {
       findsNothing,
     );
     expect(find.textContaining('aandacht op Acties'), findsNothing);
+  });
+
+  // --- The freshness stamp above the inventory ------------------------------
+  //
+  // These four came over from `actions_screen_test.dart` when #309 stripped the
+  // Acties header down to its eyebrow. The stamp is a property of the shared
+  // state rather than of either list, and this is now the only action view that
+  // renders it — so this is where its wording is pinned.
+
+  testWidgets(
+      "a generation bump refetches the passive Klasgroepen overview's "
+      'freshness (#108)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final linkedStore = InMemoryLinkedStore();
+    final snapshots = InMemorySnapshotStore();
+
+    final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+    await s1.controller.sync();
+
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ClassGroupsScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Generatie 1'), findsOneWidget);
+
+    s1.wisaResult = wisaSnap(
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+      students: [wisaStudent(classGroup: '3D')],
+    );
+    await s1.controller.sync();
+    await s2.controller.onStoreChanged(2);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Generatie 2'), findsOneWidget);
+    expect(find.textContaining('Generatie 1'), findsNothing);
+  });
+
+  testWidgets(
+      'the freshness stamp carries the date once the shared state is no longer '
+      'from today (#192)', (WidgetTester tester) async {
+    // The shared view was materialized at kFixtureDate, a past day. Time-only
+    // rendered that as "Generatie 1 · 02:00 door …" —
+    // indistinguishable from a view materialized minutes ago, the same
+    // confusion #192 fixes on the Reconcile last-sync box.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Derived here rather than through the production formatter, so this pins
+    // the rendered text instead of restating the implementation.
+    final DateTime t = kFixtureDate.toLocal();
+    final String dm = '${t.day.toString().padLeft(2, '0')}/'
+        '${t.month.toString().padLeft(2, '0')}';
+    final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+
+    expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
+    expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
+        reason: 'a stamp from a past day is never rendered as bare time');
+  });
+
+  testWidgets(
+      'the freshness stamp names the werkdatum the roster was pulled with '
+      '(#247)', (WidgetTester tester) async {
+    // "Wie synchroniseerde, wanneer" says when the pass ran, never which school
+    // year it describes — and WISA answers *as of* a date, so a pull made on
+    // the wrong side of the rollover reads here exactly like a class that went
+    // missing (#239). The stamp comes off the shared per-system record, so this
+    // passive session reads the date without having run the pull.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(
+      <MaterializedAccount>[
+        matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+      ],
+      systemSyncs: <core.Origin, SystemSyncMeta>{
+        core.Origin.wisa: SystemSyncMeta(
+          syncedBy: 'operator@school.example',
+          at: kFixtureDate,
+          workDate: DateTime(2025, 9, 1),
+        ),
+      },
+    );
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // In the wire's own dd/MM/yyyy, the way the Log panel's pull line and the
+    // `Werkdatum` SOAP parameter both spell it.
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a shared view synced before the werkdatum was recorded renders the '
+      'stamp unchanged (#247)', (WidgetTester tester) async {
+    // The store in production already holds views written without it, and a
+    // Smartschool/Azure-only stamp never has one. Neither may invent a date,
+    // and neither may lose the "wie, wanneer" half over its absence.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('werkdatum'), findsNothing);
+    expect(
+      find.textContaining('Generatie 1'),
+      findsOneWidget,
+      reason: 'the who/when half stands on its own',
+    );
+  });
+
+  testWidgets(
+      'the stamp names the werkdatum the stored view was pulled with, not the '
+      'one Instellingen now holds (#247)', (WidgetTester tester) async {
+    // The disagreement the issue is about. #238 made the werkdatum live, so
+    // between a save and the next Synchroniseer the setting says one school
+    // year and the installed roster is another. Driven over the *production*
+    // WISA pull, so the date on screen is the one that really went out.
+    _useTallWindow(tester);
+    final live = LiveSettings(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    ));
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    await harness.controller.sync();
+    expect(wire.werkdatums, <String>['01/09/2025']);
+
+    // The operator moves the werkdatum to the new school year and saves. Until
+    // they sync, the overview below is still the old year's.
+    live.publish(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
+      ),
+    ));
+
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+    expect(find.textContaining('01/09/2026'), findsNothing,
+        reason: 'a saved werkdatum describes the next pull, not this view');
   });
 }

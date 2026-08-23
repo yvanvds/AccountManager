@@ -556,8 +556,8 @@ void main() {
         final actions = groupActionsFor(
           orphan(azureClassGroup(name), className: name),
         );
-        expect(actions.whereType<DeleteAzureClassGroup>(), isEmpty,
-            reason: '$name is not a class');
+        expect(actions, isEmpty,
+            reason: '$name is not a class — and both halves move together');
       }
     });
 
@@ -568,31 +568,100 @@ void main() {
           reason: 'there is nothing to address the DELETE to');
     });
 
-    test('a security group or a hand-made Team is left unmentioned', () {
-      // Not mail-enabled ⇒ not a group this app created.
+    test(
+        'a class group the legacy app created raises the pair too — it is no '
+        'less stale for being a security group (#312)', () {
+      // The reported bug. The `SSM-3ECO`-shaped groups in the live tenant are
+      // plain security groups carrying no address at all, made by the WPF app
+      // long before this port existed. `isUnified` is false for every one of
+      // them, so the whole either/or went silent and each row was inventory
+      // with an instruction to go elsewhere — the state #271 set out to remove.
+      final actions = groupActionsFor(orphan(az.AzureGroup(
+        id: 'g-legacy',
+        displayName: 'SSM-9Z',
+        securityEnabled: true,
+        mailNickname: 'SSM-9Z',
+      )));
+
       expect(
-        groupActionsFor(orphan(az.AzureGroup(
-          id: 'g',
-          displayName: 'SSM-9Z',
-          securityEnabled: true,
-        ))),
-        isEmpty,
+        actions.map((a) => a.runtimeType),
+        [AzureClassGroupWithoutClass, DeleteAzureClassGroup],
+        reason: 'the delete may not be limited to groups this port created',
       );
-      // Mail-enabled, but its nickname is not the display name — somebody made
-      // it by hand.
       expect(
-        groupActionsFor(orphan(az.AzureGroup(
-          id: 'g',
-          displayName: 'SSM-Wiskunde',
-          mail: 'wiskunde@school.example',
-          mailNickname: 'wiskunde',
-        ))),
-        isEmpty,
+        actions.map((a) => a.alternativeGroup),
+        everyElement(staleClassGroupAlternative),
+        reason: 'widened together, so the delete is never a lone reading',
       );
-      // Outside our `<PREFIX>-` namespace ⇒ the linker never recovered a class
-      // name for it.
+    });
+
+    test('a group with no address states only the facts it has (#312)', () {
+      final actions = groupActionsFor(orphan(az.AzureGroup(
+        id: 'g-legacy',
+        displayName: 'SSM-9Z',
+        securityEnabled: true,
+        mailNickname: 'SSM-9Z',
+        memberIds: const ['az-1', 'az-2'],
+      )));
+
+      expect(
+        actions
+            .whereType<AzureClassGroupWithoutClass>()
+            .single
+            .describeChanges()
+            .fields
+            .map((f) => f.field),
+        ['leden'],
+        reason: 'a security group has no mail, and `mail: ` states nothing',
+      );
+      expect(
+        actions
+            .whereType<DeleteAzureClassGroup>()
+            .single
+            .describeChanges()
+            .fields
+            .map((f) => f.field),
+        ['leden', 'postvak, Teams en bestanden'],
+      );
+    });
+
+    test('a class group renamed by hand is still a stale class group (#312)',
+        () {
+      // The linker recovered `9Z` from the **nickname** (#280) — the address is
+      // what makes a group ours and the display name is not to be trusted.
+      // Requiring the two to be equal re-derived the opposite, stricter rule.
+      final actions = groupActionsFor(orphan(az.AzureGroup(
+        id: 'g-renamed',
+        displayName: 'Klas van juf An',
+        mail: 'SSM-9Z@student.school.example',
+        mailNickname: 'SSM-9Z',
+      )));
+
+      expect(
+        actions.map((a) => a.runtimeType),
+        [AzureClassGroupWithoutClass, DeleteAzureClassGroup],
+      );
+    });
+
+    test('a group the linker recovered no class name for is left unmentioned',
+        () {
+      // Outside our `<PREFIX>-` namespace ⇒ no class name was ever stamped on
+      // the record, so there is nothing here to call stale.
       expect(
         groupActionsFor(orphan(azureClassGroup('9Z'), className: null)),
+        isEmpty,
+      );
+      // Prefixed, but the remainder is a subject and not a class.
+      expect(
+        groupActionsFor(orphan(
+          az.AzureGroup(
+            id: 'g',
+            displayName: 'SSM-Wiskunde',
+            mail: 'wiskunde@school.example',
+            mailNickname: 'SSM-Wiskunde',
+          ),
+          className: 'Wiskunde',
+        )),
         isEmpty,
       );
     });

@@ -68,10 +68,12 @@ bool _bulkApplyableGroup(GroupAction a) => switch (a) {
       ModifySmartschoolData() => true,
       CreateAzureClassGroup() => true,
       SyncAzureClassGroupMembers() => true,
-      // Withheld: a blacklist is a per-class judgement, a delete takes the
-      // mailbox, Team and files with it.
+      // Withheld: a blacklist is a per-class judgement, and a delete takes the
+      // mailbox, Team and files with it — or, in Smartschool, the class and
+      // everyone's membership of it.
       DoNotImportFromWisa() => false,
       DeleteAzureClassGroup() => false,
+      DeleteSmartschoolClass() => false,
       // Informational — cannot be applied at all.
       CreateInSmartschool() => false,
       ClassExistsAsSmartschoolGroup() => false,
@@ -139,6 +141,7 @@ List<GroupAction> _groupActions() {
     CreateInSmartschool(linked, placement),
     ClassExistsAsSmartschoolGroup(linked),
     DoNotImportFromSmartschool(linked),
+    DeleteSmartschoolClass(linked),
     ModifySmartschoolData(linked),
     CreateAzureClassGroup(linked, plan),
     SyncAzureClassGroupMembers(linked, plan),
@@ -243,6 +246,7 @@ void main() {
         RemoveStaffFromAzure,
         // Groups.
         DeleteAzureClassGroup,
+        DeleteSmartschoolClass,
         // The blacklists, which are destructive in effect: the record drops out
         // of the next WISA snapshot while what exists downstream survives.
         DontImportStaffFromWisa,
@@ -274,8 +278,8 @@ void main() {
           reason: 'StudentAction has 16 members');
       expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(8),
           reason: 'StaffAction has 8 members');
-      expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(10),
-          reason: 'GroupAction has 10 members');
+      expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(11),
+          reason: 'GroupAction has 11 members');
     });
   });
 }
