@@ -112,7 +112,9 @@ void main() {
 
     expect(attempts, 2);
     expect(find.text('Kan het Acties-scherm niet openen'), findsNothing);
-    expect(find.text('Acties'), findsOneWidget);
+    // The screen behind the panel, named by the one line its header still
+    // carries since #309 — the eyebrow, in the design system's own upper case.
+    expect(find.text('ARCADIA · ACTIES'), findsOneWidget);
   });
 
   // --- The flat list itself (#295) -----------------------------------------
@@ -336,24 +338,37 @@ void main() {
   });
 
   testWidgets(
-      'the header states the workload and offers nothing that acts on all of '
-      'it (#294)', (WidgetTester tester) async {
-    // The global "Dry-run alles" / "Alles toepassen" pair used to sit here and
-    // write every pending action in every class off one dialog, over a list the
-    // operator had not looked at. What replaces it is nothing: the count is a
-    // statement of how much work exists, and every way to act on that work is
-    // reached by looking at it first.
+      'the header is the eyebrow and nothing else, and still offers nothing '
+      'that acts on the whole list (#309/#294)', (WidgetTester tester) async {
+    // #309: the account list is the view, and everything stacked above it was
+    // preamble charged to every visit. The title restated the eyebrow, the
+    // count was four digits nobody can act on, the pointer at Klasgroepen
+    // belonged on Klasgroepen and the freshness stamp describes the shared
+    // state rather than this list.
+    //
+    // #294's half of the same header still holds: the global "Dry-run alles" /
+    // "Alles toepassen" pair that wrote every pending action in every class off
+    // one dialog is gone, and nothing replaces it. Every way to act on the work
+    // is reached by opening it first.
     _useWideWindow(tester);
     final harness = ReconcileHarness();
     await harness.controller.sync();
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining(
-          '${harness.controller.totalPendingCount} openstaande actie(s)'),
-      findsOneWidget,
-    );
+    // The one line that stays.
+    expect(find.text('ARCADIA · ACTIES'), findsOneWidget);
+    // …and the four that came off.
+    expect(find.text('Acties'), findsNothing,
+        reason: 'the title restated the eyebrow one line above it');
+    expect(find.textContaining('openstaande actie'), findsNothing,
+        reason: 'the count line is gone from this header');
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing,
+        reason: 'what Klasgroepen is holding is stated on Klasgroepen');
+    expect(find.textContaining('Generatie'), findsNothing,
+        reason:
+            'the freshness stamp describes the shared state, not this list');
+
     expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
     expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
     expect(find.text('Dry-run alles'), findsNothing);
@@ -361,6 +376,39 @@ void main() {
     // And the flat list adds no cohort header of its own — school-wide bulk
     // apply with its cohort visible first is #296's, not this layout's.
     expect(find.textContaining('in dezelfde situatie'), findsNothing);
+  });
+
+  testWidgets('the stripped header lifts the list toward the top (#309)',
+      (WidgetTester tester) async {
+    // The point of the removal, measured rather than asserted about: with the
+    // title, the count, the pointer and the stamp gone, the search box and the
+    // list start materially higher than the four lines they used to sit under.
+    // The fixture carries class work as well, so the pointer at Klasgroepen
+    // would have rendered under the old header — this is the worst case, not
+    // the best one.
+    _useWideWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    final double eyebrowBottom =
+        tester.getBottomLeft(find.text('ARCADIA · ACTIES')).dy;
+    final double searchTop =
+        tester.getTopLeft(find.byKey(const ValueKey('actions-search'))).dy;
+
+    // One `PlinkSpacing.s4` gap (the state notice is absent in this session)
+    // rather than four text lines plus their spacing — which is what "the list
+    // starts materially higher" concretely means.
+    expect(searchTop - eyebrowBottom, lessThan(40),
+        reason: 'nothing but spacing stands between the eyebrow and the box');
+    // And a pin on the whole block above the list — eyebrow, search box, work
+    // switch, sort and system chips, family tabs. It measures 422 here; every
+    // line put back into the header adds some 30 to that, which is what this
+    // number is guarding. What the operator actually gains from it is asserted
+    // at a real 1080p window in the integration suite, in rows on screen.
+    expect(tester.getTopLeft(find.byKey(const ValueKey('actions-list'))).dy,
+        lessThan(450));
   });
 
   // --- School-wide apply-all, cohort first (#296) ---------------------------
@@ -482,12 +530,10 @@ void main() {
       expect(find.byKey(const ValueKey('actions-search')), findsNothing);
       expect(find.byKey(const ValueKey('actions-only-with-actions')),
           findsNothing);
-      // …and the header stops describing the list as the work list, which it
-      // no longer is.
-      expect(
-        find.textContaining('de lijst toont de accounts van één beslissing'),
-        findsOneWidget,
-      );
+      // The header used to restate that the list is one decision's cohort. It
+      // says nothing at all since #309 — the banner above the list, asserted on
+      // just above, is what describes the list the operator is confirming.
+      expect(find.textContaining('de lijst toont'), findsNothing);
 
       // And nothing has been written.
       expect(
@@ -1940,72 +1986,20 @@ void main() {
         reason: 'a dead button needs its reason on screen too');
   });
 
-  // --- The freshness stamp above the list ----------------------------------
+  // --- The freshness stamp -------------------------------------------------
+  //
+  // It used to sit above this list too. #309 took it off Acties — it is a
+  // property of the shared state, not of this account list — so the four tests
+  // that pinned its wording (#108/#192/#247) moved with it, to
+  // `class_groups_screen_test.dart`, where the stamp still renders. What Acties
+  // owes the removal is the assertion that it is gone, which is in the header
+  // test above.
 
-  testWidgets(
-      "a generation bump refetches the passive Actions overview's freshness "
-      '(#108)', (WidgetTester tester) async {
-    final linkedStore = InMemoryLinkedStore();
-    final snapshots = InMemorySnapshotStore();
-
-    final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
-    await s1.controller.sync();
-
-    final s2 = await ReconcileHarness.resume(
-      store: snapshots,
-      linkedStore: linkedStore,
-    );
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: s2.bootstrap)));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Generatie 1'), findsOneWidget);
-
-    s1.wisaResult = wisaSnap(
-      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
-      students: [wisaStudent(classGroup: '3D')],
-    );
-    await s1.controller.sync();
-    await s2.controller.onStoreChanged(2);
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Generatie 2'), findsOneWidget);
-    expect(find.textContaining('Generatie 1'), findsNothing);
-  });
-
-  testWidgets(
-      "the freshness stamp carries the date once the shared state is no longer "
-      'from today (#192)', (WidgetTester tester) async {
-    // The shared view was materialized at kFixtureDate, a past day. Time-only
-    // rendered that as "Generatie 1 · 02:00 door …" —
-    // indistinguishable from a view materialized minutes ago, the same
-    // confusion #192 fixes on the Reconcile last-sync box.
-    final store = await seededLinkedStore(<MaterializedAccount>[
-      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
-    ]);
-    final harness = ReconcileHarness(linkedStore: store);
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
-    // Derived here rather than through the production formatter, so this pins
-    // the rendered text instead of restating the implementation.
-    final DateTime t = kFixtureDate.toLocal();
-    final String dm = '${t.day.toString().padLeft(2, '0')}/'
-        '${t.month.toString().padLeft(2, '0')}';
-    final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
-        '${t.minute.toString().padLeft(2, '0')}';
-
-    expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
-    expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
-        reason: 'a stamp from a past day is never rendered as bare time');
-  });
-
-  testWidgets(
-      'the freshness stamp names the werkdatum the roster was pulled with '
-      '(#247)', (WidgetTester tester) async {
-    // "Wie synchroniseerde, wanneer" says when the pass ran, never which school
-    // year it describes — and WISA answers *as of* a date, so a pull made on
-    // the wrong side of the rollover reads here exactly like a class that went
-    // missing (#239). The stamp comes off the shared per-system record, so this
-    // passive session reads the date without having run the pull.
+  testWidgets('the header carries no freshness stamp at all (#309)',
+      (WidgetTester tester) async {
+    // The worst case for the removal: a shared view stamped with everything the
+    // line could have said — a generation, an operator, a werkdatum. None of it
+    // reaches this screen.
     final store = await seededLinkedStore(
       <MaterializedAccount>[
         matAccount(id: 's1', label: 'Jane Doe', withAction: true),
@@ -2022,68 +2016,9 @@ void main() {
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    // In the wire's own dd/MM/yyyy, the way the Log panel's pull line and the
-    // `Werkdatum` SOAP parameter both spell it.
-    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
-  });
-
-  testWidgets(
-      'a shared view synced before the werkdatum was recorded renders the '
-      'stamp unchanged (#247)', (WidgetTester tester) async {
-    // The store in production already holds views written without it, and a
-    // Smartschool/Azure-only stamp never has one. Neither may invent a date,
-    // and neither may lose the "wie, wanneer" half over its absence.
-    final store = await seededLinkedStore(<MaterializedAccount>[
-      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
-    ]);
-    final harness = ReconcileHarness(linkedStore: store);
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
+    expect(find.textContaining('Generatie'), findsNothing);
     expect(find.textContaining('werkdatum'), findsNothing);
-    expect(
-      find.textContaining('Generatie 1'),
-      findsOneWidget,
-      reason: 'the who/when half stands on its own',
-    );
-  });
-
-  testWidgets(
-      'the stamp names the werkdatum the stored view was pulled with, not the '
-      'one Instellingen now holds (#247)', (WidgetTester tester) async {
-    // The disagreement the issue is about. #238 made the werkdatum live, so
-    // between a save and the next Synchroniseer the setting says one school
-    // year and the installed roster is another. Driven over the *production*
-    // WISA pull, so the date on screen is the one that really went out.
-    _useWideWindow(tester);
-    final live = LiveSettings(AppSettings(
-      wisa: WisaConnection(
-        server: 'wisa.example',
-        port: '9000',
-        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
-      ),
-    ));
-    final wire = RecordingWisaSoap();
-    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
-    await harness.controller.sync();
-    expect(wire.werkdatums, <String>['01/09/2025']);
-
-    // The operator moves the werkdatum to the new school year and saves. Until
-    // they sync, the overview below is still the old year's.
-    live.publish(AppSettings(
-      wisa: WisaConnection(
-        server: 'wisa.example',
-        port: '9000',
-        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
-      ),
-    ));
-
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
-    expect(find.textContaining('01/09/2026'), findsNothing,
-        reason: 'a saved werkdatum describes the next pull, not this view');
+    expect(find.textContaining('operator@school.example'), findsNothing);
   });
 
   group('a pass runs behind a modal progress dialog (#243)', () {
@@ -2257,58 +2192,38 @@ void main() {
     });
   });
 
-  // --- The pointer at Klasgroepen (#301) ------------------------------------
+  // --- No pointer at Klasgroepen any more (#301 → #309) ---------------------
 
   testWidgets(
-      'the Acties header says how many classes are waiting on Klasgroepen '
-      '(#301)', (WidgetTester tester) async {
-    // Acties covers people and Klasgroepen covers classes, and nothing on this
-    // screen said the second half existed. The fixture is the rollover shape in
-    // miniature: `3C` and `3D` are both missing their Office 365 group, which is
-    // work that can only be done on the other tab.
+      'the header never points at Klasgroepen, however much that tab is '
+      'holding (#309)', (WidgetTester tester) async {
+    // #301 put the pointer on both action tabs so each said what the other was
+    // holding. The Acties half is gone: what Klasgroepen is holding is stated
+    // on Klasgroepen, where the mirror line — how many accounts Acties is
+    // holding — stays (see `class_groups_screen_test.dart`). The asymmetry is
+    // deliberate: that tab has the room, this one is a list of thousands.
+    //
+    // The fixture is the case that used to render the line: `3C` and `3D` are
+    // both missing their Office 365 group, which is work only the other tab can
+    // do.
     _useWideWindow(tester);
     final harness = appliedClassWorkHarness();
     await harness.controller.sync();
     await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    // The screen reads the inventory itself, so the line is there on the first
-    // visit rather than only after the operator has been to the tab it points
-    // at — which is the one case it is not needed.
-    expect(harness.controller.groupDocs, isNotNull);
-    expect(harness.controller.classesNeedingAttention, 2);
-    expect(
-      find.text('2 klas(sen) vragen ook aandacht op Klasgroepen.'),
-      findsOneWidget,
-    );
-    // Pumped outside the shell there is no tab to switch to, and the sentence is
-    // true anyway — so it degrades to prose instead of vanishing.
-    expect(
-      find.byKey(const ValueKey('actions-class-attention')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('actions-class-attention')),
-        matching: find.byType(InkWell),
-      ),
-      findsNothing,
-      reason: 'no shell above it, so there is nothing to follow the line to',
-    );
-  });
+    // With nothing left on this screen reading the class inventory, it no
+    // longer schedules the partition read that only ever fed the pointer.
+    expect(harness.controller.groupDocs, isNull);
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
 
-  testWidgets('…and says nothing at all when no class needs anything (#301)',
-      (WidgetTester tester) async {
-    // A line reading "0 klas(sen)" is noise in the one case where the operator
-    // is done. This fixture has departed Smartschool accounts and no class at
-    // all, so Acties has work and Klasgroepen has none.
-    _useWideWindow(tester);
-    final harness = departedHarness();
-    await harness.controller.sync();
-    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    // …and once the inventory *is* loaded — the operator visited Klasgroepen,
+    // which reads it through the same controller — the count is there to be
+    // rendered and this screen still renders none of it.
+    await harness.controller.loadGroups();
     await tester.pumpAndSettle();
 
-    expect(harness.controller.classesNeedingAttention, 0);
+    expect(harness.controller.classesNeedingAttention, 2);
     expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
     expect(find.textContaining('aandacht op Klasgroepen'), findsNothing);
   });

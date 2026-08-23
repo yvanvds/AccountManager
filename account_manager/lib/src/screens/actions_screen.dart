@@ -611,36 +611,12 @@ class _ActionsBodyState extends State<_ActionsBody>
     _settled.clear();
   }
 
-  /// Whether an inventory read is already queued, so a burst of notifications
-  /// schedules one.
-  bool _scheduledGroups = false;
-
-  /// Reads the class inventory when this session does not have it, so the
-  /// header can say how many classes are waiting on Klasgroepen (#301).
-  ///
-  /// The very read Klasgroepen does, through the same controller and the same
-  /// guard, so opening either tab first costs one partition read and the other
-  /// finds it already there. Without it the pointer would only appear once the
-  /// operator had visited the tab it is meant to send them to, which is the one
-  /// case it is not needed.
-  ///
-  /// Always **deferred to a microtask**, never run inline: this is reached from
-  /// a build, and the read's own first act is to publish its loading state — so
-  /// calling it inline would notify the other screens' listeners mid-frame.
-  /// A failed read answers `const []`, so it is attempted once and not retried
-  /// into a loop.
-  void _ensureGroupsLoaded() {
-    if (!mounted || _scheduledGroups) return;
-    if (controller.groupDocs != null || controller.loadingGroups) return;
-    _scheduledGroups = true;
-    scheduleMicrotask(() {
-      _scheduledGroups = false;
-      if (!mounted) return;
-      if (controller.groupDocs == null && !controller.loadingGroups) {
-        unawaited(controller.loadGroups());
-      }
-    });
-  }
+  // The class-inventory pre-read this screen used to schedule from `build` is
+  // gone with the pointer at Klasgroepen it existed for (#301 → #309). Nothing
+  // Acties renders reads `groupDocs` any more, so warming it here was a
+  // partition read on every cold visit that no pixel on this screen depended
+  // on. Klasgroepen still reads it, through its own identical guard, on the tab
+  // where the classes actually are.
 
   /// Ticks or unticks one account (#297).
   void _setTicked(String id, bool ticked) => setState(() {
@@ -802,7 +778,6 @@ class _ActionsBodyState extends State<_ActionsBody>
   Widget _body(BuildContext context, BoxConstraints constraints) {
     _retireStaleTicks();
     _holdSettled();
-    _ensureGroupsLoaded();
     final bool wide = constraints.maxWidth >= _splitBreakpoint;
     final bool active = controller.linked != null;
     final SituationCohort? cohort = active ? _armedCohort() : null;
@@ -828,15 +803,7 @@ class _ActionsBodyState extends State<_ActionsBody>
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         const SizedBox(height: PlinkSpacing.s6),
-        Padding(
-          padding: _hPad,
-          child: _ActionsHeader(
-            controller: controller,
-            onlyWithActions: _onlyWithActions,
-            reviewingCohort: cohort != null,
-            classesNeedingAttention: controller.classesNeedingAttention,
-          ),
-        ),
+        const Padding(padding: _hPad, child: _ActionsHeader()),
         const SizedBox(height: PlinkSpacing.s4),
         Padding(padding: _hPad, child: _stateNotice()),
       ],
@@ -1120,86 +1087,43 @@ class _ActionsBodyState extends State<_ActionsBody>
   }
 }
 
-/// The Actions title and how much work is pending — and, since #294, nothing
-/// that acts on it.
+/// The Acties eyebrow — and, since #309, nothing else.
 ///
-/// It used to carry a global "Dry-run alles" / "Alles toepassen" pair that ran
-/// every pending action of every family in every class in one pass. There is no
-/// safe reading of that: the operator had seen none of the changes, and at a
-/// September changeover the count behind the button is in the thousands. Its
-/// confirmation named systems and a number, which is not the same as having
-/// looked. Bulk itself is not gone — #296 put it back on the decision block,
-/// where pressing it filters the list to the cohort and shows the operator the
-/// accounts before offering a confirmation — but the affordance that applied
-/// what nobody had read is.
+/// The account list *is* this view; everything stacked above it is preamble the
+/// operator reads once and then scrolls past on every visit afterwards, while
+/// the vertical budget it eats is paid every time. On a 1080p window the header,
+/// the search box, the work switch and the filter chips together left the list
+/// the lower half of the screen — two or three accounts at a time. So four lines
+/// came off, each for its own reason:
 ///
-/// The count line stays. It states how much work exists; it is not a button.
+/// - **The title.** `Arcadia · acties` says the same thing one line above it.
+/// - **The count** (`N openstaande actie(s) — …`). Four digits of pending work
+///   is not actionable, and its trailing clause explained the work-list switch
+///   that is visible two lines further down anyway.
+/// - **The pointer at Klasgroepen** (#301). What the other tab is holding
+///   belongs on that tab; the mirror line there — how many accounts Acties is
+///   holding — stays, because Klasgroepen has the room and its list is shorter.
+///   The asymmetry is the choice, not an oversight.
+/// - **The freshness stamp** (#247/#287). It is a property of the shared state
+///   rather than of this list. [sharedViewFreshness] still renders it on
+///   Klasgroepen, and Start/Synchronisatie still carries the per-system
+///   last-sync box, so an operator judging staleness has not lost the signal.
+///
+/// It has carried nothing that *acts* since #294 either: the global "Dry-run
+/// alles" / "Alles toepassen" pair that wrote every pending action of every
+/// family in one pass, over a list nobody had looked at. Bulk itself came back
+/// on the decision block in #296, where pressing it filters the list to the
+/// cohort and shows the accounts before offering a confirmation.
 class _ActionsHeader extends StatelessWidget {
-  const _ActionsHeader({
-    required this.controller,
-    required this.onlyWithActions,
-    this.reviewingCohort = false,
-    this.classesNeedingAttention = 0,
-  });
-
-  final ReconcileController controller;
-
-  /// Whether the work-list filter is on, so the sub-line describes the list the
-  /// operator is actually looking at.
-  final bool onlyWithActions;
-
-  /// Whether a school-wide cohort is under review (#296), in which case neither
-  /// reading of [onlyWithActions] describes the list: it is one decision's
-  /// cohort, and the banner right below says so.
-  final bool reviewingCohort;
-
-  /// How many classes are waiting on the Klasgroepen tab (#301) — the one thing
-  /// in this header that is not about the list below it.
-  final int classesNeedingAttention;
+  const _ActionsHeader();
 
   @override
   Widget build(BuildContext context) {
-    final TextTheme text = Theme.of(context).textTheme;
     final bool ink = Theme.of(context).brightness == Brightness.dark;
-    final count = controller.totalPendingCount;
-    // The shared stamp both action views carry (#247), so Acties and
-    // Klasgroepen name the same generation the same way.
-    final freshness = sharedViewFreshness(controller);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Eyebrow('Arcadia · acties', onInk: ink),
-        const SizedBox(height: PlinkSpacing.s4),
-        Text('Acties', style: text.headlineMedium),
-        const SizedBox(height: PlinkSpacing.s2),
-        Text(
-          switch ((count, reviewingCohort, onlyWithActions)) {
-            (0, _, _) => 'Geen openstaande acties.',
-            (_, true, _) => '$count openstaande actie(s) — de lijst toont de '
-                'accounts van één beslissing.',
-            (_, _, true) =>
-              '$count openstaande actie(s) — de lijst toont enkel '
-                  'accounts met werk.',
-            (_, _, false) => '$count openstaande actie(s) — de lijst toont elk '
-                'account. Drie groene vinkjes betekent dat het account overal '
-                'juist staat.',
-          },
-          style: text.bodyMedium,
-        ),
-        // The other half of "is everything as expected?" (#301). It sits under
-        // the count line and above the freshness stamp because it is a
-        // statement about the work, not about the view — and it says nothing at
-        // all when Klasgroepen is holding nothing.
-        if (classesNeedingAttention > 0) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s1),
-          OtherTabAttentionLine.classes(count: classesNeedingAttention),
-        ],
-        if (freshness != null) ...<Widget>[
-          const SizedBox(height: PlinkSpacing.s1),
-          Text(freshness, style: text.bodySmall),
-        ],
-      ],
+      children: <Widget>[Eyebrow('Arcadia · acties', onInk: ink)],
     );
   }
 }

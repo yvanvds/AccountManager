@@ -1,7 +1,15 @@
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/screens/class_groups_screen.dart';
 import 'package:account_manager/src/screens/system_indicator.dart';
-import 'package:account_state/account_state.dart' show InMemoryLinkedStore;
+import 'package:account_state/account_state.dart'
+    show
+        AppSettings,
+        InMemoryLinkedStore,
+        LiveSettings,
+        MaterializedAccount,
+        SystemSyncMeta,
+        WisaConnection,
+        WorkDateSetting;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -1140,5 +1148,164 @@ void main() {
       findsNothing,
     );
     expect(find.textContaining('aandacht op Acties'), findsNothing);
+  });
+
+  // --- The freshness stamp above the inventory ------------------------------
+  //
+  // These four came over from `actions_screen_test.dart` when #309 stripped the
+  // Acties header down to its eyebrow. The stamp is a property of the shared
+  // state rather than of either list, and this is now the only action view that
+  // renders it — so this is where its wording is pinned.
+
+  testWidgets(
+      "a generation bump refetches the passive Klasgroepen overview's "
+      'freshness (#108)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final linkedStore = InMemoryLinkedStore();
+    final snapshots = InMemorySnapshotStore();
+
+    final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
+    await s1.controller.sync();
+
+    final s2 = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(_wrap(ClassGroupsScreen(bootstrap: s2.bootstrap)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Generatie 1'), findsOneWidget);
+
+    s1.wisaResult = wisaSnap(
+      fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
+      students: [wisaStudent(classGroup: '3D')],
+    );
+    await s1.controller.sync();
+    await s2.controller.onStoreChanged(2);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Generatie 2'), findsOneWidget);
+    expect(find.textContaining('Generatie 1'), findsNothing);
+  });
+
+  testWidgets(
+      'the freshness stamp carries the date once the shared state is no longer '
+      'from today (#192)', (WidgetTester tester) async {
+    // The shared view was materialized at kFixtureDate, a past day. Time-only
+    // rendered that as "Generatie 1 · 02:00 door …" —
+    // indistinguishable from a view materialized minutes ago, the same
+    // confusion #192 fixes on the Reconcile last-sync box.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Derived here rather than through the production formatter, so this pins
+    // the rendered text instead of restating the implementation.
+    final DateTime t = kFixtureDate.toLocal();
+    final String dm = '${t.day.toString().padLeft(2, '0')}/'
+        '${t.month.toString().padLeft(2, '0')}';
+    final String hhmm = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}';
+
+    expect(find.textContaining('Generatie 1 · $dm'), findsOneWidget);
+    expect(find.textContaining('Generatie 1 · $hhmm'), findsNothing,
+        reason: 'a stamp from a past day is never rendered as bare time');
+  });
+
+  testWidgets(
+      'the freshness stamp names the werkdatum the roster was pulled with '
+      '(#247)', (WidgetTester tester) async {
+    // "Wie synchroniseerde, wanneer" says when the pass ran, never which school
+    // year it describes — and WISA answers *as of* a date, so a pull made on
+    // the wrong side of the rollover reads here exactly like a class that went
+    // missing (#239). The stamp comes off the shared per-system record, so this
+    // passive session reads the date without having run the pull.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(
+      <MaterializedAccount>[
+        matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+      ],
+      systemSyncs: <core.Origin, SystemSyncMeta>{
+        core.Origin.wisa: SystemSyncMeta(
+          syncedBy: 'operator@school.example',
+          at: kFixtureDate,
+          workDate: DateTime(2025, 9, 1),
+        ),
+      },
+    );
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // In the wire's own dd/MM/yyyy, the way the Log panel's pull line and the
+    // `Werkdatum` SOAP parameter both spell it.
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a shared view synced before the werkdatum was recorded renders the '
+      'stamp unchanged (#247)', (WidgetTester tester) async {
+    // The store in production already holds views written without it, and a
+    // Smartschool/Azure-only stamp never has one. Neither may invent a date,
+    // and neither may lose the "wie, wanneer" half over its absence.
+    _useTallWindow(tester);
+    final store = await seededLinkedStore(<MaterializedAccount>[
+      matAccount(id: 's1', label: 'Jane Doe', withAction: true),
+    ]);
+    final harness = ReconcileHarness(linkedStore: store);
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('werkdatum'), findsNothing);
+    expect(
+      find.textContaining('Generatie 1'),
+      findsOneWidget,
+      reason: 'the who/when half stands on its own',
+    );
+  });
+
+  testWidgets(
+      'the stamp names the werkdatum the stored view was pulled with, not the '
+      'one Instellingen now holds (#247)', (WidgetTester tester) async {
+    // The disagreement the issue is about. #238 made the werkdatum live, so
+    // between a save and the next Synchroniseer the setting says one school
+    // year and the installed roster is another. Driven over the *production*
+    // WISA pull, so the date on screen is the one that really went out.
+    _useTallWindow(tester);
+    final live = LiveSettings(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2025, 9, 1)),
+      ),
+    ));
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(wisaTransport: wire, liveSettings: live);
+    await harness.controller.sync();
+    expect(wire.werkdatums, <String>['01/09/2025']);
+
+    // The operator moves the werkdatum to the new school year and saves. Until
+    // they sync, the overview below is still the old year's.
+    live.publish(AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
+      ),
+    ));
+
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('· werkdatum 01/09/2025'), findsOneWidget);
+    expect(find.textContaining('01/09/2026'), findsNothing,
+        reason: 'a saved werkdatum describes the next pull, not this view');
   });
 }

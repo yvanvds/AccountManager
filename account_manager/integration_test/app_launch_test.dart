@@ -389,16 +389,16 @@ void main() {
       findsNothing,
       reason: 'the drill-down it replaces is gone',
     );
-    // The header states the workload and stops there (#294): the global
-    // "Dry-run alles" / "Alles toepassen" pair that wrote every account in the
-    // school off one dialog is gone, and nothing on the overview replaces it.
-    // Whatever the operator applies, they reach by opening it first.
+    // The header is one eyebrow and stops there (#309/#294): the count line is
+    // gone, and so is the global "Dry-run alles" / "Alles toepassen" pair that
+    // wrote every account in the school off one dialog. Whatever the operator
+    // applies, they reach by opening it first.
     expect(
       find.descendant(
         of: find.byType(ActionsScreen),
         matching: find.textContaining('openstaande actie(s)'),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.byKey(const ValueKey('actions-dry-run')), findsNothing);
     expect(find.byKey(const ValueKey('actions-apply')), findsNothing);
@@ -1264,12 +1264,16 @@ void main() {
   });
 
   testWidgets(
-      "the Actions overview's freshness stamp carries the date once the shared "
-      'state is no longer from today end-to-end (#192)',
+      "the Klasgroepen overview's freshness stamp carries the date once the "
+      'shared state is no longer from today end-to-end (#192)',
       (WidgetTester tester) async {
     // A passive session over a shared view that was materialized in the past.
     // The header line used to read "Generatie 1 · 02:00 door …",
     // which is exactly as reassuring as a stamp from five minutes ago.
+    //
+    // Read on Klasgroepen since #309 took the stamp off Acties: it describes
+    // the shared state rather than either list, and this is the action view
+    // that still carries it.
     useTallWindow(tester);
     final store = await seededLinkedStore(<MaterializedAccount>[
       matAccount(id: 's1', label: 'Jane Doe', withAction: true),
@@ -1282,7 +1286,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
 
     // Derived independently of the production formatter: the store was stamped
@@ -3253,17 +3257,24 @@ void main() {
   });
 
   testWidgets(
-      'each action tab says what the other one is holding, and following the '
-      'line lands there end-to-end (#301)', (WidgetTester tester) async {
-    // The real app, real rail, real navigation — which is the whole of this
-    // issue. Acties covers people and Klasgroepen covers classes, so "is
-    // everything as expected?" is only answerable by visiting both, and nothing
-    // prompted the operator to. The rollover is where that bites: the
-    // Smartschool class change is per student here while the Office 365 roster
-    // write is one action per class there, so a clean Acties list can sit above
-    // a pile of stale rosters.
+      'Klasgroepen says what Acties is holding and following the line lands '
+      'there, while Acties points back at nothing end-to-end (#301/#309)',
+      (WidgetTester tester) async {
+    // The real app, real rail, real navigation — which is the whole of #301.
+    // Acties covers people and Klasgroepen covers classes, so "is everything as
+    // expected?" is only answerable by visiting both, and nothing prompted the
+    // operator to. The rollover is where that bites: the Smartschool class
+    // change is per student on Acties while the Office 365 roster write is one
+    // action per class here, so a clean Acties list can sit above a pile of
+    // stale rosters.
     //
-    // Only a full run can show it. The two counts are derived on the shared
+    // #309 made the pointer one-way. Acties is a list of thousands whose header
+    // was five lines of preamble before anything actionable, so the line about
+    // the *other* tab came off it; Klasgroepen has the room and keeps the
+    // mirror. The asymmetry is the decision, and this run pins both halves of
+    // it.
+    //
+    // Only a full run can show either. The two counts are derived on the shared
     // controller, rendered by two screens that never see each other, and the
     // link has to reach across the shell that keeps both alive — three halves a
     // widget test of either screen structurally cannot put together.
@@ -3279,46 +3290,94 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await syncThenOpenActions(tester);
+    await syncThenOpenKlasgroepen(tester);
     expect(harness.controller.error, isNull);
-    expect(find.byType(ActionsScreen), findsOneWidget);
-
-    // Acties names what the other tab is holding, on the first visit — it reads
-    // the inventory itself rather than waiting for the operator to go to the
-    // very tab the line exists to send them to.
-    final Finder toClasses =
-        find.byKey(const ValueKey('actions-class-attention'));
-    expect(toClasses, findsOneWidget);
-    expect(find.text('2 klas(sen) vragen ook aandacht op Klasgroepen.'),
-        findsOneWidget);
-
-    // Following it lands on Klasgroepen, where the count is the one that tab
-    // states for itself — one derivation, so the pointer cannot contradict the
-    // list it points at.
-    await tester.ensureVisible(toClasses);
-    await tester.tap(toClasses);
-    await tester.pumpAndSettle();
     expect(find.byType(ClassGroupsScreen), findsOneWidget);
+
+    // The tab states its own inventory, and beside it what the other one is
+    // holding — one derivation on the shared controller, so the pointer cannot
+    // contradict the list it points at.
     expect(find.textContaining('2 klas(sen), waarvan 2 aandacht vragen'),
         findsOneWidget);
-
-    // And the mirror of it, back the other way.
     final Finder toAccounts =
         find.byKey(const ValueKey('class-groups-account-attention'));
     expect(toAccounts, findsOneWidget);
     expect(find.text('1 account(s) vragen ook aandacht op Acties.'),
         findsOneWidget);
+
+    // Following it lands on Acties, on the one account it counted, still under
+    // that screen's own work filter.
     await tester.ensureVisible(toAccounts);
     await tester.tap(toAccounts);
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
-
-    // The one account it counted is the list Acties comes back to, still under
-    // its own work filter.
     final String sam = accountId(harness, 'Sam Sels');
     final String tom = accountId(harness, 'Tom Tas');
     expect(find.byKey(ValueKey('account-row-$sam')), findsOneWidget);
     expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
+
+    // …and there is no line back. Two classes really are waiting — the shared
+    // controller says so, on this very session, with the inventory already read
+    // by the tab we came from — and Acties states none of it.
+    expect(harness.controller.classesNeedingAttention, 2);
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
+    expect(find.textContaining('aandacht op Klasgroepen'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Acties header is one line, and the account list starts near the top '
+      'of a real window end-to-end (#309)', (WidgetTester tester) async {
+    // The reason the header was stripped, at the size it was costing something.
+    // On a 1080p window the eyebrow, the title, the count line, the pointer at
+    // Klasgroepen and the freshness stamp — plus the search box, the work
+    // switch and the filter chips under them — pushed the list into the lower
+    // half of the screen: two or three accounts at a time, on the view whose
+    // whole purpose is the list.
+    //
+    // A widget test cannot answer this. It renders the screen at whatever
+    // viewport it likes, in Ahem, outside the shell — so it can say the header
+    // has one line but not where the list ends up for the operator. This runs
+    // the real app in the real fonts at the real window size and measures it:
+    // the list top moved from 575 to 373 of 1080, from below the halfway mark
+    // to inside the top third.
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // The header is the eyebrow, and the four lines that used to follow it are
+    // nowhere on the screen.
+    expect(find.text('ARCADIA · ACTIES'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(ActionsScreen),
+        matching: find.text('Acties'),
+      ),
+      findsNothing,
+      reason: 'the title restated the eyebrow; the rail label is not it',
+    );
+    expect(find.textContaining('openstaande actie(s)'), findsNothing);
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
+    expect(find.textContaining('Generatie'), findsNothing);
+
+    // The list starts inside the top 40% of the window instead of below the
+    // middle of it — measured in the real font, in the real shell, with the
+    // real rail beside it.
+    final Finder list = find.byKey(const ValueKey('actions-list'));
+    expect(tester.getTopLeft(list).dy, lessThan(1080 * 0.4));
+    // Which is the same statement from the operator's side: the list, not the
+    // preamble above it, gets the majority of the window it is the point of.
+    expect(tester.getSize(list).height, greaterThan(1080 / 2));
     expect(tester.takeException(), isNull);
   });
 
@@ -5344,7 +5403,9 @@ void main() {
       reconcileBootstrap: resumed.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Acties'));
+    // Read on Klasgroepen: since #309 that is the action view carrying the
+    // shared state's freshness stamp, which is what this run watches move.
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
 
     // The overview rendered at generation 1 and the subscriber connected.
@@ -7931,8 +7992,8 @@ void main() {
   });
 
   testWidgets(
-      "the Acties overview's freshness stamp names the werkdatum the shared "
-      'view was pulled with, and holds it across a settings save (#247)',
+      "the Klasgroepen overview's freshness stamp names the werkdatum the "
+      'shared view was pulled with, and holds it across a settings save (#247)',
       (WidgetTester tester) async {
     // #239 put the werkdatum in the Log panel, which is a *session* diagnostic:
     // it is gone when the app closes, and a passive operator reading the shared
@@ -7969,8 +8030,9 @@ void main() {
     expect(wire.werkdatums, <String>['01/09/2025']);
 
     // The overview names the school year it describes, in the wire's own
-    // dd/MM/yyyy, on the same line as the generation and the operator.
-    await tester.tap(find.text('Acties'));
+    // dd/MM/yyyy, on the same line as the generation and the operator. Read on
+    // Klasgroepen since #309 took the stamp off Acties.
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('Generatie 1 · ', skipOffstage: false),
@@ -7982,8 +8044,8 @@ void main() {
     );
 
     // The operator moves the werkdatum in Instellingen and saves. That is the
-    // *next* pull's input; the view on Acties is still the one pulled as of
-    // 01/09/2025 and must keep saying so.
+    // *next* pull's input; the view on Klasgroepen is still the one pulled as
+    // of 01/09/2025 and must keep saying so.
     await tester.tap(find.text('Instellingen'));
     await tester.pumpAndSettle();
     final pick = find.byKey(const ValueKey('settings-workdate-pick'));
@@ -8005,7 +8067,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('· werkdatum 01/09/2025', skipOffstage: false),
@@ -8024,7 +8086,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(wire.werkdatums, <String>['01/09/2025', '15/09/2025']);
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(find.text('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('· werkdatum 15/09/2025', skipOffstage: false),
