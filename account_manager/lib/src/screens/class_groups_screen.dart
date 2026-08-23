@@ -308,8 +308,11 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
   List<Widget> _slivers(BuildContext context) {
     final bool active = controller.linked != null;
     final rows = _rows();
-    final int attention =
-        rows.where((r) => r.attentionIn(active: active)).length;
+    // The same predicate the rows below key their highlight on, but derived on
+    // the controller since #301 — Acties quotes this number too, and a pointer
+    // that counted differently from the list it points at would be worse than
+    // none.
+    final int attention = controller.classesNeedingAttention;
     // The two filters compose rather than replace one another (#262): the
     // search narrows the inventory to the classes the operator is looking for,
     // and the switch — if they turned it on — keeps the ones asking something.
@@ -333,6 +336,7 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
         controller: controller,
         total: rows.length,
         attention: attention,
+        accountsNeedingAttention: controller.accountsNeedingAttention,
       )),
       _gap(PlinkSpacing.s4),
       _section(_ClassSearchBar(searchController: _search)),
@@ -520,11 +524,16 @@ class _ClassGroupsHeader extends StatelessWidget {
     required this.controller,
     required this.total,
     required this.attention,
+    this.accountsNeedingAttention = 0,
   });
 
   final ReconcileController controller;
   final int total;
   final int attention;
+
+  /// How many accounts are waiting on the Acties tab (#301) — the mirror of the
+  /// line Acties carries about this one.
+  final int accountsNeedingAttention;
 
   @override
   Widget build(BuildContext context) {
@@ -549,6 +558,13 @@ class _ClassGroupsHeader extends StatelessWidget {
           },
           style: text.bodyMedium,
         ),
+        // The other half of "is everything as expected?" (#301) — the mirror of
+        // the pointer Acties carries at this tab, in the same place under the
+        // count line, and silent when Acties is holding nothing.
+        if (accountsNeedingAttention > 0) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s1),
+          OtherTabAttentionLine.accounts(count: accountsNeedingAttention),
+        ],
         if (freshness != null) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s1),
           Text(freshness, style: text.bodySmall),

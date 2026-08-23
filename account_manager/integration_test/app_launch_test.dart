@@ -3253,6 +3253,76 @@ void main() {
   });
 
   testWidgets(
+      'each action tab says what the other one is holding, and following the '
+      'line lands there end-to-end (#301)', (WidgetTester tester) async {
+    // The real app, real rail, real navigation — which is the whole of this
+    // issue. Acties covers people and Klasgroepen covers classes, so "is
+    // everything as expected?" is only answerable by visiting both, and nothing
+    // prompted the operator to. The rollover is where that bites: the
+    // Smartschool class change is per student here while the Office 365 roster
+    // write is one action per class there, so a clean Acties list can sit above
+    // a pile of stale rosters.
+    //
+    // Only a full run can show it. The two counts are derived on the shared
+    // controller, rendered by two screens that never see each other, and the
+    // link has to reach across the shell that keeps both alive — three halves a
+    // widget test of either screen structurally cannot put together.
+    //
+    // The fixture in miniature: `3C` and `3D` both lack their Office 365 group
+    // (two classes), and of the two students only Sam's Office 365 display name
+    // is stale (one account).
+    useTallWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+    expect(find.byType(ActionsScreen), findsOneWidget);
+
+    // Acties names what the other tab is holding, on the first visit — it reads
+    // the inventory itself rather than waiting for the operator to go to the
+    // very tab the line exists to send them to.
+    final Finder toClasses =
+        find.byKey(const ValueKey('actions-class-attention'));
+    expect(toClasses, findsOneWidget);
+    expect(find.text('2 klas(sen) vragen ook aandacht op Klasgroepen.'),
+        findsOneWidget);
+
+    // Following it lands on Klasgroepen, where the count is the one that tab
+    // states for itself — one derivation, so the pointer cannot contradict the
+    // list it points at.
+    await tester.ensureVisible(toClasses);
+    await tester.tap(toClasses);
+    await tester.pumpAndSettle();
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
+    expect(find.textContaining('2 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget);
+
+    // And the mirror of it, back the other way.
+    final Finder toAccounts =
+        find.byKey(const ValueKey('class-groups-account-attention'));
+    expect(toAccounts, findsOneWidget);
+    expect(find.text('1 account(s) vragen ook aandacht op Acties.'),
+        findsOneWidget);
+    await tester.ensureVisible(toAccounts);
+    await tester.tap(toAccounts);
+    await tester.pumpAndSettle();
+    expect(find.byType(ActionsScreen), findsOneWidget);
+
+    // The one account it counted is the list Acties comes back to, still under
+    // its own work filter.
+    final String sam = accountId(harness, 'Sam Sels');
+    final String tom = accountId(harness, 'Tom Tas');
+    expect(find.byKey(ValueKey('account-row-$sam')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Klasgroepen inventory is searchable by class name and description, '
       'composing with the attention switch end-to-end (#262)',
       (WidgetTester tester) async {

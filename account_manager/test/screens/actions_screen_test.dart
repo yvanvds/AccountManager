@@ -2256,4 +2256,60 @@ void main() {
       );
     });
   });
+
+  // --- The pointer at Klasgroepen (#301) ------------------------------------
+
+  testWidgets(
+      'the Acties header says how many classes are waiting on Klasgroepen '
+      '(#301)', (WidgetTester tester) async {
+    // Acties covers people and Klasgroepen covers classes, and nothing on this
+    // screen said the second half existed. The fixture is the rollover shape in
+    // miniature: `3C` and `3D` are both missing their Office 365 group, which is
+    // work that can only be done on the other tab.
+    _useWideWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // The screen reads the inventory itself, so the line is there on the first
+    // visit rather than only after the operator has been to the tab it points
+    // at — which is the one case it is not needed.
+    expect(harness.controller.groupDocs, isNotNull);
+    expect(harness.controller.classesNeedingAttention, 2);
+    expect(
+      find.text('2 klas(sen) vragen ook aandacht op Klasgroepen.'),
+      findsOneWidget,
+    );
+    // Pumped outside the shell there is no tab to switch to, and the sentence is
+    // true anyway — so it degrades to prose instead of vanishing.
+    expect(
+      find.byKey(const ValueKey('actions-class-attention')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('actions-class-attention')),
+        matching: find.byType(InkWell),
+      ),
+      findsNothing,
+      reason: 'no shell above it, so there is nothing to follow the line to',
+    );
+  });
+
+  testWidgets('…and says nothing at all when no class needs anything (#301)',
+      (WidgetTester tester) async {
+    // A line reading "0 klas(sen)" is noise in the one case where the operator
+    // is done. This fixture has departed Smartschool accounts and no class at
+    // all, so Acties has work and Klasgroepen has none.
+    _useWideWindow(tester);
+    final harness = departedHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.classesNeedingAttention, 0);
+    expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
+    expect(find.textContaining('aandacht op Klasgroepen'), findsNothing);
+  });
 }

@@ -611,6 +611,37 @@ class _ActionsBodyState extends State<_ActionsBody>
     _settled.clear();
   }
 
+  /// Whether an inventory read is already queued, so a burst of notifications
+  /// schedules one.
+  bool _scheduledGroups = false;
+
+  /// Reads the class inventory when this session does not have it, so the
+  /// header can say how many classes are waiting on Klasgroepen (#301).
+  ///
+  /// The very read Klasgroepen does, through the same controller and the same
+  /// guard, so opening either tab first costs one partition read and the other
+  /// finds it already there. Without it the pointer would only appear once the
+  /// operator had visited the tab it is meant to send them to, which is the one
+  /// case it is not needed.
+  ///
+  /// Always **deferred to a microtask**, never run inline: this is reached from
+  /// a build, and the read's own first act is to publish its loading state — so
+  /// calling it inline would notify the other screens' listeners mid-frame.
+  /// A failed read answers `const []`, so it is attempted once and not retried
+  /// into a loop.
+  void _ensureGroupsLoaded() {
+    if (!mounted || _scheduledGroups) return;
+    if (controller.groupDocs != null || controller.loadingGroups) return;
+    _scheduledGroups = true;
+    scheduleMicrotask(() {
+      _scheduledGroups = false;
+      if (!mounted) return;
+      if (controller.groupDocs == null && !controller.loadingGroups) {
+        unawaited(controller.loadGroups());
+      }
+    });
+  }
+
   /// Ticks or unticks one account (#297).
   void _setTicked(String id, bool ticked) => setState(() {
         if (ticked) {
@@ -771,6 +802,7 @@ class _ActionsBodyState extends State<_ActionsBody>
   Widget _body(BuildContext context, BoxConstraints constraints) {
     _retireStaleTicks();
     _holdSettled();
+    _ensureGroupsLoaded();
     final bool wide = constraints.maxWidth >= _splitBreakpoint;
     final bool active = controller.linked != null;
     final SituationCohort? cohort = active ? _armedCohort() : null;
@@ -802,6 +834,7 @@ class _ActionsBodyState extends State<_ActionsBody>
             controller: controller,
             onlyWithActions: _onlyWithActions,
             reviewingCohort: cohort != null,
+            classesNeedingAttention: controller.classesNeedingAttention,
           ),
         ),
         const SizedBox(height: PlinkSpacing.s4),
@@ -1106,6 +1139,7 @@ class _ActionsHeader extends StatelessWidget {
     required this.controller,
     required this.onlyWithActions,
     this.reviewingCohort = false,
+    this.classesNeedingAttention = 0,
   });
 
   final ReconcileController controller;
@@ -1118,6 +1152,10 @@ class _ActionsHeader extends StatelessWidget {
   /// reading of [onlyWithActions] describes the list: it is one decision's
   /// cohort, and the banner right below says so.
   final bool reviewingCohort;
+
+  /// How many classes are waiting on the Klasgroepen tab (#301) — the one thing
+  /// in this header that is not about the list below it.
+  final int classesNeedingAttention;
 
   @override
   Widget build(BuildContext context) {
@@ -1149,6 +1187,14 @@ class _ActionsHeader extends StatelessWidget {
           },
           style: text.bodyMedium,
         ),
+        // The other half of "is everything as expected?" (#301). It sits under
+        // the count line and above the freshness stamp because it is a
+        // statement about the work, not about the view — and it says nothing at
+        // all when Klasgroepen is holding nothing.
+        if (classesNeedingAttention > 0) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s1),
+          OtherTabAttentionLine.classes(count: classesNeedingAttention),
+        ],
         if (freshness != null) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s1),
           Text(freshness, style: text.bodySmall),

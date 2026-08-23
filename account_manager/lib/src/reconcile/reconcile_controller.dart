@@ -1933,6 +1933,55 @@ class ReconcileController extends ChangeNotifier {
   /// Whether a class-inventory read is in flight.
   bool get loadingGroups => _loadingGroups;
 
+  /// How many classes the **Klasgroepen** tab is holding work on (#301).
+  ///
+  /// Derived here rather than on the screen that shows it, because two screens
+  /// now quote it: Klasgroepen's own header, and the pointer Acties carries at
+  /// it. A pointer that counts differently from the list it points at is worse
+  /// than no pointer, so there is one derivation and both read it.
+  ///
+  /// Exactly the predicate that tab highlights a row on: a live entry in an
+  /// active session, [MaterializedGroup.needsAttention] in a passive one.
+  /// Informational notices therefore count — a class Smartschool already holds
+  /// is real work the operator does *there* (#225/#250), which is precisely why
+  /// it is not an Acties row and why this pointer has to exist at all.
+  ///
+  /// Zero until [loadGroups] has answered: a count the store has not been asked
+  /// for is not a count, and a header says nothing rather than guess.
+  int get classesNeedingAttention {
+    final docs = _groupDocs;
+    if (docs == null) return 0;
+    if (_linked == null) {
+      return docs.where((d) => d.needsAttention).length;
+    }
+    // The group family's entries are keyed by the class name, which is the
+    // document label — both come from the linker's cross-system match key.
+    final targets = <String>{for (final e in groupPendingEntries) e.targetId};
+    return docs.where((d) => targets.contains(d.label)).length;
+  }
+
+  /// How many accounts the **Acties** list is holding work on (#301) — the
+  /// mirror of [classesNeedingAttention], for the line Klasgroepen carries.
+  ///
+  /// Accounts rather than actions, so the two pointers are one sentence in two
+  /// nouns, and [totalPendingCount] is the wrong number for it twice over: it
+  /// counts cards of every family, class groups included, and an account with
+  /// three decisions on it is still one row of the list.
+  ///
+  /// Applyable rather than merely pending, which is the same predicate the flat
+  /// list filters on and the same one its indicators colour by (#245/#255/#298):
+  /// an informational candidate on an account diagnoses work that happens on
+  /// Klasgroepen, and counting it here would put it on the wrong side of this
+  /// very pointer.
+  int get accountsNeedingAttention {
+    if (_linked == null) return 0;
+    var total = 0;
+    for (final e in pendingEntries) {
+      if (e.family != 'group' && e.canApply) total++;
+    }
+    return total;
+  }
+
   /// How many pending actions an apply pass would actually write — the
   /// **selected** applyable option of each choice (#110). A departed student
   /// counts once (the chosen resolution), not twice, and the informational group

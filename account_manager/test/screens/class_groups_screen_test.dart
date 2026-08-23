@@ -1096,4 +1096,49 @@ void main() {
         reason: 'a non-numeric class sorts after every numbered year');
     expect(compareClassNames('3C', '3c'), 0);
   });
+
+  // --- The pointer at Acties (#301) -----------------------------------------
+
+  testWidgets(
+      'the Klasgroepen header says how many accounts are waiting on Acties '
+      '(#301)', (WidgetTester tester) async {
+    // The mirror of the line Acties carries at this tab. Sam's Office 365
+    // display name is stale, so exactly one *account* asks something — while
+    // both classes ask something here.
+    _useTallWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.accountsNeedingAttention, 1);
+    expect(
+      find.text('1 account(s) vragen ook aandacht op Acties.'),
+      findsOneWidget,
+    );
+    // Accounts, not actions: the whole view holds three pending cards, two of
+    // which are the classes on this very list.
+    expect(harness.controller.totalPendingCount, 3);
+  });
+
+  testWidgets('…and says nothing at all when no account needs anything (#301)',
+      (WidgetTester tester) async {
+    // Every student in this fixture is right everywhere a *person* can be; the
+    // only thing outstanding is the Office 365 group of `2F`, which is this
+    // tab's own work.
+    _useTallWindow(tester);
+    final harness = azureClassGroupHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.accountsNeedingAttention, 0);
+    expect(
+      find.byKey(const ValueKey('class-groups-account-attention')),
+      findsNothing,
+    );
+    expect(find.textContaining('aandacht op Acties'), findsNothing);
+  });
 }

@@ -30,6 +30,11 @@ import 'package:wisa_api/wisa_api.dart' as wapi show formatWerkdatum;
 
 import '../format/timestamps.dart';
 import '../reconcile/reconcile_controller.dart';
+// The tab names and the seam that selects one (#301) — the pointer each action
+// screen carries at the other has to be able to follow itself. Deliberately the
+// small `shell_navigation.dart` and not `app_shell.dart`, which imports the very
+// screens that import this library.
+import '../shell/shell_navigation.dart';
 import 'system_indicator.dart';
 
 // The system vocabulary both action screens speak (#298) — what a coloured
@@ -634,6 +639,80 @@ class SharedStateNotice extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// The pointer one action screen carries at the other (#301).
+///
+/// Acties covers people and Klasgroepen covers classes, and since #227 the split
+/// is right — but it means "is everything as expected?" is only answerable by
+/// visiting both, and nothing on either screen said so. The gap has teeth at a
+/// rollover, where the two halves of one operation live on opposite sides of it:
+/// the Smartschool class change is per student in Acties, while the Office 365
+/// roster write is one `SyncAzureClassGroupMembers` per class in Klasgroepen. An
+/// operator can work Acties to a clean list and leave 150 stale rosters behind.
+///
+/// So each header states what the other screen is holding, and following the
+/// line lands there.
+///
+/// Three things it is careful about:
+///
+/// - **One derivation per count.** Both numbers come from the controller
+///   ([ReconcileController.classesNeedingAttention] /
+///   [ReconcileController.accountsNeedingAttention]) rather than from the screen
+///   that renders the line, so the pointer and the header it points at cannot
+///   drift apart. A pointer quoting a number the destination then contradicts
+///   is worse than no pointer at all.
+/// - **Silence when there is nothing.** A line reading "0 klas(sen)" is noise in
+///   the one case where the operator is actually done, so a zero count renders
+///   nothing whatsoever.
+/// - **It still reads outside the shell.** [ShellNavigation] is absent in a
+///   widget test and in any embedding that is not the rail, and the sentence is
+///   true either way — so it degrades to plain prose rather than vanishing.
+class OtherTabAttentionLine extends StatelessWidget {
+  /// The line **Acties** carries: how many classes Klasgroepen is holding.
+  const OtherTabAttentionLine.classes({required this.count})
+      : _noun = 'klas(sen)',
+        _screen = 'Klasgroepen',
+        _tab = ShellTab.klasgroepen,
+        super(key: const ValueKey('actions-class-attention'));
+
+  /// The line **Klasgroepen** carries: how many accounts Acties is holding.
+  const OtherTabAttentionLine.accounts({required this.count})
+      : _noun = 'account(s)',
+        _screen = 'Acties',
+        _tab = ShellTab.acties,
+        super(key: const ValueKey('class-groups-account-attention'));
+
+  /// How many rows the *other* screen has that ask something of the operator.
+  final int count;
+
+  final String _noun;
+  final String _screen;
+  final ShellTab _tab;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 0) return const SizedBox.shrink();
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final ShellNavigation? shell = ShellNavigation.maybeOf(context);
+    // "vragen" stays invariant beside the "(s)" plural, exactly as the
+    // Klasgroepen header's own "waarvan N aandacht vragen" does.
+    final String sentence = '$count $_noun vragen ook aandacht op $_screen.';
+
+    if (shell == null) return Text(sentence, style: text.bodySmall);
+    return InkWell(
+      onTap: () => shell.go(_tab),
+      child: Text(
+        sentence,
+        style: text.bodySmall?.copyWith(
+          color: colors.primary,
+          decoration: TextDecoration.underline,
+          decorationColor: colors.primary,
+        ),
       ),
     );
   }

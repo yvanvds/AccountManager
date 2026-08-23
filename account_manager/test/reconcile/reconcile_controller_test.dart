@@ -1992,6 +1992,44 @@ void main() {
       await h.controller.loadGroups();
       expect(h.controller.groupDocs, isNotEmpty);
     });
+
+    test(
+        'the two attention counts are one derivation each, so the pointer one '
+        'action screen carries matches the list it points at (#301)', () async {
+      // `3C` and `3D` are both missing their Office 365 group; of the two
+      // students only Sam's Office 365 display name is stale.
+      final h = appliedClassWorkHarness();
+      await h.controller.sync();
+
+      // Nothing to count until the inventory has been read: a count the store
+      // was never asked for is not a count.
+      expect(h.controller.groupDocs, isNull);
+      expect(h.controller.classesNeedingAttention, 0);
+
+      await h.controller.loadGroups();
+      expect(h.controller.classesNeedingAttention, 2);
+
+      // Accounts, not actions. The view holds three pending cards — Sam plus
+      // the two classes — so neither the total nor the class half is the
+      // number the Klasgroepen pointer wants.
+      expect(h.controller.totalPendingCount, 3);
+      expect(h.controller.accountsNeedingAttention, 1);
+      expect(h.controller.groupPendingEntries, hasLength(2));
+    });
+
+    test(
+        'an informational candidate is class work, so it counts on Klasgroepen '
+        'and not against the accounts (#301)', () async {
+      // `2F` has no Office 365 group, which leaves each of its students with an
+      // `AzureClassGroupMembership` diagnosis of work that is done per class on
+      // the other tab. It must not turn them into accounts that need attention.
+      final h = azureClassGroupHarness();
+      await h.controller.sync();
+      await h.controller.loadGroups();
+
+      expect(h.controller.classesNeedingAttention, greaterThan(0));
+      expect(h.controller.accountsNeedingAttention, 0);
+    });
   });
 
   group('passive session reads the store (#115)', () {
