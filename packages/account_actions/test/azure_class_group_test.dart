@@ -10,6 +10,35 @@ import 'support/fixtures.dart';
 /// Graph replies for the class-group writes: an empty `mailNickname` lookup
 /// (nothing exists yet), an echoed create, and `204` for the `$batch`
 /// membership calls.
+/// The same `$batch`, refused: Graph answers per sub-request, each carrying the
+/// `error` envelope a single call would have (#330).
+az.GraphResponse _refusedBatch(
+  az.GraphRequest request, {
+  int status = 400,
+  String code = 'Request_BadRequest',
+  String message = 'Adding or removing members is not supported for this '
+      'group.',
+}) {
+  final body = jsonDecode(request.body!) as Map<String, dynamic>;
+  final requests = (body['requests'] as List).cast<Map<String, dynamic>>();
+  return az.GraphResponse(
+    statusCode: 200,
+    headers: const {'content-type': 'application/json'},
+    body: jsonEncode({
+      'responses': [
+        for (final r in requests)
+          {
+            'id': r['id'],
+            'status': status,
+            'body': {
+              'error': {'code': code, 'message': message},
+            },
+          },
+      ],
+    }),
+  );
+}
+
 az.GraphResponse _classGroupGraph(az.GraphRequest request) {
   if (request.method == 'GET') {
     return az.GraphResponse(
@@ -411,6 +440,91 @@ void main() {
       expect(
         (result.azureGroup! as az.AzureGroup).memberIds,
         ['az-joined'],
+      );
+    });
+
+    test('a refused membership sync reports what Graph said (#330)', () async {
+      // The #331 case: a group whose membership Graph will not manage refuses
+      // every sub-request. What used to reach the operator was the count alone
+      // — "38 of 38 … failed" — with the status and error code discarded.
+      final transport = RecordingGraphTransport(
+        handler: (request) => request.url.path.endsWith(r'/$batch')
+            ? _refusedBatch(request)
+            : _classGroupGraph(request),
+      );
+      final action = SyncAzureClassGroupMembers(
+        linkedGroup(
+          wisa: wisaGroup(),
+          azure: azureClassGroup('3A', memberIds: const ['az-left']),
+        ),
+        azurePlan(
+          membersToAdd: const ['az-joined'],
+          membersToRemove: const ['az-left'],
+        ),
+      );
+
+      final result = await action.apply(
+        Connectors(azure: azureConnector(transport)),
+        const ApplyOptions(),
+      );
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(
+        '${result.error}',
+        contains('2 of 2 membership change(s) on SSM-3A failed'),
+      );
+      expect(
+        '${result.error}',
+        contains('400 Request_BadRequest: Adding or removing members is not '
+            'supported for this group.'),
+        reason: "Graph's own words, which is what makes the line actionable",
+      );
+      expect('${result.error}', isNot(contains('other error(s)')),
+          reason: 'one reason refused them all; do not imply there were more');
+    });
+
+    test('a partly refused membership sync counts only the refusals (#330)',
+        () async {
+      // A batch can half-succeed — Graph answers per sub-request — and the
+      // failure must not read as if the whole write bounced.
+      final transport = RecordingGraphTransport(
+        handler: (request) {
+          if (!request.url.path.endsWith(r'/$batch')) {
+            return _classGroupGraph(request);
+          }
+          // The adds and the removes ride in `$batch`es of their own, so
+          // refusing the one carrying the `DELETE`s leaves the add landing.
+          return request.body!.contains('"DELETE"')
+              ? _refusedBatch(
+                  request,
+                  status: 404,
+                  code: 'Request_ResourceNotFound',
+                  message: 'Resource does not exist.',
+                )
+              : _classGroupGraph(request);
+        },
+      );
+      final action = SyncAzureClassGroupMembers(
+        linkedGroup(
+          wisa: wisaGroup(),
+          azure: azureClassGroup('3A', memberIds: const ['az-left']),
+        ),
+        azurePlan(
+          membersToAdd: const ['az-joined'],
+          membersToRemove: const ['az-left'],
+        ),
+      );
+
+      final result = await action.apply(
+        Connectors(azure: azureConnector(transport)),
+        const ApplyOptions(),
+      );
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(
+        '${result.error}',
+        contains('1 of 2 membership change(s) on SSM-3A failed — '
+            '404 Request_ResourceNotFound: Resource does not exist.'),
       );
     });
   });

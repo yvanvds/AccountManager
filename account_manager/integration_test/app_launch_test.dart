@@ -2920,6 +2920,99 @@ void main() {
   });
 
   testWidgets(
+      'a membership batch Graph refuses names what Graph said, on the card '
+      'and in the log, end-to-end (#330)', (WidgetTester tester) async {
+    // The reported run, from the operator's side. `SSM-1A` turned out to be a
+    // group whose membership Graph will not manage (#331), so all 38 of its
+    // changes bounced at once — and the whole of what came back was
+    // *"38 of 38 membership change(s) failed"*, contradicted by a log claiming
+    // 21 members had been added and 17 removed.
+    //
+    // Only a full run puts the two records side by side. The count is composed
+    // by the action, the reason travels from the connector's per-sub-request
+    // `$batch` results through the applier into the card's outcome block, and
+    // the log line is written by a connector the action never speaks to and
+    // read on a different screen. Every one of those layers was passing its own
+    // tests while the operator was told a number and a lie.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    harness.graph.refuseMembershipWrites = true;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    const entry = ValueKey('entry-group-1A');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-1A'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both writes were attempted — one add, one remove — and both were refused.
+    expect(harness.graph.batchedWrites, hasLength(2));
+
+    // The card still counts, and now also says why: Graph's status, its error
+    // code and its message, on the card the operator pressed.
+    final failure = find.descendant(
+      of: find.byKey(entry),
+      matching: find.textContaining('2 of 2 membership change(s) on GBS-1A '
+          'failed'),
+    );
+    expect(failure, findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(entry),
+        matching: find.textContaining('400 Request_BadRequest: Adding or '
+            'removing members is not supported for this group.'),
+      ),
+      findsOneWidget,
+      reason: 'the line an operator can act on, or paste into a search',
+    );
+
+    // And the log agrees with the card instead of contradicting it: the refusal
+    // is red, it counts what actually landed…
+    final errors =
+        harness.log.entries.where((e) => e.isError).map((e) => e.message);
+    expect(
+      errors,
+      containsAll(<Matcher>[
+        allOf(
+          contains('0 van 1 leden toegevoegd aan groep az-GBS-1A'),
+          contains('1 mislukt: 400 Request_BadRequest'),
+        ),
+        allOf(
+          contains('0 van 1 leden verwijderd uit groep az-GBS-1A'),
+          contains('1 mislukt: 400 Request_BadRequest'),
+        ),
+      ]),
+    );
+    // …no line anywhere claims the batch went through…
+    expect(
+      harness.log.entries.map((e) => e.message),
+      everyElement(isNot(contains('in batch'))),
+      reason: 'the unconditional success line is what made the log lie',
+    );
+    // …and each refused member is named, so a *partial* failure could be traced
+    // to the accounts it hit rather than to a count.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      containsAll(<Matcher>[
+        contains('az1 → 400 Request_BadRequest'),
+        contains('az2 → 400 Request_BadRequest'),
+      ]),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a card raising two decisions groups each one\'s fields under its own '
       'heading end-to-end (#281)', (WidgetTester tester) async {
     // `5WW1` is new to Smartschool *and* has no Office 365 group, so one card

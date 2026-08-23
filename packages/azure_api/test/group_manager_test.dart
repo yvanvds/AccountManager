@@ -441,6 +441,173 @@ void main() {
       expect(await groups.removeMembers('g1', const []), isEmpty);
       expect(transport.requests, isEmpty);
     });
+
+    test('a non-object sub-response body is dropped, not crashed on', () async {
+      // Graph base64-encodes a binary sub-response body. Nothing membership
+      // writes ask for answers that way, but a parse that dies on it would take
+      // the whole apply down with a message about types rather than about the
+      // write — the opposite of what #330 is for.
+      final transport = FakeGraphTransport(
+        (_) => jsonOk({
+          'responses': [
+            {'id': '0', 'status': 400, 'body': 'not-an-object'},
+          ],
+        }),
+      );
+      final groups = GroupManager(clientWith(transport));
+
+      final results = await groups.addMembers('g1', ['u1']);
+
+      expect(results.single.status, 400);
+      expect(results.single.body, isNull);
+      expect(results.single.reason, '400');
+    });
+  });
+
+  // Until #330 both batch writers logged an unconditional success line the
+  // moment `execute` returned — so the wholesale refusal of #331 (a
+  // mail-enabled security group whose membership Graph will not manage) was
+  // written into the log as 38 changes that never happened.
+  group('a membership batch is logged as it actually went (#330)', () {
+    /// A `$batch` whose sub-requests Graph refuses with [status]/[code], except
+    /// for the ids in [succeed].
+    FakeGraphTransport refusing({
+      int status = 400,
+      String code = 'Request_BadRequest',
+      String message = 'Adding members is not supported for this group.',
+      Set<String> succeed = const {},
+    }) =>
+        FakeGraphTransport((req) {
+          final body = jsonDecode(req.body!) as Map<String, dynamic>;
+          final requests =
+              (body['requests'] as List).cast<Map<String, dynamic>>();
+          return jsonOk({
+            'responses': [
+              for (final r in requests)
+                if (succeed.contains(r['id']))
+                  {'id': r['id'], 'status': 204}
+                else
+                  {
+                    'id': r['id'],
+                    'status': status,
+                    'body': {
+                      'error': {'code': code, 'message': message},
+                    },
+                  },
+            ],
+          });
+        });
+
+    test('a wholesale refusal is an error naming what Graph said', () async {
+      final log = RecordingLog();
+      final groups = GroupManager(clientWith(refusing()), log: log);
+
+      await groups.addMembers('g1', ['u1', 'u2', 'u3']);
+
+      expect(
+        log.errors,
+        contains(
+          'Azure: 0 van 3 leden toegevoegd aan groep g1 — 3 mislukt: '
+          '400 Request_BadRequest: Adding members is not supported for this '
+          'group.',
+        ),
+      );
+      expect(
+        log.messages,
+        isNot(contains(contains('in batch toegevoegd'))),
+        reason: 'the success line that used to be written regardless is gone',
+      );
+    });
+
+    test('every refused member is traceable in the log', () async {
+      final log = RecordingLog();
+      final groups = GroupManager(
+        clientWith(refusing(succeed: const {'0'})),
+        log: log,
+      );
+
+      await groups.removeMembers('g1', ['u1', 'u2', 'u3']);
+
+      // The partial success is stated honestly…
+      expect(
+        log.errors.single,
+        startsWith('Azure: 1 van 3 leden verwijderd uit groep g1 — 2 mislukt:'),
+      );
+      // …and the two that failed are named, so a partial failure points at
+      // accounts rather than at a count.
+      expect(
+        log.messages,
+        containsAll(<String>[
+          'Azure: groep g1 — u2 → 400 Request_BadRequest: Adding members is '
+              'not supported for this group.',
+          'Azure: groep g1 — u3 → 400 Request_BadRequest: Adding members is '
+              'not supported for this group.',
+        ]),
+      );
+      expect(
+        log.messages,
+        isNot(contains(contains('u1'))),
+        reason: 'the member that went through is not detail worth reading',
+      );
+    });
+
+    test('a batch that failed for mixed reasons says so', () async {
+      final log = RecordingLog();
+      final transport = FakeGraphTransport((req) {
+        final body = jsonDecode(req.body!) as Map<String, dynamic>;
+        final requests =
+            (body['requests'] as List).cast<Map<String, dynamic>>();
+        return jsonOk({
+          'responses': [
+            for (final r in requests)
+              {
+                'id': r['id'],
+                'status': r['id'] == '0' ? 400 : 404,
+                'body': {
+                  'error': {
+                    'code': r['id'] == '0'
+                        ? 'Request_BadRequest'
+                        : 'Request_ResourceNotFound',
+                    'message': 'Nope.',
+                  },
+                },
+              },
+          ],
+        });
+      });
+      final groups = GroupManager(clientWith(transport), log: log);
+
+      await groups.addMembers('g1', ['u1', 'u2']);
+
+      expect(
+        log.errors.single,
+        'Azure: 0 van 2 leden toegevoegd aan groep g1 — 2 mislukt: '
+        '400 Request_BadRequest: Nope. (en 1 andere fout(en))',
+      );
+    });
+
+    test('a batch that fully succeeded stays an ordinary message', () async {
+      final log = RecordingLog();
+      final transport = FakeGraphTransport((req) {
+        final body = jsonDecode(req.body!) as Map<String, dynamic>;
+        final requests =
+            (body['requests'] as List).cast<Map<String, dynamic>>();
+        return jsonOk({
+          'responses': [
+            for (final r in requests) {'id': r['id'], 'status': 204},
+          ],
+        });
+      });
+      final groups = GroupManager(clientWith(transport), log: log);
+
+      await groups.addMembers('g1', ['u1', 'u2']);
+
+      expect(log.errors, isEmpty);
+      expect(
+        log.messages,
+        ['Azure: 2 van 2 leden toegevoegd aan groep g1.'],
+      );
+    });
   });
 
   // Everything this manager writes into an [ILog] lands in the app's Log panel
@@ -501,11 +668,13 @@ void main() {
       final batchGroups = GroupManager(clientWith(batched), log: batchLog);
       await batchGroups.addMembers('g1', <String>['u1', 'u2']);
       await batchGroups.removeMembers('g1', <String>['u1', 'u2']);
+      // Since #330 the line counts what the batch actually did rather than what
+      // it was asked to do — still Dutch, and now also true.
       expect(
         batchLog.messages,
         containsAll(<String>[
-          'Azure: 2 leden in batch toegevoegd aan groep g1.',
-          'Azure: 2 leden in batch verwijderd uit groep g1.',
+          'Azure: 2 van 2 leden toegevoegd aan groep g1.',
+          'Azure: 2 van 2 leden verwijderd uit groep g1.',
         ]),
       );
 

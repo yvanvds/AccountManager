@@ -275,9 +275,11 @@ class GroupManager {
         ),
     ];
     final results = await _batch.execute(requests);
-    _log?.addMessage(
-      core.Origin.azure,
-      'Azure: ${userIds.length} leden in batch toegevoegd aan groep $groupId.',
+    _logMembershipBatch(
+      results,
+      groupId: groupId,
+      userIds: userIds,
+      verb: 'toegevoegd aan',
     );
     return results;
   }
@@ -297,11 +299,56 @@ class GroupManager {
         ),
     ];
     final results = await _batch.execute(requests);
-    _log?.addMessage(
-      core.Origin.azure,
-      'Azure: ${userIds.length} leden in batch verwijderd uit groep $groupId.',
+    _logMembershipBatch(
+      results,
+      groupId: groupId,
+      userIds: userIds,
+      verb: 'verwijderd uit',
     );
     return results;
+  }
+
+  /// Writes what the membership batch **actually** did into the log (#330).
+  ///
+  /// Never an unconditional success line. Until this existed both batch writers
+  /// logged `"${userIds.length} leden in batch toegevoegd"` the moment `execute`
+  /// returned, without looking at a single result — so the wholesale refusal of
+  /// #331 was recorded as 21 additions and 17 removals that never happened, in
+  /// the one place an operator goes to find out what happened.
+  ///
+  /// A refusal is an error line naming Graph's status and error code, followed
+  /// by the per-member detail, so a *partial* failure can be traced to the
+  /// accounts it hit rather than to a count. The detail rides at message
+  /// severity: the headline is the red line, and thirty-eight red lines below it
+  /// say nothing the headline did not.
+  void _logMembershipBatch(
+    List<BatchResponse> results, {
+    required String groupId,
+    required List<String> userIds,
+    required String verb,
+  }) {
+    final log = _log;
+    if (log == null) return;
+    final report = BatchReport(results);
+    final headline = 'Azure: ${report.successCount} van ${report.total} leden '
+        '$verb groep $groupId';
+    if (!report.hasFailures) {
+      log.addMessage(core.Origin.azure, '$headline.');
+      return;
+    }
+    final reasons = report.reasons;
+    final extra =
+        reasons.length > 1 ? ' (en ${reasons.length - 1} andere fout(en))' : '';
+    log.addError(
+      core.Origin.azure,
+      '$headline — ${report.failureCount} mislukt: ${reasons.first}$extra',
+    );
+    final labels = <String, String>{
+      for (var i = 0; i < userIds.length; i++) '$i': userIds[i],
+    };
+    for (final line in report.failureLines(labels: labels)) {
+      log.addMessage(core.Origin.azure, 'Azure: groep $groupId — $line');
+    }
   }
 
   static String _directoryObjectRef(String userId) =>

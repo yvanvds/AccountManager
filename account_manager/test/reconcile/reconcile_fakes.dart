@@ -96,6 +96,17 @@ class RecordingGraph implements az.GraphTransport {
   /// delegated scopes did not cover, applied to the class-group create (#272).
   bool refuseGroupCreates = false;
 
+  /// When set, every `$batch` sub-request is refused the way Graph refuses a
+  /// membership write on a group whose membership it will not manage — the
+  /// mail-enabled security group of #331, on which all 38 of a class's changes
+  /// bounced at once.
+  ///
+  /// The exact envelope that tenant returns is Graph's to give; what #330 is
+  /// about is that whatever it says reaches the operator. So this picks a
+  /// plausible one and the tests assert it is *relayed*, never that it is this
+  /// particular code.
+  bool refuseMembershipWrites = false;
+
   int _created = 0;
 
   /// A user PATCH/DELETE answers `204` the way Graph does, but a **create**
@@ -172,7 +183,20 @@ class RecordingGraph implements az.GraphTransport {
         <String, dynamic>{
           'responses': <Map<String, dynamic>>[
             for (final sub in subs)
-              <String, dynamic>{'id': sub['id'], 'status': 204},
+              if (refuseMembershipWrites)
+                <String, dynamic>{
+                  'id': sub['id'],
+                  'status': 400,
+                  'body': <String, dynamic>{
+                    'error': <String, dynamic>{
+                      'code': 'Request_BadRequest',
+                      'message': 'Adding or removing members is not supported '
+                          'for this group.',
+                    },
+                  },
+                }
+              else
+                <String, dynamic>{'id': sub['id'], 'status': 204},
           ],
         },
         statusCode: 200,
@@ -3951,6 +3975,12 @@ class ReconcileHarness {
           ),
           authProvider: const az.StaticAuthProvider('token'),
           transport: graph,
+          // The apply-side connector writes into the operator's log too — the
+          // app wires one `AzureConnector` for both the pull and the writes
+          // (`reconcileBootstrap`), so what a write records is what the Log
+          // panel shows. Without this the fixture could not see the connector's
+          // own account of a membership batch (#330) at all.
+          log: log,
         ),
       ),
       resolver: this.resolver,

@@ -1281,14 +1281,24 @@ class SyncAzureClassGroupMembers extends GroupAction {
         ...await groups.addMembers(_azure.id, plan.membersToAdd),
         ...await groups.removeMembers(_azure.id, plan.membersToRemove),
       ];
-      final failures = results.where((r) => !r.isSuccess).length;
-      if (failures > 0) {
+      // What Graph said, not merely how often it said no (#330). A count alone
+      // is unactionable — it was the whole of what the operator got when
+      // `SSM-1A` turned out to be a group Graph will not manage the membership
+      // of (#331) — so the first refusal's status and error code ride along,
+      // and a batch that failed for *mixed* reasons says how many other kinds
+      // there were rather than pretending the first explains all of them.
+      final report = az.BatchReport(results);
+      if (report.hasFailures) {
+        final reasons = report.reasons;
+        final extra = reasons.length > 1
+            ? ' (+${reasons.length - 1} other error(s))'
+            : '';
         return _failed(
           changes,
           Origin.azure,
           StateError(
-            '$failures of ${results.length} membership change(s) on '
-            '${plan.displayName} failed',
+            '${report.failureCount} of ${report.total} membership change(s) on '
+            '${plan.displayName} failed — ${reasons.first}$extra',
           ),
         );
       }
