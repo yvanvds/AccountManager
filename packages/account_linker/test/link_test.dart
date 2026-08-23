@@ -522,6 +522,56 @@ void main() {
     });
 
     test(
+        'a legacy security class group whose class is gone is an orphan all '
+        'the same (#312)', () {
+      // What the WPF app left behind: a plain security group with no address,
+      // named `<PREFIX>-<KLAS>` like every other class group. The naming
+      // convention is the signal (#228), so mail-enablement decides nothing
+      // here — and the class name it carries is what the stale-group either/or
+      // on the action side reads.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2A')]),
+        ssSnap(const []),
+        azSnap(const [], groups: [
+          azureGroup('$_prefix-9Z',
+              securityEnabled: true, memberIds: const ['az-oud']),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final orphan = snapshot.groups.firstWhere((g) => g.wisa == null);
+      expect(orphan.azure!.displayName, '$_prefix-9Z');
+      expect(orphan.className, '9Z');
+    });
+
+    test(
+        'a renamed group whose class is gone stays an orphan by its nickname '
+        '(#280/#312)', () {
+      // The #280 leg, on a class that no longer runs: the display name says
+      // nothing, the address still says `<PREFIX>-8Y`, and the record reaches
+      // the inventory carrying `8Y` as its class name.
+      final snapshot = link(
+        wisaSnap(const [], classGroups: [wisaClassGroup('2A')]),
+        ssSnap(const []),
+        azSnap(const [], groups: [
+          azureGroup(
+            'Klas van juf An',
+            id: 'g-renamed',
+            mail: '$_prefix-8Y@student.s.be',
+            mailNickname: '$_prefix-8Y',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final orphan = snapshot.groups.firstWhere((g) => g.wisa == null);
+      expect(orphan.azure!.id, 'g-renamed');
+      expect(orphan.className, '8Y');
+    });
+
+    test(
         'the prefix strip never turns a staff group into a class orphan '
         '(#228)', () {
       final snapshot = link(

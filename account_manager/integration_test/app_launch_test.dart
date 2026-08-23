@@ -3646,6 +3646,108 @@ void main() {
   });
 
   testWidgets(
+      'the class groups the legacy app left behind offer their delete too, '
+      'end-to-end (#312)', (WidgetTester tester) async {
+    // The reported bug, in the real app. Our school runs `1A`; Office 365 still
+    // holds two groups of classes that stopped running, and neither is shaped
+    // the way *this* port creates one:
+    //
+    //   GBS-9Z            a plain security group with no address — how the
+    //                     legacy WPF app made every class group, and how
+    //                     `SSM-3ECO`, `SSM-3MRP`, `SSM-3MWW` … sit in the live
+    //                     tenant today;
+    //   Klas van juf An   renamed by hand in the portal, still answering on
+    //                     `GBS-8Y@…`.
+    //
+    // The linker orphans both, so both were Klasgroepen rows — each with a grey
+    // ✓ and no action anybody could take, the exact state #271 set out to
+    // remove. Only a full run shows that: the inventory is composed from the
+    // *stored* documents while the either/or radios come from the live
+    // dispatch, the bulk header from a third derivation, and "the tab still
+    // writes nothing by default" is a claim about the page as composed.
+    useTallWindow(tester);
+    final harness = legacyStaleClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    Finder row(String klas) => find.byKey(ValueKey('class-row-$klas'));
+
+    expect(row('1A'), findsOneWidget);
+    expect(row('GBS-9Z'), findsOneWidget);
+    expect(row('Klas van juf An'), findsOneWidget);
+    expect(find.textContaining('3 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget,
+        reason: 'both leftovers now ask something instead of showing a ✓');
+
+    // Widened, not loosened: the notice is still the default of the pair, so a
+    // bulk pass over the whole tab writes nothing.
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    final bulkApply = find.textContaining('Alles toepassen (');
+    expect(tester.widget<Text>(bulkApply).data, 'Alles toepassen (0)');
+
+    // The renamed group is its class's group by the address it answers on
+    // (#280), so its row carries the pair under the name somebody typed over
+    // it.
+    final renamed = find.byKey(const ValueKey('entry-group-Klas van juf An'));
+    await tester.ensureVisible(renamed);
+    await tester.tap(renamed);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat de Office 365-groep Klas van juf An staan — klas 8Y '
+          'bestaat niet meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    expect(
+      find.byKey(const ValueKey('alt-Klas van juf An-DeleteAzureClassGroup')),
+      findsOneWidget,
+    );
+    await tester.tap(renamed);
+    await tester.pumpAndSettle();
+
+    // The security group's own row: 21 members still in it, and no line
+    // claiming an address, because it has none.
+    final entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
+          'meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.text('mail: '), findsNothing,
+        reason: 'a security group has no address, so no line states one');
+
+    final delete =
+        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-GBS-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Exactly the one group the operator picked, and its row goes with it.
+    expect(harness.graph.deletedGroups, ['az-GBS-9Z']);
+    expect(row('GBS-9Z'), findsNothing);
+    expect(row('Klas van juf An'), findsOneWidget,
+        reason: 'the group beside it was never selected');
+    expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the "laat de groep staan" notice states its facts end-to-end, it does '
       'not diff them (#305)', (WidgetTester tester) async {
     // The reported card, in the real app. `GBS-9Z` is the group of a class that

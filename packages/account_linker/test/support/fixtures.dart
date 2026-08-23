@@ -186,12 +186,14 @@ Group ssGroup(
 /// An Azure group, matched to WISA by [displayName] — prefix-aware for a class
 /// group, so `Arcadia-2A` is the group of class `2A` (#228). [id] defaults to
 /// [displayName]. Pass [mail]/[mailNickname] to make it a *unified* group, the
-/// shape a class group has.
+/// shape a class group this app creates has; pass [securityEnabled] for the
+/// plain security group the legacy WPF app created its class groups as (#312).
 az.AzureGroup azureGroup(
   String displayName, {
   String? id,
   String? mail,
   String? mailNickname,
+  bool securityEnabled = false,
   List<String> memberIds = const [],
 }) =>
     az.AzureGroup(
@@ -199,6 +201,7 @@ az.AzureGroup azureGroup(
       displayName: displayName,
       mail: mail,
       mailNickname: mailNickname,
+      securityEnabled: securityEnabled,
       memberIds: memberIds,
     );
 
