@@ -542,6 +542,178 @@ void main() {
     });
   });
 
+  group('azureSyncer repairs a companyName no delta can report (#315)', () {
+    // The report, at the layer that decides it. Acties offered `Office 365 ·
+    // Wijzig de school in Azure` — `companyName: SBE → SSM` — for a student
+    // whose Azure account already carried `SSM`, and the proposal survived
+    // **Controleer op drift** pass after pass, so the write was offered for a
+    // 29-account bulk apply that would have changed nothing.
+    //
+    // Adam Bidri is a transferred student: `companyName SSM`, `department 4EWb`.
+    // The correction landed in the tenant before the token this session holds
+    // was minted (or an earlier walk dropped the row), so `/users/delta` — which
+    // reports what changed *since* that token — has nothing to say about him,
+    // on this pass and on every later one. The action's own guard is right
+    // (`!_eq(_az.companyName, config.schoolPrefix)`, case-insensitive and
+    // trimmed); what was wrong was the record it judged. Only a read of what
+    // Graph holds *now* can produce a truthful one, which is what a drift pass
+    // asks for (#316).
+    late _RecordingGraphTransport transport;
+
+    /// The `employeeId in (…)` filters this pass issued, in order.
+    List<String> lookups() => transport.requests
+        .map((r) => r.url.queryParameters[r'$filter'])
+        .whereType<String>()
+        .where((f) => f.startsWith('employeeId in'))
+        .toList();
+
+    /// The school-scoped bulk reads this pass issued, in order.
+    List<String> bulkReads() => transport.requests
+        .where((r) => r.url.path.endsWith('/users'))
+        .map((r) => r.url.queryParameters[r'$filter'] ?? '')
+        .where((f) => !f.startsWith('employeeId in'))
+        .toList();
+
+    GraphResponse route(GraphRequest req) {
+      final path = req.url.path;
+      if (path.contains('groups')) return _jsonOk({'value': <Object?>[]});
+      if (path.contains('users/delta')) {
+        return _jsonOk({
+          '@odata.deltaLink':
+              'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=NEXT',
+          // Nothing changed *since the token*, which is not the same thing as
+          // nothing being wrong. This is the whole shape of the bug.
+          'value': <Object?>[],
+        });
+      }
+      final filter = req.url.queryParameters[r'$filter'] ?? '';
+      if (filter.startsWith('employeeId in')) {
+        return _jsonOk({'value': <Object?>[]});
+      }
+      // Graph as it stands right now: our prefix is already on the account, and
+      // only the department is legitimately stale (last year's class).
+      return _jsonOk({
+        'value': [
+          {
+            'id': 'az-33223',
+            'userPrincipalName': 'adam.bidri@student.school.example',
+            'employeeId': '33223',
+            'displayName': 'Bidri Adam',
+            'givenName': 'Adam',
+            'surname': 'Bidri',
+            'companyName': 'SSM',
+            'department': '4EWb',
+            'accountEnabled': true,
+          },
+        ],
+      });
+    }
+
+    /// Last night's snapshot: the school he was at *before* the transfer, and
+    /// the token whose walks all missed the correction.
+    AzureSnapshot held() => AzureSnapshot(
+          fetchedAt: DateTime.utc(2026),
+          deltaToken: 'AZ-TOKEN',
+          users: const [
+            AzureUser(
+              id: 'az-33223',
+              upn: 'adam.bidri@student.school.example',
+              employeeId: '33223',
+              displayName: 'Bidri Adam',
+              givenName: 'Adam',
+              surname: 'Bidri',
+              companyName: 'SBE',
+              department: '4EWb',
+            ),
+          ],
+          groups: const [],
+        );
+
+    SystemState<AzureSnapshot> stateFor() => SystemState<AzureSnapshot>(
+          system: core.Origin.azure,
+          initial: held(),
+          syncer: azureSyncer(
+            AzureConnector(
+              credentials: AzureCredentials(
+                clientId: 'c',
+                tenantId: 't',
+                azureDomain: 'school.example',
+                schoolPrefix: 'SSM',
+              ),
+              authProvider: const StaticAuthProvider('T'),
+              transport: transport,
+            ),
+            // WISA still places him here, so the back-fill would ask about him
+            // if the read had not turned him up (#224).
+            expectedEmployeeIds: () => const <String>['33223'],
+            schoolPrefix: () => 'SSM',
+          ),
+        );
+
+    setUp(() => transport = _RecordingGraphTransport(route));
+
+    test(
+        'a drift pass ends with the companyName Graph holds, not the stored one',
+        () async {
+      final snapshot = await stateFor().sync(fullRead: true);
+
+      // The one assertion the issue asks for: stored `SBE`, Graph `SSM`, a
+      // delta that reports nothing — and the pass still ends with `SSM`, so
+      // `ModifyAzureSchool.evaluate()` is false and no phantom PATCH is offered.
+      expect(snapshot.users.single.companyName, 'SSM');
+
+      // …and it came from asking Graph what it holds now. The stored token was
+      // never resumed from, so the empty delta above could not have supplied it.
+      expect(
+        transport.requests
+            .where((r) => r.url.path.contains('users/delta'))
+            .map((r) => r.url.queryParameters[r'$deltatoken']),
+        isNot(contains('AZ-TOKEN')),
+      );
+      expect(bulkReads(),
+          ["companyName eq 'SSM' or startswith(department,'SSM')"]);
+      // Not the `employeeId` back-fill either: the bulk read turned him up, so
+      // that leg had nothing to ask about. The repair is the re-read itself.
+      expect(lookups(), isEmpty);
+
+      // Nothing else about him moved, and the pass leaves a fresh resume point.
+      expect(
+        snapshot.users.single,
+        const AzureUser(
+          id: 'az-33223',
+          upn: 'adam.bidri@student.school.example',
+          employeeId: '33223',
+          displayName: 'Bidri Adam',
+          givenName: 'Adam',
+          surname: 'Bidri',
+          companyName: 'SSM',
+          department: '4EWb',
+        ),
+      );
+      expect(snapshot.deltaToken, 'NEXT');
+    });
+
+    test(
+        'the incremental pass, resuming the token, can only confirm the stale copy',
+        () async {
+      // The counterweight that makes the test above mean something. This is
+      // what every pass did before #316 — including the drift pass, which is
+      // why the operator could press it forever. `/users/delta` is doing its
+      // job: it reports changes since our token and there are none. The
+      // snapshot it leaves is therefore the stale one, unchanged.
+      final snapshot = await stateFor().sync();
+
+      expect(snapshot.users.single.companyName, 'SBE');
+      expect(
+        transport.requests
+            .where((r) => r.url.path.contains('users/delta'))
+            .map((r) => r.url.queryParameters[r'$deltatoken']),
+        contains('AZ-TOKEN'),
+      );
+      expect(bulkReads(), isEmpty, reason: 'no read of what Graph holds now');
+    });
+  });
+
   group('managedStudentEmployeeIds (#224)', () {
     WisaStudent student(String id, {int schoolId = 1}) => WisaStudent(
           wisaId: core.WisaId(id),
