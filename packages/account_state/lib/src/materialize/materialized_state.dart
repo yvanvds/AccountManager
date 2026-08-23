@@ -35,6 +35,7 @@ class CandidateAction {
     this.canApply = true,
     this.alternativeGroup,
     this.isDefaultAlternative = false,
+    this.noticeFor,
   });
 
   /// `student`, `staff`, or `group` — the dispatcher family.
@@ -74,6 +75,19 @@ class CandidateAction {
   /// switches. Ignored when [alternativeGroup] is `null`.
   final bool isDefaultAlternative;
 
+  /// The situation this **informational** candidate is context for (#329),
+  /// copied off the live action's `noticeFor`; `null` for every candidate that
+  /// is a decision in its own right.
+  ///
+  /// Persisted for the reason [alternativeGroup] is (#251): a passive session
+  /// has nothing else to tell a notice from a to-do, and without it the stored
+  /// view would render the namesake and empty-class instructions as decisions
+  /// the operator has to resolve — and count them in the badge — while a live
+  /// session states them as context beside the one write there is. Absent in
+  /// documents written before #329, which read back as `null` and behave exactly
+  /// as they did.
+  final String? noticeFor;
+
   Map<String, dynamic> toJson() => {
         'family': family,
         'kind': kind,
@@ -98,6 +112,7 @@ class CandidateAction {
         'canApply': canApply,
         if (alternativeGroup != null) 'alternativeGroup': alternativeGroup,
         if (isDefaultAlternative) 'isDefaultAlternative': true,
+        if (noticeFor != null) 'noticeFor': noticeFor,
       };
 
   factory CandidateAction.fromJson(Map<String, dynamic> json) =>
@@ -118,6 +133,7 @@ class CandidateAction {
         canApply: json['canApply'] as bool? ?? true,
         alternativeGroup: json['alternativeGroup'] as String?,
         isDefaultAlternative: json['isDefaultAlternative'] as bool? ?? false,
+        noticeFor: json['noticeFor'] as String?,
       );
 }
 
@@ -140,6 +156,12 @@ FieldChangeShape _fieldShape(String? name) =>
 /// into a single choice pre-selected on its declared default; every other
 /// candidate is a choice of one. Exposed so the read-only tiles can render an
 /// either/or as the one line it is instead of two independent bullets.
+///
+/// A candidate carrying [CandidateAction.noticeFor] is not a decision at all
+/// (#329): it is lifted onto the choice it names as [Alternatives.notices], so
+/// the stored view states the namesake and empty-class instructions as context
+/// exactly where a live session does — and, just as importantly, does not count
+/// them as work in [pendingDecisionCount].
 List<Alternatives<CandidateAction>> candidateChoices(
   Iterable<CandidateAction> candidates,
 ) =>
@@ -147,6 +169,7 @@ List<Alternatives<CandidateAction>> candidateChoices(
       candidates,
       groupOf: (c) => c.alternativeGroup,
       isDefault: (c) => c.isDefaultAlternative,
+      noticeFor: (c) => c.noticeFor,
     );
 
 /// How many pending **decisions** [candidates] leave for the operator — the
@@ -156,9 +179,17 @@ List<Alternatives<CandidateAction>> candidateChoices(
 /// which is exactly what an apply pass would write (the controller's
 /// `applyableCount` resolves the same way over the live actions). So a departed
 /// student's unregister/delete pair counts **once**, a new class's
-/// create/opt-out pair counts once, an empty class — whose default half is the
-/// informational notice — counts zero, and the informational actions of #245
-/// never count at all.
+/// create/opt-out pair counts once, an informational action that stands alone
+/// (the #245 one, and the leftover notices of #327/#328) counts zero, and a
+/// notice attached to a decision (#329) is not a choice here at all — the
+/// decision it is context for is counted, on its own merits.
+///
+/// That last one is a deliberate change of reading. An empty or namesake class
+/// counted **zero** while the notice was its pre-selected half; it counts one
+/// now, because the blacklist beside it genuinely is a write this app can make
+/// and the operator can press. The same shift #327/#328 made for the two
+/// leftovers, for the same reason: the badge says what there is to do here, and
+/// there is something.
 int pendingDecisionCount(Iterable<CandidateAction> candidates) {
   var pending = 0;
   for (final choice in candidateChoices(candidates)) {

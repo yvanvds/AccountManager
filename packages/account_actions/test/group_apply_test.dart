@@ -113,10 +113,13 @@ void main() {
   });
 
   group('DoNotImportFromSmartschool is informational', () {
+    /// The one leftover the delete cannot address: no code for a `delClass`.
+    /// Since #328 that is the only shape the notice fires on at all.
+    LinkedGroup undeletable({String description = 'Klas 3A'}) =>
+        linkedGroup(smartschool: ssGroup(code: ' ', description: description));
+
     test('canApply is false and apply throws UnsupportedError', () {
-      final action = DoNotImportFromSmartschool(
-        linkedGroup(smartschool: ssGroup()),
-      );
+      final action = DoNotImportFromSmartschool(undeletable());
       expect(action.canApply, isFalse);
       expect(
         () => action.apply(const Connectors(), const ApplyOptions()),
@@ -126,19 +129,20 @@ void main() {
 
     test('it no longer sends the operator into Smartschool by hand (#313)', () {
       // The dead end #271 removed on the Office 365 side: a row whose whole
-      // content was "go and do this somewhere else". The applyable delete now
-      // sits beside it, so the notice states the class instead of instructing.
+      // content was "go and do this somewhere else". The notice states the
+      // class instead of instructing — unchanged by #328, which only narrowed
+      // where it fires.
       final change =
-          DoNotImportFromSmartschool(linkedGroup(smartschool: ssGroup()))
-              .describeChanges();
+          DoNotImportFromSmartschool(undeletable()).describeChanges();
 
       expect(change.summary,
           'Laat deze klas staan — ze bestaat in Smartschool maar niet in WISA');
       expect(change.summary, isNot(contains('Verwijder ze manueel')));
       expect(change.system, Origin.smartschool);
-      // Stated, never diffed: this half writes nothing, so nothing moves.
+      // Stated, never diffed: this reading writes nothing, so nothing moves.
+      // No code here, because a class naming one is deleted rather than noticed.
       expect(change.fields.map((f) => '${f.field}:${f.before}'),
-          ['code:3A', 'omschrijving:Klas 3A']);
+          ['omschrijving:Klas 3A']);
       expect(
         change.fields.every((f) => f.shape == FieldChangeShape.statement),
         isTrue,
@@ -147,33 +151,40 @@ void main() {
     });
 
     test('a class with no description states only the facts it has (#313)', () {
-      final change = DoNotImportFromSmartschool(
-        linkedGroup(smartschool: ssGroup(description: '')),
-      ).describeChanges();
-      expect(change.fields.map((f) => f.field), ['code'],
+      final change = DoNotImportFromSmartschool(undeletable(description: ''))
+          .describeChanges();
+      expect(change.fields, isEmpty,
           reason: 'an empty statement renders as a bare `omschrijving: `');
+    });
+
+    test('it never stands beside the delete (#328)', () {
+      // The two readings partition the leftovers: "laat deze klas staan" and
+      // "doe niets" are the same act, so a class the app can delete proposes
+      // the delete and nothing else.
+      expect(
+        groupActionsFor(linkedGroup(smartschool: ssGroup()))
+            .whereType<DoNotImportFromSmartschool>(),
+        isEmpty,
+      );
+      expect(
+        groupActionsFor(undeletable()).map((a) => a.runtimeType),
+        [DoNotImportFromSmartschool],
+      );
     });
   });
 
-  group('a Smartschool class WISA does not have is one choice (#313)', () {
-    test('the notice and the delete are raised as one either/or', () {
+  group('a Smartschool class WISA does not have proposes a delete (#313)', () {
+    test('the delete is the whole row, with no radio pair (#328)', () {
       final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
 
       expect(
         actions.map((a) => a.runtimeType),
-        [DoNotImportFromSmartschool, DeleteSmartschoolClass],
-        reason: 'the notice leads, so the delete is never the fallback pick',
+        [DeleteSmartschoolClass],
+        reason: 'the no-op "laat deze klas staan" is not an option (#328) — '
+            'the operator performs it by not pressing Toepassen',
       );
-      expect(
-        actions.map((a) => a.alternativeGroup),
-        everyElement(staleSmartschoolClassAlternative),
-        reason: 'both halves fire on the one predicate, or the delete is a '
-            'lone reading with no safe default beside it',
-      );
-      expect(
-        actions.where((a) => a.isDefaultAlternative).single,
-        isA<DoNotImportFromSmartschool>(),
-      );
+      expect(actions.single.alternativeGroup, isNull);
+      expect(actions.single.isDefaultAlternative, isFalse);
     });
 
     test('the delete describes what goes with the class', () {
@@ -185,12 +196,41 @@ void main() {
           'Verwijder de klas 3A uit Smartschool — ze bestaat niet in WISA');
       expect(
         change.fields.map((f) => f.field),
-        ['code', 'omschrijving', 'lidmaatschappen en subgroepen'],
+        ['code', 'omschrijving', 'WISA', 'lidmaatschappen en subgroepen'],
       );
       expect(
         change.fields.every((f) => f.shape == FieldChangeShape.statement),
         isTrue,
-        reason: 'an inventory of what goes, not three fields being cleared',
+        reason: 'an inventory of what goes, not four fields being cleared',
+      );
+    });
+
+    test('the card warns that WISA may simply be lagging (#328)', () {
+      // The reading the pre-selected notice used to carry. It is context on the
+      // situation, not a resolution: the card proposes a delete the operator
+      // may ignore, and this is what tells them when to.
+      final change = DeleteSmartschoolClass(linkedGroup(smartschool: ssGroup()))
+          .describeChanges();
+      final warning =
+          change.fields.singleWhere((f) => f.field == 'WISA').before!;
+
+      expect(warning, contains('(nog) niet'));
+      expect(warning, contains('loopt WISA achter'));
+      expect(warning, contains('controleer'));
+      expect(
+        change.fields.indexWhere((f) => f.field == 'WISA'),
+        lessThan(
+          change.fields
+              .indexWhere((f) => f.field == 'lidmaatschappen en subgroepen'),
+        ),
+        reason: 'it sits with the class facts, before the inventory of what '
+            'the delete takes',
+      );
+      expect(
+        groupActionsFor(linkedGroup(smartschool: ssGroup()))
+            .map((a) => a.describeChanges().summary),
+        isNot(contains(contains('Laat deze klas staan'))),
+        reason: 'stated as context, never offered as a second option',
       );
     });
 

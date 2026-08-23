@@ -795,6 +795,18 @@ class MessagePanel extends StatelessWidget {
 /// email fix one of them happens to need. That is what makes the claim on the
 /// button verifiable at all — the operator can read one action's description and
 /// know what the button does to everyone in the cohort.
+///
+/// And since #326 the pair is offered only over resolutions #293 sanctions for
+/// a bulk pass ([SituationCohort.bulkApplyable]) — never merely over the ones
+/// that write *something*. The two questions came apart the moment an operator
+/// flipped two rows of one situation to a destructive alternative: the header
+/// counted them, armed, and took both Office 365 groups off one press, on an
+/// action whose own class says no bulk affordance may offer it. When nothing in
+/// the cohort survives that narrowing the buttons are gone rather than dead,
+/// because a disabled "Alles toepassen (0)" invites the operator to go and make
+/// it enabled — which is precisely the move this guards against. The line
+/// naming the cohort stays: "2 klassen in dezelfde situatie" is worth reading
+/// even when there is nothing to press.
 class SituationHeader extends StatelessWidget {
   const SituationHeader({
     super.key,
@@ -814,7 +826,11 @@ class SituationHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final String key = cohort.key;
-    final int applyable = cohort.applyableCount;
+    // The members a bulk pass may write — [PendingDecision.canApply] *and* the
+    // #293 sanction (#326). The pair below is built from this list, quotes its
+    // length, confirms its scope and hands it to the pass, so the four cannot
+    // drift apart; when it is empty there is no pair at all.
+    final List<PendingDecision> writable = cohort.bulkApplyable;
 
     return Padding(
       padding: const EdgeInsets.only(
@@ -830,37 +846,38 @@ class SituationHeader extends StatelessWidget {
               style: text.titleSmall,
             ),
           ),
-          const SizedBox(width: PlinkSpacing.s2),
-          OutlinedButton(
-            key: ValueKey('situation-dry-run-$key'),
-            onPressed: controller.busy || applyable == 0
-                ? null
-                : () => runWithProgress(
-                      context,
-                      controller: controller,
-                      dry: true,
-                      run: () => controller.dryRunDecisions(cohort.decisions),
-                    ),
-            child: const Text('Dry-run alles'),
-          ),
-          const SizedBox(width: PlinkSpacing.s2),
-          FilledButton(
-            key: ValueKey('situation-apply-$key'),
-            onPressed: controller.busy || applyable == 0
-                ? null
-                : () => confirmAndApply(
-                      context,
-                      controller: controller,
-                      title: 'Toepassen op ${cohort.length} $noun?',
-                      // The dialog is scoped to the very decisions the pass
-                      // below runs — the ones this header counted (#234/#252),
-                      // and only those (#292).
-                      scope:
-                          controller.applyScopeForDecisions(cohort.decisions),
-                      apply: () => controller.applyDecisions(cohort.decisions),
-                    ),
-            child: Text('Alles toepassen ($applyable)'),
-          ),
+          if (writable.isNotEmpty) ...<Widget>[
+            const SizedBox(width: PlinkSpacing.s2),
+            OutlinedButton(
+              key: ValueKey('situation-dry-run-$key'),
+              onPressed: controller.busy
+                  ? null
+                  : () => runWithProgress(
+                        context,
+                        controller: controller,
+                        dry: true,
+                        run: () => controller.dryRunDecisions(writable),
+                      ),
+              child: const Text('Dry-run alles'),
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            FilledButton(
+              key: ValueKey('situation-apply-$key'),
+              onPressed: controller.busy
+                  ? null
+                  : () => confirmAndApply(
+                        context,
+                        controller: controller,
+                        title: 'Toepassen op ${writable.length} $noun?',
+                        // The dialog is scoped to the very decisions the pass
+                        // below runs — the ones this header counted
+                        // (#234/#252), and only those (#292/#326).
+                        scope: controller.applyScopeForDecisions(writable),
+                        apply: () => controller.applyDecisions(writable),
+                      ),
+              child: Text('Alles toepassen (${writable.length})'),
+            ),
+          ],
         ],
       ),
     );
@@ -878,6 +895,18 @@ String pendingChoiceLine(PendingChoice c) {
   if (c.isChoice) return '$summary (keuze)';
   return c.selected.canApply ? summary : '$summary (manueel)';
 }
+
+/// The collapsed line one of a decision's [PendingChoice.notices] reads as
+/// (#329) — the instruction, marked "(manueel)" exactly as a standalone
+/// informational action is.
+///
+/// A notice is context rather than a decision, so it is *not* one of
+/// [pendingChoiceLine]'s cases: a preview lists both, the notice first and the
+/// decision it explains under it. That order is the point of showing it here at
+/// all — from an inventory row, "Negeer deze klas bij het importeren uit WISA"
+/// on its own does not say why the class is in that state.
+String pendingNoticeLine(PendingActionOption notice) =>
+    '${notice.changes.summary} (manueel)';
 
 /// The expandable card the Klasgroepen inventory builds a class with pending
 /// work on. (Acties built one too until #295 moved its decisions into a details
@@ -1053,13 +1082,22 @@ List<Widget> entryDetail(
 /// the "(manueel)" marker exists to make an informational action scannable in a
 /// list of many, while inside the block [OptionDetail] already spells the same
 /// thing out in a full sentence.
+///
+/// **"Kies één oplossing:" is asked only about alternatives that both write**
+/// (#329). It follows from [PendingChoice.isChoice] rather than being re-checked
+/// here, because the collapse keeps an informational action out of the option
+/// list altogether — it becomes [PendingChoice.notices] and is stated above this
+/// heading instead. Before that, a card could ask the operator to choose between
+/// "this class already exists in Smartschool, go make it official" and "never
+/// import this class": one of those is not a solution, so the heading was
+/// putting a question to them that had one real answer.
 String choiceHeading(PendingChoice choice) =>
     choice.isChoice ? 'Kies één oplossing:' : choice.selected.changes.summary;
 
-/// One decision of a card, as a block of its own (#281): the heading that names
-/// it, then the radios (for an either/or) and the field diff of the resolution
-/// that would actually run — and, since #283, what the last pass did about
-/// *this* decision.
+/// One decision of a card, as a block of its own (#281): whatever notices are
+/// context for it (#329), the heading that names it, then the radios (for an
+/// either/or) and the field diff of the resolution that would actually run —
+/// and, since #283, what the last pass did about *this* decision.
 ///
 /// The reading this exists for: a class that is new to Smartschool **and** has
 /// no Office 365 group raises two independent decisions on one card. The body
@@ -1121,6 +1159,18 @@ class EntryChoiceBlock extends StatelessWidget {
           Divider(height: 1, color: Theme.of(context).dividerColor),
           const SizedBox(height: PlinkSpacing.s3),
         ],
+        // Context before proposal (#329). A notice states what is *already* the
+        // case — "this class exists in Smartschool but is not an official
+        // class", "this WISA class has no students yet" — and the heading under
+        // it says what this app proposes about that. Read the other way round
+        // the proposal is a non sequitur, which is exactly how the radio pair
+        // these used to be half of read.
+        for (final notice in choice.notices)
+          ChoiceNotice(
+            key: ValueKey(
+                'notice-${entry.family}-${entry.targetId}-$index-${notice.kind}'),
+            notice: notice,
+          ),
         // Led by the system it writes to, exactly as the collapsed preview is
         // (#298). Since #300 that preview gives way while the card is open, so
         // this heading is the only thing left saying where the write lands —
@@ -1429,6 +1479,69 @@ String fieldChangeLine(actions.FieldChange f) => switch (f.shape) {
       actions.FieldChangeShape.transition =>
         '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}',
     };
+
+/// One informational action a decision carries as **context** (#329): the
+/// instruction, marked "(manueel)", with the facts it states about the record
+/// under it — and no radio, no apply, nothing to choose.
+///
+/// The rule it enforces: *a notice is context, not an alternative.* Two
+/// decisions used to pair one of these with the single write the app has for
+/// the situation and offer them as radios — "make this group official in
+/// Smartschool" beside "never import this class", "delete this empty WISA class
+/// by hand" beside the same. Only one of each pair is something an apply can
+/// run; the other is an instruction to go elsewhere, and an operator cannot
+/// "apply" it. So the card states it and proposes the write, rather than asking
+/// a question whose two answers are not comparable.
+///
+/// Deliberately not [OptionDetail] with the radio suppressed. That widget
+/// renders *the resolution that would run*: its lifecycle fallback says
+/// "Levenscyclusactie — geen wijzigingen per veld", and its "(manueel)"
+/// sentence appears only when an informational option has no fields at all — so
+/// a notice with fields (the namesake one names the group's code and its
+/// official flag) would have rendered as a bare field list with nothing marking
+/// it as write-free. Here the marker is on the sentence, always.
+class ChoiceNotice extends StatelessWidget {
+  const ChoiceNotice({super.key, required this.notice});
+
+  /// The informational option this states — [PendingChoice.notices]' member.
+  final PendingActionOption notice;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          // Led by the system the operator has to go and act in — the same tag
+          // every other line on the card carries (#298), and here it is the
+          // more useful half: the instruction is "do this over there".
+          ActionLine(
+            system: notice.changes.system,
+            line: pendingNoticeLine(notice),
+            style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+          // How the operator finds the thing the instruction is about. Stated,
+          // never diffed — these are the notice's own `FieldChange`s and
+          // [fieldChangeLine] already keeps a statement from reading as a
+          // value being cleared (#305).
+          for (final f in notice.changes.fields)
+            Padding(
+              padding: const EdgeInsets.only(top: PlinkSpacing.s1),
+              child: Text(
+                fieldChangeLine(f),
+                style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
 /// The per-field diff (or a lifecycle note) for a single option — the one that
 /// stands alone, or the one selected inside a [ChoiceControl].

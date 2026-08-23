@@ -133,6 +133,7 @@ class PendingActionOption {
     required this.changes,
     required this.canApply,
     this.canApplyToAll = false,
+    this.noticeFor,
     this.unlockedSystems = const {},
   });
 
@@ -177,6 +178,15 @@ class PendingActionOption {
   /// mechanism — the action classes pin `canApplyToAll ⇒ canApply` — so nothing
   /// here has to re-check it.
   final bool canApplyToAll;
+
+  /// The situation this **informational** option is context for (#329) —
+  /// `StudentAction.noticeFor` et al. — or `null` when it is a decision in its
+  /// own right.
+  ///
+  /// Non-null only where [canApply] is false. It is what the collapse reads to
+  /// keep the option out of an either/or and hand it to the decision it
+  /// explains instead ([PendingChoice.notices]).
+  final String? noticeFor;
 
   /// The systems only a **chained follow-up** of this option would write to
   /// (`StudentAction.unlockedSystems` et al., #234) — never the option's own
@@ -278,17 +288,38 @@ class ApplyStep {
 /// the alternatives as one choice — rather than independent rows — is the core
 /// of #110: the operator picks one resolution and never runs both.
 class PendingChoice {
-  PendingChoice({required this.alternatives, required this.selected})
-      : assert(alternatives.isNotEmpty);
+  PendingChoice({
+    required this.alternatives,
+    required this.selected,
+    this.notices = const <PendingActionOption>[],
+  }) : assert(alternatives.isNotEmpty);
 
-  /// The mutually-exclusive options (one or more).
+  /// The mutually-exclusive options (one or more). **Every one of them writes**
+  /// (#329) — an informational action is [notices], never an alternative.
   final List<PendingActionOption> alternatives;
 
   /// The currently-chosen option (defaults to the group's default).
   final PendingActionOption selected;
 
+  /// The informational actions this decision carries as **context** (#329), in
+  /// dispatch order — read above the decision on the card, without a radio and
+  /// without an apply of their own, still marked "(manueel)".
+  ///
+  /// Two situations have one: a class Smartschool already carries under a group
+  /// the linker could not adopt ("make it official there and it will link",
+  /// #225/#250) and an empty WISA class ("delete it by hand, or wait until it
+  /// has students", #244). In both, the single thing this app can do is stop
+  /// importing the class — so the card proposes that, and states the repair the
+  /// operator makes instead. Pairing the two as radios asked them to choose
+  /// between a diagnosis and a resolution.
+  ///
+  /// Empty for nearly every decision.
+  final List<PendingActionOption> notices;
+
   /// True when this is a real choice the operator must resolve (more than one
-  /// alternative), false for a lone action.
+  /// alternative), false for a lone action. Since #329 both sides of such a
+  /// choice always write, so "Kies één oplossing:" is only ever asked about two
+  /// things that do.
   bool get isChoice => alternatives.length > 1;
 
   /// The situation this choice resolves — the alternative-group key for a real
@@ -363,10 +394,10 @@ class PendingDecision {
 
   /// Whether an apply pass would write anything for **this decision** — the
   /// selected alternative is applyable. Deliberately not
-  /// [PendingAccountEntry.canApply], which answers for the whole card: a
-  /// namesake class whose import decision is a hand-fix notice still has an
-  /// applyable Office 365 group decision beside it, and a cohort of the former
-  /// must not count itself as work.
+  /// [PendingAccountEntry.canApply], which answers for the whole card: a class
+  /// whose only informational row is a lone notice still has an applyable
+  /// Office 365 group decision beside it, and a cohort of the former must not
+  /// count itself as work.
   bool get canApply => choice.selected.canApply;
 
   /// Whether this account's stake in the decision may be written by a
@@ -405,10 +436,40 @@ class SituationCohort {
   /// cohort answers the same question.
   String get label => decisions.first.choice.situationLabel;
 
+  /// The members a **bulk** affordance may write (#326) — the same narrowing
+  /// [ReconcileController.applyToAllCohortFor] applies, so the two bulk paths
+  /// answer one question instead of two.
+  ///
+  /// [PendingDecision.canApply] alone is not it. That asks "does the selected
+  /// option write anything", which every flipped radio makes true; the sanction
+  /// of #293 asks "may this be written to a whole cohort off one confirmation",
+  /// which the destructive and judgement-call actions refuse. Counting only the
+  /// first meant that flipping two rows of a stale Office 365 class group to
+  /// "delete" armed a header that took both groups — mailboxes, Teams and files
+  /// — on one press, on an action whose own class says no bulk affordance may
+  /// offer it. Since #327 and #328 dropped the no-op half of that pair and of
+  /// the Smartschool-leftover one beside it, and #329 turned the two remaining
+  /// notices into context rather than pre-selected halves, both deletes *and*
+  /// the class blacklist are the *selected* resolution of every such row from
+  /// the moment the tab opens — so this narrowing is the only thing standing
+  /// between those cohorts and one press. Both flags, because a cohort is a
+  /// mix: the members of a `classImportAlternative` cohort set to "create" are
+  /// sanctioned, the ones flipped to the blacklist beside it — and the empty
+  /// classes whose lone decision *is* that blacklist — are not.
+  ///
+  /// (`canApplyToAll ⇒ canApply` is pinned on the action classes, so the second
+  /// test is redundant. It is written out anyway: a bulk write must not inherit
+  /// its whole guard from an invariant one layer away.)
+  List<PendingDecision> get bulkApplyable => <PendingDecision>[
+        for (final d in decisions)
+          if (d.canApply && d.canApplyToAll) d,
+      ];
+
   /// How many of them a bulk apply would actually write — the count the "Alles
-  /// toepassen (n)" button quotes. Zero for a cohort of informational notices,
-  /// which is what disables the button.
-  int get applyableCount => decisions.where((d) => d.canApply).length;
+  /// toepassen (n)" button quotes, and the length of [bulkApplyable]. Zero for a
+  /// cohort of informational notices *and* for one whose rows are all set to a
+  /// resolution #293 withholds, which is what drops the button.
+  int get applyableCount => bulkApplyable.length;
 }
 
 /// One colliding Smartschool account inside a [DuplicateMailWarning] (#109),
@@ -1050,6 +1111,9 @@ class ReconcileController extends ChangeNotifier {
       // The school-wide sanction of #293, carried here so #296's per-decision
       // "Toepassen op alle" can read it off the pending list.
       canApplyToAll: (a) => a.canApplyToAll,
+      // The #329 notice relation, read off the action for every family so no
+      // screen has to know which one happens to have notices today.
+      noticeFor: (a) => a.noticeFor,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
@@ -1064,6 +1128,7 @@ class ReconcileController extends ChangeNotifier {
       // action is applyable today, but nothing here should assume it.
       canApply: (a) => a.canApply,
       canApplyToAll: (a) => a.canApplyToAll,
+      noticeFor: (a) => a.noticeFor,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     entries.addAll(_entriesFor(
@@ -1076,6 +1141,7 @@ class ReconcileController extends ChangeNotifier {
       changes: (a) => a.describeChanges(),
       canApply: (a) => a.canApply,
       canApplyToAll: (a) => a.canApplyToAll,
+      noticeFor: (a) => a.noticeFor,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
     _pendingCacheKey = l;
@@ -1318,6 +1384,7 @@ class ReconcileController extends ChangeNotifier {
     required actions.ChangeSet Function(T) changes,
     required bool Function(T) canApply,
     required bool Function(T) canApplyToAll,
+    required String? Function(T) noticeFor,
     required Set<core.Origin> Function(T) unlockedSystems,
   }) {
     final order = <String>[];
@@ -1351,6 +1418,7 @@ class ReconcileController extends ChangeNotifier {
                   changes: changes(a),
                   canApply: canApply(a),
                   canApplyToAll: canApplyToAll(a),
+                  noticeFor: noticeFor(a),
                   unlockedSystems: unlockedSystems(a),
                 ),
             ],
@@ -1367,8 +1435,11 @@ class ReconcileController extends ChangeNotifier {
   /// The partition itself is `account_actions`' [actions.collapseAlternatives]
   /// (#251) — the one definition of "these actions are one either/or", shared
   /// with the materializer so the badges and this list cannot disagree about
-  /// what a decision is. Only the operator's session-local pick is layered on
-  /// here; a passive session has no picks to apply.
+  /// what a decision is. It is also where "an informational action is context,
+  /// not an alternative" is enforced (#329): an option declaring `noticeFor`
+  /// never enters an option list and is handed to the decision it names as
+  /// [PendingChoice.notices]. Only the operator's session-local pick is layered
+  /// on here; a passive session has no picks to apply.
   List<PendingChoice> _choicesFor(
     String targetId,
     List<PendingActionOption> options,
@@ -1378,10 +1449,16 @@ class ReconcileController extends ChangeNotifier {
           options,
           groupOf: (o) => o.group,
           isDefault: (o) => o.isDefault,
+          // An informational action that names a situation is context on that
+          // decision, never one of its answers (#329) — the collapse is where
+          // that rule lives, so the pending list and the materialized view
+          // cannot disagree about what a decision is.
+          noticeFor: (o) => o.noticeFor,
         ))
           PendingChoice(
             alternatives: choice.options,
             selected: _chosen(targetId, choice),
+            notices: choice.notices,
           ),
       ];
 
@@ -2737,14 +2814,64 @@ class ReconcileController extends ChangeNotifier {
   /// the header named one action and the pass ran whatever else was there.
   ///
   /// Each member still contributes its **own** selected alternative, exactly as
-  /// the whole-card pass does: a cohort of departed students where one is set to
-  /// unregister and one to delete applies each as chosen.
+  /// the whole-card pass does — among the resolutions #293 sanctions for a bulk
+  /// pass. A cohort of departed students where one is set to unregister and one
+  /// to delete writes neither: both resolutions are withheld, and this is the
+  /// bulk path. Their per-card **Toepassen** still applies each as chosen.
+  ///
+  /// That narrowing is [_bulkSanctioned], and it lives here rather than in the
+  /// affordances so the invariant survives a new one (#326).
   Future<void> applyDecisions(Iterable<PendingDecision> decisions) =>
-      _run(decisions, dry: false);
+      _runBulk(decisions, dry: false);
 
   /// Dry-runs [decisions] — [applyDecisions] with no writes.
   Future<void> dryRunDecisions(Iterable<PendingDecision> decisions) =>
-      _run(decisions, dry: true);
+      _runBulk(decisions, dry: true);
+
+  /// [_run] over the members of [decisions] a bulk pass may write (#326).
+  Future<void> _runBulk(
+    Iterable<PendingDecision> decisions, {
+    required bool dry,
+  }) async {
+    final sanctioned = _bulkSanctioned(decisions);
+    if (sanctioned.isEmpty) return;
+    return _run(sanctioned, dry: dry);
+  }
+
+  /// [decisions] narrowed to the ones a **bulk** pass is allowed to write
+  /// (#326): the resolution each is set to must declare
+  /// [PendingActionOption.canApplyToAll], the sanction of #293.
+  ///
+  /// The guard the situation header reads ([SituationCohort.bulkApplyable]) and
+  /// the guard the pass applies are deliberately the same rule stated twice.
+  /// Before #326 it was stated only in the header's count, and only *by
+  /// accident*: the destructive resolutions were kept off the bulk path by
+  /// their alternative group's polarity — the informational half is the default,
+  /// so nothing counted until the operator flipped a radio, and flipping two of
+  /// them armed the button. A guard that holds only while a default holds is
+  /// not a guard, and the defaults are exactly what #327–#329 take away.
+  ///
+  /// A skip here means an affordance offered something it must not have, so it
+  /// is stated in the log rather than swallowed.
+  List<PendingDecision> _bulkSanctioned(Iterable<PendingDecision> decisions) {
+    final kept = <PendingDecision>[];
+    var withheld = 0;
+    for (final d in decisions) {
+      if (d.canApply && d.canApplyToAll) {
+        kept.add(d);
+      } else if (d.canApply) {
+        withheld++;
+      }
+    }
+    if (withheld > 0) {
+      log.addMessage(
+        core.Origin.all,
+        'Overgeslagen in de groepsbewerking: $withheld actie(s) die enkel per '
+        'record toegepast mogen worden.',
+      );
+    }
+    return kept;
+  }
 
   /// Runs the selected, applyable option of every decision in [decisions]
   /// through the apply path (dry or real). Shared by the per-entry and

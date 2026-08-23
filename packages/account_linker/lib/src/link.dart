@@ -495,8 +495,9 @@ List<_StaffRecord> _buildStaffRecords(
 /// virtual school — now becomes a Smartschool orphan record (#52) rather than
 /// linking to a class we have no business managing. The action engine then
 /// treats it as the orphan it is instead of silently considering it in sync;
-/// the orphan action is the informational `DoNotImportFromSmartschool`, which
-/// cannot be applied, so nothing is ever deleted automatically.
+/// the orphan action is `DeleteSmartschoolClass` (or, where that cannot fire,
+/// the informational `DoNotImportFromSmartschool`), and it is a proposal on one
+/// row behind a confirmation — never a bulk pass and never automatic.
 ///
 /// Only `official` Smartschool groups are considered (legacy
 /// `AddSmartschoolChildGroups` walked the "Leerlingen" subtree and linked only
@@ -729,7 +730,9 @@ List<LinkedGroup> _linkGroups(
 /// unprefixed `5A` somebody created without the school's prefix: the exact-name
 /// match above adopts it when a class owns it, and this keeps it as an orphan
 /// when none does. It carries no recoverable class name, so it raises no
-/// stale-group action either way — see `AzureClassGroupWithoutClass`.
+/// stale-group action either way — neither `DeleteAzureClassGroup` nor the
+/// `AzureClassGroupWithoutClass` notice that stands in where the delete cannot
+/// act.
 bool _looksLikeClassGroup(String? displayName, String? bare) =>
     looksLikeClassName(bare ?? displayName);
 

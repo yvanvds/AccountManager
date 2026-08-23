@@ -1,5 +1,12 @@
 # Arcadia Account Manager - Project Overview
 
+> **Scope: this document describes the legacy WPF application** under
+> `legacy-wpf/`. It is the architectural reference for that code - the
+> behaviour oracle the Flutter/Dart port is measured against - and is
+> deliberately *not* a description of the port. See
+> [§2](#2-migration-status-and-where-the-port-is-documented) for where the
+> port's own model is written down.
+
 ## 1. Purpose
 
 Arcadia Account Manager is a Windows desktop application that synchronizes user
@@ -18,23 +25,35 @@ reconcile them, and lets the operator apply those actions individually or in
 bulk. It also generates and distributes passwords (PDFs) for new students,
 co-accounts and staff members.
 
-## 2. Migration status
+## 2. Migration status and where the port is documented
 
 The project is being ported from WPF / .NET Framework 4.8 to **Flutter / Dart**.
 The original C# code has been moved under `legacy-wpf/` and is preserved as
-read-only reference material. The Dart and Flutter packages that will replace
-it - `account_api/` (pure Dart) and `account_manager/` (Flutter app) - exist
-as empty placeholders today and will be filled in incrementally; see
-[docs/port-plan.md](docs/port-plan.md) and [CLAUDE.md](CLAUDE.md) for the
-porting strategy.
+read-only reference material - it is what the rest of this document describes.
+
+The port is well past its placeholder stage: most of the application's code is
+now the Dart workspace under `packages/` plus the Flutter app in
+`account_manager/` (see §3). **This document does not describe that code**, and
+nothing here should be read as a statement about how the port behaves today.
+The port's own model lives in:
+
+- [docs/domain-model.md](docs/domain-model.md) - the **spec** the port
+  implements against: entities, identifiers, numbered invariants, and the
+  `sync` / `link` / `evaluate` / `apply` operations. Where the new code diverges
+  from legacy, the rationale is recorded there.
+- [docs/port-plan.md](docs/port-plan.md) - the running port strategy.
+- the per-package `README.md` files under `packages/`. In particular
+  [packages/account_actions/README.md](packages/account_actions/README.md)
+  owns the rules that govern **what a card offers** - `canApply`,
+  `canApplyToAll`, `alternativeGroup`, `noticeFor` - which have no counterpart
+  in the legacy action model described in §6.4.
+- [CLAUDE.md](CLAUDE.md) - repository conventions and port order.
 
 ## 3. Solution Layout
 
-The repository is currently in transition. The top-level layout is:
-
 ```
 Accountmanager/
-├── legacy-wpf/         Original C# / WPF solution (reference, read-only)
+├── legacy-wpf/         Original C# / WPF solution (read-only) - what this document describes
 │   ├── AccountApi/         Class library: domain model + connectors to WISA, Smartschool, Azure
 │   ├── AccountManager/     WPF desktop application (WinExe) - the UI
 │   ├── Setup/              Visual Studio Installer project (.vdproj)
@@ -42,13 +61,26 @@ Accountmanager/
 │   ├── WisaAPIService.wsdl WSDL used to generate the WISA SOAP web reference
 │   ├── MigrationBackup/    Visual Studio upgrade artefacts
 │   └── AccountManager.sln  Visual Studio solution (two C# projects, .NET Framework 4.8)
-├── account_api/        Future pure-Dart package (domain, connectors, linker, action engine) - empty
-├── account_manager/    Future Flutter application (depends on account_api/) - empty
+├── packages/           Pure-Dart workspace packages - the port (documented in their own READMEs)
+│   ├── account_core/       Canonical domain model: entities, id types, enums, password generator, ILog
+│   ├── account_store/      File-backed PersonId resolver (stable local ids across syncs)
+│   ├── wisa_api/           WISA SOAP connector -> WisaSnapshot
+│   ├── smartschool_api/    Smartschool SOAP (V3) connector + account/group/password writes
+│   ├── azure_api/          Microsoft Graph connector + user/group writes
+│   ├── account_linker/     Pure, deterministic cross-system linker -> LinkedSnapshot
+│   ├── account_actions/    Action engine: evaluate / describeChanges / apply, with a dry-run path
+│   └── account_state/      Orchestration: sync, link, apply, materialize, settings, passwords,
+│                           Cosmos / Blob / Key Vault / SignalR
+├── account_manager/    Flutter application (depends on packages/* via path: dependencies)
 ├── docs/
+│   ├── domain-model.md The spec the port implements against
 │   └── port-plan.md    Running document describing the port strategy
+├── tool/               PowerShell helpers (opt-in live integration tests, Cosmos provisioning)
+├── pubspec.yaml        Dart workspace definition (lists the workspace members)
+├── analysis_options.yaml  Lint/analyzer config applied to every workspace member
 ├── CLAUDE.md           Guidance for Claude Code sessions in this repo
 ├── PROJECT_OVERVIEW.md This document
-└── README.md           (if present)
+└── README.md           Entry point: badges, how to run the Flutter app
 ```
 
 The legacy Visual Studio solution `legacy-wpf/AccountManager.sln` contains two
@@ -308,6 +340,12 @@ The action layer is the heart of reconciliation. Every detected divergence
 between Wisa, Smartschool, and Azure becomes a typed Action that the user can
 inspect and apply.
 
+> The port keeps the three families and most of the action names, but **not**
+> this model: it adds mutually-exclusive alternatives, informational actions
+> that are card context rather than an option, and a separate bulk sanction.
+> Read [packages/account_actions/README.md](packages/account_actions/README.md)
+> for those rules - the section below is legacy behaviour only.
+
 Three action families, each with its own abstract base class:
 
 - **Group actions** ([Action/Group/](legacy-wpf/AccountManager/Action/Group/)) -
@@ -421,6 +459,10 @@ Modal MaterialDesign dialogs used for rule editing and confirmation:
    filterable by origin and severity.
 
 ## 9. Extensibility points
+
+These describe how the **legacy** application was extended, and are kept as
+reference for reading that code. `legacy-wpf/` is read-only: new connectors,
+actions and import rules belong in the Dart packages under `packages/` (see §2).
 
 - **Adding a sync target** - implement an `AbstractState` for the new system,
   expose `Account`/`Group` types implementing `IAccount`/`IGroup`, write a

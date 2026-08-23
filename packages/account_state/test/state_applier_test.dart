@@ -1022,10 +1022,12 @@ void main() {
 
       test('an informational group action is never chained', () async {
         // The orphan notice throws on apply; the walk must skip it whatever a
-        // future `unlocks` declaration says.
+        // future `unlocks` declaration says. Since #327 that notice is raised
+        // only where the delete beside it cannot fire — here, a stale group the
+        // tenant gave no object id to address a DELETE to.
         final harness = classHarness(groups: [
           az.AzureGroup(
-            id: 'az-9Z',
+            id: '',
             displayName: 'SSM-9Z',
             mail: 'SSM-9Z@student.school.example',
             mailNickname: 'SSM-9Z',
@@ -1100,7 +1102,8 @@ void main() {
       expect(
         applied.linked!.groupActions.whereType<DoNotImportFromSmartschool>(),
         isEmpty,
-        reason: 'and so is the notice that was its alternative',
+        reason: 'and the relink raises no notice in its place — the record is '
+            'gone, not merely undeletable (#328)',
       );
       expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
     });

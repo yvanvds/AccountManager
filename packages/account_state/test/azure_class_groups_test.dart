@@ -368,7 +368,12 @@ void main() {
   });
 
   group('a vanished class (#228)', () {
-    test('its group is reported for manual cleanup, never deleted', () {
+    test('its group is offered for deletion, and nothing is deleted for you',
+        () {
+      // Since #327 the row proposes exactly one thing — the delete — instead of
+      // pairing it with a "laat de groep staan" radio that wrote nothing. What
+      // keeps it from running on its own is `canApplyToAll` plus the operator's
+      // own press, not the polarity of a pair.
       final linked = _recompute(
         classGroups: [_wClass('2A')],
         students: [_student(wisaId: 'w1', classGroup: '2A')],
@@ -379,11 +384,16 @@ void main() {
         ],
       );
 
-      final notices =
-          _actionsOfType<actions.AzureClassGroupWithoutClass>(linked);
-      expect(notices, hasLength(1));
-      expect(notices.single.canApply, isFalse);
-      expect(notices.single.target.className, '9Z');
+      final deletes = _actionsOfType<actions.DeleteAzureClassGroup>(linked);
+      expect(deletes, hasLength(1));
+      expect(deletes.single.target.className, '9Z');
+      expect(deletes.single.canApplyToAll, isFalse,
+          reason: 'no bulk affordance may offer it (#293/#326)');
+      expect(
+        _actionsOfType<actions.AzureClassGroupWithoutClass>(linked),
+        isEmpty,
+        reason: 'the notice is only for a group the delete cannot address',
+      );
     });
   });
 
@@ -536,8 +546,8 @@ void main() {
     });
 
     test('the group of a vanished class is never reported as a stray', () {
-      // Nothing removes a member from it — AzureClassGroupWithoutClass is a
-      // manual-cleanup notice — so naming it per student would be work nobody
+      // Nothing removes a member from it — the whole group either goes or stays
+      // (DeleteAzureClassGroup) — so naming it per student would be work nobody
       // can do.
       final linked = _recompute(
         classGroups: [_wClass('2A')],
@@ -550,8 +560,8 @@ void main() {
         ],
       );
 
-      expect(_actionsOfType<actions.AzureClassGroupWithoutClass>(linked),
-          hasLength(1));
+      expect(
+          _actionsOfType<actions.DeleteAzureClassGroup>(linked), hasLength(1));
       expect(memberships(linked), isEmpty);
     });
 

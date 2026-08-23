@@ -109,8 +109,16 @@ void main() {
     expect(find.byKey(const ValueKey('reconcile-category-groups')),
         findsOneWidget);
     expect(find.text('LEERLINGEN'), findsOneWidget); // PlinkBadge uppercases
-    // The one fixture student's applyable actions surface as a pending indicator.
-    expect(find.text('2 openstaande acties'), findsOneWidget);
+    // The one fixture student's applyable actions surface as a pending
+    // indicator. Scoped to her card: since #328 the two Smartschool-only
+    // classes propose a delete each, so the groups card carries the same count.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('reconcile-category-students')),
+        matching: find.text('2 openstaande acties'),
+      ),
+      findsOneWidget,
+    );
 
     // …but the pending actions moved to the Actions tab: neither the title, an
     // apply affordance, nor any entry tile is on the Reconcile screen (#154).
@@ -517,8 +525,16 @@ void main() {
         find.byKey(const ValueKey('reconcile-category-staff')), findsOneWidget);
     expect(find.byKey(const ValueKey('reconcile-category-groups')),
         findsOneWidget);
-    // The one fixture student is summed from the rollup, with a pending indicator.
-    expect(find.text('2 openstaande acties'), findsOneWidget);
+    // The one fixture student is summed from the rollup, with a pending
+    // indicator on her own card (the groups card carries the same count since
+    // #328, so the finder is scoped rather than global).
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('reconcile-category-students')),
+        matching: find.text('2 openstaande acties'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets(

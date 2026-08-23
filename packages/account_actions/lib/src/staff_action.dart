@@ -54,11 +54,21 @@ sealed class StaffAction {
   /// situation (#110). `null` (the default) means the action stands on its own.
   /// The staff family's one key is [staffImportAlternative] (#248). See
   /// [StudentAction.alternativeGroup].
+  ///
+  /// **Every member of a group writes** (#329): an informational action states
+  /// [noticeFor] instead and is context on a decision rather than one of its
+  /// answers. [staffImportAlternative] is a genuine either/or — three real
+  /// writes — and keeps its radios.
   String? get alternativeGroup => null;
 
   /// Whether this action is the default alternative within its
   /// [alternativeGroup]. Ignored when [alternativeGroup] is `null`.
   bool get isDefaultAlternative => false;
+
+  /// The situation this **informational** action is context for (#329) — see
+  /// [StudentAction.noticeFor]. No staff action carries one: every member of the
+  /// family is applyable today.
+  String? get noticeFor => null;
 
   /// Whether [apply] can perform a change. `false` for an informational action
   /// (the legacy `CanBeApplied == false` case): it surfaces a diagnosis but has
