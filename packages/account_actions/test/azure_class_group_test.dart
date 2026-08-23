@@ -248,7 +248,7 @@ void main() {
 
       expect(
           fields.map((f) => f.field), ['leden toevoegen', 'leden verwijderen']);
-      expect(fields.every((f) => f.isCount), isTrue);
+      expect(fields.every((f) => f.shape == FieldChangeShape.count), isTrue);
       expect(fields.map((f) => f.after), ['2', '1']);
       expect(fields.every((f) => f.before == null), isTrue,
           reason: 'a count has no "before" half to diff against');
@@ -469,6 +469,47 @@ void main() {
         contains('postvak, Teams en bestanden'),
       );
       expect(delete.unlocks, isEmpty, reason: 'nothing follows a delete');
+    });
+
+    test('both halves state the group\'s facts, they do not diff them (#305)',
+        () {
+      // The notice's whole content is "this group stays", and under that
+      // heading its two fields read "mail: SSM-9Z@… → ∅" and "leden: 21 → ∅" —
+      // the address and the 21 members being cleared, which is what the *other*
+      // radio does. Neither field is a value moving anywhere, so neither may be
+      // described as one.
+      final actions = groupActionsFor(
+        orphan(azureClassGroup('9Z',
+            memberIds: List<String>.generate(21, (int i) => 'az-$i'))),
+      );
+
+      final notice = actions
+          .whereType<AzureClassGroupWithoutClass>()
+          .single
+          .describeChanges();
+      expect(notice.fields.map((f) => f.field), ['mail', 'leden']);
+      expect(
+        notice.fields.every((f) => f.shape == FieldChangeShape.statement),
+        isTrue,
+        reason: 'a notice that writes nothing cannot describe a transition',
+      );
+      expect(notice.fields.map((f) => f.before),
+          ['SSM-9Z@student.school.example', '21']);
+      expect(notice.fields.every((f) => f.after == null), isTrue,
+          reason: 'a statement has no half to move to');
+
+      // The delete's arrow at least pointed at a real deletion, but its three
+      // fields are still the inventory of what goes, not three fields being
+      // cleared one by one — least of all "verdwijnen mee", never a value.
+      final delete =
+          actions.whereType<DeleteAzureClassGroup>().single.describeChanges();
+      expect(delete.fields.map((f) => f.field),
+          ['mail', 'leden', 'postvak, Teams en bestanden']);
+      expect(
+        delete.fields.every((f) => f.shape == FieldChangeShape.statement),
+        isTrue,
+      );
+      expect(delete.fields.last.before, 'verdwijnen mee');
     });
 
     test('applying the delete asks Graph to delete that one group', () async {

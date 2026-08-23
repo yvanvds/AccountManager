@@ -1875,6 +1875,10 @@ ReconcileHarness azureClassGroupHarness({
 ///
 /// The four prefixed non-class groups are here too — they must not appear in the
 /// inventory at all, let alone in that subset.
+///
+/// `GBS-9Z` still holds the 21 members its class left behind (#305): both halves
+/// of the either/or name that number, and a stale group with an empty roster
+/// cannot show whether the card *states* it or claims it is being cleared.
 ReconcileHarness staleClassGroupHarness() => ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: '1', classGroup: '1A')],
@@ -1904,7 +1908,8 @@ ReconcileHarness staleClassGroupHarness() => ReconcileHarness(
         ],
         groups: [
           azClassGroup('1A', memberIds: const ['az1']),
-          azClassGroup('9Z'),
+          azClassGroup('9Z',
+              memberIds: List<String>.generate(21, (int i) => 'az-oud-$i')),
           azClassGroup('8Y'),
           azNonClassGroup('GBS - GOK'),
           azNonClassGroup('GBS-OKAN'),

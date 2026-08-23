@@ -1060,9 +1060,14 @@ class AzureClassGroupWithoutClass extends GroupAction {
         system: Origin.azure,
         summary: 'Laat de Office 365-groep ${_azure?.displayName} staan — '
             'klas ${group.className} bestaat niet meer in WISA of Smartschool',
+        // Nothing is written here, so nothing moves: these two lines describe
+        // the group the operator is being told about (#305). Put through the
+        // before → after template they read `mail: GBS-9Z@… → ∅` and
+        // `leden: 21 → ∅` — the address and the members going away, which is
+        // what the *other* half of this either/or does.
         fields: [
-          FieldChange('mail', before: _azure?.mail ?? ''),
-          FieldChange('leden', before: '${_azure?.memberIds.length ?? 0}'),
+          FieldChange.statement('mail', _azure?.mail ?? ''),
+          FieldChange.statement('leden', '${_azure?.memberIds.length ?? 0}'),
         ],
       );
 
@@ -1128,12 +1133,17 @@ class DeleteAzureClassGroup extends GroupAction {
         system: Origin.azure,
         summary: 'Verwijder de Office 365-groep ${_azure?.displayName} van de '
             'verdwenen klas ${group.className}',
+        // What the delete takes with it, stated (#305). The summary above
+        // already says the group goes; these lines are the inventory of it, and
+        // an arrow on each one claimed three separate fields were being
+        // cleared — least of all `postvak, Teams en bestanden: verdwijnen
+        // mee → ∅`, which was never a value in the first place.
         fields: [
-          FieldChange('mail', before: _azure?.mail ?? ''),
-          FieldChange('leden', before: '${_azure?.memberIds.length ?? 0}'),
-          const FieldChange(
+          FieldChange.statement('mail', _azure?.mail ?? ''),
+          FieldChange.statement('leden', '${_azure?.memberIds.length ?? 0}'),
+          const FieldChange.statement(
             'postvak, Teams en bestanden',
-            before: 'verdwijnen mee',
+            'verdwijnen mee',
           ),
         ],
       );

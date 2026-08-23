@@ -792,14 +792,40 @@ void main() {
         ],
       );
       final restored = CandidateAction.fromJson(original.toJson());
-      expect(restored.fields.first.isCount, isTrue);
+      expect(restored.fields.first.shape, FieldChangeShape.count);
       expect(restored.fields.first.after, '21');
       expect(restored.fields.first.before, isNull);
-      expect(restored.fields.last.isCount, isFalse,
+      expect(restored.fields.last.shape, FieldChangeShape.transition,
           reason: 'an ordinary transition is unaffected');
     });
 
-    test('a field written before #300 reads back as a transition', () {
+    test('a statement field survives a candidate JSON round-trip (#305)', () {
+      // Same reasoning as the count above, for the other non-transition shape:
+      // dropped on the way through Cosmos, the "laat de groep staan" notice
+      // reads "mail: GBS-9Z@… → ∅" in a passive session — an address being
+      // cleared by the option that writes nothing.
+      const original = CandidateAction(
+        family: 'group',
+        kind: 'AzureClassGroupWithoutClass',
+        system: core.Origin.azure,
+        summary: 'Laat de Office 365-groep GBS-9Z staan',
+        canApply: false,
+        fields: [
+          FieldChange.statement('mail', 'GBS-9Z@student.school.example'),
+          FieldChange.statement('leden', '21'),
+        ],
+      );
+      final restored = CandidateAction.fromJson(original.toJson());
+      expect(
+        restored.fields.map((f) => f.shape),
+        everyElement(FieldChangeShape.statement),
+      );
+      expect(restored.fields.map((f) => f.before),
+          ['GBS-9Z@student.school.example', '21']);
+      expect(restored.fields.every((f) => f.after == null), isTrue);
+    });
+
+    test('a field written before #300/#305 reads back as a transition', () {
       final restored = CandidateAction.fromJson(<String, dynamic>{
         'family': 'group',
         'kind': 'SyncAzureClassGroupMembers',
@@ -809,7 +835,7 @@ void main() {
           {'field': 'leden toevoegen', 'after': '21'},
         ],
       });
-      expect(restored.fields.single.isCount, isFalse);
+      expect(restored.fields.single.shape, FieldChangeShape.transition);
     });
 
     test('buildRollups counts the choice once at every level', () {

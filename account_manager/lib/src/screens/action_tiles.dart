@@ -1334,15 +1334,23 @@ class ChoiceControl extends StatelessWidget {
 
 /// How one [actions.FieldChange] reads on a card.
 ///
-/// Two shapes, because a `ChangeSet` describes two kinds of thing (#300). A
-/// **transition** is a value moving, and reads as one: `mail: ∅ → 1a@…`. A
-/// **count** is a quantity the action acts on, and reads as the number it is:
-/// `leden toevoegen: 21`. Put through the transition template a count claimed
-/// the field used to be empty and is becoming 21 — a sentence about nothing
-/// that happens to the group.
-String fieldChangeLine(actions.FieldChange f) => f.isCount
-    ? '${f.field}: ${f.after}'
-    : '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}';
+/// Three shapes, because a `ChangeSet` describes three kinds of thing (#300,
+/// #305). A **transition** is a value moving, and reads as one:
+/// `mail: ∅ → 1a@…`. A **count** is a quantity the action acts on, and reads as
+/// the number it is: `leden toevoegen: 21`. A **statement** is a fact about the
+/// record an informational notice is describing, and reads as that fact:
+/// `mail: GBS-9Z@…`.
+///
+/// Put through the transition template, the two of them that are not
+/// transitions each claimed something untrue: a count, that the field used to
+/// be empty and is becoming 21; a statement, that the value it names is being
+/// cleared — on a notice whose whole point is that nothing is written.
+String fieldChangeLine(actions.FieldChange f) => switch (f.shape) {
+      actions.FieldChangeShape.count => '${f.field}: ${f.after}',
+      actions.FieldChangeShape.statement => '${f.field}: ${f.before}',
+      actions.FieldChangeShape.transition =>
+        '${f.field}: ${f.before ?? '∅'} → ${f.after ?? '∅'}',
+    };
 
 /// The per-field diff (or a lifecycle note) for a single option — the one that
 /// stands alone, or the one selected inside a [ChoiceControl].

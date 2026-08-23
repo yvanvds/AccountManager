@@ -3130,6 +3130,74 @@ void main() {
   });
 
   testWidgets(
+      'the "laat de groep staan" notice states its facts end-to-end, it does '
+      'not diff them (#305)', (WidgetTester tester) async {
+    // The reported card, in the real app. `GBS-9Z` is the group of a class that
+    // stopped running, still holding its 21 members, and the pre-selected half
+    // of its either/or is the notice that leaves it alone. It read
+    //
+    //   Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet meer …
+    //   mail: GBS-9Z@student.school.example → ∅
+    //   leden: 21 → ∅
+    //
+    // — a heading promising the group stays, over two lines saying its address
+    // and its 21 members are going away. That is what the *other* radio does,
+    // and it is the reading a bulk pass would run.
+    //
+    // End-to-end rather than on the widget alone, because the shape has to
+    // survive the whole path the operator's card is built from: the group
+    // dispatch's `ChangeSet`, the alternative collapse into one choice, the
+    // radio that swaps which option's fields are on screen, and only then a
+    // line of text in the tile. And "no arrow anywhere" is a claim about the
+    // page as composed — this tab also renders a same-situation bulk header
+    // over the two stale groups, which a row-scoped widget test cannot see.
+    useTallWindow(tester);
+    final harness = staleClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final entry = find.byKey(const ValueKey('entry-group-GBS-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    // The default half is the notice, and under its heading are two facts.
+    expect(
+      find.text('Laat de Office 365-groep GBS-9Z staan — klas 9Z bestaat niet '
+          'meer in WISA of Smartschool'),
+      findsWidgets,
+    );
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing — and no other '
+            'card on this page diffs against an empty half either');
+
+    // Flip to the delete and the same two facts are the inventory of what goes,
+    // joined by the consequence that was never a field value at all.
+    final delete =
+        find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup'));
+    await tester.ensureVisible(delete);
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
+        findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing);
+    expect(harness.graph.deletedGroups, isEmpty,
+        reason: 'picking a radio writes nothing on its own');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       "a student's Office 365 class group is reported on their own account "
       'end-to-end, pointing at the one class-level write (#245)',
       (WidgetTester tester) async {

@@ -1048,6 +1048,46 @@ void main() {
     expect(harness.graph.deletedGroups, isEmpty);
   });
 
+  testWidgets(
+      'the stale-group card states the group\'s facts instead of diffing them '
+      '(#305)', (WidgetTester tester) async {
+    // `GBS-9Z` is the group of a class that stopped running, still holding its
+    // 21 members. Under the heading "Laat de Office 365-groep GBS-9Z staan"
+    // its two fields read
+    //
+    //   mail: GBS-9Z@student.school.example → ∅
+    //   leden: 21 → ∅
+    //
+    // — the address and the members going away, which is precisely what the
+    // *other* radio does and what this one promises not to.
+    _useTallWindow(tester);
+    final harness = staleClassGroupHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-GBS-9Z')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the option that writes nothing clears nothing');
+
+    // The delete beside it names the same facts — the inventory of what goes,
+    // not three fields each being emptied. "verdwijnen mee" was never a value.
+    await tester
+        .tap(find.byKey(const ValueKey('alt-GBS-9Z-DeleteAzureClassGroup')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('mail: GBS-9Z@student.school.example'), findsOneWidget);
+    expect(find.text('leden: 21'), findsOneWidget);
+    expect(find.text('postvak, Teams en bestanden: verdwijnen mee'),
+        findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing);
+  });
+
   testWidgets('classes sort by year, numerically (#227)',
       (WidgetTester tester) async {
     expect(compareClassNames('2A', '10A'), lessThan(0));
