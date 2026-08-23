@@ -1136,6 +1136,12 @@ class _ActionsHeader extends StatelessWidget {
 /// of a row. The switch in particular is set in exactly one place (#226); its
 /// per-classroom ancestor had to be re-flipped in every class the operator
 /// opened, which is why it never actually collapsed anything to the work list.
+///
+/// The name box and the work-list switch share one row since #310. Each of
+/// them shapes the same list, so reading them together matches what they do —
+/// and the box no longer claims 1500px of a wide window for a field that holds
+/// a name. Laid out as a [Wrap] so a window too narrow for both puts the switch
+/// on a second run instead of overflowing.
 class _ListControls extends StatelessWidget {
   const _ListControls({
     required this.searchController,
@@ -1155,6 +1161,14 @@ class _ListControls extends StatelessWidget {
   final _SystemFilter system;
   final ValueChanged<_SystemFilter> onSystemChanged;
 
+  /// The widest the name box gets (#310).
+  ///
+  /// A name is a handful of words; beyond this the field is empty rubber, and
+  /// the width is better spent on the switch beside it. Bounded rather than
+  /// fixed: on a window narrower than this the box takes what there is, so the
+  /// cap never becomes the thing that overflows.
+  static const double _searchMaxWidth = 380.0;
+
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
@@ -1162,38 +1176,52 @@ class _ListControls extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        TextField(
-          key: const ValueKey('actions-search'),
-          controller: searchController,
-          decoration: InputDecoration(
-            isDense: true,
-            prefixIcon: const Icon(Icons.search, size: 18),
-            // Same wording as the Wachtwoorden → Personeel box, which matches
-            // the same way (#217): any part of the name, in any order.
-            hintText: 'Zoek op naam…',
-            border: const OutlineInputBorder(),
-            suffixIcon: searchController.text.isEmpty
-                ? null
-                : IconButton(
-                    key: const ValueKey('actions-search-clear'),
-                    icon: const Icon(Icons.close, size: 18),
-                    tooltip: 'Wis zoekopdracht',
-                    onPressed: searchController.clear,
-                  ),
-          ),
-        ),
-        const SizedBox(height: PlinkSpacing.s2),
-        Row(
+        Wrap(
+          spacing: PlinkSpacing.s4,
+          runSpacing: PlinkSpacing.s2,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
-            Switch(
-              key: const ValueKey('actions-only-with-actions'),
-              value: onlyWithActions,
-              onChanged: onOnlyWithActionsChanged,
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: _searchMaxWidth),
+              child: TextField(
+                key: const ValueKey('actions-search'),
+                controller: searchController,
+                decoration: InputDecoration(
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  // Same wording as the Wachtwoorden → Personeel box, which
+                  // matches the same way (#217): any part of the name, in any
+                  // order.
+                  hintText: 'Zoek op naam…',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: searchController.text.isEmpty
+                      ? null
+                      : IconButton(
+                          key: const ValueKey('actions-search-clear'),
+                          icon: const Icon(Icons.close, size: 18),
+                          tooltip: 'Wis zoekopdracht',
+                          onPressed: searchController.clear,
+                        ),
+                ),
+              ),
             ),
-            const SizedBox(width: PlinkSpacing.s2),
-            Expanded(
-              child: Text('Toon enkel accounts met acties',
-                  style: text.bodyMedium),
+            // Sized to the switch and its label rather than stretched: the Wrap
+            // already bounds it to the row, so the label folds before anything
+            // can spill.
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Switch(
+                  key: const ValueKey('actions-only-with-actions'),
+                  value: onlyWithActions,
+                  onChanged: onOnlyWithActionsChanged,
+                ),
+                const SizedBox(width: PlinkSpacing.s2),
+                Flexible(
+                  child: Text('Toon enkel accounts met acties',
+                      style: text.bodyMedium),
+                ),
+              ],
             ),
           ],
         ),

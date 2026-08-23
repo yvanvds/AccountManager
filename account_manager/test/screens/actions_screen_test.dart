@@ -403,12 +403,97 @@ void main() {
     expect(searchTop - eyebrowBottom, lessThan(40),
         reason: 'nothing but spacing stands between the eyebrow and the box');
     // And a pin on the whole block above the list — eyebrow, search box, work
-    // switch, sort and system chips, family tabs. It measures 422 here; every
-    // line put back into the header adds some 30 to that, which is what this
-    // number is guarding. What the operator actually gains from it is asserted
-    // at a real 1080p window in the integration suite, in rows on screen.
+    // switch, sort and system chips, family tabs. It measured 422 when #309
+    // landed and measures 366 since #310 put the box and the switch on one
+    // row; every line put back into the header adds some 30 to that, which is
+    // what this number is guarding. What the operator actually gains from it is
+    // asserted at a real 1080p window in the integration suite, in rows on
+    // screen.
     expect(tester.getTopLeft(find.byKey(const ValueKey('actions-list'))).dy,
-        lessThan(450));
+        lessThan(390));
+  });
+
+  // --- The name box and the work-list switch on one row (#310) -------------
+
+  testWidgets(
+      'the name box and the work-list switch share one row, and the box is '
+      'bounded rather than full-bleed (#310)', (WidgetTester tester) async {
+    // Two controls that shape the same list, stacked as two full-width rows:
+    // the box claimed the whole content width — well over 1200px here — for a
+    // field that holds a name, and the switch cost a row of its own under it.
+    _useWideWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    final Rect search =
+        tester.getRect(find.byKey(const ValueKey('actions-search')));
+    final Rect toggle =
+        tester.getRect(find.byKey(const ValueKey('actions-only-with-actions')));
+    final Rect label =
+        tester.getRect(find.text('Toon enkel accounts met acties'));
+
+    // One row: the switch and its label stand to the right of the box, and
+    // every one of the three overlaps the others vertically instead of
+    // stacking under them.
+    expect(toggle.left, greaterThan(search.right));
+    expect(label.left, greaterThan(toggle.right));
+    expect(toggle.top, lessThan(search.bottom));
+    expect(search.top, lessThan(toggle.bottom));
+    expect(label.top, lessThan(search.bottom));
+
+    // Bounded, not full-bleed: a fraction of the width it used to fill.
+    final double paneWidth = tester.getSize(find.byType(ActionsScreen)).width;
+    expect(paneWidth, greaterThan(1000), reason: 'a genuinely wide window');
+    expect(search.width, lessThanOrEqualTo(380));
+    expect(search.width, lessThan(paneWidth / 3));
+
+    // And the row it saved: the filter chips follow the box by one spacing gap,
+    // where a whole switch row used to stand between them.
+    final Rect chips =
+        tester.getRect(find.byKey(const ValueKey('actions-system-azure')));
+    expect(chips.top - search.bottom, lessThan(24),
+        reason: 'nothing but spacing separates the box from the chips');
+  });
+
+  testWidgets(
+      'a window too narrow for both wraps the row instead of overflowing '
+      '(#310)', (WidgetTester tester) async {
+    // The failure mode a fixed-width box would have introduced. At 700px the
+    // box, the switch and a 30-character label do not fit side by side, so the
+    // switch takes a second run — and the box shrinks to what there is rather
+    // than holding its cap and spilling.
+    _useNarrowWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final Rect search =
+        tester.getRect(find.byKey(const ValueKey('actions-search')));
+    final Rect toggle =
+        tester.getRect(find.byKey(const ValueKey('actions-only-with-actions')));
+
+    expect(toggle.top, greaterThanOrEqualTo(search.bottom),
+        reason: 'the switch wrapped onto its own run');
+    // Still capped, even on the run it now has to itself — a narrow window is
+    // not a reason to give a name field 636px.
+    expect(search.width, lessThanOrEqualTo(380));
+    // Both stay inside the 700px window: nothing is clipped off the right.
+    expect(search.right, lessThanOrEqualTo(700));
+    expect(toggle.right, lessThanOrEqualTo(700));
+    // Still one switch and one box, still operable.
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<Switch>(
+              find.byKey(const ValueKey('actions-only-with-actions')))
+          .value,
+      isFalse,
+    );
   });
 
   // --- School-wide apply-all, cohort first (#296) ---------------------------

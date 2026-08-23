@@ -3340,7 +3340,8 @@ void main() {
     // has one line but not where the list ends up for the operator. This runs
     // the real app in the real fonts at the real window size and measures it:
     // the list top moved from 575 to 373 of 1080, from below the halfway mark
-    // to inside the top third.
+    // to inside the top third — and to 325 once #310 folded the work-list
+    // switch onto the search box's own row.
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -3370,14 +3371,89 @@ void main() {
     expect(find.byKey(const ValueKey('actions-class-attention')), findsNothing);
     expect(find.textContaining('Generatie'), findsNothing);
 
-    // The list starts inside the top 40% of the window instead of below the
+    // The list starts inside the top third of the window instead of below the
     // middle of it — measured in the real font, in the real shell, with the
     // real rail beside it.
     final Finder list = find.byKey(const ValueKey('actions-list'));
-    expect(tester.getTopLeft(list).dy, lessThan(1080 * 0.4));
+    expect(tester.getTopLeft(list).dy, lessThan(1080 / 3));
     // Which is the same statement from the operator's side: the list, not the
     // preamble above it, gets the majority of the window it is the point of.
     expect(tester.getSize(list).height, greaterThan(1080 / 2));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Acties name box is a name-sized box beside the work-list switch on '
+      'a real window, and folds instead of overflowing when the window '
+      'narrows end-to-end (#310)', (WidgetTester tester) async {
+    // A widget test renders these controls at whatever viewport it likes, in a
+    // test font, outside the shell. Both halves of #310 are about the real
+    // thing: how much of a *1920px window with the rail beside it* a name field
+    // was claiming, and whether the row folds or spills when that window is
+    // dragged narrow. The fold in particular runs through the real text metrics
+    // of a 30-character Dutch label — the exact place a fixed-width box would
+    // have overflowed in the app but not in Ahem.
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final Finder searchFinder = find.byKey(const ValueKey('actions-search'));
+    final Finder toggleFinder =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    Rect search = tester.getRect(searchFinder);
+    Rect toggle = tester.getRect(toggleFinder);
+
+    // One row: the switch and its label stand to the right of the box and
+    // overlap it vertically, rather than sitting on a row of their own.
+    expect(toggle.left, greaterThan(search.right));
+    expect(toggle.top, lessThan(search.bottom));
+    expect(search.top, lessThan(toggle.bottom));
+    final Rect label =
+        tester.getRect(find.text('Toon enkel accounts met acties'));
+    expect(label.left, greaterThan(toggle.right));
+    expect(label.top, lessThan(search.bottom));
+
+    // Name-sized, not window-sized. The Acties pane is the full 1920 minus the
+    // navigation rail, and the box used to be exactly that wide.
+    final double paneWidth = tester.getSize(find.byType(ActionsScreen)).width;
+    expect(paneWidth, greaterThan(1500),
+        reason: 'the rail leaves the pane most of a 1920px window');
+    expect(search.width, lessThanOrEqualTo(380));
+    expect(search.width, lessThan(paneWidth / 4),
+        reason: 'the box stops a long way short of the content width');
+
+    // Now drag the window narrow — narrower than the box, the switch and the
+    // label side by side. The switch takes a second run and nothing overflows.
+    tester.view.physicalSize = const Size(900, 1080);
+    await tester.pumpAndSettle();
+    search = tester.getRect(searchFinder);
+    toggle = tester.getRect(toggleFinder);
+    expect(toggle.top, greaterThanOrEqualTo(search.bottom),
+        reason: 'the row folded rather than spilling off the right');
+    expect(search.width, lessThanOrEqualTo(380));
+    expect(search.right, lessThanOrEqualTo(900));
+    expect(toggle.right, lessThanOrEqualTo(900));
+    expect(tester.takeException(), isNull);
+
+    // And it is still the working switch, not a decoration that survived the
+    // fold: flipping it here gives the whole school back (#226).
+    final String tom = accountId(harness, 'Tom Tas');
+    expect(find.byKey(ValueKey('account-row-$tom')), findsNothing);
+    await tester.ensureVisible(toggleFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(toggleFinder);
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('account-row-$tom')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
