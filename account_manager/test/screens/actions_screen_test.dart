@@ -878,6 +878,228 @@ void main() {
     });
   });
 
+  // --- What an apply leaves on the screen (#299) ---------------------------
+
+  group('an apply updates the list and the pane in place (#299)', () {
+    /// Applies every decision on the card the details pane is open on, through
+    /// the confirmation the operator sees.
+    Future<void> applyCard(WidgetTester tester, String id) async {
+      final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+      await tester.ensureVisible(apply);
+      await tester.tap(apply);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+    }
+
+    /// The "Toegepast" marker a held row carries once nothing is left on it.
+    Finder done(String id) => find.byKey(ValueKey('account-done-$id'));
+
+    /// Opens Acties over [harness] with the flat list on screen.
+    Future<void> open(WidgetTester tester, ReconcileHarness harness) async {
+      _useWideWindow(tester);
+      await harness.controller.sync();
+      await tester
+          .pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+        'the account the pass settled stays in the filtered list, marked done, '
+        'with the pane still on it', (WidgetTester tester) async {
+      // Sam's stale Office 365 display name is his only work, and a real write
+      // genuinely clears it — so the instant the pass ends he stops matching
+      // "toon enkel accounts met acties" and the list would drop him, taking
+      // the open pane and the verdict he was waiting for with him.
+      final harness = appliedClassWorkHarness();
+      await open(tester, harness);
+
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+      await applyCard(tester, sam);
+
+      expect(harness.graph.requests.where((r) => r.method == 'PATCH'),
+          hasLength(1));
+      expect(
+        harness.controller.pendingEntries.where((e) => e.targetId == sam),
+        isEmpty,
+        reason: 'the write settled his one decision',
+      );
+
+      // The filter never moved, and he is still on the list — marked as what
+      // just happened to him, not as an account that was always in order.
+      expect(
+        tester
+            .widget<Switch>(
+                find.byKey(const ValueKey('actions-only-with-actions')))
+            .value,
+        isTrue,
+      );
+      expect(_row(sam), findsOneWidget,
+          reason: 'a row that vanishes on the strength of its own success '
+              'takes the verdict off the screen with it');
+      expect(done(sam), findsOneWidget);
+      expect(
+          _cellState(tester, sam, Origin.azure), SystemIndicatorState.inOrder,
+          reason: 'the indicators re-rendered in place off the refreshed view');
+
+      // The pane never let go of him, and it says what the pass did — with no
+      // re-selection, and no sync.
+      expect(find.byKey(ValueKey('actions-detail-$sam')), findsOneWidget);
+      expect(find.byKey(const ValueKey('actions-detail-empty')), findsNothing);
+      final Finder verdict =
+          find.byKey(ValueKey('entry-outcomes-student-$sam'));
+      await tester.ensureVisible(verdict);
+      expect(
+        find.descendant(
+            of: verdict, matching: find.text('Wijzig de naam in Azure')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+        'a pass where one write lands and another is refused keeps the row and '
+        'shows both verdicts (#272/#283)', (WidgetTester tester) async {
+      // The reported shape behind #272, on an account rather than a class: one
+      // half of the card lands and the other is refused. A row that dropped out
+      // on the strength of the half that worked would make the refusal
+      // unreadable anywhere but the log panel on another screen.
+      var calls = 0;
+      final harness = rolloverHarness(applyGate: () async {
+        if (++calls == 2) throw StateError('Smartschool weigerde de opdracht');
+      });
+      await open(tester, harness);
+
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      await _select(tester, sam);
+      await applyCard(tester, sam);
+
+      // He keeps the decision that was refused, so the row stands on its own
+      // work — and is emphatically not marked done.
+      expect(_row(sam), findsOneWidget);
+      expect(done(sam), findsNothing);
+      expect(_cellState(tester, sam, Origin.smartschool),
+          SystemIndicatorState.needsWork);
+      expect(
+          _cellState(tester, sam, Origin.azure), SystemIndicatorState.inOrder,
+          reason: 'the rename landed, and the cell re-rendered in place');
+
+      // The refusal sits under the question it answers (#283)…
+      final Finder refused =
+          find.byKey(ValueKey('entry-outcomes-student-$sam-0'));
+      await tester.ensureVisible(refused);
+      expect(
+        find.descendant(
+          of: refused,
+          matching: find.textContaining('Smartschool weigerde de opdracht'),
+        ),
+        findsOneWidget,
+      );
+      // …and the half that landed keeps its own at card level, a settled
+      // decision having no block left to sit in.
+      final Finder settled =
+          find.byKey(ValueKey('entry-outcomes-student-$sam'));
+      await tester.ensureVisible(settled);
+      expect(
+        find.descendant(
+            of: settled, matching: find.text('Wijzig de naam in Azure')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('moving to an account the pass did not touch lets the row go',
+        (WidgetTester tester) async {
+      // Three students in one situation; applying Sam settles Sam alone. The
+      // hold is a courtesy to somebody reading a verdict, not a second filter,
+      // so it has to clear or the list accumulates finished rows.
+      final harness = crossClassSituationHarness();
+      await open(tester, harness);
+
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      final sara = _idOf(harness.controller, 'Sara Segers');
+      await _select(tester, sam);
+      await applyCard(tester, sam);
+      expect(_row(sam), findsOneWidget);
+
+      await _select(tester, sara);
+      expect(_row(sam), findsNothing);
+      expect(find.byKey(ValueKey('actions-detail-$sara')), findsOneWidget);
+    });
+
+    testWidgets('a sort or a search lets the held rows go',
+        (WidgetTester tester) async {
+      // Both reshape the list, which is the operator saying they are done
+      // reading the last pass — and the issue's own rule for when the hold must
+      // clear, alongside the sync that clears it anyway.
+      final harness = crossClassSituationHarness();
+      await open(tester, harness);
+
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      final sara = _idOf(harness.controller, 'Sara Segers');
+
+      await _select(tester, sam);
+      await applyCard(tester, sam);
+      expect(_row(sam), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('actions-sort-klas')));
+      await tester.pumpAndSettle();
+      expect(_row(sam), findsNothing);
+
+      await _select(tester, sara);
+      await applyCard(tester, sara);
+      expect(_row(sara), findsOneWidget);
+      await tester.enterText(
+          find.byKey(const ValueKey('actions-search')), 'Sara');
+      await tester.pumpAndSettle();
+      expect(_row(sara), findsNothing,
+          reason: 'she matches the needle and has no work left, so only the '
+              'hold was keeping her on screen');
+    });
+
+    testWidgets(
+        'a bulk pass holds every account it settled, and reading one does not '
+        'drop the rest', (WidgetTester tester) async {
+      // The pass a rollover really runs: one decision over a set of accounts,
+      // all of them settling at once. Opening the second of them must not
+      // delete the first out from under the tap that opened it.
+      final harness = crossClassSituationHarness();
+      await open(tester, harness);
+
+      final sam = _idOf(harness.controller, 'Sam Sels');
+      final sara = _idOf(harness.controller, 'Sara Segers');
+      final tom = _idOf(harness.controller, 'Tom Tas');
+
+      await tester.tap(find.byKey(const ValueKey('actions-select-all')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-selection-apply')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(harness.controller.applyResults, hasLength(3));
+      for (final String id in <String>[sam, sara, tom]) {
+        await tester.ensureVisible(_row(id));
+        expect(_row(id), findsOneWidget);
+        expect(done(id), findsOneWidget);
+      }
+
+      await _select(tester, sara);
+      expect(_row(sam), findsOneWidget);
+      expect(_row(tom), findsOneWidget);
+
+      // Her own verdict is on her card, though she raises nothing any more.
+      expect(find.text('Geen openstaande beslissingen voor dit account.'),
+          findsOneWidget);
+      final Finder verdict =
+          find.byKey(ValueKey('entry-outcomes-student-$sara'));
+      await tester.ensureVisible(verdict);
+      expect(
+        find.descendant(
+            of: verdict, matching: find.text('Wijzig de naam in Azure')),
+        findsOneWidget,
+      );
+    });
+  });
+
   testWidgets('cancelling the apply dialog writes nothing (#154)',
       (WidgetTester tester) async {
     _useWideWindow(tester);

@@ -848,6 +848,91 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+      'an apply leaves the operator on the account they applied, reading its '
+      'verdict, and lets the row go when they move on end-to-end (#299)',
+      (WidgetTester tester) async {
+    // The complaint #299 is about is a *composition* one, which is why it gets
+    // a full run: the pass is the controller's, the refreshed rows and the
+    // details pane are the screen's, and the failure was the seam between them
+    // — an account settling its last decision fell out of the filtered list at
+    // the exact moment its verdict arrived, so the pane the operator applied
+    // from reverted to "kies een account" and a half-succeeded pass read like a
+    // clean one. Only the real app puts the pass, the list, the pane and the
+    // filters in one frame together.
+    //
+    // Three students each carry one stale Office 365 display name — work a real
+    // Graph write genuinely clears — so a pass really does empty an account's
+    // card, which is the whole precondition.
+    useTallWindow(tester);
+    final harness = crossClassSituationHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder row(String id) => find.byKey(ValueKey('account-row-$id'));
+
+    // Apply Sam's one decision from his open details pane.
+    await selectAccount(tester, sam);
+    final Finder apply = find.byKey(ValueKey('entry-apply-$sam'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // One real Graph PATCH, and it settled his card.
+    expect(
+        harness.graph.requests.where((r) => r.method == 'PATCH'), hasLength(1));
+    expect(harness.controller.pendingEntries.where((e) => e.targetId == sam),
+        isEmpty);
+
+    // He is still on the list, under the work filter that no longer matches
+    // him, marked as what just happened rather than as an account that was
+    // always fine — and his two colleagues are untouched beside him.
+    await tester.ensureVisible(row(sam));
+    expect(row(sam), findsOneWidget);
+    expect(find.byKey(ValueKey('account-done-$sam')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-done-$sara')), findsNothing);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-cell-$sam-${Origin.azure.name}')))
+          .state,
+      SystemIndicatorState.inOrder,
+      reason: 'the row re-rendered in place off the view the pass relinked',
+    );
+
+    // The pane is still his, with the verdict on the card — no re-selection,
+    // no sync, and not merely the page-level section that reports the pass.
+    expect(find.byKey(ValueKey('actions-detail-$sam')), findsOneWidget);
+    expect(find.byKey(const ValueKey('actions-detail-empty')), findsNothing);
+    final Finder verdict = find.byKey(ValueKey('entry-outcomes-student-$sam'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de naam in Azure')),
+      findsOneWidget,
+    );
+
+    // Moving to an account the pass never touched is the operator done reading
+    // it, so the held row lets go and the list is the work list again.
+    await selectAccount(tester, sara);
+    expect(row(sam), findsNothing);
+    expect(row(sara), findsOneWidget);
+    expect(row(tom), findsOneWidget);
+    expect(find.byKey(ValueKey('actions-detail-$sara')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   /// Opens the Klasgroepen tab from the navigation rail (#227). The class
   /// inventory is a destination of its own now, not a node inside Acties.
   Future<void> openKlasgroepen(WidgetTester tester) async {
@@ -4000,9 +4085,9 @@ void main() {
   });
 
   testWidgets(
-      'applying an account\'s work takes it out of the Acties work list and '
-      'off the counts, without a re-sync end-to-end (#236/#295)',
-      (WidgetTester tester) async {
+      'applying an account\'s work takes it off the counts and, once the '
+      'operator moves on, out of the Acties work list, without a re-sync '
+      'end-to-end (#236/#295/#299)', (WidgetTester tester) async {
     // The real app, real fonts, real navigation. The counts are re-derived from
     // the materialized rollups, which only a sync used to rewrite, so work that
     // had just been applied kept being advertised — and the work-list filter
@@ -4046,9 +4131,20 @@ void main() {
       reason: 'the live list drops the work immediately — it always did',
     );
 
-    // The work list is empty now, with no sync between…
-    expect(find.byKey(ValueKey('account-row-$sam')), findsNothing,
+    // His badge is gone with the work behind it. The row itself is still on
+    // screen, and only because #299 holds a just-applied account there long
+    // enough for its verdict to be read — marked as what happened, not badged.
+    final Finder samRow = find.byKey(ValueKey('account-row-$sam'));
+    expect(samRow, findsOneWidget);
+    expect(find.byKey(ValueKey('account-done-$sam')), findsOneWidget);
+    expect(find.descendant(of: samRow, matching: find.text('1')), findsNothing,
         reason: 'the row used to come back still badged 1');
+
+    // Reshaping the list is the operator moving on, so the hold lets go — and
+    // the work list is empty, with no sync between.
+    await tester.tap(find.byKey(const ValueKey('actions-sort-klas')));
+    await tester.pumpAndSettle();
+    expect(samRow, findsNothing);
     expect(find.text('Geen openstaande acties — alles staat in orde.'),
         findsOneWidget);
     // …while the work nobody touched is untouched: a re-derivation of what
@@ -4061,7 +4157,6 @@ void main() {
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    final Finder samRow = find.byKey(ValueKey('account-row-$sam'));
     await tester.ensureVisible(samRow);
     expect(find.descendant(of: samRow, matching: find.text('1')), findsNothing);
     expect(find.descendant(of: samRow, matching: find.byIcon(Icons.check)),

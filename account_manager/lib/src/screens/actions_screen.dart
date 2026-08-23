@@ -156,6 +156,43 @@ export 'action_tiles.dart' show applyConfirmationMessage, systemLabel;
 /// settled them — and when the family tab changes, because both make the set
 /// name accounts that are no longer the list.
 ///
+/// ## Where an apply leaves the operator (#299)
+///
+/// Standing exactly where they were, reading what the pass did. That takes two
+/// things, and the screen owns only the second.
+///
+/// The **refresh** is the controller's: `_applyOne` swaps in the view relinked
+/// after every write and the derived lists are keyed on its identity, so a row's
+/// indicators, its badge and the details pane's decisions all re-render in place
+/// from the settled state, with no re-selection and no sync. What #299 added
+/// there is that a pass pins those lists for its duration and drops them once at
+/// the end — a rollover writes thousands of accounts and notifies per write, and
+/// re-deriving the school between two writes is time spent on a list nobody can
+/// read behind the modal.
+///
+/// The **list** is this screen's. An apply settles what it lands, so the account
+/// just applied stops matching "toon enkel accounts met acties" and would drop
+/// out the instant the pass ends — taking the selection, the open pane and the
+/// verdict with it. So the pass's targets are held through the state filters
+/// until the operator looks away, marked **Toegepast** when nothing is left on
+/// them, and the pane keeps rendering the account's own verdict even once its
+/// entry is gone.
+///
+/// That hold is not a filter and must never behave like one, so every control
+/// that reshapes the list drops it: the sort, the work switch, the system chips,
+/// the search box, a family tab change, and selecting an account the pass did
+/// not touch. Selecting one it *did* keeps it — a bulk pass settles many
+/// accounts and reading the second must not delete the first out from under the
+/// tap. A sync drops it on its own, the pass that replaces the view being the
+/// same one that clears the results the hold is read from.
+///
+/// The case that decides all of it is the half-succeeded pass, which is where
+/// #272 came from: Smartschool takes the write, Graph refuses the other half.
+/// The account keeps the refused decision, so it stays on the list under its own
+/// steam, its card shows the refusal under the question it answers (#283) and
+/// the landed half at card level. Nothing about that reads as a clean success,
+/// which is the whole point.
+///
 /// ## What it deliberately does not do
 ///
 /// Nothing here applies an action the operator has not seen. The header's global
@@ -446,6 +483,30 @@ class _ActionsBodyState extends State<_ActionsBody>
   /// frame is already building.
   LinkedState? _tickedView;
 
+  /// The accounts the last apply pass wrote to, by id — the rows the list holds
+  /// on screen for a moment longer than the filter would (#299).
+  ///
+  /// An apply settles what it lands, so an account whose work is finished stops
+  /// matching "toon enkel accounts met acties" and would drop out of the list
+  /// the instant the pass ends — taking the selection, the open details pane
+  /// and the verdict the operator was waiting for with it. Worse when the pass
+  /// half-succeeds: the reported case behind #272 is a class whose Smartschool
+  /// write landed and whose Office 365 write was refused, and a row that
+  /// vanishes on the strength of the half that worked makes a refusal read as a
+  /// clean success.
+  ///
+  /// So the pass's targets are held through the filters until the operator
+  /// looks away — see [_forgetSettled] for exactly when that is. Ids, for the
+  /// reason [_selectedId] and [_ticked] are ids: the rows are rebuilt from the
+  /// refreshed view underneath them.
+  final Set<String> _settled = <String>{};
+
+  /// The results list [_settled] was taken from, so it is re-read exactly once
+  /// per pass. `_begin` nulls the results when any pass starts and the tail of
+  /// the pass installs the new list, so an identity check covers both halves:
+  /// the hold is dropped when a pass begins and re-armed from what it wrote.
+  List<ActionOutcomeEntry>? _settledFrom;
+
   ReconcileController get controller => widget.controller;
 
   @override
@@ -468,7 +529,9 @@ class _ActionsBodyState extends State<_ActionsBody>
   }
 
   void _onSearchChanged() {
-    if (mounted) setState(() {});
+    // Typing a name is the operator moving on, so the rows the last pass is
+    // holding on screen let go (#299).
+    if (mounted) setState(_forgetSettled);
   }
 
   /// Rebuilds for the newly-selected family and — when the family actually
@@ -484,6 +547,8 @@ class _ActionsBodyState extends State<_ActionsBody>
       // The ticks name accounts of the family being left behind, and a pass is
       // single-family anyway (#297).
       _clearTicks();
+      // …as do the rows the last pass is holding on screen (#299).
+      _forgetSettled();
     }
     if (mounted) setState(() {});
   }
@@ -507,6 +572,43 @@ class _ActionsBodyState extends State<_ActionsBody>
     if (identical(_tickedView, view)) return;
     _tickedView = view;
     _clearTicks();
+  }
+
+  /// Re-reads [_settled] off the last pass's results (#299), at the top of
+  /// [_body] and for the same reasons [_retireStaleTicks] sits there.
+  ///
+  /// The whole pass, not only the accounts that came out clean: one that failed
+  /// still has work and stays visible on its own, and one whose card now shows
+  /// a refusal beside a success is exactly the row that must not move.
+  ///
+  /// Group results are dropped — a class is a Klasgroepen row, and its id is a
+  /// display label rather than an account id, so keeping it could only ever
+  /// collide with one.
+  void _holdSettled() {
+    final List<ActionOutcomeEntry>? results = controller.applyResults;
+    if (identical(_settledFrom, results)) return;
+    _settledFrom = results;
+    _settled.clear();
+    if (results == null) return;
+    for (final r in results) {
+      if (r.family != 'group' && r.targetId.isNotEmpty) {
+        _settled.add(r.targetId);
+      }
+    }
+  }
+
+  /// Lets the held rows go (#299) — they are a courtesy to the operator reading
+  /// a verdict, not a second filter, so they must clear reliably or a long
+  /// session accumulates settled rows in a list that claims to show work.
+  ///
+  /// Called from every control that says the operator has moved on: a sort, the
+  /// work switch, the system chips, the search box, a family tab change, and
+  /// selecting an account that is not itself one of the held ones. A sync
+  /// clears it too, through [_holdSettled] — the pass that replaces the view
+  /// nulls the results the hold is read from.
+  void _forgetSettled() {
+    if (_settled.isEmpty) return;
+    _settled.clear();
   }
 
   /// Ticks or unticks one account (#297).
@@ -609,10 +711,17 @@ class _ActionsBodyState extends State<_ActionsBody>
     final core.Origin? origin = _system.origin;
     return <_AccountRow>[
       for (final r in rows)
-        if ((!_onlyWithActions || r.hasWork) &&
-            query.matches(r.searchText) &&
-            (origin == null ||
-                r.stateFor(origin) != SystemIndicatorState.inOrder))
+        // A row the last pass just settled is exempt from both *state* filters
+        // — the work switch and the system chip, which are two readings of
+        // "does this need doing?" and are exactly what an apply has just
+        // answered (#299). Never from the search: that one is about who the
+        // account is, and a needle that no longer matches was typed after the
+        // pass, which drops the hold anyway.
+        if ((_settled.contains(r.id) ||
+                ((!_onlyWithActions || r.hasWork) &&
+                    (origin == null ||
+                        r.stateFor(origin) != SystemIndicatorState.inOrder))) &&
+            query.matches(r.searchText))
           r,
     ];
   }
@@ -661,6 +770,7 @@ class _ActionsBodyState extends State<_ActionsBody>
 
   Widget _body(BuildContext context, BoxConstraints constraints) {
     _retireStaleTicks();
+    _holdSettled();
     final bool wide = constraints.maxWidth >= _splitBreakpoint;
     final bool active = controller.linked != null;
     final SituationCohort? cohort = active ? _armedCohort() : null;
@@ -726,12 +836,23 @@ class _ActionsBodyState extends State<_ActionsBody>
                     ? _ListControls(
                         searchController: _search,
                         onlyWithActions: _onlyWithActions,
-                        onOnlyWithActionsChanged: (v) =>
-                            setState(() => _onlyWithActions = v),
+                        // Every one of the three reshapes the list, which is
+                        // the operator saying they are done reading the last
+                        // pass — so each lets the held rows go (#299).
+                        onOnlyWithActionsChanged: (v) => setState(() {
+                          _onlyWithActions = v;
+                          _forgetSettled();
+                        }),
                         sort: _sort,
-                        onSortChanged: (v) => setState(() => _sort = v),
+                        onSortChanged: (v) => setState(() {
+                          _sort = v;
+                          _forgetSettled();
+                        }),
                         system: _system,
-                        onSystemChanged: (v) => setState(() => _system = v),
+                        onSystemChanged: (v) => setState(() {
+                          _system = v;
+                          _forgetSettled();
+                        }),
                       )
                     : _CohortReviewBanner(
                         controller: controller,
@@ -883,9 +1004,18 @@ class _ActionsBodyState extends State<_ActionsBody>
         return _AccountListRow(
           row: row,
           selected: identical(row, selected),
-          onTap: () => setState(() => _selectedId = row.id),
+          onTap: () => setState(() {
+            // Moving to an account the last pass did not touch is the operator
+            // done with its results, so the held rows go (#299). Moving to one
+            // it *did* keeps them: a bulk pass settles many accounts at once
+            // and reading the second must not delete the first from under the
+            // tap that opened it.
+            if (!_settled.contains(row.id)) _forgetSettled();
+            _selectedId = row.id;
+          }),
           ticked: _ticked.contains(row.id),
           onTicked: ticking ? (v) => _setTicked(row.id, v) : null,
+          justApplied: _settled.contains(row.id),
         );
       },
     );
@@ -1573,6 +1703,7 @@ class _AccountListRow extends StatelessWidget {
     required this.onTap,
     this.ticked = false,
     this.onTicked,
+    this.justApplied = false,
   });
 
   final _AccountRow row;
@@ -1581,6 +1712,15 @@ class _AccountListRow extends StatelessWidget {
 
   /// Whether this row is in the multi-select (#297).
   final bool ticked;
+
+  /// Whether the last apply pass wrote to this account (#299) — which is why
+  /// the row may be here at all with nothing left to do.
+  ///
+  /// It gets a marker rather than being left to the badge's muted tick, because
+  /// that tick is also what an account that was in order all along shows, and
+  /// the difference between "nothing to do here" and "this is what you just
+  /// did" is the whole reason the row is being held.
+  final bool justApplied;
 
   /// Ticks/unticks the row, or `null` when this list offers no ticking at all —
   /// which is what a cohort under review is, its list being the review's own.
@@ -1648,6 +1788,25 @@ class _AccountListRow extends StatelessWidget {
                   ),
                   const SizedBox(width: PlinkSpacing.s2),
                   Text(row.account.classroom, style: text.bodySmall),
+                  // Only once the work is gone: a pass that half-failed leaves
+                  // the row with its remaining decisions, and calling that
+                  // "toegepast" is the misreading #299 is written against.
+                  if (justApplied && !row.hasWork) ...<Widget>[
+                    const SizedBox(width: PlinkSpacing.s2),
+                    Row(
+                      key: ValueKey('account-done-${row.id}'),
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(Icons.task_alt, size: 14, color: colors.primary),
+                        const SizedBox(width: PlinkSpacing.s1),
+                        Text(
+                          'Toegepast',
+                          style:
+                              text.bodySmall?.copyWith(color: colors.primary),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(width: PlinkSpacing.s2),
                   PendingBadge(count: row.pendingCount),
                 ],
@@ -1749,12 +1908,13 @@ class _AccountDetail extends StatelessWidget {
           Text(w, style: text.bodySmall),
         ],
         const SizedBox(height: PlinkSpacing.s3),
-        if (entry == null)
+        if (entry == null) ...<Widget>[
           Text(
             'Geen openstaande beslissingen voor dit account.',
             style: text.bodyMedium,
-          )
-        else
+          ),
+          ..._settledVerdict(),
+        ] else
           ...entryDetail(
             context,
             controller: controller,
@@ -1763,6 +1923,32 @@ class _AccountDetail extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  /// What the last pass did to an account it left with nothing to decide
+  /// (#299) — the verdict block [entryDetail] would have shown at card level,
+  /// for the card that no longer exists.
+  ///
+  /// The ordinary end of a successful apply, and the moment the operator most
+  /// wants to read: their work settled every decision, so the entry that
+  /// carried them is gone and with it every route to the verdict except the
+  /// page-level results section — which reports the whole *pass*, and in a
+  /// rollover is hundreds of rows deep. Keyed exactly as the card-level block
+  /// is, because it is the same block about the same account.
+  List<Widget> _settledVerdict() {
+    final String family = row.account.isStaff ? 'staff' : 'student';
+    final outcomes = controller.applyOutcomesForTarget(
+      family: family,
+      targetId: row.id,
+    );
+    if (outcomes.isEmpty) return const <Widget>[];
+    return <Widget>[
+      EntryOutcomes(
+        keyValue: 'entry-outcomes-$family-${row.id}',
+        outcomes: outcomes,
+        settled: true,
+      ),
+    ];
   }
 }
 

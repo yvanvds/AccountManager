@@ -702,7 +702,8 @@ class ReconcileController extends ChangeNotifier {
   /// several times per frame — recomputing it each time is what janks a large
   /// pending set. The cache is keyed on the identity of the linked view (a fresh
   /// `link()` / apply-refresh replaces it) and a version bumped on every
-  /// [chooseAlternative], so a stale entry can never be served.
+  /// [chooseAlternative], so a stale entry can never be served — except for the
+  /// span of a running apply pass, which pins it deliberately ([_holdDerived]).
   List<PendingAccountEntry>? _pendingEntriesCache;
   LinkedState? _pendingCacheKey;
   int _choicesVersion = 0;
@@ -726,6 +727,26 @@ class ReconcileController extends ChangeNotifier {
   /// decisions per block per frame is what that costs without a cache.
   Map<String, SituationCohort>? _cohortIndexCache;
   List<PendingAccountEntry>? _cohortIndexKey;
+
+  /// Whether the three caches above are pinned to the view the running apply
+  /// pass started from, rather than following [_linked] (#299).
+  ///
+  /// [_applyOne] swaps a freshly relinked view in after **every** write, and the
+  /// pass emits a notification per action to drive the progress dialog (#243).
+  /// Left to itself that means one full rebuild of the derived state per write:
+  /// `describeChanges()` over every pending action, and [materialize] over a
+  /// ~9.6k-account roster. A September rollover writes thousands of accounts in
+  /// one pass, so the screen behind the modal would spend the whole run
+  /// re-deriving a list nobody can read — quadratic in the size of the very
+  /// operation this app exists to do.
+  ///
+  /// So a pass answers from the view it began with and the screens refresh
+  /// **once**, when it ends and [_releaseDerived] drops the pinned lists. The
+  /// live [_linked] is never held back — [_refreshRollups], [_shareApplied] and
+  /// the applier itself all read it directly — and nothing the operator can
+  /// reach is interactive mid-pass anyway: every affordance is gated on [busy]
+  /// behind a modal dialog.
+  bool _holdDerived = false;
 
   /// The persisted operator decisions loaded from the shared store (#109/#110),
   /// used to tell which duplicate-mail collisions have been accepted. Refreshed
@@ -832,14 +853,28 @@ class ReconcileController extends ChangeNotifier {
   /// [applyOutcomesForChoice] gives the part that answers one decision, and
   /// [unroutedApplyOutcomesFor] the part no decision on the card can claim
   /// (#283).
-  List<ActionOutcomeEntry> applyOutcomesFor(PendingAccountEntry entry) {
+  List<ActionOutcomeEntry> applyOutcomesFor(PendingAccountEntry entry) =>
+      applyOutcomesForTarget(family: entry.family, targetId: entry.targetId);
+
+  /// [applyOutcomesFor] addressed by the identity the rows are stamped with,
+  /// for a target that no longer raises an entry at all (#299).
+  ///
+  /// An apply that lands settles the decision it wrote, so an account whose
+  /// last piece of work the pass finished raises nothing on the relink behind
+  /// it — and the details pane the operator applied from has no
+  /// [PendingAccountEntry] left to ask for the verdict. That verdict is the one
+  /// thing they were waiting for, so the pane reads it by `family` +
+  /// `targetId`: precisely what [ActionOutcomeEntry] carries, and all an entry
+  /// ever supplied here.
+  List<ActionOutcomeEntry> applyOutcomesForTarget({
+    required String family,
+    required String targetId,
+  }) {
     final results = _applyResults ?? _dryRunResults;
     if (results == null) return const <ActionOutcomeEntry>[];
     return <ActionOutcomeEntry>[
       for (final r in results)
-        if (r.identifiesEntry &&
-            r.family == entry.family &&
-            r.targetId == entry.targetId)
+        if (r.identifiesEntry && r.family == family && r.targetId == targetId)
           r,
     ];
   }
@@ -953,9 +988,10 @@ class ReconcileController extends ChangeNotifier {
   List<PendingAccountEntry> get pendingEntries {
     final l = _linked;
     if (l == null) return const [];
-    if (identical(_pendingCacheKey, l) &&
-        _pendingCacheChoicesVersion == _choicesVersion &&
-        _pendingEntriesCache != null) {
+    if (_pendingEntriesCache != null &&
+        (_holdDerived ||
+            (identical(_pendingCacheKey, l) &&
+                _pendingCacheChoicesVersion == _choicesVersion))) {
       return _pendingEntriesCache!;
     }
     final entries = <PendingAccountEntry>[];
@@ -1151,7 +1187,8 @@ class ReconcileController extends ChangeNotifier {
   List<MaterializedAccount> get linkedAccounts {
     final linked = _linked;
     if (linked == null) return const [];
-    if (identical(_accountDocsKey, linked) && _accountDocsCache != null) {
+    if (_accountDocsCache != null &&
+        (_holdDerived || identical(_accountDocsKey, linked))) {
       return _accountDocsCache!;
     }
     List<MaterializedAccount> docs;
@@ -2540,6 +2577,11 @@ class ReconcileController extends ChangeNotifier {
         touched.add(d.entry);
       }
     }
+    // Pin the derived lists to the view this pass starts from (#299). A real
+    // pass relinks after every write and notifies once per action, so without
+    // this the screens re-derive the whole school between one write and the
+    // next; a dry run patches nothing, so there is nothing for it to pin.
+    _holdDerived = !dry;
     _begin(ReconcilePhase.applying);
 
     final options =
@@ -2599,6 +2641,7 @@ class ReconcileController extends ChangeNotifier {
         await _shareApplied(_refreshRollups(), touched);
       }
       _applyStep = null;
+      _releaseDerived();
       _finish(ReconcilePhase.ready);
     } on Object catch (e) {
       // _applyOne swallows per-action failures; reaching here means the pass
@@ -2614,8 +2657,11 @@ class ReconcileController extends ChangeNotifier {
         await _persistEarnedWisaRules(earnedRules);
         await _shareApplied(_refreshRollups(), touched);
       }
-      // Nothing is in flight any more, however the pass ended (#243).
+      // Nothing is in flight any more, however the pass ended (#243), and the
+      // half of it that did run is as real as a whole one — so the screens get
+      // the view it left behind rather than the one it started from (#299).
       _applyStep = null;
+      _releaseDerived();
       _fail(e);
     }
   }
@@ -3256,6 +3302,25 @@ class ReconcileController extends ChangeNotifier {
         'Kon de WISA-importregel(s) niet opslaan in de instellingen: $e',
       );
     }
+  }
+
+  /// Unpins the derived caches after a pass and drops what they were pinned to
+  /// (#299), so the very next read rebuilds — once — from the settled view.
+  ///
+  /// Dropped rather than merely unpinned: the last write of the pass may well
+  /// have left [_linked] identical to the view a pinned list was keyed on, and
+  /// an identity check would then serve that list forever. Called before the
+  /// pass's closing notification, so the frame that learns the pass is over is
+  /// already the refreshed one — the same reason #289 moved the sibling
+  /// invalidation in [_relink] to the near side of the store write.
+  void _releaseDerived() {
+    _holdDerived = false;
+    _pendingEntriesCache = null;
+    _pendingCacheKey = null;
+    _accountDocsCache = null;
+    _accountDocsKey = null;
+    _cohortIndexCache = null;
+    _cohortIndexKey = null;
   }
 
   void _begin(ReconcilePhase phase) {
