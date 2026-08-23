@@ -9858,6 +9858,86 @@ void main() {
     expect(harness.wisaSyncs, pulls);
     expect(outcomes, everyElement('applied'));
   });
+
+  testWidgets(
+      'a card owing two Office 365 writes keeps both after one apply, and '
+      're-offers neither (#321)', (WidgetTester tester) async {
+    // Found while working #315, on the apply side rather than the read side. A
+    // whole-card pass resolves **every** action once, up front, from the
+    // pre-apply linked view, and each Azure modify projects its mutated record
+    // as `_az.copyWith(…)` off that same frozen record. So the second write's
+    // snapshot splice put the first write's field back to the value it had
+    // before the pass: Graph held both PATCHes, the in-memory record held one,
+    // and the relink behind the pass re-raised an action for a change Azure
+    // already carried — the contradicted record being also what the shared
+    // store publishes to the other operators.
+    //
+    // Only a run of the real app covers the whole of it: the card the operator
+    // reads, the confirmation they answer, the pass, the relink behind it, and
+    // the list that has to stop offering what was just written.
+    useTallWindow(tester);
+    final harness = twoAzureWritesHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Her card owes two Office 365 writes and nothing else: the display name
+    // WISA disagrees with, and the school her account does not carry.
+    final String id = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student')
+        .targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de naam in Azure'), findsOneWidget);
+    expect(find.text('Wijzig de school in Azure'), findsOneWidget);
+
+    // Apply the whole card, confirmation and all.
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Two real Graph PATCHes went out…
+    expect(
+      harness.graph.requests.where((r) => r.method == 'PATCH'),
+      hasLength(2),
+    );
+    // …and the record the app holds carries both of them. Before the fix it
+    // carried the school alone, with the display name back at its pre-apply
+    // value.
+    final user = harness.app.azure.snapshot!.users.single;
+    expect(user.displayName, 'Jane Doe');
+    expect(user.companyName, 'GBS');
+
+    // Which is what the operator sees: both writes reported on her card, and
+    // nothing left to apply on it — the re-offered rename is gone.
+    expect(find.byKey(ValueKey('actions-detail-$id')), findsOneWidget);
+    final Finder verdict = find.byKey(ValueKey('entry-outcomes-student-$id'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de naam in Azure')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de school in Azure')),
+      findsOneWidget,
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+    );
+    expect(find.byKey(ValueKey('entry-apply-$id')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.

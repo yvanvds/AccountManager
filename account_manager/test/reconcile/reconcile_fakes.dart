@@ -1672,6 +1672,29 @@ ReconcileHarness dualEnrolledHarness() => ReconcileHarness(
       azure: azSnap(users: const []),
     );
 
+/// A harness for a card that owes **two Azure writes on one account** (#321).
+///
+/// One student, fully linked and already in step with Smartschool, whose
+/// Office 365 account is wrong in two independent ways: its `displayName` is
+/// blank (so `ModifyAzureName` raises) and its `companyName` names another
+/// school (so `ModifyAzureSchool` does). Applying her card is therefore a pass
+/// of two Azure PATCHes against one record — the shape whose second snapshot
+/// splice used to revert the first one's, because every action was resolved
+/// once, up front, off the pre-apply view.
+ReconcileHarness twoAzureWritesHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(users: [azUser(companyName: 'SBE')]),
+    );
+
 /// A harness for the school-less Actions drill-down (#210). Two managed schools
 /// (1 and 2) each hold students, and their years overlap: school 1 has `1A` and
 /// `3C`, school 2 has `1B` and the non-numeric `OKAN`. So a correct overview

@@ -3293,6 +3293,89 @@ void main() {
     });
   });
 
+  group('a second Azure write in one pass (#321)', () {
+    PendingAccountEntry studentEntry(ReconcileHarness h) =>
+        h.controller.pendingEntries.singleWhere((e) => e.family == 'student');
+
+    List<String> summariesOf(PendingAccountEntry e) =>
+        <String>[for (final c in e.choices) c.selected.changes.summary];
+
+    test('the card owes both Azure modifies before the pass', () async {
+      final h = twoAzureWritesHarness();
+      await h.controller.sync();
+
+      expect(
+        summariesOf(studentEntry(h)),
+        containsAll(<String>[
+          'Wijzig de naam in Azure',
+          'Wijzig de school in Azure',
+        ]),
+        reason: 'the fixture is the two-Azure-writes card the bug needs',
+      );
+    });
+
+    test('the held record carries both writes, not only the last', () async {
+      // The pass resolved every action once, up front, off the pre-apply view,
+      // and an Azure modify projects its mutated record as `_az.copyWith(…)`
+      // off the record it was bound to. So the second splice put the pre-apply
+      // value of the first write's field back: Graph held both PATCHes and the
+      // snapshot held one.
+      final h = twoAzureWritesHarness();
+      await h.controller.sync();
+
+      await h.controller.applyEntry(studentEntry(h));
+
+      expect(h.controller.error, isNull);
+      expect(
+        h.controller.applyResults!.map((r) => r.outcome),
+        everyElement(actions.ActionOutcome.applied),
+      );
+      expect(
+        h.graph.requests.where((r) => r.method == 'PATCH'),
+        hasLength(2),
+        reason: 'both writes really went out',
+      );
+      final user = h.app.azure.snapshot!.users.single;
+      expect(user.displayName, 'Jane Doe');
+      expect(user.companyName, 'GBS');
+    });
+
+    test('neither write is re-offered the moment it landed', () async {
+      // The contradicted record is what the relink dispatches from — and what
+      // `_shareApplied` publishes to the other operators — so a reverted splice
+      // re-raises an action for a change Azure already holds.
+      final h = twoAzureWritesHarness();
+      await h.controller.sync();
+
+      await h.controller.applyEntry(studentEntry(h));
+
+      expect(
+        h.controller.pendingEntries.where((e) => e.family == 'student'),
+        isEmpty,
+      );
+    });
+
+    test('a dry-run still projects both, writing nothing', () async {
+      // A projection refreshes no view, so there is nothing to re-resolve
+      // against and the pass must behave exactly as it always did.
+      final h = twoAzureWritesHarness();
+      await h.controller.sync();
+
+      await h.controller.dryRunEntry(studentEntry(h));
+
+      expect(
+        h.controller.dryRunResults!.map((r) => r.changes.summary),
+        containsAll(<String>[
+          'Wijzig de naam in Azure',
+          'Wijzig de school in Azure',
+        ]),
+      );
+      expect(h.graph.requests, isEmpty);
+      expect(summariesOf(studentEntry(h)), hasLength(2),
+          reason: 'nothing was written, so nothing was settled');
+    });
+  });
+
   group('LogBuffer', () {
     test('caps its entries and reports errors', () {
       final log = LogBuffer(capacity: 3, clock: () => kFixtureDate);

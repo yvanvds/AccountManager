@@ -2727,8 +2727,35 @@ class ReconcileController extends ChangeNotifier {
       'openstaande actie(s).',
     );
 
+    // The view [selected] is bound to, and the actions the view in hand raises
+    // (#321). Both stay null-ish until a write replaces the view — a dry run
+    // patches nothing, so it never re-resolves anything.
+    var boundTo = _linked;
+    Map<String, Object>? relinked;
+
     try {
-      for (final (index, option) in selected.indexed) {
+      for (final (index, planned) in selected.indexed) {
+        // Re-resolve this decision against the view the **previous** write
+        // produced (#321).
+        //
+        // Every action of a pass is resolved once, up front, from the pre-apply
+        // linked view, and an Azure modify projects its mutated record as
+        // `_az.copyWith(…)` off the record it was bound to. So a pass with two
+        // Azure writes on one account had its second snapshot splice put the
+        // pre-apply value of the first write's field back: Graph held both
+        // PATCHes, the in-memory record held one, and the relink behind it
+        // re-raised an action for a change Azure already had — which is also
+        // what [_shareApplied] then published to the other operators.
+        //
+        // [_chainFollowUps] never had the problem, because it takes each link
+        // off the freshly relinked view's own dispatch; this gives the pass
+        // loop the same treatment.
+        final current = _linked;
+        if (current != null && !identical(current, boundTo)) {
+          relinked = _actionsByIdentity(current);
+          boundTo = current;
+        }
+        final option = relinked == null ? planned : _rebind(planned, relinked);
         // Name the action *before* it runs, so the modal progress dialog says
         // what is in flight rather than what just finished (#243). `results`
         // already holds one row per write performed, so anything in it beyond
@@ -2801,6 +2828,82 @@ class ReconcileController extends ChangeNotifier {
       return applier.applyStaff(action, options: options);
     }
     return applier.applyGroup(action as actions.GroupAction, options: options);
+  }
+
+  /// Every pending action of [linked] under the identity a
+  /// [PendingActionOption] carries — `family|targetId|kind` (#321).
+  ///
+  /// Keyed with the very values [_entriesFor] stamps its options with, so a
+  /// lookup answers with the action the pending list *would* offer for that
+  /// decision had it been rebuilt from this view. First-seen wins, matching the
+  /// entry list's own grouping; a kind that names more than one decision on a
+  /// card is already ambiguous there (#283).
+  ///
+  /// Rebuilt once per write rather than per remaining decision: the relink it
+  /// follows already walks the whole roster, so this is a constant factor on
+  /// top of something the pass pays anyway.
+  Map<String, Object> _actionsByIdentity(LinkedState linked) {
+    final index = <String, Object>{};
+    for (final a in linked.studentActions) {
+      index.putIfAbsent(
+        'student|${a.target.id.value}|${a.runtimeType}',
+        () => a,
+      );
+    }
+    for (final a in linked.staffActions) {
+      index.putIfAbsent('staff|${a.target.id.value}|${a.runtimeType}', () => a);
+    }
+    for (final a in linked.groupActions) {
+      index.putIfAbsent(
+        'group|${_groupLabel(a.target)}|${a.runtimeType}',
+        () => a,
+      );
+    }
+    return index;
+  }
+
+  /// [planned] re-bound to the action [index] holds for the same decision, with
+  /// its diff re-read off that action (#321).
+  ///
+  /// Only the live action and its [PendingActionOption.changes] move. The
+  /// identity stamps are what route the pass's verdict back to the card and the
+  /// decision it answers (#272/#283), the operator's pick is what the pass
+  /// agreed to run, and the label is the one they read on the confirmation —
+  /// none of which a write may re-decide underneath them.
+  ///
+  /// A decision the relinked view no longer raises keeps the binding it was
+  /// planned with. That is what this pass has always run, and it is the safe
+  /// side of the trade: a target can change identity under a write (a class
+  /// entry is keyed by its label), so treating "not found" as "no longer
+  /// needed" would silently drop the rest of an operator's card.
+  PendingActionOption _rebind(
+    PendingActionOption planned,
+    Map<String, Object> index,
+  ) {
+    final fresh =
+        index['${planned.family}|${planned.targetId}|${planned.kind}'];
+    if (fresh == null || identical(fresh, planned.action)) return planned;
+    return PendingActionOption(
+      action: fresh,
+      kind: planned.kind,
+      group: planned.group,
+      isDefault: planned.isDefault,
+      family: planned.family,
+      targetId: planned.targetId,
+      target: planned.target,
+      changes: _describeAny(fresh),
+      canApply: planned.canApply,
+      canApplyToAll: planned.canApplyToAll,
+      unlockedSystems: planned.unlockedSystems,
+    );
+  }
+
+  /// One action's pure diff, whichever family it belongs to — the read half of
+  /// [_applyAny]'s dispatch.
+  static actions.ChangeSet _describeAny(Object action) {
+    if (action is actions.StudentAction) return action.describeChanges();
+    if (action is actions.StaffAction) return action.describeChanges();
+    return (action as actions.GroupAction).describeChanges();
   }
 
   /// Runs one selected option and returns a result row per **write it
