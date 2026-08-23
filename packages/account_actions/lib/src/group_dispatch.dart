@@ -78,6 +78,14 @@ import 'group_placement.dart';
 /// class raises one proposal rather than one per sub-group. When omitted, the
 /// dispatch is exactly as it shipped before #228.
 ///
+/// A class whose group Graph will not manage the membership of — a mail-enabled
+/// security group or a distribution list, both mastered by Exchange Online —
+/// yields the informational [AzureClassGroupNotManageable] in place of
+/// [SyncAzureClassGroupMembers] (#331). The two are mutually exclusive rather
+/// than alternatives: there is nothing to choose between a write and a refusal,
+/// and the notice exists so the class stops being offered a sync that fails
+/// wholesale on every pass.
+///
 /// An Azure-only orphan group (`wisa == null && smartschool == null`, #52)
 /// yields [DeleteAzureClassGroup] (#271) — **one action, no radio pair** since
 /// #327 — and only when it is shaped like a group this app created; anything
@@ -132,7 +140,13 @@ List<GroupAction> groupActionsFor(
     // so these ride alongside both branches (#228).
     if (azurePlan != null) ...[
       CreateAzureClassGroup(group, azurePlan),
+      // The roster readings (#228/#331). Not an either/or: their predicates
+      // partition a class whose membership differs, so at most one survives
+      // `evaluate` — the write where Graph manages the group, the "(manueel)"
+      // notice where Exchange Online masters it and every add and remove would
+      // be refused. The write leads because it is the ordinary case.
       SyncAzureClassGroupMembers(group, azurePlan),
+      AzureClassGroupNotManageable(group, azurePlan),
     ],
     // The stale-group readings (#271/#327). Not an either/or: their predicates
     // partition the stale groups, so at most one of the two ever survives

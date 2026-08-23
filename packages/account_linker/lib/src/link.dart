@@ -142,7 +142,7 @@ LinkedSnapshot link(
         smartschool: rec.smartschool,
         azure: rec.azure,
         confidence: _confidence(rec),
-        wisaSchoolIds: rec.wisaSchoolIds,
+        wisaClassGroups: rec.wisaClassGroups,
         wisaPresence: _presence(rec.wisaSchoolIds, effectiveOurSchoolIds),
       ),
   ];
@@ -310,14 +310,18 @@ List<_Record> _buildStudentRecords(
     final match = key == null ? null : byWisaId[key];
     if (match == null) {
       final placeholder = _Record(wisa: student)
-        ..wisaSchoolIds.add(student.schoolId);
+        ..wisaClassGroups[student.schoolId] = student.classGroup.trim();
       records.add(placeholder);
       if (key != null) byWisaId.putIfAbsent(key, () => placeholder);
       continue;
     }
     // Every school this person was found in, so `_presence` can see that one
-    // of them is ours even when another is not.
-    match.wisaSchoolIds.add(student.schoolId);
+    // of them is ours even when another is not — and so a view can say which
+    // class the other school holds them in (#334). The bare `classGroup` is
+    // what lands here, the same fact the materialized `classroom` carries for
+    // our own school, so the two class facts on one card are the same kind of
+    // fact.
+    match.wisaClassGroups[student.schoolId] = student.classGroup.trim();
     if (_prefersWisaRow(match.wisa, student, ourSchoolIds)) {
       match.wisa = student;
     }
@@ -764,15 +768,25 @@ class _Record {
   /// The WISA row this person's class placement is read from. A person enrolled
   /// in two group schools has two rows (#318); the one from a school we manage
   /// wins, see [_prefersWisaRow]. Every school they were found in is on
-  /// [wisaSchoolIds] regardless of which row this holds.
+  /// [wisaClassGroups] regardless of which row this holds.
   wapi.WisaStudent? wisa;
 
   az.AzureUser? azure;
 
-  /// The WISA school ids this record's student was found in — accumulated as
-  /// WISA rows attach (a single id in the common case; more only for a student
-  /// enrolled across group schools). Frozen onto [LinkedAccount.wisaSchoolIds].
-  final Set<int> wisaSchoolIds = <int>{};
+  /// Every WISA school this record's student was found in, mapped to the class
+  /// that school's row holds them in — accumulated as WISA rows attach (a single
+  /// entry in the common case; more only for a student enrolled across group
+  /// schools). Frozen onto [LinkedAccount.wisaClassGroups].
+  ///
+  /// The class travels with the school id because a sibling school's enrolment
+  /// is something a view *states* rather than merely counts (#334): the ids
+  /// alone can say "she is also somewhere else", never where. It stays presence
+  /// either way — the class we write is [wisa]'s, never one read from here
+  /// (INV-25).
+  final Map<int, String> wisaClassGroups = <int, String>{};
+
+  /// The school ids of [wisaClassGroups] — what [_presence] classifies.
+  Set<int> get wisaSchoolIds => wisaClassGroups.keys.toSet();
 
   _Record({this.smartschool, this.wisa, this.azure});
 }

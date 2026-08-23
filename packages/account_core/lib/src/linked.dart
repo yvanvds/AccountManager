@@ -65,11 +65,25 @@ class LinkedAccount {
   final AzureUser? azure;
   final LinkConfidence confidence;
 
-  /// The WISA school ids this student's record was found in — the raw
-  /// per-school membership the linker joins against the managed-school set
-  /// (#133). Empty when [wisa] is null. Retained on the record so the ours-vs-
-  /// group distinction is auditable, not just its derived [wisaPresence].
-  final Set<int> wisaSchoolIds;
+  /// Every WISA school this person was found in, mapped to the class group that
+  /// school's row holds them in — the raw per-school membership the linker joins
+  /// against the managed-school set (#133). Empty when [wisa] is null; a single
+  /// entry in the common case, more only for a person enrolled across group
+  /// schools. Retained on the record so the ours-vs-group distinction is
+  /// auditable, not just its derived [wisaPresence].
+  ///
+  /// **A sibling school's entry is presence and nothing else** (INV-25). It
+  /// answers "is this person still somewhere in the group?", which gates
+  /// deletion (#134), and it is context a view may *state* — "ook ingeschreven
+  /// in …" (#334). Every value we write into our own systems comes from [wisa],
+  /// the row of a school we manage: reading a class out of here instead is
+  /// exactly the bug of #318 and #332.
+  final Map<int, String> wisaClassGroups;
+
+  /// The WISA school ids this student's record was found in — the keys of
+  /// [wisaClassGroups], which is the one place the membership is stored so the
+  /// ids and the classes behind them can never disagree.
+  Set<int> get wisaSchoolIds => wisaClassGroups.keys.toSet();
 
   /// Where this student sits relative to the schools we manage — the signal the
   /// departure actions turn on (#134). Defaults to [WisaPresence.ours]; the
@@ -85,7 +99,7 @@ class LinkedAccount {
     this.smartschool,
     this.azure,
     required this.confidence,
-    this.wisaSchoolIds = const <int>{},
+    this.wisaClassGroups = const <int, String>{},
     this.wisaPresence = WisaPresence.ours,
   });
 

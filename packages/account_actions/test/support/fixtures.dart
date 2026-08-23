@@ -129,14 +129,16 @@ az.AzureUser azureUser({
 /// [wisaPresence] controls the ours-vs-group classification (#134): the default
 /// [WisaPresence.ours] means a WISA-present student is one of ours (pre-#134
 /// behaviour), while [WisaPresence.groupOnly] models a student who moved to a
-/// sibling group school we don't manage.
+/// sibling group school we don't manage. [wisaClassGroups] is the per-school
+/// membership behind it — school id → the class that school's row holds this
+/// person in (#334).
 LinkedAccount linked({
   wapi.WisaStudent? wisa,
   ss.SmartschoolAccount? smartschool,
   az.AzureUser? azure,
   String id = 'p0',
   WisaPresence wisaPresence = WisaPresence.ours,
-  Set<int> wisaSchoolIds = const <int>{},
+  Map<int, String> wisaClassGroups = const <int, String>{},
 }) =>
     LinkedAccount(
       id: LinkedAccountId(id),
@@ -146,7 +148,7 @@ LinkedAccount linked({
       azure: azure,
       confidence: LinkConfidence.high,
       wisaPresence: wisaPresence,
-      wisaSchoolIds: wisaSchoolIds,
+      wisaClassGroups: wisaClassGroups,
     );
 
 /// A fully-synced student present in all three systems with matching fields —
@@ -180,17 +182,26 @@ Group ssGroupNode({
 /// [ClassPlacement.resolveClass] searches by name (default: the official `3A`
 /// class). [currentClass] is the student's current official class — omit for a
 /// student in no class yet (a fresh account).
+///
+/// [ourClasses] is the WISA class inventory [ClassPlacement.isOurClass] answers
+/// from (#333). It defaults to `{className}` — the placement's own target is
+/// one of ours — so a test that is not about the guard reads as it did before
+/// the guard existed. Pass it explicitly (`const {}`, or another school's
+/// classes) to build a placement naming a class we do not have.
 ClassPlacement classPlacement({
   String className = '3A',
   Group? currentClass,
   List<Group> tree = const [],
+  Set<String>? ourClasses,
 }) {
   final resolved = tree.isEmpty ? [ssGroup(code: '3A', name: '3A')] : tree;
   final byName = {for (final g in resolved) g.name: g};
+  final ours = ourClasses ?? {className};
   return ClassPlacement(
     className: className,
     currentClass: currentClass,
     resolveClass: (name) => byName[name],
+    isOurClass: ours.contains,
   );
 }
 
@@ -416,6 +427,33 @@ az.AzureGroup azureClassGroup(
       displayName: '$prefix-$className',
       mail: '$prefix-$className@$domain',
       mailNickname: '$prefix-$className',
+      mailEnabled: true,
+      groupTypes: const ['Unified'],
+      memberIds: memberIds,
+    );
+
+/// An Office 365 class group somebody made by hand as a **mail-enabled security
+/// group** (#331) — `SSM-1A` in the live tenant, and the one shape among the
+/// school's 372 prefixed groups whose membership Graph refuses to write.
+///
+/// Identical to [azureClassGroup] in everything an operator can see: same name,
+/// same nickname, same address. Only `securityEnabled` + the empty `groupTypes`
+/// tell them apart, which is exactly why the app proposed a roster sync on it
+/// every pass and every one of the 38 changes came back refused.
+az.AzureGroup azureMailEnabledSecurityClassGroup(
+  String className, {
+  String prefix = 'SSM',
+  String domain = 'student.school.example',
+  String? id,
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: id ?? 'az-$prefix-$className',
+      displayName: '$prefix-$className',
+      mail: '$prefix-$className@$domain',
+      mailNickname: '$prefix-$className',
+      mailEnabled: true,
+      securityEnabled: true,
       memberIds: memberIds,
     );
 

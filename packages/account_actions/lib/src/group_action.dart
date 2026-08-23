@@ -1198,6 +1198,14 @@ class CreateAzureClassGroup extends GroupAction {
 /// class groups are out of scope, so a member this app cannot account for as one
 /// of its students is never touched — see
 /// [AzureClassGroupPlan.membersToRemove].
+///
+/// **It never proposes on a group Graph will not manage** (#331). A group
+/// mastered by Exchange Online — a mail-enabled security group, or a
+/// distribution list — refuses every add and every remove, so a diff on one is
+/// not work: it is a proposal that fails wholesale, is re-offered on the next
+/// pass, and can never be got rid of. [AzureClassGroupNotManageable] states the
+/// situation there instead, and the two partition the same condition, so a class
+/// raises one row and never none or two.
 class SyncAzureClassGroupMembers extends GroupAction {
   /// The Office 365 naming + roster context, injected by the dispatch.
   final AzureClassGroupPlan plan;
@@ -1208,7 +1216,8 @@ class SyncAzureClassGroupMembers extends GroupAction {
 
   @override
   bool evaluate() =>
-      plan.owner && group.azure != null && plan.membershipDiffers;
+      _classGroupMembershipDiffers(group, plan) &&
+      _canManageClassGroupMembership(group);
 
   /// **In bulk — the group family's headline grant** (#293), and the one this
   /// flag was decided on explicitly rather than by analogy.
@@ -1281,14 +1290,24 @@ class SyncAzureClassGroupMembers extends GroupAction {
         ...await groups.addMembers(_azure.id, plan.membersToAdd),
         ...await groups.removeMembers(_azure.id, plan.membersToRemove),
       ];
-      final failures = results.where((r) => !r.isSuccess).length;
-      if (failures > 0) {
+      // What Graph said, not merely how often it said no (#330). A count alone
+      // is unactionable — it was the whole of what the operator got when
+      // `SSM-1A` turned out to be a group Graph will not manage the membership
+      // of (#331) — so the first refusal's status and error code ride along,
+      // and a batch that failed for *mixed* reasons says how many other kinds
+      // there were rather than pretending the first explains all of them.
+      final report = az.BatchReport(results);
+      if (report.hasFailures) {
+        final reasons = report.reasons;
+        final extra = reasons.length > 1
+            ? ' (+${reasons.length - 1} other error(s))'
+            : '';
         return _failed(
           changes,
           Origin.azure,
           StateError(
-            '$failures of ${results.length} membership change(s) on '
-            '${plan.displayName} failed',
+            '${report.failureCount} of ${report.total} membership change(s) on '
+            '${plan.displayName} failed — ${reasons.first}$extra',
           ),
         );
       }
@@ -1302,6 +1321,85 @@ class SyncAzureClassGroupMembers extends GroupAction {
       return _failed(changes, Origin.azure, e);
     }
   }
+}
+
+/// A class whose Office 365 group **Graph will not manage the membership of**
+/// (#331) — the lone informational row such a class is left with, where
+/// [SyncAzureClassGroupMembers] used to propose a write that could never land.
+///
+/// The reported bug, and the shape of it: `SSM-1A` in the live tenant is a
+/// **mail-enabled security group** — `mailEnabled: true`, `securityEnabled:
+/// true`, `groupTypes: []` — the one such group among the school's 372. Its
+/// membership is Exchange Online's, not the directory's, so all 38 additions and
+/// removals came back refused, the class card reported *"38 of 38 membership
+/// change(s) failed"*, and the identical proposal returned on the next pass,
+/// forever. The other 371 groups are Microsoft 365 groups (255) or plain
+/// security groups (116), both of which Graph manages, which is why exactly one
+/// class in the school misbehaved.
+///
+/// The app could not see the difference until #331: `graphSelectFields`
+/// requested neither `mailEnabled` nor `groupTypes`, and `isUnified` was
+/// inferred from `securityEnabled` + `mail`. Reading the two fields Graph
+/// actually answers with is what makes this row possible
+/// ([az.AzureGroup.canManageMembership]).
+///
+/// **Informational** (`canApply == false`), like every other row whose remedy
+/// lives in another system: there is no automated write, and inventing one would
+/// mean the app doing in Exchange what the operator must decide. The two ways
+/// out are stated on the card — manage the members in Exchange Online, or
+/// replace the group with a Microsoft 365 one, after which the app takes the
+/// class over again (a mail-enabled security group cannot be *converted*, so
+/// "replace" means freeing the address and letting [CreateAzureClassGroup] make
+/// the group it would have made).
+///
+/// It fires **exactly where the sync cannot**, on the same
+/// [_classGroupMembershipDiffers] condition: a class whose roster already
+/// matches has nothing to say, however the group is mastered.
+class AzureClassGroupNotManageable extends GroupAction {
+  /// The Office 365 naming + roster context, injected by the dispatch.
+  final AzureClassGroupPlan plan;
+
+  const AzureClassGroupNotManageable(super.group, this.plan);
+
+  az.AzureGroup get _azure => group.azure! as az.AzureGroup;
+
+  @override
+  bool evaluate() =>
+      _classGroupMembershipDiffers(group, plan) &&
+      !_canManageClassGroupMembership(group);
+
+  @override
+  bool get canApply => false;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'De Office 365-groep ${plan.displayName} is een '
+            '${_exchangeGroupKind(_azure)}. Graph kan haar ledenlijst niet '
+            'beheren. Beheer de leden in Exchange Online, of vervang de groep '
+            'door een Microsoft 365-groep, dan neemt de app de klas weer over.',
+        // Nothing is written here, so nothing moves (#305/#306): these lines
+        // describe the group the operator is being sent to Exchange Online for,
+        // and how far its roster has drifted while nobody could write to it.
+        fields: [
+          FieldChange.statement('type', _exchangeGroupKind(_azure)),
+          if ((_azure.mail ?? '').trim().isNotEmpty)
+            FieldChange.statement('mail', _azure.mail!.trim()),
+          FieldChange.statement(
+            'niet gesynchroniseerd',
+            '${plan.membersToAdd.length} toe te voegen, '
+                '${plan.membersToRemove.length} te verwijderen',
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      throw UnsupportedError(
+        'AzureClassGroupNotManageable is informational and cannot be applied '
+        '(canApply is false) — Graph refuses every membership write on an '
+        'Exchange-mastered group',
+      );
 }
 
 /// An Office 365 class group whose class no longer exists in WISA or
@@ -1328,10 +1426,13 @@ class SyncAzureClassGroupMembers extends GroupAction {
 /// trick is redundant and the guard is stated where it is enforced.
 ///
 /// So this now fires **exactly where the delete cannot** — see
-/// [_deletableStaleClassGroup] — which in practice means a linked record naming
-/// no Azure object id to address a `DELETE /groups/` to. There is then
-/// genuinely nothing to offer, and saying so *is* the whole content of the row,
-/// marked "(manueel)" like every other informational action.
+/// [_deletableStaleClassGroup] — which means a linked record naming no Azure
+/// object id to address a `DELETE /groups/` to, or (since #331) a group
+/// Exchange Online masters rather than the directory. There is then genuinely
+/// nothing to offer, and saying so *is* the whole content of the row, marked
+/// "(manueel)" like every other informational action. In the Exchange case the
+/// row also says *why* and where to go instead — [_staleGroupFacts] states the
+/// group's shape beside its address.
 ///
 /// It is narrow, but no narrower than the linker's own orphan rule: an
 /// unmatched Azure group is reported when the name it answers on inside the
@@ -1466,6 +1567,40 @@ class DeleteAzureClassGroup extends GroupAction {
   }
 }
 
+/// Whether the class's Office 365 group has a roster to reconcile at all
+/// (#228) — the one condition [SyncAzureClassGroupMembers] and
+/// [AzureClassGroupNotManageable] share.
+///
+/// One definition rather than two copies, because the two readings partition
+/// it: [_canManageClassGroupMembership] is the half the write proposes on and
+/// the notice is exactly the remainder, so a class raises one row and never
+/// none or two — the same shape the stale-group and leftover-class pairs are
+/// drawn in.
+bool _classGroupMembershipDiffers(
+  LinkedGroup group,
+  AzureClassGroupPlan plan,
+) =>
+    plan.owner && group.azure != null && plan.membershipDiffers;
+
+/// Whether Graph will manage the membership of [group]'s Office 365 group
+/// (#331) — false for the Exchange-mastered shapes, which refuse every add and
+/// every remove.
+///
+/// A record carrying no concrete connector group answers `true`: there is
+/// nothing to refuse, and the linked-record model is not where a missing group
+/// is diagnosed.
+bool _canManageClassGroupMembership(LinkedGroup group) {
+  final azure = group.azure;
+  return azure is! az.AzureGroup || azure.canManageMembership;
+}
+
+/// What to call an Exchange-mastered group on a card (#331). The two shapes read
+/// very differently to an operator looking for the group in Exchange Online, and
+/// `securityEnabled` is what tells them apart.
+String _exchangeGroupKind(az.AzureGroup azure) => azure.securityEnabled
+    ? 'mail-enabled beveiligingsgroep'
+    : 'distributielijst';
+
 /// Whether [group] is an Office 365 class group left behind by a class that no
 /// longer exists anywhere (#228/#271) — the one condition
 /// [AzureClassGroupWithoutClass] and [DeleteAzureClassGroup] share.
@@ -1517,12 +1652,19 @@ bool _staleClassGroup(LinkedGroup group) {
 ///
 /// The name-shape test is a restatement of one [_staleClassGroup] already
 /// makes, deliberately: a delete must not inherit its whole scope from a
-/// predicate it does not spell out. So the case this genuinely separates off is
-/// the blank object id.
-bool _deletableStaleClassGroup(LinkedGroup group) =>
-    _staleClassGroup(group) &&
-    looksLikeClassName(group.className) &&
-    ((group.azure as az.AzureGroup?)?.id.trim().isNotEmpty ?? false);
+/// predicate it does not spell out. So the cases this genuinely separates off
+/// are the blank object id and, since #331, the **Exchange-mastered** group: a
+/// mail-enabled security group or a distribution list is not the directory's to
+/// delete either, so proposing `DELETE /groups/{id}` on one is the same doomed
+/// write the membership sync used to offer. The notice states it instead — see
+/// [_staleGroupFacts], which names the reason there.
+bool _deletableStaleClassGroup(LinkedGroup group) {
+  final azure = group.azure as az.AzureGroup?;
+  return _staleClassGroup(group) &&
+      looksLikeClassName(group.className) &&
+      (azure?.id.trim().isNotEmpty ?? false) &&
+      !(azure?.isExchangeManaged ?? false);
+}
 
 /// The facts both readings of a stale Office 365 class group state about the
 /// group they are describing (#305) — stated, never diffed.
@@ -1531,10 +1673,22 @@ bool _deletableStaleClassGroup(LinkedGroup group) =>
 /// security group carrying no `mail` (#312), and an empty statement renders as
 /// a bare `mail: ` under the heading — a label for a fact the group does not
 /// have.
+///
+/// The management line is the same kind of conditional fact (#331). It appears
+/// only on an Exchange-mastered group, which is exactly where the delete cannot
+/// fire — so in practice only [AzureClassGroupWithoutClass] ever shows it, and
+/// it is the difference between "nothing can be done here" and knowing *why*
+/// and *where* to go and do it.
 List<FieldChange> _staleGroupFacts(az.AzureGroup? azure) {
   final mail = azure?.mail?.trim() ?? '';
   return <FieldChange>[
     if (mail.isNotEmpty) FieldChange.statement('mail', mail),
+    if (azure != null && azure.isExchangeManaged)
+      FieldChange.statement(
+        'beheer',
+        '${_exchangeGroupKind(azure)} — Graph beheert deze groep niet; '
+            'verwijder ze in Exchange Online',
+      ),
     FieldChange.statement('leden', '${azure?.memberIds.length ?? 0}'),
   ];
 }

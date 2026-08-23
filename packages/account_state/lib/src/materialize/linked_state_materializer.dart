@@ -102,6 +102,7 @@ MaterializedView materialize(
       inWisa: account.wisa != null,
       inSmartschool: account.smartschool != null,
       inAzure: account.azure != null,
+      otherEnrolments: _otherEnrolments(account, schoolLabels),
       warnings: _warningsFor(account.smartschool, warningsByUid),
       candidates: byAccount[account.id.value] ?? const [],
     ));
@@ -506,6 +507,42 @@ _Placement _placeAccount(
     gradeYear: _noGrade,
     classroom: _noClassroom,
   );
+}
+
+/// The group schools this person is enrolled in **besides** the one the card's
+/// own class facts come from (#334) — empty for the ordinary single-school
+/// account, which is every account but a handful.
+///
+/// Only a person the aggregated pull returned from more than one school has any:
+/// with a single row there is nothing to say, so a single-school card renders
+/// exactly as it did before this existed. The row left out is the one
+/// [_placeAccount] already placed the card in — our school's, the authoritative
+/// one (INV-25). When the placement fell through to `unassigned` no row was
+/// shown, so every school is named: a departed dual-enrolled student's card
+/// carries no class of ours to contradict, and where she went is the whole
+/// answer it can give.
+///
+/// School names come from [schoolLabels] — the WISA school list merged with the
+/// operator's persisted profiles — degrading to `wisaSchoolLabel`'s last-resort
+/// `School <id>` for an id no list knows. Never a name invented from an id
+/// (#204/#208). Ordered by school id so one enrolment reads the same way twice.
+List<OtherEnrolment> _otherEnrolments(
+  core.LinkedAccount account,
+  Map<int, String> schoolLabels,
+) {
+  if (account.wisaClassGroups.length < 2) return const [];
+  final wisa = account.wisa;
+  final int? placed =
+      wisa is wapi.WisaStudent && account.isInOurWisa ? wisa.schoolId : null;
+  final ids = account.wisaClassGroups.keys.where((id) => id != placed).toList()
+    ..sort();
+  return <OtherEnrolment>[
+    for (final id in ids)
+      OtherEnrolment(
+        schoolLabel: schoolLabels[id] ?? wisaSchoolLabel(schoolId: id),
+        classroom: account.wisaClassGroups[id]!.trim(),
+      ),
+  ];
 }
 
 /// The grade-year bucket for a WISA class group: its leading run of digits

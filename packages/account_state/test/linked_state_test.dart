@@ -144,15 +144,30 @@ ss.SmartschoolSnapshot _sSnap({
 az.AzureSnapshot _aSnap({List<az.AzureUser> users = const []}) =>
     az.AzureSnapshot(fetchedAt: _d, users: users, groups: const []);
 
+/// A linked student record.
+///
+/// [wisa] is the WISA row the linker chose for this person — which is what
+/// [PlacementResolver.classPlacementFor] reads (#332), so a fixture must carry
+/// the same row its snapshot does. Pass it directly when the person has more
+/// than one row; otherwise the named parts build the single obvious one.
 core.LinkedAccount _linkedStudent({
   required String wisaId,
   String classGroup = '',
+  String classSubGroup = '',
+  int schoolId = 1,
   String? ssUid,
+  wapi.WisaStudent? wisa,
 }) =>
     core.LinkedAccount(
       id: const core.LinkedAccountId('p0'),
       role: core.PersonRole.student,
-      wisa: _wStudent(wisaId: wisaId, classGroup: classGroup),
+      wisa: wisa ??
+          _wStudent(
+            wisaId: wisaId,
+            classGroup: classGroup,
+            classSubGroup: classSubGroup,
+            schoolId: schoolId,
+          ),
       smartschool: ssUid == null
           ? null
           : _ssAccount(uid: ssUid, accountId: wisaId, mail: '$ssUid@x'),
@@ -221,11 +236,11 @@ void main() {
   group('PlacementResolver.classPlacementFor', () {
     test('appends the sub-group to the class name when the class uses them',
         () {
+      final student =
+          _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: 'A');
       final resolver = PlacementResolver(
         wisa: _wSnap(
-          students: [
-            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: 'A'),
-          ],
+          students: [student],
           classGroups: [
             _wClass('1A', groupName: 'A', adminCode: 'a1'),
             _wClass('1A', groupName: 'B', adminCode: 'a2'),
@@ -234,23 +249,25 @@ void main() {
         smartschool: _sSnap(),
       );
 
-      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+      final placement = resolver
+          .classPlacementFor(_linkedStudent(wisaId: '1', wisa: student));
 
       expect(placement.className, '1A A');
     });
 
     test('uses the bare class name when the class has a single admin code', () {
+      final student =
+          _wStudent(wisaId: '1', classGroup: '3C', classSubGroup: 'x');
       final resolver = PlacementResolver(
         wisa: _wSnap(
-          students: [
-            _wStudent(wisaId: '1', classGroup: '3C', classSubGroup: 'x'),
-          ],
+          students: [student],
           classGroups: [_wClass('3C', adminCode: 'c1')],
         ),
         smartschool: _sSnap(),
       );
 
-      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+      final placement = resolver
+          .classPlacementFor(_linkedStudent(wisaId: '1', wisa: student));
 
       expect(placement.className, '3C');
     });
@@ -263,20 +280,13 @@ void main() {
       // `a2` read as two admin codes for "1C", so both schools' students got
       // their `KLASGROEP` appended and every one of them was proposed for a
       // move to the non-existent class "1C 00".
+      final ours =
+          _wStudent(wisaId: '1', classGroup: '1C', classSubGroup: '00');
+      final sibling = _wStudent(
+          wisaId: '2', classGroup: '1C', classSubGroup: '00', schoolId: 2);
       final resolver = PlacementResolver(
         wisa: _wSnap(
-          students: [
-            _wStudent(
-                wisaId: '1',
-                classGroup: '1C',
-                classSubGroup: '00',
-                schoolId: 1),
-            _wStudent(
-                wisaId: '2',
-                classGroup: '1C',
-                classSubGroup: '00',
-                schoolId: 2),
-          ],
+          students: [ours, sibling],
           classGroups: [
             _wClass('1C', adminCode: 'a1', schoolId: 1),
             _wClass('1C', adminCode: 'a2', schoolId: 2),
@@ -285,9 +295,15 @@ void main() {
         smartschool: _sSnap(),
       );
 
-      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: ours))
+              .className,
           '1C');
-      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '2')).className,
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '2', wisa: sibling))
+              .className,
           '1C');
     });
 
@@ -296,16 +312,12 @@ void main() {
         'shares its name (#221)', () {
       // The over-correction guard: per-school scoping must not swallow a real
       // split. School 1's `1A` has two admin codes of its own.
+      final ours = _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: 'A');
+      final sibling = _wStudent(
+          wisaId: '2', classGroup: '1A', classSubGroup: '00', schoolId: 2);
       final resolver = PlacementResolver(
         wisa: _wSnap(
-          students: [
-            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: 'A'),
-            _wStudent(
-                wisaId: '2',
-                classGroup: '1A',
-                classSubGroup: '00',
-                schoolId: 2),
-          ],
+          students: [ours, sibling],
           classGroups: [
             _wClass('1A', groupName: 'A', adminCode: 'a1'),
             _wClass('1A', groupName: 'B', adminCode: 'a2'),
@@ -315,9 +327,15 @@ void main() {
         smartschool: _sSnap(),
       );
 
-      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: ours))
+              .className,
           '1A A');
-      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '2')).className,
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '2', wisa: sibling))
+              .className,
           '1A',
           reason: 'school 2\'s own 1A is single-group');
     });
@@ -327,11 +345,11 @@ void main() {
         'in a sub-grouped class (#221)', () {
       // `00` means "no sub-groups" — it names no group, so it is never part of
       // a class name (the guard `WisaClassGroup.fullName` already applies).
+      final student =
+          _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '00');
       final resolver = PlacementResolver(
         wisa: _wSnap(
-          students: [
-            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '00'),
-          ],
+          students: [student],
           classGroups: [
             _wClass('1A', groupName: 'A', adminCode: 'a1'),
             _wClass('1A', groupName: 'B', adminCode: 'a2'),
@@ -340,16 +358,19 @@ void main() {
         smartschool: _sSnap(),
       );
 
-      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: student))
+              .className,
           '1A');
     });
 
     test('a blank sub-group never leaves a trailing separator (#221)', () {
+      final student =
+          _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '  ');
       final resolver = PlacementResolver(
         wisa: _wSnap(
-          students: [
-            _wStudent(wisaId: '1', classGroup: '1A', classSubGroup: '  '),
-          ],
+          students: [student],
           classGroups: [
             _wClass('1A', groupName: 'A', adminCode: 'a1'),
             _wClass('1A', groupName: 'B', adminCode: 'a2'),
@@ -358,8 +379,99 @@ void main() {
         smartschool: _sSnap(),
       );
 
-      expect(resolver.classPlacementFor(_linkedStudent(wisaId: '1')).className,
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: student))
+              .className,
           '1A');
+    });
+
+    test(
+        'a dual-enrolled student is placed in our class, not the sibling '
+        'school\'s row the pooled pull read first (#332)', () {
+      // `Lies Van Noten`: one `wisaId`, two rows — ours (`3MWW1`, school 1) and
+      // a sibling group school's (`3HWa`, school 2), whose pull ran first and so
+      // sits ahead of ours in the concatenated snapshot. The linker already
+      // chose our row (#318) and stamped it on the record; the resolver used to
+      // throw that away and look the student up again by id, so the Smartschool
+      // class move targeted a class our school does not have.
+      final ours = _wStudent(wisaId: '1', classGroup: '3MWW1');
+      final sibling = _wStudent(wisaId: '1', classGroup: '3HWa', schoolId: 2);
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [sibling, ours],
+          classGroups: [
+            _wClass('3MWW1', adminCode: 'a1'),
+            _wClass('3HWa', adminCode: 'b1', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: ours))
+              .className,
+          '3MWW1');
+    });
+
+    test(
+        'the same dual enrolment with our row first places our class too — '
+        'snapshot order decides nothing (#332)', () {
+      // The mirror. With our row read first a first-wins id index happens to
+      // answer correctly, so only running both orderings proves the placement
+      // follows the linker's choice rather than the pull order's luck.
+      final ours = _wStudent(wisaId: '1', classGroup: '3MWW1');
+      final sibling = _wStudent(wisaId: '1', classGroup: '3HWa', schoolId: 2);
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [ours, sibling],
+          classGroups: [
+            _wClass('3MWW1', adminCode: 'a1'),
+            _wClass('3HWa', adminCode: 'b1', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: ours))
+              .className,
+          '3MWW1');
+    });
+
+    test(
+        'the sub-group widening asks whether *our* school splits the class, '
+        'not the sibling\'s (#332/#221)', () {
+      // The second half of the same read: `_classNameFor` scopes its sub-group
+      // test by `student.schoolId`, so reading the wrong row asked the wrong
+      // school. Here the sibling's `3HWa` really is split while our `3MWW1` is
+      // not — reading the sibling row both named the wrong class *and* widened
+      // it to `3HWa B`.
+      final ours = _wStudent(wisaId: '1', classGroup: '3MWW1');
+      final sibling = _wStudent(
+          wisaId: '1', classGroup: '3HWa', classSubGroup: 'B', schoolId: 2);
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [sibling, ours],
+          classGroups: [
+            _wClass('3MWW1', adminCode: 'a1'),
+            _wClass('3HWa', groupName: 'A', adminCode: 'b1', schoolId: 2),
+            _wClass('3HWa', groupName: 'B', adminCode: 'b2', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: ours))
+              .className,
+          '3MWW1');
     });
 
     test('currentClass is the student\'s official-class membership', () {
@@ -382,6 +494,99 @@ void main() {
       expect(placement.currentClass?.name, '2B');
       expect(placement.currentClassName, '2B');
       expect(placement.className, '3C');
+    });
+
+    test(
+        'isOurClass answers from the managed schools\' WISA inventory, not '
+        'from the pooled one (#333)', () {
+      // The class inventory pools every school the shared credentials reach.
+      // Only school 1 is ours, so `3HWa` — a real class, in a real group school
+      // — is not something we may ever write into our own Smartschool.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '3MWW1')],
+          classGroups: [
+            _wClass('3MWW1', adminCode: 'a1'),
+            _wClass('3HWa', adminCode: 'b1', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(groups: [_ssGroup('3HWa', code: '3HWa_ss')]),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+
+      expect(placement.isOurClass('3MWW1'), isTrue);
+      expect(placement.isOurClass('3HWa'), isFalse,
+          reason: 'in the Smartschool tree, but not one of our WISA classes');
+      expect(placement.isOurClass('3mww1  '), isTrue,
+          reason: 'names match case- and whitespace-insensitively (INV-12)');
+      expect(placement.isOurClass(''), isFalse,
+          reason: 'a blank name is not a class, so it is never ours');
+    });
+
+    test('isOurClass carries the bare and the sub-grouped form (#333)', () {
+      // A sub-grouped class is written as `1A A`, so that is the form the
+      // guard is asked about — it has to know the class by both its names.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '1A')],
+          classGroups: [
+            _wClass('1A', groupName: 'A', adminCode: 'a1'),
+            _wClass('1A', groupName: 'B', adminCode: 'a2'),
+          ],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+
+      expect(placement.isOurClass('1A'), isTrue);
+      expect(placement.isOurClass('1A A'), isTrue);
+      expect(placement.isOurClass('1A B'), isTrue);
+      expect(placement.isOurClass('1A C'), isFalse,
+          reason: 'that sub-group is nobody\'s class');
+    });
+
+    test(
+        'a snapshot carrying no class inventory forbids nothing — silence is '
+        'not evidence (#333)', () {
+      // The same reading an empty `ourSchoolIds` gets: unconfigured, not
+      // "everything is foreign". A pull without class groups must not silently
+      // suppress every class move in the school.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(students: [_wStudent(wisaId: '1', classGroup: '3C')]),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver.classPlacementFor(_linkedStudent(wisaId: '1'));
+
+      expect(placement.isOurClass('3C'), isTrue);
+      expect(placement.isOurClass('anything'), isTrue);
+      expect(placement.isOurClass(''), isFalse);
+    });
+
+    test('a student\'s own row never vouches for the class it names (#333)',
+        () {
+      // The set is built from the class inventory, deliberately: a student row
+      // naming a class our school does not have is the very input the guard
+      // exists to refuse, so it must not be what makes that name ours.
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [_wStudent(wisaId: '1', classGroup: '3HWa')],
+          classGroups: [_wClass('3MWW1', adminCode: 'a1')],
+        ),
+        smartschool: _sSnap(),
+        ourSchoolIds: const {1},
+      );
+
+      final placement = resolver
+          .classPlacementFor(_linkedStudent(wisaId: '1', classGroup: '3HWa'));
+
+      expect(placement.className, '3HWa');
+      expect(placement.isOurClass('3HWa'), isFalse);
     });
 
     test('resolveClass finds any group by name across the whole tree', () {

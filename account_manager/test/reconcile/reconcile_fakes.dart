@@ -47,7 +47,14 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// reason: "a write happened" is not "this record was written".
   final List<String> deletedClasses = <String>[];
 
+  /// The class codes of every `saveUserToClass` this transport accepted, in
+  /// order — the Smartschool class each move actually wrote a student into
+  /// (#333). Read off the envelope for the same reason [deletedClasses] is:
+  /// "a move happened" is not "this class is the one it wrote".
+  final List<String> movedToClasses = <String>[];
+
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
+  static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
 
   @override
   Future<String> send({
@@ -59,6 +66,12 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.contains('delClass')) {
       final match = _codeArg.firstMatch(envelope);
       if (match != null) deletedClasses.add(match.group(1)!);
+    }
+    // `saveUserToClassesAndGroups` is a different write (non-official groups),
+    // so match the method exactly rather than by prefix.
+    if (soapAction.endsWith('#saveUserToClass')) {
+      final match = _classArg.firstMatch(envelope);
+      if (match != null) movedToClasses.add(match.group(1)!);
     }
     // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'
@@ -95,6 +108,17 @@ class RecordingGraph implements az.GraphTransport {
   /// not create Microsoft 365 groups — the shape #216 hit on a Graph write the
   /// delegated scopes did not cover, applied to the class-group create (#272).
   bool refuseGroupCreates = false;
+
+  /// When set, every `$batch` sub-request is refused the way Graph refuses a
+  /// membership write on a group whose membership it will not manage — the
+  /// mail-enabled security group of #331, on which all 38 of a class's changes
+  /// bounced at once.
+  ///
+  /// The exact envelope that tenant returns is Graph's to give; what #330 is
+  /// about is that whatever it says reaches the operator. So this picks a
+  /// plausible one and the tests assert it is *relayed*, never that it is this
+  /// particular code.
+  bool refuseMembershipWrites = false;
 
   int _created = 0;
 
@@ -172,7 +196,20 @@ class RecordingGraph implements az.GraphTransport {
         <String, dynamic>{
           'responses': <Map<String, dynamic>>[
             for (final sub in subs)
-              <String, dynamic>{'id': sub['id'], 'status': 204},
+              if (refuseMembershipWrites)
+                <String, dynamic>{
+                  'id': sub['id'],
+                  'status': 400,
+                  'body': <String, dynamic>{
+                    'error': <String, dynamic>{
+                      'code': 'Request_BadRequest',
+                      'message': 'Adding or removing members is not supported '
+                          'for this group.',
+                    },
+                  },
+                }
+              else
+                <String, dynamic>{'id': sub['id'], 'status': 204},
           ],
         },
         statusCode: 200,
@@ -1198,10 +1235,21 @@ wapi.WisaStudent wisaStudent({
 ///
 /// A school carries no ownership flag (#286): which schools we manage is the
 /// harness's `ourSchoolIds` — the persisted Settings path, and the only one.
-wapi.WisaSchool wisaSchool(int id, {bool virtual = false}) => wapi.WisaSchool(
+///
+/// [name] and [code] are the two halves WISA answers with (#208) and the only
+/// source a view may name a school from (#204). The default stands in for a
+/// school nobody has fetched the halves of, which is what most fixtures want; a
+/// fixture that renders a school name on screen gives it the real pair.
+wapi.WisaSchool wisaSchool(
+  int id, {
+  bool virtual = false,
+  String? name,
+  String code = '',
+}) =>
+    wapi.WisaSchool(
       id: id,
-      name: 'School $id',
-      code: '',
+      name: name ?? 'School $id',
+      code: code,
       isVirtual: virtual,
     );
 
@@ -1704,6 +1752,136 @@ ReconcileHarness dualEnrolledHarness() => ReconcileHarness(
       azure: azSnap(users: const []),
     );
 
+/// A harness for the sibling school's class deciding *our* Smartschool move
+/// (#332). The dual enrolment of [dualEnrolledHarness], now on a student who is
+/// fully in step: one `wisaId`, two rows, only school 1 ours. Our row puts
+/// `Lies` in `3MWW1` and Smartschool already has her there, so a correct pass
+/// proposes no class move at all. The sibling's row names `3HWa` — a class our
+/// school does not have and our Smartschool has never held.
+///
+/// Before the fix the placement resolver ignored the row the linker had chosen
+/// (#318) and looked the student up again by `wisaId` in a first-wins index over
+/// the pooled snapshot, so the sibling's row answered: the card offered "Wijzig
+/// de klas in Smartschool — class: 3MWW1 → 3HWa", and its "Toepassen op alle"
+/// cohort would have carried that write along with a rollover pass.
+///
+/// [siblingFirst] flips the order the two rows arrive in. The WISA pull runs
+/// once per group school and concatenates, so which row lands first is an
+/// accident of how the schools are configured — and it must decide nothing.
+ReconcileHarness dualEnrolledClassMoveHarness({bool siblingFirst = true}) {
+  final ours = wisaStudent(wisaId: '1', classGroup: '3MWW1');
+  final sibling = wisaStudent(wisaId: '1', classGroup: '3HWa', schoolId: 2);
+  return ReconcileHarness(
+    ourSchoolIds: const {1},
+    wisa: wisaSnap(
+      students: siblingFirst
+          ? <wapi.WisaStudent>[sibling, ours]
+          : <wapi.WisaStudent>[ours, sibling],
+      classGroups: [
+        wisaClassGroup('3MWW1', adminCode: 'a1'),
+        wisaClassGroup('3HWa', adminCode: 'b1', schoolCode: '222', schoolId: 2),
+      ],
+      // Both schools carry their real WISA halves, because since #334 the card
+      // names the sibling school out loud and it must be named from this list.
+      schools: [
+        wisaSchool(1, name: 'Instituut Sancta Maria-A', code: 'ISMAA'),
+        wisaSchool(2, name: 'Instituut Sancta Maria-B', code: 'ISMAB'),
+      ],
+    ),
+    smartschool: ssSnap(
+      groups: [ssGroup('3MWW1', code: '3MWW1_ss', untis: '3MWW1')],
+      accounts: [ssAccount()],
+      memberships: [member('jane', '3MWW1_ss')],
+    ),
+    azure: azSnap(users: [azUser(displayName: 'Jane Doe')]),
+  );
+}
+
+/// A harness for saying the dual enrolment out loud (#334): two students whose
+/// cards must read differently, and neither of whom has any work.
+///
+/// - **Lies Vermeulen** is enrolled in both group schools — one `wisaId`, two
+///   rows. Ours puts her in `3MWW1`, where Smartschool already has her; the
+///   sibling school 2 holds her in `3HWa`. Her card is in order in all three
+///   systems, so the only thing on it to read is the second enrolment: "Ook
+///   ingeschreven in Instituut Sancta Maria-B (ISMAB), klas 3HWa".
+/// - **Nele Peeters** is the ordinary single-school student, identical in every
+///   other way. Her card must render exactly as it did before the line existed.
+///
+/// Both schools carry their real WISA halves (long name + short code), because
+/// the school on the line is named from the WISA school list and never invented
+/// from an id (#204/#208). The sibling's row arrives *first*, as it does when
+/// that school is configured first: pull order decides nothing (INV-21).
+ReconcileHarness dualEnrolmentDisplayHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+            wisaId: '1',
+            classGroup: '3HWa',
+            schoolId: 2,
+            firstName: 'Lies',
+            name: 'Vermeulen',
+          ),
+          wisaStudent(
+            wisaId: '1',
+            classGroup: '3MWW1',
+            firstName: 'Lies',
+            name: 'Vermeulen',
+          ),
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '3MWW1',
+            firstName: 'Nele',
+            name: 'Peeters',
+          ),
+        ],
+        classGroups: [
+          wisaClassGroup('3MWW1', adminCode: 'a1'),
+          wisaClassGroup('3HWa',
+              adminCode: 'b1', schoolCode: '222', schoolId: 2),
+        ],
+        schools: [
+          wisaSchool(1, name: 'Instituut Sancta Maria-A', code: 'ISMAA'),
+          wisaSchool(2, name: 'Instituut Sancta Maria-B', code: 'ISMAB'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3MWW1', code: '3MWW1_ss', untis: '3MWW1')],
+        accounts: [
+          ssAccount(
+            uid: 'lies',
+            accountId: '1',
+            mail: 'lies.vermeulen@student.school.example',
+            givenName: 'Lies',
+            surname: 'Vermeulen',
+          ),
+          ssAccount(
+            uid: 'nele',
+            accountId: '2',
+            mail: 'nele.peeters@student.school.example',
+            givenName: 'Nele',
+            surname: 'Peeters',
+          ),
+        ],
+        memberships: [member('lies', '3MWW1_ss'), member('nele', '3MWW1_ss')],
+      ),
+      azure: azSnap(users: [
+        azUser(
+          id: 'az-lies',
+          upn: 'lies.vermeulen@student.school.example',
+          employeeId: '1',
+          displayName: 'Lies Vermeulen',
+        ),
+        azUser(
+          id: 'az-nele',
+          upn: 'nele.peeters@student.school.example',
+          employeeId: '2',
+          displayName: 'Nele Peeters',
+        ),
+      ]),
+    );
+
 /// A harness for a card that owes **two Azure writes on one account** (#321).
 ///
 /// One student, fully linked and already in step with Smartschool, whose
@@ -2035,6 +2213,109 @@ const String kSamRollover = 'az-sam-4a';
 const String kSaraRollover = 'az-sara-4a';
 const String kTomRollover = 'az-tom-4a';
 
+/// A harness for the ours-classes guard on the class move (#333): the same
+/// September rollover as [rolloverHarness], with one student whose WISA row
+/// names a class **our own school does not have**.
+///
+/// The three students are the three cases the guard has to tell apart, and all
+/// three sit in last year's `3C` in Smartschool:
+/// - **Sam → `4A`** — ours, and Smartschool already has the class. The ordinary
+///   rollover move.
+/// - **Sara → `4B`** — ours in WISA, but Smartschool has no `4B` yet, because
+///   creating it is another action on another card. She must still be proposed:
+///   gating the move on the Smartschool tree instead of on our WISA inventory
+///   would suppress the very moves the action exists for, every September.
+/// - **Tom → `3HWa`** — a class only the sibling group school (2, unmanaged)
+///   has. Nothing here is dual enrolment, so #332's fix does not reach it: his
+///   is a single row, ours, naming a foreign class the way a WISA quirk or a
+///   hand-edited rule would. He must raise no move at all.
+///
+/// `3HWa` is deliberately present in the Smartschool tree, so `resolveClass`
+/// finds it and the write would go through: the only thing standing between a
+/// foreign class name and a live Smartschool account is the WISA guard.
+ReconcileHarness foreignClassMoveHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(
+              wisaId: '1', classGroup: '4A', firstName: 'Sam', name: 'Sels'),
+          wisaStudent(
+              wisaId: '2', classGroup: '4B', firstName: 'Sara', name: 'Segers'),
+          wisaStudent(
+              wisaId: '3', classGroup: '3HWa', firstName: 'Tom', name: 'Tas'),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+        classGroups: [
+          wisaClassGroup('4A', adminCode: 'a4', schoolCode: '111'),
+          wisaClassGroup('4B', adminCode: 'b4', schoolCode: '111'),
+          wisaClassGroup('3C', adminCode: 'a3', schoolCode: '111'),
+          // The foreign class: it exists, but in a school we do not manage.
+          wisaClassGroup('3HWa',
+              adminCode: 'h3', schoolCode: '222', schoolId: 2),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('4A', code: '4A_ss', untis: '4A'),
+          ssGroup('3C', code: '3C_ss', untis: '3C'),
+          // …and our Smartschool holds it too, so nothing but the WISA guard
+          // can stop a write into it.
+          ssGroup('3HWa', code: '3HWa_ss', untis: '3HWa'),
+          // No `4B`: Sara's new class has yet to be created.
+        ],
+        accounts: [
+          ssAccount(
+            uid: 'sam',
+            accountId: '1',
+            mail: 'sam.sels@student.school.example',
+            givenName: 'Sam',
+            surname: 'Sels',
+          ),
+          ssAccount(
+            uid: 'sara',
+            accountId: '2',
+            mail: 'sara.segers@student.school.example',
+            givenName: 'Sara',
+            surname: 'Segers',
+          ),
+          ssAccount(
+            uid: 'tom',
+            accountId: '3',
+            mail: 'tom.tas@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tas',
+          ),
+        ],
+        memberships: [
+          member('sam', '3C_ss'),
+          member('sara', '3C_ss'),
+          member('tom', '3C_ss'),
+        ],
+      ),
+      // Every Office 365 account is in step, so the class move is the only
+      // decision any of these cards can carry.
+      azure: azSnap(users: [
+        azUser(
+          id: kSamRollover,
+          upn: 'sam.sels@student.school.example',
+          employeeId: '1',
+          displayName: 'Sam Sels',
+        ),
+        azUser(
+          id: kSaraRollover,
+          upn: 'sara.segers@student.school.example',
+          employeeId: '2',
+          displayName: 'Sara Segers',
+        ),
+        azUser(
+          id: kTomRollover,
+          upn: 'tom.tas@student.school.example',
+          employeeId: '3',
+          displayName: 'Tom Tas',
+        ),
+      ]),
+    );
+
 /// A harness for the managed-school class-group scope (#205). WISA hands the
 /// session class groups from two schools, and the sibling school's arrive
 /// *first* in the pull: `1A` and `9Z` of school 2 (which we do not manage),
@@ -2175,6 +2456,73 @@ ReconcileHarness azureClassGroupHarness({
             azNonClassGroup('GBS - Leerlingenraad'),
             azNonClassGroup('GBS - Frans - 3D'),
           ],
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the class group Graph will not manage the membership of
+/// (#331) — the reported bug, in the smallest shape that reproduces it.
+///
+/// Our school 1 runs one class, `1A`, correct in WISA and Smartschool, with two
+/// students. Office 365 holds `GBS-1A` as a **mail-enabled security group**
+/// carrying only the first of them, so the roster genuinely differs — and every
+/// add Graph is asked to make on such a group is refused. Before #331 the class
+/// card offered "werk het ledenbestand bij", the apply failed wholesale, and the
+/// identical proposal was back on the next pass.
+///
+/// [manageable] flips the same fixture to an ordinary Microsoft 365 group: same
+/// name, same address, same roster diff, and the write is proposed again. It is
+/// the control that shows the group's *shape* is the only thing deciding.
+ReconcileHarness unmanageableClassGroupHarness({bool manageable = false}) =>
+    ReconcileHarness(
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          // Named, so the account row can be told from Jane's on screen.
+          wisaStudent(
+              wisaId: '2', classGroup: '1A', firstName: 'Joe', name: 'Sels'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+          ssAccount(
+              uid: 'joe',
+              accountId: '2',
+              mail: 'a2@student.school.example',
+              givenName: 'Joe',
+              surname: 'Sels'),
+        ],
+        memberships: [member('jane', '1A'), member('joe', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe'),
+          azUser(
+              id: 'az2',
+              upn: 'a2@student.school.example',
+              employeeId: '2',
+              displayName: 'Joe Sels'),
+        ],
+        groups: [
+          if (manageable)
+            azClassGroup('1A', memberIds: const ['az1'])
+          else
+            azMailEnabledSecurityClassGroup('1A', memberIds: const ['az1']),
         ],
       ),
       ourSchoolIds: const {1},
@@ -3163,6 +3511,30 @@ az.AzureGroup azClassGroup(
       displayName: 'GBS-$className',
       mail: 'GBS-$className@student.school.example',
       mailNickname: 'GBS-$className',
+      mailEnabled: true,
+      groupTypes: const ['Unified'],
+      memberIds: memberIds,
+    );
+
+/// An Office 365 class group somebody made by hand as a **mail-enabled security
+/// group** (#331) — `SSM-1A` in the live tenant, the one shape among the
+/// school's 372 prefixed groups whose membership Graph refuses to write.
+///
+/// Identical to [azClassGroup] in everything the operator sees: same name, same
+/// nickname, same address. Only `securityEnabled` beside an empty `groupTypes`
+/// tells them apart, which is why a roster sync was proposed on it every pass
+/// and all 38 changes came back refused.
+az.AzureGroup azMailEnabledSecurityClassGroup(
+  String className, {
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: 'az-GBS-$className',
+      displayName: 'GBS-$className',
+      mail: 'GBS-$className@student.school.example',
+      mailNickname: 'GBS-$className',
+      mailEnabled: true,
+      securityEnabled: true,
       memberIds: memberIds,
     );
 
@@ -3951,6 +4323,12 @@ class ReconcileHarness {
           ),
           authProvider: const az.StaticAuthProvider('token'),
           transport: graph,
+          // The apply-side connector writes into the operator's log too — the
+          // app wires one `AzureConnector` for both the pull and the writes
+          // (`reconcileBootstrap`), so what a write records is what the Log
+          // panel shows. Without this the fixture could not see the connector's
+          // own account of a membership batch (#330) at all.
+          log: log,
         ),
       ),
       resolver: this.resolver,

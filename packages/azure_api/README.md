@@ -220,6 +220,28 @@ package defines a `TokenCache` interface and never writes plaintext to disk:
   `InMemoryTokenCache`, `StaticAuthProvider`.
 - Models: `AzureUser`, `AzureGroup`, `AzureSnapshot`, `UserDelta`.
 
+### Which groups Graph will write to (#331)
+
+`AzureGroup` reads Graph's `mailEnabled` and `groupTypes` (both in
+`graphSelectFields`) because they are the only fields that tell the four group
+shapes apart:
+
+| shape | `groupTypes` | `mailEnabled` | `securityEnabled` | membership |
+|---|---|---|---|---|
+| Microsoft 365 ("unified") | `[Unified]` | true | false | Graph |
+| plain security group (the legacy WPF class groups) | `[]` | false | true | Graph |
+| mail-enabled security group | `[]` | true | true | **Exchange Online** |
+| distribution list | `[]` | true | false | **Exchange Online** |
+
+`isUnified` is `groupTypes.contains('Unified')`, and `canManageMembership` (the
+inverse of `isExchangeManaged`) is what the action engine reads before proposing
+a membership write or a delete. The old inference —
+`!securityEnabled && mail != ''` — could see neither of the bottom two rows: it
+read a distribution list as a Microsoft 365 group and a mail-enabled security
+group as an ordinary one, which is why `SSM-1A` was offered a roster sync Graph
+refused on every pass. A snapshot stored before #331 carries neither field and
+reads as manageable, so an old snapshot behaves as it did until the next pull.
+
 ## `$batch`
 
 Membership changes are folded into Graph `$batch` calls (`GraphBatch`,

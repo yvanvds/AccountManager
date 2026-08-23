@@ -10,6 +10,35 @@ import 'support/fixtures.dart';
 /// Graph replies for the class-group writes: an empty `mailNickname` lookup
 /// (nothing exists yet), an echoed create, and `204` for the `$batch`
 /// membership calls.
+/// The same `$batch`, refused: Graph answers per sub-request, each carrying the
+/// `error` envelope a single call would have (#330).
+az.GraphResponse _refusedBatch(
+  az.GraphRequest request, {
+  int status = 400,
+  String code = 'Request_BadRequest',
+  String message = 'Adding or removing members is not supported for this '
+      'group.',
+}) {
+  final body = jsonDecode(request.body!) as Map<String, dynamic>;
+  final requests = (body['requests'] as List).cast<Map<String, dynamic>>();
+  return az.GraphResponse(
+    statusCode: 200,
+    headers: const {'content-type': 'application/json'},
+    body: jsonEncode({
+      'responses': [
+        for (final r in requests)
+          {
+            'id': r['id'],
+            'status': status,
+            'body': {
+              'error': {'code': code, 'message': message},
+            },
+          },
+      ],
+    }),
+  );
+}
+
 az.GraphResponse _classGroupGraph(az.GraphRequest request) {
   if (request.method == 'GET') {
     return az.GraphResponse(
@@ -297,6 +326,162 @@ void main() {
     });
   });
 
+  group('a group Graph will not manage the membership of (#331)', () {
+    // The reported bug. `SSM-1A` is a mail-enabled security group — the only
+    // one among the school's 372 prefixed groups — so all 38 of its membership
+    // changes were refused, the card said "38 of 38 … failed", and the same
+    // proposal came back on the next pass, forever.
+    LinkedGroup stuck({
+      List<String> memberIds = const ['az-old'],
+      String className = '3A',
+    }) =>
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(),
+          azure: azureMailEnabledSecurityClassGroup(
+            className,
+            memberIds: memberIds,
+          ),
+        );
+
+    List<GroupAction> actionsForStuck() => groupActionsFor(
+          stuck(),
+          azurePlanFor: (_) => azurePlan(
+            membersToAdd: const ['az-new'],
+            membersToRemove: const ['az-old'],
+          ),
+        );
+
+    test('the doomed roster sync is not proposed at all', () {
+      // The whole point: not a better error message on a write that fails, but
+      // no write proposed. The identical record with a Microsoft 365 group
+      // raises the sync (the test above), so the group's shape is the only
+      // thing that changed.
+      expect(
+        actionsForStuck().map((a) => a.runtimeType),
+        [AzureClassGroupNotManageable],
+      );
+    });
+
+    test('the notice names the shape, the reason and the two ways out', () {
+      final action = actionsForStuck().single;
+      expect(action.canApply, isFalse);
+      expect(
+        action.describeChanges().summary,
+        'De Office 365-groep SSM-3A is een mail-enabled beveiligingsgroep. '
+        'Graph kan haar ledenlijst niet beheren. Beheer de leden in Exchange '
+        'Online, of vervang de groep door een Microsoft 365-groep, dan neemt '
+        'de app de klas weer over.',
+      );
+      expect(action.describeChanges().system, Origin.azure);
+    });
+
+    test('it states facts about the group, it does not diff them (#305)', () {
+      final fields = actionsForStuck().single.describeChanges().fields;
+      expect(fields.map((f) => f.field),
+          ['type', 'mail', 'niet gesynchroniseerd']);
+      expect(
+          fields.every((f) => f.shape == FieldChangeShape.statement), isTrue);
+      expect(fields.last.before, '1 toe te voegen, 1 te verwijderen');
+    });
+
+    test('a distribution list is named for what it is', () {
+      // The other shape the old `!securityEnabled && mail != ""` inference got
+      // wrong: it read a plain distribution list as a Microsoft 365 group.
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(),
+          azure: az.AzureGroup(
+            id: 'az-dl',
+            displayName: 'SSM-3A',
+            mail: 'SSM-3A@student.school.example',
+            mailNickname: 'SSM-3A',
+            mailEnabled: true,
+            memberIds: const ['az-old'],
+          ),
+        ),
+        azurePlanFor: (_) => azurePlan(membersToRemove: const ['az-old']),
+      );
+      expect(actions.map((a) => a.runtimeType), [AzureClassGroupNotManageable]);
+      expect(
+        actions.single.describeChanges().summary,
+        startsWith('De Office 365-groep SSM-3A is een distributielijst.'),
+      );
+    });
+
+    test('a class already in sync raises no notice either', () {
+      // The notice fires exactly where the sync would have, and nowhere else:
+      // an unmanageable group whose roster happens to match has nothing to say.
+      expect(
+        groupActionsFor(stuck(), azurePlanFor: (_) => azurePlan()),
+        isEmpty,
+      );
+    });
+
+    test('applying the notice throws — there is no write to make', () {
+      expect(
+        () => actionsForStuck().single.apply(
+              const Connectors(),
+              const ApplyOptions(),
+            ),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('it is never bulk-applyable', () {
+      expect(actionsForStuck().single.canApplyToAll, isFalse);
+    });
+
+    test('a plain security group is still managed — the legacy class groups',
+        () {
+      // The guard must not swallow the 116 `SSM-3ECO`-shaped groups the WPF app
+      // made: no address, no mail-enablement, and Graph writes their membership
+      // perfectly well (#312).
+      final actions = groupActionsFor(
+        linkedGroup(
+          wisa: wisaGroup(),
+          smartschool: ssGroup(),
+          azure: az.AzureGroup(
+            id: 'az-legacy',
+            displayName: 'SSM-3A',
+            mailNickname: 'SSM-3A',
+            securityEnabled: true,
+            memberIds: const ['az-old'],
+          ),
+        ),
+        azurePlanFor: (_) => azurePlan(membersToRemove: const ['az-old']),
+      );
+      expect(actions.map((a) => a.runtimeType), [SyncAzureClassGroupMembers]);
+    });
+
+    test('a stale group Exchange masters raises the notice, not the delete',
+        () {
+      // The same rule applied to the other Graph write on a group: a
+      // `DELETE /groups/{id}` on an Exchange-mastered group is refused too, so
+      // the leftover reads as the "(manueel)" row instead — with the reason on
+      // it, which is the difference between "nothing can be done" and knowing
+      // where to go.
+      final actions = groupActionsFor(
+        linkedGroup(
+          azure: azureMailEnabledSecurityClassGroup('9Z'),
+          className: '9Z',
+        ),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        [AzureClassGroupWithoutClass],
+      );
+      final fields = actions.single.describeChanges().fields;
+      expect(fields.map((f) => f.field), ['mail', 'beheer', 'leden']);
+      expect(
+        fields[1].before,
+        'mail-enabled beveiligingsgroep — Graph beheert deze groep niet; '
+        'verwijder ze in Exchange Online',
+      );
+    });
+  });
+
   group('apply writes through Graph (#228)', () {
     test('a create POSTs a unified group after asking for the nickname',
         () async {
@@ -411,6 +596,91 @@ void main() {
       expect(
         (result.azureGroup! as az.AzureGroup).memberIds,
         ['az-joined'],
+      );
+    });
+
+    test('a refused membership sync reports what Graph said (#330)', () async {
+      // The #331 case: a group whose membership Graph will not manage refuses
+      // every sub-request. What used to reach the operator was the count alone
+      // — "38 of 38 … failed" — with the status and error code discarded.
+      final transport = RecordingGraphTransport(
+        handler: (request) => request.url.path.endsWith(r'/$batch')
+            ? _refusedBatch(request)
+            : _classGroupGraph(request),
+      );
+      final action = SyncAzureClassGroupMembers(
+        linkedGroup(
+          wisa: wisaGroup(),
+          azure: azureClassGroup('3A', memberIds: const ['az-left']),
+        ),
+        azurePlan(
+          membersToAdd: const ['az-joined'],
+          membersToRemove: const ['az-left'],
+        ),
+      );
+
+      final result = await action.apply(
+        Connectors(azure: azureConnector(transport)),
+        const ApplyOptions(),
+      );
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(
+        '${result.error}',
+        contains('2 of 2 membership change(s) on SSM-3A failed'),
+      );
+      expect(
+        '${result.error}',
+        contains('400 Request_BadRequest: Adding or removing members is not '
+            'supported for this group.'),
+        reason: "Graph's own words, which is what makes the line actionable",
+      );
+      expect('${result.error}', isNot(contains('other error(s)')),
+          reason: 'one reason refused them all; do not imply there were more');
+    });
+
+    test('a partly refused membership sync counts only the refusals (#330)',
+        () async {
+      // A batch can half-succeed — Graph answers per sub-request — and the
+      // failure must not read as if the whole write bounced.
+      final transport = RecordingGraphTransport(
+        handler: (request) {
+          if (!request.url.path.endsWith(r'/$batch')) {
+            return _classGroupGraph(request);
+          }
+          // The adds and the removes ride in `$batch`es of their own, so
+          // refusing the one carrying the `DELETE`s leaves the add landing.
+          return request.body!.contains('"DELETE"')
+              ? _refusedBatch(
+                  request,
+                  status: 404,
+                  code: 'Request_ResourceNotFound',
+                  message: 'Resource does not exist.',
+                )
+              : _classGroupGraph(request);
+        },
+      );
+      final action = SyncAzureClassGroupMembers(
+        linkedGroup(
+          wisa: wisaGroup(),
+          azure: azureClassGroup('3A', memberIds: const ['az-left']),
+        ),
+        azurePlan(
+          membersToAdd: const ['az-joined'],
+          membersToRemove: const ['az-left'],
+        ),
+      );
+
+      final result = await action.apply(
+        Connectors(azure: azureConnector(transport)),
+        const ApplyOptions(),
+      );
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(
+        '${result.error}',
+        contains('1 of 2 membership change(s) on SSM-3A failed — '
+            '404 Request_ResourceNotFound: Resource does not exist.'),
       );
     });
   });

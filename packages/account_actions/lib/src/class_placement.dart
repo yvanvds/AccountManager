@@ -12,7 +12,9 @@ import 'package:account_core/account_core.dart';
 ///   from the Smartschool memberships, which the linker does not project onto a
 ///   [LinkedAccount] (a `LinkedAccount` has no membership at all); and
 /// - how to resolve a class *name* to its Smartschool group (and code), which
-///   needs the group tree.
+///   needs the group tree; and
+/// - whether a class name is one of *our* classes at all (#333), which needs
+///   the managed schools' WISA class inventory.
 ///
 /// This is a plain injectable value object, exactly like [StudentActionConfig]:
 /// the caller (the future State layer, or a test) builds one per student from
@@ -39,9 +41,31 @@ class ClassPlacement {
   /// `GroupManager.Root.Find`). Returns `null` when no group carries that name.
   final Group? Function(String name) resolveClass;
 
+  /// Whether [name] is one of **our own** classes — a class the WISA schools
+  /// the operator manages actually have (#333).
+  ///
+  /// The guard in front of every class write fed by this placement: a class
+  /// name our WISA does not have is never something to write into our
+  /// Smartschool, at any point in the year, so an action that would propose one
+  /// raises nothing at all instead of a proposal that can be bulk-applied.
+  /// Observed live as a dual-enrolled student offered `3MWW1 → 3HWa` — a
+  /// sibling group school's class — on a card whose "Toepassen op alle (14)"
+  /// cohort otherwise held thirteen legitimate rollover moves (#332 fixed the
+  /// placement that named it; this is the guard that holds whatever names it).
+  ///
+  /// It asks about **WISA**, deliberately — not about the Smartschool tree
+  /// [resolveClass] searches. At the September rollover the target class
+  /// legitimately does not exist in Smartschool yet (creating it is another
+  /// action on another card), so gating on `resolveClass != null` would
+  /// suppress the very moves these actions exist for. A class that is ours but
+  /// missing from Smartschool still fails loudly at apply time; a foreign one
+  /// never gets that far.
+  final bool Function(String name) isOurClass;
+
   const ClassPlacement({
     required this.className,
     required this.resolveClass,
+    required this.isOurClass,
     this.currentClass,
   });
 

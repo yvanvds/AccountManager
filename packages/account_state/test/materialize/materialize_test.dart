@@ -165,6 +165,42 @@ LinkedState _movePendingLinked() => LinkedState.recompute(
       staffConfig: _staffConfig,
     );
 
+/// A student the aggregated pull returned **twice** (#334): one `wisaId`, a row
+/// in school 1 — ours, `3MWW1` — and one in the sibling group school 2, `3HWa`.
+///
+/// The sibling row arrives *first*, as it does when that school is configured
+/// first: which row the pull reads first must decide nothing (INV-21/INV-25).
+/// [ourSchoolIds] moves the ownership line, so the same person can be read as
+/// ours-plus-elsewhere or as departed-but-still-in-the-group.
+LinkedState _dualEnrolledLinked({Set<int>? ourSchoolIds = const {1}}) =>
+    LinkedState.recompute(
+      wisa: wapi.WisaSnapshot(
+        fetchedAt: _d,
+        students: [
+          _wStudent(classGroup: '3HWa', schoolId: 2),
+          _wStudent(classGroup: '3MWW1'),
+        ],
+        staff: const [],
+        classGroups: const [],
+        schools: const [],
+      ),
+      smartschool: ss.SmartschoolSnapshot(
+        fetchedAt: _d,
+        groups: [_ssGroup('3MWW1', code: '3MWW1_ss')],
+        accounts: [_ssAccount()],
+        memberships: const [
+          ss.SmartschoolMembership(
+              uid: 'jane', groupId: core.GroupId('3MWW1_ss')),
+        ],
+      ),
+      azure:
+          az.AzureSnapshot(fetchedAt: _d, users: [_azUser()], groups: const []),
+      resolver: _SeqResolver(),
+      studentConfig: _studentConfig,
+      staffConfig: _staffConfig,
+      ourSchoolIds: ourSchoolIds,
+    );
+
 /// A class present in **both** WISA and Smartschool whose institute number
 /// drifts, so the group dispatch yields exactly one *applyable*
 /// `ModifySmartschoolData` — used to prove the group rollup counts pending.
@@ -447,6 +483,103 @@ void main() {
         schoolLabels: const {99: 'Ergens anders'},
       );
       expect(view.accounts.single.schoolLabel, 'School 1');
+    });
+
+    group('the other group schools a person is enrolled in (#334)', () {
+      // The persisted school profiles the operator curates — the same pair the
+      // Settings grid shows, and the only place a school *name* may come from
+      // (#204/#208). School 1 is ours; school 2 is a sibling of the group.
+      final labels = wisaSchoolLabels(profiles: const [
+        WisaSchoolProfile(
+          schoolId: 1,
+          code: 'ISMAA',
+          name: 'Instituut Sancta Maria-A',
+        ),
+        WisaSchoolProfile(
+          schoolId: 2,
+          code: 'ISMAB',
+          name: 'Instituut Sancta Maria-B',
+        ),
+      ]);
+
+      test('the card names the other school and the class it holds', () {
+        final view = materialize(
+          _dualEnrolledLinked(),
+          generation: 1,
+          schoolLabels: labels,
+        );
+        final account = view.accounts.single;
+        expect(
+          account.otherEnrolments,
+          [
+            const OtherEnrolment(
+              schoolLabel: 'Instituut Sancta Maria-B (ISMAB)',
+              classroom: '3HWa',
+            ),
+          ],
+        );
+        // …while every fact the card leads with is still our school's row: the
+        // partition, the label, the grade-year and the class (INV-25).
+        expect(account.school, '1');
+        expect(account.schoolLabel, 'Instituut Sancta Maria-A (ISMAA)');
+        expect(account.gradeYear, '3');
+        expect(account.classroom, '3MWW1');
+      });
+
+      test('a single-school account carries none, and stores none', () {
+        final view = materialize(
+          _movePendingLinked(),
+          generation: 1,
+          schoolLabels: labels,
+        );
+        expect(view.accounts.single.otherEnrolments, isEmpty);
+        // The ordinary document — every document but a handful — keeps exactly
+        // the shape it had before this existed.
+        expect(view.accounts.single.toJson().containsKey('otherEnrolments'),
+            isFalse);
+      });
+
+      test('an unknown school degrades to the documented last resort', () {
+        // `School <id>` is the fallback for an id no list knows, never a name
+        // invented from an id (#204/#208).
+        final view = materialize(
+          _dualEnrolledLinked(),
+          generation: 1,
+          schoolLabels: const {1: 'Instituut Sancta Maria-A (ISMAA)'},
+        );
+        expect(view.accounts.single.otherEnrolments.single.schoolLabel,
+            'School 2');
+      });
+
+      test('a departed dual-enrolled student is told where she went', () {
+        // Neither school is ours any more, so the card has no class of ours to
+        // qualify — it reads "Niet toegewezen". Where she is instead is the
+        // whole of what it can still say, and it gates keeping Azure (#134).
+        final view = materialize(
+          _dualEnrolledLinked(ourSchoolIds: const {9}),
+          generation: 1,
+          schoolLabels: labels,
+        );
+        final account = view.accounts.single;
+        expect(account.school, unassignedPartition);
+        expect(
+          account.otherEnrolments.map((e) => e.classroom),
+          ['3MWW1', '3HWa'],
+          reason: 'ordered by school id, so one enrolment reads the same twice',
+        );
+      });
+
+      test('it survives the round-trip through a stored document', () {
+        // A passive session reads the store and never links, so the line has to
+        // come back out of the document exactly as it went in.
+        final account = materialize(
+          _dualEnrolledLinked(),
+          generation: 1,
+          schoolLabels: labels,
+        ).accounts.single;
+        final back = MaterializedAccount.fromJson(account.toJson());
+        expect(back.otherEnrolments, account.otherEnrolments);
+      });
     });
 
     test('an Azure-only leaver lands in the unassigned bucket', () {

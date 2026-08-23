@@ -1457,6 +1457,25 @@ void main() {
       expect(a.hasLeftGroup, isFalse);
     });
 
+    test('carries the class each school holds the person in (#334)', () {
+      // The school ids alone can say "she is also enrolled somewhere else",
+      // never where — and where is what the card states. The row every value we
+      // write comes from is still ours (INV-25); naming the other school's
+      // class is the sibling row's one other job.
+      final snapshot = linkRows(
+        [
+          wisaStudent('W1', schoolId: 2, classGroup: '4ECO'),
+          wisaStudent('W1', schoolId: 1, classGroup: '3BO'),
+        ],
+        ourSchoolIds: {1},
+      );
+      final a = snapshot.accounts.single;
+      expect(a.wisaClassGroups, {1: '3BO', 2: '4ECO'});
+      // …and the row the placement reads is unmoved by carrying it.
+      expect(rowOf(a)?.schoolId, 1);
+      expect(rowOf(a)?.classGroup, '3BO');
+    });
+
     test('never mints two records onto one LinkedAccountId', () {
       // Both rows produce the natural key `wisa:w1`, so two records would have
       // been handed the *same* id — which is what put two records' actions on
@@ -1559,6 +1578,10 @@ void main() {
       expect(snapshot.accounts, hasLength(2));
       expect(snapshot.accounts[0].wisaSchoolIds, {1});
       expect(snapshot.accounts[1].wisaSchoolIds, {2});
+      // One school each — the ordinary account, which is every account but a
+      // handful, and the one nothing on screen may change for.
+      expect(snapshot.accounts[0].wisaClassGroups, hasLength(1));
+      expect(snapshot.accounts[1].wisaClassGroups, hasLength(1));
     });
   });
 

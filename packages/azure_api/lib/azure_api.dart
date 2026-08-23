@@ -27,7 +27,7 @@ export 'src/auth/token_cache.dart'
 export 'src/config/live_config.dart' show AzureLiveConfig;
 export 'src/connector.dart' show AzureConnector;
 export 'src/graph/graph_batch.dart'
-    show BatchRequest, BatchResponse, GraphBatch;
+    show BatchReport, BatchRequest, BatchResponse, GraphBatch;
 export 'src/graph/graph_client.dart'
     show DeltaResult, GraphClient, GraphFailurePredicate;
 export 'src/graph/graph_request.dart'

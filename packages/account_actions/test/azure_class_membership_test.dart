@@ -18,6 +18,7 @@ AzureClassPlacement placement({
   bool groupExists = true,
   bool isMember = true,
   List<String> strayGroupNames = const [],
+  List<String> unmanagedGroupNames = const [],
 }) =>
     AzureClassPlacement(
       className: className,
@@ -25,6 +26,7 @@ AzureClassPlacement placement({
       groupExists: groupExists,
       isMember: isMember,
       strayGroupNames: strayGroupNames,
+      unmanagedGroupNames: unmanagedGroupNames,
     );
 
 List<StudentAction> _dispatch(
@@ -111,6 +113,77 @@ void main() {
         placement(isMember: false),
       );
       expect(action.evaluate(), isFalse);
+    });
+  });
+
+  group('a group Exchange Online masters (#331)', () {
+    // The class-level write is withheld on such a group, so the instruction
+    // "werk het ledenbestand van klas 3A bij" points at a card that no longer
+    // offers it. The diagnosis is still true and still worth showing; only the
+    // remedy moves.
+    test('the missing-member row sends the operator to Exchange, not the class',
+        () {
+      final changes = AzureClassGroupMembership(
+        fullySynced(),
+        config(),
+        placement(isMember: false, unmanagedGroupNames: const ['SSM-3A']),
+      ).describeChanges();
+      expect(changes.summary, contains('Ontbreekt in de Office 365-klasgroep'));
+      expect(changes.summary, contains('Die groep wordt in Exchange Online'));
+      expect(changes.summary, isNot(contains('Werk het ledenbestand')));
+    });
+
+    test('so does the stray-group row', () {
+      final changes = AzureClassGroupMembership(
+        fullySynced(),
+        config(),
+        placement(
+          strayGroupNames: const ['SSM-2B'],
+          unmanagedGroupNames: const ['SSM-2B'],
+        ),
+      ).describeChanges();
+      expect(changes.summary, contains('Staat nog in de Office 365-klasgroep'));
+      expect(changes.summary, contains('Die groep wordt in Exchange Online'));
+    });
+
+    test('two of them read as plural', () {
+      final changes = AzureClassGroupMembership(
+        fullySynced(),
+        config(),
+        placement(
+          isMember: false,
+          strayGroupNames: const ['SSM-2B'],
+          unmanagedGroupNames: const ['SSM-3A', 'SSM-2B'],
+        ),
+      ).describeChanges();
+      expect(changes.summary, contains('Die groepen worden in Exchange'));
+    });
+
+    test('a half-manageable row keeps the instruction it can act on', () {
+      // The student is missing from a group we manage *and* stuck in one we do
+      // not. A class card is still waiting to take the first half, so the
+      // instruction must survive — "every", not "any".
+      final changes = AzureClassGroupMembership(
+        fullySynced(),
+        config(),
+        placement(
+          isMember: false,
+          strayGroupNames: const ['SSM-2B'],
+          unmanagedGroupNames: const ['SSM-2B'],
+        ),
+      ).describeChanges();
+      expect(changes.summary, contains('Werk het ledenbestand van beide'));
+      expect(changes.summary, isNot(contains('Exchange Online')));
+    });
+
+    test('an ordinary row is untouched', () {
+      final changes = AzureClassGroupMembership(
+        fullySynced(),
+        config(),
+        placement(isMember: false),
+      ).describeChanges();
+      expect(changes.summary, contains('Werk het ledenbestand van klas 3A'));
+      expect(changes.summary, isNot(contains('Exchange')));
     });
   });
 

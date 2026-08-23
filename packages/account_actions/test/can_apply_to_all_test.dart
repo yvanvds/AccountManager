@@ -79,6 +79,7 @@ bool _bulkApplyableGroup(GroupAction a) => switch (a) {
       ClassExistsAsSmartschoolGroup() => false,
       DoNotImportFromSmartschool() => false,
       AzureClassGroupWithoutClass() => false,
+      AzureClassGroupNotManageable() => false,
     };
 
 // ---------------------------------------------------------------------------
@@ -145,6 +146,7 @@ List<GroupAction> _groupActions() {
     ModifySmartschoolData(linked),
     CreateAzureClassGroup(linked, plan),
     SyncAzureClassGroupMembers(linked, plan),
+    AzureClassGroupNotManageable(linked, plan),
     AzureClassGroupWithoutClass(linked),
     DeleteAzureClassGroup(linked),
   ];
@@ -278,8 +280,8 @@ void main() {
           reason: 'StudentAction has 16 members');
       expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(8),
           reason: 'StaffAction has 8 members');
-      expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(11),
-          reason: 'GroupAction has 11 members');
+      expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(12),
+          reason: 'GroupAction has 12 members');
     });
   });
 }

@@ -75,6 +75,23 @@ az.AzureGroup _classGroup(String className,
       displayName: '$_prefix-$className',
       mail: '$_prefix-$className@$_domain',
       mailNickname: '$_prefix-$className',
+      mailEnabled: true,
+      groupTypes: const ['Unified'],
+      memberIds: memberIds,
+    );
+
+/// The same class group, hand-made as a **mail-enabled security group** (#331):
+/// indistinguishable by name or address, and the one shape Graph will not write
+/// the membership of.
+az.AzureGroup _mailEnabledSecurityClassGroup(String className,
+        {List<String> memberIds = const []}) =>
+    az.AzureGroup(
+      id: 'az-$_prefix-$className',
+      displayName: '$_prefix-$className',
+      mail: '$_prefix-$className@$_domain',
+      mailNickname: '$_prefix-$className',
+      mailEnabled: true,
+      securityEnabled: true,
       memberIds: memberIds,
     );
 
@@ -364,6 +381,90 @@ void main() {
       expect(
           _actionsOfType<actions.SyncAzureClassGroupMembers>(linked), isEmpty);
       expect(_actionsOfType<actions.CreateAzureClassGroup>(linked), isEmpty);
+    });
+  });
+
+  group('a class group Graph will not manage (#331)', () {
+    // End to end through the real linker + resolver + dispatch: `GBS-1A` is a
+    // mail-enabled security group, so the roster diff the resolver computes is
+    // perfectly real and there is no write that can land it.
+    LinkedState stuckClass() => _recompute(
+          classGroups: [_wClass('1A')],
+          students: [
+            _student(wisaId: 'w1', classGroup: '1A'),
+            _student(wisaId: 'w2', classGroup: '1A'),
+          ],
+          azureUsers: [
+            _azUser('az-1', employeeId: 'w1'),
+            _azUser('az-2', employeeId: 'w2'),
+          ],
+          ssAccounts: [
+            _ssAccount('jane', accountId: 'w1'),
+            _ssAccount('joe', accountId: 'w2'),
+          ],
+          azureGroups: [
+            _mailEnabledSecurityClassGroup('1A', memberIds: const ['az-1']),
+          ],
+        );
+
+    test('the class raises the notice instead of the roster sync', () {
+      final linked = stuckClass();
+      expect(
+        _actionsOfType<actions.SyncAzureClassGroupMembers>(linked),
+        isEmpty,
+        reason: 'every add and remove on this group is refused',
+      );
+      final notice =
+          _actionsOfType<actions.AzureClassGroupNotManageable>(linked).single;
+      expect(notice.canApply, isFalse);
+      expect(
+        notice.describeChanges().summary,
+        contains('GBS-1A is een mail-enabled beveiligingsgroep'),
+      );
+    });
+
+    test('the identical class on a Microsoft 365 group still syncs', () {
+      // The control: only the group's shape differs between the two.
+      final linked = _recompute(
+        classGroups: [_wClass('1A')],
+        students: [
+          _student(wisaId: 'w1', classGroup: '1A'),
+          _student(wisaId: 'w2', classGroup: '1A'),
+        ],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-2', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('1A', memberIds: const ['az-1'])
+        ],
+      );
+      expect(
+        _actionsOfType<actions.SyncAzureClassGroupMembers>(linked)
+            .single
+            .plan
+            .membersToAdd,
+        ['az-2'],
+      );
+      expect(
+        _actionsOfType<actions.AzureClassGroupNotManageable>(linked),
+        isEmpty,
+      );
+    });
+
+    test('the student\'s own row points at Exchange, not at the class card',
+        () {
+      // The per-account half (#245) reads the same fact from the same resolver,
+      // so the two views cannot disagree about where the remedy lives.
+      final membership = stuckClass()
+          .studentActions
+          .whereType<actions.AzureClassGroupMembership>()
+          .single;
+      expect(membership.placement.unmanagedGroupNames, ['GBS-1A']);
+      expect(
+        membership.describeChanges().summary,
+        contains('Die groep wordt in Exchange Online beheerd'),
+      );
     });
   });
 

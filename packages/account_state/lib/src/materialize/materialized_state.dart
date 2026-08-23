@@ -280,6 +280,54 @@ class AccountDecision {
       );
 }
 
+/// One **other** group school a person is enrolled in, beside the school whose
+/// class facts the card is already showing (#334).
+///
+/// The rare, recurring case: at the start of a school year a student may apply
+/// to several schools of the group, and which one she actually turns up in is
+/// only known once term starts. Until then her record carries two WISA rows, and
+/// the card that says nothing about the second one reads as an anomaly — a class
+/// name from nowhere, a departure beside a create.
+///
+/// Context, never a value to write. [schoolLabel] is the WISA school list's own
+/// name for the school (never invented from an id, #204/#208) and [classroom]
+/// the class *that* school's row holds the person in — stated so the operator
+/// can read the rest of the card, and consulted for nothing else (INV-25).
+class OtherEnrolment {
+  const OtherEnrolment({required this.schoolLabel, required this.classroom});
+
+  /// How the school is named — `"<naam> (<code>)"` from `wisaSchoolLabels`.
+  final String schoolLabel;
+
+  /// The class that school's WISA row holds this person in; empty when its row
+  /// names no class.
+  final String classroom;
+
+  Map<String, dynamic> toJson() => {
+        'schoolLabel': schoolLabel,
+        'classroom': classroom,
+      };
+
+  factory OtherEnrolment.fromJson(Map<String, dynamic> json) => OtherEnrolment(
+        schoolLabel: json['schoolLabel'] as String? ?? '',
+        classroom: json['classroom'] as String? ?? '',
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is OtherEnrolment &&
+          schoolLabel == other.schoolLabel &&
+          classroom == other.classroom;
+
+  @override
+  int get hashCode => Object.hash(schoolLabel, classroom);
+
+  @override
+  String toString() =>
+      'OtherEnrolment(schoolLabel: $schoolLabel, classroom: $classroom)';
+}
+
 /// One linked account (or staff member) as a stored document.
 ///
 /// The atomic write/notify unit of the materialized view: partitioned by
@@ -301,6 +349,7 @@ class MaterializedAccount {
     required this.inWisa,
     required this.inSmartschool,
     required this.inAzure,
+    this.otherEnrolments = const [],
     this.warnings = const [],
     this.candidates = const [],
     this.decisions = const [],
@@ -337,7 +386,21 @@ class MaterializedAccount {
   final bool inSmartschool;
   final bool inAzure;
 
+  /// The **other** group schools this person is enrolled in — empty for the
+  /// ordinary account, which is every account but a handful (#334).
+  ///
+  /// Baked into the document rather than derived on the card, because the WISA
+  /// rows behind it live in the transient linked view: a passive session reads
+  /// this store and never pulls, and a card that can only say it in the session
+  /// that synced is a card that says it to nobody.
+  final List<OtherEnrolment> otherEnrolments;
+
   /// Account-scoped warnings (e.g. the duplicate-mail message naming this uid).
+  ///
+  /// Read type-blind by `decisions_merge` as evidence that an accepted
+  /// duplicate-*mail* collision still exists, which is why a sibling enrolment
+  /// is [otherEnrolments] and not a warning string: it is context, not a
+  /// situation anybody accepted.
   final List<String> warnings;
 
   final List<CandidateAction> candidates;
@@ -365,6 +428,7 @@ class MaterializedAccount {
         inWisa: inWisa,
         inSmartschool: inSmartschool,
         inAzure: inAzure,
+        otherEnrolments: otherEnrolments,
         warnings: warnings,
         candidates: candidates,
         decisions: decisions,
@@ -384,6 +448,10 @@ class MaterializedAccount {
         'inWisa': inWisa,
         'inSmartschool': inSmartschool,
         'inAzure': inAzure,
+        // Written only when there is one, so the ordinary document — every
+        // document but a handful — keeps exactly the shape it had.
+        if (otherEnrolments.isNotEmpty)
+          'otherEnrolments': [for (final e in otherEnrolments) e.toJson()],
         if (warnings.isNotEmpty) 'warnings': warnings,
         if (candidates.isNotEmpty)
           'candidates': [for (final c in candidates) c.toJson()],
@@ -405,6 +473,10 @@ class MaterializedAccount {
         inWisa: json['inWisa'] as bool? ?? false,
         inSmartschool: json['inSmartschool'] as bool? ?? false,
         inAzure: json['inAzure'] as bool? ?? false,
+        otherEnrolments: [
+          for (final e in (json['otherEnrolments'] as List? ?? const []))
+            OtherEnrolment.fromJson(e as Map<String, dynamic>),
+        ],
         warnings: [
           for (final w in (json['warnings'] as List? ?? const [])) w as String,
         ],

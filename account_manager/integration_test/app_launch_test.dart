@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:account_actions/account_actions.dart' show ActionOutcome;
 import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
@@ -759,6 +760,127 @@ void main() {
     // list has its own controls back.
     expect(find.byKey(const ValueKey('actions-cohort-banner')), findsNothing);
     expect(find.byKey(const ValueKey('actions-search')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a class our own WISA school does not have never becomes a move, and '
+      'never joins the rollover cohort, end-to-end (#333)',
+      (WidgetTester tester) async {
+    // The same rollover as above, with the case the guard exists for mixed in.
+    // Three students still sitting in last year's `3C` in Smartschool:
+    //   Sam  → `4A`    ours, and Smartschool has the class already.
+    //   Sara → `4B`    ours, and Smartschool has yet to be given the class.
+    //   Tom  → `3HWa`  a class only the sibling group school has.
+    //
+    // Only a full run shows what the guard is actually protecting: the count on
+    // "Toepassen op alle", the cohort the operator reviews behind it, and the
+    // writes the confirmation then makes. A foreign class name that survives
+    // `evaluate` does not merely produce one wrong row — it rides along with
+    // every legitimate move on the same button.
+    //
+    // Tom's is a single WISA row, ours, naming another school's class, so #332
+    // (which taught the resolver to read the row the linker chose) cannot help
+    // here; and `3HWa` is in the Smartschool tree, so `resolveClass` finds it
+    // and the write would go straight through. The WISA guard is the only thing
+    // between it and a live account.
+    useTallWindow(tester);
+    final harness = foreignClassMoveHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String sam = accountId(harness, 'Sam Sels');
+    final String sara = accountId(harness, 'Sara Segers');
+    final String tom = accountId(harness, 'Tom Tas');
+    Finder row(String id) => find.byKey(ValueKey('account-row-$id'));
+
+    List<String> kindsFor(String id) => harness.controller.pendingEntries
+        .where((e) => e.family == 'student' && e.targetId == id)
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+
+    // The two ours-classes moves stand, including the one Smartschool cannot
+    // satisfy yet — suppressing *that* one is what over-tightening this guard
+    // would look like, and it would gut the action every September.
+    expect(kindsFor(sam), contains('MoveToSmartschoolClassGroup'));
+    expect(
+      kindsFor(sara),
+      contains('MoveToSmartschoolClassGroup'),
+      reason: '`4B` is ours; Smartschool simply has not been given it yet',
+    );
+    // The foreign one raises nothing at all — not a failing proposal, silence.
+    expect(
+      kindsFor(tom),
+      isEmpty,
+      reason: 'our WISA school has no `3HWa`, so there is nothing to propose',
+    );
+
+    // Nowhere in the pass does the foreign class reach a projected value.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .expand((a) => a.changes.fields)
+          .expand((f) => <String?>[f.before, f.after]),
+      isNot(contains('3HWa')),
+    );
+
+    // On screen, from Sam's card: the button counts the school, and it counts
+    // two — the third student is not one short of a write, he is not in the
+    // cohort at all.
+    await selectAccount(tester, sam);
+    final Finder moveAll =
+        find.byKey(ValueKey('decision-apply-all-student-$sam-0'));
+    await tester.ensureVisible(moveAll);
+    expect(
+      find.descendant(
+          of: moveAll, matching: find.text('Toepassen op alle (2)')),
+      findsOneWidget,
+    );
+
+    // Pressing it reviews before it writes: the cohort is Sam and Sara.
+    await tester.tap(moveAll);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Wijzig de klas in Smartschool — 2 account(s) in de hele '
+          'school'),
+      findsOneWidget,
+    );
+    for (final String id in <String>[sam, sara]) {
+      await tester.ensureVisible(row(id));
+      expect(row(id), findsOneWidget);
+    }
+    expect(row(tom), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // One real Smartschool write, into `4A` and nothing else. Sara's class does
+    // not exist in Smartschool yet, so hers fails loudly where an operator can
+    // see it — which is the point of gating on WISA rather than on the tree:
+    // the move is owed, and the missing class is a card of its own.
+    expect(harness.soap.movedToClasses, <String>['4A_ss']);
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome),
+      containsAll(<ActionOutcome>[ActionOutcome.applied, ActionOutcome.failed]),
+    );
+    expect(
+      harness.controller.applyResults!
+          .firstWhere((r) => r.outcome == ActionOutcome.failed)
+          .error
+          .toString(),
+      contains('does not exist'),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -1765,6 +1887,169 @@ void main() {
     expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
     expect(find.text('Schrijf de leerling uit in Smartschool'), findsNothing);
     expect(find.text('Verwijder dit account uit Smartschool'), findsNothing);
+  });
+
+  for (final MapEntry<String, bool> order in <String, bool>{
+    'the sibling school\'s row first': true,
+    'our own row first': false,
+  }.entries) {
+    testWidgets(
+        'a dual-enrolled student keeps our Smartschool class, never the '
+        'sibling school\'s, with ${order.key} end-to-end (#332)',
+        (WidgetTester tester) async {
+      // The real app, real fonts, real navigation. `Lies` is enrolled in both
+      // group schools — one `wisaId`, two rows — and only school 1 is ours. Our
+      // row puts her in `3MWW1`, where Smartschool already has her, so a correct
+      // pass proposes no class move at all. The sibling's row names `3HWa`, a
+      // class our school does not have.
+      //
+      // Before the fix the placement resolver ignored the row the linker had
+      // chosen (#318) and re-read the student out of a first-wins id index over
+      // the pooled snapshot: the card offered "Wijzig de klas in Smartschool —
+      // class: 3MWW1 → 3HWa", and the cohort behind "Toepassen op alle" would
+      // have carried that write along with a legitimate rollover pass.
+      //
+      // Both orderings run, because with our row read first a first-wins index
+      // happens to answer correctly — only the pair proves the placement follows
+      // the linker's choice rather than the pull order's luck.
+      useTallWindow(tester);
+      final harness = dualEnrolledClassMoveHarness(siblingFirst: order.value);
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Synchronisatie'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+      await tester.pumpAndSettle();
+      expect(harness.controller.error, isNull);
+
+      // One person, both schools on the record — which is what makes her read
+      // `ours` rather than `groupOnly`, so no departure competes for the card.
+      expect(
+        harness.controller.linked!.snapshot.accounts.single.wisaSchoolIds,
+        const {1, 2},
+      );
+
+      // Not one class move is proposed anywhere in the pass, and the sibling's
+      // class never reaches a projected value.
+      final alternatives = harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives);
+      expect(
+        alternatives.map((a) => a.kind),
+        isNot(contains('MoveToSmartschoolClassGroup')),
+        reason: 'she is already in our 3MWW1 — nobody moves',
+      );
+      expect(
+        alternatives
+            .expand((a) => a.changes.fields)
+            .expand((f) => <String?>[f.before, f.after]),
+        isNot(contains('3HWa')),
+        reason: 'a sibling school\'s class is never written into our systems',
+      );
+
+      // Browse it the way the operator does. She has no work of her own, so the
+      // list is the whole school with the filter off.
+      await tester.tap(find.text('Acties'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('3HWa'), findsNothing,
+          reason: 'school 2 is not managed — its class names no row in the '
+              'list, which shows the class each student is ours in');
+
+      final String id = harness.controller.linkedAccounts.single.id.value;
+      final Finder row = find.byKey(ValueKey('account-row-$id'));
+      expect(row, findsOneWidget);
+      await tester.ensureVisible(row);
+      expect(find.descendant(of: row, matching: find.text('3MWW1')),
+          findsOneWidget);
+
+      await selectAccount(tester, id);
+      expect(find.text('Wijzig de klas in Smartschool'), findsNothing);
+      // Since #334 the sibling's class *is* on the card — as the statement that
+      // explains the second enrolment, and as nothing else. The two issues are
+      // the same rule from both sides: the class we write comes from our row
+      // (pinned above, over the whole pass), and the class we merely say comes
+      // from theirs (INV-25).
+      expect(
+        find.text('Ook ingeschreven in Instituut Sancta Maria-B (ISMAB), '
+            'klas 3HWa'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('3HWa'), findsOneWidget,
+          reason: 'that one line is the whole of what it says on screen');
+    });
+  }
+
+  testWidgets(
+      'a card states the other group school a student is enrolled in, and a '
+      'single-school card is untouched, end-to-end (#334)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real navigation. Two students, neither with any
+    // work: `Lies` is enrolled in both group schools (ours holds her in
+    // `3MWW1`, the sibling in `3HWa`), `Nele` in ours alone.
+    //
+    // Only a full run shows what the line is for. It has to survive the whole
+    // pipeline — the linker keeping both rows on one record, the materializer
+    // naming the school off the WISA school list, the document, the card — and
+    // it has to land where an operator reading a strange card will find it,
+    // under the class facts it explains. A widget test renders the pane with a
+    // document handed to it; it cannot show that the document ever carries this.
+    useTallWindow(tester);
+    final harness = dualEnrolmentDisplayHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Neither of them has anything to do, so the list is the whole school.
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+    final String lies = accountId(harness, 'Lies Vermeulen');
+    final String nele = accountId(harness, 'Nele Peeters');
+
+    await selectAccount(tester, lies);
+    // Named as the WISA school list names it — the long name with its short
+    // code — never invented from the school id (#204/#208).
+    expect(
+      find.text(
+          'Ook ingeschreven in Instituut Sancta Maria-B (ISMAB), klas 3HWa'),
+      findsOneWidget,
+    );
+    // Beside the class facts it qualifies, which stay our school's: the card
+    // still leads with the class she is ours in (INV-25).
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('actions-detail-$lies')),
+        matching: find.text('3MWW1'),
+      ),
+      findsOneWidget,
+    );
+    // And it stays a statement: the sibling's class reaches no proposal, no
+    // projected value, nothing to apply anywhere in the pass.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .expand((a) => a.changes.fields)
+          .expand((f) => <String?>[f.before, f.after]),
+      isNot(contains('3HWa')),
+    );
+
+    // The ordinary student — same class, same three systems in step — reads
+    // exactly as she did before the line existed.
+    await selectAccount(tester, nele);
+    expect(find.textContaining('Ook ingeschreven'), findsNothing);
+    expect(find.textContaining('3HWa'), findsNothing);
   });
 
   testWidgets(
@@ -2916,6 +3201,99 @@ void main() {
     expect(harness.soap.soapActions.where((a) => a.endsWith('#saveClass')),
         hasLength(1),
         reason: 'the Smartschool class was already there — no second create');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a membership batch Graph refuses names what Graph said, on the card '
+      'and in the log, end-to-end (#330)', (WidgetTester tester) async {
+    // The reported run, from the operator's side. `SSM-1A` turned out to be a
+    // group whose membership Graph will not manage (#331), so all 38 of its
+    // changes bounced at once — and the whole of what came back was
+    // *"38 of 38 membership change(s) failed"*, contradicted by a log claiming
+    // 21 members had been added and 17 removed.
+    //
+    // Only a full run puts the two records side by side. The count is composed
+    // by the action, the reason travels from the connector's per-sub-request
+    // `$batch` results through the applier into the card's outcome block, and
+    // the log line is written by a connector the action never speaks to and
+    // read on a different screen. Every one of those layers was passing its own
+    // tests while the operator was told a number and a lie.
+    useTallWindow(tester);
+    final harness = azureClassMembershipHarness();
+    harness.graph.refuseMembershipWrites = true;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    const entry = ValueKey('entry-group-1A');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-1A'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both writes were attempted — one add, one remove — and both were refused.
+    expect(harness.graph.batchedWrites, hasLength(2));
+
+    // The card still counts, and now also says why: Graph's status, its error
+    // code and its message, on the card the operator pressed.
+    final failure = find.descendant(
+      of: find.byKey(entry),
+      matching: find.textContaining('2 of 2 membership change(s) on GBS-1A '
+          'failed'),
+    );
+    expect(failure, findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(entry),
+        matching: find.textContaining('400 Request_BadRequest: Adding or '
+            'removing members is not supported for this group.'),
+      ),
+      findsOneWidget,
+      reason: 'the line an operator can act on, or paste into a search',
+    );
+
+    // And the log agrees with the card instead of contradicting it: the refusal
+    // is red, it counts what actually landed…
+    final errors =
+        harness.log.entries.where((e) => e.isError).map((e) => e.message);
+    expect(
+      errors,
+      containsAll(<Matcher>[
+        allOf(
+          contains('0 van 1 leden toegevoegd aan groep az-GBS-1A'),
+          contains('1 mislukt: 400 Request_BadRequest'),
+        ),
+        allOf(
+          contains('0 van 1 leden verwijderd uit groep az-GBS-1A'),
+          contains('1 mislukt: 400 Request_BadRequest'),
+        ),
+      ]),
+    );
+    // …no line anywhere claims the batch went through…
+    expect(
+      harness.log.entries.map((e) => e.message),
+      everyElement(isNot(contains('in batch'))),
+      reason: 'the unconditional success line is what made the log lie',
+    );
+    // …and each refused member is named, so a *partial* failure could be traced
+    // to the accounts it hit rather than to a count.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      containsAll(<Matcher>[
+        contains('az1 → 400 Request_BadRequest'),
+        contains('az2 → 400 Request_BadRequest'),
+      ]),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -4332,6 +4710,121 @@ void main() {
         .toList();
     expect(applyable,
         ['SyncAzureClassGroupMembers', 'SyncAzureClassGroupMembers']);
+  });
+
+  testWidgets(
+      'a class group Graph will not manage is diagnosed, not proposed for a '
+      'write that always fails, end-to-end (#331)',
+      (WidgetTester tester) async {
+    // The reported bug, in the real app. `GBS-1A` is a mail-enabled security
+    // group — Exchange Online masters its membership, so Graph refuses every
+    // add and every remove. The class card offered "Werk het ledenbestand van
+    // GBS-1A bij", the operator pressed Toepassen, all 38 changes failed, and
+    // the identical proposal was back on the next pass. Forever.
+    //
+    // End-to-end because the claim spans surfaces a unit test sees one at a
+    // time: the class card in Klasgroepen (composed from the stored candidate
+    // document plus the live dispatch), the per-student row in Acties (a second
+    // projection of the same dispatch), and the Graph transport underneath —
+    // which must stay untouched even while the operator reads and expands.
+    useTallWindow(tester);
+    final harness = unmanageableClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // The doomed proposal is gone from the screen entirely — not merely failing
+    // more legibly than it used to (#330).
+    expect(
+        find.textContaining('Werk het ledenbestand van GBS-1A'), findsNothing,
+        reason: 'no write may be offered on a group Graph refuses');
+    expect(
+      find.textContaining(
+          'De Office 365-groep GBS-1A is een mail-enabled beveiligingsgroep'),
+      findsWidgets,
+    );
+    expect(find.textContaining('(manueel)'), findsWidgets);
+    expect(find.textContaining('(keuze)'), findsNothing,
+        reason: 'a lone notice is not a choice');
+
+    // The card states the shape, the address and how far the roster has drifted
+    // while nobody could write to it — and offers no apply of its own.
+    final Finder entry = find.byKey(const ValueKey('entry-group-1A'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    expect(find.text('type: mail-enabled beveiligingsgroep'), findsOneWidget);
+    expect(find.textContaining('niet gesynchroniseerd: 1 toe te voegen'),
+        findsOneWidget);
+    final Finder apply = find.byKey(const ValueKey('entry-apply-1A'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull);
+
+    // Nothing anywhere in the app is willing to write to this group.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .where((a) => a.canApply)
+          .map((a) => a.kind)
+          .toList(),
+      isEmpty,
+    );
+    expect(harness.graph.batchedWrites, isEmpty);
+
+    // And the student who is missing from it is told where the remedy lives,
+    // instead of being sent to a class card that no longer offers one.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await selectAccount(tester, accountId(harness, 'Joe Sels'));
+    expect(
+      find.textContaining('Ontbreekt in de Office 365-klasgroep GBS-1A'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Die groep wordt in Exchange Online beheerd'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Werk het ledenbestand van klas 1A bij'),
+        findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the very same class on a Microsoft 365 group still gets its roster '
+      'write end-to-end (#331)', (WidgetTester tester) async {
+    // The control, and the reason the guard is narrow: one class, one student
+    // missing, one address — the *only* difference from the test above is
+    // `groupTypes: ["Unified"]` instead of `securityEnabled: true`. If the guard
+    // ever widened to "anything mail-enabled" or "anything security-enabled" it
+    // would silence the write on the 371 groups that work, and this is what
+    // would say so.
+    useTallWindow(tester);
+    final harness = unmanageableClassGroupHarness(manageable: true);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    expect(
+      find.textContaining('Werk het ledenbestand van GBS-1A bij (1 toevoegen'),
+      findsWidgets,
+    );
+    expect(find.textContaining('mail-enabled beveiligingsgroep'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

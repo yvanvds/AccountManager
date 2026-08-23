@@ -456,8 +456,9 @@ class AddStudentToSmartschool extends StudentAction {
   ///
   /// **Best-effort, by design.** The create is this action's success criterion;
   /// a failed placement must not fail (and so retry) the create (INV-41).
-  /// Legacy likewise logs and continues. An unresolved or non-official target,
-  /// or a failed move, is therefore silently tolerated here — a mis-placed
+  /// Legacy likewise logs and continues. A target that is not one of our
+  /// classes (#333), an unresolved or non-official one, or a failed move, is
+  /// therefore silently tolerated here — a mis-placed
   /// *non*-ANS/BNS student is re-caught next pass by [MoveToSmartschoolClassGroup]
   /// once the account is complete, so only the (rare) ANS/BNS → "Leerlingen"
   /// case has no safety net. There is no log sink on this path.
@@ -469,10 +470,17 @@ class AddStudentToSmartschool extends StudentAction {
     if (placement == null) return;
 
     final classGroup = _wisa.classGroup;
-    final targetName =
-        (classGroup.contains('ANS') || classGroup.contains('BNS'))
-            ? 'Leerlingen'
-            : classGroup;
+    final isAdultEducation =
+        classGroup.contains('ANS') || classGroup.contains('BNS');
+
+    // The same ours-check [MoveToSmartschoolClassGroup.evaluate] applies (#333):
+    // a create must not be the way a foreign class name gets enrolled either.
+    // The ANS/BNS branch is exempt because it targets the "Leerlingen" root,
+    // which is a tree node rather than one of our classes — `_isOfficialClass`
+    // below is what vets that one.
+    if (!isAdultEducation && !placement.isOurClass(classGroup)) return;
+
+    final targetName = isAdultEducation ? 'Leerlingen' : classGroup;
     final target = placement.resolveClass(targetName);
     if (target == null || !_isOfficialClass(target)) return;
 
@@ -1096,9 +1104,21 @@ class MoveToSmartschoolClassGroup extends StudentAction {
     return classGroup.contains('ANS') || classGroup.contains('BNS');
   }
 
+  /// Fires when the student's WISA class and their Smartschool class disagree —
+  /// and only for a class that is **ours** (#333).
+  ///
+  /// The ours-check is the guard in front of the widest bulk action in the app:
+  /// whatever named the target — a WISA quirk, a mis-scoped index (#332), a
+  /// hand-edited rule — a class our own school does not have must end in
+  /// silence rather than in a proposal an operator can apply to the whole
+  /// school. It asks WISA, not Smartschool: at the rollover the target class
+  /// legitimately does not exist in Smartschool yet, and suppressing *those*
+  /// moves would gut the action (see [ClassPlacement.isOurClass]).
   @override
   bool evaluate() =>
-      !_isAdultEducation && placement.className != placement.currentClassName;
+      !_isAdultEducation &&
+      placement.className != placement.currentClassName &&
+      placement.isOurClass(placement.className);
 
   /// The bulk action the app exists for (legacy
   /// `MoveToSmartschoolClassGroup(…, true, true)`): at the September rollover
@@ -1241,15 +1261,34 @@ class AzureClassGroupMembership extends StudentAction {
   String _summary() {
     final target = placement.groupName ?? placement.className;
     if (!placement.missingFromOwnGroup) {
-      return 'Staat nog in de Office 365-klasgroep $_strays. Werk het '
-          'ledenbestand van die klas bij.';
+      return 'Staat nog in de Office 365-klasgroep $_strays. '
+          '${_instruction('die klas')}';
     }
     if (placement.strayGroupNames.isEmpty) {
-      return 'Ontbreekt in de Office 365-klasgroep $target. Werk het '
-          'ledenbestand van klas ${placement.className} bij.';
+      return 'Ontbreekt in de Office 365-klasgroep $target. '
+          '${_instruction('klas ${placement.className}')}';
     }
     return 'Zit in de verkeerde Office 365-klasgroep: $_strays in plaats van '
-        '$target. Werk het ledenbestand van beide klassen bij.';
+        '$target. ${_instruction('beide klassen')}';
+  }
+
+  /// What the operator should do about it — and *where* (#331).
+  ///
+  /// Normally the remedy is the class-level `SyncAzureClassGroupMembers`, which
+  /// this row deliberately does not duplicate. But when every group named here
+  /// is mastered by Exchange Online, that write does not exist: the class card
+  /// carries `AzureClassGroupNotManageable` instead, and telling the operator to
+  /// go and update a roster the app will not offer to update sends them around
+  /// the loop #331 was filed to break.
+  String _instruction(String which) {
+    if (!placement.onlyExchangeManagedGroups) {
+      return 'Werk het ledenbestand van $which bij.';
+    }
+    final subject = placement.unmanagedGroupNames.length == 1
+        ? 'Die groep wordt'
+        : 'Die groepen worden';
+    return '$subject in Exchange Online beheerd; Graph kan de ledenlijst niet '
+        'bijwerken. Pas het lidmaatschap daar aan.';
   }
 
   @override

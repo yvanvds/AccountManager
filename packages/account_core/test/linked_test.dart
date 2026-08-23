@@ -112,12 +112,33 @@ void main() {
         smartschool: ss,
         azure: az,
         confidence: LinkConfidence.high,
-        wisaSchoolIds: {1},
+        wisaClassGroups: {1: '3A'},
       );
       expect(acc.isInOurWisa, isTrue);
       expect(acc.hasLeftOurSchool, isFalse);
       expect(acc.hasLeftGroup, isFalse);
       expect(acc.wisaSchoolIds, {1});
+    });
+
+    test('the school ids are the per-school membership\'s keys (#334)', () {
+      // One field, so the ids and the classes behind them cannot disagree: a
+      // record that knows a person is in school 2 also knows which class school
+      // 2 holds her in, which is what a card states (INV-25).
+      const acc = LinkedAccount(
+        id: LinkedAccountId('la-dual'),
+        role: PersonRole.student,
+        wisa: wisa,
+        smartschool: ss,
+        azure: az,
+        confidence: LinkConfidence.high,
+        wisaClassGroups: {1: '3MWW1', 2: '3HWa'},
+      );
+      expect(acc.wisaSchoolIds, {1, 2});
+      expect(acc.wisaClassGroups[2], '3HWa');
+      // Still ours: one of the two schools is ours, so nothing about the second
+      // enrolment changes what the departure actions see.
+      expect(acc.isInOurWisa, isTrue);
+      expect(acc.hasLeftGroup, isFalse);
     });
 
     test('moved to a sibling group school → left our school, still in group',
@@ -129,7 +150,7 @@ void main() {
         smartschool: ss,
         azure: az,
         confidence: LinkConfidence.medium,
-        wisaSchoolIds: {2},
+        wisaClassGroups: {2: '3HWa'},
         wisaPresence: WisaPresence.groupOnly,
       );
       expect(acc.isInOurWisa, isFalse);

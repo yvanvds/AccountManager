@@ -94,6 +94,13 @@ class AzureClassGroupResolver {
       final azure = group.azure;
       if (className == null || group.wisa == null || azure == null) continue;
       _groupNameByClass.putIfAbsent(className, () => azure.displayName);
+      // Whose membership Graph will not write (#331). Read here, where the
+      // concrete connector record is in hand, so the per-student row can say
+      // what the class row says instead of pointing at a write that is no
+      // longer offered.
+      if (azure is az.AzureGroup && !azure.canManageMembership) {
+        _unmanagedGroupNames.add(azure.displayName);
+      }
       for (final memberId in _memberIdsOf(azure)) {
         (_classesByMemberId[memberId] ??= <String>{}).add(className);
       }
@@ -133,6 +140,13 @@ class AzureClassGroupResolver {
   /// [planFor] diffs the roster against, so the per-account and per-class views
   /// of one student cannot disagree.
   final Map<String, Set<String>> _classesByMemberId = {};
+
+  /// The display names of the class groups Exchange Online masters, so Graph
+  /// refuses every membership write on them (#331). Empty in a healthy tenant:
+  /// the app only ever creates Microsoft 365 groups, and the legacy WPF app only
+  /// ever created plain security groups. A hand-made mail-enabled security group
+  /// inside the school namespace — `SSM-1A` — is what puts a name here.
+  final Set<String> _unmanagedGroupNames = {};
 
   /// The plan for one linked class, or `null` when the record names no Office
   /// 365 class group: it carries no WISA class (an orphan), the school prefix
@@ -197,16 +211,24 @@ class AzureClassGroupResolver {
         ? const <String>{}
         : (_classesByMemberId[azureId] ?? const <String>{});
 
+    final strayGroupNames = <String>[
+      for (final entry in _groupNameByClass.entries)
+        if (entry.key != className && memberOf.contains(entry.key)) entry.value,
+    ];
+
     return AzureClassPlacement(
       className: rawName,
       groupName: groupName,
       groupExists:
           className != null && _groupNameByClass.containsKey(className),
       isMember: className != null && memberOf.contains(className),
-      strayGroupNames: <String>[
-        for (final entry in _groupNameByClass.entries)
-          if (entry.key != className && memberOf.contains(entry.key))
-            entry.value,
+      strayGroupNames: strayGroupNames,
+      // Only the groups this placement actually names: an unmanaged group
+      // somewhere else in the school is not this student's problem (#331).
+      unmanagedGroupNames: <String>[
+        if (groupName != null && _unmanagedGroupNames.contains(groupName))
+          groupName,
+        ...strayGroupNames.where(_unmanagedGroupNames.contains),
       ],
     );
   }

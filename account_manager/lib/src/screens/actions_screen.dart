@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
-import 'package:account_state/account_state.dart' show MaterializedAccount;
+import 'package:account_state/account_state.dart'
+    show MaterializedAccount, OtherEnrolment;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -1435,8 +1436,33 @@ class _SystemRow extends StatelessWidget {
   }
 }
 
+/// What the card says about one *other* group school this person is enrolled in
+/// (#334): "Ook ingeschreven in Instituut Sancta Maria-B (ISMAB), klas 3HWa".
+///
+/// A statement, not an action. It sits beside the class facts because that is
+/// what it explains: at the start of a school year a student may apply to
+/// several schools of the group, and until she turns up the card carries a
+/// second school's traces — a departure beside a create, a class name from
+/// nowhere. Rare enough that nobody remembers it when it appears, which is
+/// exactly why it is written down rather than left to be inferred.
+///
+/// The school is named by the WISA school list ([OtherEnrolment.schoolLabel],
+/// baked in by the materializer), and the class is *that* school's — read here
+/// and nowhere else. Every value this app writes comes from our own school's row
+/// (INV-25).
+String _otherEnrolmentLine(OtherEnrolment e) {
+  final String klas = e.classroom.trim();
+  final String where = klas.isEmpty ? 'zonder klas' : 'klas $klas';
+  return 'Ook ingeschreven in ${e.schoolLabel}, $where';
+}
+
 /// The details pane's content for one account: who it is, what each system says
 /// about it, and every decision it raises.
+///
+/// Since #334 it also states the other group schools the person is enrolled in,
+/// directly under the class facts they qualify. Only here, and not on the
+/// collapsed list row: the row is one dense line per account across a roster of
+/// thousands, and this is context for reading *one* card, not a way to scan.
 ///
 /// The decisions are [entryDetail] verbatim — one block per decision, each led
 /// by its own heading and its system, then the radios or the field diff, then
@@ -1474,6 +1500,15 @@ class _AccountDetail extends StatelessWidget {
         ),
         const SizedBox(height: PlinkSpacing.s1),
         Text(row.account.classroom, style: text.bodySmall),
+        for (final (int i, OtherEnrolment e)
+            in row.account.otherEnrolments.indexed) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s1),
+          Text(
+            key: ValueKey('account-other-enrolment-${row.id}-$i'),
+            _otherEnrolmentLine(e),
+            style: text.bodySmall,
+          ),
+        ],
         const SizedBox(height: PlinkSpacing.s3),
         // Repeated from the row on purpose: on a narrow window the list is not
         // on screen at all, so the pane has to be able to say what the account's
