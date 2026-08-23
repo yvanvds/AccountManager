@@ -163,10 +163,9 @@ class's Smartschool state and ride alongside **both** branches:
   parser order: `DoNotImportFromWisa` (WISA-only class; adds a `DontImportClass`
   rule), `AddToSmartschool` (WISA-only class **with students**; creates the
   official class in Smartschool), `CreateInSmartschool` (WISA-only class with
-  **no** students; informational), and the `staleSmartschoolClassAlternative`
-  pair of #313 for an orphan Smartschool class — the informational
-  `DoNotImportFromSmartschool` (leave it standing) and the applyable
-  `DeleteSmartschoolClass` (`delClass` on the class code). A WISA-only class
+  **no** students; informational), and — for an orphan Smartschool class —
+  `DeleteSmartschoolClass` (#313; `delClass` on the class code), which since
+  #328 is the **whole** of what that row proposes. A WISA-only class
   therefore raises `DoNotImportFromWisa` plus exactly one of `AddToSmartschool` /
   `CreateInSmartschool` — or, when Smartschool already carries the name on a
   group the linker could not adopt (#225), the informational
@@ -178,10 +177,20 @@ class's Smartschool state and ride alongside **both** branches:
   `classImportAlternative` for a genuinely new class (#244) and
   `namesakeClassAlternative` for one Smartschool already has (#250), which keeps
   the two situations in separate bulk-apply subsets. The default is always the
-  provisioning/diagnosis half, never the blacklist — and the same holds for the
-  Smartschool leftovers, where the notice is the default so a bulk pass writes
-  nothing and the delete is a per-row pick a bulk affordance may never reach
-  (#293).
+  provisioning/diagnosis half, never the blacklist.
+
+  The **Smartschool leftovers** had a third such key until #328. It went for the
+  reason the Office 365 one did (see below): its default half was an
+  informational "laat deze klas staan", and the operator performs that by not
+  pressing **Toepassen**. What keeps `delClass` — which takes the class, every
+  membership and every subgroup with it — out of a bulk pass is
+  `canApplyToAll == false` (#293), read by both bulk paths since #326.
+  `DoNotImportFromSmartschool` survives as the lone `(manueel)` notice for a
+  leftover the delete cannot address (a non-official group, or one naming no
+  class code). The reading the default *also* carried — that early in a school
+  year the WISA snapshot lags, so a live class can read as a leftover — is a
+  fact about the situation rather than a resolution, and is stated on the
+  delete's own card (`WISA: kent deze klas (nog) niet — …`).
 - **Azure-only, class-shaped** (a group whose class stopped running) →
   `DeleteAzureClassGroup` (#271), and since #327 that is the **whole** of what
   the row proposes. It used to be one radio of a pair whose default half was an

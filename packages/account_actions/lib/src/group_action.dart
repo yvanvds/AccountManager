@@ -88,17 +88,20 @@ sealed class GroupAction {
 
   /// The key shared by mutually-exclusive alternatives resolving the same
   /// situation (#110). `null` (the default) means the action stands on its own.
-  /// The group family has three: [classImportAlternative] for a class
-  /// Smartschool does not have (#244), [namesakeClassAlternative] for one it
-  /// already carries under a group the linker could not adopt (#250), and
-  /// [staleSmartschoolClassAlternative] for a Smartschool class WISA does not
-  /// have (#313). See [StudentAction.alternativeGroup].
+  /// The group family has two: [classImportAlternative] for a class Smartschool
+  /// does not have (#244) and [namesakeClassAlternative] for one it already
+  /// carries under a group the linker could not adopt (#250). See
+  /// [StudentAction.alternativeGroup].
   ///
-  /// An Office 365 group whose class is gone had a fourth until #327. It lost
-  /// it because its conservative half was a no-op: "laat de groep staan" and
-  /// "doe niets" are the same act, and the operator performs the second one by
-  /// not pressing **Toepassen**. [DeleteAzureClassGroup] now stands alone where
-  /// it can fire and [AzureClassGroupWithoutClass] alone where it cannot.
+  /// The two **leftovers** — an Office 365 group whose class is gone, and a
+  /// Smartschool class WISA does not have — each had a key of their own until
+  /// #327 and #328. Both lost it for the same reason: their conservative half
+  /// was a no-op. "Laat de groep staan" / "laat deze klas staan" and "doe
+  /// niets" are the same act, and the operator performs the second one by not
+  /// pressing **Toepassen**, so the pair asked them to record a non-decision.
+  /// [DeleteAzureClassGroup] and [DeleteSmartschoolClass] now stand alone where
+  /// they can fire, and [AzureClassGroupWithoutClass] /
+  /// [DoNotImportFromSmartschool] alone where they cannot.
   String? get alternativeGroup => null;
 
   /// Whether this action is the default alternative within its
@@ -585,67 +588,51 @@ class ClassExistsAsSmartschoolGroup extends GroupAction {
       );
 }
 
-/// The [GroupAction.alternativeGroup] key shared by the two readings of an
-/// official Smartschool class WISA does not have (#313): leave it standing
-/// ([DoNotImportFromSmartschool]) *or* delete it ([DeleteSmartschoolClass]).
-///
-/// The Smartschool twin of the Office 365 stale-group decision, and
-/// deliberately the same shape — one predicate, one facts helper, the notice as
-/// the default and the delete as the non-default that no bulk pass may reach.
-/// Until #313 the notice was the *only* reading, and its whole content was an
-/// instruction to go and do it by hand in Smartschool: the dead end #271
-/// removed on the Office 365 side, still standing here, and a screenful of it
-/// at a September changeover.
-///
-/// The Azure pair has since lost its radios altogether (#327), and #328 is
-/// where this one is weighed against the same argument — the polarity here
-/// carries a job the Azure one's never did, spelled out below.
-///
-/// **The default is the notice**, and here the polarity carries an extra job
-/// the Azure pair does not have. Early in a school year the WISA snapshot lags
-/// the real world, so a legitimately new class reads as Smartschool-only until
-/// it lands — and a class the school deliberately maintains only in Smartschool
-/// reads that way forever. Leaving it alone is therefore the right answer far
-/// more often than deleting it, which is why "Alles toepassen" over these rows
-/// writes nothing at all and the delete is a radio the operator flips on one
-/// row.
-///
-/// A key of its own rather than a third member of [classImportAlternative], for
-/// the reason [namesakeClassAlternative] is separate from it: the pending list
-/// keys its "same situation" bulk subsets on this very string
-/// (`PendingChoice.situationId`), so pooling the Smartschool leftovers with the
-/// genuinely new WISA classes would file both under one header offering one
-/// **Apply to all**.
-const String staleSmartschoolClassAlternative = 'class-smartschool-stale';
-
-/// An orphan Smartschool class with no matching WISA class — **leave it
-/// standing**, the conservative half of the [staleSmartschoolClassAlternative]
-/// pair and its default (#313).
+/// An orphan Smartschool class with no matching WISA class **that this app
+/// cannot delete for you** — the lone informational row such a class is left
+/// with (#328).
 ///
 /// Ported from `Action\Group\DoNotImportFromSmartschool`, whose legacy `Apply`
 /// throws `NotImplementedException` — it is **informational only** (legacy
-/// `CanBeApplied == false`), so [canApply] is `false` and [apply] throws. It is
-/// the Smartschool analogue of [AzureClassGroupWithoutClass], down to the
-/// wording: it states what the class is, and it no longer tells the operator to
-/// go and delete it by hand, because [DeleteSmartschoolClass] now sits beside it
-/// as the non-default alternative.
+/// `CanBeApplied == false`), so [canApply] is `false` and [apply] throws. Until
+/// #313 it was the *only* reading, and its whole content was an instruction to
+/// go and delete the class by hand in Smartschool: the dead end #271 removed on
+/// the Office 365 side, and a screenful of it at a September changeover. From
+/// #313 to #328 it was the pre-selected half of a radio pair whose other half
+/// was [DeleteSmartschoolClass].
+///
+/// **It is neither any more**, exactly as [AzureClassGroupWithoutClass] stopped
+/// being either at #327. "Laat deze klas staan" and "doe niets" are the same
+/// act, and the operator performs the second one by not pressing **Toepassen**;
+/// offering it as a radio asked them to record a non-decision, and made a card
+/// proposing exactly one thing read as a question with two answers.
+///
+/// **The job the polarity did carry is not lost.** Being the default is what
+/// kept the delete out of a bulk pass, and that job belongs to
+/// [GroupAction.canApplyToAll], which [DeleteSmartschoolClass] withholds (#293)
+/// and every bulk affordance honours since #326. The *other* thing the default
+/// said — that leaving the class alone is usually right, because early in a
+/// school year the WISA snapshot lags the real world and a class the school
+/// maintains only in Smartschool reads as a leftover forever — is a fact about
+/// the situation, not a resolution to choose. It survives as the line
+/// [_wisaMayBeLagging] states on the delete's own card, where the operator
+/// reads it before pressing rather than after picking.
+///
+/// So this now fires **exactly where the delete cannot** — see
+/// [_deletableSmartschoolClass] — which in practice means a record naming no
+/// class code to address a `delClass` to, or a group that is not an official
+/// class. There is then genuinely nothing to offer, and saying so *is* the
+/// whole content of the row, marked "(manueel)" like every other informational
+/// action.
 class DoNotImportFromSmartschool extends GroupAction {
   const DoNotImportFromSmartschool(super.group);
 
   @override
-  bool evaluate() => _smartschoolOnlyClass(group);
+  bool evaluate() =>
+      _smartschoolOnlyClass(group) && !_deletableSmartschoolClass(group);
 
   @override
   bool get canApply => false;
-
-  /// The notice leads — and is the default of — the pair (#313), so a bulk
-  /// apply over Smartschool leftovers writes nothing and the delete stays a
-  /// deliberate, per-row pick.
-  @override
-  String? get alternativeGroup => staleSmartschoolClassAlternative;
-
-  @override
-  bool get isDefaultAlternative => true;
 
   @override
   ChangeSet describeChanges() => ChangeSet(
@@ -666,56 +653,58 @@ class DoNotImportFromSmartschool extends GroupAction {
       );
 }
 
-/// Delete a Smartschool class WISA no longer has (#313) — the applyable half of
-/// the [staleSmartschoolClassAlternative] pair, and never its default.
+/// Delete a Smartschool class WISA no longer has (#313) — since #328 the
+/// **only** thing such a leftover proposes, not one radio of two.
 ///
 /// Genuinely destructive: `delClass` takes the class, the membership of every
 /// student in it, and whatever hangs under it. The same three things hold it in
 /// place that hold [DeleteAzureClassGroup] in place, and each of them is
 /// tested:
 ///
-/// - **It proposes on exactly the record the notice does**, via the one
-///   [_smartschoolOnlyClass] predicate — no WISA class, a Smartschool one —
-///   plus a restatement of the linker's own orphan rule: only an **official**
-///   Smartschool class ever seeds an orphan record, so an organisational group
-///   is already out of scope and must stay out. The restatement is
-///   belt-and-braces and deliberately redundant: a delete must not inherit its
-///   whole scope from a filter one layer away.
-/// - **It is never the selected option of a bulk pass**, because the notice
-///   beside it is the default of their shared alternative group. The operator
-///   flips this radio on one row, and only that row is written.
+/// - **It proposes on exactly the record [_deletableSmartschoolClass]
+///   describes** — no WISA class, a Smartschool one — plus a restatement of the
+///   linker's own orphan rule: only an **official** Smartschool class ever
+///   seeds an orphan record, so an organisational group is already out of scope
+///   and must stay out. The restatement is belt-and-braces and deliberately
+///   redundant: a delete must not inherit its whole scope from a filter one
+///   layer away.
+/// - **No bulk affordance may offer it**, because [canApplyToAll] is false and,
+///   since #326, both bulk paths read it. This is now the *whole* of that
+///   guard: until #328 it leaned on the polarity of a radio pair, which meant
+///   two flipped radios could arm a header the flag had already refused.
 /// - **The linked record must actually name a class to delete** — a blank
 ///   Smartschool class code yields no proposal rather than a `delClass` with an
-///   empty `code`.
+///   empty `code`, and [DoNotImportFromSmartschool] states the situation
+///   instead.
+///
+/// **The card proposes; it does not interrogate.** Losing the pair must not
+/// lose the reading the pair's default carried — that a WISA snapshot lagging
+/// early in a school year, or a class the school deliberately keeps only in
+/// Smartschool, is the *common* cause of a row landing here. That is context on
+/// the situation rather than a resolution to pick, so [describeChanges] states
+/// it ([_wisaMayBeLagging]) beside the class's own facts. Nothing is written
+/// until the operator presses **Dry-run** or **Toepassen** behind the ordinary
+/// confirmation, and ignoring the card is a complete answer.
 ///
 /// Deliberately no `unlocks`: nothing follows a delete.
 ///
 /// **What this is not.** Legacy's neighbour here was `Klas Negeren` — a
-/// persistent "do not import this class" decision. That is a third option, not
-/// a replacement for either half: if such a blacklist ever comes back it
-/// belongs in this same alternative group, beside the notice and the delete.
+/// persistent "do not import this class" decision. That is a genuine second
+/// resolution rather than the no-op #328 removed: if such a blacklist ever
+/// comes back it belongs beside this delete under an alternative key of their
+/// own, and it would be the first thing this row ever had to choose *between*.
 class DeleteSmartschoolClass extends GroupAction {
   const DeleteSmartschoolClass(super.group);
 
   @override
-  bool evaluate() =>
-      _smartschoolOnlyClass(group) &&
-      _ss.official &&
-      _ss.id.value.trim().isNotEmpty;
-
-  /// The destructive half, so never the default (#313). See
-  /// [staleSmartschoolClassAlternative].
-  @override
-  String? get alternativeGroup => staleSmartschoolClassAlternative;
-
-  @override
-  bool get isDefaultAlternative => false;
+  bool evaluate() => _deletableSmartschoolClass(group);
 
   /// **Never in bulk** (#293), for the reason [DeleteAzureClassGroup] is not:
   /// `delClass` takes the class and everything in it, and a WISA snapshot that
-  /// merely lags makes a perfectly live class look like a leftover. The
-  /// operator flips this radio on one row, and even then no bulk affordance may
-  /// offer it.
+  /// merely lags makes a perfectly live class look like a leftover. Since #328
+  /// removed the pair this used to sit in, this flag is the only thing keeping
+  /// the delete off every bulk path — and #326 is what makes every one of them
+  /// ask.
   @override
   bool get canApplyToAll => false;
 
@@ -727,8 +716,11 @@ class DeleteSmartschoolClass extends GroupAction {
         // What the delete takes with it, stated (#305). The summary already
         // says the class goes; these lines are the inventory of it, and an
         // arrow on each would claim three separate fields were being cleared.
+        // The caution sits with the class's own facts rather than with that
+        // inventory: it is why the operator might not press at all (#328).
         fields: [
           ..._smartschoolClassFacts(group.smartschool),
+          _wisaMayBeLagging,
           const FieldChange.statement(
             'lidmaatschappen en subgroepen',
             'verdwijnen mee',
@@ -780,10 +772,10 @@ class DeleteSmartschoolClass extends GroupAction {
 /// one condition [DoNotImportFromSmartschool] and [DeleteSmartschoolClass]
 /// share.
 ///
-/// One definition rather than two copies, because the pair are alternatives:
-/// they must fire together or a leftover class is left with a lone applyable
-/// delete as its only reading, which is precisely the "no safe default" state
-/// [staleSmartschoolClassAlternative] exists to prevent.
+/// One definition rather than two copies, because the two readings partition
+/// it: [_deletableSmartschoolClass] is the half the delete proposes on and the
+/// notice is exactly the remainder, so a leftover class raises one row and
+/// never none or two.
 ///
 /// It asks the linker's own question and no stricter one, exactly as
 /// [_staleClassGroup] does on the Azure side: the record is on screen because
@@ -792,7 +784,47 @@ class DeleteSmartschoolClass extends GroupAction {
 bool _smartschoolOnlyClass(LinkedGroup group) =>
     group.wisa == null && group.smartschool != null;
 
-/// The facts both halves of [staleSmartschoolClassAlternative] state about the
+/// Whether [group] is a Smartschool leftover this app can actually **delete**
+/// (#328) — [_smartschoolOnlyClass] plus the two things a `delClass` needs: an
+/// official class rather than an organisational group, and a code to address
+/// the call to.
+///
+/// Written out as a predicate of its own rather than folded into
+/// [DeleteSmartschoolClass.evaluate], for the reason [_deletableStaleClassGroup]
+/// is: it is the line the two readings of a leftover class are drawn on. The
+/// delete proposes exactly where this holds, and [DoNotImportFromSmartschool]
+/// states its "(manueel)" notice exactly where it does not. Expressed once,
+/// "the notice fires when the delete cannot" cannot drift into a second,
+/// differently-worded copy of this guard.
+///
+/// The official-class test restates the linker's own orphan rule deliberately:
+/// a delete must not inherit its whole scope from a filter one layer away.
+bool _deletableSmartschoolClass(LinkedGroup group) {
+  final smartschool = group.smartschool;
+  return _smartschoolOnlyClass(group) &&
+      smartschool!.official &&
+      smartschool.id.value.trim().isNotEmpty;
+}
+
+/// Why a class can sit in Smartschool with no WISA counterpart and still be
+/// perfectly live (#328) — stated on [DeleteSmartschoolClass]'s card, never
+/// offered as a resolution.
+///
+/// This is the reading the pre-selected "laat deze klas staan" used to carry,
+/// and the whole reason the Smartschool leftovers were weighed separately from
+/// the Office 365 ones: early in a school year the WISA snapshot lags the real
+/// world, so a legitimately new class reads as Smartschool-only until WISA
+/// catches up, and a class the school deliberately maintains only in
+/// Smartschool reads that way forever. The operator needs it *before* pressing,
+/// which is a sentence on the card — not a radio recording that they chose not
+/// to act.
+const FieldChange _wisaMayBeLagging = FieldChange.statement(
+  'WISA',
+  'kent deze klas (nog) niet — vroeg in het schooljaar loopt WISA achter, '
+      'controleer daar of ze bestaat voor je ze verwijdert',
+);
+
+/// The facts both readings of a Smartschool leftover class state about the
 /// class they are describing (#305) — stated, never diffed.
 ///
 /// Each is stated only when the class carries it: an empty statement renders as
@@ -801,8 +833,8 @@ List<FieldChange> _smartschoolClassFacts(Group? smartschool) {
   final code = smartschool?.id.value.trim() ?? '';
   final description = smartschool?.description.trim() ?? '';
   return <FieldChange>[
-    // How the operator finds the class in Smartschool, and what the delete
-    // beside this is addressed to.
+    // How the operator finds the class in Smartschool, and what a `delClass`
+    // is addressed to.
     if (code.isNotEmpty) FieldChange.statement('code', code),
     if (description.isNotEmpty)
       FieldChange.statement('omschrijving', description),

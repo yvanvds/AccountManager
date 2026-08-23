@@ -220,19 +220,19 @@ void main() {
       await h.controller.sync();
 
       // The count mirrors the relink summary's pendingActions.length (the
-      // fixture derives six pending actions across the families — its two
-      // Smartschool-only classes each carry the #313 either/or, which is two
-      // actions and one decision), and the line names the operator who ran the
-      // pass (#169).
+      // fixture derives four pending actions across the families — its two
+      // Smartschool-only classes each propose one delete since #328 dropped the
+      // no-op half of the #313 pair), and the line names the operator who ran
+      // the pass (#169).
       expect(
         h.log.entries.map((e) => e.message),
-        contains('Sync voltooid — 6 openstaande actie(s). Klaar. '
+        contains('Sync voltooid — 4 openstaande actie(s). Klaar. '
             'Operator: operator@school.example.'),
       );
       // It is the *last* line — the operator sees it closing the pass.
       expect(
           h.log.entries.last.message,
-          'Sync voltooid — 6 openstaande actie(s). Klaar. '
+          'Sync voltooid — 4 openstaande actie(s). Klaar. '
           'Operator: operator@school.example.');
     });
 
@@ -243,7 +243,7 @@ void main() {
       await h.controller.sync();
 
       expect(h.log.entries.last.message,
-          'Sync voltooid — 6 openstaande actie(s). Klaar.');
+          'Sync voltooid — 4 openstaande actie(s). Klaar.');
     });
 
     test('the "no changes needed" path also logs a ready line', () async {
@@ -281,7 +281,7 @@ void main() {
       // actually ran, because a drift check is not a sync.
       expect(
           h.log.entries.last.message,
-          'Driftcontrole voltooid — 6 openstaande actie(s). Klaar. '
+          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar. '
           'Operator: operator@school.example.');
       expect(
         h.log.entries.where((e) => e.message.startsWith('Sync voltooid')),
@@ -299,7 +299,7 @@ void main() {
       await h.controller.checkDrift();
 
       expect(h.log.entries.last.message,
-          'Driftcontrole voltooid — 6 openstaande actie(s). Klaar.');
+          'Driftcontrole voltooid — 4 openstaande actie(s). Klaar.');
     });
   });
 
@@ -1377,15 +1377,18 @@ void main() {
     });
 
     test('informational group actions are listed but never applied', () async {
-      // An orphan Smartschool class (no WISA counterpart) surfaces the
-      // informational DoNotImportFromSmartschool — visible in the pending
-      // list, skipped by the apply pass (its apply() throws by contract).
+      // An orphan Smartschool class the app cannot delete — `9Z` names no class
+      // code, so there is nothing to address a `delClass` to (#328) — surfaces
+      // the informational DoNotImportFromSmartschool, visible in the pending
+      // list and skipped by the apply pass (its apply() throws by contract).
+      // Its two neighbours do name codes, so they propose the delete instead
+      // and keep the applyable count non-trivial.
       final h = ReconcileHarness(
         smartschool: ssSnap(
           groups: [
             ssGroup('2B', code: '2B_ss'),
             ssGroup('3C', code: '3C_ss'),
-            ssGroup('9Z', code: '9Z_ss'),
+            ssGroup('9Z', code: ' '),
           ],
         ),
       );
@@ -1829,9 +1832,10 @@ void main() {
       expectSummary(h.controller.studentSummary, total: 1, pending: 2);
       // No staff in the fixture ⇒ the staff bucket is absent.
       expectSummary(h.controller.staffSummary, total: 0, pending: 0);
-      // Two Smartschool-only classes (2B, 3C) are informational group notices,
-      // so they count toward the total but carry no applyable pending action.
-      expectSummary(h.controller.groupSummary, total: 2, pending: 0);
+      // Two Smartschool-only classes (2B, 3C). Each proposes one delete since
+      // #328 — where the notice used to be the pre-selected half, so the pair
+      // counted toward the total and nothing toward the pending work.
+      expectSummary(h.controller.groupSummary, total: 2, pending: 2);
     });
 
     test('departed students sum across the unassigned bucket, not staff',
@@ -1866,7 +1870,7 @@ void main() {
 
       expect(s2.controller.linked, isNull);
       expectSummary(s2.controller.studentSummary, total: 1, pending: 2);
-      expectSummary(s2.controller.groupSummary, total: 2, pending: 0);
+      expectSummary(s2.controller.groupSummary, total: 2, pending: 2);
     });
   });
 

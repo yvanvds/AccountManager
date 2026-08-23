@@ -128,15 +128,21 @@ void main() {
       expect(actions, isEmpty);
     });
 
-    test('Smartschool only → the leave-it/delete-it pair (#313)', () {
+    test('Smartschool only → the delete, alone (#313/#328)', () {
       // The notice used to stand alone and tell the operator to go and delete
       // the class by hand in Smartschool — a row whose whole content was an
-      // instruction to go elsewhere.
+      // instruction to go elsewhere. #313 put the delete beside it as a radio
+      // pair; #328 dropped the no-op half, so the delete is the whole row.
       final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
-      expect(
-        actions.map((a) => a.runtimeType),
-        [DoNotImportFromSmartschool, DeleteSmartschoolClass],
-      );
+      expect(actions.map((a) => a.runtimeType), [DeleteSmartschoolClass]);
+    });
+
+    test('Smartschool only, but undeletable → the lone notice (#328)', () {
+      // The remainder the delete cannot act on: no code to address `delClass`
+      // to. Exactly one of the two readings ever fires.
+      final actions =
+          groupActionsFor(linkedGroup(smartschool: ssGroup(code: ' ')));
+      expect(actions.map((a) => a.runtimeType), [DoNotImportFromSmartschool]);
     });
 
     test('orphan group with neither WISA nor Smartschool → no action', () {
@@ -215,28 +221,36 @@ void main() {
       expect(actions.single.alternativeGroup, isNull);
     });
 
-    test('the Smartschool-only orphan notice leads a choice of its own (#313)',
-        () {
-      // A key of its own, for the reason the namesake pair has one: the pending
-      // list bulk-applies per situation key, and "this Smartschool class is not
-      // in WISA" is not the situation "this WISA class is not in Smartschool".
+    test('a Smartschool leftover carries no alternative key at all (#328)', () {
+      // It had one of its own until #328 — the pending list bulk-applies per
+      // situation key, so the leftovers were kept out of the new-class subset.
+      // The pair it keyed is gone: "laat deze klas staan" and "doe niets" are
+      // the same act, and the operator performs the second by not pressing
+      // Toepassen. What keeps `delClass` off every bulk path is the #293
+      // sanction the delete withholds, read by both bulk paths since #326.
       final actions = groupActionsFor(linkedGroup(smartschool: ssGroup()));
-      final notice = actions.whereType<DoNotImportFromSmartschool>().single;
       final delete = actions.whereType<DeleteSmartschoolClass>().single;
 
-      expect(notice.alternativeGroup, staleSmartschoolClassAlternative);
-      expect(delete.alternativeGroup, staleSmartschoolClassAlternative);
-      expect(notice.alternativeGroup, isNot(classImportAlternative));
-      expect(notice.alternativeGroup, isNot(namesakeClassAlternative));
-
-      // Polarity: the informational notice leads and is the default, so a bulk
-      // apply writes *nothing* for a Smartschool leftover and the delete stays
-      // a deliberate, per-row pick.
-      expect(notice.isDefaultAlternative, isTrue);
-      expect(notice.canApply, isFalse);
+      expect(actions.map((a) => a.runtimeType), [DeleteSmartschoolClass]);
+      expect(delete.alternativeGroup, isNull,
+          reason: 'one action, so no alternative group and no radio pair');
+      expect(delete.alternativeGroup, isNot(classImportAlternative));
+      expect(delete.alternativeGroup, isNot(namesakeClassAlternative));
       expect(delete.isDefaultAlternative, isFalse);
       expect(delete.canApplyToAll, isFalse);
-      expect(actions.indexOf(notice), lessThan(actions.indexOf(delete)));
+    });
+
+    test('the leftover notice is a lone "(manueel)" row, never a half (#328)',
+        () {
+      final actions =
+          groupActionsFor(linkedGroup(smartschool: ssGroup(code: ' ')));
+      final notice = actions.whereType<DoNotImportFromSmartschool>().single;
+
+      expect(notice.canApply, isFalse);
+      expect(notice.alternativeGroup, isNull);
+      expect(notice.isDefaultAlternative, isFalse);
+      expect(actions.whereType<DeleteSmartschoolClass>(), isEmpty,
+          reason: 'the two readings partition the leftovers — never both');
     });
 
     test('the namesake notice (#225) leads a choice of its own (#250)', () {

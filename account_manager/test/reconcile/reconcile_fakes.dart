@@ -2314,7 +2314,15 @@ ReconcileHarness legacyStaleClassGroupHarness() => ReconcileHarness(
 /// worst. Before #313 each row's whole content was "Verwijder ze manueel als ze
 /// niet meer nodig is" — an instruction to go elsewhere, and a screenful of them
 /// at a September changeover.
-ReconcileHarness smartschoolLeftoverClassHarness() => ReconcileHarness(
+///
+/// [codelessLeftover] strips `9Z` of its class code, which is the one leftover
+/// `DeleteSmartschoolClass` cannot act on: with nothing to address a `delClass`
+/// to, the row falls back to the lone informational `DoNotImportFromSmartschool`
+/// notice (#328).
+ReconcileHarness smartschoolLeftoverClassHarness({
+  bool codelessLeftover = false,
+}) =>
+    ReconcileHarness(
       wisa: wisaSnap(
         students: [wisaStudent(wisaId: '1', classGroup: '1A')],
         schools: [wisaSchool(1)],
@@ -2327,7 +2335,7 @@ ReconcileHarness smartschoolLeftoverClassHarness() => ReconcileHarness(
               instituteNumber: '123',
               untis: '1A'),
           ssGroup('9Z',
-              code: 'C9Z',
+              code: codelessLeftover ? ' ' : 'C9Z',
               description: 'Zesde jaar Z',
               instituteNumber: '123',
               untis: '9Z'),

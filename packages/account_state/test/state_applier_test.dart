@@ -1102,7 +1102,8 @@ void main() {
       expect(
         applied.linked!.groupActions.whereType<DoNotImportFromSmartschool>(),
         isEmpty,
-        reason: 'and so is the notice that was its alternative',
+        reason: 'and the relink raises no notice in its place — the record is '
+            'gone, not merely undeletable (#328)',
       );
       expect(harness.counts, [0, 0, 0], reason: 'nothing was re-pulled');
     });

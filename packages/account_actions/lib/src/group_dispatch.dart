@@ -20,9 +20,10 @@ import 'group_placement.dart';
 ///   them as one either/or choice and an apply runs only the picked one (#244).
 ///   Legacy ordered [DoNotImportFromWisa] first; it now trails the create it is
 ///   an alternative to, so the create leads the radio pair. A **Smartschool-only**
-///   class is the mirror image: it raises the [staleSmartschoolClassAlternative]
-///   pair of #313 — the informational [DoNotImportFromSmartschool] (leave it
-///   standing, the default) and the applyable [DeleteSmartschoolClass].
+///   class is the mirror image: it yields [DeleteSmartschoolClass] (#313) —
+///   **one action, no radio pair** since #328 — where the class is official and
+///   names a code, and the informational [DoNotImportFromSmartschool] as a lone
+///   "(manueel)" row where it is not.
 /// - If it is present in both, only [ModifySmartschoolData] is considered.
 ///
 /// [ClassExistsAsSmartschoolGroup] (#225) sits where the two create actions
@@ -102,12 +103,14 @@ List<GroupAction> groupActionsFor(
       if (placement != null) AddToSmartschool(group, placement),
       if (placement != null) CreateInSmartschool(group, placement),
       DoNotImportFromWisa(group),
-      // The Smartschool-leftover either/or (#313), notice first for the same
-      // reason the create leads the blacklist above: the order is the order the
-      // operator reads the radios in, and the fallback the grouping uses if a
-      // default is ever forgotten — so the delete is never first.
-      DoNotImportFromSmartschool(group),
+      // The Smartschool-leftover readings (#313/#328). Not an either/or: their
+      // predicates partition the leftovers, so at most one of the two ever
+      // survives `evaluate` for a given record — the delete where it can act,
+      // the "(manueel)" notice where it cannot. The delete leads because it is
+      // the ordinary case; the order carries no other meaning here, since these
+      // two never appear on one card together.
       DeleteSmartschoolClass(group),
+      DoNotImportFromSmartschool(group),
     ],
     // The Office 365 group of a class is orthogonal to its Smartschool state,
     // so these ride alongside both branches (#228).

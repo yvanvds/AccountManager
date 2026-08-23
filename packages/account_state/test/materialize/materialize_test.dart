@@ -197,6 +197,34 @@ LinkedState _modifyPendingLinked() => LinkedState.recompute(
       staffConfig: _staffConfig,
     );
 
+/// A Smartschool-only class the app **cannot** delete: the group carries no
+/// class code, so there is nothing to address a `delClass` to and the dispatch
+/// falls back to the lone informational `DoNotImportFromSmartschool` (#328).
+///
+/// The one shape a class group still has manual-only work in, which is what the
+/// "attention, not pending" claim of #225/#250 is about. It used to be every
+/// Smartschool leftover, back when the notice was the pre-selected half of a
+/// radio pair.
+LinkedState _leftoverNoticeLinked() => LinkedState.recompute(
+      wisa: wapi.WisaSnapshot(
+        fetchedAt: _d,
+        students: const [],
+        staff: const [],
+        classGroups: const [],
+        schools: const [],
+      ),
+      smartschool: ss.SmartschoolSnapshot(
+        fetchedAt: _d,
+        groups: [_ssGroup('2B', code: ' ')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: az.AzureSnapshot(fetchedAt: _d, users: const [], groups: const []),
+      resolver: _SeqResolver(),
+      studentConfig: _studentConfig,
+      staffConfig: _staffConfig,
+    );
+
 /// A class that is **entirely in order**: present in WISA, in Smartschool with
 /// matching institute number / untis / description, and in Office 365 as
 /// `GBS-3C` with its one student already in it. So the group dispatch raises
@@ -470,7 +498,10 @@ void main() {
 
   group('materialize groups (#119)', () {
     test('a group action → a group doc in the groups partition + rollup', () {
-      // The Smartschool-only 2B class raises the informational orphan notice.
+      // The Smartschool-only 2B class names a code, so since #328 its one
+      // reading is the applyable `DeleteSmartschoolClass` — the informational
+      // notice it used to be pre-selected beside is gone. See
+      // `_leftoverNoticeLinked` for the leftover that still has no write.
       final view = materialize(_movePendingLinked(), generation: 2);
 
       expect(view.groups, hasLength(1));
@@ -483,8 +514,7 @@ void main() {
       expect(group.inWisa, isFalse);
       expect(group.candidates, isNotEmpty);
       expect(group.candidates.every((c) => c.family == 'group'), isTrue);
-      // The orphan notice is informational — nothing to apply.
-      expect(group.hasPending, isFalse);
+      expect(group.hasPending, isTrue);
 
       final rollup =
           view.rollups.firstWhere((r) => r.level == RollupLevel.groups);
@@ -492,8 +522,8 @@ void main() {
       expect(rollup.school, groupsPartition);
       expect(rollup.label, 'Klasgroepen');
       expect(rollup.accountCount, 1);
-      expect(rollup.pendingCount, 0,
-          reason: 'the orphan notice is informational');
+      expect(rollup.pendingCount, 1,
+          reason: 'the leftover proposes a delete the operator may apply');
     });
 
     test('an applyable group action counts toward the group rollup pending',
@@ -573,10 +603,16 @@ void main() {
     });
 
     test('an informational-only notice is attention, not pending work', () {
-      // #225/#250: a class Smartschool already holds carries manual work with no
-      // automated write, so it must not be filtered away with the pending count.
+      // #225/#250: a class carrying manual work with no automated write must
+      // not be filtered away with the pending count. Since #328 the shape that
+      // still does is the Smartschool leftover naming no class code — the one
+      // the delete cannot address.
       final group =
-          materialize(_movePendingLinked(), generation: 1).groups.single;
+          materialize(_leftoverNoticeLinked(), generation: 1).groups.single;
+      expect(
+        group.candidates.map((c) => c.kind),
+        ['DoNotImportFromSmartschool'],
+      );
       expect(group.hasPending, isFalse);
       expect(group.needsAttention, isTrue);
     });

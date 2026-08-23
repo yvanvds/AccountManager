@@ -207,17 +207,18 @@ void main() {
   testWidgets(
       'an informational-only class colours no cell, and still lights its row '
       '(#298)', (WidgetTester tester) async {
-    // `9Z` is an official Smartschool class WISA does not have. Its decision is
-    // an either/or whose default half is the "laat deze klas staan" notice
-    // (#313), so there is no write pending and the Smartschool cell stays green
-    // — while the row itself is highlighted, because `needsAttention` counts the
-    // notice and on this screen the notice *is* the work (#225/#250).
+    // `9Z` is an official Smartschool class WISA does not have, and here it
+    // names no class code — so there is nothing to address a `delClass` to and
+    // its lone reading is the "laat deze klas staan" notice (#328). Nothing is
+    // written, so the Smartschool cell stays green — while the row itself is
+    // highlighted, because `needsAttention` counts the notice and on this
+    // screen the notice *is* the work (#225/#250).
     //
-    // (This claim used to be made on a stale Office 365 group, whose pair had
-    // the same polarity. Since #327 that row proposes a delete outright, so it
-    // is no longer an informational-only class — see the test below.)
+    // (This claim has moved twice. It was made on a stale Office 365 group
+    // until #327 and on any Smartschool leftover until #328; both of those rows
+    // now propose a delete outright — see the two tests below.)
     _useTallWindow(tester);
-    final harness = smartschoolLeftoverClassHarness();
+    final harness = smartschoolLeftoverClassHarness(codelessLeftover: true);
     await harness.controller.sync();
     await tester
         .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
@@ -259,6 +260,27 @@ void main() {
         SystemIndicatorState.missing);
     expect(_cell(tester, 'GBS-9Z', core.Origin.smartschool),
         SystemIndicatorState.missing);
+  });
+
+  testWidgets(
+      'a Smartschool leftover colours its own cell, because the delete is work '
+      'this screen can do (#298/#328)', (WidgetTester tester) async {
+    // The twin of the test above, on the other system. `9Z` is an official
+    // Smartschool class WISA does not have, and it names a code — so the delete
+    // can fire, and since #328 it is the row's single proposal rather than one
+    // radio behind a notice that wrote nothing. The cell says so.
+    _useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(_cell(tester, '9Z', core.Origin.smartschool),
+        SystemIndicatorState.needsWork);
+    expect(_cell(tester, '9Z', core.Origin.wisa), SystemIndicatorState.missing);
+    expect(
+        _cell(tester, '9Z', core.Origin.azure), SystemIndicatorState.missing);
   });
 
   testWidgets(
@@ -744,12 +766,14 @@ void main() {
     // The stored classes are there, with their stored candidates marked exactly
     // as Acties marks them (#255).
     expect(find.byKey(const ValueKey('class-row-2B')), findsOneWidget);
-    // A Smartschool class WISA does not have is an either/or since #313, so the
-    // stored row reads as the choice it is — on its pre-selected half, which is
-    // the notice that writes nothing.
-    expect(find.textContaining('ze bestaat in Smartschool maar niet in WISA'),
+    // A Smartschool class WISA does not have proposes one delete since #328, so
+    // the stored row reads as the lone proposal it is: no "(keuze)" marker,
+    // because there is nothing to choose between, and no "(manueel)" one,
+    // because the app can act on it.
+    expect(find.textContaining('Verwijder de klas 2B uit Smartschool'),
         findsWidgets);
-    expect(find.textContaining('(keuze)'), findsWidgets);
+    expect(find.textContaining('(keuze)'), findsNothing);
+    expect(find.textContaining('(manueel)'), findsNothing);
     // Nothing interactive: a passive session has nothing to apply.
     expect(find.byKey(const ValueKey('entry-group-2B')), findsNothing);
   });
@@ -1176,11 +1200,12 @@ void main() {
   // --- The Smartschool leftovers (#313) --------------------------------------
 
   testWidgets(
-      'a Smartschool class WISA does not have offers a delete, and leaving it '
-      'alone is the default (#313)', (WidgetTester tester) async {
+      'a Smartschool class WISA does not have proposes its delete and nothing '
+      'else (#313/#328)', (WidgetTester tester) async {
     // Until #313 this row's whole content was "Verwijder ze manueel als ze niet
     // meer nodig is" — an instruction to go and do it by hand in Smartschool,
-    // the dead end #271 removed on the Office 365 side.
+    // the dead end #271 removed on the Office 365 side. #313 put a delete
+    // beside it as a radio pair; #328 dropped the no-op half.
     _useTallWindow(tester);
     final harness = smartschoolLeftoverClassHarness();
     await harness.controller.sync();
@@ -1193,46 +1218,56 @@ void main() {
     await tester.tap(find.byKey(entry));
     await tester.pumpAndSettle();
 
-    // Two radios, one choice — never two independent to-dos.
-    final leave =
-        find.byKey(const ValueKey('alt-9Z-DoNotImportFromSmartschool'));
-    final delete = find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass'));
-    expect(leave, findsOneWidget);
-    expect(delete, findsOneWidget);
+    // One proposal, no radio pair: "laat deze klas staan" and "doe niets" are
+    // the same act, and the operator performs the second by not pressing
+    // Toepassen (#328).
+    expect(find.byKey(const ValueKey('alt-9Z-DoNotImportFromSmartschool')),
+        findsNothing);
+    expect(find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass')),
+        findsNothing);
+    expect(find.byIcon(Icons.radio_button_checked), findsNothing);
+    expect(find.byIcon(Icons.radio_button_unchecked), findsNothing);
+    expect(find.text('Kies één oplossing:'), findsNothing);
     expect(
-      find.text('Laat deze klas staan — ze bestaat in Smartschool maar niet '
-          'in WISA'),
-      findsWidgets,
+      find.textContaining('Laat deze klas staan'),
+      findsNothing,
+      reason: 'the no-op is not on offer any more',
     );
     expect(find.textContaining('Verwijder ze manueel'), findsNothing);
-    // The notice states the class instead of instructing; the code is how the
-    // operator finds it in Smartschool.
-    expect(find.text('code: C9Z'), findsOneWidget);
-    expect(find.textContaining('→ ∅'), findsNothing,
-        reason: 'the option that writes nothing clears nothing');
 
-    // The default is the informational half, so nothing is applyable until the
-    // operator deliberately picks the delete.
-    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
-    await tester.ensureVisible(apply);
-    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
-        reason: 'a delete must never be the pre-selected resolution');
-
-    await tester.ensureVisible(delete);
-    await tester.tap(delete);
-    await tester.pumpAndSettle();
+    // The card leads with the delete's own summary, states the class's facts,
+    // warns that WISA may simply be lagging, and only then inventories what
+    // goes with the class.
     expect(
       find.text('Verwijder de klas 9Z uit Smartschool — ze bestaat niet in '
           'WISA'),
       findsWidgets,
     );
+    expect(find.text('code: C9Z'), findsOneWidget);
+    expect(
+      find.text('WISA: kent deze klas (nog) niet — vroeg in het schooljaar '
+          'loopt WISA achter, controleer daar of ze bestaat voor je ze '
+          'verwijdert'),
+      findsOneWidget,
+      reason: 'the lagging-snapshot reading survives as context on the card',
+    );
     expect(find.text('lidmaatschappen en subgroepen: verdwijnen mee'),
         findsOneWidget);
+    expect(find.textContaining('→ ∅'), findsNothing,
+        reason: 'the inventory of what goes is stated, never diffed');
 
+    // Nothing was written by opening the card: the delete runs on the
+    // operator's press, behind the ordinary confirmation.
+    expect(harness.soap.deletedClasses, isEmpty);
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
     await tester.ensureVisible(apply);
     expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
     await tester.tap(apply);
     await tester.pumpAndSettle();
+    expect(harness.soap.deletedClasses, isEmpty,
+        reason: 'the confirmation is still standing');
+    expect(find.textContaining('9Z'), findsWidgets,
+        reason: 'the dialog names the class it is about to take');
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -1241,13 +1276,47 @@ void main() {
     expect(_row('9Z'), findsNothing,
         reason: 'the relink drops the class the operator just removed');
     expect(_row('8Y'), findsOneWidget,
-        reason: 'the class beside it was never selected');
+        reason: 'the class beside it was never applied');
     expect(_row('1A'), findsOneWidget, reason: 'no other class was touched');
   });
 
   testWidgets(
-      'a flipped radio never arms the bulk header over Smartschool leftovers '
-      '(#293/#313/#326)', (WidgetTester tester) async {
+      'a leftover class with no code keeps its lone "(manueel)" notice (#328)',
+      (WidgetTester tester) async {
+    // The one leftover the delete cannot act on: there is nothing to address a
+    // `delClass` to, so the row falls back to stating the situation —
+    // informational, marked "(manueel)", with no apply of its own.
+    _useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness(codelessLeftover: true);
+    await harness.controller.sync();
+    await tester
+        .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Laat deze klas staan'), findsWidgets);
+    expect(find.textContaining('(manueel)'), findsWidgets,
+        reason: 'an informational row is still marked as one');
+
+    await tester.tap(find.byKey(const ValueKey('entry-group-9Z')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('alt-9Z-DeleteSmartschoolClass')),
+        findsNothing);
+    expect(find.textContaining('Verwijder de klas 9Z uit Smartschool'),
+        findsNothing);
+    expect(find.textContaining('controleer daar of ze bestaat'), findsNothing,
+        reason: 'no delete is proposed, so there is nothing to caution about');
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
+    await tester.ensureVisible(apply);
+    expect(tester.widget<FilledButton>(apply).onPressed, isNull,
+        reason: 'an informational row writes nothing');
+    expect(harness.soap.deletedClasses, isEmpty);
+  });
+
+  testWidgets(
+      'a cohort of selected deletes never arms the bulk header over '
+      'Smartschool leftovers (#293/#313/#326/#328)',
+      (WidgetTester tester) async {
     // `9Z` and `8Y` share the situation, so the tab collects them into one
     // header — the surface where a destructive default would do the most
     // damage, and the reason the delete withholds `canApplyToAll`.
@@ -1258,30 +1327,37 @@ void main() {
         .pumpWidget(_wrap(ClassGroupsScreen(bootstrap: harness.bootstrap)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget);
+    expect(find.text('Klassen in dezelfde situatie'), findsOneWidget,
+        reason: 'the cohort is still worth naming; only the pair is withdrawn');
+    // Since #328 the delete is the *selected* resolution of both rows, so the
+    // only thing keeping it off the bulk path is the #293 sanction #326 taught
+    // the header to read — hence no pair rather than a dead "Alles toepassen
+    // (2)" one confirmation away from two deleted classes, each taking every
+    // membership and subgroup with it.
     expect(find.textContaining('Alles toepassen ('), findsNothing,
-        reason: 'neither resolution of this situation is bulk-sanctioned');
+        reason: 'this situation is not bulk-sanctioned');
+    expect(find.text('Dry-run alles'), findsNothing);
 
-    // Flipping the rows to the delete used to *arm* the header: it counted the
-    // selected option's `canApply` and nothing else, so two flipped radios read
-    // "Alles toepassen (2)" and one press took both classes — every membership
-    // and subgroup with them — on an action whose own class says no bulk
-    // affordance may offer it (#326).
+    // Each row really is set to its delete — the state that used to need a
+    // flipped radio on every one of them.
     for (final String id in const <String>['9Z', '8Y']) {
       final entry = find.byKey(ValueKey('entry-group-$id'));
       await tester.ensureVisible(entry);
       await tester.tap(entry);
       await tester.pumpAndSettle();
-      final delete = find.byKey(ValueKey('alt-$id-DeleteSmartschoolClass'));
-      await tester.ensureVisible(delete);
-      await tester.tap(delete);
+      final rowApply = find.byKey(ValueKey('entry-apply-$id'));
+      await tester.ensureVisible(rowApply);
+      expect(tester.widget<FilledButton>(rowApply).onPressed, isNotNull);
+      expect(find.textContaining('Verwijder de klas $id uit Smartschool'),
+          findsWidgets);
+      await tester.ensureVisible(entry);
+      await tester.tap(entry);
       await tester.pumpAndSettle();
     }
 
     expect(find.textContaining('Alles toepassen ('), findsNothing,
         reason: 'the sanction is a property of the action, not of how many '
             'rows happen to be set to it');
-    expect(find.text('Dry-run alles'), findsNothing);
     expect(harness.soap.deletedClasses, isEmpty);
 
     // …and the per-row apply is untouched: one class at a time, from the card
