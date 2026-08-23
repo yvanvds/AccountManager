@@ -1533,6 +1533,38 @@ ReconcileHarness dupMailHarness({
       syncedBy: syncedBy,
     );
 
+/// The deliberate **co-account** pair INV-23 exists for (#323): one person with
+/// a normal Smartschool account and an admin one, both carrying the same
+/// `accountId` — the operator's convention is the student's WISA id — and the
+/// same [mail].
+///
+/// The default [wisaStudent] and [azUser] carry that same id, so they link to
+/// the *first* of the two: the shape is one fully-linked record plus one
+/// Smartschool-only co-account, which is what the operator really has. Both
+/// records preferred the natural key `wisa:1`, so before #323 the resolver
+/// handed them one `LinkedAccountId` and every layer below the linker merged
+/// them — the self-contradicting card #319 describes, reached with no
+/// constructed resolver at all.
+ss.SmartschoolSnapshot coAccountSnap({
+  String mail = 'jane.doe@student.school.example',
+}) =>
+    ssSnap(
+      accounts: [
+        ssAccount(mail: mail),
+        // Named apart so the two cards are distinguishable on screen; the ids
+        // and the mail are what the linker keys on and they are identical.
+        ssAccount(uid: 'jane-beheer', mail: mail, surname: 'Doe-beheer'),
+      ],
+    );
+
+/// A reconcile harness over the [coAccountSnap] co-account pair (#323), on the
+/// otherwise-default WISA/Azure fixtures so the person is fully linked.
+ReconcileHarness coAccountHarness({InMemoryLinkedStore? linkedStore}) =>
+    ReconcileHarness(
+      smartschool: coAccountSnap(),
+      linkedStore: linkedStore,
+    );
+
 /// A [core.PersonIdResolver] that hands every natural key the same id — the way
 /// a test constructs the INV-24 collision (#319).
 ///
@@ -3648,6 +3680,7 @@ class ReconcileHarness {
     InMemoryLinkedStore? linkedStore,
     this.controllerStore,
     this.persistTimeout,
+    this.azureRefreshAge,
     this.hub,
     SignalPublisher? publisher,
     SignalSubscriber? subscriber,
@@ -3959,6 +3992,7 @@ class ReconcileHarness {
       publisher: publisher ?? signalHub?.publisher(),
       subscriber: subscriber ?? signalHub?.subscriber(),
       persistTimeout: persistTimeout ?? const Duration(minutes: 10),
+      azureRefreshAge: azureRefreshAge ?? const Duration(minutes: 30),
       clock: () => kFixtureDate,
     );
   }
@@ -3972,6 +4006,17 @@ class ReconcileHarness {
   /// The controller's persist-step timeout (#168); defaults to 10 minutes when
   /// unset, and the stall tests inject a tiny value.
   final Duration? persistTimeout;
+
+  /// How old the Azure snapshot in hand may get before a smart sync refreshes
+  /// it with an incremental delta resume (#320); defaults to the production 30
+  /// minutes when unset.
+  ///
+  /// Because the harness clock is pinned to [kFixtureDate] and every fixture
+  /// snapshot is stamped there, the default leaves the age test false in every
+  /// test that does not opt in — a test wanting the refresh either seeds an
+  /// `azureInitial` stamped before [kFixtureDate] or collapses this to
+  /// [Duration.zero].
+  final Duration? azureRefreshAge;
 
   /// The shared materialized-view store (#115): a sync writes the derived
   /// per-account docs + rollups here, and a resumed session reads the overview
@@ -4173,9 +4218,11 @@ class ReconcileHarness {
   /// **Synchroniseer** re-pulls Azure instead of leaving the snapshot this
   /// session already holds alone.
   ///
-  /// Which is what a test about the **incremental** Azure pass has to reach for
-  /// since #316: **Controleer op drift** re-reads Azure in full by design, so
-  /// the smart sync is the pass that still resumes the stored delta token. The
+  /// Which is one of the two ways a test reaches the **incremental** Azure pass:
+  /// **Controleer op drift** re-reads Azure in full by design since #316, so the
+  /// smart sync is the pass that resumes the stored delta token. Since #320 an
+  /// aged snapshot ([azureRefreshAge]) arms the very same pass without any
+  /// settings change; this stays the way to arm it at a fixture-fresh age. The
   /// school is written with the name and code a [wisaSchool] fixture carries, so
   /// the school-profile back-fill (#207) finds nothing to repair afterwards.
   void markSchoolManaged(int schoolId) {

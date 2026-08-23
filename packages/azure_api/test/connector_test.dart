@@ -834,6 +834,181 @@ void main() {
     });
   });
 
+  group('an adopted record on the incremental path (#322)', () {
+    /// The transfer as an earlier pass adopted her: our `employeeId`, no
+    /// `companyName`, a `department` still naming the school she came from. No
+    /// prefix-scoped read of ours returns her, and `_walkDelta` cannot keep a
+    /// row about her either — the back-fill is the only leg that can.
+    const adopted = AzureUser(
+      id: 'az-transferred',
+      upn: 'alfio.ambre@student.other.example',
+      employeeId: 'W7',
+      displayName: 'Alfio Ambre',
+      department: 'OTHER-3A',
+    );
+
+    /// A student of ours, in step: both the bulk read and the walk see her.
+    const ours = AzureUser(
+      id: 'az-ours',
+      upn: 'jane.doe@student.school.example',
+      employeeId: 'W1',
+      displayName: 'Jane Doe',
+      companyName: 'GBS',
+      department: '3C',
+    );
+
+    /// A staff member whose `department` lists us **second** (#237). The
+    /// server-side `$filter` (`startswith`) misses her, but `belongsToSchool`
+    /// keeps her, so the delta walk maintains her like any other account of
+    /// ours and there is nothing for the back-fill to repair.
+    const staff = AzureUser(
+      id: 'az-staff',
+      upn: 'anna.smit@school.example',
+      employeeId: 'S9',
+      displayName: 'Anna Smit',
+      department: 'SSM,GBS',
+    );
+
+    /// Her account as Graph holds it *now*: somebody corrected the mangled
+    /// name order and moved her into this year's class, before the token this
+    /// session resumes from was minted.
+    const Map<String, dynamic> ambreNow = <String, dynamic>{
+      'id': 'az-transferred',
+      'userPrincipalName': 'alfio.ambre@student.other.example',
+      'employeeId': 'W7',
+      'displayName': 'Ambre Alfio',
+      'givenName': 'Alfio',
+      'surname': 'Ambre',
+      'department': 'OTHER-4B',
+      'accountEnabled': true,
+    };
+
+    AzureSnapshot previousWith(List<AzureUser> users) => AzureSnapshot(
+          fetchedAt: DateTime.utc(2026, 6, 1),
+          deltaToken: 'OLDTOKEN',
+          users: users,
+          groups: const [],
+        );
+
+    /// A pass where `/users/delta` reports **nothing at all** — the edit is
+    /// older than our token, or an earlier walk dropped its row. [hits] is what
+    /// the targeted `employeeId in (…)` lookup answers with; the bulk read
+    /// answers empty and is counted, so a test can prove the pass really was
+    /// the incremental one.
+    GraphResponse Function(GraphRequest) silentWalk({
+      required List<String> lookups,
+      required List<String> bulkReads,
+      List<Map<String, dynamic>> hits = const [ambreNow],
+    }) =>
+        (req) {
+          final path = req.url.path;
+          if (path.contains('/members') || path.contains('groups')) {
+            return jsonOk({'value': const <Object>[]});
+          }
+          if (path.contains('users/delta')) {
+            return jsonOk({
+              '@odata.deltaLink':
+                  'https://graph.microsoft.com/v1.0/users/delta?\$deltatoken=T2',
+              'value': const <Object>[],
+            });
+          }
+          final filter = req.url.queryParameters[r'$filter'] ?? '';
+          if (filter.startsWith('employeeId in')) {
+            lookups.add(filter);
+            return jsonOk({'value': hits});
+          }
+          bulkReads.add(filter);
+          return jsonOk({'value': const <Object>[]});
+        };
+
+    test(
+        'it is re-read, so a drift no delta can report is repaired without a '
+        'full read', () async {
+      // The bug: `current` on an incremental pass is the *previous* user list
+      // with the delta applied, so an adopted record marked its own id as
+      // accounted for and the one leg that could refresh it never asked again.
+      // A full read has no such blind spot — the record is simply absent from
+      // the bulk result, so every full pass re-reads it — and this makes the
+      // two legs agree.
+      final lookups = <String>[];
+      final bulkReads = <String>[];
+      final connector = connectorWith(FakeGraphTransport(
+        silentWalk(lookups: lookups, bulkReads: bulkReads),
+      ));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [adopted, ours, staff]),
+        expectedEmployeeIds: const ['W7', 'W1', 'S9'],
+      );
+
+      // Exactly the one id this pass could not read for itself. The student the
+      // `$filter` covers and the staff member the walk maintains are still
+      // never asked about, so the bounded pull (PAIN-2) stays bounded.
+      expect(lookups, ["employeeId in ('W7')"]);
+      expect(bulkReads, isEmpty, reason: 'still the incremental leg');
+
+      final byId = {for (final u in snapshot.users) u.id: u};
+      expect(
+        byId['az-transferred'],
+        const AzureUser(
+          id: 'az-transferred',
+          upn: 'alfio.ambre@student.other.example',
+          employeeId: 'W7',
+          displayName: 'Ambre Alfio',
+          givenName: 'Alfio',
+          surname: 'Ambre',
+          department: 'OTHER-4B',
+        ),
+      );
+      // …and nobody else moved.
+      expect(byId['az-ours'], ours);
+      expect(byId['az-staff'], staff);
+    });
+
+    test('a lookup that turns nothing up leaves the record standing', () async {
+      // The snapshot's copy is the only one the app has. An empty answer is not
+      // evidence the account is gone — Graph reports a deletion as an
+      // `@removed` delta row, which `_applyDelta` already acts on.
+      final lookups = <String>[];
+      final connector = connectorWith(FakeGraphTransport(silentWalk(
+        lookups: lookups,
+        bulkReads: <String>[],
+        hits: const [],
+      )));
+
+      final snapshot = await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [adopted]),
+        expectedEmployeeIds: const ['W7'],
+      );
+
+      expect(lookups, ["employeeId in ('W7')"]);
+      expect(snapshot.users.single, adopted);
+    });
+
+    test('a blank school prefix does not turn the whole snapshot into a lookup',
+        () async {
+      // `belongsToSchool` claims nobody for a blank prefix, so gating on it
+      // without this guard would declare every record unaccounted for and ask
+      // Graph about every expected id at once — unbounding the pull over a
+      // school that is merely unconfigured.
+      final lookups = <String>[];
+      final connector = connectorWith(FakeGraphTransport(
+        silentWalk(lookups: lookups, bulkReads: <String>[], hits: const []),
+      ));
+
+      await connector.sync(
+        deltaToken: 'OLDTOKEN',
+        previous: previousWith(const [adopted, ours, staff]),
+        expectedEmployeeIds: const ['W7', 'W1', 'S9'],
+        schoolPrefix: '',
+      );
+
+      expect(lookups, isEmpty);
+    });
+  });
+
   group('class-group back-fill by mailNickname (#280)', () {
     /// One Graph `/groups` row for the class group of #280: it still answers on
     /// `GBS-5WW1`, but its display name was renamed by hand, so

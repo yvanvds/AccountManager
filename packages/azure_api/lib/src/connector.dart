@@ -173,6 +173,7 @@ class AzureConnector {
     final userList = await _adoptByEmployeeId(
       _applyDelta(previous?.users ?? const [], delta),
       expectedEmployeeIds,
+      prefix,
     );
     return AzureSnapshot(
       fetchedAt: _now(),
@@ -196,6 +197,7 @@ class AzureConnector {
     final userList = await _adoptByEmployeeId(
       await users.load(schoolPrefix),
       expectedEmployeeIds,
+      schoolPrefix,
     );
     return AzureSnapshot(
       fetchedAt: _now(),
@@ -206,8 +208,9 @@ class AzureConnector {
   }
 
   /// Completes [current] with the accounts the prefix-scoped read cannot see
-  /// (#224): for every id in [expectedEmployeeIds] that no user in [current]
-  /// carries, one targeted `employeeId` lookup, merged in by object id.
+  /// (#224): for every id in [expectedEmployeeIds] that no user [current] holds
+  /// *for this school* carries, one targeted `employeeId` lookup, merged in by
+  /// object id.
   ///
   /// This is the whole fix for the transferred-student duplicate. The `$filter`
   /// that keeps the bulk read bounded (PAIN-2) — `companyName eq` /
@@ -224,6 +227,28 @@ class AzureConnector {
   /// which is what lets the linker keep an Azure-only record for them and the
   /// engine propose `RemoveStaffFromAzure` instead of losing them silently.
   ///
+  /// **What counts as accounted for is "this pass could have read it", not "we
+  /// happen to hold it"** (#322). A record that fails [core.belongsToSchool] is
+  /// one *no other leg of this connector can ever refresh*: the `$filter` bulk
+  /// read is narrower than that test and never returns it, and `_walkDelta`
+  /// applies the same test, so a row about it is either dropped or routed to
+  /// [UserDelta.leftSchoolIds]. It is in the snapshot only because an earlier
+  /// pass adopted it here. Letting it mark its own `employeeId` as known
+  /// therefore closed the one door left: on a full read the record is absent
+  /// from [current] and so is re-read every pass, while on an incremental pass
+  /// it counted as known and the app kept asserting the copy it first adopted —
+  /// for as long as Graph sent no delta row about it (an edit older than our
+  /// token, or one a walk dropped). Gating on the school test makes the
+  /// incremental leg repair it exactly as a full read does, and costs nothing
+  /// elsewhere: everything [UserManager.load] returns passes the test (the
+  /// server-side `$filter` is strictly narrower), and so does every record the
+  /// delta walk keeps — including the staff whose `department` lists us second
+  /// (#237), whom the walk maintains on its own.
+  ///
+  /// A blank [schoolPrefix] claims nobody, so the gate is skipped rather than
+  /// declaring the whole snapshot unaccounted for and asking Graph about every
+  /// id at once — an unconfigured school is not a reason to unbound the pull.
+  ///
   /// A Graph failure here is **not** fatal: this step enriches a snapshot that
   /// is otherwise complete, and losing the whole pass over it would be worse
   /// than missing the adoption for one sync. The failure is logged as an error,
@@ -232,11 +257,19 @@ class AzureConnector {
   Future<List<AzureUser>> _adoptByEmployeeId(
     List<AzureUser> current,
     Iterable<String> expectedEmployeeIds,
+    String schoolPrefix,
   ) async {
+    final gated = schoolPrefix.trim().isNotEmpty;
     final known = <String>{
       for (final u in current)
-        if ((u.employeeId ?? '').trim().isNotEmpty)
-          u.employeeId!.trim().toLowerCase(),
+        if (!gated ||
+            core.belongsToSchool(
+              companyName: u.companyName,
+              department: u.department,
+              schoolPrefix: schoolPrefix,
+            ))
+          if ((u.employeeId ?? '').trim().isNotEmpty)
+            u.employeeId!.trim().toLowerCase(),
     };
     final missing = <String>{
       for (final id in expectedEmployeeIds)

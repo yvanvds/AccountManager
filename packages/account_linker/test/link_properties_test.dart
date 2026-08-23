@@ -211,17 +211,37 @@ void main() {
     );
 
     Glados(_scenario).test(
+      'INV-24: no two records share a LinkedAccountId (#323)',
+      (specs) {
+        // The scenarios repeat tags freely, so they routinely generate the
+        // INV-23 duplicate-mail pair: two Smartschool accounts for one person,
+        // kept as two records, both preferring the same `accountId` key — or,
+        // with no accountId, the very mail that made them collide. That was a
+        // live cause of the #319 card (filed as #323) and this property is what
+        // found it. Since the natural key falls through to an unclaimed one, it
+        // can be stated as the invariant itself: an ordinary pass over ordinary
+        // data never puts two records on one id.
+        final linked = _build(specs, SeqResolver()).linked;
+
+        final ids = <String>[
+          for (final a in linked.accounts) a.id.value,
+          for (final s in linked.staff) s.id.value,
+        ];
+        expect(ids.toSet(), hasLength(ids.length),
+            reason: 'every record must own its id');
+        expect(linked.warnings.whereType<DuplicateLinkedId>(), isEmpty);
+      },
+    );
+
+    Glados(_scenario).test(
       'INV-24: a shared LinkedAccountId is always reported, never silent',
       (specs) {
-        // This is the property #319 delivers, and it is deliberately *not* "ids
-        // never collide". They do: an INV-23 duplicate-mail pair keeps two
-        // records for one person, and both key on the same `accountId` — or,
-        // with no accountId, on the very mail that made them collide — so the
-        // resolver hands them one id. That is a live cause, independent of the
-        // one #318 fixed, and it is filed as #323. Asserting its absence would
-        // be asserting something false; what must hold is that no collision
-        // gets through quietly.
-        final linked = _build(specs, SeqResolver()).linked;
+        // The guard itself, driven from a resolver that hands out one id for
+        // every key: whatever collides must be reported, exactly once per id.
+        // Two properties, because they say different things — the one above is
+        // "the linker does not produce collisions", this one is "a collision
+        // from anywhere cannot pass quietly".
+        final linked = _build(specs, CollidingResolver()).linked;
 
         final claims = <String, int>{};
         for (final a in linked.accounts) {

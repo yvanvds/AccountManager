@@ -146,6 +146,72 @@ void main() {
     });
   });
 
+  group('aged Azure refresh (#320)', () {
+    test('a pass that re-links refreshes an aged Azure snapshot incrementally',
+        () async {
+      // The seed a session opens on: last night's Azure from the cold store,
+      // carrying the resume token that pass left behind.
+      final h = ReconcileHarness(
+        azureInitial: azSnap(
+          fetchedAt: kFixtureDate.subtract(const Duration(hours: 12)),
+          deltaToken: 'AZ-TOKEN',
+        ),
+      );
+
+      await h.controller.sync();
+
+      // Before #320 this pass left Azure alone entirely — the snapshot was not
+      // null and no Azure setting had moved — so the stored token was minted by
+      // every drift pass and spent by none.
+      expect(h.azSyncs, 1);
+      expect(h.azFullReads, 0,
+          reason: 'the refresh is the cheap delta resume, never a re-read');
+      expect(h.controller.error, isNull);
+      // The pass says which kind of read the operator got, the way the drift
+      // pass's "volledig opnieuw gelezen" line does (#316).
+      expect(
+        h.log.entries.map((e) => e.message),
+        contains(allOf(
+          startsWith('De Azure-gegevens dateren van '),
+          endsWith('— Azure AD wordt incrementeel bijgewerkt.'),
+        )),
+      );
+    });
+
+    test('a fresh Azure snapshot is left alone, and says nothing about it',
+        () async {
+      final h = ReconcileHarness(azureInitial: azSnap(deltaToken: 'AZ-TOKEN'));
+
+      await h.controller.sync();
+
+      expect(h.azSyncs, 0, reason: 'the copy in hand is this minute old');
+      expect(
+        h.log.entries.map((e) => e.message),
+        everyElement(isNot(contains('incrementeel bijgewerkt'))),
+      );
+    });
+
+    test('an unchanged WISA re-sync still pulls nothing, however aged Azure is',
+        () async {
+      // The refresh window collapsed to nothing, so the age test is true on
+      // every pass: the only thing that can keep Azure unpulled below is the
+      // unchanged-WISA shortcut itself. It has to win — falling through it
+      // would re-link and rewrite the whole materialized view for every other
+      // operator merely because time passed.
+      final h = ReconcileHarness(azureRefreshAge: Duration.zero);
+      await h.controller.sync();
+      expect(h.azSyncs, 1, reason: 'the first pass holds no snapshot at all');
+
+      h.wisaResult =
+          wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
+      await h.controller.sync();
+
+      expect(h.controller.noChangesNeeded, isTrue);
+      expect(h.azSyncs, 1, reason: 'the shortcut returns before the refresh');
+      expect(h.ssSyncs, 1);
+    });
+  });
+
   group('sync-complete log line (#162)', () {
     test('a completed sync logs a terminal ready line with the action count',
         () async {
@@ -3026,6 +3092,49 @@ void main() {
             .where((l) => l.contains('Koppelingsfout')),
         isEmpty,
       );
+    });
+
+    test('an admin co-account gets a document of its own (#323)', () async {
+      // The live cause: the INV-23 co-account pair, no constructed resolver.
+      // Both records preferred `wisa:1`, so the materializer used to hand one
+      // document the union of both records' candidates.
+      final linkedStore = InMemoryLinkedStore();
+      final h = coAccountHarness(linkedStore: linkedStore);
+      await h.controller.sync();
+
+      expect(h.controller.linkIdCollisions, isEmpty);
+      final ids = h.controller.linkedAccounts.map((a) => a.id.value).toList();
+      expect(ids.toSet(), hasLength(2),
+          reason: 'one id per Smartschool account, not one for the pair');
+
+      // …and one stored document per id, which is what every other operator
+      // inherits. Two records on one id left a single document behind.
+      expect(linkedStore.accountCount, 2);
+
+      // The mail collision itself is untouched — still one warning, still the
+      // operator's to accept (#109).
+      expect(h.controller.duplicateWarnings, hasLength(1));
+      expect(
+        h.controller.duplicateWarnings.single.accounts
+            .map((a) => a.uid)
+            .toSet(),
+        {'jane', 'jane-beheer'},
+      );
+    });
+
+    test('accepting the co-account mail still works with two ids (#323)',
+        () async {
+      // The issue's own caveat: "accepted" must not become a way to silence an
+      // id problem. With the ids separated there is nothing left to silence —
+      // acceptance demotes the mail warning and no collision was ever raised.
+      final linkedStore = InMemoryLinkedStore();
+      final h = coAccountHarness(linkedStore: linkedStore);
+      await h.controller.sync();
+
+      await h.controller.acceptDuplicate('jane.doe@student.school.example');
+      expect(await linkedStore.readDecisions(), hasLength(1));
+      expect(h.controller.duplicateWarnings.single.accepted, isTrue);
+      expect(h.controller.linkIdCollisions, isEmpty);
     });
   });
 

@@ -701,6 +701,13 @@ void main() {
       // why the operator could press it forever. `/users/delta` is doing its
       // job: it reports changes since our token and there are none. The
       // snapshot it leaves is therefore the stale one, unchanged.
+      //
+      // Since #322 this pass does issue the `employeeId` lookup — the stored
+      // record names another school, so nothing else about this pass could ever
+      // refresh it — and this wire answers that lookup empty. What is pinned
+      // here is the *delta* leg's reach, not the back-fill's: with a tenant that
+      // answers, the incremental pass now repairs this too (pinned end-to-end in
+      // `app_launch_test.dart`).
       final snapshot = await stateFor().sync();
 
       expect(snapshot.users.single.companyName, 'SBE');

@@ -96,6 +96,18 @@ OData can ask:
   `RemoveStaffFromAzure` for someone who left. The id is remembered only while
   the Azure row still names our school in `department`, so it falls out by itself
   once the account is gone.
+
+  An id counts as accounted for only when the record we hold for it **passes
+  `belongsToSchool`** (#322). One that does not is an *adopted* record — a
+  transfer whose account names another school — and no other leg can refresh it:
+  the `$filter` is narrower than that test, and the delta walk applies the test
+  and so either drops the row or reports the account as left (#317). Treating it
+  as known meant a full read re-read it every pass (it is simply absent from the
+  bulk result) while an incremental pass never asked again, so a drift Graph sent
+  no delta row about — an edit older than our token, or one a walk dropped —
+  could not be repaired without a full read. Gating on the school test makes both
+  legs behave the same and adds no lookups elsewhere: everything the bulk read
+  returns passes the test, and so does everything the walk keeps.
 - **the client-side test** — the delta path always filters in Dart (`/users/delta`
   does not honour these property filters), and so does
   `UserManager.loadClientFiltered`. Neither is bound by OData, so both apply the
