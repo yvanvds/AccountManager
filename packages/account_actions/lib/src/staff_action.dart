@@ -578,7 +578,8 @@ class RemoveStaffFromAzure extends StaffAction {
 ///
 /// Unlike the other actions this writes nothing: WISA is read-only, so [apply]
 /// returns the rule via [ActionResult.wisaRule] for the State layer to add to
-/// its import-rule set and re-sync (which drops the record next snapshot).
+/// its import-rule set and filter its snapshot by (which drops the record on
+/// the spot, with no re-pull — #345).
 class DontImportStaffFromWisa extends StaffAction {
   const DontImportStaffFromWisa(super.staff, super.config);
 

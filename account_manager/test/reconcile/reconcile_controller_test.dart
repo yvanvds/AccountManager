@@ -753,6 +753,14 @@ void main() {
       // `WisaImportRules`' de-dup has to hold across the persist path too, or a
       // September of re-applies would append the same rule until the settings
       // document itself became the problem.
+      //
+      // Being offered the same decision twice takes a pull in between: since
+      // #345 the first apply really removes the row from the snapshot in hand,
+      // so the opt-out is gone from this session's list the moment it lands.
+      // The re-applies that matter come from a *later* roster that still
+      // carries the record — this harness's scripted syncer answers with the
+      // unfiltered fixture, which is exactly that shape (another operator's
+      // pull, or one made before the rule reached the document).
       final settings = _RecordingSettingsStore(const AppSettings());
       final h = ignoreStaffHarness(
         settingsStore: settings,
@@ -761,6 +769,7 @@ void main() {
       await h.controller.sync();
 
       await ignoreTheStaffMember(h);
+      await h.controller.sync();
       await ignoreTheStaffMember(h);
 
       expect((await settings.load()).wisaRules, hasLength(1));

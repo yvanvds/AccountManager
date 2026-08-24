@@ -3742,7 +3742,8 @@ class ReconcileController extends ChangeNotifier {
   ///
   /// **The drift gate stays honest.** `wisaPullFingerprint` covers the persisted
   /// rules (#238), so this write would otherwise arm it — falsely, because the
-  /// applier re-pulled WISA *with* these rules the moment each was earned, and
+  /// applier filtered the WISA snapshot by each of these rules the moment it was
+  /// earned (#345: the same filter the next pull would apply, run locally), and
   /// the snapshot in hand already reflects them. So the pull is re-credited to
   /// the document it now matches, but only when the gate was closed to begin
   /// with and the saved document differs from the one in hand by nothing but

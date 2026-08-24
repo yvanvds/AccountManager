@@ -51,7 +51,8 @@
 /// - [StateApplier] — runs an action's dry-run-capable `apply()`, then on a
 ///   real write patches the owning snapshot from the mutated record and
 ///   re-runs `link()` with no re-sync, or (for a `DontImportFromWisa` rule)
-///   accumulates it in [WisaImportRules] and re-syncs WISA (#72).
+///   accumulates it in [WisaImportRules] and patches the WISA snapshot with
+///   that rule — also with no re-sync (#72 / #345).
 ///
 /// Pure Dart plus `dart:io`. No Flutter.
 library;

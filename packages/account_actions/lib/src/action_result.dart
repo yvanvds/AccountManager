@@ -31,8 +31,8 @@ enum ActionOutcome {
 ///
 /// A WISA-targeted action ([wisaRule], e.g. the staff `DontImportFromWisa`)
 /// carries no connector record: WISA is read-only, so the action produces an
-/// import rule for the State layer to add to its rule set and re-sync, rather
-/// than writing anything itself.
+/// import rule for the State layer to add to its rule set and filter its
+/// snapshot by, rather than writing anything itself.
 class ActionResult {
   final ActionOutcome outcome;
 
@@ -96,8 +96,9 @@ class ActionResult {
 
   /// The WISA import rule the action produced, when [system] is
   /// [Origin.wisa]. WISA is read-only, so the action performs no write itself;
-  /// the State layer adds this rule to its import-rule set and re-syncs (which
-  /// drops the ignored staff record from the next snapshot). Null for every
+  /// the State layer adds this rule to its import-rule set and applies it to the
+  /// snapshot in hand, which drops the ignored record there and then — the rule
+  /// is a client-side filter, so no re-pull is involved (#345). Null for every
   /// non-WISA action.
   final WisaImportRule? wisaRule;
 

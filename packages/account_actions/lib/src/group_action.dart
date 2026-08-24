@@ -282,8 +282,8 @@ const String namesakeClassAlternative = 'class-namesake';
 ///
 /// Like the staff [DontImportStaffFromWisa] this writes nothing: WISA is
 /// read-only, so [apply] returns the rule via [ActionResult.wisaRule] for the
-/// State layer to add to its import-rule set and re-sync (which drops the class
-/// next snapshot).
+/// State layer to add to its import-rule set and filter its snapshot by (which
+/// drops the class on the spot, with no re-pull — #345).
 ///
 /// **Key divergence.** Legacy keys the rule on the raw WISA `Group.Name`; the
 /// canonical [LinkedGroup.wisa] carries only the `fullName` (the cross-system

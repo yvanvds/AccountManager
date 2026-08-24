@@ -742,8 +742,16 @@ void main() {
     });
   });
 
-  group('DontImportFromWisa re-sync path', () {
-    test('accumulates the rule and re-syncs WISA to drop the record', () async {
+  group('DontImportFromWisa patches the snapshot instead of re-pulling (#345)',
+      () {
+    // The rule never reaches WISA: it is a client-side filter the connector
+    // applies at snapshot *construction*, after all the I/O, and no row query
+    // carries it. So a re-pull could only ever return "the snapshot in hand
+    // minus this record" — at the price of three SOAP round trips per school,
+    // which on the real scholengroep is the 20+ seconds an operator waited per
+    // ignored staff member. The applier runs the same filter locally instead.
+
+    test('a staff rule drops the row with no WISA pull at all', () async {
       final staff = _linkedStaff(wisa: _wStaff(code: 'SMIT'));
       final harness = _Harness(
         wisa: _wSnap(staff: [_wStaff(code: 'SMIT'), _wStaff(code: 'KEEP')]),
@@ -757,27 +765,81 @@ void main() {
         harness.app.wisa.snapshot!.staff.map((s) => s.code.value),
         containsAll(['SMIT', 'KEEP']),
       );
+      final fetchedAt = harness.app.wisa.snapshot!.fetchedAt;
+      final lastSync = harness.app.wisa.lastSync;
 
       final applied = await harness.applier.applyStaff(action);
 
       expect(applied.result.wrote, isTrue);
       expect(harness.soap.soapActions, isEmpty,
           reason: 'WISA is read-only — the action writes nothing itself');
+      // The rule still joins the shared set: the *next* real pull must filter by
+      // it, and #276 persists it from there.
       expect(
           harness.rules.rules
               .whereType<wapi.DontImportUserFromWisa>()
               .single
               .userCode,
           'SMIT');
-      expect(harness.counts[0], 1, reason: 'WISA was re-synced exactly once');
-      expect(harness.counts[1], 0);
-      expect(harness.counts[2], 0);
-      // The re-sync applied the rule: SMIT is gone, KEEP remains.
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the rule is a local filter — nothing is re-pulled');
+      // The local patch applied the rule: SMIT is gone, KEEP remains.
       expect(
         harness.app.wisa.snapshot!.staff.map((s) => s.code.value),
         ['KEEP'],
       );
       expect(applied.refreshed, isTrue);
+      // A patch is not a fresh fetch, so the roster still dates from the pull it
+      // came out of and the dashboard freshness badge must not reset.
+      expect(harness.app.wisa.snapshot!.fetchedAt, fetchedAt);
+      expect(harness.app.wisa.lastSync, lastSync);
+      // The relinked view no longer offers the opt-out on SMIT — that record is
+      // gone from the snapshot the link reads. KEEP is still WISA-only, so it
+      // keeps its own.
+      expect(
+        applied.linked!.staffActions
+            .whereType<DontImportStaffFromWisa>()
+            .map((a) => a.target.wisa?.code.value),
+        ['KEEP'],
+      );
+    });
+
+    test('a class rule drops that class group and leaves the others', () async {
+      // Two WISA-only classes; Smartschool holds nothing but the root a create
+      // would hang under, so each raises the #244 create-or-ignore either/or.
+      final harness = _Harness(
+        wisa: _wSnap(classGroups: [_wClass('3A'), _wClass('3B')]),
+        smartschool: _sSnap(groups: [_ssNode('Leerlingen', code: 'SCHOOL')]),
+      );
+      final before = await harness.applier.link();
+      final ignore = before.groupActions
+          .whereType<DoNotImportFromWisa>()
+          .where((a) => a.target.wisa?.name == '3A')
+          .single;
+
+      final applied = await harness.applier.applyGroup(ignore);
+
+      expect(applied.result.wrote, isTrue);
+      expect(
+          harness.rules.rules
+              .whereType<wapi.DontImportClass>()
+              .single
+              .className,
+          '3A');
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the class rule is the same local filter as the staff one');
+      expect(
+        harness.app.wisa.snapshot!.classGroups.map((g) => g.name),
+        ['3B'],
+      );
+      expect(applied.refreshed, isTrue);
+      expect(
+        applied.linked!.groupActions
+            .whereType<DoNotImportFromWisa>()
+            .map((a) => a.target.wisa?.name),
+        ['3B'],
+        reason: 'the relink sees 3A gone and still offers the choice on 3B',
+      );
     });
   });
 
