@@ -132,6 +132,7 @@ wapi.WisaStudent _wStudent({
   String firstName = 'Jan',
   String name = 'Peeters',
   String classGroup = '3A',
+  String stemId = '',
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
@@ -141,7 +142,7 @@ wapi.WisaStudent _wStudent({
       firstName: firstName,
       preferredName: '',
       birthDate: _d,
-      stemId: '',
+      stemId: stemId,
       gender: core.Gender.male,
       nationalId: '',
       birthPlace: '',
@@ -164,13 +165,14 @@ ss.SmartschoolAccount _ssAccount({
   String accountId = 'W1',
   String mail = 'jan.peeters@student.school.example',
   core.PersonRole role = core.PersonRole.student,
+  int stemId = 0,
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
       accountId: accountId,
       mail: mail,
       registerId: '',
-      stemId: 0,
+      stemId: stemId,
       role: role,
       givenName: 'Jan',
       surname: 'Peeters',
@@ -223,12 +225,37 @@ wapi.WisaSnapshot _wSnap({
 ss.SmartschoolSnapshot _sSnap({
   List<ss.SmartschoolAccount> accounts = const [],
   List<core.Group> groups = const [],
+  List<ss.SmartschoolMembership> memberships = const [],
 }) =>
     ss.SmartschoolSnapshot(
       fetchedAt: _d,
       groups: groups,
       accounts: accounts,
-      memberships: const [],
+      memberships: memberships,
+    );
+
+ss.SmartschoolMembership _member(String uid, String groupCode) =>
+    ss.SmartschoolMembership(uid: uid, groupId: core.GroupId(groupCode));
+
+wapi.WisaClassGroup _wClass(String name, {int schoolId = 1}) =>
+    wapi.WisaClassGroup(
+      name: name,
+      groupName: '00',
+      description: '',
+      adminCode: '',
+      schoolCode: '123',
+      schoolId: schoolId,
+    );
+
+/// A non-class Smartschool group — the kind a membership splice must leave
+/// alone (a subject group, a tree node).
+core.Group _ssNode(String name, {String? code}) => core.Group(
+      id: core.GroupId(code ?? name),
+      name: name,
+      description: name,
+      type: core.GroupType.group,
+      official: false,
+      origin: core.Origin.smartschool,
     );
 
 /// An **official** Smartschool class, the only shape the linker ever seeds a
@@ -447,6 +474,114 @@ void main() {
           reason: 'the removed account is spliced out by uid');
       expect(applied.refreshed, isTrue);
       expect(harness.counts, [0, 0, 0]);
+    });
+  });
+
+  group('a successful class move reseats the membership (#341)', () {
+    /// Jan sits in `3B` in Smartschool while WISA has already moved him to
+    /// `3A` — the rollover shape — and he also belongs to a non-class group
+    /// the move says nothing about.
+    _Harness moving({String wisaStemId = '', int ssStemId = 0}) => _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1', stemId: wisaStemId)],
+            classGroups: [_wClass('3A'), _wClass('3B')],
+          ),
+          smartschool: _sSnap(
+            groups: [
+              _ssClass('3A', code: '3A_ss'),
+              _ssClass('3B', code: '3B_ss'),
+              _ssNode('Wiskunde', code: 'wisk'),
+            ],
+            accounts: [_ssAccount(uid: 'jan.peeters', stemId: ssStemId)],
+            memberships: [
+              _member('jan.peeters', '3B_ss'),
+              _member('jan.peeters', 'wisk'),
+            ],
+          ),
+          azure: _aSnap(users: [_azUser()]),
+        );
+
+    test('the snapshot moves the student to the new class, keeping the rest',
+        () async {
+      final harness = moving();
+      final before = await harness.applier.link();
+      final move =
+          before.studentActions.whereType<MoveToSmartschoolClassGroup>().single;
+
+      final applied = await harness.applier.applyStudent(move);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(harness.soap.soapActions.single, endsWith('#saveUserToClass'));
+      final rows = harness.app.smartschool.snapshot!.memberships
+          .where((m) => m.uid == 'jan.peeters')
+          .map((m) => m.groupId.value)
+          .toList();
+      expect(rows, containsAll(<String>['3A_ss', 'wisk']),
+          reason: 'the new class is in, the subject group is untouched');
+      expect(rows, isNot(contains('3B_ss')),
+          reason:
+              'Smartschool re-seats an official class, it does not add one');
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the incremental refresh must not hit the network');
+    });
+
+    test('the relink no longer offers the move it just performed', () async {
+      final harness = moving();
+      final before = await harness.applier.link();
+      final move =
+          before.studentActions.whereType<MoveToSmartschoolClassGroup>().single;
+
+      final applied = await harness.applier.applyStudent(move);
+
+      expect(applied.refreshed, isTrue);
+      expect(
+        applied.linked!.studentActions.whereType<MoveToSmartschoolClassGroup>(),
+        isEmpty,
+        reason: 'the class the operator applied is the class Smartschool has',
+      );
+    });
+
+    test('and the stamboeknummer write it was holding back is released (#338)',
+        () async {
+      // #338 stands the stem write down per account while a move is pending, so
+      // a move that never clears itself keeps the number deferred forever.
+      final harness = moving(wisaStemId: '2300033', ssStemId: 2200123);
+      final before = await harness.applier.link();
+      expect(
+        before.studentActions.whereType<ModifySmartschoolStemId>(),
+        isEmpty,
+        reason: 'the running year\'s career row is still the last one',
+      );
+
+      final applied = await harness.applier.applyStudent(
+        before.studentActions.whereType<MoveToSmartschoolClassGroup>().single,
+      );
+
+      expect(
+        applied.linked!.studentActions.whereType<ModifySmartschoolStemId>(),
+        hasLength(1),
+        reason: 'the move created the row the number belongs on',
+      );
+    });
+
+    test('a plain field write leaves the memberships alone', () async {
+      final harness = moving();
+      final account = _linkedStudent(
+        wisa: _wStudent(wisaId: 'W1'),
+        smartschool: _ssAccount(uid: 'jan.peeters', accountId: 'OLD'),
+        azure: _azUser(),
+      );
+
+      await harness.applier.applyStudent(
+        ModifyAccountId(account, harness.applier.studentConfig),
+      );
+
+      expect(
+        harness.app.smartschool.snapshot!.memberships
+            .map((m) => m.groupId.value),
+        <String>['3B_ss', 'wisk'],
+        reason: 'only a move names a class, so only a move reseats one',
+      );
     });
   });
 

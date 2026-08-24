@@ -285,6 +285,28 @@ void main() {
       expect(transport.calledMethod('saveUserToClass'), isTrue);
       expect(result.system, Origin.smartschool);
       expect(result.smartschool?.uid, 'jan.peeters');
+      // The record is unchanged by a move, so the class it landed in is the
+      // only thing the State layer can reseat the membership from (#341).
+      expect(result.movedToClass?.id.value, '3A');
+    });
+
+    test('a dry run names no class — nothing moved (#341)', () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+
+      final result = await move().apply(connectors, ApplyOptions.dry);
+      expect(result.movedToClass, isNull);
+    });
+
+    test('a failed move names no class — nothing moved (#341)', () async {
+      final transport = RecordingSmartschoolTransport(resultCode: 1);
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+
+      final result = await move().apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.movedToClass, isNull);
     });
 
     test('unresolved target class → failed, no write', () async {

@@ -90,7 +90,10 @@ class ApplierSettings {
 ///    writes and just returns the projected [ActionResult] (PAIN-3);
 /// 2. on a successful real write, **patches the owning snapshot** from the
 ///    result's mutated record ([ActionResult.smartschool] / [ActionResult.azure]
-///    / [ActionResult.group], or a removal) and re-runs `link()` — no re-sync;
+///    / [ActionResult.group], or a removal) and re-runs `link()` — no re-sync.
+///    A class move mutates no field of the account it moves, so it names the
+///    class instead ([ActionResult.movedToClass]) and the patch reseats the
+///    membership as well (#341);
 /// 3. for a `DontImportFromWisa` action (which writes nothing and returns a
 ///    [ActionResult.wisaRule]), accumulates the rule in [wisaRules] and
 ///    **re-syncs WISA** so the ignored record drops from the next snapshot —
@@ -492,7 +495,18 @@ class StateApplier {
         } else if (result.group != null) {
           app.smartschool.patch(_putGroup(current, result.group!));
         } else if (result.smartschool != null) {
-          app.smartschool.patch(_putAccount(current, result.smartschool!));
+          // A class move (#341) returns the account unchanged and names the
+          // class it now belongs to instead, so the membership travels with
+          // the record splice — otherwise the relink below would still read
+          // the old class off `current.memberships` and re-raise the very move
+          // that just succeeded.
+          app.smartschool.patch(
+            _putAccount(
+              current,
+              result.smartschool!,
+              movedTo: result.movedToClass,
+            ),
+          );
         }
       case core.Origin.azure:
         final current = app.azure.snapshot!;
@@ -688,8 +702,9 @@ String? _nameOf(ss.SmartschoolAccount? account) {
 
 ss.SmartschoolSnapshot _putAccount(
   ss.SmartschoolSnapshot current,
-  core.SmartschoolAccount account,
-) {
+  core.SmartschoolAccount account, {
+  core.Group? movedTo,
+}) {
   final record = account as ss.SmartschoolAccount;
   final accounts = [
     for (final a in current.accounts)
@@ -700,8 +715,46 @@ ss.SmartschoolSnapshot _putAccount(
     fetchedAt: current.fetchedAt,
     groups: current.groups,
     accounts: accounts,
-    memberships: current.memberships,
+    memberships: movedTo == null
+        ? current.memberships
+        : _reseat(current, uid: record.uid, target: movedTo),
   );
+}
+
+/// [current]'s memberships with [uid]'s **official class** row replaced by one
+/// in [target] — the membership half of a successful class move (#341).
+///
+/// Smartschool gives an account exactly one official class (`saveUserToClass`
+/// re-seats rather than adds), so every official-class row this uid holds goes
+/// and the target's takes their place. Everything else the account belongs to —
+/// subject groups, the `Leerlingen` root, another school's node — is untouched:
+/// the move said nothing about those, and dropping them would make the snapshot
+/// lie in the other direction.
+///
+/// The uid is matched the way [PlacementResolver] keys its own membership index
+/// (trimmed, case-insensitive), so a row that index would have found is a row
+/// this replaces. The target is appended last, like every other splice here;
+/// it is the only official-class row left for the uid, so the resolver's
+/// first-wins walk finds it regardless of position.
+List<ss.SmartschoolMembership> _reseat(
+  ss.SmartschoolSnapshot current, {
+  required String uid,
+  required core.Group target,
+}) {
+  final officialClasses = <String>{
+    for (final g in current.groups)
+      if (g.official && g.type == core.GroupType.classGroup) g.id.value,
+  };
+  final key = uid.trim().toLowerCase();
+  bool isMovedFrom(ss.SmartschoolMembership m) =>
+      m.uid.trim().toLowerCase() == key &&
+      officialClasses.contains(m.groupId.value);
+
+  return [
+    for (final m in current.memberships)
+      if (!isMovedFrom(m)) m,
+    ss.SmartschoolMembership(uid: uid, groupId: target.id),
+  ];
 }
 
 ss.SmartschoolSnapshot _putGroup(

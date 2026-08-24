@@ -64,6 +64,22 @@ class ActionResult {
   /// other action.
   final AzureGroup? azureGroup;
 
+  /// The official Smartschool class an account-targeted action **moved the
+  /// account into** (#341) — set by [MoveToSmartschoolClassGroup] on a real
+  /// write, alongside the unchanged [smartschool] record.
+  ///
+  /// A move writes a *membership*, not a field on the account, so the record
+  /// the write returns is byte-for-byte the one it started from. Without this
+  /// the State layer had nothing to patch the snapshot's membership list from,
+  /// so the class the student sat in never changed there: the placement
+  /// resolver kept reporting the old class and the move kept evaluating true
+  /// after its own write had landed (and, since #338, the stamboeknummer write
+  /// waiting behind it stayed deferred) until Smartschool was read again.
+  ///
+  /// Null for every other action — including a move that failed or was a dry
+  /// run, neither of which changed a membership.
+  final Group? movedToClass;
+
   /// True when the action deleted the record from [system] (so the State layer
   /// should drop it from the snapshot rather than patch it).
   final bool removed;
@@ -96,6 +112,7 @@ class ActionResult {
     this.azure,
     this.group,
     this.azureGroup,
+    this.movedToClass,
     this.removed = false,
     this.wisaRule,
     this.generatedPassword,

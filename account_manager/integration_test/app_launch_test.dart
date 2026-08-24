@@ -5731,6 +5731,91 @@ void main() {
   });
 
   testWidgets(
+      'a successful class move settles on the card end-to-end: the move stops '
+      'being offered and the stamboeknummer is released, with no second pull '
+      'of Smartschool (#341)', (WidgetTester tester) async {
+    // The real app, real navigation, real writes over the recording SOAP wire.
+    // The same rollover student as the run above — Jane moves up from `4NW2`
+    // into `5ADB` — but this one is about the screen *after* the write.
+    //
+    // The incremental refresh (#72) exists so an applied action disappears
+    // without a re-sync, and it did that by splicing the written record back
+    // into the snapshot. A move writes no field of the account, though: the
+    // record comes back exactly as it went in, so the memberships kept saying
+    // `4NW2`, the placement resolver kept reading the old class out of them,
+    // and the move an operator had just applied was still on the card — still
+    // bulk-applyable — while the stamboeknummer queued behind it (#338) stayed
+    // deferred. Only a full run shows it: the SOAP wire says the write landed,
+    // and the very next frame contradicts it.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(classGroup: '5ADB', stemId: '2300033')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('4NW2', code: '4nw2_ss'),
+          ssGroup('5ADB', code: '5adb_ss'),
+        ],
+        accounts: [ssAccount(stemId: 2200123)],
+        memberships: [member('jane', '4nw2_ss')],
+      ),
+      azure: azSnap(users: [azUser(displayName: 'Jane Doe')]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
+
+    // Apply the card, then never touch Synchronisatie again: whatever the
+    // operator sees from here on is the incremental refresh's own account of
+    // what it just wrote.
+    final int pullsBefore = harness.ssSyncs;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.movedToClasses, <String>['5adb_ss']);
+
+    // The card reports the move as done rather than re-raising it, and the
+    // write it was holding back is on screen — no **Controleer op drift** in
+    // between.
+    await selectAccount(tester, id);
+    expect(
+      find.text('Deze acties staan niet meer open op deze kaart.'),
+      findsOneWidget,
+      reason: 'the applied move settled instead of coming back as pending',
+    );
+    expect(
+      find.text('Wijzig het stamboeknummer in Smartschool'),
+      findsWidgets,
+      reason: 'the move is settled, so #338 stands the stem write up again',
+    );
+
+    // And the operator's second click writes the number without re-running the
+    // move it already applied.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.savedStamboeknummers, <String>['2300033']);
+    expect(harness.soap.movedToClasses, <String>['5adb_ss'],
+        reason: 'a settled move is not written a second time');
+    expect(harness.ssSyncs, pullsBefore,
+        reason: 'both passes ran off the spliced snapshot, not a re-pull');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Actions view splits Personeel and Leerlingen into tabs end-to-end: '
       'staff in one tab, students in the other (#179/#295)',
       (WidgetTester tester) async {

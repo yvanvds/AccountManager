@@ -492,6 +492,14 @@ class AddStudentToSmartschool extends StudentAction {
   /// *non*-ANS/BNS student is re-caught next pass by [MoveToSmartschoolClassGroup]
   /// once the account is complete, so only the (rare) ANS/BNS → "Leerlingen"
   /// case has no safety net. There is no log sink on this path.
+  ///
+  /// It also reports no target, so — unlike the move, which names its class in
+  /// [ActionResult.movedToClass] (#341) — a *successful* placement is invisible
+  /// to the State layer's membership splice, and the next relink offers the
+  /// move for a student who is already in the right class. Harmless (the move
+  /// is idempotent) but noisy; #342 tracks giving this path the same treatment,
+  /// which needs a success/target signal the best-effort contract above
+  /// deliberately does not have yet.
   Future<void> _placeNewAccount(
     Connectors connectors,
     ss.SmartschoolAccount built,
@@ -1240,14 +1248,18 @@ class MoveToSmartschoolClassGroup extends StudentAction {
         );
       }
       // A move changes membership, not the account's own fields; the account
-      // still exists, so the State layer keeps its record. It does **not** yet
-      // splice the new membership into the snapshot, so the move stays proposed
-      // until Smartschool is read again — see #341.
+      // still exists, so the State layer keeps its record — and [target] is
+      // named so it can reseat the membership too (#341). The record alone
+      // could not tell it: it comes back byte-for-byte as it went in, so
+      // patching the snapshot from it left the student sitting in the old
+      // class, and this action kept evaluating true after its own write had
+      // landed.
       return ActionResult(
         outcome: ActionOutcome.applied,
         changes: changes,
         system: Origin.smartschool,
         smartschool: account,
+        movedToClass: target,
       );
     } on Object catch (e) {
       return _failed(changes, Origin.smartschool, e);
