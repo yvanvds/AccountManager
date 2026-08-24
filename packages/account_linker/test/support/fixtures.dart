@@ -95,11 +95,22 @@ ss.SmartschoolAccount ssAccount({
 /// A WISA staff member. [code] is the alphabetic surname-mnemonic that bridges
 /// to Smartschool (`accountId`); [wisaId] is the distinct numeric id that
 /// bridges to Azure (`employeeId`) and may be null (OQ-1).
-wapi.WisaStaff wisaStaff(String code, {String? wisaId}) => wapi.WisaStaff(
+///
+/// [schoolIds] are the group schools the `SmaSyncPer` pull found them in (#340).
+/// Empty by default — the shape of a snapshot written before the school was
+/// stamped on a staff row — which reads as "school unknown", so a fixture that
+/// says nothing keeps its pre-#340 classification.
+wapi.WisaStaff wisaStaff(
+  String code, {
+  String? wisaId,
+  Set<int> schoolIds = const <int>{},
+}) =>
+    wapi.WisaStaff(
       code: WisaStaffCode(code),
       wisaId: wisaId == null ? null : WisaId(wisaId),
       firstName: 'Jane',
       lastName: 'Doe',
+      schoolIds: schoolIds,
     );
 
 /// A Smartschool **staff** account. Unlike [ssAccount], [accountId] holds the

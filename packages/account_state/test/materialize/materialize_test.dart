@@ -68,6 +68,55 @@ ss.SmartschoolAccount _ssAccount({
       status: 'actief',
     );
 
+/// A WISA staff member, found in [schoolIds] (#340). `code` bridges to
+/// Smartschool's `accountId`, `wisaId` to Azure's `employeeId`.
+wapi.WisaStaff _wStaff({Set<int> schoolIds = const {1}}) => wapi.WisaStaff(
+      code: const core.WisaStaffCode('SMITA'),
+      wisaId: const core.WisaId('42'),
+      firstName: 'Anna',
+      lastName: 'Smit',
+      schoolIds: schoolIds,
+    );
+
+/// The Smartschool staff account matching [_wStaff] — teacher role, so the
+/// linker routes it to the staff population, with `fax` already holding the
+/// zero-padded copy code so no modify action fires.
+ss.SmartschoolAccount _ssStaffAccount() => const ss.SmartschoolAccount(
+      uid: 'anna.smit',
+      accountId: 'SMITA',
+      mail: 'anna.smit@school.example',
+      registerId: '',
+      stemId: 0,
+      role: core.PersonRole.teacher,
+      givenName: 'Anna',
+      surname: 'Smit',
+      extraNames: '',
+      initials: '',
+      preferredName: '',
+      gender: core.Gender.female,
+      birthDate: null,
+      birthPlace: '',
+      birthCountry: '',
+      address: _addr,
+      mobilePhone: '',
+      homePhone: '',
+      fax: '0042',
+      untisId: '',
+      status: 'actief',
+    );
+
+/// The Azure account matching [_wStaff]. Staff carry no `companyName`; their
+/// school lives in [department], the comma list other software maintains (#237).
+az.AzureUser _azStaffUser({String department = 'GBS'}) => az.AzureUser(
+      id: 'az-staff',
+      upn: 'anna.smit@school.example',
+      employeeId: '42',
+      displayName: 'Smit Anna',
+      givenName: 'Anna',
+      surname: 'Smit',
+      department: department,
+    );
+
 az.AzureUser _azUser({String id = 'az1', String? employeeId = '1'}) =>
     az.AzureUser(
       id: id,
@@ -906,6 +955,148 @@ void main() {
 
       final view = materialize(linked, generation: 1);
       expect(view.accounts.single.school, '1');
+    });
+  });
+
+  group('the Personeel list is our own school only (#340)', () {
+    // One WISA staff member found in [schoolIds], linked against [ourSchoolIds]
+    // with whichever of our own systems [smartschool] / [azureDepartment] give
+    // them. `department` is what other software maintains as the comma list of
+    // schools a teacher is active at (#237), so `null` is "Azure says nothing".
+    LinkedState staffLinked({
+      Set<int> schoolIds = const {1},
+      Set<int>? ourSchoolIds = const {1},
+      bool smartschool = false,
+      String? azureDepartment,
+      bool wisa = true,
+    }) =>
+        LinkedState.recompute(
+          wisa: wapi.WisaSnapshot(
+            fetchedAt: _d,
+            students: const [],
+            staff: [if (wisa) _wStaff(schoolIds: schoolIds)],
+            classGroups: const [],
+            schools: const [],
+          ),
+          smartschool: ss.SmartschoolSnapshot(
+            fetchedAt: _d,
+            groups: const [],
+            accounts: smartschool ? [_ssStaffAccount()] : const [],
+            memberships: const [],
+          ),
+          azure: az.AzureSnapshot(
+            fetchedAt: _d,
+            users: azureDepartment == null
+                ? const []
+                : [_azStaffUser(department: azureDepartment)],
+            groups: const [],
+          ),
+          resolver: _SeqResolver(),
+          studentConfig: _studentConfig,
+          staffConfig: _staffConfig,
+          ourSchoolIds: ourSchoolIds,
+        );
+
+    test('a staff member of a school we manage is listed', () {
+      final view = materialize(staffLinked(), generation: 1);
+
+      expect(view.accounts, hasLength(1));
+      expect(view.accounts.single.isStaff, isTrue);
+      expect(view.skippedUnmanagedStaff, 0);
+    });
+
+    test('a sibling group school\'s teacher is left out of the list', () {
+      // The bug as reported: the shared WISA credentials pull the group's whole
+      // personeel — 2574 rows — and every one of them used to become a row here.
+      final view = materialize(
+        staffLinked(schoolIds: const {7}),
+        generation: 1,
+      );
+
+      expect(view.accounts, isEmpty);
+      expect(view.rollups.where((r) => r.school == staffPartition), isEmpty,
+          reason:
+              'no Personeel rollup, so the Synchronisatie tile is empty too');
+    });
+
+    test('the left-out staff are counted, not silently dropped', () {
+      final view = materialize(
+        staffLinked(schoolIds: const {7}),
+        generation: 1,
+      );
+
+      expect(view.skippedUnmanagedStaff, 1);
+    });
+
+    test(
+        'a sibling-school teacher who kept an account of ours is still listed, '
+        'and no removal is proposed for them', () {
+      // The load-bearing case. She left us for a group school that still employs
+      // her, so `wisa != null` — which is the only reason the two staff removals
+      // stand down. Our Smartschool account is the tie that keeps her visible.
+      final linked = staffLinked(schoolIds: const {7}, smartschool: true);
+      final view = materialize(linked, generation: 1);
+
+      expect(view.accounts, hasLength(1));
+      expect(view.skippedUnmanagedStaff, 0);
+      expect(
+          linked.staffActions.whereType<RemoveStaffFromSmartschool>(), isEmpty);
+      expect(linked.staffActions.whereType<RemoveStaffFromAzure>(), isEmpty);
+    });
+
+    test('Azure\'s department is consulted, and only ever to keep a record',
+        () {
+      // Azure's `employeeId` back-fill (#231) asks about every staff member the
+      // *group-wide* WISA pull returned, so a sibling school's teacher very often
+      // does have an Azure row here. Whose it is comes off `department`.
+      final theirs = materialize(
+        staffLinked(schoolIds: const {7}, azureDepartment: 'OTHER'),
+        generation: 1,
+      );
+      expect(theirs.accounts, isEmpty);
+      expect(theirs.skippedUnmanagedStaff, 1);
+
+      final ours = materialize(
+        staffLinked(schoolIds: const {7}, azureDepartment: 'OTHER,GBS'),
+        generation: 1,
+      );
+      expect(ours.accounts, hasLength(1));
+      expect(ours.skippedUnmanagedStaff, 0);
+    });
+
+    test('a former staff member WISA no longer lists at all is kept', () {
+      // Nothing but Azure left, which is precisely what RemoveStaffFromAzure
+      // exists to clean up — the filter must not swallow it.
+      final linked = staffLinked(wisa: false, azureDepartment: 'GBS');
+      final view = materialize(linked, generation: 1);
+
+      expect(view.accounts, hasLength(1));
+      expect(view.skippedUnmanagedStaff, 0);
+      expect(
+          linked.staffActions.whereType<RemoveStaffFromAzure>(), hasLength(1));
+    });
+
+    test('ownership unconfigured lists every staff member, as before', () {
+      final view = materialize(
+        staffLinked(schoolIds: const {7}, ourSchoolIds: null),
+        generation: 1,
+      );
+
+      expect(view.accounts, hasLength(1));
+      expect(view.skippedUnmanagedStaff, 0);
+    });
+
+    test('a WISA row with no school at all is listed, not filtered away', () {
+      // What a cold snapshot written before #340 restores to. Reading "school
+      // unknown" as "not ours" would empty the Personeel tab on the first launch
+      // after the upgrade.
+      final view = materialize(
+        staffLinked(schoolIds: const {}),
+        generation: 1,
+      );
+
+      expect(view.accounts, hasLength(1));
+      expect(view.skippedUnmanagedStaff, 0);
     });
   });
 

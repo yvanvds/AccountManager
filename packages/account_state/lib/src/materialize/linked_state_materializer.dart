@@ -107,7 +107,29 @@ MaterializedView materialize(
       candidates: byAccount[account.id.value] ?? const [],
     ));
   }
+  var skippedUnmanagedStaff = 0;
   for (final staff in linked.snapshot.staff) {
+    // #340: keep the Personeel list to our own school. The shared WISA
+    // credentials walk every school of the group, so `linked.snapshot.staff`
+    // holds the group's entire personeel — 2574 rows where our own school has a
+    // couple of hundred — and every one of them used to become a row here.
+    //
+    // The filter belongs *here* and nowhere upstream. A teacher who left us for
+    // a sibling group school must keep arriving in the WISA snapshot and must
+    // keep a non-null `wisa` on their record, because that is the sole reason
+    // `RemoveStaffFromAzure` and `RemoveStaffFromSmartschool` do not fire on
+    // them; narrowing the pull, or the linker's staff pass, would start
+    // proposing the deletion of Office 365 accounts of people the group still
+    // employs. So the record stays, in full, and only the *view* leaves it out.
+    //
+    // Counted like its student twin (#230) so the drop is never silent: a
+    // personeelslid an operator cannot find should read as "filtered by the
+    // managed-school flags in Instellingen", not as "the pull never returned
+    // them".
+    if (!staff.belongsToOurSchool) {
+      skippedUnmanagedStaff++;
+      continue;
+    }
     accounts.add(MaterializedAccount(
       id: staff.id,
       school: _staffSchool,
@@ -138,6 +160,7 @@ MaterializedView materialize(
     groups: groups,
     rollups: [...rollups, if (groupsRollup != null) groupsRollup],
     skippedUnmanagedStudents: skippedUnmanagedStudents,
+    skippedUnmanagedStaff: skippedUnmanagedStaff,
   );
 }
 

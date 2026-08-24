@@ -132,6 +132,46 @@ class LinkedStaff {
   final AzureUser? azure;
   final LinkConfidence confidence;
 
+  /// Every WISA school this staff member's rows were found in (#340) — the staff
+  /// analogue of [LinkedAccount.wisaSchoolIds], kept on the record so the
+  /// ours-vs-group classification below is auditable rather than only derived.
+  ///
+  /// Empty when [wisa] is null, and also for a WISA row that carries no school —
+  /// a snapshot written before #340, or a hand-built record. "No school" is read
+  /// as *unknown*, never as *not ours*: see [wisaPresence].
+  final Set<int> wisaSchoolIds;
+
+  /// Where this staff member sits relative to the schools we manage — the staff
+  /// analogue of [LinkedAccount.wisaPresence] (#340).
+  ///
+  /// The shared WISA credentials walk **every** school of the group, so
+  /// [wisa] being non-null only means the person is employed somewhere in the
+  /// group. That is exactly the fact the removal actions turn on and must keep
+  /// turning on — a teacher who left us for a sibling school still has
+  /// `wisa != null`, which is the only reason `RemoveStaffFromAzure` and
+  /// `RemoveStaffFromSmartschool` never fire on them. This says the *other*
+  /// thing: whether any of those schools is one of ours, which is what the
+  /// Personeel view lists by.
+  ///
+  /// Defaults to [WisaPresence.ours] so a record built without it — and one
+  /// whose WISA row predates [WisaStaff.schoolIds] — reads exactly as it did
+  /// before #340.
+  final WisaPresence wisaPresence;
+
+  /// Whether Azure's `department` names our school for this record — INV-22's
+  /// staff half, evaluated by the linker because [azure] here is the narrow
+  /// [AzureUser] interface, which carries no `department` (#340).
+  ///
+  /// The **weaker** of the two ownership signals and the fallback for the case
+  /// WISA cannot answer: `department` is a comma-separated list of school
+  /// prefixes that *other* software maintains (#237), so it is neither ours to
+  /// write nor guaranteed current. It is read only to keep a record — never to
+  /// drop one.
+  ///
+  /// Defaults to `false`; on its own it never hides anybody, because
+  /// [belongsToOurSchool] treats an unknown school as ours.
+  final bool azureNamesOurSchool;
+
   const LinkedStaff({
     required this.id,
     required this.role,
@@ -139,7 +179,52 @@ class LinkedStaff {
     this.smartschool,
     this.azure,
     required this.confidence,
+    this.wisaSchoolIds = const <int>{},
+    this.wisaPresence = WisaPresence.ours,
+    this.azureNamesOurSchool = false,
   });
+
+  /// Whether this staff member is present in WISA in a school we manage. False
+  /// when absent from WISA entirely or listed only by sibling group schools.
+  bool get isInOurWisa => wisa != null && wisaPresence == WisaPresence.ours;
+
+  /// Whether this staff member has left the schools we manage — moved to a
+  /// sibling group school, or gone from the group entirely.
+  bool get hasLeftOurSchool => !isInOurWisa;
+
+  /// Whether this staff member is gone from the **entire** group. The staff twin
+  /// of [LinkedAccount.hasLeftGroup], and the condition the Azure removal turns
+  /// on: someone still employed elsewhere in the group keeps a non-null [wisa],
+  /// so this is false and their Office 365 account is left alone.
+  bool get hasLeftGroup => wisa == null;
+
+  /// Whether this record is one of **our own school's** people — the question
+  /// the Personeel view filters on (#340), answered from the strongest signal
+  /// available.
+  ///
+  /// Three ways to be ours, and the order is the order of trust:
+  /// - WISA lists them in a school we manage ([isInOurWisa]) — including the
+  ///   "school unknown" fallback, so nothing written before #340 is hidden;
+  /// - they hold an account on **our** Smartschool platform, which serves this
+  ///   school alone, so its say-so is as good as WISA's;
+  /// - Azure's `department` names us ([azureNamesOurSchool]) — third-party
+  ///   maintained and consulted last, and never able to *override* the two
+  ///   above, only to answer where they say nothing in our favour. It has to be
+  ///   asked at all because the Azure pull's `employeeId` back-fill (#231) is
+  ///   fed from the group-wide WISA staff list, so an Azure row on a staff
+  ///   record proves nothing about whose account it is — unlike the student
+  ///   side, whose back-fill is already scoped to the schools we manage. And it
+  ///   is the *only* thing left to ask about a former staff member WISA no
+  ///   longer lists at all, whose Office 365 account is precisely what
+  ///   `RemoveStaffFromAzure` exists to clean up.
+  ///
+  /// False only for a record WISA places exclusively in sibling group schools
+  /// with no tie of ours anywhere — a colleague at another school of the group,
+  /// who is none of our business to list and none of our business to delete.
+  /// Note which way the doubt falls: every unknown reads as ours, so the filter
+  /// can only ever hide someone no system of ours claims at all.
+  bool get belongsToOurSchool =>
+      isInOurWisa || smartschool != null || azureNamesOurSchool;
 }
 
 /// Output of the linker: one record per identified group.

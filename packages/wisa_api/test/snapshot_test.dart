@@ -76,16 +76,23 @@ void main() {
       final full = WisaSnapshot(
         fetchedAt: DateTime.utc(2026, 5, 20, 9, 30, 15),
         students: [_anyStudent()],
-        staff: const [
+        staff: [
           WisaStaff(
-            code: core.WisaStaffCode('T01'),
-            wisaId: core.WisaId('900001'),
+            code: const core.WisaStaffCode('T01'),
+            wisaId: const core.WisaId('900001'),
             firstName: 'Ann',
             lastName: 'Teacher',
+            // Two group schools employ her — the merged set the connector folds
+            // across the group-wide pull (#340).
+            schoolIds: const {1, 7},
           ),
-          // A staff member with no numeric id — the nullable branch.
+          // A staff member with no numeric id — the nullable branch — and no
+          // school at all, the shape a document written before #340 restores to.
           WisaStaff(
-              code: core.WisaStaffCode('T02'), firstName: 'Bo', lastName: 'X'),
+            code: const core.WisaStaffCode('T02'),
+            firstName: 'Bo',
+            lastName: 'X',
+          ),
         ],
         classGroups: const [
           WisaClassGroup(

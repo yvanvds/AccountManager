@@ -123,6 +123,14 @@ class WisaConnector {
   ///   - Students are pulled via `SmaSyncLln`.
   ///   - Staff are pulled via `SmaSyncPer`.
   ///
+  /// Every population is concatenated across [schools] and each record carries
+  /// the school it came from. A staff member the group employs at two schools
+  /// comes back from two pulls under one `code`: the rows are folded into one
+  /// record whose [WisaStaff.schoolIds] holds both (#340), the staff twin of how
+  /// the linker merges a dual-enrolled student's second row (#318). The pull
+  /// itself stays deliberately group-wide — a teacher still listed by a sibling
+  /// school is the reason the staff removal actions do not fire on them.
+  ///
   /// [workDate] is used as the "Werkdatum" parameter for each query
   /// **unless** the school's `isVirtual` flag is set, in which case
   /// [virtualWorkDate] is used (falls back to [workDate] when null).
@@ -141,7 +149,12 @@ class WisaConnector {
     final allStudents = <WisaStudent>[];
     final allStaff = <WisaStaff>[];
     final allClassGroups = <WisaClassGroup>[];
-    final seenStaffCodes = <String>{};
+    // Staff `code` -> where that member's row sits in [allStaff], so a second
+    // school's row merges its school id into the row already held instead of
+    // being dropped (#340). Before that this was a plain seen-set and the
+    // second occurrence was thrown away whole — which was harmless while a
+    // staff row carried nothing school-specific, and is not any more.
+    final staffRowByCode = <String, int>{};
 
     for (final school in schools) {
       final wd = school.isVirtual ? (virtualWorkDate ?? workDate) : workDate;
@@ -157,8 +170,12 @@ class WisaConnector {
 
       final staff = await _loadStaff(school, params);
       for (final s in staff) {
-        if (seenStaffCodes.add(s.code.value)) {
+        final at = staffRowByCode[s.code.value];
+        if (at == null) {
+          staffRowByCode[s.code.value] = allStaff.length;
           allStaff.add(s);
+        } else {
+          allStaff[at] = allStaff[at].withSchoolIds(s.schoolIds);
         }
       }
     }
@@ -246,7 +263,7 @@ class WisaConnector {
     for (final row in parsed.rows) {
       if (row.isEmpty) continue;
       try {
-        staff.add(parseStaffRow(row));
+        staff.add(parseStaffRow(row, schoolId: school.id));
       } on CsvRowParseException catch (e) {
         _log?.addError(core.Origin.wisa, e.toString());
         rethrow;

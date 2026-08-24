@@ -1325,17 +1325,23 @@ wapi.WisaClassGroup wisaClassGroup(
 /// member present only in WISA (no Smartschool / Azure counterpart) links as a
 /// [core.LinkedStaff] and materializes into the synthetic "Personeel" school
 /// rollup the Actions Personeel tab drills into (#179).
+/// [schoolIds] are the group schools the `SmaSyncPer` pull found them in
+/// (#340) — what tells one of our own personeel from the rest of the
+/// scholengroep's. Defaults to school 1, the fixture school every harness
+/// manages, so an existing fixture keeps listing its staff member.
 wapi.WisaStaff wisaStaff({
   String code = 'SMIT',
   String wisaId = '42',
   String firstName = 'Anna',
   String lastName = 'Smit',
+  Set<int> schoolIds = const {1},
 }) =>
     wapi.WisaStaff(
       code: core.WisaStaffCode(code),
       wisaId: core.WisaId(wisaId),
       firstName: firstName,
       lastName: lastName,
+      schoolIds: schoolIds,
     );
 
 ss.SmartschoolAccount ssAccount({

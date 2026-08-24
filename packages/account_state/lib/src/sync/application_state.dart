@@ -232,12 +232,19 @@ Set<String> managedClassGroupMailNicknames(
 /// the school they came from, so neither leg of the connector's `$filter`
 /// matches it and the app proposed creating a second one.
 ///
-/// Unlike [managedStudentEmployeeIds] there is nothing to scope by: the
-/// `SmaSyncPer` pull carries no school id per staff row, so every staff member
-/// it returned is one this pass expects an account for. `wisaId` is **nullable**
-/// on a staff row (`code` is the staff primary key, spec §3.4 / OQ-1); a member
-/// without one is dropped, since `wisaId ≡ employeeId` is the only Azure bridge
-/// the linker has for staff and there is nothing to look up.
+/// Unlike [managedStudentEmployeeIds] this is **not** scoped to the schools we
+/// manage, and must not become so. A staff row does carry its school since #340,
+/// but narrowing here would stop the back-fill asking about a teacher WISA now
+/// places at a sibling group school — and their Office 365 account dropping out
+/// of the snapshot is precisely how a record loses the `azure != null` that both
+/// #269's deletion and #340's ours-vs-group test are read from. The group-wide
+/// ask is the cheap half; which of those accounts are ours is decided later, in
+/// the view, off `LinkedStaff.belongsToOurSchool`.
+///
+/// `wisaId` is **nullable** on a staff row (`code` is the staff primary key,
+/// spec §3.4 / OQ-1); a member without one is dropped, since
+/// `wisaId ≡ employeeId` is the only Azure bridge the linker has for staff and
+/// there is nothing to look up.
 Set<String> managedStaffEmployeeIds(WisaSnapshot? snapshot) {
   if (snapshot == null) return const <String>{};
   return <String>{

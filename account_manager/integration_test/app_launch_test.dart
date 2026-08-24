@@ -5,7 +5,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:account_actions/account_actions.dart' show ActionOutcome;
+import 'package:account_actions/account_actions.dart'
+    show ActionOutcome, RemoveStaffFromAzure, RemoveStaffFromSmartschool;
 import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
@@ -11188,6 +11189,190 @@ void main() {
       isEmpty,
     );
     expect(find.byKey(ValueKey('entry-apply-$id')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Personeel lists our own school, and a colleague at a sibling group '
+      'school is left out without being proposed for deletion (#340)',
+      (WidgetTester tester) async {
+    // As reported: Acties → Personeel listed 2574 people — the whole
+    // scholengroep's personeel, because the shared WISA credentials walk every
+    // school and `SmaSyncPer` carried no school of origin at all. The tab was
+    // unusable as a work list and the Synchronisatie "Personeel" tile counted
+    // the same group-wide set.
+    //
+    // The fix has to narrow the *view* and nothing upstream of it, and only a
+    // run of the real app puts both halves of that on screen at once. Carla
+    // below is the reason: she left us for a sibling school that still employs
+    // her, so WISA still returns her — which is the sole thing standing between
+    // her Smartschool and Office 365 accounts and a proposed deletion. Narrow
+    // the pull, or the linker's staff pass, and every one of those records loses
+    // its WISA half and the app starts offering to delete the accounts of people
+    // the group still employs. The Personeel list shrinking and the removals
+    // staying silent are one behaviour, and this is the layer that sees it.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      // School 1 is ours; school 7 is a sibling school of the group.
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: const [],
+        schools: [wisaSchool(1), wisaSchool(7)],
+        staff: [
+          // Ours, fully in sync across the three systems.
+          wisaStaff(),
+          // A teacher of the sibling school and nothing to do with us — the
+          // shape 2500-odd of those 2574 rows had.
+          wisaStaff(
+            code: 'VERB',
+            wisaId: '77',
+            firstName: 'Bert',
+            lastName: 'Vermeer',
+            schoolIds: const {7},
+          ),
+          // The one that makes the pull load-bearing: she taught here until
+          // recently, so we still hold both her accounts, and WISA now places
+          // her at the sibling school alone.
+          wisaStaff(
+            code: 'DEGRC',
+            wisaId: '78',
+            firstName: 'Carla',
+            lastName: 'De Groote',
+            schoolIds: const {7},
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssStaffAccount(),
+          ssStaffAccount(
+            uid: 'carla.degroote',
+            accountId: 'DEGRC',
+            mail: 'carla.degroote@school.example',
+            givenName: 'Carla',
+            surname: 'De Groote',
+            fax: '0078',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [
+        azStaffUser(),
+        // Bert's account exists in the shared tenant and the connector's
+        // `employeeId` back-fill (#231) adopts it, because that back-fill asks
+        // about every staff member the group-wide WISA pull returned. His
+        // `department` names his own school, which is what says it is not ours.
+        azStaffUser(
+          id: 'az-vermeer',
+          upn: 'bert.vermeer@school.example',
+          employeeId: '77',
+          displayName: 'Vermeer Bert',
+          givenName: 'Bert',
+          surname: 'Vermeer',
+          department: 'SSM',
+        ),
+        azStaffUser(
+          id: 'az-degroote',
+          upn: 'carla.degroote@school.example',
+          employeeId: '78',
+          displayName: 'De Groote Carla',
+          givenName: 'Carla',
+          surname: 'De Groote',
+        ),
+      ]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The Synchronisatie overview tile counts our own personeel: Anna and
+    // Carla, not Bert. It read the group-wide number before.
+    final Finder tile = find.byKey(const ValueKey('reconcile-category-staff'));
+    await tester.ensureVisible(tile);
+    expect(find.descendant(of: tile, matching: find.text('PERSONEEL')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('2')), findsOneWidget);
+
+    // The drop is said out loud, so a colleague an operator cannot find reads as
+    // "filtered by the managed-school flags in Instellingen" rather than as a
+    // pull that never returned them.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains('1 personeelslid/-leden overgeslagen: niet in een school die we '
+          'beheren.'),
+    );
+
+    // And that is what Acties → Personeel shows.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    // Nobody here has work — that is half the point — so turn off the "alleen
+    // met acties" switch and look at the whole personeel roster, which is what
+    // the operator counting 2574 was looking at.
+    final Finder toggle =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Carla De Groote'), findsOneWidget,
+        reason: 'we still hold both her accounts, so her situation is ours');
+    expect(find.text('Bert Vermeer'), findsNothing,
+        reason: 'a teacher of a school we do not manage is none of our work');
+
+    // Nothing is proposed for anybody — and *nothing* is the whole point for
+    // Carla. Her WISA row survived the group-wide pull, so neither staff removal
+    // evaluates; a narrower pull would have left her `wisa` null and offered to
+    // delete both her accounts.
+    final staff = harness.controller.linked!.snapshot.staff;
+    final carla = staff.singleWhere((s) => s.wisa?.code.value == 'DEGRC');
+    expect(carla.wisa, isNotNull);
+    expect(carla.smartschool, isNotNull);
+    expect(carla.azure, isNotNull);
+    expect(
+      harness.controller.linked!.staffActions
+          .whereType<RemoveStaffFromSmartschool>(),
+      isEmpty,
+    );
+    expect(
+      harness.controller.linked!.staffActions.whereType<RemoveStaffFromAzure>(),
+      isEmpty,
+    );
+    expect(find.textContaining('Verwijder'), findsNothing);
+
+    // Bert's record is kept whole behind the filter — dropped from the view, not
+    // from the link, which is exactly what keeps his Office 365 account safe.
+    // The dispatch, still running over the *unfiltered* snapshot, does raise the
+    // Smartschool create-or-blacklist either/or on him…
+    final bert = staff.singleWhere((s) => s.wisa?.code.value == 'VERB');
+    expect(bert.wisa, isNotNull);
+    expect(bert.azure?.id, 'az-vermeer');
+    expect(bert.belongsToOurSchool, isFalse);
+    expect(
+      harness.controller.linked!.staffActions
+          .where((a) => a.target.id == bert.id),
+      hasLength(2),
+    );
+    // …and the view drops it on the floor, which is the half that matters here.
+    // These entries are not only what the list renders: they are the Personeel
+    // badge's count and, through the school-wide "Toepassen op alle", what one
+    // press would write. Left in, that press would have offered to provision the
+    // whole scholengroep — for people who appear in no list being confirmed.
+    expect(harness.controller.pendingEntries.where((e) => e.family == 'staff'),
+        isEmpty);
+    expect(harness.controller.staffPendingCount, 0);
     expect(tester.takeException(), isNull);
   });
 }

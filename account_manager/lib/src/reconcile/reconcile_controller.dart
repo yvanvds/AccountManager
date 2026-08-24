@@ -1118,7 +1118,24 @@ class ReconcileController extends ChangeNotifier {
     ));
     entries.addAll(_entriesFor(
       family: 'staff',
-      actionList: l.staffActions,
+      // #340: the same our-school narrowing the materialized Personeel list
+      // applies, because these entries are not merely what the list renders.
+      // They are what the tab's badge counts, what `applyableCount` totals, and
+      // — through `applyToAllCohort`, which is school-wide by definition and
+      // deliberately *not* grouped from the rows on screen — what a
+      // "Toepassen op alle" writes. `AddStaffToAzure` carries that grant, so
+      // leaving the group's other schools in here would arm one press to create
+      // a couple of thousand Office 365 accounts for colleagues nobody in this
+      // building manages, none of whom appear in the list being confirmed.
+      //
+      // Narrowing the *view*, never the dispatch: `l.staffActions` is still
+      // derived from the whole snapshot, so every record keeps the non-null
+      // `wisa` that stops a removal being proposed for someone the group still
+      // employs.
+      actionList: <actions.StaffAction>[
+        for (final a in l.staffActions)
+          if (a.target.belongsToOurSchool) a,
+      ],
       targetId: (a) => a.target.id.value,
       label: (a) => _staffLabel(a.target),
       group: (a) => a.alternativeGroup,
@@ -3551,6 +3568,17 @@ class ReconcileController extends ChangeNotifier {
         log.addMessage(
           core.Origin.wisa,
           '${view.skippedUnmanagedStudents} leerling(en) overgeslagen: '
+          'niet in een school die we beheren.',
+        );
+      }
+      // The personeel half of the same sentence (#340). Expect a big number:
+      // the shared credentials pull the whole scholengroep's personeel and most
+      // of it is another school's. Saying so is what keeps a missing colleague
+      // diagnosable, since the records behind it are deliberately kept whole.
+      if (view.skippedUnmanagedStaff > 0) {
+        log.addMessage(
+          core.Origin.wisa,
+          '${view.skippedUnmanagedStaff} personeelslid/-leden overgeslagen: '
           'niet in een school die we beheren.',
         );
       }

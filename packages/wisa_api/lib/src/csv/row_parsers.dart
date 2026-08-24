@@ -106,7 +106,14 @@ WisaStudent parseStudentRow(String line, {required int schoolId}) {
 
 /// Parses a `SmaSyncPer` row into a [WisaStaff]. `WISAID` may be empty,
 /// in which case [WisaStaff.wisaId] is `null`.
-WisaStaff parseStaffRow(String line) {
+///
+/// [schoolId] is the WISA school the row was fetched for — the `IS_ID` the query
+/// carried. Like `KLAS`/`INSTELLINGSNUMMER` on the other two feeds it is not in
+/// this CSV at all (`staffCsvHeader` is `CODE,WISAID,FAMILIENAAM,VOORNAAM`), so
+/// the caller stamps it exactly as [parseStudentRow] does (#340). Without it a
+/// staff row carried no school of origin and every consumer had to treat the
+/// group-wide pull as if it were one school's.
+WisaStaff parseStaffRow(String line, {required int schoolId}) {
   try {
     final f = splitCsvLine(line);
     if (f.length < 4) {
@@ -121,6 +128,7 @@ WisaStaff parseStaffRow(String line) {
       wisaId: wisaIdRaw.isEmpty ? null : core.WisaId(wisaIdRaw),
       lastName: f[2].trim(),
       firstName: f[3].trim(),
+      schoolIds: <int>{schoolId},
     );
   } on CsvRowParseException {
     rethrow;
