@@ -10999,6 +10999,87 @@ void main() {
   });
 
   testWidgets(
+      'a freshly provisioned student is not then offered a move into the class '
+      'the create just put them in (#342)', (WidgetTester tester) async {
+    // The sibling of the #341 rollover run, from the other end of the account
+    // lifecycle: a new intake rather than a class change.
+    //
+    // `AddStudentToSmartschool` does not only create — it writes the account
+    // into its class straight after (#55), the way legacy chained the move
+    // after the create. But the record it hands back is the account it built,
+    // which says nothing about that membership, so the incremental refresh
+    // (#72) spliced in a student sitting in no class at all: the placement
+    // resolver read `currentClass` as null, `MoveToSmartschoolClassGroup`
+    // evaluated true, and the very next frame proposed a move into the class
+    // Smartschool had *just* been told to put them in. Idempotent, so harmless
+    // to apply — but this is the bulk card the whole September intake cohort is
+    // applied from, and since #338 an open move also holds back the
+    // stamboeknummer write.
+    //
+    // Only the real app shows it: the create and its placement are two SOAP
+    // writes inside one chained apply, and what the operator then sees is
+    // whatever the refresh believes about a snapshot it patched itself.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        // The class has to be one of *ours* or the create declines to place at
+        // all (#333) — the same guard the standalone move applies.
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+        schools: [wisaSchool(1)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    // One click provisions both accounts (#230) — and places the Smartschool
+    // one.
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    final int pullsBefore = harness.ssSyncs;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.movedToClasses, <String>['3C_ss'],
+        reason: 'the create placed the account it just made');
+
+    // Back on the card, with no Synchronisatie in between: the student is in
+    // their class as far as the app is concerned, so there is nothing left to
+    // propose.
+    await selectAccount(tester, id);
+    expect(
+      find.text('Wijzig de klas in Smartschool'),
+      findsNothing,
+      reason: 'the class the create wrote is the class Smartschool has',
+    );
+    expect(
+      find.text('Deze acties staan niet meer open op deze kaart.'),
+      findsOneWidget,
+      reason: 'the provisioning settled instead of raising a follow-up',
+    );
+    expect(harness.ssSyncs, pullsBefore,
+        reason: 'the card ran off the spliced snapshot, not a re-pull');
+    expect(harness.soap.movedToClasses, <String>['3C_ss'],
+        reason: 'and no second placement was written');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a WISA-only staff member is provisioned by one apply in Acties → '
       'Personeel (#240)', (WidgetTester tester) async {
     // The staff twin of the #230 student case, and the same two-pass friction:

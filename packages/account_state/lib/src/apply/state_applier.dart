@@ -499,7 +499,11 @@ class StateApplier {
           // class it now belongs to instead, so the membership travels with
           // the record splice — otherwise the relink below would still read
           // the old class off `current.memberships` and re-raise the very move
-          // that just succeeded.
+          // that just succeeded. A create that placed its new account names it
+          // the same way (#342), for the same reason from the other side: the
+          // record it returns says nothing about the class it was written
+          // into, so without this the student arrives in the snapshot with no
+          // membership and is offered the move they no longer need.
           app.smartschool.patch(
             _putAccount(
               current,
@@ -722,7 +726,9 @@ ss.SmartschoolSnapshot _putAccount(
 }
 
 /// [current]'s memberships with [uid]'s **official class** row replaced by one
-/// in [target] — the membership half of a successful class move (#341).
+/// in [target] — the membership half of a successful class move (#341), and of
+/// a create that placed its new account (#342, where there is no row to
+/// replace and the target is simply the account's first seat).
 ///
 /// Smartschool gives an account exactly one official class (`saveUserToClass`
 /// re-seats rather than adds), so every official-class row this uid holds goes

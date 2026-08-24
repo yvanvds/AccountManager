@@ -466,12 +466,17 @@ class AddStudentToSmartschool extends StudentAction {
           StateError('Smartschool saveAccount returned failure'),
         );
       }
-      await _placeNewAccount(connectors, built);
+      // The placement is best-effort, so it cannot change this action's
+      // outcome — but when it *did* land it names its class, exactly as the
+      // standalone move does, so the State layer can seat the new account in
+      // it (#342). A skipped or refused placement names nothing.
+      final placedIn = await _placeNewAccount(connectors, built);
       return ActionResult(
         outcome: ActionOutcome.applied,
         changes: changes,
         system: Origin.smartschool,
         smartschool: built,
+        movedToClass: placedIn,
         generatedPassword: password,
       );
     } on Object catch (e) {
@@ -493,19 +498,30 @@ class AddStudentToSmartschool extends StudentAction {
   /// once the account is complete, so only the (rare) ANS/BNS → "Leerlingen"
   /// case has no safety net. There is no log sink on this path.
   ///
-  /// It also reports no target, so — unlike the move, which names its class in
-  /// [ActionResult.movedToClass] (#341) — a *successful* placement is invisible
-  /// to the State layer's membership splice, and the next relink offers the
-  /// move for a student who is already in the right class. Harmless (the move
-  /// is idempotent) but noisy; #342 tracks giving this path the same treatment,
-  /// which needs a success/target signal the best-effort contract above
-  /// deliberately does not have yet.
-  Future<void> _placeNewAccount(
+  /// **Returns the official class the account was actually seated in**, or null
+  /// when no placement happened — which is what the caller puts in
+  /// [ActionResult.movedToClass] so the State layer can splice the membership
+  /// the same way it does for the standalone move (#341/#342). Without it a
+  /// student who had just been created *and correctly placed* was immediately
+  /// offered [MoveToSmartschoolClassGroup] into the class they already sat in:
+  /// the snapshot gained the account but no membership, so
+  /// [ClassPlacement.currentClass] read null and the move evaluated true (and,
+  /// since #338, blocked the stamboeknummer write behind it).
+  ///
+  /// Only a *written* seat is named, and best-effort is why: every way this
+  /// helper declines — no placement context, a class that is not ours (#333),
+  /// one that does not resolve, one that is not an official class (the ANS/BNS
+  /// "Leerlingen" root among them, which is a tree node and holds no class
+  /// membership), or a `moveUserToClass` that came back false — returns null
+  /// and leaves the snapshot's membership list alone. A claim here becomes the
+  /// snapshot's truth until Smartschool is read again, so silence is the only
+  /// honest answer to a placement that did not demonstrably land.
+  Future<Group?> _placeNewAccount(
     Connectors connectors,
     ss.SmartschoolAccount built,
   ) async {
     final placement = this.placement;
-    if (placement == null) return;
+    if (placement == null) return null;
 
     final classGroup = _wisa.classGroup;
     final isAdultEducation =
@@ -516,14 +532,15 @@ class AddStudentToSmartschool extends StudentAction {
     // The ANS/BNS branch is exempt because it targets the "Leerlingen" root,
     // which is a tree node rather than one of our classes — `_isOfficialClass`
     // below is what vets that one.
-    if (!isAdultEducation && !placement.isOurClass(classGroup)) return;
+    if (!isAdultEducation && !placement.isOurClass(classGroup)) return null;
 
     final targetName = isAdultEducation ? 'Leerlingen' : classGroup;
     final target = placement.resolveClass(targetName);
-    if (target == null || !_isOfficialClass(target)) return;
+    if (target == null || !_isOfficialClass(target)) return null;
 
-    await _requireSmartschool(connectors)
+    final seated = await _requireSmartschool(connectors)
         .moveUserToClass(built.uid, target.id.value, _wisa.classChange);
+    return seated ? target : null;
   }
 }
 

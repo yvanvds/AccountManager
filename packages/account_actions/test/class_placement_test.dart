@@ -378,6 +378,8 @@ void main() {
       expect(result.outcome, ActionOutcome.applied);
       expect(result.smartschool, isNotNull);
       expect(transport.calledMethod('saveUserToClass'), isFalse);
+      expect(result.movedToClass, isNull,
+          reason: 'nothing was placed, so there is no class to report (#342)');
     });
 
     test('placement → account created then moved into its class', () async {
@@ -390,6 +392,11 @@ void main() {
       ).apply(connectors, const ApplyOptions());
       expect(result.outcome, ActionOutcome.applied);
       expect(transport.calledMethod('saveUserToClass'), isTrue);
+      // The create's record says nothing about the class it was written into,
+      // so the seat has to be named separately or the State layer splices an
+      // account with no membership — and then offers the move it just made
+      // unnecessary (#342).
+      expect(result.movedToClass?.id.value, '3A');
     });
 
     test('dry run with placement → no writes at all', () async {
@@ -402,6 +409,8 @@ void main() {
       ).apply(connectors, ApplyOptions.dry);
       expect(result.outcome, ActionOutcome.dryRun);
       expect(transport.soapActions, isEmpty);
+      expect(result.movedToClass, isNull,
+          reason: 'a dry run seated nobody anywhere (#342)');
     });
 
     test('ANS/BNS student targets the (non-official) Leerlingen root → no move',
@@ -417,6 +426,9 @@ void main() {
       expect(result.outcome, ActionOutcome.applied);
       // Leerlingen is not an official class, so the move is (correctly) skipped.
       expect(transport.calledMethod('saveUserToClass'), isFalse);
+      expect(result.movedToClass, isNull,
+          reason:
+              'the Leerlingen root is a tree node, not a class seat (#342)');
     });
 
     test('a class our WISA school does not have is never enrolled into (#333)',
@@ -442,6 +454,8 @@ void main() {
       expect(result.outcome, ActionOutcome.applied);
       expect(result.smartschool, isNotNull);
       expect(transport.calledMethod('saveUserToClass'), isFalse);
+      expect(result.movedToClass, isNull,
+          reason: 'a class we refused to write into is not a seat (#342)');
     });
 
     test('a failed placement move does not fail the create (best-effort)',
@@ -459,6 +473,12 @@ void main() {
       expect(result.outcome, ActionOutcome.applied);
       expect(result.smartschool, isNotNull);
       expect(transport.calledMethod('saveUserToClass'), isTrue);
+      // Best-effort cuts both ways (#342): the create still succeeds, but the
+      // seat it reports is spliced into the snapshot as fact, so a placement
+      // Smartschool refused must name no class — otherwise the app would
+      // believe in a membership that does not exist and suppress the
+      // `MoveToSmartschoolClassGroup` that is this path's only safety net.
+      expect(result.movedToClass, isNull);
     });
   });
 }

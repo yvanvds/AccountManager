@@ -64,9 +64,11 @@ class ActionResult {
   /// other action.
   final AzureGroup? azureGroup;
 
-  /// The official Smartschool class an account-targeted action **moved the
-  /// account into** (#341) — set by [MoveToSmartschoolClassGroup] on a real
-  /// write, alongside the unchanged [smartschool] record.
+  /// The official Smartschool class an account-targeted action **seated the
+  /// account in** (#341) — set by [MoveToSmartschoolClassGroup] on a real
+  /// write, alongside the unchanged [smartschool] record, and by
+  /// [AddStudentToSmartschool] when its best-effort placement step actually
+  /// wrote the new account into its class (#342).
   ///
   /// A move writes a *membership*, not a field on the account, so the record
   /// the write returns is byte-for-byte the one it started from. Without this
@@ -76,8 +78,16 @@ class ActionResult {
   /// after its own write had landed (and, since #338, the stamboeknummer write
   /// waiting behind it stayed deferred) until Smartschool was read again.
   ///
-  /// Null for every other action — including a move that failed or was a dry
-  /// run, neither of which changed a membership.
+  /// A create has the same problem from the other side: the record it returns
+  /// is the account it just built, which says nothing about the class the
+  /// placement step then wrote it into, so a freshly provisioned student
+  /// landed in the snapshot with no membership at all and was offered a move
+  /// into the class they were already sitting in (#342).
+  ///
+  /// Null for every other action — and for a failed or dry-run move, or a
+  /// create whose best-effort placement was skipped or refused: none of those
+  /// changed a membership, and this field is spliced into the snapshot as
+  /// fact, so only a write that demonstrably landed may name a class.
   final Group? movedToClass;
 
   /// True when the action deleted the record from [system] (so the State layer
