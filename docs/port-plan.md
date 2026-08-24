@@ -60,7 +60,8 @@ Landed slices:
   `PlacementResolver`.
 - **#72** — apply + incremental refresh: `StateApplier` runs an action's dry-run
   capable `apply()`, then patches the owning snapshot and re-links with no
-  re-sync (or accumulates a `DontImportFromWisa` rule and re-syncs WISA).
+  re-sync (a `DontImportFromWisa` rule is accumulated *and* applied to the WISA
+  snapshot in place — since #345 that path re-syncs nothing either).
 - **#73** — **settings/config model + import-rule sets** *(this slice)*. See below.
 
 ### Phase A / #73 — settings/config model

@@ -2571,8 +2571,9 @@ void main() {
     final saved =
         harness.soap.soapActions.where((a) => a.endsWith('#saveClass')).length;
     expect(saved, 2);
-    // …and not one of them was blacklisted on the way out. A DontImportClass
-    // rule re-pulls WISA, so an untouched pull count is the proof.
+    // …and the pass re-pulled nothing while doing it (#72; since #345 a rule
+    // would not have re-pulled either). What proves none of them was
+    // blacklisted on the way out is the summaries below.
     expect(harness.wisaSyncs, pulls);
     final summaries =
         harness.controller.applyResults!.map((r) => r.changes.summary).toList();
@@ -2725,8 +2726,10 @@ void main() {
       isNot(contains('Negeer deze klas bij het importeren uit WISA')),
       reason: 'the rule would drop the classes the app just said to repair',
     );
-    // A DontImportClass rule re-pulls WISA, so an untouched pull count is the
-    // proof that none was written.
+    // The summaries above are the proof that no rule was written; this is the
+    // separate #72/#345 claim that a bulk create re-pulls nothing at all — not
+    // for the creates, and not for a rule either (which since #345 filters the
+    // snapshot in place rather than re-syncing).
     expect(harness.wisaSyncs, pulls);
     expect(tester.takeException(), isNull);
   });
@@ -8943,8 +8946,9 @@ void main() {
     );
     final live = LiveSettings(stored);
     final settings = SettingsHarness(initial: stored, liveSettings: live);
+    final wire = RecordingWisaSoap();
     final harness = ReconcileHarness(
-      wisaTransport: RecordingWisaSoap(),
+      wisaTransport: wire,
       liveSettings: live,
       settingsStore: settings.store,
       // Smartschool holds only the root a new class would hang under, so WISA's
@@ -9005,8 +9009,27 @@ void main() {
       find.textContaining('bewaart 1 importregel blijvend voor iedereen'),
       findsOneWidget,
     );
+    // What the apply costs, measured on both sides of the seam: the WISA syncer
+    // and the SOAP wire underneath it.
+    final pulls = harness.wisaSyncs;
+    final queries = wire.queries.length;
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
+
+    // The apply is free (#345). An import rule never reaches WISA — it is a
+    // client-side filter the connector applies once the rows are already in
+    // hand — so the applier runs that filter over the snapshot it holds instead
+    // of re-pulling klassen/leerlingen/personeel for every school to obtain the
+    // same roster minus one class. That re-pull is what made a single "niet
+    // importeren" apply take 20+ seconds on the real scholengroep, paid again
+    // per record when several were ignored in one pass.
+    expect(harness.wisaSyncs, pulls, reason: 'the apply must not re-pull WISA');
+    expect(wire.queries.length, queries,
+        reason: 'and nothing went out on the SOAP wire either');
+
+    // The patch is not merely cheap, it is the same answer: the class is gone
+    // from the view the operator is looking at, exactly as the re-pull left it.
+    expect(find.byKey(const ValueKey('entry-group-3C')), findsNothing);
 
     // It landed on the settings document, on the wire shape #263's pull reads.
     final saved = await settings.store.load();
@@ -9014,8 +9037,9 @@ void main() {
     expect((saved.wisaRules.single as DontImportClass).className, '3C');
     expect(harness.controller.error, isNull);
 
-    // The apply re-pulled WISA with the rule itself, so **Controleer op drift**
-    // must not now refuse over the document that apply just wrote (#238).
+    // The snapshot in hand already reflects the rule — the apply filtered it in
+    // place — so **Controleer op drift** must not now refuse over the document
+    // that apply just wrote (#238).
     await tester.tap(find.text('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);

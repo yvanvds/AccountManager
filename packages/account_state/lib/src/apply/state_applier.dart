@@ -95,12 +95,15 @@ class ApplierSettings {
 ///    class instead ([ActionResult.movedToClass]) and the patch reseats the
 ///    membership as well (#341);
 /// 3. for a `DontImportFromWisa` action (which writes nothing and returns a
-///    [ActionResult.wisaRule]), accumulates the rule in [wisaRules] and
-///    **re-syncs WISA** so the ignored record drops from the next snapshot —
-///    the one path that does hit the network again. Making that rule permanent
-///    is the caller's job, not this layer's: since #276 the reconcile controller
-///    writes it to the shared settings document once the pass ends, where the
-///    store (and, for #285, the operator's identity) lives.
+///    [ActionResult.wisaRule]), accumulates the rule in [wisaRules] and patches
+///    the WISA snapshot with it locally, so the ignored record drops with no
+///    network at all (#345 — the rule is a client-side filter, never a query
+///    parameter). Making that rule permanent is the caller's job, not this
+///    layer's: since #276 the reconcile controller writes it to the shared
+///    settings document once the pass ends, where the store (and, for #285, the
+///    operator's identity) lives.
+///
+/// No step here touches the network beyond the action's own write.
 ///
 /// **Smartschool uid uniqueness (#72).** Because State holds the account set,
 /// this applier wraps the injected [StudentActionConfig] / [StaffActionConfig]
@@ -164,8 +167,9 @@ class StateApplier {
   final core.PersonIdResolver resolver;
 
   /// The shared WISA import-rule set the `DontImportFromWisa` path grows before
-  /// re-syncing WISA. Must be the same instance the WISA [Syncer] reads (see
-  /// [WisaImportRules]).
+  /// patching the snapshot with the new rule. Must be the same instance the WISA
+  /// [Syncer] reads (see [WisaImportRules]), so the *next* real pull filters by
+  /// everything this pass earned.
   final WisaImportRules wisaRules;
 
   /// The shared password-distribution queue (#105). When wired, every apply that
@@ -475,12 +479,20 @@ class StateApplier {
     switch (result.system) {
       case core.Origin.wisa:
         // WISA is read-only: the action produced an import rule instead of a
-        // write. Accumulate it and re-sync WISA so the ignored record drops
-        // from the next snapshot. This is the only path that hits the network.
+        // write. Accumulate it — the rule must still reach the *next* real pull
+        // and, since #276, the shared settings document — and then patch the
+        // snapshot locally, exactly like every other origin (#345).
+        //
+        // This used to re-sync WISA, and that re-pull bought nothing: an import
+        // rule never reaches WISA. It is a client-side filter the connector
+        // applies at snapshot *construction*, after all the I/O, and the row
+        // queries carry no rule parameter — so `sync()` paid three SOAP round
+        // trips per school (20s+ on a real scholengroep) only to rebuild the
+        // snapshot already in hand minus one dropped row.
         final rule = result.wisaRule;
         if (rule != null) {
           wisaRules.add(rule);
-          await app.sync(core.Origin.wisa);
+          app.wisa.patch(_applyWisaRule(app.wisa.snapshot!, rule));
         }
       case core.Origin.smartschool:
         final current = app.smartschool.snapshot!;
@@ -703,6 +715,41 @@ String? _nameOf(ss.SmartschoolAccount? account) {
 // record replaced/removed, reusing the current snapshot's `fetchedAt` so the
 // patch reads as the same fetch (a local edit, not a fresh network read).
 // ---------------------------------------------------------------------------
+
+/// [current] with [rule] applied to it exactly as [wapi.WisaConnector.sync]
+/// applies its rule set at snapshot construction (#345) — the staff filter and
+/// the class-group filter, in that one order, over the snapshot in hand.
+///
+/// This is what makes the local patch honest rather than merely fast: the two
+/// filters here are the *same* functions the next real pull runs, so a
+/// `DontImportUserFromWisa` drops the same staff row and a `DontImportClass`
+/// the same class group the pull would have dropped, and the in-memory view
+/// cannot drift from the snapshot that pull will produce. Both rule kinds go
+/// through both filters because a rule the other filter does not recognise is a
+/// no-op there, which is also how the connector composes them.
+///
+/// Students are untouched: no import rule drops a student. A `DontImportClass`
+/// removes the *class group*, and the students who were in it keep their
+/// (now classless) rows — precisely what the connector leaves behind, since it
+/// filters `classGroups` and hands `students` through unfiltered.
+///
+/// `fetchedAt` and `workDate` are carried over: a local filter is not a fresh
+/// fetch, so the roster still dates from the pull it came out of (and
+/// [SystemState.patch] leaves `lastSync` alone for the same reason).
+wapi.WisaSnapshot _applyWisaRule(
+  wapi.WisaSnapshot current,
+  wapi.WisaImportRule rule,
+) {
+  final rules = [rule];
+  return wapi.WisaSnapshot(
+    fetchedAt: current.fetchedAt,
+    workDate: current.workDate,
+    students: current.students,
+    staff: wapi.applyRulesToStaff(current.staff, rules),
+    classGroups: wapi.applyRulesToClassGroups(current.classGroups, rules),
+    schools: current.schools,
+  );
+}
 
 ss.SmartschoolSnapshot _putAccount(
   ss.SmartschoolSnapshot current,
