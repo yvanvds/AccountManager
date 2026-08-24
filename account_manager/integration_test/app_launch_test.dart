@@ -46,7 +46,7 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
-    show DiscardSmartschoolGroup, SmartschoolConnector;
+    show DiscardSmartschoolGroup, SmartschoolConnector, SmartschoolSnapshot;
 import 'package:wisa_api/wisa_api.dart'
     show
         DontImportClass,
@@ -5552,6 +5552,107 @@ void main() {
           reason: 'school $school\'s 1C is single-group — no move is due');
       expect(find.textContaining('1C 00'), findsNothing);
     }
+  });
+
+  testWidgets(
+      'the stamboeknummer waits for the class move end-to-end: the card offers '
+      'only the move, the pass sends no saveUser, and the number follows once '
+      'the new career row exists (#338)', (WidgetTester tester) async {
+    // The real app, real navigation, real writes over the recording SOAP wire.
+    // The rollover case that damaged 66 of 66 students last summer: Jane moves
+    // up from `4NW2` to `5ADB` and, with it, from one of the group's schools to
+    // the other, so WISA (werkdatum already in the new year) reports the *new*
+    // institute number while Smartschool still carries the old one.
+    //
+    // A schoolloopbaan keeps one stamnummer per row and `saveUser` writes it to
+    // the *last* row, so a save before the move stamps next year's number onto
+    // the row of the year she is still sitting in — silently, because the class
+    // change then creates the new row and inherits the value, leaving the new
+    // year right and the running year wrong. Only a full run shows the thing
+    // that has to be true: what the card offers, and which SOAP calls one click
+    // sends, in what order.
+    useTallWindow(tester);
+    SmartschoolSnapshot smartschoolWith(String classCode) => ssSnap(
+          groups: [
+            ssGroup('4NW2', code: '4nw2_ss'),
+            ssGroup('5ADB', code: '5adb_ss'),
+          ],
+          accounts: [ssAccount(stemId: 2200123)],
+          memberships: [member('jane', classCode)],
+        );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(classGroup: '5ADB', stemId: '2300033')],
+      ),
+      smartschool: smartschoolWith('4nw2_ss'),
+      azure: azSnap(users: [azUser(displayName: 'Jane Doe')]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    // Her card carries the move and says nothing at all about the
+    // stamboeknummer — there is no row to apply out of order, in any order.
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
+    expect(
+      find.text('Wijzig het stamboeknummer in Smartschool'),
+      findsNothing,
+      reason: 'the running year\'s career row is still the last one',
+    );
+
+    // Applying the whole card is therefore one write, and it is the move.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+    expect(harness.soap.movedToClasses, <String>['5adb_ss']);
+    expect(
+      harness.soap.savedStamboeknummers,
+      isEmpty,
+      reason: 'no saveUser may precede the move that creates the new row',
+    );
+
+    // Smartschool now has her in `5ADB`; the operator re-reads it the way they
+    // do after a rollover pass — **Controleer op drift**, which re-pulls
+    // Smartschool and Azure without touching the WISA roster.
+    harness.ssResult = smartschoolWith('5adb_ss');
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+
+    // The move is settled, so the number is offered — and now it lands on the
+    // new year's row, which is the last one.
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Smartschool'), findsNothing);
+    expect(find.text('Wijzig het stamboeknummer in Smartschool'), findsWidgets);
+
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.savedStamboeknummers, <String>['2300033']);
+    expect(
+      harness.soap.soapActions.indexWhere((a) => a.endsWith('#saveUser')),
+      greaterThan(
+        harness.soap.soapActions
+            .indexWhere((a) => a.endsWith('#saveUserToClass')),
+      ),
+      reason: 'the move creates the row the number is written to',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

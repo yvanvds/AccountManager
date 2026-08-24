@@ -53,8 +53,17 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// "a move happened" is not "this class is the one it wrote".
   final List<String> movedToClasses = <String>[];
 
+  /// The `stamboeknummer` every `saveUser` carried, in order (#338). A
+  /// schoolloopbaan keeps one stamnummer **per row** and `saveUser` writes it to
+  /// the *last* row, so what matters is not that a save happened but which
+  /// number it carried — and whether the class move that creates the new row had
+  /// already run. Read off the envelope for the same reason [movedToClasses] is.
+  final List<String> savedStamboeknummers = <String>[];
+
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
   static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
+  static final RegExp _stamboekArg =
+      RegExp(r'<stamboeknummer[^>]*>([^<]*)</stamboeknummer>');
 
   @override
   Future<String> send({
@@ -72,6 +81,12 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.endsWith('#saveUserToClass')) {
       final match = _classArg.firstMatch(envelope);
       if (match != null) movedToClasses.add(match.group(1)!);
+    }
+    // Likewise exact: `saveUserParameter` shares the prefix but carries no
+    // stamboeknummer at all.
+    if (soapAction.endsWith('#saveUser')) {
+      savedStamboeknummers
+          .add(_stamboekArg.firstMatch(envelope)?.group(1) ?? '');
     }
     // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'
@@ -1211,6 +1226,11 @@ wapi.WisaStudent wisaStudent({
   // apart on screen (#245) names them.
   String firstName = 'Jane',
   String name = 'Doe',
+  // The institute number of the enrolment WISA reports *as of the werkdatum* —
+  // next school year's, once the werkdatum is moved forward (#338). Blank by
+  // default, matching the Smartschool fixture, so no stamboeknummer action fires
+  // unless a test is about one.
+  String stemId = '',
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
@@ -1220,7 +1240,7 @@ wapi.WisaStudent wisaStudent({
       firstName: firstName,
       preferredName: '',
       birthDate: kFixtureDate,
-      stemId: '',
+      stemId: stemId,
       gender: core.Gender.female,
       nationalId: '',
       birthPlace: '',
@@ -1315,13 +1335,16 @@ ss.SmartschoolAccount ssAccount({
   // wants no SetStaffCopyCode must set it.
   core.PersonRole role = core.PersonRole.student,
   String fax = '',
+  // The stamboeknummer Smartschool holds on the account today — the value its
+  // last schoolloopbaan row carries (#338).
+  int stemId = 0,
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
       accountId: accountId,
       mail: mail,
       registerId: '',
-      stemId: 0,
+      stemId: stemId,
       role: role,
       givenName: givenName,
       surname: surname,

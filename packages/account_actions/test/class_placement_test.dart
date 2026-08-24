@@ -84,8 +84,12 @@ void main() {
       }
     });
 
-    test('the move sits between BirthPlace and StudentEmail (legacy order)',
-        () {
+    test('the move leads the Smartschool modifiers (#338)', () {
+      // Legacy ran the move late — after StemID and BirthPlace — and that order
+      // is what damaged 66 careers: `saveUser` writes the stamboeknummer to the
+      // *last* schoolloopbaan row, which is the running year's until the move
+      // has created next year's. So the move now leads, and the rest of the
+      // Smartschool modifiers keep their legacy order behind it.
       final actions = studentActionsFor(
         completeStudent(
           smartschool: ssAccount(
@@ -100,8 +104,8 @@ void main() {
         ),
       );
       expect(types(actions), [
-        ModifySmartschoolBirthPlace,
         MoveToSmartschoolClassGroup,
+        ModifySmartschoolBirthPlace,
         ModifySmartschoolStudentEmail,
       ]);
     });

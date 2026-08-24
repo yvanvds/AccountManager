@@ -198,6 +198,36 @@ sealed class StudentAction {
   /// the ported `moveUserToClass` connector leaves that guard to the caller).
   bool _isOfficialClass(Group group) =>
       group.official && group.type == GroupType.classGroup;
+
+  /// Whether a Smartschool class move is still **pending** for this student
+  /// (#338): they already sit in an official class today *and*
+  /// [MoveToSmartschoolClassGroup] would fire on the same account with the same
+  /// [placement].
+  ///
+  /// `saveUser` carries `stamboeknummer` with no school-year parameter, while a
+  /// Smartschool schoolloopbaan stores one stamnummer **per row** — and the
+  /// write lands on the *last* row. Until the move into next year's class has
+  /// run, that last row is the **running** year's, so a student switching
+  /// between two of the group's schools has this year's row overwritten with
+  /// next year's institute number. Waiting for the move to create the new row is
+  /// what keeps the running year intact (66 of 66 such students were damaged the
+  /// summer the stem write went first; the years where the moves ran first are
+  /// all clean).
+  ///
+  /// The condition is per **account**, never per school: a student who holds no
+  /// class yet — a virtual school's intake, a freshly created account — has no
+  /// row to damage, so nothing is held back for them. And the move's own
+  /// [MoveToSmartschoolClassGroup.evaluate] is asked directly rather than
+  /// restated here, so "a move is pending" cannot drift from what the move
+  /// actually does.
+  ///
+  /// A null [placement] means the caller wired no membership context at all
+  /// (the dispatch's `placementFor` is optional), and then nothing is known
+  /// about a pending move — the pre-#338 behaviour.
+  bool _classMoveIsPending(ClassPlacement? placement) =>
+      placement != null &&
+      placement.currentClass != null &&
+      MoveToSmartschoolClassGroup(account, config, placement).evaluate();
 }
 
 /// The [StudentAction.alternativeGroup] key shared by the two mutually
@@ -973,13 +1003,28 @@ class ModifySmartschoolStudentAddress extends StudentAction {
 
 /// Sync the Smartschool stamboeknummer from WISA. Ported from
 /// `Action\StudentAccount\ModifySmartschoolStemID`.
+///
+/// **Held back while a class move is pending** (#338). Smartschool keeps one
+/// stamnummer per schoolloopbaan row and `saveUser` writes it to the last one,
+/// so running this before [MoveToSmartschoolClassGroup] stamps *next* year's
+/// number onto the row of the year the student is still sitting in. The action
+/// therefore evaluates false until the move has created the new row — see
+/// [StudentAction._classMoveIsPending] for why the condition is per account.
 class ModifySmartschoolStemId extends StudentAction {
-  const ModifySmartschoolStemId(super.account, super.config);
+  /// The class-placement context, when the caller wired one (#338).
+  ///
+  /// This action moves nobody; it reads the placement only to answer whether a
+  /// class move is still pending, and defers to it when one is. Null — no
+  /// membership context — restores the unconditional pre-#338 behaviour.
+  final ClassPlacement? placement;
+
+  const ModifySmartschoolStemId(super.account, super.config, {this.placement});
 
   int get _wisaStemId => int.tryParse(_wisa.stemId) ?? 0;
 
   @override
-  bool evaluate() => _wisaStemId != _ss.stemId;
+  bool evaluate() =>
+      _wisaStemId != _ss.stemId && !_classMoveIsPending(placement);
 
   /// A mechanical WISA → Smartschool copy, so it goes in bulk (legacy
   /// `ModifySmartschoolStemID(…, true, true)`).
@@ -1002,6 +1047,9 @@ class ModifySmartschoolStemId extends StudentAction {
         options,
         describeChanges(),
         _ss.copyWith(stemId: _wisaStemId),
+        // The one action allowed to put a *different* stamboeknummer in the
+        // `saveUser` payload (#338); every other save re-sends the current one.
+        writesStemId: true,
       );
 }
 
@@ -1192,8 +1240,9 @@ class MoveToSmartschoolClassGroup extends StudentAction {
         );
       }
       // A move changes membership, not the account's own fields; the account
-      // still exists, so the State layer keeps its record (and updates its
-      // membership index from the target it built into [placement]).
+      // still exists, so the State layer keeps its record. It does **not** yet
+      // splice the new membership into the snapshot, so the move stays proposed
+      // until Smartschool is read again — see #341.
       return ActionResult(
         outcome: ActionOutcome.applied,
         changes: changes,
@@ -1336,25 +1385,38 @@ extension _AzurePatch on StudentAction {
   }
 
   /// Saves [updated] to Smartschool (`saveUser` with an unchanged password)
-  /// unless dry-run, and returns [updated] as the mutated source record.
+  /// unless dry-run, and returns the saved record as the mutated source record.
+  ///
+  /// **The stamboeknummer never rides along** (#338). `saveUser` sends the whole
+  /// account, so every field modifier — mail, address, birthplace, roepnaam —
+  /// carries a `stamboeknummer` it has no opinion about; Smartschool then stamps
+  /// that value on the *last* schoolloopbaan row. So unless [writesStemId] says
+  /// this is the action whose job is to change it, the payload re-sends the
+  /// number Smartschool holds **right now** and that half of the write is a
+  /// no-op. Default-safe on purpose: an action added later cannot smuggle a
+  /// stamnummer through by forgetting about this.
   Future<ActionResult> _smartschoolSave(
     Connectors connectors,
     ApplyOptions options,
     ChangeSet changes,
-    ss.SmartschoolAccount updated,
-  ) async {
+    ss.SmartschoolAccount updated, {
+    bool writesStemId = false,
+  }) async {
+    final payload =
+        writesStemId ? updated : updated.copyWith(stemId: _ss.stemId);
+
     if (options.dryRun) {
       return ActionResult(
         outcome: ActionOutcome.dryRun,
         changes: changes,
         system: Origin.smartschool,
-        smartschool: updated,
+        smartschool: payload,
       );
     }
     try {
       // An empty password leaves the holder's existing password unchanged.
       final ok = await _requireSmartschool(connectors)
-          .saveAccount(updated, password: '');
+          .saveAccount(payload, password: '');
       if (!ok) {
         return _failed(
           changes,
@@ -1366,7 +1428,7 @@ extension _AzurePatch on StudentAction {
         outcome: ActionOutcome.applied,
         changes: changes,
         system: Origin.smartschool,
-        smartschool: updated,
+        smartschool: payload,
       );
     } on Object catch (e) {
       return _failed(changes, Origin.smartschool, e);
