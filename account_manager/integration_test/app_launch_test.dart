@@ -10744,7 +10744,7 @@ void main() {
 
   testWidgets(
       'a staff member who left WISA still gets their Office 365 account '
-      'proposed for deletion (#269)', (WidgetTester tester) async {
+      'proposed for cleanup (#269/#349)', (WidgetTester tester) async {
     // The other half of #268, and the worse one. Anna Smit has left the school:
     // WISA no longer lists her and her Smartschool account is already gone. Her
     // Office 365 account is not — and our prefix sits *second* in the comma list
@@ -10771,7 +10771,23 @@ void main() {
     // Only this layer sees the whole thing: the Azure pull has to remember her
     // from the snapshot it already holds, the linker has to keep the row it
     // produces as an Azure-only staff record (INV-22), and the operator has to be
-    // handed the deletion in Acties → Personeel.
+    // handed the cleanup in Acties → Personeel.
+    //
+    // **What that cleanup is changed in #349.** Her `department` reads
+    // `SSM,GBS`: she is gone from WISA group-wide, but the list a *sibling*
+    // school maintains still names them. The account may not be deleted on that
+    // evidence — `department` is neither ours to write nor guaranteed current
+    // (#237), and destroying a live account of another school of the group is
+    // the loss #340 exists to prevent. So our own entry is struck out instead
+    // and the account is left standing, which is also what makes the group-wide
+    // outcome right: she drops out of *our* Azure pull, SSM's own instance then
+    // sees an account naming nobody but them, and the last school to release her
+    // is the one that deletes it.
+    //
+    // Everything this test is actually about is unchanged: the delta recovery,
+    // the targeted `employeeId` lookup that is the only leg left, the record
+    // surviving as an Azure-only LinkedStaff, and the operator being handed
+    // something to do about it.
     useTallWindow(tester);
     final azureWire = DepartedStaffGraph();
     final harness = ReconcileHarness(
@@ -10841,7 +10857,10 @@ void main() {
           .firstWhere((e) => e.family == 'staff')
           .targetId,
     );
-    expect(find.text('Verwijder Azure account'), findsOneWidget);
+    expect(find.text('Haal onze school uit het Office 365 account'),
+        findsOneWidget);
+    expect(find.text('Verwijder Azure account'), findsNothing,
+        reason: "the department list still names a sibling school (#349)");
   });
 
   testWidgets(
