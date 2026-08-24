@@ -54,6 +54,7 @@ import 'package:wisa_api/wisa_api.dart'
         DontImportUserFromWisa,
         WisaImportRule,
         WisaSchool,
+        WisaSnapshot,
         parseSchoolRow;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
@@ -8947,10 +8948,14 @@ void main() {
     final live = LiveSettings(stored);
     final settings = SettingsHarness(initial: stored, liveSettings: live);
     final wire = RecordingWisaSoap();
+    // The cold store every other session seeds from, so this run can check what
+    // the apply left in it (#347).
+    final snapshots = InMemorySnapshotStore();
     final harness = ReconcileHarness(
       wisaTransport: wire,
       liveSettings: live,
       settingsStore: settings.store,
+      store: snapshots,
       // Smartschool holds only the root a new class would hang under, so WISA's
       // `3C` is genuinely absent downstream and raises the #244 either/or.
       smartschool: ssSnap(
@@ -9013,6 +9018,9 @@ void main() {
     // and the SOAP wire underneath it.
     final pulls = harness.wisaSyncs;
     final queries = wire.queries.length;
+    // When the roster in the cold store was fetched, to check the write-back
+    // below does not restamp it (#347).
+    final pulledAt = snapshots.peek(Origin.wisa)!.fetchedAt;
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -9036,6 +9044,19 @@ void main() {
     expect(saved.wisaRules.single, isA<DontImportClass>());
     expect((saved.wisaRules.single as DontImportClass).className, '3C');
     expect(harness.controller.error, isNull);
+
+    // …and so did the corrected roster (#347). Snapshot persistence lives
+    // inside the syncer, which the patch above deliberately bypasses, so
+    // without the end-of-pass write-back the stored copy would still carry
+    // `3C` — and the next operator to launch the app seeds from that copy,
+    // which `WisaSnapshot.fromJson` filters not at all, and is offered the very
+    // rule this pass just wrote.
+    final storedWisa =
+        WisaSnapshot.fromJson(snapshots.peek(Origin.wisa)!.payload);
+    expect(storedWisa.classGroups.map((g) => g.name), isNot(contains('3C')));
+    // The write-back is not a fetch, so the stored freshness still belongs to
+    // the pull (#345) — a cold seed must not read as newer than its data.
+    expect(snapshots.peek(Origin.wisa)!.fetchedAt, pulledAt);
 
     // The snapshot in hand already reflects the rule — the apply filtered it in
     // place — so **Controleer op drift** must not now refuse over the document

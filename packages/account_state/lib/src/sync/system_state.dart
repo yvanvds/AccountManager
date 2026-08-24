@@ -65,6 +65,7 @@ class SystemState<S extends core.Snapshot> {
   DateTime? _lastSync;
   core.ConnectionState _connection = core.ConnectionState.unknown;
   bool _syncing = false;
+  bool _patched = false;
 
   /// The last successfully synced snapshot, or `null` before the first sync.
   S? get snapshot => _snapshot;
@@ -79,6 +80,21 @@ class SystemState<S extends core.Snapshot> {
 
   /// Whether a [sync] is currently in flight.
   bool get isSyncing => _syncing;
+
+  /// Whether [snapshot] carries local [patch]es the cold snapshot store has not
+  /// been told about yet (#347).
+  ///
+  /// Snapshot persistence lives inside the [Syncer] (`persistingSyncer`), which
+  /// a [patch] deliberately bypasses — so without this the stored snapshot keeps
+  /// the record an apply just dropped, and the next session to seed from the
+  /// store links from a roster its own operator already corrected. This flag is
+  /// what lets the pass write the patched snapshot back **once at the end**
+  /// rather than per patch: a pass applying thirty actions would otherwise
+  /// serialize and upload the whole roster thirty times.
+  ///
+  /// Set by [patch], cleared by a successful [sync] (that path persists on its
+  /// own) and by [markPatchPersisted].
+  bool get hasUnpersistedPatch => _patched;
 
   /// Runs one sync and, **only on success**, replaces [snapshot] with the
   /// fresh result and stamps [lastSync] from its `fetchedAt`.
@@ -101,6 +117,10 @@ class SystemState<S extends core.Snapshot> {
       final fresh = await _syncer(_snapshot, fullRead: fullRead);
       _snapshot = fresh;
       _lastSync = fresh.fetchedAt;
+      // The fresh snapshot replaces whatever was patched into the old one, and
+      // the syncer persisted it on the way through — so there is nothing left
+      // for the end-of-pass write-back to catch up on (#347).
+      _patched = false;
       return fresh;
     } finally {
       _syncing = false;
@@ -120,11 +140,23 @@ class SystemState<S extends core.Snapshot> {
   ///
   /// Rejected while a [sync] is in flight — patching the shared snapshot slot
   /// under an in-flight sync would race the fresh result in.
+  ///
+  /// Marks the state [hasUnpersistedPatch], which is the pass's cue to write the
+  /// patched snapshot back to the cold store when it ends (#347).
   void patch(S snapshot) {
     if (_syncing) {
       throw StateError('Cannot patch $system while a sync is in progress');
     }
     _snapshot = snapshot;
+    _patched = true;
+  }
+
+  /// Clears [hasUnpersistedPatch] after the caller has written [snapshot] to the
+  /// cold store (#347). Called by `persistPatchedSnapshots` on a **successful**
+  /// write only, so a store that was unreachable at the end of one pass is
+  /// simply retried at the end of the next.
+  void markPatchPersisted() {
+    _patched = false;
   }
 
   /// Probes the connector with [tester] and records the outcome in

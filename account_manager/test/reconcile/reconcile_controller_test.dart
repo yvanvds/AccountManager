@@ -678,6 +678,7 @@ void main() {
     ReconcileHarness ignoreStaffHarness({
       SettingsStore? settingsStore,
       LiveSettings? liveSettings,
+      SnapshotStore? store,
     }) =>
         ReconcileHarness(
           wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
@@ -689,6 +690,7 @@ void main() {
           azure: azSnap(users: const []),
           settingsStore: settingsStore,
           liveSettings: liveSettings,
+          store: store,
         );
 
     /// Syncs, switches the staff either/or to the opt-out the way the screen
@@ -725,6 +727,38 @@ void main() {
       // a reload (#263) and Instellingen shows what the store holds (#273).
       expect(live.current.wisaRules, hasLength(1));
       expect(h.controller.error, isNull);
+    });
+
+    test('writes the corrected roster back to the cold store (#347)', () async {
+      // The rule reaching the settings document is only half of what the next
+      // operator needs. They seed their `SystemState`s from the cold snapshot,
+      // and `WisaSnapshot.fromJson` filters nothing — import rules are applied
+      // at snapshot *construction* during a pull — so a stored roster that
+      // still lists the ignored staff member puts them straight back in front
+      // of the very colleague this pass was meant to spare.
+      final snapshots = InMemorySnapshotStore();
+      final h = ignoreStaffHarness(store: snapshots);
+      await h.controller.sync();
+      // The pull persisted the roster as WISA reports it: SMIT included.
+      expect(
+        wapi.WisaSnapshot.fromJson(snapshots.peek(core.Origin.wisa)!.payload)
+            .staff,
+        hasLength(1),
+      );
+
+      await ignoreTheStaffMember(h);
+
+      final stored = snapshots.peek(core.Origin.wisa)!;
+      expect(wapi.WisaSnapshot.fromJson(stored.payload).staff, isEmpty);
+      // The write-back is not a fetch (#345), so the stored freshness is still
+      // the pull's — a cold seed must not read as newer than the data it holds.
+      expect(stored.fetchedAt, kFixtureDate);
+
+      // What the next operator actually gets: a session seeded from that store
+      // starts from the corrected roster, with no pull of its own.
+      final next = await ReconcileHarness.resume(store: snapshots);
+      expect(next.app.wisa.snapshot!.staff, isEmpty);
+      expect(next.wisaSyncs, 0);
     });
 
     test('tells the operator the exclusion is permanent and shared', () async {

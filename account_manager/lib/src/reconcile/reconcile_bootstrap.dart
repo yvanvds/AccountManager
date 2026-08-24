@@ -563,6 +563,10 @@ Future<ReconcileServices> bootstrapReconcile({
     // (#207), so a profile stored before the two halves existed stops rendering
     // as "School 25" in the Settings grid, which consults no snapshot.
     settingsStore: store,
+    // The same cold store the syncers persist through, so an apply pass can
+    // write back the snapshots it patched locally instead of leaving the stored
+    // copy carrying the record it just dropped (#347).
+    snapshotStore: snapshots,
     // The live document, so the drift gate can tell that the WISA pull inputs
     // moved since the installed snapshot was pulled (#238).
     liveSettings: live,
