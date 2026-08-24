@@ -28,6 +28,10 @@ class _RecordingSoap implements ss.SmartschoolSoapTransport {
 
   final List<String> soapActions = [];
 
+  /// The request envelope of every call, in order — so a test can assert what a
+  /// write carried, not merely that it happened.
+  final List<String> envelopes = [];
+
   /// The integer result every write returns; non-zero is Smartschool's way of
   /// saying the call failed.
   final int resultCode;
@@ -39,6 +43,7 @@ class _RecordingSoap implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
+    envelopes.add(envelope);
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '
         'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
@@ -204,6 +209,7 @@ wapi.WisaSnapshot _wSnap({
   List<wapi.WisaStudent> students = const [],
   List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaClassGroup> classGroups = const [],
+  DateTime? workDate,
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: _d,
@@ -211,6 +217,7 @@ wapi.WisaSnapshot _wSnap({
       staff: staff,
       classGroups: classGroups,
       schools: const [],
+      workDate: workDate,
     );
 
 ss.SmartschoolSnapshot _sSnap({
@@ -1123,6 +1130,86 @@ void main() {
       expect(applied.refreshed, isFalse);
       expect(harness.soap.soapActions, isEmpty);
       expect(harness.app.smartschool.snapshot!.groups, hasLength(2));
+    });
+  });
+
+  group('a class write names the school year it was read at (#339)', () {
+    /// A class whose Smartschool institute number has drifted from WISA's — the
+    /// state that raises [ModifySmartschoolData], the action whose whole job is
+    /// to write an institute number.
+    _Harness driftHarness({DateTime? workDate}) => _Harness(
+          wisa: _wSnap(
+            workDate: workDate,
+            classGroups: [
+              const wapi.WisaClassGroup(
+                name: '2A',
+                groupName: '00',
+                description: 'Klas 2A',
+                adminCode: '',
+                // Next year this class belongs to the group's other school.
+                schoolCode: '125252',
+                schoolId: 1,
+              ),
+            ],
+          ),
+          smartschool: _sSnap(groups: [_ssClass('2A')]),
+        );
+
+    /// The `$schoolYearDate` of the last `saveClass` envelope, or null when no
+    /// class was saved. Read off the wire: `''` is Smartschool's "the current
+    /// school year", which is exactly the value #339 is about.
+    String? savedSchoolYearDate(_Harness harness) {
+      for (var i = harness.soap.soapActions.length - 1; i >= 0; i--) {
+        if (!harness.soap.soapActions[i].endsWith('#saveClass')) continue;
+        return RegExp(r'<schoolYearDate[^>]*>([^<]*)</schoolYearDate>')
+                .firstMatch(harness.soap.envelopes[i])
+                ?.group(1) ??
+            '';
+      }
+      return null;
+    }
+
+    test("the applier stamps the WISA snapshot's werkdatum onto the write",
+        () async {
+      // The operator has moved the werkdatum into next school year to prepare
+      // it; Smartschool is still in the running one. Without the stamp the new
+      // institute number overwrites the running year's.
+      final harness = driftHarness(workDate: DateTime(2026, 9, 1));
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<ModifySmartschoolData>().single;
+
+      final applied = await harness.applier.applyGroup(sync);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(savedSchoolYearDate(harness), '2026-9-1');
+    });
+
+    test('an unstamped snapshot leaves the API default alone', () async {
+      // A pull from before #247 carries no werkdatum, so there is nothing
+      // truthful to name and the write behaves as it always did.
+      final harness = driftHarness();
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<ModifySmartschoolData>().single;
+
+      await harness.applier.applyGroup(sync);
+
+      expect(savedSchoolYearDate(harness), '');
+    });
+
+    test('a caller that named a werkdatum keeps it', () async {
+      final harness = driftHarness(workDate: DateTime(2026, 9, 1));
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<ModifySmartschoolData>().single;
+
+      await harness.applier.applyGroup(
+        sync,
+        options: ApplyOptions(workDate: DateTime(2025, 9, 1)),
+      );
+
+      expect(savedSchoolYearDate(harness), '2025-9-1');
     });
   });
 

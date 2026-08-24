@@ -413,6 +413,80 @@ void main() {
     });
   });
 
+  group('the class write names the school year it read from (#339)', () {
+    /// The `$schoolYearDate` argument of the last `saveClass` envelope, or null
+    /// when no class was saved. Read off the envelope rather than trusted from
+    /// the action: an empty value is the API's "current school year", which is
+    /// exactly the bug.
+    String? savedSchoolYearDate(RecordingSmartschoolTransport t) {
+      for (var i = t.soapActions.length - 1; i >= 0; i--) {
+        if (!t.soapActions[i].endsWith('#saveClass')) continue;
+        return RegExp(r'<schoolYearDate[^>]*>([^<]*)</schoolYearDate>')
+                .firstMatch(t.envelopes[i])
+                ?.group(1) ??
+            '';
+      }
+      return null;
+    }
+
+    test('AddToSmartschool carries the werkdatum it was applied with',
+        () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = AddToSmartschool(
+        linkedGroup(
+          wisa: wisaGroup(name: '3A', instituteNumber: '125252'),
+        ),
+        groupPlacement(),
+      );
+
+      final result = await action.apply(
+        connectors,
+        ApplyOptions(workDate: DateTime(2026, 9, 1)),
+      );
+      expect(result.outcome, ActionOutcome.applied);
+      expect(savedSchoolYearDate(transport), '2026-9-1');
+    });
+
+    test('ModifySmartschoolData carries the werkdatum it was applied with',
+        () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      // Next year this class belongs to the group's other school; WISA says so
+      // because the werkdatum is in next year. Written with no year, that
+      // number would overwrite the running year's row.
+      final action = ModifySmartschoolData(
+        linkedGroup(
+          wisa: wisaGroup(instituteNumber: '125252'),
+          smartschool: ssGroup(instituteNumber: '125261'),
+        ),
+      );
+
+      final result = await action.apply(
+        connectors,
+        ApplyOptions(workDate: DateTime(2026, 9, 1)),
+      );
+      expect(result.outcome, ActionOutcome.applied);
+      expect(savedSchoolYearDate(transport), '2026-9-1');
+    });
+
+    test('no werkdatum leaves the API default — the current school year',
+        () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = AddToSmartschool(
+        linkedGroup(wisa: wisaGroup(name: '3A')),
+        groupPlacement(),
+      );
+
+      await action.apply(connectors, const ApplyOptions());
+      expect(savedSchoolYearDate(transport), '');
+    });
+  });
+
   group('CreateInSmartschool is informational (#65)', () {
     test('canApply is false and apply throws UnsupportedError', () {
       final action = CreateInSmartschool(

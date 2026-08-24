@@ -3117,6 +3117,80 @@ void main() {
   });
 
   testWidgets(
+      'a class written to Smartschool names the school year WISA was read at, '
+      'end-to-end (#339)', (WidgetTester tester) async {
+    // The reported loop, from the operator's side and through the real app:
+    // pin the werkdatum to next 1 September in Instellingen, Synchroniseer, and
+    // apply the class the pass proposes.
+    //
+    // WISA answers *as of* the werkdatum, so the institute number on that class
+    // is next year's. Smartschool's `saveClass` documents that a write naming no
+    // year adjusts "het huidige schooljaar" — the year Smartschool is in today,
+    // which in August is still the running one. So the whole chain has to carry
+    // the date: settings → the WISA pull → the werkdatum stamped on the
+    // snapshot → the class write. Every link but the last was already there, and
+    // no unit test can see that the last one is missing, because it is only
+    // missing once the four are composed.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(
+      wisaTransport: wire,
+      liveSettings: live,
+      // Smartschool holds only the root the classes hang under, so the class
+      // WISA reports is genuinely missing and its parent genuinely resolves.
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    // The pull really did ask WISA for next school year.
+    expect(wire.werkdatums, <String>['01/09/2026']);
+
+    const entry = ValueKey('entry-group-3C');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-3C'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // The class landed — and it named the year it came from, so next year's
+    // institute number is written onto next year and the running year is left
+    // as it is.
+    expect(harness.soap.savedClassSchoolYears, <String>['2026-9-1']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an Office 365 create Graph refuses says so on the class card, and can '
       'be run again from it end-to-end (#272)', (WidgetTester tester) async {
     // The reported run. Both options are dispatched; Graph refuses the group

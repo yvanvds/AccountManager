@@ -481,6 +481,10 @@ class AddToSmartschool extends GroupAction {
         untis: created.untis,
         instituteNumber: created.instituteNumber ?? '',
         adminNumber: created.adminNumber ?? 0,
+        // The institute and admin numbers came out of WISA as of the werkdatum
+        // this pass read, so they are written for that school year and not for
+        // whichever one Smartschool is in today (#339).
+        schoolYearDate: options.workDate,
       );
       if (!ok) {
         return _failed(
@@ -1024,6 +1028,11 @@ class ModifySmartschoolData extends GroupAction {
         untis: updated.name,
         instituteNumber: updated.instituteNumber ?? '',
         adminNumber: updated.adminNumber ?? 0,
+        // Same as [AddToSmartschool]: the institute number this action syncs is
+        // WISA's answer for the werkdatum, so it is written for that school
+        // year (#339). Without it the one action whose whole job is to correct
+        // an institute number corrects the *wrong year's*.
+        schoolYearDate: options.workDate,
       );
       if (!ok) {
         return _failed(

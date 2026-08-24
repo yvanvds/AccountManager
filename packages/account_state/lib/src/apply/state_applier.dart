@@ -274,22 +274,40 @@ class StateApplier {
 
   /// Applies a [GroupAction] and refreshes the snapshot on a real write, then
   /// runs whatever that write unlocked on the same class (#245).
+  ///
+  /// Stamps the pass with the werkdatum the WISA snapshot in hand was pulled as
+  /// of (#339) unless the caller already named one. The State layer owns the
+  /// snapshots, so it is the one layer that can answer "which school year is
+  /// this class data from" — leaving it to each call site is how the class
+  /// writes came to name no year at all. A caller that *does* set
+  /// [ApplyOptions.workDate] is left alone: it knows something this does not.
   Future<ApplyResult> applyGroup(
     GroupAction action, {
     ApplyOptions options = const ApplyOptions(),
   }) async {
-    final applied = await _applyGroupOnce(action, options);
+    final dated = _stamped(options);
+    final applied = await _applyGroupOnce(action, dated);
     final targetKey = _groupKeyOf(action.target);
     return _chainFollowUps<GroupAction>(
       action,
       applied,
-      options,
+      dated,
       dispatch: (linked) => linked.groupActions,
       sameTarget: (candidate) => _groupKeyOf(candidate.target) == targetKey,
       canApply: (candidate) => candidate.canApply,
       unlocksOf: (candidate) => candidate.unlocks,
       run: _applyGroupOnce,
     );
+  }
+
+  /// [options] carrying the werkdatum of the WISA snapshot this applier holds,
+  /// or unchanged when the caller named one or no snapshot has a stamp (a pull
+  /// from before #247, or a harness that models no sync). See
+  /// [ApplyOptions.workDate].
+  ApplyOptions _stamped(ApplyOptions options) {
+    if (options.workDate != null) return options;
+    final stamp = app.wisa.snapshot?.workDate;
+    return stamp == null ? options : options.asOf(stamp);
   }
 
   /// Runs one student action and refreshes the snapshot — the single link the

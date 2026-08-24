@@ -419,6 +419,16 @@ class SmartschoolConnector {
   /// Saves an official class (`saveClass`). Official classes need an
   /// [instituteNumber] and [adminNumber]; the institute number must already
   /// exist in Smartschool or the call is rejected.
+  ///
+  /// [schoolYearDate] names **which school year** the institute and admin
+  /// numbers are written for: *"Dit past het instellingsnummer en nummer van de
+  /// administratieve groep aan voor het doorgegeven schooljaar (indien niet
+  /// meegegeven wordt dit aangepast voor het huidige schooljaar)."* Pass the
+  /// werkdatum the class data was **read** at, or the values of a year the
+  /// operator is preparing land on the year Smartschool happens to be in
+  /// today (#339). `null` keeps the API's own default — the current school
+  /// year — which is what legacy always sent (`""`,
+  /// `AccountApi/Smartschool/GroupManager.cs:233`).
   Future<bool> saveClass({
     required String name,
     required String description,
@@ -427,7 +437,7 @@ class SmartschoolConnector {
     String untis = '',
     String instituteNumber = '',
     int adminNumber = 0,
-    String schoolYearDate = '',
+    DateTime? schoolYearDate,
   }) {
     return _writeResult(SmartschoolMethod.saveClass, [
       _access,
@@ -438,7 +448,9 @@ class SmartschoolConnector {
       SoapArg.string('untis', untis),
       SoapArg.string('instituteNumber', instituteNumber),
       SoapArg.string('adminNumber', '$adminNumber'),
-      SoapArg.string('schoolYearDate', schoolYearDate),
+      // `formatSmartschoolDate(null)` is `''` — the "current school year"
+      // sentinel the API documents.
+      SoapArg.string('schoolYearDate', formatSmartschoolDate(schoolYearDate)),
     ]);
   }
 

@@ -550,6 +550,28 @@ void main() {
       final args = t.callTo(SmartschoolMethod.saveClass).args;
       expect(args['instituteNumber'], '30024');
       expect(args['adminNumber'], '12345');
+      expect(args['schoolYearDate'], '',
+          reason: 'no year named means the API default: the current one');
+    });
+
+    test('saveClass names the school year the class data was read at (#339)',
+        () async {
+      final t = _FakeTransport();
+      final ok = await _connector(t).saveClass(
+        name: '1A',
+        description: 'Klas 1A',
+        code: 'C1A',
+        parentCode: 'SCH',
+        instituteNumber: '125252',
+        adminNumber: 12345,
+        schoolYearDate: DateTime(2026, 9, 1),
+      );
+      expect(ok, isTrue);
+      // Smartschool's own date shape: `Y-M-D`, unpadded.
+      expect(
+        t.callTo(SmartschoolMethod.saveClass).args['schoolYearDate'],
+        '2026-9-1',
+      );
     });
 
     test('deleteClass', () async {

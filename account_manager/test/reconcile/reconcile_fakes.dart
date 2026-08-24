@@ -60,10 +60,21 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// already run. Read off the envelope for the same reason [movedToClasses] is.
   final List<String> savedStamboeknummers = <String>[];
 
+  /// The `schoolYearDate` every `saveClass` carried, in order (#339). The
+  /// institute and admin numbers a class write carries are **per school year**,
+  /// and an empty value means "the year Smartschool is in today" — so an
+  /// operator reading WISA with next year's werkdatum writes next year's numbers
+  /// onto the running year unless the write names the year it read from. Read
+  /// off the envelope for the same reason [savedStamboeknummers] is: "a class
+  /// was saved" is not "it was saved for the right year".
+  final List<String> savedClassSchoolYears = <String>[];
+
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
   static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
   static final RegExp _stamboekArg =
       RegExp(r'<stamboeknummer[^>]*>([^<]*)</stamboeknummer>');
+  static final RegExp _schoolYearArg =
+      RegExp(r'<schoolYearDate[^>]*>([^<]*)</schoolYearDate>');
 
   @override
   Future<String> send({
@@ -87,6 +98,10 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.endsWith('#saveUser')) {
       savedStamboeknummers
           .add(_stamboekArg.firstMatch(envelope)?.group(1) ?? '');
+    }
+    if (soapAction.endsWith('#saveClass')) {
+      savedClassSchoolYears
+          .add(_schoolYearArg.firstMatch(envelope)?.group(1) ?? '');
     }
     // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'
