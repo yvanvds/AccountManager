@@ -292,6 +292,57 @@ az.AzureSnapshot _aSnap({
 }) =>
     az.AzureSnapshot(fetchedAt: _d, users: users, groups: groups);
 
+/// Our Smartschool account for the staff member [_wStaff] describes — the staff
+/// bridge is `accountId ≡ WisaStaff.code` (spec §4).
+///
+/// Deliberately in sync with [_wStaff] and [_azStaff] down to the copy code
+/// (`fax`, the zero-padded `wisaId`), so a record built from these three raises
+/// **no** action at all. That is what lets a departure test state its
+/// precondition exactly: today the app has nothing to say about her.
+ss.SmartschoolAccount _ssStaff() => const ss.SmartschoolAccount(
+      uid: 'anna.smit',
+      accountId: 'SMIT',
+      mail: 'anna.smit@school.example',
+      registerId: '',
+      stemId: 0,
+      role: core.PersonRole.teacher,
+      givenName: 'Anna',
+      surname: 'Smit',
+      extraNames: '',
+      initials: '',
+      preferredName: '',
+      gender: core.Gender.female,
+      birthDate: null,
+      birthPlace: '',
+      birthCountry: '',
+      address: core.Address(
+        street: '',
+        houseNumber: '',
+        postalCode: '',
+        city: '',
+        country: '',
+      ),
+      mobilePhone: '',
+      homePhone: '',
+      fax: '0042',
+      untisId: '',
+      status: 'actief',
+    );
+
+/// Her Office 365 account. [department] is the comma list of schools other
+/// software maintains (#237) and the only signal the Azure half of a departure
+/// splits on (#349); `employeeId ≡ WisaStaff.wisaId`, `upn ≡ the Smartschool
+/// mail`.
+az.AzureUser _azStaff({String department = 'SSM'}) => az.AzureUser(
+      id: 'az-s1',
+      upn: 'anna.smit@school.example',
+      employeeId: '42',
+      displayName: 'Anna Smit',
+      givenName: 'Anna',
+      surname: 'Smit',
+      department: department,
+    );
+
 core.LinkedAccount _linkedStudent({
   wapi.WisaStudent? wisa,
   ss.SmartschoolAccount? smartschool,
@@ -1692,6 +1743,151 @@ void main() {
       expect(applier.studentConfig.schoolPrefix, 'SSM');
       expect(applier.classTree.path, 'ROOT');
       expect(applier.ourSchoolIds, const {7});
+    });
+  });
+
+  group('retiring a staff member is one chain, not three passes (#349)', () {
+    /// A teacher WISA still reports as employed — HR never closed the
+    /// dienstverband — holding both of our accounts. [department] is what other
+    /// software maintains as the comma list of schools she is active at, and is
+    /// the only thing the Office 365 half splits on.
+    _Harness employed({String department = 'SSM', int soapResultCode = 0}) {
+      final wisa = _wStaff(code: 'SMIT', wisaId: '42');
+      return _Harness(
+        wisa: _wSnap(staff: [wisa]),
+        wisaBaseStaff: [wisa],
+        smartschool: _sSnap(accounts: [_ssStaff()]),
+        azure: _aSnap(users: [_azStaff(department: department)]),
+        soapResultCode: soapResultCode,
+      );
+    }
+
+    Future<RetireStaffMember> commandFor(_Harness harness) async {
+      final linked = await harness.applier.link();
+      return RetireStaffMember(
+        linked.snapshot.staff.single,
+        harness.applier.staffConfig,
+      );
+    }
+
+    test('one apply writes the rule, Smartschool and Office 365', () async {
+      final harness = employed();
+      final command = await commandFor(harness);
+
+      // Precondition: nothing about her is a pending decision today. That is the
+      // whole problem — WISA says she is employed, so the dispatch has nothing
+      // to offer and the accounts can never be cleaned up.
+      final before = await harness.applier.link();
+      expect(before.staffActions, isEmpty);
+
+      final applied = await harness.applier.applyStaff(command);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.result.system, core.Origin.wisa);
+      expect(applied.followUps.map((r) => r.changes.summary), [
+        'Schakel het Smartschool account uit',
+        'Verwijder Azure account',
+      ]);
+      expect(applied.followUps.every((r) => r.outcome == ActionOutcome.applied),
+          isTrue);
+
+      // The rule joined the shared set and dropped her from the snapshot in
+      // hand, with no WISA round trip (#345).
+      expect(
+        harness.rules.rules
+            .whereType<wapi.DontImportUserFromWisa>()
+            .single
+            .userCode,
+        'SMIT',
+      );
+      expect(harness.app.wisa.snapshot!.staff, isEmpty);
+      // Both accounts are gone from the snapshots the pass left behind.
+      expect(
+        harness.soap.soapActions.any((a) => a.contains('setAccountStatus')),
+        isTrue,
+      );
+      expect(harness.app.smartschool.snapshot!.accounts, isEmpty);
+      expect(
+        harness.graph.requests
+            .any((r) => r.method == 'DELETE' && r.url.path.contains('users')),
+        isTrue,
+      );
+      expect(harness.app.azure.snapshot!.users, isEmpty);
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the chain rides the incremental refresh — no re-sync');
+    });
+
+    test('the rule is what stops her being re-provisioned next sync', () async {
+      // The load-bearing half. Without the rule the relinked record is
+      // WISA-only, which is exactly AddStaffToAzure — the *default* alternative
+      // of the import choice, and bulk-applyable — so the next "Toepassen op
+      // alle" would re-create the very accounts this pass removed.
+      final harness = employed();
+      final applied =
+          await harness.applier.applyStaff(await commandFor(harness));
+
+      expect(applied.linked!.staffActions, isEmpty);
+      expect(applied.linked!.snapshot.staff, isEmpty);
+
+      // And a real WISA pull agrees: the harness syncer filters the base rows by
+      // the accumulated rules, exactly as the connector does at snapshot
+      // construction.
+      await harness.app.sync(core.Origin.wisa);
+      final after = await harness.applier.link();
+      expect(after.staffActions.whereType<AddStaffToAzure>(), isEmpty);
+      expect(after.snapshot.staff, isEmpty);
+    });
+
+    test('a sibling school still claiming her keeps the Office 365 account',
+        () async {
+      final harness = employed(department: 'GBS,SSM');
+
+      final applied =
+          await harness.applier.applyStaff(await commandFor(harness));
+
+      expect(applied.followUps.map((r) => r.changes.summary), [
+        'Schakel het Smartschool account uit',
+        'Haal onze school uit het Office 365 account',
+      ]);
+      expect(harness.graph.requests.any((r) => r.method == 'DELETE'), isFalse,
+          reason: "deleting it would destroy the sibling school's account");
+      final user = harness.app.azure.snapshot!.users.single;
+      expect(user.department, 'GBS');
+    });
+
+    test('a dry run writes nothing and chains nothing', () async {
+      final harness = employed();
+      final command = await commandFor(harness);
+
+      final applied =
+          await harness.applier.applyStaff(command, options: ApplyOptions.dry);
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(applied.followUps, isEmpty,
+          reason: 'nothing was written, so nothing was unlocked');
+      expect(harness.soap.soapActions, isEmpty);
+      expect(harness.graph.requests, isEmpty);
+      expect(harness.rules.rules, isEmpty);
+      expect(harness.app.wisa.snapshot!.staff, hasLength(1));
+    });
+
+    test('a failing Smartschool write stops the chain and is reported',
+        () async {
+      // Smartschool refuses; the rule it followed is already earned and the
+      // Office 365 account must be left alone until somebody looks.
+      final harness = employed(soapResultCode: 1);
+
+      final applied =
+          await harness.applier.applyStaff(await commandFor(harness));
+
+      expect(applied.result.outcome, ActionOutcome.applied,
+          reason: 'the rule itself landed');
+      expect(applied.followUps.single.outcome, ActionOutcome.failed);
+      expect(harness.graph.requests, isEmpty);
+      expect(harness.app.azure.snapshot!.users, hasLength(1));
+      // The next pass offers exactly what is still outstanding.
+      expect(applied.linked!.staffActions.whereType<RemoveStaffFromAzure>(),
+          hasLength(1));
     });
   });
 }

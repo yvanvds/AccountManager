@@ -288,11 +288,18 @@ az.AzureUser azureStaff({
 
 /// Builds a [LinkedStaff] from optional per-system records. Omit a system to
 /// simulate it missing (drives the lifecycle-action branch).
+///
+/// [wisaPresence] controls the ours-vs-group classification (#340), the staff
+/// twin of [linked]'s: the default [WisaPresence.ours] means a WISA-present
+/// staff member is one of ours, while [WisaPresence.groupOnly] models a teacher
+/// who moved to a sibling group school we don't manage — still carrying a WISA
+/// row, but departed as far as we are concerned (#349).
 LinkedStaff linkedStaff({
   wapi.WisaStaff? wisa,
   ss.SmartschoolAccount? smartschool,
   az.AzureUser? azure,
   String id = 's0',
+  WisaPresence wisaPresence = WisaPresence.ours,
 }) =>
     LinkedStaff(
       id: LinkedAccountId(id),
@@ -301,6 +308,7 @@ LinkedStaff linkedStaff({
       smartschool: smartschool,
       azure: azure,
       confidence: LinkConfidence.high,
+      wisaPresence: wisaPresence,
     );
 
 /// A fully-synced staff member present in all three systems with matching

@@ -1030,17 +1030,48 @@ void main() {
 
     test(
         'a sibling-school teacher who kept an account of ours is still listed, '
-        'and no removal is proposed for them', () {
+        'and her departure is proposed (#349)', () {
       // The load-bearing case. She left us for a group school that still employs
-      // her, so `wisa != null` — which is the only reason the two staff removals
-      // stand down. Our Smartschool account is the tie that keeps her visible.
+      // her; our Smartschool account is the tie that keeps her visible in the
+      // Personeel list, which is what #340 secured and is unchanged.
+      //
+      // What she is *offered* changed in #349. The removals used to stand down
+      // purely because `wisa != null`, so an account on our platform belonging
+      // to somebody who no longer works here could never be cleaned up. They now
+      // key on `hasLeftOurSchool`, exactly as the student departure has since
+      // #134 — and she is precisely that: WISA places her in school 7 alone.
       final linked = staffLinked(schoolIds: const {7}, smartschool: true);
       final view = materialize(linked, generation: 1);
 
-      expect(view.accounts, hasLength(1));
+      expect(view.accounts, hasLength(1), reason: 'still listed (#340)');
       expect(view.skippedUnmanagedStaff, 0);
-      expect(
-          linked.staffActions.whereType<RemoveStaffFromSmartschool>(), isEmpty);
+      expect(linked.staffActions.whereType<DeactivateStaffInSmartschool>(),
+          hasLength(1));
+      expect(linked.staffActions.whereType<RemoveStaffFromSmartschool>(),
+          hasLength(1));
+      // Nothing to do in Office 365: she has no account there in this fixture.
+      expect(linked.staffActions.whereType<RemoveStaffFromAzure>(), isEmpty);
+      expect(linked.staffActions.whereType<ReleaseStaffFromAzureSchool>(),
+          isEmpty);
+    });
+
+    test(
+        "a sibling school's claim on her Office 365 account is released, never "
+        'deleted (#349)', () {
+      // The guard the whole Azure split exists for. She is departed as far as we
+      // are concerned, but `department` still names the school that employs her,
+      // so deleting the account would destroy a sibling school's.
+      final linked = staffLinked(
+        schoolIds: const {7},
+        smartschool: true,
+        azureDepartment: 'OTHER,GBS',
+      );
+      final view = materialize(linked, generation: 1);
+
+      expect(view.accounts, hasLength(1));
+      final release =
+          linked.staffActions.whereType<ReleaseStaffFromAzureSchool>().single;
+      expect(release.describeChanges().fields.single.after, 'OTHER');
       expect(linked.staffActions.whereType<RemoveStaffFromAzure>(), isEmpty);
     });
 

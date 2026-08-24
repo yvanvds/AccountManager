@@ -90,8 +90,16 @@ class ActionResult {
   /// fact, so only a write that demonstrably landed may name a class.
   final Group? movedToClass;
 
-  /// True when the action deleted the record from [system] (so the State layer
-  /// should drop it from the snapshot rather than patch it).
+  /// True when the record is **gone from the snapshot** for [system], so the
+  /// State layer drops it rather than patching it.
+  ///
+  /// Usually that is because the action deleted it. Since #349 it can also mean
+  /// the action put the record into a state the connector's own snapshot
+  /// construction filters out — [DeactivateStaffInSmartschool] disables a
+  /// Smartschool account, which still exists there but no longer reaches any
+  /// pull of ours. Both are the same instruction to this layer, and stating it
+  /// as "gone from the snapshot" is what keeps the local patch equal to what the
+  /// next sync will produce.
   final bool removed;
 
   /// The WISA import rule the action produced, when [system] is

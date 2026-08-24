@@ -69,6 +69,40 @@ bool staffBelongsToSchool(String? department, String? schoolPrefix) {
   return dept != null && prefix != null && dept.contains(prefix);
 }
 
+/// The individual school prefixes an Azure staff account's [department] lists,
+/// in the order they appear, trimmed, with blank entries dropped (#349).
+///
+/// The original casing is preserved: this is the field's own content, and the
+/// only writer entitled to touch it rewrites it from these very items (see
+/// [departmentSchoolsExcept]).
+List<String> departmentSchools(String? department) => <String>[
+      for (final part in (department ?? '').split(','))
+        if (part.trim().isNotEmpty) part.trim(),
+    ];
+
+/// [departmentSchools] minus every entry that **is** [schoolPrefix] — the other
+/// schools of the group that still claim this staff member (#349).
+///
+/// Empty means nobody but us claims them, which is the one condition under
+/// which their Office 365 account may be deleted rather than merely released.
+///
+/// **An exact item match, deliberately unlike [staffBelongsToSchool]'s
+/// `contains`.** The two are asymmetric on purpose: a read that is too wide only
+/// keeps a row the linker drops a moment later, while a *write* that is too wide
+/// destroys a sibling school's claim in a field we do not own. `SSM` must not
+/// match inside a longer school code here, and that is exactly the failure mode
+/// #237 removed `ModifyStaffAzureSchool` for — it collapsed `GBS,SSM` to a bare
+/// `SSM`. Releasing our own entry is the only edit to this field we are entitled
+/// to make, so it is the only one this expresses.
+List<String> departmentSchoolsExcept(String? department, String? schoolPrefix) {
+  final prefix = _fold(schoolPrefix);
+  if (prefix == null) return departmentSchools(department);
+  return <String>[
+    for (final school in departmentSchools(department))
+      if (_fold(school) != prefix) school,
+  ];
+}
+
 /// Whether an Azure account belongs to the school under **either** half of
 /// INV-22 — the question a bulk read asks, which cannot yet tell a student row
 /// from a staff row.

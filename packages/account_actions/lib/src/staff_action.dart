@@ -469,19 +469,157 @@ class AddStaffToSmartschool extends StaffAction {
   }
 }
 
-/// Delete a Smartschool account whose staff member exists in neither WISA nor
-/// Azure. Ported from `Action\StaffAccount\RemoveFromSmartschool`.
+/// The [StaffAction.alternativeGroup] key shared by the two mutually exclusive
+/// resolutions of a departed staff member's Smartschool account (#349):
+/// [DeactivateStaffInSmartschool] (keep, the default) and
+/// [RemoveStaffFromSmartschool] (delete).
+///
+/// The staff twin of [smartschoolDepartureAlternative], and it takes the same
+/// polarity for the same reason: the conservative option leads. A teacher who
+/// stops working here is not the same event as a teacher who must be erased —
+/// their account may hold course material, and they may be back next term — so
+/// one click deactivates and erasing stays a decision somebody has to take on
+/// purpose.
+const String staffSmartschoolDepartureAlternative =
+    'staff-smartschool-departure';
+
+/// Deactivate — but keep — the Smartschool account of a staff member who has
+/// left our school (#349): the conservative half of
+/// [staffSmartschoolDepartureAlternative], and the staff analogue of
+/// [UnregisterStudentFromSmartschool].
+///
+/// Smartschool's staff-side equivalent of the student `unregisterStudent` is
+/// `setAccountStatus`, which is what this writes.
+///
+/// **Why the result reports [ActionResult.removed].** The account is *not*
+/// deleted — that is the whole point of preferring this to
+/// [RemoveStaffFromSmartschool] — but the Smartschool connector drops every
+/// account whose status is `uitgeschakeld` at snapshot construction
+/// (`connector.dart`, the legacy `Group.cs:400` filter), so the very next pull
+/// will not contain this record. Reporting it as gone from the *snapshot* is
+/// what keeps the local patch honest: the alternative is an in-memory view that
+/// carries a record the next sync silently drops, which is the drift
+/// `_applyWisaRule` exists to avoid on the WISA side.
+class DeactivateStaffInSmartschool extends StaffAction {
+  const DeactivateStaffInSmartschool(super.staff, super.config);
+
+  @override
+  bool evaluate() =>
+      staff.hasLeftOurSchool &&
+      staff.smartschool != null &&
+      _ss.status == 'actief';
+
+  @override
+  String? get alternativeGroup => staffSmartschoolDepartureAlternative;
+
+  /// Keeping the account is the conservative resolution, so it leads.
+  @override
+  bool get isDefaultAlternative => true;
+
+  /// Releasing the Office 365 account is the other half of the same departure
+  /// (#349), so it rides along rather than waiting for the operator to notice it
+  /// on the next pass — the retirement twin of [AddStaffToAzure]'s provisioning
+  /// chain. Which of the two Azure actions applies is decided by the
+  /// `department` list, and the applier takes whichever the freshly relinked
+  /// record's own dispatch offers.
+  @override
+  Set<Type> get unlocks =>
+      const {ReleaseStaffFromAzureSchool, RemoveStaffFromAzure};
+
+  /// So one confirmed apply reaches Office 365 as well, and says so (#234).
+  @override
+  Set<Origin> get unlockedSystems => const {Origin.azure};
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.smartschool,
+        summary: 'Schakel het Smartschool account uit',
+        fields: [
+          FieldChange('status', before: _ss.status, after: ss.disabledStatus),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.smartschool,
+        removed: true,
+      );
+    }
+
+    try {
+      final ok = await _requireSmartschool(connectors)
+          .setAccountStatus(_ss.uid, AccountState.inactive);
+      if (!ok) {
+        return _failed(
+          changes,
+          Origin.smartschool,
+          StateError('Smartschool setAccountStatus returned failure'),
+        );
+      }
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.smartschool,
+        removed: true,
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.smartschool, e);
+    }
+  }
+}
+
+/// Delete the Smartschool account of a staff member who has left our school.
+/// Ported from `Action\StaffAccount\RemoveFromSmartschool`.
+///
+/// **The gate widened in #349.** It used to demand `wisa == null && azure ==
+/// null`, which meant a departed teacher still holding an Office 365 account was
+/// offered nothing at all: this action wanted the Azure record gone and
+/// [RemoveStaffFromAzure] wanted the Smartschool record gone, so neither could
+/// ever fire. Keying on [LinkedStaff.hasLeftOurSchool] instead — exactly as
+/// [DeleteStudentFromSmartschool] does — is what makes a staff departure
+/// expressible at all. The two systems are then cleaned in order rather than
+/// waiting for each other.
 class RemoveStaffFromSmartschool extends StaffAction {
   const RemoveStaffFromSmartschool(super.staff, super.config);
 
   @override
-  bool evaluate() =>
-      staff.wisa == null && staff.azure == null && staff.smartschool != null;
+  bool evaluate() => staff.hasLeftOurSchool && staff.smartschool != null;
+
+  /// The destructive half of [staffSmartschoolDepartureAlternative] (#349), so
+  /// it is never the default: an operator has to pick it.
+  @override
+  String? get alternativeGroup => staffSmartschoolDepartureAlternative;
+
+  /// Deleting an account is judgement work, one record at a time — the same line
+  /// legacy drew, and the reason [RetireStaffMember] carries no bulk grant
+  /// either.
+  @override
+  bool get canApplyToAll => false;
+
+  /// Same chain as the conservative half: the Office 365 side of the departure
+  /// follows the Smartschool side (#349).
+  @override
+  Set<Type> get unlocks =>
+      const {ReleaseStaffFromAzureSchool, RemoveStaffFromAzure};
 
   @override
-  ChangeSet describeChanges() => const ChangeSet(
+  Set<Origin> get unlockedSystems => const {Origin.azure};
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
         system: Origin.smartschool,
-        summary: 'Verwijder dit account uit Smartschool',
+        summary: _ss.status == 'actief'
+            ? 'Verwijder dit account uit Smartschool'
+            : 'Verwijder dit account uit Smartschool (al uitgeschakeld)',
       );
 
   @override
@@ -524,16 +662,129 @@ class RemoveStaffFromSmartschool extends StaffAction {
   }
 }
 
-/// Delete an Azure-only account for a staff member absent from WISA and
-/// Smartschool. Ported from `Action\StaffAccount\RemoveFromAzure` — which, like
-/// legacy, gates only on system presence (the linker already restricts a
-/// [LinkedStaff]'s Azure record to one belonging to the school, INV-22).
+/// The other group schools that still claim a departed staff member, read from
+/// the Azure `department` list (#349).
+///
+/// The **only** signal the two Azure departure actions split on, and never WISA
+/// presence — which is a trap here rather than a shortcut. A
+/// [wapi.DontImportUserFromWisa] rule is keyed on the staff code and applied at
+/// snapshot construction, so it drops the member from *every* group school's
+/// rows at once; after one has been written, [LinkedStaff.hasLeftGroup] reads
+/// true even for a teacher genuinely still employed at a sibling school, and
+/// deleting on that signal would destroy the sibling's account. This list is
+/// then the only thing that still remembers them.
+///
+/// A blank or absent `department` yields an empty list, which reads as "no other
+/// school claims them" and therefore permits the delete. That is deliberate: it
+/// is the pre-#349 behaviour for an Azure-only leftover, whose `department` says
+/// nothing precisely because nobody has maintained it.
+extension _DepartedSchools on StaffAction {
+  List<String> get _otherSchools =>
+      departmentSchoolsExcept(_az.department, config.schoolPrefix);
+}
+
+/// Release a departed staff member from **our** school by striking our prefix
+/// out of the Azure `department` list, leaving the account itself alone (#349).
+/// Fires when at least one other group school still claims them.
+///
+/// **The one edit to `department` we are entitled to make.** #237 removed
+/// `ModifyStaffAzureSchool` because it *rewrote* the field — it fired for every
+/// teacher whose list merely names us second, and its repair collapsed
+/// `GBS,SSM` to a bare `SSM`, destroying a sibling school's claim in a field
+/// other software maintains. Striking our own entry is the opposite operation:
+/// it is subtractive, it is scoped to a member who has demonstrably left us, and
+/// every other entry survives verbatim, in place. The removal is an exact list
+/// match ([departmentSchoolsExcept]) rather than the substring test the *read*
+/// side uses, so a longer school code that merely contains our prefix cannot be
+/// struck by accident.
+///
+/// After it lands, the Azure bulk read no longer matches this account for our
+/// school, so the member drops out of our snapshot on the next pull — which is
+/// the intended end state, and why the action is self-cleaning rather than
+/// something an operator has to remember to undo.
+class ReleaseStaffFromAzureSchool extends StaffAction {
+  const ReleaseStaffFromAzureSchool(super.staff, super.config);
+
+  @override
+  bool evaluate() =>
+      staff.hasLeftOurSchool && staff.azure != null && _otherSchools.isNotEmpty;
+
+  /// Never in bulk: a departure is read and recognised one name at a time
+  /// (#349). See [RetireStaffMember].
+  @override
+  bool get canApplyToAll => false;
+
+  String get _remaining => _otherSchools.join(',');
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'Haal onze school uit het Office 365 account',
+        fields: [
+          FieldChange(
+            'department',
+            before: _az.department,
+            after: _remaining,
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+    final remaining = _remaining;
+    final updated = _az.copyWith(department: remaining);
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.azure,
+        azure: updated,
+      );
+    }
+
+    try {
+      await _requireAzure(connectors)
+          .users
+          .updateUser(_az.id, department: remaining);
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.azure,
+        azure: updated,
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.azure, e);
+    }
+  }
+}
+
+/// Delete the Office 365 account of a departed staff member no other group
+/// school claims. Ported from `Action\StaffAccount\RemoveFromAzure`.
+///
+/// **The gate changed shape in #349.** It used to be `wisa == null &&
+/// smartschool == null`, which deadlocked against
+/// [RemoveStaffFromSmartschool] (see there) and, worse, said nothing about the
+/// sibling schools: a teacher the group still employs elsewhere could reach it
+/// through their Smartschool account being removed first. It now asks the two
+/// questions that actually matter — have they left *us*
+/// ([LinkedStaff.hasLeftOurSchool]), and does anybody else still claim them
+/// ([_DepartedSchools._otherSchools]) — and defers to
+/// [ReleaseStaffFromAzureSchool] whenever somebody does.
 class RemoveStaffFromAzure extends StaffAction {
   const RemoveStaffFromAzure(super.staff, super.config);
 
   @override
   bool evaluate() =>
-      staff.wisa == null && staff.smartschool == null && staff.azure != null;
+      staff.hasLeftOurSchool && staff.azure != null && _otherSchools.isEmpty;
+
+  /// Never in bulk (#349) — and this one deletes.
+  @override
+  bool get canApplyToAll => false;
 
   @override
   ChangeSet describeChanges() => const ChangeSet(
@@ -601,6 +852,105 @@ class DontImportStaffFromWisa extends StaffAction {
         summary: 'Negeer dit account bij het importeren uit WISA',
         fields: [
           FieldChange('DontImportUserFromWisa', after: _wisa.code.value)
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+    return ActionResult(
+      outcome: options.dryRun ? ActionOutcome.dryRun : ActionOutcome.applied,
+      changes: changes,
+      system: Origin.wisa,
+      wisaRule: _rule(),
+    );
+  }
+}
+
+/// Retire a staff member WISA still reports as employed — the "medewerker uit
+/// dienst" command (#349).
+///
+/// **Why this exists.** WISA's `SmaSyncPer` carries no employment-status column;
+/// whether somebody is in *actief dienstverband* is decided server-side from the
+/// werkdatum. When HR leaves a dienstverband open for a teacher who will not be
+/// hired again — the standing reality this was built for, not an edge case —
+/// they arrive in every pull forever and no state-derived action can tell that
+/// they are gone. This is the operator saying so.
+///
+/// **It writes the import rule, and the rule is the load-bearing half.** Deleting
+/// the accounts on their own would not survive the next sync: the record would
+/// go back to `wisa != null, smartschool == null, azure == null`, which is
+/// exactly [AddStaffToAzure] — the *default* alternative of
+/// [staffImportAlternative], and bulk-applyable — so the next "Toepassen op
+/// alle" would re-create the accounts that had just been removed and chain the
+/// Smartschool create in behind them. The [wapi.DontImportUserFromWisa] rule is
+/// what stops that loop, and (through the caller, #276/#285) it is also the
+/// standing record of who decided this and when.
+///
+/// **It is deliberately not dispatched.** [staffActionsFor] never returns it, so
+/// nobody employed here gains a standing destructive to-do and no pending count
+/// moves. Dispatch (§6.3) is a pure function of the record as it stands, and
+/// "this person is not coming back" is not in the record — it is a judgement
+/// only an operator holds. So the UI constructs this action for the one staff
+/// member on screen and hands it straight to the applier.
+///
+/// **One record, never a cohort.** [canApplyToAll] is false and there is no path
+/// that could bulk it: a departure has to be read, the name recognised, and the
+/// case judged on its own. That is the safety property the command is designed
+/// around, not an incidental default.
+///
+/// Like [DontImportStaffFromWisa] it writes nothing itself — WISA is read-only —
+/// and hands the rule back via [ActionResult.wisaRule]. The two produce the same
+/// rule and stay separate on purpose: that one is an *alternative* inside the
+/// import choice for a member with no Smartschool account (#248), offered by the
+/// dispatch and answering "provision or ignore"; this one is a command that
+/// opens a departure and pulls the account cleanup along behind it.
+class RetireStaffMember extends StaffAction {
+  const RetireStaffMember(super.staff, super.config);
+
+  /// True for any staff member WISA still lists. Once the rule has landed they
+  /// are an ordinary departed record and the dispatch offers the removals
+  /// directly, so there is nothing left for this command to open.
+  @override
+  bool evaluate() => staff.wisa != null;
+
+  /// Never in bulk — see the class doc. This is the flag that keeps the command
+  /// out of "Toepassen op alle" and out of every cohort the Acties screen can
+  /// arm.
+  @override
+  bool get canApplyToAll => false;
+
+  /// The cleanup the rule opens, in the order it has to happen: Smartschool
+  /// first (its `mail` is the Azure UPN, so releasing Office 365 first would
+  /// leave it dangling), then whichever Azure action the `department` list calls
+  /// for. The applier takes each link off the freshly relinked record's own
+  /// dispatch, so the conservative Smartschool half leads and the operator's one
+  /// confirmation performs the whole retirement.
+  @override
+  Set<Type> get unlocks => const {
+        DeactivateStaffInSmartschool,
+        RemoveStaffFromSmartschool,
+        ReleaseStaffFromAzureSchool,
+        RemoveStaffFromAzure,
+      };
+
+  /// So the confirmation names both systems this one click reaches (#234).
+  @override
+  Set<Origin> get unlockedSystems => const {Origin.smartschool, Origin.azure};
+
+  wapi.DontImportUserFromWisa _rule() =>
+      wapi.DontImportUserFromWisa(_wisa.code.value);
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.wisa,
+        summary: 'Medewerker uit dienst — negeer dit account bij het '
+            'importeren uit WISA',
+        fields: [
+          FieldChange('DontImportUserFromWisa', after: _wisa.code.value),
         ],
       );
 
