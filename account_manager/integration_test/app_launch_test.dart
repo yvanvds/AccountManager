@@ -5,7 +5,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:account_actions/account_actions.dart' show ActionOutcome;
+import 'package:account_actions/account_actions.dart'
+    show ActionOutcome, RemoveStaffFromAzure, RemoveStaffFromSmartschool;
 import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
@@ -46,7 +47,7 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
-    show DiscardSmartschoolGroup, SmartschoolConnector;
+    show DiscardSmartschoolGroup, SmartschoolConnector, SmartschoolSnapshot;
 import 'package:wisa_api/wisa_api.dart'
     show
         DontImportClass,
@@ -3117,6 +3118,80 @@ void main() {
   });
 
   testWidgets(
+      'a class written to Smartschool names the school year WISA was read at, '
+      'end-to-end (#339)', (WidgetTester tester) async {
+    // The reported loop, from the operator's side and through the real app:
+    // pin the werkdatum to next 1 September in Instellingen, Synchroniseer, and
+    // apply the class the pass proposes.
+    //
+    // WISA answers *as of* the werkdatum, so the institute number on that class
+    // is next year's. Smartschool's `saveClass` documents that a write naming no
+    // year adjusts "het huidige schooljaar" — the year Smartschool is in today,
+    // which in August is still the running one. So the whole chain has to carry
+    // the date: settings → the WISA pull → the werkdatum stamped on the
+    // snapshot → the class write. Every link but the last was already there, and
+    // no unit test can see that the last one is missing, because it is only
+    // missing once the four are composed.
+    useTallWindow(tester);
+    final stored = AppSettings(
+      wisa: WisaConnection(
+        server: 'wisa.example',
+        port: '9000',
+        workDate: WorkDateSetting(isNow: false, date: DateTime(2026, 9, 1)),
+      ),
+    );
+    final live = LiveSettings(stored);
+    final wire = RecordingWisaSoap();
+    final harness = ReconcileHarness(
+      wisaTransport: wire,
+      liveSettings: live,
+      // Smartschool holds only the root the classes hang under, so the class
+      // WISA reports is genuinely missing and its parent genuinely resolves.
+      smartschool: ssSnap(
+        groups: [
+          ssGroup(
+            'Leerlingen',
+            code: 'SCHOOL',
+            official: false,
+            type: GroupType.group,
+          ),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      classTree: const SmartschoolClassTree(path: 'SCHOOL'),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+
+    // The pull really did ask WISA for next school year.
+    expect(wire.werkdatums, <String>['01/09/2026']);
+
+    const entry = ValueKey('entry-group-3C');
+    await tester.ensureVisible(find.byKey(entry));
+    await tester.tap(find.byKey(entry));
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-3C'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // The class landed — and it named the year it came from, so next year's
+    // institute number is written onto next year and the running year is left
+    // as it is.
+    expect(harness.soap.savedClassSchoolYears, <String>['2026-9-1']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an Office 365 create Graph refuses says so on the class card, and can '
       'be run again from it end-to-end (#272)', (WidgetTester tester) async {
     // The reported run. Both options are dispatched; Graph refuses the group
@@ -5552,6 +5627,192 @@ void main() {
           reason: 'school $school\'s 1C is single-group — no move is due');
       expect(find.textContaining('1C 00'), findsNothing);
     }
+  });
+
+  testWidgets(
+      'the stamboeknummer waits for the class move end-to-end: the card offers '
+      'only the move, the pass sends no saveUser, and the number follows once '
+      'the new career row exists (#338)', (WidgetTester tester) async {
+    // The real app, real navigation, real writes over the recording SOAP wire.
+    // The rollover case that damaged 66 of 66 students last summer: Jane moves
+    // up from `4NW2` to `5ADB` and, with it, from one of the group's schools to
+    // the other, so WISA (werkdatum already in the new year) reports the *new*
+    // institute number while Smartschool still carries the old one.
+    //
+    // A schoolloopbaan keeps one stamnummer per row and `saveUser` writes it to
+    // the *last* row, so a save before the move stamps next year's number onto
+    // the row of the year she is still sitting in — silently, because the class
+    // change then creates the new row and inherits the value, leaving the new
+    // year right and the running year wrong. Only a full run shows the thing
+    // that has to be true: what the card offers, and which SOAP calls one click
+    // sends, in what order.
+    useTallWindow(tester);
+    SmartschoolSnapshot smartschoolWith(String classCode) => ssSnap(
+          groups: [
+            ssGroup('4NW2', code: '4nw2_ss'),
+            ssGroup('5ADB', code: '5adb_ss'),
+          ],
+          accounts: [ssAccount(stemId: 2200123)],
+          memberships: [member('jane', classCode)],
+        );
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(classGroup: '5ADB', stemId: '2300033')],
+      ),
+      smartschool: smartschoolWith('4nw2_ss'),
+      azure: azSnap(users: [azUser(displayName: 'Jane Doe')]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    // Her card carries the move and says nothing at all about the
+    // stamboeknummer — there is no row to apply out of order, in any order.
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
+    expect(
+      find.text('Wijzig het stamboeknummer in Smartschool'),
+      findsNothing,
+      reason: 'the running year\'s career row is still the last one',
+    );
+
+    // Applying the whole card is therefore one write, and it is the move.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+    expect(harness.soap.movedToClasses, <String>['5adb_ss']);
+    expect(
+      harness.soap.savedStamboeknummers,
+      isEmpty,
+      reason: 'no saveUser may precede the move that creates the new row',
+    );
+
+    // Smartschool now has her in `5ADB`; the operator re-reads it the way they
+    // do after a rollover pass — **Controleer op drift**, which re-pulls
+    // Smartschool and Azure without touching the WISA roster.
+    harness.ssResult = smartschoolWith('5adb_ss');
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+
+    // The move is settled, so the number is offered — and now it lands on the
+    // new year's row, which is the last one.
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Smartschool'), findsNothing);
+    expect(find.text('Wijzig het stamboeknummer in Smartschool'), findsWidgets);
+
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.savedStamboeknummers, <String>['2300033']);
+    expect(
+      harness.soap.soapActions.indexWhere((a) => a.endsWith('#saveUser')),
+      greaterThan(
+        harness.soap.soapActions
+            .indexWhere((a) => a.endsWith('#saveUserToClass')),
+      ),
+      reason: 'the move creates the row the number is written to',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a successful class move settles on the card end-to-end: the move stops '
+      'being offered and the stamboeknummer is released, with no second pull '
+      'of Smartschool (#341)', (WidgetTester tester) async {
+    // The real app, real navigation, real writes over the recording SOAP wire.
+    // The same rollover student as the run above — Jane moves up from `4NW2`
+    // into `5ADB` — but this one is about the screen *after* the write.
+    //
+    // The incremental refresh (#72) exists so an applied action disappears
+    // without a re-sync, and it did that by splicing the written record back
+    // into the snapshot. A move writes no field of the account, though: the
+    // record comes back exactly as it went in, so the memberships kept saying
+    // `4NW2`, the placement resolver kept reading the old class out of them,
+    // and the move an operator had just applied was still on the card — still
+    // bulk-applyable — while the stamboeknummer queued behind it (#338) stayed
+    // deferred. Only a full run shows it: the SOAP wire says the write landed,
+    // and the very next frame contradicts it.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(classGroup: '5ADB', stemId: '2300033')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('4NW2', code: '4nw2_ss'),
+          ssGroup('5ADB', code: '5adb_ss'),
+        ],
+        accounts: [ssAccount(stemId: 2200123)],
+        memberships: [member('jane', '4nw2_ss')],
+      ),
+      azure: azSnap(users: [azUser(displayName: 'Jane Doe')]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Smartschool'), findsWidgets);
+
+    // Apply the card, then never touch Synchronisatie again: whatever the
+    // operator sees from here on is the incremental refresh's own account of
+    // what it just wrote.
+    final int pullsBefore = harness.ssSyncs;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.movedToClasses, <String>['5adb_ss']);
+
+    // The card reports the move as done rather than re-raising it, and the
+    // write it was holding back is on screen — no **Controleer op drift** in
+    // between.
+    await selectAccount(tester, id);
+    expect(
+      find.text('Deze acties staan niet meer open op deze kaart.'),
+      findsOneWidget,
+      reason: 'the applied move settled instead of coming back as pending',
+    );
+    expect(
+      find.text('Wijzig het stamboeknummer in Smartschool'),
+      findsWidgets,
+      reason: 'the move is settled, so #338 stands the stem write up again',
+    );
+
+    // And the operator's second click writes the number without re-running the
+    // move it already applied.
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.savedStamboeknummers, <String>['2300033']);
+    expect(harness.soap.movedToClasses, <String>['5adb_ss'],
+        reason: 'a settled move is not written a second time');
+    expect(harness.ssSyncs, pullsBefore,
+        reason: 'both passes ran off the spliced snapshot, not a re-pull');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -10738,6 +10999,204 @@ void main() {
   });
 
   testWidgets(
+      'a freshly provisioned student is not then offered a move into the class '
+      'the create just put them in (#342)', (WidgetTester tester) async {
+    // The sibling of the #341 rollover run, from the other end of the account
+    // lifecycle: a new intake rather than a class change.
+    //
+    // `AddStudentToSmartschool` does not only create — it writes the account
+    // into its class straight after (#55), the way legacy chained the move
+    // after the create. But the record it hands back is the account it built,
+    // which says nothing about that membership, so the incremental refresh
+    // (#72) spliced in a student sitting in no class at all: the placement
+    // resolver read `currentClass` as null, `MoveToSmartschoolClassGroup`
+    // evaluated true, and the very next frame proposed a move into the class
+    // Smartschool had *just* been told to put them in. Idempotent, so harmless
+    // to apply — but this is the bulk card the whole September intake cohort is
+    // applied from, and since #338 an open move also holds back the
+    // stamboeknummer write.
+    //
+    // Only the real app shows it: the create and its placement are two SOAP
+    // writes inside one chained apply, and what the operator then sees is
+    // whatever the refresh believes about a snapshot it patched itself.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        // The class has to be one of *ours* or the create declines to place at
+        // all (#333) — the same guard the standalone move applies.
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+        schools: [wisaSchool(1)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    // One click provisions both accounts (#230) — and places the Smartschool
+    // one.
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    final int pullsBefore = harness.ssSyncs;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.soap.movedToClasses, <String>['3C_ss'],
+        reason: 'the create placed the account it just made');
+
+    // Back on the card, with no Synchronisatie in between: the student is in
+    // their class as far as the app is concerned, so there is nothing left to
+    // propose.
+    await selectAccount(tester, id);
+    expect(
+      find.text('Wijzig de klas in Smartschool'),
+      findsNothing,
+      reason: 'the class the create wrote is the class Smartschool has',
+    );
+    expect(
+      find.text('Deze acties staan niet meer open op deze kaart.'),
+      findsOneWidget,
+      reason: 'the provisioning settled instead of raising a follow-up',
+    );
+    expect(harness.ssSyncs, pullsBefore,
+        reason: 'the card ran off the spliced snapshot, not a re-pull');
+    expect(harness.soap.movedToClasses, <String>['3C_ss'],
+        reason: 'and no second placement was written');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a class placement that blows up leaves the Smartschool create reported '
+      'as done, with the class named as the part that failed (#343)',
+      (WidgetTester tester) async {
+    // The hole #342 left in the same path. `AddStudentToSmartschool` places its
+    // new account straight after creating it (#55), and that step is
+    // best-effort: a `moveUserToClass` that comes back *false* is shrugged off
+    // and the standalone move catches the student next pass. But the step ran
+    // inside the create's own `try`, so a placement that **threw** — a dropped
+    // connection, a gateway error, unreadable XML — unwound into the create's
+    // `catch` and was reported as a failed create, for an account `saveUser`
+    // had already made.
+    //
+    // What the operator then saw is the reason this is an app-level test: the
+    // applier splices nothing on a failure, so the card went on offering "Maak
+    // een nieuw Smartschool account" for an account that existed, and pressing
+    // Toepassen again wrote `saveUser` a second time for the same uid. The
+    // error message pointed at the create, not at the placement.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+        schools: [wisaSchool(1)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+    // `saveUser` succeeds; only the placement behind it comes apart on the
+    // wire. A refusal code would take the other branch — this is the one that
+    // used to escape.
+    harness.soap.throwFor = (String action) =>
+        action.endsWith('#saveUserToClass')
+            ? StateError('502 Bad Gateway')
+            : null;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    final int pullsBefore = harness.ssSyncs;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both creates are reported as done — the Smartschool one included, because
+    // the account it made is real.
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome),
+      everyElement(ActionOutcome.applied),
+      reason: 'the create is this action\'s success criterion (INV-41); a '
+          'best-effort placement may not fail it however it declines',
+    );
+    expect(find.textContaining('Mislukt —'), findsNothing);
+
+    // And the placement that did not happen is on screen, naming the class, so
+    // the swallowed exception is not a silent one — there is no log sink on
+    // that path.
+    expect(
+      find.textContaining('klasplaatsing in 3C is mislukt'),
+      findsWidgets,
+      reason: 'a bare "gelukt" for a write that half happened is the trip to '
+          'the log panel #272 exists to remove',
+    );
+    expect(find.textContaining('502 Bad Gateway'), findsWidgets,
+        reason: 'with the cause Smartschool gave, which decides what to do');
+    expect(
+      harness.controller.applyResults!
+          .expand((r) => r.warnings)
+          .where((w) => w.contains('3C')),
+      hasLength(1),
+    );
+    expect(
+      harness.log.entries.where((e) => e.isError).map((e) => e.message),
+      contains(contains('klasplaatsing in 3C is mislukt')),
+      reason: 'the pass an operator reconstructs later must carry it too',
+    );
+
+    // The account exists in Smartschool, so it exists in the snapshot: the
+    // create is not offered a second time, and the class move — this path's
+    // safety net — is what the card asks for instead.
+    await selectAccount(tester, id);
+    expect(
+      harness.controller.linked!.snapshot.accounts.single.smartschool,
+      isNotNull,
+      reason: 'a create reported as failed spliced nothing, and the card then '
+          'offered saveUser for the same uid all over again',
+    );
+    expect(
+      find.text('Wijzig de klas in Smartschool'),
+      findsOneWidget,
+      reason: 'the student really is in no class, so the move is the fix',
+    );
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUser')),
+      hasLength(1),
+      reason: 'exactly one create went out for this student',
+    );
+    expect(harness.soap.movedToClasses, isEmpty,
+        reason: 'the placement never landed, so nothing may claim it did');
+    expect(harness.ssSyncs, pullsBefore,
+        reason: 'the card ran off the spliced snapshot, not a re-pull');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a WISA-only staff member is provisioned by one apply in Acties → '
       'Personeel (#240)', (WidgetTester tester) async {
     // The staff twin of the #230 student case, and the same two-pass friction:
@@ -11013,6 +11472,190 @@ void main() {
       isEmpty,
     );
     expect(find.byKey(ValueKey('entry-apply-$id')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Personeel lists our own school, and a colleague at a sibling group '
+      'school is left out without being proposed for deletion (#340)',
+      (WidgetTester tester) async {
+    // As reported: Acties → Personeel listed 2574 people — the whole
+    // scholengroep's personeel, because the shared WISA credentials walk every
+    // school and `SmaSyncPer` carried no school of origin at all. The tab was
+    // unusable as a work list and the Synchronisatie "Personeel" tile counted
+    // the same group-wide set.
+    //
+    // The fix has to narrow the *view* and nothing upstream of it, and only a
+    // run of the real app puts both halves of that on screen at once. Carla
+    // below is the reason: she left us for a sibling school that still employs
+    // her, so WISA still returns her — which is the sole thing standing between
+    // her Smartschool and Office 365 accounts and a proposed deletion. Narrow
+    // the pull, or the linker's staff pass, and every one of those records loses
+    // its WISA half and the app starts offering to delete the accounts of people
+    // the group still employs. The Personeel list shrinking and the removals
+    // staying silent are one behaviour, and this is the layer that sees it.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      // School 1 is ours; school 7 is a sibling school of the group.
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: const [],
+        schools: [wisaSchool(1), wisaSchool(7)],
+        staff: [
+          // Ours, fully in sync across the three systems.
+          wisaStaff(),
+          // A teacher of the sibling school and nothing to do with us — the
+          // shape 2500-odd of those 2574 rows had.
+          wisaStaff(
+            code: 'VERB',
+            wisaId: '77',
+            firstName: 'Bert',
+            lastName: 'Vermeer',
+            schoolIds: const {7},
+          ),
+          // The one that makes the pull load-bearing: she taught here until
+          // recently, so we still hold both her accounts, and WISA now places
+          // her at the sibling school alone.
+          wisaStaff(
+            code: 'DEGRC',
+            wisaId: '78',
+            firstName: 'Carla',
+            lastName: 'De Groote',
+            schoolIds: const {7},
+          ),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssStaffAccount(),
+          ssStaffAccount(
+            uid: 'carla.degroote',
+            accountId: 'DEGRC',
+            mail: 'carla.degroote@school.example',
+            givenName: 'Carla',
+            surname: 'De Groote',
+            fax: '0078',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [
+        azStaffUser(),
+        // Bert's account exists in the shared tenant and the connector's
+        // `employeeId` back-fill (#231) adopts it, because that back-fill asks
+        // about every staff member the group-wide WISA pull returned. His
+        // `department` names his own school, which is what says it is not ours.
+        azStaffUser(
+          id: 'az-vermeer',
+          upn: 'bert.vermeer@school.example',
+          employeeId: '77',
+          displayName: 'Vermeer Bert',
+          givenName: 'Bert',
+          surname: 'Vermeer',
+          department: 'SSM',
+        ),
+        azStaffUser(
+          id: 'az-degroote',
+          upn: 'carla.degroote@school.example',
+          employeeId: '78',
+          displayName: 'De Groote Carla',
+          givenName: 'Carla',
+          surname: 'De Groote',
+        ),
+      ]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The Synchronisatie overview tile counts our own personeel: Anna and
+    // Carla, not Bert. It read the group-wide number before.
+    final Finder tile = find.byKey(const ValueKey('reconcile-category-staff'));
+    await tester.ensureVisible(tile);
+    expect(find.descendant(of: tile, matching: find.text('PERSONEEL')),
+        findsOneWidget);
+    expect(find.descendant(of: tile, matching: find.text('2')), findsOneWidget);
+
+    // The drop is said out loud, so a colleague an operator cannot find reads as
+    // "filtered by the managed-school flags in Instellingen" rather than as a
+    // pull that never returned them.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains('1 personeelslid/-leden overgeslagen: niet in een school die we '
+          'beheren.'),
+    );
+
+    // And that is what Acties → Personeel shows.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    // Nobody here has work — that is half the point — so turn off the "alleen
+    // met acties" switch and look at the whole personeel roster, which is what
+    // the operator counting 2574 was looking at.
+    final Finder toggle =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.text('Carla De Groote'), findsOneWidget,
+        reason: 'we still hold both her accounts, so her situation is ours');
+    expect(find.text('Bert Vermeer'), findsNothing,
+        reason: 'a teacher of a school we do not manage is none of our work');
+
+    // Nothing is proposed for anybody — and *nothing* is the whole point for
+    // Carla. Her WISA row survived the group-wide pull, so neither staff removal
+    // evaluates; a narrower pull would have left her `wisa` null and offered to
+    // delete both her accounts.
+    final staff = harness.controller.linked!.snapshot.staff;
+    final carla = staff.singleWhere((s) => s.wisa?.code.value == 'DEGRC');
+    expect(carla.wisa, isNotNull);
+    expect(carla.smartschool, isNotNull);
+    expect(carla.azure, isNotNull);
+    expect(
+      harness.controller.linked!.staffActions
+          .whereType<RemoveStaffFromSmartschool>(),
+      isEmpty,
+    );
+    expect(
+      harness.controller.linked!.staffActions.whereType<RemoveStaffFromAzure>(),
+      isEmpty,
+    );
+    expect(find.textContaining('Verwijder'), findsNothing);
+
+    // Bert's record is kept whole behind the filter — dropped from the view, not
+    // from the link, which is exactly what keeps his Office 365 account safe.
+    // The dispatch, still running over the *unfiltered* snapshot, does raise the
+    // Smartschool create-or-blacklist either/or on him…
+    final bert = staff.singleWhere((s) => s.wisa?.code.value == 'VERB');
+    expect(bert.wisa, isNotNull);
+    expect(bert.azure?.id, 'az-vermeer');
+    expect(bert.belongsToOurSchool, isFalse);
+    expect(
+      harness.controller.linked!.staffActions
+          .where((a) => a.target.id == bert.id),
+      hasLength(2),
+    );
+    // …and the view drops it on the floor, which is the half that matters here.
+    // These entries are not only what the list renders: they are the Personeel
+    // badge's count and, through the school-wide "Toepassen op alle", what one
+    // press would write. Left in, that press would have offered to provision the
+    // whole scholengroep — for people who appear in no list being confirmed.
+    expect(harness.controller.pendingEntries.where((e) => e.family == 'staff'),
+        isEmpty);
+    expect(harness.controller.staffPendingCount, 0);
     expect(tester.takeException(), isNull);
   });
 }

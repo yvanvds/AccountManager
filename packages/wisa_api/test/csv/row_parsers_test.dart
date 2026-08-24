@@ -137,21 +137,28 @@ void main() {
 
   group('parseStaffRow', () {
     test('parses a typical row', () {
-      final s = parseStaffRow('ABCDE,12345,VanDerSanden,Yvan');
+      final s = parseStaffRow('ABCDE,12345,VanDerSanden,Yvan', schoolId: 3);
       expect(s.code, const core.WisaStaffCode('ABCDE'));
       expect(s.wisaId, const core.WisaId('12345'));
       expect(s.lastName, 'VanDerSanden');
       expect(s.firstName, 'Yvan');
     });
 
+    test('stamps the school the row was pulled for (#340)', () {
+      // `SmaSyncPer` has no institution column, so the only source of the
+      // school is the IS_ID the caller queried with.
+      final s = parseStaffRow('ABCDE,12345,VanDerSanden,Yvan', schoolId: 42);
+      expect(s.schoolIds, {42});
+    });
+
     test('empty WISAID yields wisaId == null (per OQ-1 resolution)', () {
-      final s = parseStaffRow('ABCDE,,VanDerSanden,Yvan');
+      final s = parseStaffRow('ABCDE,,VanDerSanden,Yvan', schoolId: 3);
       expect(s.wisaId, isNull);
     });
 
     test('throws CsvRowParseException on too few columns', () {
       expect(
-        () => parseStaffRow('only,two'),
+        () => parseStaffRow('only,two', schoolId: 3),
         throwsA(isA<CsvRowParseException>()),
       );
     });

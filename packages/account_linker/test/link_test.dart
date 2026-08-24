@@ -1,5 +1,7 @@
 import 'package:account_core/account_core.dart';
 import 'package:account_linker/account_linker.dart';
+import 'package:azure_api/azure_api.dart' as az;
+import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:test/test.dart';
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
@@ -1313,6 +1315,158 @@ void main() {
 
       expect(snapshot.accounts.single.smartschool?.uid, 'stagiair1');
       expect(snapshot.staff.single.smartschool?.uid, 'begeleider');
+    });
+  });
+
+  group('link — staff WISA-school membership (#340)', () {
+    /// One WISA staff member found in [schoolIds], linked against the managed
+    /// set [ourSchoolIds] and whatever [azure] the snapshot holds.
+    LinkedStaff linkStaffFrom(
+      Set<int> schoolIds, {
+      Set<int>? ourSchoolIds,
+      List<ss.SmartschoolAccount> smartschool = const [],
+      List<az.AzureUser> azure = const [],
+    }) =>
+        link(
+          wisaSnap(
+            const [],
+            staff: [wisaStaff('SMITA', wisaId: '42', schoolIds: schoolIds)],
+          ),
+          ssSnap(smartschool),
+          azSnap(azure),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+          ourSchoolIds: ourSchoolIds,
+        ).staff.single;
+
+    test('a staff member of a school we manage is ours', () {
+      final s = linkStaffFrom(const {1}, ourSchoolIds: const {1});
+      expect(s.wisaSchoolIds, {1});
+      expect(s.wisaPresence, WisaPresence.ours);
+      expect(s.isInOurWisa, isTrue);
+      expect(s.belongsToOurSchool, isTrue);
+    });
+
+    test('a staff member of a sibling group school only is groupOnly', () {
+      final s = linkStaffFrom(const {7}, ourSchoolIds: const {1});
+      expect(s.wisaSchoolIds, {7});
+      expect(s.wisaPresence, WisaPresence.groupOnly);
+      expect(s.isInOurWisa, isFalse);
+      expect(s.hasLeftOurSchool, isTrue);
+      expect(s.belongsToOurSchool, isFalse);
+      // The whole point of the group-wide pull: they are still *somewhere* in
+      // the group, so nothing may propose deleting their accounts.
+      expect(s.hasLeftGroup, isFalse);
+      expect(s.wisa, isNotNull);
+    });
+
+    test('one of our schools among several is enough to be ours', () {
+      // The teacher the group employs at two schools, one of them ours — a
+      // single record carrying both ids, because the connector merges the two
+      // `SmaSyncPer` rows on `code`.
+      final s = linkStaffFrom(const {7, 1}, ourSchoolIds: const {1});
+      expect(s.wisaSchoolIds, {1, 7});
+      expect(s.wisaPresence, WisaPresence.ours);
+      expect(s.belongsToOurSchool, isTrue);
+    });
+
+    test('ownership unconfigured leaves every WISA staff member ours', () {
+      final s = linkStaffFrom(const {7});
+      expect(s.wisaPresence, WisaPresence.ours);
+      expect(s.belongsToOurSchool, isTrue);
+    });
+
+    test('a WISA row carrying no school at all reads as ours, not as foreign',
+        () {
+      // The shape a snapshot written before #340 restores to: the row is there,
+      // the school is simply not on it. Reading that as "not one of ours" would
+      // empty the whole Personeel list the first time an old cold seed is
+      // opened, so unknown falls the same way an unconfigured managed set does.
+      final s = linkStaffFrom(const {}, ourSchoolIds: const {1});
+      expect(s.wisaSchoolIds, isEmpty);
+      expect(s.wisaPresence, WisaPresence.ours);
+      expect(s.belongsToOurSchool, isTrue);
+    });
+
+    test(
+        'a sibling-school staff member with an account on our Smartschool '
+        'stays ours', () {
+      // Our Smartschool platform serves this school alone, so an account on it
+      // is as good a claim as WISA's — this is the teacher who left us for a
+      // sibling school and whose cleanup here is still ours to do.
+      final s = linkStaffFrom(
+        const {7},
+        ourSchoolIds: const {1},
+        smartschool: [
+          ssStaffAccount(uid: 'smita', accountId: 'SMITA', mail: 's@s.be'),
+        ],
+      );
+      expect(s.wisaPresence, WisaPresence.groupOnly);
+      expect(s.belongsToOurSchool, isTrue);
+    });
+
+    test(
+        'the Azure department is stamped and keeps a sibling-school record '
+        'that still names us', () {
+      final ours = linkStaffFrom(
+        const {7},
+        ourSchoolIds: const {1},
+        azure: [
+          azureUser(
+            id: 'az-1',
+            upn: 'smit.anna@s.be',
+            employeeId: '42',
+            // The comma list other software maintains (#237) still names us.
+            department: 'OTHER,$_prefix',
+          ),
+        ],
+      );
+      expect(ours.azureNamesOurSchool, isTrue);
+      expect(ours.belongsToOurSchool, isTrue);
+
+      final theirs = linkStaffFrom(
+        const {7},
+        ourSchoolIds: const {1},
+        azure: [
+          azureUser(
+            id: 'az-2',
+            upn: 'smit.anna@s.be',
+            employeeId: '42',
+            department: 'OTHER',
+          ),
+        ],
+      );
+      // Adopted by the connector's `employeeId` back-fill (#231), which asks
+      // about every WISA staff member the group has — so `azure != null` says
+      // nothing about whose they are. `department` does.
+      expect(theirs.azure?.id, 'az-2');
+      expect(theirs.azureNamesOurSchool, isFalse);
+      expect(theirs.belongsToOurSchool, isFalse);
+    });
+
+    test('an Azure-only staff orphan is ours on the department alone', () {
+      // No WISA row to ask, so the weaker signal is all there is — and it is
+      // the record `RemoveStaffFromAzure` exists for.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap([
+          azureUser(
+            id: 'az-gone',
+            upn: 'gone@s.be',
+            department: '$_prefix - Talen',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+        ourSchoolIds: const {1},
+      );
+      final s = snapshot.staff.single;
+      expect(s.wisa, isNull);
+      expect(s.wisaPresence, WisaPresence.absent);
+      expect(s.isInOurWisa, isFalse);
+      expect(s.azureNamesOurSchool, isTrue);
+      expect(s.belongsToOurSchool, isTrue);
     });
   });
 

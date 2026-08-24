@@ -53,8 +53,39 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// "a move happened" is not "this class is the one it wrote".
   final List<String> movedToClasses = <String>[];
 
+  /// The `stamboeknummer` every `saveUser` carried, in order (#338). A
+  /// schoolloopbaan keeps one stamnummer **per row** and `saveUser` writes it to
+  /// the *last* row, so what matters is not that a save happened but which
+  /// number it carried — and whether the class move that creates the new row had
+  /// already run. Read off the envelope for the same reason [movedToClasses] is.
+  final List<String> savedStamboeknummers = <String>[];
+
+  /// The `schoolYearDate` every `saveClass` carried, in order (#339). The
+  /// institute and admin numbers a class write carries are **per school year**,
+  /// and an empty value means "the year Smartschool is in today" — so an
+  /// operator reading WISA with next year's werkdatum writes next year's numbers
+  /// onto the running year unless the write names the year it read from. Read
+  /// off the envelope for the same reason [savedStamboeknummers] is: "a class
+  /// was saved" is not "it was saved for the right year".
+  final List<String> savedClassSchoolYears = <String>[];
+
+  /// When set, a SOAP call whose action this answers with an error **throws**
+  /// instead of replying — the wire coming apart (a dropped connection, a
+  /// gateway error, XML that does not parse) rather than Smartschool returning
+  /// a refusal code (#343). Returning null lets the call answer normally.
+  ///
+  /// The distinction matters because the two take different branches: a
+  /// best-effort step reads a non-zero code and shrugs, while a throw unwinds
+  /// into whatever `try` encloses it — which is how a class placement used to
+  /// fail the create it followed.
+  Object? Function(String soapAction)? throwFor;
+
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
   static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
+  static final RegExp _stamboekArg =
+      RegExp(r'<stamboeknummer[^>]*>([^<]*)</stamboeknummer>');
+  static final RegExp _schoolYearArg =
+      RegExp(r'<schoolYearDate[^>]*>([^<]*)</schoolYearDate>');
 
   @override
   Future<String> send({
@@ -63,6 +94,11 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
+    // Recorded first, then thrown: the call went out, it just never came back.
+    // The per-method lists below are "what this transport accepted", and a call
+    // that blew up accepted nothing.
+    final Object? failure = throwFor?.call(soapAction);
+    if (failure != null) throw failure;
     if (soapAction.contains('delClass')) {
       final match = _codeArg.firstMatch(envelope);
       if (match != null) deletedClasses.add(match.group(1)!);
@@ -72,6 +108,16 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.endsWith('#saveUserToClass')) {
       final match = _classArg.firstMatch(envelope);
       if (match != null) movedToClasses.add(match.group(1)!);
+    }
+    // Likewise exact: `saveUserParameter` shares the prefix but carries no
+    // stamboeknummer at all.
+    if (soapAction.endsWith('#saveUser')) {
+      savedStamboeknummers
+          .add(_stamboekArg.firstMatch(envelope)?.group(1) ?? '');
+    }
+    if (soapAction.endsWith('#saveClass')) {
+      savedClassSchoolYears
+          .add(_schoolYearArg.firstMatch(envelope)?.group(1) ?? '');
     }
     // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'
@@ -1211,6 +1257,11 @@ wapi.WisaStudent wisaStudent({
   // apart on screen (#245) names them.
   String firstName = 'Jane',
   String name = 'Doe',
+  // The institute number of the enrolment WISA reports *as of the werkdatum* —
+  // next school year's, once the werkdatum is moved forward (#338). Blank by
+  // default, matching the Smartschool fixture, so no stamboeknummer action fires
+  // unless a test is about one.
+  String stemId = '',
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
@@ -1220,7 +1271,7 @@ wapi.WisaStudent wisaStudent({
       firstName: firstName,
       preferredName: '',
       birthDate: kFixtureDate,
-      stemId: '',
+      stemId: stemId,
       gender: core.Gender.female,
       nationalId: '',
       birthPlace: '',
@@ -1290,17 +1341,23 @@ wapi.WisaClassGroup wisaClassGroup(
 /// member present only in WISA (no Smartschool / Azure counterpart) links as a
 /// [core.LinkedStaff] and materializes into the synthetic "Personeel" school
 /// rollup the Actions Personeel tab drills into (#179).
+/// [schoolIds] are the group schools the `SmaSyncPer` pull found them in
+/// (#340) — what tells one of our own personeel from the rest of the
+/// scholengroep's. Defaults to school 1, the fixture school every harness
+/// manages, so an existing fixture keeps listing its staff member.
 wapi.WisaStaff wisaStaff({
   String code = 'SMIT',
   String wisaId = '42',
   String firstName = 'Anna',
   String lastName = 'Smit',
+  Set<int> schoolIds = const {1},
 }) =>
     wapi.WisaStaff(
       code: core.WisaStaffCode(code),
       wisaId: core.WisaId(wisaId),
       firstName: firstName,
       lastName: lastName,
+      schoolIds: schoolIds,
     );
 
 ss.SmartschoolAccount ssAccount({
@@ -1315,13 +1372,16 @@ ss.SmartschoolAccount ssAccount({
   // wants no SetStaffCopyCode must set it.
   core.PersonRole role = core.PersonRole.student,
   String fax = '',
+  // The stamboeknummer Smartschool holds on the account today — the value its
+  // last schoolloopbaan row carries (#338).
+  int stemId = 0,
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
       accountId: accountId,
       mail: mail,
       registerId: '',
-      stemId: 0,
+      stemId: stemId,
       role: role,
       givenName: givenName,
       surname: surname,

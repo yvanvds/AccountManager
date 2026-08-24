@@ -14,8 +14,35 @@ class ApplyOptions {
   /// the student `Apply`. Ignored by actions that don't need a date.
   final DateTime? deletionDate;
 
-  const ApplyOptions({this.dryRun = false, this.deletionDate});
+  /// The WISA **werkdatum** the records this pass writes were read as of — the
+  /// same stamp `WisaSnapshot.workDate` carries (#247).
+  ///
+  /// WISA answers *as of* a work date, so an operator preparing next year reads
+  /// next year's institute and admin numbers. Smartschool, meanwhile, is still
+  /// in the running year, and a write that names no year lands there (#339). So
+  /// a write whose payload is year-bound must say which year it came from; this
+  /// is that year. `null` means nothing stamped one (a snapshot from before
+  /// #247, or a harness that models no sync), and every write then behaves
+  /// exactly as it did before — the target system's own current year.
+  ///
+  /// Ignored by actions whose payload is not year-bound.
+  final DateTime? workDate;
+
+  const ApplyOptions({
+    this.dryRun = false,
+    this.deletionDate,
+    this.workDate,
+  });
 
   /// A dry-run with no deletion date — the common "just describe it" case.
   static const ApplyOptions dry = ApplyOptions(dryRun: true);
+
+  /// These options stamped with the werkdatum the roster in hand was pulled at.
+  /// The State layer owns the snapshots, so it is the layer that knows this;
+  /// the actions only read it back off [workDate].
+  ApplyOptions asOf(DateTime? workDate) => ApplyOptions(
+        dryRun: dryRun,
+        deletionDate: deletionDate,
+        workDate: workDate,
+      );
 }

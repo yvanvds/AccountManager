@@ -18,11 +18,13 @@ import 'student_action_config.dart';
 /// When supplied it is called for each WISA-bearing account to build its
 /// [ClassPlacement]: the class placement flows into [AddStudentToSmartschool]
 /// (so a newly created account lands in its class) and enables
-/// [MoveToSmartschoolClassGroup] in the modify branch. When omitted, the
-/// dispatch is exactly as it shipped in #46 — no placement, no class move —
-/// because a [LinkedAccount] alone cannot answer either. It is only called for
-/// `account.wisa != null` records (the placement's target class comes from the
-/// WISA record); WISA-less lifecycle accounts never need it.
+/// [MoveToSmartschoolClassGroup] in the modify branch. Since #338 it also
+/// reaches [ModifySmartschoolStemId], which reads it only to stand down while
+/// that move is still pending. When omitted, the dispatch is exactly as it
+/// shipped in #46 — no placement, no class move — because a [LinkedAccount]
+/// alone cannot answer either. It is only called for `account.wisa != null`
+/// records (the placement's target class comes from the WISA record); WISA-less
+/// lifecycle accounts never need it.
 ///
 /// [azurePlacementFor] wires the **Office 365 class-group** view of the same
 /// student (#245), the per-account half of #228. Like [placementFor] it is only
@@ -66,10 +68,16 @@ List<StudentAction> studentActionsFor(
           ModifyAzureSchool(account, config),
           ModifySmartschoolStudentAddress(account, config),
           ModifyAccountId(account, config),
-          ModifySmartschoolStemId(account, config),
-          ModifySmartschoolBirthPlace(account, config),
+          // The class move sits **before** the stamboeknummer write (#338), and
+          // the stem write is handed the same placement so it can stand down
+          // while the move is still pending. Smartschool stores one stamnummer
+          // per schoolloopbaan row and `saveUser` writes it to the last one, so
+          // the move has to create next year's row first — otherwise the number
+          // lands on the row of the year the student is still sitting in.
           if (placement != null)
             MoveToSmartschoolClassGroup(account, config, placement),
+          ModifySmartschoolStemId(account, config, placement: placement),
+          ModifySmartschoolBirthPlace(account, config),
           if (azurePlacement != null)
             AzureClassGroupMembership(account, config, azurePlacement),
           ModifySmartschoolStudentEmail(account, config),

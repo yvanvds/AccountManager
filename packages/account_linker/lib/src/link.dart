@@ -71,7 +71,9 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 /// every WISA-present student is treated as ours, preserving the pre-#134
 /// behaviour. For students and staff, membership never changes which records
 /// exist or their identity keys, only how each is classified
-/// ([WisaPresence]) — and, for a student the shared pull returns *twice*
+/// ([WisaPresence]; for staff since #340, off the school ids the connector now
+/// stamps on each `SmaSyncPer` row) — and, for a student the shared pull returns
+/// *twice*
 /// because they are enrolled in two group schools, which of those two rows
 /// supplies the class placement (#318, see [_prefersWisaRow]). For **groups**
 /// it is a filter (#205), because a class of a school we do not manage has no
@@ -156,6 +158,14 @@ LinkedSnapshot link(
         smartschool: rec.smartschool,
         azure: rec.azure,
         confidence: _staffConfidence(rec),
+        wisaSchoolIds: rec.wisaSchoolIds,
+        wisaPresence: _staffPresence(rec, effectiveOurSchoolIds),
+        // INV-22's staff half, evaluated here because `LinkedStaff.azure` is the
+        // narrow `AzureUser` interface and carries no `department` (#340). Same
+        // predicate pass 3 keeps an orphan by, so "kept as ours" and "listed as
+        // ours" can never disagree.
+        azureNamesOurSchool:
+            staffBelongsToSchool(rec.azure?.department, schoolPrefix),
       ),
   ];
 
@@ -799,6 +809,16 @@ class _StaffRecord {
   wapi.WisaStaff? wisa;
   az.AzureUser? azure;
 
+  /// The WISA schools this record's staff member was found in — read straight
+  /// off the attached row, which the connector already folded across the
+  /// group-wide pull (#340). Frozen onto [LinkedStaff.wisaSchoolIds].
+  ///
+  /// Unlike the student side there is nothing to accumulate here: a staff member
+  /// employed at two group schools is *one* `WisaStaff` carrying both ids, not
+  /// two rows, because `code` is the staff primary key and the connector merges
+  /// on it.
+  Set<int> get wisaSchoolIds => wisa?.schoolIds ?? const <int>{};
+
   _StaffRecord({this.smartschool, this.wisa, this.azure});
 }
 
@@ -883,6 +903,27 @@ WisaPresence _presence(Set<int> wisaSchoolIds, Set<int> ourSchoolIds) {
   if (wisaSchoolIds.isEmpty) return WisaPresence.absent;
   if (ourSchoolIds.isEmpty) return WisaPresence.ours;
   return wisaSchoolIds.any(ourSchoolIds.contains)
+      ? WisaPresence.ours
+      : WisaPresence.groupOnly;
+}
+
+/// Classifies a **staff** member's WISA presence (#340) — the staff twin of
+/// [_presence], and deliberately not the same function.
+///
+/// The difference is what an empty school set means. A student with no school
+/// ids has no WISA row at all, so [_presence] reads it as
+/// [WisaPresence.absent]. A staff member can have a row and still no school:
+/// `SmaSyncPer` carries no institution column, so the id is stamped by the
+/// connector and is simply missing from any snapshot written before #340 (and
+/// from every hand-built record). Reading *that* as "not one of ours" would hide
+/// the entire personeel list the first time an old cold snapshot is opened, so
+/// unknown falls back to [WisaPresence.ours] — the same direction the empty
+/// [ourSchoolIds] fallback already goes.
+WisaPresence _staffPresence(_StaffRecord rec, Set<int> ourSchoolIds) {
+  if (rec.wisa == null) return WisaPresence.absent;
+  final schools = rec.wisaSchoolIds;
+  if (schools.isEmpty || ourSchoolIds.isEmpty) return WisaPresence.ours;
+  return schools.any(ourSchoolIds.contains)
       ? WisaPresence.ours
       : WisaPresence.groupOnly;
 }

@@ -1337,6 +1337,13 @@ class EntryOutcomes extends StatelessWidget {
 /// panel on another screen, which is exactly the trip #272 is about; the Graph
 /// `403 Authorization_RequestDenied` or the duplicate-nickname message decides
 /// what they do next.
+///
+/// An action that finished can still owe the operator that reason (#343). A
+/// best-effort step may not fail the action around it — the Smartschool create
+/// whose class placement blew up is applied, correctly — but a bare "gelukt"
+/// for a write that half happened is the same trip to the log panel. So a row
+/// with [ActionOutcomeEntry.warnings] is marked, and says what did not land
+/// under what did.
 class EntryOutcomeLine extends StatelessWidget {
   const EntryOutcomeLine({super.key, required this.outcome});
 
@@ -1347,6 +1354,8 @@ class EntryOutcomeLine extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
     final bool failed = outcome.outcome == actions.ActionOutcome.failed;
+    final List<String> warnings = outcome.warnings;
+    final bool warned = !failed && warnings.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
@@ -1354,19 +1363,34 @@ class EntryOutcomeLine extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Icon(
-            failed ? Icons.close : Icons.check,
+            switch ((failed, warned)) {
+              (true, _) => Icons.close,
+              (false, true) => Icons.warning_amber_outlined,
+              (false, false) => Icons.check,
+            },
             size: 16,
-            color: failed ? colors.error : colors.primary,
+            color: failed || warned ? colors.error : colors.primary,
           ),
           const SizedBox(width: PlinkSpacing.s2),
           Expanded(
-            child: Text(
-              failed
-                  ? 'Mislukt — ${outcome.changes.summary}: ${outcome.error}'
-                  : outcome.changes.summary,
-              style: text.bodySmall?.copyWith(
-                color: failed ? colors.error : null,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  failed
+                      ? 'Mislukt — ${outcome.changes.summary}: ${outcome.error}'
+                      : outcome.changes.summary,
+                  style: text.bodySmall?.copyWith(
+                    color: failed ? colors.error : null,
+                  ),
+                ),
+                // The write landed; this is the part of it that did not.
+                for (final warning in warnings)
+                  Text(
+                    warning,
+                    style: text.bodySmall?.copyWith(color: colors.error),
+                  ),
+              ],
             ),
           ),
         ],

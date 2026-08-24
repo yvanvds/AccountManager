@@ -24,13 +24,30 @@ const core.Address _addr = core.Address(
 // ---------------------------------------------------------------------------
 
 class _RecordingSoap implements ss.SmartschoolSoapTransport {
-  _RecordingSoap({this.resultCode = 0});
+  _RecordingSoap({this.resultCode = 0, this.resultFor, this.throwFor});
 
   final List<String> soapActions = [];
+
+  /// The request envelope of every call, in order — so a test can assert what a
+  /// write carried, not merely that it happened.
+  final List<String> envelopes = [];
 
   /// The integer result every write returns; non-zero is Smartschool's way of
   /// saying the call failed.
   final int resultCode;
+
+  /// Per-call override of [resultCode], keyed on the SOAP action. Lets a test
+  /// fail *one* step of a multi-write action — a create whose class placement
+  /// Smartschool refuses (#342) — the way the connector-level fixture already
+  /// can. Returning null falls back to [resultCode].
+  final int? Function(String soapAction)? resultFor;
+
+  /// Per-call **throw**, keyed on the SOAP action: returns the error one call
+  /// should blow up with, or null to answer normally (#343). A result code is
+  /// Smartschool refusing; this is the wire coming apart, which is the failure
+  /// shape that used to escape the create's best-effort placement step and take
+  /// the whole create down with it.
+  final Object? Function(String soapAction)? throwFor;
 
   @override
   Future<String> send({
@@ -39,10 +56,15 @@ class _RecordingSoap implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
+    envelopes.add(envelope);
+    // Recorded first: the call went out, it just never came back.
+    final failure = throwFor?.call(soapAction);
+    if (failure != null) throw failure;
+    final code = resultFor?.call(soapAction) ?? resultCode;
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '
         'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
-        '<soap:Body><response><return>$resultCode</return></response>'
+        '<soap:Body><response><return>$code</return></response>'
         '</soap:Body></soap:Envelope>';
   }
 }
@@ -127,6 +149,7 @@ wapi.WisaStudent _wStudent({
   String firstName = 'Jan',
   String name = 'Peeters',
   String classGroup = '3A',
+  String stemId = '',
 }) =>
     wapi.WisaStudent(
       wisaId: core.WisaId(wisaId),
@@ -136,7 +159,7 @@ wapi.WisaStudent _wStudent({
       firstName: firstName,
       preferredName: '',
       birthDate: _d,
-      stemId: '',
+      stemId: stemId,
       gender: core.Gender.male,
       nationalId: '',
       birthPlace: '',
@@ -159,13 +182,14 @@ ss.SmartschoolAccount _ssAccount({
   String accountId = 'W1',
   String mail = 'jan.peeters@student.school.example',
   core.PersonRole role = core.PersonRole.student,
+  int stemId = 0,
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
       accountId: accountId,
       mail: mail,
       registerId: '',
-      stemId: 0,
+      stemId: stemId,
       role: role,
       givenName: 'Jan',
       surname: 'Peeters',
@@ -204,6 +228,7 @@ wapi.WisaSnapshot _wSnap({
   List<wapi.WisaStudent> students = const [],
   List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaClassGroup> classGroups = const [],
+  DateTime? workDate,
 }) =>
     wapi.WisaSnapshot(
       fetchedAt: _d,
@@ -211,17 +236,43 @@ wapi.WisaSnapshot _wSnap({
       staff: staff,
       classGroups: classGroups,
       schools: const [],
+      workDate: workDate,
     );
 
 ss.SmartschoolSnapshot _sSnap({
   List<ss.SmartschoolAccount> accounts = const [],
   List<core.Group> groups = const [],
+  List<ss.SmartschoolMembership> memberships = const [],
 }) =>
     ss.SmartschoolSnapshot(
       fetchedAt: _d,
       groups: groups,
       accounts: accounts,
-      memberships: const [],
+      memberships: memberships,
+    );
+
+ss.SmartschoolMembership _member(String uid, String groupCode) =>
+    ss.SmartschoolMembership(uid: uid, groupId: core.GroupId(groupCode));
+
+wapi.WisaClassGroup _wClass(String name, {int schoolId = 1}) =>
+    wapi.WisaClassGroup(
+      name: name,
+      groupName: '00',
+      description: '',
+      adminCode: '',
+      schoolCode: '123',
+      schoolId: schoolId,
+    );
+
+/// A non-class Smartschool group — the kind a membership splice must leave
+/// alone (a subject group, a tree node).
+core.Group _ssNode(String name, {String? code}) => core.Group(
+      id: core.GroupId(code ?? name),
+      name: name,
+      description: name,
+      type: core.GroupType.group,
+      official: false,
+      origin: core.Origin.smartschool,
     );
 
 /// An **official** Smartschool class, the only shape the linker ever seeds a
@@ -303,7 +354,13 @@ class _Harness {
     ss.SmartschoolSnapshot? smartschool,
     az.AzureSnapshot? azure,
     int soapResultCode = 0,
-  }) : soap = _RecordingSoap(resultCode: soapResultCode) {
+    int? Function(String soapAction)? soapResultFor,
+    Object? Function(String soapAction)? soapThrowFor,
+  }) : soap = _RecordingSoap(
+          resultCode: soapResultCode,
+          resultFor: soapResultFor,
+          throwFor: soapThrowFor,
+        ) {
     final ssSnap = smartschool ?? _sSnap();
     final azSnap = azure ?? _aSnap();
     rules = WisaImportRules();
@@ -440,6 +497,248 @@ void main() {
           reason: 'the removed account is spliced out by uid');
       expect(applied.refreshed, isTrue);
       expect(harness.counts, [0, 0, 0]);
+    });
+  });
+
+  group('a successful class move reseats the membership (#341)', () {
+    /// Jan sits in `3B` in Smartschool while WISA has already moved him to
+    /// `3A` — the rollover shape — and he also belongs to a non-class group
+    /// the move says nothing about.
+    _Harness moving({String wisaStemId = '', int ssStemId = 0}) => _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1', stemId: wisaStemId)],
+            classGroups: [_wClass('3A'), _wClass('3B')],
+          ),
+          smartschool: _sSnap(
+            groups: [
+              _ssClass('3A', code: '3A_ss'),
+              _ssClass('3B', code: '3B_ss'),
+              _ssNode('Wiskunde', code: 'wisk'),
+            ],
+            accounts: [_ssAccount(uid: 'jan.peeters', stemId: ssStemId)],
+            memberships: [
+              _member('jan.peeters', '3B_ss'),
+              _member('jan.peeters', 'wisk'),
+            ],
+          ),
+          azure: _aSnap(users: [_azUser()]),
+        );
+
+    test('the snapshot moves the student to the new class, keeping the rest',
+        () async {
+      final harness = moving();
+      final before = await harness.applier.link();
+      final move =
+          before.studentActions.whereType<MoveToSmartschoolClassGroup>().single;
+
+      final applied = await harness.applier.applyStudent(move);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(harness.soap.soapActions.single, endsWith('#saveUserToClass'));
+      final rows = harness.app.smartschool.snapshot!.memberships
+          .where((m) => m.uid == 'jan.peeters')
+          .map((m) => m.groupId.value)
+          .toList();
+      expect(rows, containsAll(<String>['3A_ss', 'wisk']),
+          reason: 'the new class is in, the subject group is untouched');
+      expect(rows, isNot(contains('3B_ss')),
+          reason:
+              'Smartschool re-seats an official class, it does not add one');
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the incremental refresh must not hit the network');
+    });
+
+    test('the relink no longer offers the move it just performed', () async {
+      final harness = moving();
+      final before = await harness.applier.link();
+      final move =
+          before.studentActions.whereType<MoveToSmartschoolClassGroup>().single;
+
+      final applied = await harness.applier.applyStudent(move);
+
+      expect(applied.refreshed, isTrue);
+      expect(
+        applied.linked!.studentActions.whereType<MoveToSmartschoolClassGroup>(),
+        isEmpty,
+        reason: 'the class the operator applied is the class Smartschool has',
+      );
+    });
+
+    test('and the stamboeknummer write it was holding back is released (#338)',
+        () async {
+      // #338 stands the stem write down per account while a move is pending, so
+      // a move that never clears itself keeps the number deferred forever.
+      final harness = moving(wisaStemId: '2300033', ssStemId: 2200123);
+      final before = await harness.applier.link();
+      expect(
+        before.studentActions.whereType<ModifySmartschoolStemId>(),
+        isEmpty,
+        reason: 'the running year\'s career row is still the last one',
+      );
+
+      final applied = await harness.applier.applyStudent(
+        before.studentActions.whereType<MoveToSmartschoolClassGroup>().single,
+      );
+
+      expect(
+        applied.linked!.studentActions.whereType<ModifySmartschoolStemId>(),
+        hasLength(1),
+        reason: 'the move created the row the number belongs on',
+      );
+    });
+
+    test('a plain field write leaves the memberships alone', () async {
+      final harness = moving();
+      final account = _linkedStudent(
+        wisa: _wStudent(wisaId: 'W1'),
+        smartschool: _ssAccount(uid: 'jan.peeters', accountId: 'OLD'),
+        azure: _azUser(),
+      );
+
+      await harness.applier.applyStudent(
+        ModifyAccountId(account, harness.applier.studentConfig),
+      );
+
+      expect(
+        harness.app.smartschool.snapshot!.memberships
+            .map((m) => m.groupId.value),
+        <String>['3B_ss', 'wisk'],
+        reason: 'only a move names a class, so only a move reseats one',
+      );
+    });
+  });
+
+  group('a create that placed its new account seats it too (#342)', () {
+    /// New intake: Jan is in WISA (class `3A`) and already has his Office 365
+    /// account, so `AddStudentToSmartschool` is the one action the card raises.
+    /// Smartschool knows the class but nobody sits in it yet.
+    _Harness intake({
+      int? Function(String soapAction)? soapResultFor,
+      Object? Function(String soapAction)? soapThrowFor,
+    }) =>
+        _Harness(
+          wisa: _wSnap(
+            students: [_wStudent(wisaId: 'W1')],
+            classGroups: [_wClass('3A')],
+          ),
+          smartschool: _sSnap(groups: [_ssClass('3A', code: '3A_ss')]),
+          azure: _aSnap(users: [_azUser()]),
+          soapResultFor: soapResultFor,
+          soapThrowFor: soapThrowFor,
+        );
+
+    AddStudentToSmartschool createOf(LinkedState linked) =>
+        linked.studentActions.whereType<AddStudentToSmartschool>().single;
+
+    test('the new account lands in the snapshot sitting in its class',
+        () async {
+      final harness = intake();
+      final before = await harness.applier.link();
+
+      final applied = await harness.applier.applyStudent(createOf(before));
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(
+        harness.soap.soapActions.any((a) => a.endsWith('#saveUserToClass')),
+        isTrue,
+        reason: 'the create places the account it just made',
+      );
+      expect(
+        harness.app.smartschool.snapshot!.memberships
+            .where((m) => m.uid == 'jan.peeters')
+            .map((m) => m.groupId.value),
+        <String>['3A_ss'],
+        reason: 'the account arrives in the snapshot already seated',
+      );
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the incremental refresh must not hit the network');
+    });
+
+    test('so the relink does not offer a move into the class he is in',
+        () async {
+      // The bug: the splice added the account but no membership, so the
+      // placement resolver read no current class, and the very next frame
+      // offered `MoveToSmartschoolClassGroup` — bulk-applyable, and since #338
+      // holding the stamboeknummer write behind it — for a student who had
+      // just been placed correctly.
+      final harness = intake();
+      final before = await harness.applier.link();
+
+      final applied = await harness.applier.applyStudent(createOf(before));
+
+      expect(applied.refreshed, isTrue);
+      expect(
+        applied.linked!.studentActions.whereType<MoveToSmartschoolClassGroup>(),
+        isEmpty,
+      );
+    });
+
+    test('a placement Smartschool refused seats nobody, and the move stands',
+        () async {
+      // Best-effort's other half: the create still succeeds, but nothing may
+      // claim a seat that was not written. The move is this path's safety net
+      // — suppressing it on a placement that failed would strand the student
+      // outside every class until someone noticed.
+      final harness = intake(
+        soapResultFor: (a) => a.endsWith('#saveUserToClass') ? 1 : null,
+      );
+      final before = await harness.applier.link();
+
+      final applied = await harness.applier.applyStudent(createOf(before));
+
+      expect(applied.result.outcome, ActionOutcome.applied,
+          reason: 'a failed placement must not fail the create (INV-41)');
+      expect(harness.app.smartschool.snapshot!.memberships, isEmpty);
+      expect(
+        applied.linked!.studentActions.whereType<MoveToSmartschoolClassGroup>(),
+        hasLength(1),
+        reason: 'the student really is in no class, so the move is the fix',
+      );
+    });
+
+    test(
+        'a placement that threw is spliced in anyway, with the move standing '
+        '(#343)', () async {
+      // The whole point of #343 at this layer. A `moveUserToClass` that threw
+      // used to make the create report `failed`, so `_refresh` spliced nothing:
+      // the account existed in Smartschool but not in the snapshot, the card
+      // kept offering "Maak een nieuw Smartschool account", and applying it
+      // again wrote `saveUser` a second time for the same uid.
+      final harness = intake(
+        soapThrowFor: (a) => a.endsWith('#saveUserToClass')
+            ? StateError('connection closed')
+            : null,
+      );
+      final before = await harness.applier.link();
+
+      final applied = await harness.applier.applyStudent(createOf(before));
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.refreshed, isTrue,
+          reason: 'the create landed, so the snapshot must learn about it');
+      expect(
+        harness.app.smartschool.snapshot!.accounts.map((a) => a.uid),
+        contains('jan.peeters'),
+      );
+      expect(harness.app.smartschool.snapshot!.memberships, isEmpty,
+          reason: 'nothing was seated, so nothing may be claimed');
+      expect(
+        applied.linked!.studentActions.whereType<AddStudentToSmartschool>(),
+        isEmpty,
+        reason: 'the account exists; offering the create again would write '
+            'saveUser twice for the same uid',
+      );
+      expect(
+        applied.linked!.studentActions.whereType<MoveToSmartschoolClassGroup>(),
+        hasLength(1),
+        reason: 'the placement is what failed, so the move is what is left',
+      );
+      expect(applied.result.warnings, hasLength(1),
+          reason: 'and the swallowed cause must not vanish — there is no log '
+              'sink on that path');
+      expect(applied.result.warnings.single, contains('3A'));
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the incremental refresh must not hit the network');
     });
   });
 
@@ -1123,6 +1422,86 @@ void main() {
       expect(applied.refreshed, isFalse);
       expect(harness.soap.soapActions, isEmpty);
       expect(harness.app.smartschool.snapshot!.groups, hasLength(2));
+    });
+  });
+
+  group('a class write names the school year it was read at (#339)', () {
+    /// A class whose Smartschool institute number has drifted from WISA's — the
+    /// state that raises [ModifySmartschoolData], the action whose whole job is
+    /// to write an institute number.
+    _Harness driftHarness({DateTime? workDate}) => _Harness(
+          wisa: _wSnap(
+            workDate: workDate,
+            classGroups: [
+              const wapi.WisaClassGroup(
+                name: '2A',
+                groupName: '00',
+                description: 'Klas 2A',
+                adminCode: '',
+                // Next year this class belongs to the group's other school.
+                schoolCode: '125252',
+                schoolId: 1,
+              ),
+            ],
+          ),
+          smartschool: _sSnap(groups: [_ssClass('2A')]),
+        );
+
+    /// The `$schoolYearDate` of the last `saveClass` envelope, or null when no
+    /// class was saved. Read off the wire: `''` is Smartschool's "the current
+    /// school year", which is exactly the value #339 is about.
+    String? savedSchoolYearDate(_Harness harness) {
+      for (var i = harness.soap.soapActions.length - 1; i >= 0; i--) {
+        if (!harness.soap.soapActions[i].endsWith('#saveClass')) continue;
+        return RegExp(r'<schoolYearDate[^>]*>([^<]*)</schoolYearDate>')
+                .firstMatch(harness.soap.envelopes[i])
+                ?.group(1) ??
+            '';
+      }
+      return null;
+    }
+
+    test("the applier stamps the WISA snapshot's werkdatum onto the write",
+        () async {
+      // The operator has moved the werkdatum into next school year to prepare
+      // it; Smartschool is still in the running one. Without the stamp the new
+      // institute number overwrites the running year's.
+      final harness = driftHarness(workDate: DateTime(2026, 9, 1));
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<ModifySmartschoolData>().single;
+
+      final applied = await harness.applier.applyGroup(sync);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(savedSchoolYearDate(harness), '2026-9-1');
+    });
+
+    test('an unstamped snapshot leaves the API default alone', () async {
+      // A pull from before #247 carries no werkdatum, so there is nothing
+      // truthful to name and the write behaves as it always did.
+      final harness = driftHarness();
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<ModifySmartschoolData>().single;
+
+      await harness.applier.applyGroup(sync);
+
+      expect(savedSchoolYearDate(harness), '');
+    });
+
+    test('a caller that named a werkdatum keeps it', () async {
+      final harness = driftHarness(workDate: DateTime(2026, 9, 1));
+      final before = await harness.applier.link();
+      final sync =
+          before.groupActions.whereType<ModifySmartschoolData>().single;
+
+      await harness.applier.applyGroup(
+        sync,
+        options: ApplyOptions(workDate: DateTime(2025, 9, 1)),
+      );
+
+      expect(savedSchoolYearDate(harness), '2025-9-1');
     });
   });
 

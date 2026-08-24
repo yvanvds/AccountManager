@@ -66,6 +66,7 @@ class ActionOutcomeEntry {
     required this.changes,
     required this.outcome,
     this.error,
+    this.warnings = const <String>[],
     this.family = '',
     this.targetId = '',
     this.situationId = '',
@@ -81,6 +82,17 @@ class ActionOutcomeEntry {
 
   /// The failure cause when [outcome] is [actions.ActionOutcome.failed].
   final Object? error;
+
+  /// What went wrong *inside* an action that nonetheless finished (#343) — the
+  /// action's own [actions.ActionResult.warnings], already worded for the
+  /// operator.
+  ///
+  /// A best-effort step that fails may not fail the action around it (INV-41),
+  /// which is right and also how a half-done write becomes a plain "gelukt"
+  /// line. A student whose Smartschool account was created but whose class
+  /// placement blew up is exactly that case: the pass succeeded, the operator
+  /// still needs to know the class was not written. Empty for nearly every row.
+  final List<String> warnings;
 
   /// Which family the [PendingAccountEntry] this row came from belongs to —
   /// `student`, `staff` or `group` (#272).
@@ -1118,7 +1130,24 @@ class ReconcileController extends ChangeNotifier {
     ));
     entries.addAll(_entriesFor(
       family: 'staff',
-      actionList: l.staffActions,
+      // #340: the same our-school narrowing the materialized Personeel list
+      // applies, because these entries are not merely what the list renders.
+      // They are what the tab's badge counts, what `applyableCount` totals, and
+      // — through `applyToAllCohort`, which is school-wide by definition and
+      // deliberately *not* grouped from the rows on screen — what a
+      // "Toepassen op alle" writes. `AddStaffToAzure` carries that grant, so
+      // leaving the group's other schools in here would arm one press to create
+      // a couple of thousand Office 365 accounts for colleagues nobody in this
+      // building manages, none of whom appear in the list being confirmed.
+      //
+      // Narrowing the *view*, never the dispatch: `l.staffActions` is still
+      // derived from the whole snapshot, so every record keeps the non-null
+      // `wisa` that stops a removal being proposed for someone the group still
+      // employs.
+      actionList: <actions.StaffAction>[
+        for (final a in l.staffActions)
+          if (a.target.belongsToOurSchool) a,
+      ],
       targetId: (a) => a.target.id.value,
       label: (a) => _staffLabel(a.target),
       group: (a) => a.alternativeGroup,
@@ -3188,6 +3217,14 @@ class ReconcileController extends ChangeNotifier {
     } else {
       log.addMessage(core.Origin.all, '$target — ${changes.summary}');
     }
+    // A warning belongs to an action that *finished* (#343), so it never
+    // replaces the line above — it is added to it. As an error line, because it
+    // reports a write that did not happen: the Log panel is where an operator
+    // goes back to reconstruct a pass, and a swallowed best-effort failure that
+    // only ever reads as ordinary text is the silence #343 is about.
+    for (final warning in result.warnings) {
+      log.addError(changes.system, '$target — $warning');
+    }
     return ActionOutcomeEntry(
       target: target,
       family: option.family,
@@ -3196,6 +3233,7 @@ class ReconcileController extends ChangeNotifier {
       changes: changes,
       outcome: result.outcome,
       error: result.error,
+      warnings: result.warnings,
     );
   }
 
@@ -3551,6 +3589,17 @@ class ReconcileController extends ChangeNotifier {
         log.addMessage(
           core.Origin.wisa,
           '${view.skippedUnmanagedStudents} leerling(en) overgeslagen: '
+          'niet in een school die we beheren.',
+        );
+      }
+      // The personeel half of the same sentence (#340). Expect a big number:
+      // the shared credentials pull the whole scholengroep's personeel and most
+      // of it is another school's. Saying so is what keeps a missing colleague
+      // diagnosable, since the records behind it are deliberately kept whole.
+      if (view.skippedUnmanagedStaff > 0) {
+        log.addMessage(
+          core.Origin.wisa,
+          '${view.skippedUnmanagedStaff} personeelslid/-leden overgeslagen: '
           'niet in een school die we beheren.',
         );
       }

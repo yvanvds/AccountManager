@@ -375,6 +375,47 @@ void main() {
       );
       expect(bothSchools.staff.length, oneSchool.staff.length);
     });
+
+    test('stamps the pulled school on every staff row (#340)', () async {
+      // `SmaSyncPer` has no institution column, so without this a staff record
+      // carried no school of origin at all and the view layer could not tell one
+      // of ours from the rest of the scholengroep's personeel.
+      final t = _FakeTransport(fixtures);
+      final c = buildConnector(t);
+      final schools = await c.loadSchools();
+      final snapshot = await c.sync(
+        schools: [schools.firstWhere((s) => s.id == 25)],
+        workDate: DateTime(2024, 9, 1),
+      );
+      expect(snapshot.staff, isNotEmpty);
+      expect(snapshot.staff.every((s) => s.schoolIds.contains(25)), isTrue);
+    });
+
+    test('a staff member both schools employ carries both school ids (#340)',
+        () async {
+      // The fake transport answers every IS_ID with the same fixture, so every
+      // code comes back twice — which is exactly the dual-employment shape. The
+      // second row must *merge* its school into the first rather than be
+      // dropped: first-wins on the ids would leave a teacher of ours looking
+      // like a sibling school's and hide them from Personeel.
+      final t = _FakeTransport(fixtures);
+      final c = buildConnector(t);
+      final schools = await c.loadSchools();
+      final snapshot = await c.sync(
+        schools: [
+          schools.firstWhere((s) => s.id == 25),
+          schools.firstWhere((s) => s.id == 27),
+        ],
+        workDate: DateTime(2024, 9, 1),
+      );
+      expect(snapshot.staff, isNotEmpty);
+      expect(snapshot.staff.every((s) => s.schoolIds.contains(25)), isTrue);
+      expect(snapshot.staff.every((s) => s.schoolIds.contains(27)), isTrue);
+      // Everything else still comes from the row read first, exactly as the
+      // seen-set dedupe this replaced left it.
+      expect(snapshot.staff.map((s) => s.code.value).toSet().length,
+          snapshot.staff.length);
+    });
   });
 
   group('SOAP fault handling', () {

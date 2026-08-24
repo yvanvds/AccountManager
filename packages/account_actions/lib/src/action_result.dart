@@ -64,6 +64,32 @@ class ActionResult {
   /// other action.
   final AzureGroup? azureGroup;
 
+  /// The official Smartschool class an account-targeted action **seated the
+  /// account in** (#341) — set by [MoveToSmartschoolClassGroup] on a real
+  /// write, alongside the unchanged [smartschool] record, and by
+  /// [AddStudentToSmartschool] when its best-effort placement step actually
+  /// wrote the new account into its class (#342).
+  ///
+  /// A move writes a *membership*, not a field on the account, so the record
+  /// the write returns is byte-for-byte the one it started from. Without this
+  /// the State layer had nothing to patch the snapshot's membership list from,
+  /// so the class the student sat in never changed there: the placement
+  /// resolver kept reporting the old class and the move kept evaluating true
+  /// after its own write had landed (and, since #338, the stamboeknummer write
+  /// waiting behind it stayed deferred) until Smartschool was read again.
+  ///
+  /// A create has the same problem from the other side: the record it returns
+  /// is the account it just built, which says nothing about the class the
+  /// placement step then wrote it into, so a freshly provisioned student
+  /// landed in the snapshot with no membership at all and was offered a move
+  /// into the class they were already sitting in (#342).
+  ///
+  /// Null for every other action — and for a failed or dry-run move, or a
+  /// create whose best-effort placement was skipped or refused: none of those
+  /// changed a membership, and this field is spliced into the snapshot as
+  /// fact, so only a write that demonstrably landed may name a class.
+  final Group? movedToClass;
+
   /// True when the action deleted the record from [system] (so the State layer
   /// should drop it from the snapshot rather than patch it).
   final bool removed;
@@ -88,6 +114,28 @@ class ActionResult {
   /// The failure cause; non-null only when [outcome] is [ActionOutcome.failed].
   final Object? error;
 
+  /// Problems that happened **inside a successful apply** — operator-facing
+  /// sentences, already worded, for the caller to log and show beside the
+  /// verdict (#343).
+  ///
+  /// [error] answers "why did this action fail"; this answers "what went wrong
+  /// even though it did not". They are mutually exclusive in practice: an
+  /// action either finishes and may carry warnings, or fails and carries an
+  /// error.
+  ///
+  /// Only an action with a genuinely **best-effort step** can produce one. Today
+  /// that is [AddStudentToSmartschool], whose class placement (#55) may not fail
+  /// the create around it (INV-41): before #343 a `moveUserToClass` that *threw*
+  /// — a dropped connection, a gateway error, unreadable XML — was caught by the
+  /// create's own `catch` and reported as a failed create, for an account that
+  /// already existed. Swallowing it instead is what the contract asks for, but a
+  /// swallowed exception on a path with no log sink is a silent one, so the
+  /// swallowed cause travels here.
+  ///
+  /// Empty for every action and every outcome that has nothing to add — which
+  /// is nearly all of them.
+  final List<String> warnings;
+
   const ActionResult({
     required this.outcome,
     required this.changes,
@@ -96,10 +144,12 @@ class ActionResult {
     this.azure,
     this.group,
     this.azureGroup,
+    this.movedToClass,
     this.removed = false,
     this.wisaRule,
     this.generatedPassword,
     this.error,
+    this.warnings = const <String>[],
   });
 
   /// Convenience: the write succeeded or was a dry run (i.e. not failed).

@@ -936,6 +936,7 @@ class MaterializedView {
     required this.rollups,
     this.groups = const [],
     this.skippedUnmanagedStudents = 0,
+    this.skippedUnmanagedStaff = 0,
   });
 
   final int generation;
@@ -953,4 +954,16 @@ class MaterializedView {
   /// operator who cannot find an intake in Acties can tell "filtered out by the
   /// managed-school flags in Instellingen" from "never came back from WISA".
   final int skippedUnmanagedStudents;
+
+  /// How many linked **staff** the materialize deliberately left out because
+  /// they belong to a school of the group we do not manage and hold no account
+  /// of ours (#340) — the personeel twin of [skippedUnmanagedStudents].
+  ///
+  /// Expect this to be large: the shared WISA credentials pull the group's whole
+  /// personeel and most of it is other schools'. Also pass metadata rather than
+  /// part of the persisted view, and reported by the sync for the same reason —
+  /// the drop must be legible, since the records themselves are deliberately
+  /// kept intact behind it so no removal action is ever proposed for a colleague
+  /// the group still employs.
+  final int skippedUnmanagedStaff;
 }
