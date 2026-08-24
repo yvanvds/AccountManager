@@ -4440,6 +4440,9 @@ class ReconcileHarness {
       // so a pull can fill their names back in (#207).
       schoolProfiles: schoolProfiles,
       settingsStore: settingsStore,
+      // The same store the scripted syncers persist through, so an apply pass
+      // writes its patched snapshots back exactly as bootstrap wires it (#347).
+      snapshotStore: store,
       // The same holder the WISA pull reads, so the drift gate sees a save the
       // moment Instellingen publishes it (#238) — unless this harness models no
       // settings at all (#274), which is the documented null-holder mode.

@@ -603,6 +603,7 @@ class ReconcileController extends ChangeNotifier {
     this.syncedBy = '',
     List<WisaSchoolProfile> schoolProfiles = const <WisaSchoolProfile>[],
     this.settingsStore,
+    this.snapshotStore,
     this.liveSettings,
     this.publisher,
     this.subscriber,
@@ -691,6 +692,18 @@ class ReconcileController extends ChangeNotifier {
   /// no store is wired (the in-memory harnesses), which simply skips the
   /// repair.
   final SettingsStore? settingsStore;
+
+  /// The cold snapshot store (#107), so an apply pass can write back the
+  /// snapshots it patched locally (#347).
+  ///
+  /// The pull path persists on its own — bootstrap wraps every syncer in
+  /// `persistingSyncer` — but an apply patches the in-memory snapshot without
+  /// going near the syncer, which is exactly what makes it cheap (#345). Without
+  /// this the stored copy keeps the record the pass just dropped, and the next
+  /// operator to launch the app seeds from it and is offered the very work this
+  /// pass applied. Null when no store is wired (the in-memory harnesses), which
+  /// simply skips the write-back.
+  final SnapshotStore? snapshotStore;
 
   /// The live settings document (#238) — the same holder the WISA syncer reads
   /// at pull time and the Settings view publishes into on every load and save.
@@ -3019,6 +3032,7 @@ class ReconcileController extends ChangeNotifier {
         _applyResults = results;
         _dryRunResults = null;
         await _persistEarnedWisaRules(earnedRules);
+        await _persistPatchedSnapshots();
         await _shareApplied(_refreshRollups(), touched);
       }
       _applyStep = null;
@@ -3034,8 +3048,10 @@ class ReconcileController extends ChangeNotifier {
         // A pass that broke halfway still wrote whatever it got through, so the
         // overview owes the operator those counts too (#236) — and so do the
         // other operators (#254). The rules it earned before it broke are just
-        // as real, and just as permanent (#276).
+        // as real, and just as permanent (#276) — and so are the snapshot
+        // patches those writes left behind (#347).
         await _persistEarnedWisaRules(earnedRules);
+        await _persistPatchedSnapshots();
         await _shareApplied(_refreshRollups(), touched);
       }
       // Nothing is in flight any more, however the pass ended (#243), and the
@@ -3808,6 +3824,39 @@ class ReconcileController extends ChangeNotifier {
         'Kon de WISA-importregel(s) niet opslaan in de instellingen: $e',
       );
     }
+  }
+
+  /// Writes back the connector snapshots this apply pass patched locally, so the
+  /// cold store carries what the pass ended with (#347).
+  ///
+  /// Every applied write patches the owning snapshot in memory rather than
+  /// re-pulling it — the incremental-refresh constraint (#72), and since #345
+  /// that includes WISA, whose `DontImportFromWisa` rules are filtered in
+  /// locally. Persistence, though, lives inside the syncer, which a patch
+  /// bypasses. So the pass that dropped a record from its own view left the
+  /// stored snapshot still carrying it, and the next session to seed from the
+  /// store — a colleague launching the app before anyone re-pulls — linked from
+  /// the uncorrected roster and was offered the work again.
+  ///
+  /// Runs once per pass rather than once per action: each write serializes a
+  /// whole roster, so thirty applies would mean thirty uploads. Only the systems
+  /// actually patched are written.
+  ///
+  /// A failure is logged and swallowed, exactly as one on the pull path is: the
+  /// writes to Smartschool and Office 365 really happened, and the stored copy
+  /// catches up on the next pass or the next pull.
+  Future<void> _persistPatchedSnapshots() async {
+    final snapshots = snapshotStore;
+    if (snapshots == null) return;
+    await persistPatchedSnapshots(
+      app,
+      store: snapshots,
+      syncedBy: syncedBy,
+      onError: (system, e) => log.addError(
+        system,
+        'Kon de bijgewerkte momentopname niet opslaan: $e',
+      ),
+    );
   }
 
   /// Unpins the derived caches after a pass and drops what they were pinned to
