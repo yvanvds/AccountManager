@@ -114,6 +114,28 @@ class ActionResult {
   /// The failure cause; non-null only when [outcome] is [ActionOutcome.failed].
   final Object? error;
 
+  /// Problems that happened **inside a successful apply** — operator-facing
+  /// sentences, already worded, for the caller to log and show beside the
+  /// verdict (#343).
+  ///
+  /// [error] answers "why did this action fail"; this answers "what went wrong
+  /// even though it did not". They are mutually exclusive in practice: an
+  /// action either finishes and may carry warnings, or fails and carries an
+  /// error.
+  ///
+  /// Only an action with a genuinely **best-effort step** can produce one. Today
+  /// that is [AddStudentToSmartschool], whose class placement (#55) may not fail
+  /// the create around it (INV-41): before #343 a `moveUserToClass` that *threw*
+  /// — a dropped connection, a gateway error, unreadable XML — was caught by the
+  /// create's own `catch` and reported as a failed create, for an account that
+  /// already existed. Swallowing it instead is what the contract asks for, but a
+  /// swallowed exception on a path with no log sink is a silent one, so the
+  /// swallowed cause travels here.
+  ///
+  /// Empty for every action and every outcome that has nothing to add — which
+  /// is nearly all of them.
+  final List<String> warnings;
+
   const ActionResult({
     required this.outcome,
     required this.changes,
@@ -127,6 +149,7 @@ class ActionResult {
     this.wisaRule,
     this.generatedPassword,
     this.error,
+    this.warnings = const <String>[],
   });
 
   /// Convenience: the write succeeded or was a dry run (i.e. not failed).

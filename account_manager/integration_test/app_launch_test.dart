@@ -11080,6 +11080,123 @@ void main() {
   });
 
   testWidgets(
+      'a class placement that blows up leaves the Smartschool create reported '
+      'as done, with the class named as the part that failed (#343)',
+      (WidgetTester tester) async {
+    // The hole #342 left in the same path. `AddStudentToSmartschool` places its
+    // new account straight after creating it (#55), and that step is
+    // best-effort: a `moveUserToClass` that comes back *false* is shrugged off
+    // and the standalone move catches the student next pass. But the step ran
+    // inside the create's own `try`, so a placement that **threw** — a dropped
+    // connection, a gateway error, unreadable XML — unwound into the create's
+    // `catch` and was reported as a failed create, for an account `saveUser`
+    // had already made.
+    //
+    // What the operator then saw is the reason this is an app-level test: the
+    // applier splices nothing on a failure, so the card went on offering "Maak
+    // een nieuw Smartschool account" for an account that existed, and pressing
+    // Toepassen again wrote `saveUser` a second time for the same uid. The
+    // error message pointed at the create, not at the placement.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+        schools: [wisaSchool(1)],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+    // `saveUser` succeeds; only the placement behind it comes apart on the
+    // wire. A refusal code would take the other branch — this is the one that
+    // used to escape.
+    harness.soap.throwFor = (String action) =>
+        action.endsWith('#saveUserToClass')
+            ? StateError('502 Bad Gateway')
+            : null;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+
+    final String id = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, id);
+    final int pullsBefore = harness.ssSyncs;
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Both creates are reported as done — the Smartschool one included, because
+    // the account it made is real.
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome),
+      everyElement(ActionOutcome.applied),
+      reason: 'the create is this action\'s success criterion (INV-41); a '
+          'best-effort placement may not fail it however it declines',
+    );
+    expect(find.textContaining('Mislukt —'), findsNothing);
+
+    // And the placement that did not happen is on screen, naming the class, so
+    // the swallowed exception is not a silent one — there is no log sink on
+    // that path.
+    expect(
+      find.textContaining('klasplaatsing in 3C is mislukt'),
+      findsWidgets,
+      reason: 'a bare "gelukt" for a write that half happened is the trip to '
+          'the log panel #272 exists to remove',
+    );
+    expect(find.textContaining('502 Bad Gateway'), findsWidgets,
+        reason: 'with the cause Smartschool gave, which decides what to do');
+    expect(
+      harness.controller.applyResults!
+          .expand((r) => r.warnings)
+          .where((w) => w.contains('3C')),
+      hasLength(1),
+    );
+    expect(
+      harness.log.entries.where((e) => e.isError).map((e) => e.message),
+      contains(contains('klasplaatsing in 3C is mislukt')),
+      reason: 'the pass an operator reconstructs later must carry it too',
+    );
+
+    // The account exists in Smartschool, so it exists in the snapshot: the
+    // create is not offered a second time, and the class move — this path's
+    // safety net — is what the card asks for instead.
+    await selectAccount(tester, id);
+    expect(
+      harness.controller.linked!.snapshot.accounts.single.smartschool,
+      isNotNull,
+      reason: 'a create reported as failed spliced nothing, and the card then '
+          'offered saveUser for the same uid all over again',
+    );
+    expect(
+      find.text('Wijzig de klas in Smartschool'),
+      findsOneWidget,
+      reason: 'the student really is in no class, so the move is the fix',
+    );
+    expect(
+      harness.soap.soapActions.where((a) => a.endsWith('#saveUser')),
+      hasLength(1),
+      reason: 'exactly one create went out for this student',
+    );
+    expect(harness.soap.movedToClasses, isEmpty,
+        reason: 'the placement never landed, so nothing may claim it did');
+    expect(harness.ssSyncs, pullsBefore,
+        reason: 'the card ran off the spliced snapshot, not a re-pull');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a WISA-only staff member is provisioned by one apply in Acties → '
       'Personeel (#240)', (WidgetTester tester) async {
     // The staff twin of the #230 student case, and the same two-pass friction:

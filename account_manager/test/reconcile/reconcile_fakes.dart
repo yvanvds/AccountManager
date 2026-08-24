@@ -69,6 +69,17 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// was saved" is not "it was saved for the right year".
   final List<String> savedClassSchoolYears = <String>[];
 
+  /// When set, a SOAP call whose action this answers with an error **throws**
+  /// instead of replying — the wire coming apart (a dropped connection, a
+  /// gateway error, XML that does not parse) rather than Smartschool returning
+  /// a refusal code (#343). Returning null lets the call answer normally.
+  ///
+  /// The distinction matters because the two take different branches: a
+  /// best-effort step reads a non-zero code and shrugs, while a throw unwinds
+  /// into whatever `try` encloses it — which is how a class placement used to
+  /// fail the create it followed.
+  Object? Function(String soapAction)? throwFor;
+
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
   static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
   static final RegExp _stamboekArg =
@@ -83,6 +94,11 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     required String envelope,
   }) async {
     soapActions.add(soapAction);
+    // Recorded first, then thrown: the call went out, it just never came back.
+    // The per-method lists below are "what this transport accepted", and a call
+    // that blew up accepted nothing.
+    final Object? failure = throwFor?.call(soapAction);
+    if (failure != null) throw failure;
     if (soapAction.contains('delClass')) {
       final match = _codeArg.firstMatch(envelope);
       if (match != null) deletedClasses.add(match.group(1)!);

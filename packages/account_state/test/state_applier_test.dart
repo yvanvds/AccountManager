@@ -24,7 +24,7 @@ const core.Address _addr = core.Address(
 // ---------------------------------------------------------------------------
 
 class _RecordingSoap implements ss.SmartschoolSoapTransport {
-  _RecordingSoap({this.resultCode = 0, this.resultFor});
+  _RecordingSoap({this.resultCode = 0, this.resultFor, this.throwFor});
 
   final List<String> soapActions = [];
 
@@ -42,6 +42,13 @@ class _RecordingSoap implements ss.SmartschoolSoapTransport {
   /// can. Returning null falls back to [resultCode].
   final int? Function(String soapAction)? resultFor;
 
+  /// Per-call **throw**, keyed on the SOAP action: returns the error one call
+  /// should blow up with, or null to answer normally (#343). A result code is
+  /// Smartschool refusing; this is the wire coming apart, which is the failure
+  /// shape that used to escape the create's best-effort placement step and take
+  /// the whole create down with it.
+  final Object? Function(String soapAction)? throwFor;
+
   @override
   Future<String> send({
     required Uri endpoint,
@@ -50,6 +57,9 @@ class _RecordingSoap implements ss.SmartschoolSoapTransport {
   }) async {
     soapActions.add(soapAction);
     envelopes.add(envelope);
+    // Recorded first: the call went out, it just never came back.
+    final failure = throwFor?.call(soapAction);
+    if (failure != null) throw failure;
     final code = resultFor?.call(soapAction) ?? resultCode;
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '
@@ -345,9 +355,11 @@ class _Harness {
     az.AzureSnapshot? azure,
     int soapResultCode = 0,
     int? Function(String soapAction)? soapResultFor,
+    Object? Function(String soapAction)? soapThrowFor,
   }) : soap = _RecordingSoap(
           resultCode: soapResultCode,
           resultFor: soapResultFor,
+          throwFor: soapThrowFor,
         ) {
     final ssSnap = smartschool ?? _sSnap();
     final azSnap = azure ?? _aSnap();
@@ -600,7 +612,10 @@ void main() {
     /// New intake: Jan is in WISA (class `3A`) and already has his Office 365
     /// account, so `AddStudentToSmartschool` is the one action the card raises.
     /// Smartschool knows the class but nobody sits in it yet.
-    _Harness intake({int? Function(String soapAction)? soapResultFor}) =>
+    _Harness intake({
+      int? Function(String soapAction)? soapResultFor,
+      Object? Function(String soapAction)? soapThrowFor,
+    }) =>
         _Harness(
           wisa: _wSnap(
             students: [_wStudent(wisaId: 'W1')],
@@ -609,6 +624,7 @@ void main() {
           smartschool: _sSnap(groups: [_ssClass('3A', code: '3A_ss')]),
           azure: _aSnap(users: [_azUser()]),
           soapResultFor: soapResultFor,
+          soapThrowFor: soapThrowFor,
         );
 
     AddStudentToSmartschool createOf(LinkedState linked) =>
@@ -678,6 +694,51 @@ void main() {
         hasLength(1),
         reason: 'the student really is in no class, so the move is the fix',
       );
+    });
+
+    test(
+        'a placement that threw is spliced in anyway, with the move standing '
+        '(#343)', () async {
+      // The whole point of #343 at this layer. A `moveUserToClass` that threw
+      // used to make the create report `failed`, so `_refresh` spliced nothing:
+      // the account existed in Smartschool but not in the snapshot, the card
+      // kept offering "Maak een nieuw Smartschool account", and applying it
+      // again wrote `saveUser` a second time for the same uid.
+      final harness = intake(
+        soapThrowFor: (a) => a.endsWith('#saveUserToClass')
+            ? StateError('connection closed')
+            : null,
+      );
+      final before = await harness.applier.link();
+
+      final applied = await harness.applier.applyStudent(createOf(before));
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.refreshed, isTrue,
+          reason: 'the create landed, so the snapshot must learn about it');
+      expect(
+        harness.app.smartschool.snapshot!.accounts.map((a) => a.uid),
+        contains('jan.peeters'),
+      );
+      expect(harness.app.smartschool.snapshot!.memberships, isEmpty,
+          reason: 'nothing was seated, so nothing may be claimed');
+      expect(
+        applied.linked!.studentActions.whereType<AddStudentToSmartschool>(),
+        isEmpty,
+        reason: 'the account exists; offering the create again would write '
+            'saveUser twice for the same uid',
+      );
+      expect(
+        applied.linked!.studentActions.whereType<MoveToSmartschoolClassGroup>(),
+        hasLength(1),
+        reason: 'the placement is what failed, so the move is what is left',
+      );
+      expect(applied.result.warnings, hasLength(1),
+          reason: 'and the swallowed cause must not vanish — there is no log '
+              'sink on that path');
+      expect(applied.result.warnings.single, contains('3A'));
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the incremental refresh must not hit the network');
     });
   });
 

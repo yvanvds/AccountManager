@@ -66,6 +66,7 @@ class ActionOutcomeEntry {
     required this.changes,
     required this.outcome,
     this.error,
+    this.warnings = const <String>[],
     this.family = '',
     this.targetId = '',
     this.situationId = '',
@@ -81,6 +82,17 @@ class ActionOutcomeEntry {
 
   /// The failure cause when [outcome] is [actions.ActionOutcome.failed].
   final Object? error;
+
+  /// What went wrong *inside* an action that nonetheless finished (#343) — the
+  /// action's own [actions.ActionResult.warnings], already worded for the
+  /// operator.
+  ///
+  /// A best-effort step that fails may not fail the action around it (INV-41),
+  /// which is right and also how a half-done write becomes a plain "gelukt"
+  /// line. A student whose Smartschool account was created but whose class
+  /// placement blew up is exactly that case: the pass succeeded, the operator
+  /// still needs to know the class was not written. Empty for nearly every row.
+  final List<String> warnings;
 
   /// Which family the [PendingAccountEntry] this row came from belongs to —
   /// `student`, `staff` or `group` (#272).
@@ -3205,6 +3217,14 @@ class ReconcileController extends ChangeNotifier {
     } else {
       log.addMessage(core.Origin.all, '$target — ${changes.summary}');
     }
+    // A warning belongs to an action that *finished* (#343), so it never
+    // replaces the line above — it is added to it. As an error line, because it
+    // reports a write that did not happen: the Log panel is where an operator
+    // goes back to reconstruct a pass, and a swallowed best-effort failure that
+    // only ever reads as ordinary text is the silence #343 is about.
+    for (final warning in result.warnings) {
+      log.addError(changes.system, '$target — $warning');
+    }
     return ActionOutcomeEntry(
       target: target,
       family: option.family,
@@ -3213,6 +3233,7 @@ class ReconcileController extends ChangeNotifier {
       changes: changes,
       outcome: result.outcome,
       error: result.error,
+      warnings: result.warnings,
     );
   }
 

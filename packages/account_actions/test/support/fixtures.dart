@@ -513,7 +513,21 @@ class RecordingSmartschoolTransport implements ss.SmartschoolSoapTransport {
   /// `saveAccount` ok but `saveUserToClass` failing).
   final int? Function(String soapAction)? resultFor;
 
-  RecordingSmartschoolTransport({this.resultCode = 0, this.resultFor});
+  /// Optional per-call override that makes a call **throw** instead of
+  /// answering at all: given a `SOAPAction` header, returns the error to throw,
+  /// or null to answer normally (#343).
+  ///
+  /// A result code models Smartschool saying "no"; this models the wire coming
+  /// apart — a dropped connection, a gateway error, XML that does not parse.
+  /// The two take different branches in the caller, and only this one used to
+  /// escape a best-effort step and fail the action around it.
+  final Object? Function(String soapAction)? throwFor;
+
+  RecordingSmartschoolTransport({
+    this.resultCode = 0,
+    this.resultFor,
+    this.throwFor,
+  });
 
   bool calledMethod(String method) =>
       soapActions.any((a) => a.contains(method));
@@ -526,6 +540,10 @@ class RecordingSmartschoolTransport implements ss.SmartschoolSoapTransport {
   }) async {
     soapActions.add(soapAction);
     envelopes.add(envelope);
+    // Recorded first: the call went out, it just never came back — a test must
+    // still be able to assert that the write was attempted.
+    final failure = throwFor?.call(soapAction);
+    if (failure != null) throw failure;
     final code = resultFor?.call(soapAction) ?? resultCode;
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<soap:Envelope '

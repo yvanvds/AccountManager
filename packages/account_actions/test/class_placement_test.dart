@@ -479,6 +479,100 @@ void main() {
       // believe in a membership that does not exist and suppress the
       // `MoveToSmartschoolClassGroup` that is this path's only safety net.
       expect(result.movedToClass, isNull);
+      expect(result.warnings, isEmpty,
+          reason:
+              'a refused move is an ordinary answer, not a surprise (#343)');
+    });
+
+    test('a placement that throws does not fail the create either (#343)',
+        () async {
+      // The hole #342 left. `moveUserToClass` returning false was tolerated,
+      // but a *throw* — a dropped connection, a gateway error, unreadable XML
+      // — was caught by the create's own `catch` and reported as a failed
+      // create, for an account `saveAccount` had already made. INV-41 says the
+      // create is this action's success criterion, and it does not care how the
+      // best-effort step declined.
+      final transport = RecordingSmartschoolTransport(
+        throwFor: (action) => action.contains('saveUserToClass')
+            ? StateError('connection closed')
+            : null,
+      );
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+
+      final result = await add(
+        placement: classPlacement(tree: [ssGroup(code: '3A', name: '3A')]),
+      ).apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.smartschool, isNotNull,
+          reason: 'the record must reach the State layer, or the card goes on '
+              'offering a create for an account that already exists');
+      expect(result.error, isNull);
+      expect(transport.calledMethod('saveUserToClass'), isTrue);
+      expect(result.movedToClass, isNull,
+          reason: 'a placement that threw wrote nothing we may claim');
+    });
+
+    test('a placement that throws says so instead of vanishing (#343)',
+        () async {
+      // There is no log sink on this path, so swallowing the exception without
+      // handing the cause back would trade a wrong failure for a silent one:
+      // the operator would read "gelukt" for a student who is in no class.
+      final transport = RecordingSmartschoolTransport(
+        throwFor: (action) => action.contains('saveUserToClass')
+            ? StateError('502 Bad Gateway')
+            : null,
+      );
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+
+      final result = await add(
+        placement: classPlacement(tree: [ssGroup(code: '3A', name: '3A')]),
+      ).apply(connectors, const ApplyOptions());
+
+      expect(result.warnings, hasLength(1));
+      expect(result.warnings.single, contains('3A'),
+          reason: 'the class that was not written is half the message');
+      expect(result.warnings.single, contains('502 Bad Gateway'),
+          reason: 'and the cause Smartschool gave is the other half');
+    });
+
+    test('a placement that lands quietly warns about nothing (#343)', () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+
+      final result = await add(
+        placement: classPlacement(tree: [ssGroup(code: '3A', name: '3A')]),
+      ).apply(connectors, const ApplyOptions());
+      expect(result.movedToClass?.id.value, '3A');
+      expect(result.warnings, isEmpty);
+    });
+
+    test('a create whose own saveUser throws still fails (#343)', () async {
+      // The guard is around the placement call only. The create itself is this
+      // action's success criterion, so a `saveAccount` that throws must still
+      // produce a failed outcome — otherwise #343 would have turned a real
+      // failure into a warning nobody acts on.
+      final transport = RecordingSmartschoolTransport(
+        throwFor: (action) =>
+            action.contains('saveUser') && !action.contains('saveUserToClass')
+                ? StateError('connection closed')
+                : null,
+      );
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+
+      final result = await add(
+        placement: classPlacement(tree: [ssGroup(code: '3A', name: '3A')]),
+      ).apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.error, isNotNull);
+      expect(result.warnings, isEmpty);
+      expect(transport.calledMethod('saveUserToClass'), isFalse,
+          reason: 'no placement follows a create that did not happen');
     });
   });
 }

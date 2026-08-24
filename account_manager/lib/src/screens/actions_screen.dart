@@ -1616,6 +1616,12 @@ class _ResultSection extends StatelessWidget {
 
 /// One outcome row of a dry-run/apply pass: the check/cross plus the target and
 /// its change summary (or the failure cause).
+///
+/// A row can also be *marked* without having failed (#343): an action with a
+/// best-effort step — the Smartschool create that also places its student — is
+/// applied even when that step blew up, and this is the pass list the whole
+/// September intake cohort is read back from, so the half that did not land is
+/// spelled out here rather than left to the log panel.
 class _ResultRow extends StatelessWidget {
   const _ResultRow({required this.result});
 
@@ -1626,6 +1632,8 @@ class _ResultRow extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
     final failed = result.outcome == actions.ActionOutcome.failed;
+    final List<String> warnings = result.warnings;
+    final bool warned = !failed && warnings.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
@@ -1633,18 +1641,32 @@ class _ResultRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Icon(
-            failed ? Icons.close : Icons.check,
+            switch ((failed, warned)) {
+              (true, _) => Icons.close,
+              (false, true) => Icons.warning_amber_outlined,
+              (false, false) => Icons.check,
+            },
             size: 16,
-            color: failed ? colors.error : colors.primary,
+            color: failed || warned ? colors.error : colors.primary,
           ),
           const SizedBox(width: PlinkSpacing.s2),
           Expanded(
-            child: Text(
-              failed
-                  ? '${result.target} — ${result.changes.summary}: '
-                      '${result.error}'
-                  : '${result.target} — ${result.changes.summary}',
-              style: text.bodySmall,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  failed
+                      ? '${result.target} — ${result.changes.summary}: '
+                          '${result.error}'
+                      : '${result.target} — ${result.changes.summary}',
+                  style: text.bodySmall,
+                ),
+                for (final warning in warnings)
+                  Text(
+                    warning,
+                    style: text.bodySmall?.copyWith(color: colors.error),
+                  ),
+              ],
             ),
           ),
         ],
