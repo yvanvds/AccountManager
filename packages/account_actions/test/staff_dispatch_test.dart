@@ -512,13 +512,40 @@ void main() {
     test('a longer school code that merely contains our prefix is not ours',
         () {
       // The write side matches list *items*, unlike the substring test the read
-      // side uses. `SSMB` is somebody else's school; striking it would be the
+      // side uses. `SSMB` is somebody else's school: striking it would be the
       // #237 bug committed a second time, and deleting the account on the
-      // strength of it would be worse.
+      // strength of it would be worse. So neither fires — the list carries no
+      // claim of ours, and there is nothing here to release or remove.
       final actions = staffActionsFor(departed('SSMB'), cfg);
-      final release = actions.whereType<ReleaseStaffFromAzureSchool>().single;
+      expect(actions.whereType<ReleaseStaffFromAzureSchool>(), isEmpty);
       expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty);
-      expect(release.describeChanges().fields.single.after, 'SSMB');
+    });
+
+    test('a department naming nobody but another school is left alone', () {
+      // Same rule stated on the ordinary shape: the account is not ours, so the
+      // departure has nothing to say about it.
+      final actions = staffActionsFor(departed('GBS'), cfg);
+      expect(actions.whereType<ReleaseStaffFromAzureSchool>(), isEmpty);
+      expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty);
+    });
+
+    test('WISA still placing her somewhere in the group forbids the delete',
+        () {
+      // The #340 loss, from the other side. `department` is neither ours to
+      // write nor guaranteed current, so a teacher who moved to a sibling school
+      // may still be listed under our prefix alone. Deleting on the list alone
+      // would destroy the account of somebody WISA can see is still employed.
+      final moved = linkedStaff(
+        wisa: wisaStaff(),
+        smartschool: ssStaff(),
+        azure: azureStaff(department: 'SSM'),
+        wisaPresence: WisaPresence.groupOnly,
+      );
+      final actions = staffActionsFor(moved, cfg);
+      expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty);
+      // Our claim is struck instead, and the account stands.
+      final release = actions.whereType<ReleaseStaffFromAzureSchool>().single;
+      expect(release.describeChanges().fields.single.after, '');
     });
 
     test('the release keeps every other entry verbatim, in order', () {

@@ -662,30 +662,50 @@ class RemoveStaffFromSmartschool extends StaffAction {
   }
 }
 
-/// The other group schools that still claim a departed staff member, read from
-/// the Azure `department` list (#349).
+/// What the two Azure departure actions split on (#349): who, besides us, still
+/// has a claim on a departed staff member's Office 365 account.
 ///
-/// The **only** signal the two Azure departure actions split on, and never WISA
-/// presence — which is a trap here rather than a shortcut. A
-/// [wapi.DontImportUserFromWisa] rule is keyed on the staff code and applied at
-/// snapshot construction, so it drops the member from *every* group school's
-/// rows at once; after one has been written, [LinkedStaff.hasLeftGroup] reads
-/// true even for a teacher genuinely still employed at a sibling school, and
-/// deleting on that signal would destroy the sibling's account. This list is
-/// then the only thing that still remembers them.
+/// **Both sources are asked, and neither is sufficient alone.**
 ///
-/// A blank or absent `department` yields an empty list, which reads as "no other
-/// school claims them" and therefore permits the delete. That is deliberate: it
-/// is the pre-#349 behaviour for an Azure-only leftover, whose `department` says
-/// nothing precisely because nobody has maintained it.
+/// - `department` — the comma list other software maintains — is the only thing
+///   that survives a [wapi.DontImportUserFromWisa] rule. The rule is keyed on
+///   the staff code and applied at snapshot construction, so it drops the member
+///   from *every* group school's rows at once: after one has been written,
+///   [LinkedStaff.hasLeftGroup] reads true even for a teacher a sibling school
+///   genuinely still employs. Deleting on WISA presence alone would destroy that
+///   school's account.
+/// - [LinkedStaff.hasLeftGroup] is the only thing that catches the *opposite*
+///   error. `department` is neither ours to write nor guaranteed current
+///   (#237), so a teacher who moved to a sibling school last term may still be
+///   listed under our prefix alone — and deleting on the list alone would then
+///   destroy the account of somebody WISA can see is still employed by the
+///   group. That is exactly the loss #340 kept the group-wide staff pull for.
+///
+/// So an account may be deleted only when **nothing** claims it: WISA has no row
+/// for the person anywhere in the group, and the list names no school but ours.
+/// Anything less is a release — our entry struck out, the account left standing.
 extension _DepartedSchools on StaffAction {
+  /// The other group schools the `department` list names.
   List<String> get _otherSchools =>
       departmentSchoolsExcept(_az.department, config.schoolPrefix);
+
+  /// Whether the list still names *us*, i.e. whether there is a claim of ours
+  /// left to strike. False for a blank or absent `department`, which nobody has
+  /// maintained and which a release could only rewrite to itself.
+  bool get _weStillClaim =>
+      departmentSchools(_az.department).length != _otherSchools.length;
+
+  /// Whether the account is ours alone — nobody else in the group has a claim on
+  /// it, by either signal — and may therefore be deleted rather than released.
+  bool get _accountIsOursAlone => staff.hasLeftGroup && _otherSchools.isEmpty;
 }
 
 /// Release a departed staff member from **our** school by striking our prefix
 /// out of the Azure `department` list, leaving the account itself alone (#349).
-/// Fires when at least one other group school still claims them.
+/// Fires whenever the list still carries a claim of ours and the account is not
+/// ours alone to delete — see [_DepartedSchools]. Striking our only entry leaves
+/// the field empty, which is the correct statement about an account no school of
+/// ours has a claim on any more.
 ///
 /// **The one edit to `department` we are entitled to make.** #237 removed
 /// `ModifyStaffAzureSchool` because it *rewrote* the field — it fired for every
@@ -705,9 +725,15 @@ extension _DepartedSchools on StaffAction {
 class ReleaseStaffFromAzureSchool extends StaffAction {
   const ReleaseStaffFromAzureSchool(super.staff, super.config);
 
+  /// Fires whenever there is a claim of ours to strike and the account is not
+  /// ours alone — the complement of [RemoveStaffFromAzure], so exactly one of
+  /// the two is ever offered.
   @override
   bool evaluate() =>
-      staff.hasLeftOurSchool && staff.azure != null && _otherSchools.isNotEmpty;
+      staff.hasLeftOurSchool &&
+      staff.azure != null &&
+      _weStillClaim &&
+      !_accountIsOursAlone;
 
   /// Never in bulk: a departure is read and recognised one name at a time
   /// (#349). See [RetireStaffMember].
@@ -772,15 +798,15 @@ class ReleaseStaffFromAzureSchool extends StaffAction {
 /// sibling schools: a teacher the group still employs elsewhere could reach it
 /// through their Smartschool account being removed first. It now asks the two
 /// questions that actually matter — have they left *us*
-/// ([LinkedStaff.hasLeftOurSchool]), and does anybody else still claim them
-/// ([_DepartedSchools._otherSchools]) — and defers to
-/// [ReleaseStaffFromAzureSchool] whenever somebody does.
+/// ([LinkedStaff.hasLeftOurSchool]), and is the account ours alone
+/// ([_DepartedSchools._accountIsOursAlone]) — and defers to
+/// [ReleaseStaffFromAzureSchool] whenever anybody else has a claim.
 class RemoveStaffFromAzure extends StaffAction {
   const RemoveStaffFromAzure(super.staff, super.config);
 
   @override
   bool evaluate() =>
-      staff.hasLeftOurSchool && staff.azure != null && _otherSchools.isEmpty;
+      staff.hasLeftOurSchool && staff.azure != null && _accountIsOursAlone;
 
   /// Never in bulk (#349) — and this one deletes.
   @override
