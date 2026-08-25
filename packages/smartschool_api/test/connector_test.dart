@@ -386,6 +386,96 @@ void main() {
         isNot(contains(contains('matched no Smartschool group'))),
       );
     });
+
+    test('scopes the walk to the configured roots (#351)', () async {
+      // The fixture tree is School -> [1A, 1B, Sport]. Scoping to `1A` and
+      // `Sport` stands in for the real one (Leerlingen + Personeel, with a
+      // beheerders subtree beside them): the excluded subtree contributes no
+      // group, no account, no membership — and costs no SOAP call, which is
+      // the point. `miek` sits only in 1B and never arrives.
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      final snap =
+          await _connector(t, log: log).sync(roots: const ['1A', 'Sport']);
+
+      expect(snap.groups.map((g) => g.id.value), ['C1A', 'GSPORT']);
+      expect(
+          snap.accounts.map((a) => a.uid).toList()..sort(), ['jand', 'saral']);
+      expect(
+        snap.memberships.map((m) => m.groupId.value).toSet(),
+        {'C1A', 'GSPORT'},
+      );
+
+      final codes = t.calls
+          .where((c) => c.method == SmartschoolMethod.getAllAccountsExtended)
+          .map((c) => c.args['code'])
+          .toList();
+      expect(codes, ['C1A', 'GSPORT']);
+      expect(codes, isNot(contains('SCH')));
+      expect(codes, isNot(contains('C1B')));
+
+      expect(
+          log.messages, contains('De ophaalbeurt is beperkt tot: 1A, Sport.'));
+    });
+
+    test('matches a root however the operator spelled it (#351)', () async {
+      final t = _FakeTransport();
+      final snap = await _connector(t).sync(roots: const [' sport ']);
+      expect(snap.groups.map((g) => g.id.value), ['GSPORT']);
+    });
+
+    test('no roots configured walks the whole forest, as before (#351)',
+        () async {
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      final snap = await _connector(t, log: log).sync(roots: const []);
+      expect(
+        snap.groups.map((g) => g.id.value),
+        ['SCH', 'C1A', 'C1B', 'GSPORT'],
+      );
+      expect(log.errors, isEmpty);
+      expect(log.messages, isNot(contains(contains('beperkt tot'))));
+    });
+
+    test('a root that matches nothing pulls the whole tree and says so (#351)',
+        () async {
+      // The fail-safe, and the half that must never be silent: scoping to
+      // whatever matched would empty a whole population out of the snapshot,
+      // where "absent" reads as *departed* and the #349 departure family acts
+      // on it. Pulling everything is at worst what the connector did before.
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      final snap = await _connector(t, log: log).sync(
+        roots: const ['1A', 'Personeel'],
+      );
+      expect(
+        snap.groups.map((g) => g.id.value),
+        ['SCH', 'C1A', 'C1B', 'GSPORT'],
+      );
+      expect(
+        log.errors,
+        contains(
+          'Hoofdgroep "Personeel" komt met geen enkele Smartschool-groep '
+          'overeen — de volledige groepsboom wordt opgehaald. Controleer de '
+          'hoofdgroepen bij Instellingen.',
+        ),
+      );
+      // Only the missing one is named; the root that did match is not.
+      expect(log.errors.where((e) => e.startsWith('Hoofdgroep')), hasLength(1));
+    });
+
+    test('roots are applied after the import rules (#351)', () async {
+      // A discarded root is gone by the time the scope is resolved, so the
+      // pull is unscoped rather than scoped to the survivors.
+      final t = _FakeTransport();
+      final log = _RecordingLog();
+      final snap = await _connector(t, log: log).sync(
+        rules: const [DiscardSmartschoolGroup('Sport')],
+        roots: const ['1A', 'Sport'],
+      );
+      expect(snap.groups.map((g) => g.id.value), ['SCH', 'C1A', 'C1B']);
+      expect(log.errors, contains(contains('Hoofdgroep "Sport"')));
+    });
   });
 
   group('saveAccount', () {

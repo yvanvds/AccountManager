@@ -48,7 +48,8 @@ import 'package:account_state/account_state.dart'
         WisaSchoolProfile,
         WisaSchoolProfileLabel,
         WorkDateSetting,
-        signalRRecordSeparator;
+        signalRRecordSeparator,
+        staffPartition;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
@@ -8210,6 +8211,187 @@ void main() {
   });
 
   testWidgets(
+      'the Smartschool pull is scoped to the roots Instellingen names, so a '
+      'beheerder account never becomes a staff record (#351)',
+      (WidgetTester tester) async {
+    // As reported on the live platform: several staff members keep a second,
+    // admin-featured Smartschool account that shares the mail of their normal
+    // one. That is intended and must stay — but the pull walked the *whole*
+    // group forest and asked every node for its accounts, so the admin account
+    // came in too. The student/staff split happens far downstream, in the
+    // linker, on `Basisrol` alone, at which point it is indistinguishable from
+    // a real staff member: it became a `LinkedStaff` of its own, took the
+    // Office 365 user off the real record by mail (so Anna was offered "Maak
+    // een nieuw Office 365 account" for an account that plainly exists), and —
+    // having no WISA counterpart — read as *departed*, which since #349 offers
+    // to delete the very Azure account it had just captured.
+    //
+    // Only a full run puts that on screen. The pull, the link, the dispatch and
+    // two screens are all involved, and so is the second half of the change:
+    // scoping drops out-of-root groups from the snapshot, so the official class
+    // sitting under Beheerders no longer seeds a Klasgroepen orphan (#52/#225).
+    useTallWindow(tester);
+    // A tenant tree with the two managed roots and a third beside them. The
+    // beheerders subtree comes *first*, which is what put its account ahead of
+    // the real one in snapshot order and let it claim the shared mail.
+    const String tree = '<groups>'
+        '<group><name>School</name><type>G</type><code>SCH</code>'
+        '<visible>1</visible><children>'
+        '<group><name>Beheerders</name><type>G</type><code>BEH</code>'
+        '<visible>1</visible><children>'
+        '<group><name>9Z</name><type>K</type><code>C9Z</code>'
+        '<visible>1</visible><isOfficial>1</isOfficial></group>'
+        '</children></group>'
+        '<group><name>Leerlingen</name><type>G</type><code>LLN</code>'
+        '<visible>1</visible><children>'
+        '<group><name>1A</name><type>K</type><code>C1A</code>'
+        '<visible>1</visible><isOfficial>1</isOfficial></group>'
+        '</children></group>'
+        '<group><name>Personeel</name><type>G</type><code>PERS</code>'
+        '<visible>1</visible></group>'
+        '</children></group></groups>';
+    final wire = GroupTreeSoap(
+      tree: tree,
+      accounts: <String, String>{
+        // Anna's real account: the WISA staff code as internal number, her
+        // zero-padded wisaId in `fax`, in step with WISA and Azure.
+        'PERS': '[{"voornaam":"Anna","naam":"Smit",'
+            '"gebruikersnaam":"anna.smit","internnummer":"SMIT",'
+            '"status":"actief","basisrol":"13","geslacht":"f",'
+            '"emailadres":"anna.smit@school.example","fax":"0042",'
+            '"stamboeknummer":"0",'
+            '"groups":[{"id":"201","code":"PERS","name":"Personeel"}]}]',
+        // Her admin account: same mail, no WISA counterpart, a teacher
+        // Basisrol like every beheerder here carries.
+        'BEH': '[{"voornaam":"Anna","naam":"Smit (beheer)",'
+            '"gebruikersnaam":"anna.smit.admin","internnummer":"SMITADM",'
+            '"status":"actief","basisrol":"13","geslacht":"f",'
+            '"emailadres":"anna.smit@school.example","fax":"",'
+            '"stamboeknummer":"0",'
+            '"groups":[{"id":"301","code":"BEH","name":"Beheerders"}]}]',
+      },
+    );
+    // One LiveSettings for both bootstraps, exactly as `main()` wires them, so
+    // what Instellingen saves is what the next pull is scoped by (#238/#246).
+    final live = LiveSettings();
+    final harness = ReconcileHarness(
+      smartschoolTransport: wire,
+      liveSettings: live,
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: const [],
+        staff: [wisaStaff()],
+        schools: [wisaSchool(1)],
+      ),
+      // Her Office 365 account, `department` naming our school and ours alone —
+      // the shape that makes the departure branch offer to delete it outright.
+      azure: azSnap(users: [azStaffUser(department: 'GBS')]),
+    );
+    final settings = SettingsHarness(liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // The operator opens Instellingen and finds the roots already named — the
+    // document says what the pull is scoped to rather than leaving an empty box
+    // that would mean "everything".
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+    final Finder roots = find.byKey(const ValueKey('settings-ss-roots'));
+    await tester.ensureVisible(roots);
+    expect(tester.widget<TextField>(roots).controller!.text,
+        'Leerlingen, Personeel');
+
+    // They retype them the way anyone types a list, and it still names the same
+    // two groups: the roots are matched on the normalized name (#241), not raw.
+    await tester.enterText(roots, 'leerlingen,  personeel ');
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).smartschoolRoots,
+        <String>['leerlingen', 'personeel']);
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pull visited the two roots and nothing else — and never even asked
+    // Smartschool about the beheerders subtree, which is a SOAP call per node
+    // saved as well as an account kept out.
+    expect(
+      harness.app.smartschool.snapshot?.groups.map((g) => g.id.value).toList(),
+      <String>['LLN', 'C1A', 'PERS'],
+    );
+    expect(wire.accountCodes, <String>['LLN', 'C1A', 'PERS']);
+    expect(
+      harness.app.smartschool.snapshot?.accounts.map((a) => a.uid).toList(),
+      <String>['anna.smit'],
+    );
+    // …and the pass says so, so a scoped pull is never a silently short one.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains('De ophaalbeurt is beperkt tot: Leerlingen, Personeel.'),
+    );
+
+    // One staff record, holding all three systems: the Office 365 user is on
+    // the real account, because nothing else was there to claim it by mail.
+    final staff = harness.controller.linked!.snapshot.staff;
+    expect(staff, hasLength(1));
+    expect(staff.single.smartschool?.uid, 'anna.smit');
+    expect(staff.single.wisa, isNotNull);
+    expect(staff.single.azure?.id, 'az-staff');
+
+    // Nothing anywhere in the pass proposes the four things the phantom record
+    // used to: two Smartschool removals aimed at a live, wanted admin account,
+    // the Azure delete aimed at a real staff member's account, and the create
+    // that fired on the real record once its Azure user had been taken.
+    final kinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toSet();
+    expect(kinds, isNot(contains('RemoveStaffFromAzure')));
+    expect(kinds, isNot(contains('RemoveStaffFromSmartschool')));
+    expect(kinds, isNot(contains('DeactivateStaffInSmartschool')));
+    expect(kinds, isNot(contains('AddStaffToAzure')));
+
+    // And that is what the operator sees on the tab they reported this from.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final Finder toggle =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.textContaining('beheer'), findsNothing,
+        reason: 'the admin account is no longer a person on this list');
+    expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
+        reason: 'her account exists — it was simply attached to the wrong '
+            'record');
+    expect(find.text('Verwijder Azure account'), findsNothing);
+
+    // The second half of the change: an out-of-root group is gone from the
+    // snapshot, so the official class under Beheerders no longer reads as a
+    // Smartschool class WISA has never heard of. The in-root one still does —
+    // scoping narrows what we look at, it does not blunt what we find there.
+    await openKlasgroepen(tester);
+    expect(find.byKey(const ValueKey('class-row-1A')), findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-9Z')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a werkdatum saved in Instellingen reaches the very next Synchroniseer, '
       'and Check for drift refuses until it has (#238)',
       (WidgetTester tester) async {
@@ -9936,6 +10118,97 @@ void main() {
     // create side of the #248 choice it shares with the WISA opt-out.
     expect(find.text('Kies één oplossing:'), findsOneWidget);
     expect(find.text('Maak een nieuw Smartschool account'), findsOneWidget);
+  });
+
+  testWidgets(
+      "an admin co-account does not take the staff member's Office 365 "
+      'account away from her (#354)', (WidgetTester tester) async {
+    // The pair INV-23 keeps, in its staff shape: Anna Smit has an admin account
+    // next to her normal one, and it carries her mail. Both records claim that
+    // mail, so the Azure user's UPN points at the pair rather than at one
+    // record, and the linker took the first with a free slot — snapshot order,
+    // with the admin account first. Because a mail target was found, the strong
+    // `employeeId ≡ wisaId` bridge never ran.
+    //
+    // Only the whole app shows what that costs: her real record then looks
+    // Azure-less, so Acties → Personeel offers to *create* the Office 365
+    // account she already has — the same silent duplicate #231 is about,
+    // reached from an entirely ordinary pair of accounts.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          // The admin account: her mail, no WISA counterpart, and first in the
+          // snapshot. Named apart so the two cards are distinguishable.
+          ssStaffAccount(
+            uid: 'anna.smit-beheer',
+            accountId: 'SMITADM',
+            surname: 'Smit-beheer',
+          ),
+          ssStaffAccount(),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azStaffUser()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The Azure user sits on the WISA-anchored record — the one whose
+    // `accountId` is her staff code and whose `wisaId` is the Azure
+    // `employeeId` — not on the admin account that merely shares her mail.
+    final staff = harness.controller.linked!.snapshot.staff;
+    final anna = staff.singleWhere((s) => s.wisa != null);
+    expect(anna.smartschool?.uid, 'anna.smit');
+    expect(anna.azure?.id, 'az-staff');
+    expect(
+      staff.singleWhere((s) => s.wisa == null).azure,
+      isNull,
+      reason: 'the admin co-account has no Azure account of its own',
+    );
+    // Both accounts are still kept and the mail collision is still reported —
+    // INV-13/INV-23 are untouched; only the attachment moved.
+    expect(staff.map((s) => s.smartschool?.uid),
+        <String?>['anna.smit-beheer', 'anna.smit']);
+    expect(
+      find.byKey(const ValueKey('dup-warning-anna.smit@school.example')),
+      findsOneWidget,
+    );
+
+    // Nowhere in the pass is an Azure account proposed for her.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((a) => a.kind),
+      isNot(contains('AddStaffToAzure')),
+    );
+
+    // And that is what the operator reads on Acties → Personeel: her three
+    // systems agree, so she has no card there at all. Before the fix she had
+    // one, offering the Office 365 account she was holding all along.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(ValueKey('account-row-${anna.id.value}')), findsNothing,
+        reason: 'nothing is pending for her — all three systems agree');
+    expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
+        reason: 'she already has one — creating another duplicates it');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -11835,6 +12108,109 @@ void main() {
     expect(harness.controller.linked!.snapshot.staff, isEmpty);
     expect(harness.controller.staffPendingCount, 0,
         reason: 'nothing is proposed to re-create her');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Office 365 cell of a staff card names the schools its Azure '
+      'department lists, and a session that never pulled reads the same list '
+      '(#352)', (WidgetTester tester) async {
+    // The reading that makes the "uit dienst" decision above legible. The two
+    // Office 365 halves of a departure are mutually exclusive by construction
+    // and this one field is the whole discriminator: with a sibling school still
+    // in the list Anna's account is *released*, with ours alone it is *deleted*.
+    // Until now the app decided on a field the operator could not see anywhere.
+    //
+    // Only a full run shows it works. The list has to survive the whole pipeline
+    // — the linker (whose `LinkedStaff.azure` is the narrow interface and
+    // carries no `department` at all), the materializer, the document, the
+    // shared store, a second session's adoption, and the card — and land in the
+    // one cell it explains. A widget test renders the pane over a document
+    // handed to it; it cannot show that the document ever carries this.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+
+    // Operator A pulls: Anna is in step in all three systems, and `department`
+    // names our school second beside a sibling group school — the ordinary
+    // state, not an edge case (#268).
+    await ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azStaffUser(department: 'SSM,GBS')]),
+      store: snapshots,
+      linkedStore: linkedStore,
+      syncedBy: 'jan@school.example',
+    ).controller.sync();
+
+    // It is on the stored document, which is what makes the rest of this
+    // possible: the transient record it was read off does not outlive the pass.
+    final List<MaterializedAccount> stored = await linkedStore.readClassroom(
+      school: staffPartition,
+      classroom: 'Personeel',
+    );
+    expect(stored.single.departmentSchools, ['SSM', 'GBS']);
+
+    // Operator B launches the real app onto the shared stores and never pulls.
+    final operatorB = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: operatorB.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+
+    // She is in step everywhere, so she sits behind the work-list filter.
+    final Finder toggle =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    final String anna = accountId(operatorB, 'Anna Smit');
+    await selectAccount(tester, anna);
+
+    // Under the Office 365 tag, in the field's own order and casing, with our
+    // own prefix left in: "ours alone" is the state that makes a deletion safe,
+    // so it is exactly the one worth confirming on screen.
+    const String line = 'Scholen: SSM, GBS';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$anna-azure')),
+        matching: find.text(line),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(line), findsOneWidget,
+        reason: 'the details pane only — an extra line per collapsed card on a '
+            'Personeel roster is noise, and the two share one widget');
+
+    // Read by an operator who pulled nothing: no connector round-trip anywhere
+    // in this session, and the shared view untouched.
+    expect(operatorB.wisaSyncs, 0);
+    expect(operatorB.ssSyncs, 0);
+    expect(operatorB.azSyncs, 0);
+    // And it stays a reading: `department` is maintained by other software and
+    // is not ours to write (#237), so nothing in the pass proposes touching it.
+    expect(
+      operatorB.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .expand((a) => a.changes.fields)
+          .map((f) => f.field),
+      isNot(contains('department')),
+    );
     expect(tester.takeException(), isNull);
   });
 }

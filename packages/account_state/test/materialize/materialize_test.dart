@@ -1129,6 +1129,89 @@ void main() {
       expect(view.accounts, hasLength(1));
       expect(view.skippedUnmanagedStaff, 0);
     });
+
+    group('the Azure department schools ride on the document (#352)', () {
+      test('every school the list names, in its order and its casing', () {
+        // A quotation of the field, not a reading of it: no re-sorting, no
+        // case-folding, no label invented for a prefix nothing here knows.
+        final view = materialize(
+          staffLinked(azureDepartment: ' ismab , GBS ,, sbe '),
+          generation: 1,
+        );
+
+        expect(
+          view.accounts.single.departmentSchools,
+          ['ismab', 'GBS', 'sbe'],
+          reason: 'departmentSchools trims and drops blanks, nothing else',
+        );
+      });
+
+      test('our own school alone is still listed', () {
+        // The case that decides a deletion: `departmentSchoolsExcept` comes back
+        // empty here, so `RemoveStaffFromAzure` is what a departure would raise.
+        // That is precisely what the operator needs confirmed, so the reading
+        // must not filter our prefix out the way the *write* does.
+        final view = materialize(
+          staffLinked(azureDepartment: 'GBS'),
+          generation: 1,
+        );
+
+        expect(view.accounts.single.departmentSchools, ['GBS']);
+      });
+
+      test(
+          'a staff member with no Office 365 account carries none, and stores '
+          'none', () {
+        final account =
+            materialize(staffLinked(), generation: 1).accounts.single;
+
+        expect(account.inAzure, isFalse);
+        expect(account.departmentSchools, isEmpty);
+        // An absent key reads as "nothing recorded", never as "recorded, and
+        // empty" — which is what keeps a document written before #352 from
+        // being reported as a blank list.
+        expect(account.toJson().containsKey('departmentSchools'), isFalse);
+      });
+
+      test('a blank department stores nothing either', () {
+        final account = materialize(
+          staffLinked(azureDepartment: '  '),
+          generation: 1,
+        ).accounts.single;
+
+        expect(account.inAzure, isTrue);
+        expect(account.departmentSchools, isEmpty);
+        expect(account.toJson().containsKey('departmentSchools'), isFalse);
+      });
+
+      test('a student is untouched: their school is companyName (INV-22)', () {
+        // One exact value, not a list — there is nothing here to print, and the
+        // student document keeps exactly the shape it had.
+        final account =
+            materialize(_movePendingLinked(), generation: 1).accounts.single;
+
+        expect(account.isStaff, isFalse);
+        expect(account.departmentSchools, isEmpty);
+        expect(account.toJson().containsKey('departmentSchools'), isFalse);
+      });
+
+      test('it survives the round-trip through a stored document', () {
+        // A passive session reads the store and never links, so the list has to
+        // come back out of the document exactly as it went in — and the record
+        // it came from does not survive at all: `LinkedStaff.azure` is the
+        // narrow interface, which carries no `department`.
+        final account = materialize(
+          staffLinked(azureDepartment: 'OTHER,GBS'),
+          generation: 1,
+        ).accounts.single;
+        final back = MaterializedAccount.fromJson(account.toJson());
+
+        expect(back.departmentSchools, ['OTHER', 'GBS']);
+        expect(back.withDecisions(const []).departmentSchools,
+            account.departmentSchools,
+            reason: 'the decisions merge rewrites the doc every sync');
+      });
+    });
   });
 
   group('pending counts are decisions, not actions (#251)', () {

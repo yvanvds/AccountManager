@@ -210,9 +210,31 @@ void main() {
       );
     });
 
+    test('changes when the operator renames a group root (#351)', () {
+      // The roots decide which subtrees the walk visits at all, so a saved
+      // root is a different pull — and a drift pass, which never re-pulls
+      // Smartschool, would otherwise relink against the tree it never reached.
+      final before = smartschoolPullFingerprint(_settings());
+      final after = smartschoolPullFingerprint(_settings().copyWith(
+        smartschoolRoots: const ['Leerlingen', 'Medewerkers'],
+      ));
+      expect(after, isNot(before));
+    });
+
+    test('changes when the roots are cleared altogether (#351)', () {
+      // Emptying the field turns the scoping off — the whole tree comes in —
+      // which is as much a changed pull as renaming a root.
+      expect(
+        smartschoolPullFingerprint(
+            _settings().copyWith(smartschoolRoots: const <String>[])),
+        isNot(smartschoolPullFingerprint(_settings())),
+      );
+    });
+
     test('ignores settings a Smartschool pull does not depend on', () {
-      // The pull takes the rules and nothing else; the class tree, the prefix
-      // and the werkdatum all feed other readers and must not force a re-pull.
+      // The pull takes the rules and the roots and nothing else; the class
+      // tree, the prefix and the werkdatum all feed other readers and must not
+      // force a re-pull.
       final base = _settings();
       expect(
         smartschoolPullFingerprint(base.copyWith(

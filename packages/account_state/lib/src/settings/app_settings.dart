@@ -7,6 +7,20 @@ import 'import_rule_codec.dart';
 import 'rule_provenance.dart';
 import 'wisa_school_profile.dart';
 
+/// The Smartschool group roots a pull is scoped to when the operator has
+/// configured none — the two populations this app manages, spelled the way
+/// this school's tree spells them (#351).
+///
+/// A default rather than a hardcoding: the tree is tenant-specific, so the
+/// names are editable in Instellingen, and an install whose roots are named
+/// otherwise says so there. Adopted by an older settings document too — one
+/// written before #351 carries no roots at all, and scoping the pull is what
+/// that document *means* now.
+const List<String> defaultSmartschoolRoots = <String>[
+  'Leerlingen',
+  'Personeel',
+];
+
 /// The persisted configuration model for the Arcadia Account Manager.
 ///
 /// This is the Dart counterpart of the legacy `config.json` (PROJECT_OVERVIEW
@@ -39,6 +53,7 @@ class AppSettings {
     this.wisaRules = const [],
     this.wisaRuleProvenance = const <String, RuleProvenance>{},
     this.smartschoolRules = const [],
+    this.smartschoolRoots = defaultSmartschoolRoots,
     this.wisaSchools = const [],
   }) : _smartschool = smartschool;
 
@@ -90,6 +105,19 @@ class AppSettings {
   /// Smartschool import rules applied at snapshot construction (spec §3.11).
   final List<SmartschoolImportRule> smartschoolRules;
 
+  /// The Smartschool group roots the pull is scoped to (#351).
+  ///
+  /// The connector walks these subtrees and nothing else, so an account that
+  /// sits only in a beheerders or externen group never enters the snapshot —
+  /// and cannot become a `LinkedStaff` of its own downstream, where the
+  /// student/staff split is decided on `Basisrol` alone. Matched on
+  /// `normalizeGroupName`, like the import rules.
+  ///
+  /// [defaultSmartschoolRoots] until an operator says otherwise. **Empty means
+  /// unscoped**: the whole forest, as every pull did before #351 — the escape
+  /// hatch for a tenant whose tree has no such roots.
+  final List<String> smartschoolRoots;
+
   /// Per-WISA-school ownership entries, keyed by school id. Empty means no
   /// school has been marked managed yet — the group-membership plumbing #113
   /// slice 2 reads, but no action fires here.
@@ -127,6 +155,7 @@ class AppSettings {
     List<WisaImportRule>? wisaRules,
     Map<String, RuleProvenance>? wisaRuleProvenance,
     List<SmartschoolImportRule>? smartschoolRules,
+    List<String>? smartschoolRoots,
     List<WisaSchoolProfile>? wisaSchools,
   }) {
     return AppSettings(
@@ -138,6 +167,7 @@ class AppSettings {
       wisaRules: wisaRules ?? this.wisaRules,
       wisaRuleProvenance: wisaRuleProvenance ?? this.wisaRuleProvenance,
       smartschoolRules: smartschoolRules ?? this.smartschoolRules,
+      smartschoolRoots: smartschoolRoots ?? this.smartschoolRoots,
       wisaSchools: wisaSchools ?? this.wisaSchools,
     );
   }
@@ -159,6 +189,7 @@ class AppSettings {
           encodeWisaRule(rule, provenance: provenanceOf(rule)),
       ],
       'smartschoolRules': smartschoolRules.map(encodeSmartschoolRule).toList(),
+      'smartschoolRoots': smartschoolRoots,
       'wisaSchools': wisaSchools.map((p) => p.toJson()).toList(),
     };
   }
@@ -181,6 +212,7 @@ class AppSettings {
     final wisa = (json['wisaRules'] as List<dynamic>?) ?? const [];
     final smartschool =
         (json['smartschoolRules'] as List<dynamic>?) ?? const [];
+    final roots = json['smartschoolRoots'] as List<dynamic>?;
     final wisaConn = json['wisa'] as Map<String, dynamic>?;
     final smartschoolConn = json['smartschool'] as Map<String, dynamic>?;
     final azureConn = json['azure'] as Map<String, dynamic>?;
@@ -230,6 +262,13 @@ class AppSettings {
         for (final r in smartschool)
           decodeSmartschoolRule(r as Map<String, dynamic>),
       ],
+      // Absent ⇒ the defaults (#351): a document written before the roots
+      // existed is one that never chose to pull the whole tree, it simply had
+      // no say. Present-but-empty is a choice, and it is honoured — that is how
+      // a tenant with no such roots turns the scoping off.
+      smartschoolRoots: roots == null
+          ? defaultSmartschoolRoots
+          : <String>[for (final r in roots) r as String],
       wisaSchools: adoptRetiredVirtualMarks(
         <WisaSchoolProfile>[
           for (final p in wisaSchools)

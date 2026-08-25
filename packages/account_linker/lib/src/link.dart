@@ -49,7 +49,9 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 ///   a [ResolveDuplicateMail] warning is raised (legacy silently dropped one).
 ///   Keeping both means keeping two *records* for one person, so the pair also
 ///   has to end up on two distinct [LinkedAccountId]s — see [_firstUnclaimed]
-///   (#323).
+///   (#323). It also means the Azure user matching that one mail has two
+///   records to choose from: the WISA-anchored one wins, never snapshot order —
+///   see [_preferredMailCandidate] (#354).
 /// - **INV-24:** two records that resolve to the same [LinkedAccountId] raise a
 ///   [DuplicateLinkedId] warning (#319). The check is not written here: it lives
 ///   in [LinkedSnapshot.fromRecords], which this function returns through, so it
@@ -347,12 +349,17 @@ List<_Record> _buildStudentRecords(
     if (upn != null) {
       final candidates = byMail[upn];
       if (candidates != null) {
-        for (final rec in candidates) {
-          if (rec.azure == null) {
-            target = rec;
-            break;
-          }
-        }
+        // Several accounts may claim one mail (INV-23); the WISA-anchored one
+        // wins over snapshot order (#354). A student record's WISA id is the
+        // attached row's, or the `accountId` the Smartschool account claims —
+        // the same key `byWisaId` indexes for the fallback leg below.
+        target = _preferredMailCandidate(
+          candidates,
+          employeeId,
+          isFree: (rec) => rec.azure == null,
+          wisaIdOf: (rec) =>
+              _norm(rec.wisa?.wisaId.value ?? rec.smartschool?.accountId),
+        );
       }
     }
     if (target == null && employeeId != null) {
@@ -448,12 +455,17 @@ List<_StaffRecord> _buildStaffRecords(
     if (upn != null) {
       final candidates = byMail[upn];
       if (candidates != null) {
-        for (final rec in candidates) {
-          if (rec.azure == null) {
-            target = rec;
-            break;
-          }
-        }
+        // The live shape of #354: a staff member's admin account carries the
+        // mail of their normal one, and only the normal one is WISA-anchored.
+        // A staff record's WISA id lives on the attached WISA row alone — the
+        // Smartschool `accountId` is the `code`, a different key — so an
+        // admin account with no WISA counterpart simply never qualifies.
+        target = _preferredMailCandidate(
+          candidates,
+          employeeId,
+          isFree: (rec) => rec.azure == null,
+          wisaIdOf: (rec) => _norm(rec.wisa?.wisaId?.value),
+        );
       }
     }
     if (target == null && employeeId != null) {
@@ -863,6 +875,44 @@ String? _norm(String? value) {
   if (value == null) return null;
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed.toLowerCase();
+}
+
+/// Which of the [candidates] claiming one mail receives the Azure user whose
+/// UPN matches it (#354). Returns `null` when every candidate already holds an
+/// Azure user, leaving the caller's `employeeId` fallback to run.
+///
+/// Usually there is exactly one candidate and the answer is that record. More
+/// than one is legitimate here — INV-23 keeps both accounts of a pair sharing a
+/// mail, the real shape being a staff member's admin account carrying the mail
+/// of their normal one — and then snapshot order alone used to decide, which is
+/// arbitrary: the mail is the *weak* key and the WISA id is the strong one, yet
+/// finding any mail target meant the `employeeId` bridge never ran. So among
+/// the candidates that still have a free slot ([isFree]), one whose WISA id
+/// ([wisaIdOf], normalized per INV-12) equals the Azure [employeeId] wins;
+/// with none, the first free candidate does — exactly the old behaviour, and
+/// the only behaviour a single candidate can produce.
+///
+/// The tie-break stays *within* the mail candidates on purpose: it never lets
+/// an `employeeId` reach a record the mail did not already point at, so a stale
+/// or mistyped one cannot steal an account the mail resolves correctly today.
+///
+/// Both colliding accounts are still kept and still raise `ResolveDuplicateMail`
+/// (INV-13/INV-23); this decides only which of them the Azure user attaches to.
+/// The single scan walks [candidates] in insertion (snapshot) order, so the
+/// result stays a deterministic function of the input lists' order (INV-20).
+T? _preferredMailCandidate<T>(
+  List<T> candidates,
+  String? employeeId, {
+  required bool Function(T rec) isFree,
+  required String? Function(T rec) wisaIdOf,
+}) {
+  T? firstFree;
+  for (final rec in candidates) {
+    if (!isFree(rec)) continue;
+    if (employeeId != null && wisaIdOf(rec) == employeeId) return rec;
+    firstFree ??= rec;
+  }
+  return firstFree;
 }
 
 /// Whether [candidate] should displace [held] as the WISA row a record carries

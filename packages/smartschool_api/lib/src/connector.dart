@@ -9,6 +9,7 @@ import 'parsing/date_format.dart';
 import 'parsing/group_tree.dart';
 import 'parsing/mappings.dart';
 import 'rules/import_rules.dart';
+import 'rules/root_scope.dart';
 import 'snapshot.dart';
 import 'soap/credentials.dart';
 import 'soap/soap_envelope.dart';
@@ -104,6 +105,16 @@ class SmartschoolConnector {
   /// its normalized name and naming in the log any rule that matched nothing at
   /// all (#241).
   ///
+  /// [roots] scopes the walk to named subtrees — `Leerlingen` and `Personeel`
+  /// at this school — so accounts that are neither students nor staff never
+  /// enter the snapshot at all (#351). Matched on the same normalized name the
+  /// rules are; empty means "walk the whole forest", as every pull did before
+  /// #351. A name that matches no group leaves the pull unscoped and is named
+  /// in the log — see [scopeToRoots] for why that, and not a partial scope, is
+  /// the fail-safe. Note that a group outside the roots is dropped from
+  /// [SmartschoolSnapshot.groups] too, so it no longer seeds a Klasgroepen
+  /// orphan record (#52).
+  ///
   /// Disabled (`uitgeschakeld`) accounts are dropped. One
   /// [SmartschoolMembership] is emitted per (account, group) pair, so an
   /// account appearing in several subtrees produces several membership rows
@@ -117,6 +128,7 @@ class SmartschoolConnector {
   /// with no members anywhere stays unresolved (`sourceId == null`).
   Future<SmartschoolSnapshot> sync({
     Iterable<SmartschoolImportRule> rules = const [],
+    Iterable<String> roots = const [],
   }) async {
     final treeXml = await _call(
       SmartschoolMethod.getAllGroupsAndClasses,
@@ -125,7 +137,8 @@ class SmartschoolConnector {
     final payload = decodeReturn(treeXml).text;
     final parsed = parseGroupTree(payload);
     _reportUnmatchedRules(parsed, rules);
-    final forest = applyImportRules(parsed, rules);
+    final pruned = applyImportRules(parsed, rules);
+    final forest = _scopeToRoots(pruned, roots);
 
     final visited = <SmartschoolGroup>[];
     final accountsByUid = <String, SmartschoolAccount>{};
@@ -178,6 +191,39 @@ class SmartschoolConnector {
         'enkele Smartschool-groep overeen — $effect. Controleer de groepsnaam.',
       );
     }
+  }
+
+  /// Scopes [forest] to the configured [roots] and says in the log what that
+  /// did (#351).
+  ///
+  /// The decision itself is [scopeToRoots]'; this adds the operator's half of
+  /// it. A root that matches no group is the one that matters: the pull stays
+  /// unscoped — the whole tree, exactly as before #351 — and a *silent*
+  /// unscoped pull is what re-admits the beheerder accounts this scoping exists
+  /// to keep out. Each missing name is named on its own, because each is its own
+  /// correction to make in Instellingen.
+  List<SmartschoolGroup> _scopeToRoots(
+    List<SmartschoolGroup> forest,
+    Iterable<String> roots,
+  ) {
+    final scoped = scopeToRoots(forest, roots);
+    if (identical(scoped, forest)) {
+      for (final name in unmatchedRootNames(forest, roots)) {
+        _log?.addError(
+          core.Origin.smartschool,
+          'Hoofdgroep "$name" komt met geen enkele Smartschool-groep overeen — '
+          'de volledige groepsboom wordt opgehaald. Controleer de hoofdgroepen '
+          'bij Instellingen.',
+        );
+      }
+      return forest;
+    }
+    _log?.addMessage(
+      core.Origin.smartschool,
+      'De ophaalbeurt is beperkt tot: '
+      '${scoped.map((g) => g.name).join(', ')}.',
+    );
+    return scoped;
   }
 
   /// Depth-first walk over [nodes], collecting the visited nodes in tree order

@@ -446,8 +446,12 @@ Future<ReconcileServices> bootstrapReconcile({
         // `fullRead` is ignored here and everywhere Smartschool is pulled: the
         // connector reads the whole site every pass, so there is no resume
         // point a drift check could be asked to drop (#316).
-        inner: (_, {bool fullRead = false}) =>
-            ssConnector.sync(rules: live.current.smartschoolRules),
+        // The group roots the walk is scoped to travel the same way (#351):
+        // read live, so renaming a root in Instellingen reaches the next pull.
+        inner: (_, {bool fullRead = false}) => ssConnector.sync(
+          rules: live.current.smartschoolRules,
+          roots: live.current.smartschoolRoots,
+        ),
       ),
     ),
     azure: SystemState<az.AzureSnapshot>(

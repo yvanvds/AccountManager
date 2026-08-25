@@ -90,6 +90,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _ssTestUser = TextEditingController();
   final _ssStudentGroup = TextEditingController();
   final _ssStaffGroup = TextEditingController();
+
+  /// The group roots the Smartschool pull is scoped to (#351), as one
+  /// comma-separated field — the shape the operator reads them in ("Leerlingen,
+  /// Personeel") and the shortest thing to correct when a tree spells them
+  /// otherwise.
+  final _ssRoots = TextEditingController();
   final _ssPassphrase = TextEditingController(); // write-only secret
   bool _ssUseGrades = false;
   bool _ssUseYears = false;
@@ -154,6 +160,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _ssTestUser,
       _ssStudentGroup,
       _ssStaffGroup,
+      _ssRoots,
       _ssPassphrase,
       _azClientId,
       _azTenantId,
@@ -237,6 +244,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _ssTestUser.text = s.smartschool.testUser;
     _ssStudentGroup.text = s.smartschool.studentGroup;
     _ssStaffGroup.text = s.smartschool.staffGroup;
+    _ssRoots.text = s.smartschoolRoots.join(', ');
     _ssPassphrase.clear();
     _ssUseGrades = s.smartschool.useGrades;
     _ssUseYears = s.smartschool.useYears;
@@ -502,6 +510,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Assembles an [AppSettings] from the form, preserving the loaded document's
   /// secret refs.
+  /// The Smartschool roots as the document stores them: the comma-separated
+  /// field split, trimmed, and stripped of the empties a stray comma leaves
+  /// (#351).
+  ///
+  /// An emptied field really is an empty list, which the connector reads as
+  /// "walk the whole tree" — the escape hatch for a tenant whose Smartschool
+  /// has no such roots.
+  List<String> _parsedRoots() => <String>[
+        for (final name in _ssRoots.text.split(','))
+          if (name.trim().isNotEmpty) name.trim(),
+      ];
+
   AppSettings _collect(AppSettings base) {
     return base.copyWith(
       schoolPrefix: _schoolPrefix.text.trim(),
@@ -533,6 +553,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         domain: _azDomain.text.trim(),
       ),
       smartschoolRules: List<SmartschoolImportRule>.of(_ssRules),
+      smartschoolRoots: _parsedRoots(),
       wisaRules: List<WisaImportRule>.of(_wisaRules),
       wisaRuleProvenance: _prunedWisaProvenance(_wisaRules),
       wisaSchools: List<WisaSchoolProfile>.of(_wisaSchools),
@@ -878,6 +899,11 @@ class _SettingsForm extends StatelessWidget {
             keyValue: 'settings-ss-staff-group',
             label: 'Pad personeelsgroep',
             controller: state._ssStaffGroup,
+          ),
+          _Field(
+            keyValue: 'settings-ss-roots',
+            label: 'Hoofdgroepen om op te halen (gescheiden door komma\'s)',
+            controller: state._ssRoots,
           ),
           _SecretField(
             keyValue: 'settings-ss-passphrase',

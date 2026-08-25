@@ -184,6 +184,51 @@ void main() {
     expect(saved.smartschool.grades.first, 'Graad 1');
   });
 
+  testWidgets('the Smartschool group roots round-trip through the field (#351)',
+      (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    // The field opens on the defaults, so an operator sees what the pull is
+    // scoped to rather than an empty box that means "everything".
+    final Finder roots = find.byKey(const ValueKey('settings-ss-roots'));
+    expect(tester.widget<TextField>(roots).controller!.text,
+        'Leerlingen, Personeel');
+
+    // This tenant spells the staff root otherwise, and pads its list the way a
+    // typed list gets padded.
+    await tester.enterText(roots, ' Leerlingen ,Medewerkers, ');
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    final saved = await harness.store.load();
+    expect(saved.smartschoolRoots, <String>['Leerlingen', 'Medewerkers']);
+    expect(saved.toJson()['smartschoolRoots'],
+        <String>['Leerlingen', 'Medewerkers']);
+  });
+
+  testWidgets('clearing the roots field turns the scoping off (#351)',
+      (WidgetTester tester) async {
+    // The escape hatch for a tenant whose tree carries no such roots: an empty
+    // list is a decision the document keeps, not a missing value to re-default.
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    await _openTab(tester, 'settings-tab-smartschool');
+    await tester.enterText(find.byKey(const ValueKey('settings-ss-roots')), '');
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    expect((await harness.store.load()).smartschoolRoots, isEmpty);
+  });
+
   testWidgets('a stored secret is never echoed back into the UI',
       (WidgetTester tester) async {
     _useTallWindow(tester);

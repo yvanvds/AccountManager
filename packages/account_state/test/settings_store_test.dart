@@ -45,6 +45,7 @@ AppSettings _sampleSettings() => AppSettings(
         DiscardSmartschoolGroup('Archief'),
         NoSmartschoolSubgroups('Klassen'),
       ],
+      smartschoolRoots: const ['Leerlingen', 'Personeelsleden'],
       wisaSchools: const [
         WisaSchoolProfile(schoolId: 1, ours: true, prefix: 'SMA'),
         WisaSchoolProfile(schoolId: 2),
@@ -61,6 +62,7 @@ void expectSameSettings(AppSettings a, AppSettings b) {
       equals(encodeRules(b.wisaRules, encodeWisaRule)));
   expect(encodeRules(a.smartschoolRules, encodeSmartschoolRule),
       equals(encodeRules(b.smartschoolRules, encodeSmartschoolRule)));
+  expect(a.smartschoolRoots, equals(b.smartschoolRoots));
   expect(a.wisaSchools, equals(b.wisaSchools));
 }
 
@@ -86,6 +88,22 @@ void main() {
       expect(settings.wisa, const WisaConnection());
       expect(settings.smartschool, SmartschoolConnection());
       expect(settings.azure, const AzureConnection());
+      // …and one predating the Smartschool roots (#351) adopts them: it never
+      // chose to pull the whole tree, it had no say in the matter.
+      expect(settings.smartschoolRoots, <String>['Leerlingen', 'Personeel']);
+    });
+
+    test('an explicitly emptied root list is honoured (#351)', () {
+      // Present-but-empty is a choice — the escape hatch for a tenant whose
+      // tree carries no such roots — and must not be re-defaulted on load.
+      final settings = AppSettings.fromJson(<String, dynamic>{
+        'smartschoolRoots': <dynamic>[],
+      });
+      expect(settings.smartschoolRoots, isEmpty);
+      expect(
+        AppSettings.fromJson(settings.toJson()).smartschoolRoots,
+        isEmpty,
+      );
     });
 
     test('a persisted markAsOurs rule loads and is dropped (#286)', () {
