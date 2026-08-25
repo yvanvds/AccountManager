@@ -72,6 +72,15 @@ List<StudentAction> studentActionsFor(
           // the job title is derived from what WISA says they are and never from
           // an Azure-only orphan's `companyName`.
           ModifyAzureJobTitle(account, config),
+          // The class the Azure profile advertises (#359), beside the school and
+          // the job title. Same reason for living here: `department` may only
+          // ever be *written* from what WISA says, and this branch is the one
+          // that has a WISA row of ours to say it. It is also why the staff
+          // meaning of the field (#237) is out of reach — that population never
+          // passes through this dispatch at all. The placement rides along for
+          // the ours-classes guard alone (#333): a class our WISA does not have
+          // is not written into Office 365 either.
+          ModifyAzureDepartment(account, config, placement: placement),
           ModifySmartschoolStudentAddress(account, config),
           ModifyAccountId(account, config),
           // The class move sits **before** the stamboeknummer write (#338), and

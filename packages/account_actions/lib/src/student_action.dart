@@ -284,6 +284,10 @@ class AddStudentToAzure extends StudentAction {
         // the dynamic group that grants the licence and stays unlicensed until
         // somebody notices by hand (#358).
         FieldChange('jobTitle', after: config.studentJobTitle),
+        // The create has always written the class here; naming it is what makes
+        // the field the app's to keep current (#359) rather than a value stamped
+        // once and forgotten.
+        FieldChange('department', after: wisa.classGroup),
       ],
     );
   }
@@ -990,6 +994,98 @@ class ModifyAzureJobTitle extends StudentAction {
         describeChanges(),
         (users) => users.updateUser(_az.id, jobTitle: config.studentJobTitle),
         () => _az.copyWith(jobTitle: config.studentJobTitle),
+      );
+}
+
+/// Correct a **student's** Azure `department` to the class group WISA reports
+/// for them (#359) — the third field of the profile the create stamps and
+/// nothing ever reconciled.
+///
+/// `department` means two different things depending on who holds the account,
+/// and this action writes only one of them:
+///
+/// - on a **student** it is the class group. [AddStudentToAzure] writes it at
+///   creation, and until this action existed nothing rewrote it — so an account
+///   kept naming the class its holder sat in the year it was made. The live
+///   tenant carries secondary pupils whose `department` still names a
+///   basisschool class.
+/// - on a **staff member** it is the comma-separated list of school prefixes
+///   other software maintains, which #237 established we must not rewrite (see
+///   `departmentSchoolsExcept` in `account_core`'s `school_prefix.dart`).
+///
+/// Nothing but the student dispatch can reach this — it is a [StudentAction] of
+/// a sealed family, constructed in one place, in the modify branch — so the
+/// staff meaning of the field is structurally out of its reach.
+///
+/// **WISA is the authority, in one direction only.** The value written is
+/// `WisaStudent.classGroup`, the same bare class name the create writes (never
+/// the sub-grouped `2F ECO` widening a Smartschool placement may use, and never
+/// the Office 365 group's `<PREFIX>-<KLAS>` name). The Azure field is output:
+/// nothing may read a class back out of it, which is why the repair is derived
+/// from the linked WISA row and the modify branch is the only place it runs.
+///
+/// A **missing** `department` counts as differing, like [ModifyAzureSchool]'s
+/// and [ModifyAzureJobTitle]'s: an adopted account (#224) arrives carrying the
+/// other school's class or nothing at all, and filling the field in is the same
+/// repair as correcting it.
+///
+/// A **blank WISA class** stands the action down instead. WISA saying nothing is
+/// not WISA saying "no class", and clearing a field on the strength of a silence
+/// would destroy the one answer the record still had. The student keeps whatever
+/// Azure holds until WISA names a class.
+///
+/// So does a class our own WISA schools do not have (#333), when a [placement]
+/// is wired to say so: the same guard that stands the Smartschool move down
+/// stands this write down, because a name our inventory does not carry is never
+/// one to write into our systems — in Smartschool or in Office 365. Without a
+/// placement nothing is known about the inventory and the write goes ahead, the
+/// pre-#333 reading its sibling actions give a null placement.
+class ModifyAzureDepartment extends StudentAction {
+  const ModifyAzureDepartment(super.account, super.config, {this.placement});
+
+  /// The class-placement context (#333), when the caller wired one. Read for
+  /// [ClassPlacement.isOurClass] alone — the target class is WISA's bare
+  /// `classGroup`, never the placement's (possibly sub-grouped) `className`,
+  /// which is what Smartschool wants and not what the create stamps here.
+  final ClassPlacement? placement;
+
+  @override
+  bool evaluate() =>
+      _className.isNotEmpty &&
+      (placement?.isOurClass(_className) ?? true) &&
+      !_eq(_az.department, _className);
+
+  /// The class WISA holds this student in, trimmed. Empty when WISA names none.
+  String get _className => _wisa.classGroup.trim();
+
+  /// Mechanical, like its [ModifyAzureSchool] and [ModifyAzureJobTitle] twins:
+  /// the value is copied from WISA with no judgement to make. It also arrives as
+  /// a cohort — a class moving up a year is one repair per pupil in it, which is
+  /// precisely what a bulk apply is for.
+  @override
+  bool get canApplyToAll => true;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'Wijzig de klas in Azure',
+        fields: [
+          FieldChange(
+            'department',
+            before: _az.department,
+            after: _className,
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      _azurePatch(
+        connectors,
+        options,
+        describeChanges(),
+        (users) => users.updateUser(_az.id, department: _className),
+        () => _az.copyWith(department: _className),
       );
 }
 

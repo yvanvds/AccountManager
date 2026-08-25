@@ -38,6 +38,32 @@
 /// folded the copies into this one predicate so the next change to the rule
 /// cannot reach one caller and miss the other.
 ///
+/// ## The Azure profile is output, never input (#359)
+///
+/// INV-22 is the one thing the app ever *reads* out of an Azure profile field,
+/// and it reads exactly one bit: "is this account one of ours?". Nothing else
+/// may be inferred from those fields — not a class, not a school level, not an
+/// entitlement. **Always resolve a student against WISA first.**
+///
+/// `companyName`, `department` and `jobTitle` are values *we* stamp on a student
+/// account, and nothing outside this app maintains them. A stamp is only ever as
+/// fresh as the last pass that wrote it, so reading a class back out of
+/// `department` answers with the class the pupil sat in when the account was
+/// made — which in the live tenant means basisschool class names on pupils who
+/// are now in secondary. The same holds for deriving the *kind* of pupil from
+/// `companyName`: our prefix says which school an account belongs to, never what
+/// its holder is (#358).
+///
+/// So the direction is fixed: WISA decides, and the Azure fields are written to
+/// follow it (`ModifyAzureSchool`, `ModifyAzureJobTitle`, `ModifyAzureDepartment`
+/// in `account_actions`, all three reachable only from the student dispatch's
+/// modify branch, which requires a WISA row of ours). A code path that wants a
+/// student's class asks `WisaStudent.classGroup`.
+///
+/// Staff are the exception that proves it: their `department` is not ours at all
+/// (#237), so it is neither read for anything but INV-22 nor written except to
+/// strike our own claim out of it (see [departmentSchoolsExcept]).
+///
 /// Note this is a *domain* rule about the values, not a Graph query: the
 /// server-side `$filter` in `UserManager.filterFor` is deliberately narrower
 /// (Graph offers no `contains` on these properties) and is completed by the

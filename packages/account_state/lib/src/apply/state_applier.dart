@@ -655,7 +655,13 @@ class StateApplier {
       displayName:
           wisa?.fullName ?? azUser?.displayName ?? _nameOf(ssAccount) ?? '',
       mail: azUser?.upn ?? ssAccount?.mail,
-      classGroup: wisa?.classGroup ?? azUser?.department,
+      // WISA or nothing (#359). The Azure `department` used to stand in here,
+      // but it is a field *we* stamp and only as fresh as the pass that last
+      // wrote it — printing it on a password sheet would name the class the
+      // pupil sat in when the account was created. The invariant is documented
+      // beside INV-22 in `account_core`'s `school_prefix.dart`: a student's
+      // class is resolved against WISA, and the Azure profile is output.
+      classGroup: wisa?.classGroup,
     );
   }
 
@@ -673,6 +679,11 @@ class StateApplier {
               .join(' ')
               .trim(),
       mail: azUser?.upn ?? ssAccount?.mail,
+      // A staff `department` is not a class at all — it is the comma-separated
+      // list of schools other software maintains (#237) — so what a staff sheet
+      // prints in this slot is the school they belong to. Left as it is on
+      // purpose: #359's "never read a class from Azure" is about the student
+      // field, and no class is being inferred here.
       classGroup: azUser?.department,
     );
   }

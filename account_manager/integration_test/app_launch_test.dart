@@ -5198,17 +5198,19 @@ void main() {
           member('tom', '3D_ss'),
         ],
       ),
-      // Every Azure account already carries the WISA display name, so the only
-      // student action the pass raises anywhere is Sam's class move. (The WISA
-      // fixture names every student "Jane Doe"; the rows are addressed by id,
-      // so only the class each of them sits in matters here.)
+      // Every Azure account already carries the WISA display name *and* the WISA
+      // class (#359), so the only student action the pass raises anywhere is
+      // Sam's class move. (The WISA fixture names every student "Jane Doe"; the
+      // rows are addressed by id, so only the class each of them sits in
+      // matters here.)
       azure: azSnap(users: [
-        azUser(displayName: 'Jane Doe'),
+        azUser(displayName: 'Jane Doe', department: '1C'),
         azUser(
           id: 'az2',
           upn: 'jan.peeters@student.school.example',
           employeeId: '2',
           displayName: 'Jane Doe',
+          department: '1C',
         ),
         azUser(
           id: 'az3',
@@ -5221,6 +5223,7 @@ void main() {
           upn: 'tom.tas@student.school.example',
           employeeId: '4',
           displayName: 'Jane Doe',
+          department: '3D',
         ),
       ]),
       ourSchoolIds: const {1, 2},
@@ -10760,8 +10763,10 @@ void main() {
           'companyName': 'SSM',
           // Graph answers the whole `$select`, job title included (#358) — so
           // the row that lands is the account SSM holds, wrong school and
-          // right kind of pupil, and this pass is about the school alone.
+          // right kind of pupil, and this pass is about the school alone. The
+          // class it names is his real one, for the same reason (#359).
           'jobTitle': 'LeerlingSec',
+          'department': '3C',
           'accountEnabled': true,
         },
       ],
@@ -10929,8 +10934,10 @@ void main() {
           'companyName': 'GBS',
           // The `$select` reads it since #358, so the back-fill's row carries
           // it — and it is already right, leaving the school the one thing this
-          // pass has to repair.
+          // pass has to repair. Her class is right on it too (#359), for the
+          // same reason.
           'jobTitle': 'LeerlingSec',
+          'department': '3C',
           'accountEnabled': true,
         },
       ],
@@ -11991,6 +11998,112 @@ void main() {
           .expand((e) => e.choices)
           .map((c) => c.selected.changes.summary),
       isNot(contains('Wijzig de functietitel in Azure')),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a pupil whose Office 365 class is last year\'s is repaired end to end, '
+      'and the app reads her class from WISA throughout (#359)',
+      (WidgetTester tester) async {
+    // The report: a student's Azure `department` holds their class group, and
+    // the app wrote it once — at account creation — and never again. The live
+    // tenant is full of accounts naming a class their holder left years ago,
+    // basisschool classes on secondary pupils among them.
+    //
+    // Jane below is one of them: `1B` on the profile, `3C` in WISA, and in step
+    // in every other respect, so the class is the only thing this run can be
+    // about. Two things have to hold at once, and only a run of the real app
+    // shows both — that the stale field is *repaired*, and that while it is
+    // stale nothing in the app believes it: she is a 3C pupil on every screen,
+    // because a class is resolved against WISA and the Azure field is output.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(
+        users: [azUser(displayName: 'Jane Doe', department: '1B')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Before anything is written: the overview places her in the class WISA
+    // names, and last year's class is nowhere in the tree. This is the half of
+    // #359 that matters most — the Azure field is a stale copy, so nothing may
+    // resolve a class, a school level or an entitlement from it.
+    final classrooms = <String>[
+      for (final root in harness.controller.studentRollups)
+        ...harness.controller.studentChildrenOf(root).map((r) => r.classroom),
+    ];
+    expect(classrooms, contains('3C'));
+    expect(classrooms, isNot(contains('1B')),
+        reason: 'the class comes from WISA; the Azure copy is output only');
+
+    // Her card owes exactly one write.
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de klas in Azure'],
+    );
+    final String id = entry.targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Azure'), findsOneWidget);
+
+    // Apply it, confirmation and all.
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // One real Graph PATCH went out, carrying that field and nothing else: the
+    // rest of her profile was already right, and a one-field correction must not
+    // turn into a rewrite of the record.
+    final patches =
+        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
+    expect(patches, hasLength(1));
+    expect(
+      jsonDecode(patches.single.body!),
+      <String, dynamic>{'department': '3C'},
+    );
+
+    // The record the app holds names her real class now, with the two other
+    // stamped fields untouched.
+    final user = harness.app.azure.snapshot!.users.single;
+    expect(user.department, '3C');
+    expect(user.companyName, 'GBS');
+    expect(user.jobTitle, 'LeerlingSec');
+
+    // And the operator sees the write reported on her card, with nothing left
+    // to apply on it — the relink must not offer again what was just written.
+    final Finder verdict = find.byKey(ValueKey('entry-outcomes-student-$id'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de klas in Azure')),
+      findsOneWidget,
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
     );
     expect(tester.takeException(), isNull);
   });

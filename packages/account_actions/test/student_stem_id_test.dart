@@ -30,7 +30,9 @@ void main() {
   LinkedAccount switcher() => linked(
         wisa: wisaStudent(classGroup: '5ADB', stemId: nextYearStem),
         smartschool: ssAccount(stemId: currentStem),
-        azure: azureUser(),
+        // Her Office 365 profile already names the class WISA does, so the class
+        // repair of #359 stays out of a file that is about the stamnummer.
+        azure: azureUser(department: '5ADB'),
       );
 
   Group runningYearClass() => ssGroup(code: '4nw2_ss', name: '4NW2');
