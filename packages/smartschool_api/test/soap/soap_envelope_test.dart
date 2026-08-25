@@ -122,9 +122,56 @@ void main() {
         () => decodeReturn(fault),
         throwsA(
           isA<SmartschoolSoapFault>()
-              .having((e) => e.faultString, 'faultString', 'boom'),
+              .having((e) => e.faultString, 'faultString', 'boom')
+              // #361 added a status for faults the transport recovers from a
+              // non-2xx reply; a fault decoded here reached the decoder, so it
+              // arrived on a 200 and names none.
+              .having((e) => e.statusCode, 'statusCode', isNull)
+              .having((e) => e.isServerFault, 'isServerFault', isTrue),
         ),
       );
+    });
+  });
+
+  group('parseSoapFault (#361)', () {
+    test('reads code and faultstring, stamping the status it arrived with', () {
+      final fault = parseSoapFault(
+        '<SOAP-ENV:Envelope '
+        'xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<SOAP-ENV:Body><SOAP-ENV:Fault>'
+        '<faultcode>SOAP-ENV:Server</faultcode>'
+        '<faultstring>boom</faultstring>'
+        '</SOAP-ENV:Fault></SOAP-ENV:Body></SOAP-ENV:Envelope>',
+        statusCode: 500,
+      );
+
+      expect(fault, isNotNull);
+      expect(fault!.code, 'SOAP-ENV:Server');
+      expect(fault.faultString, 'boom');
+      expect(fault.statusCode, 500);
+    });
+
+    test('returns null for a well-formed response that carries no fault', () {
+      expect(
+        parseSoapFault('<soap:Envelope '
+            'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+            '<soap:Body><x><return>0</return></x></soap:Body></soap:Envelope>'),
+        isNull,
+      );
+    });
+
+    test('returns null instead of throwing on a body that is not XML', () {
+      expect(parseSoapFault('<html><body>502</body>'), isNull);
+      expect(parseSoapFault(''), isNull);
+    });
+
+    test('an unprefixed Server faultcode still reads as server-side', () {
+      final fault = parseSoapFault('<soap:Envelope '
+          'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+          '<soap:Body><soap:Fault><faultcode>Server</faultcode>'
+          '<faultstring>boom</faultstring>'
+          '</soap:Fault></soap:Body></soap:Envelope>');
+      expect(fault!.isServerFault, isTrue);
     });
   });
 

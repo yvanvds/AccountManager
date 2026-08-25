@@ -836,6 +836,33 @@ class DeleteSmartschoolClass extends GroupAction {
         system: Origin.smartschool,
         removed: true,
       );
+    } on ss.SmartschoolSoapFault catch (e) {
+      // `delClass` currently dies inside Smartschool on a PHP fatal error
+      // (`Undefined constant "Smsc\Legacy\Core\_THE_OFFICIAL_CLASS"`, #361),
+      // which comes back as a server-side SOAP Fault on a 500. Their defect,
+      // not ours: the request is the documented two-argument call, so the same
+      // press tomorrow fails identically. Saying so — and naming the one thing
+      // that does clear the class — is the difference between a failure an
+      // operator can act on and one they retry every pass. Reporting it to
+      // Smartschool is #364; nothing here changes when they fix it.
+      //
+      // Only a *server* fault earns this. A `Client` fault says Smartschool
+      // read our request and refused it, which is ours to fix and not
+      // something to send anybody into the web UI over.
+      if (!e.isServerFault) return _failed(changes, Origin.smartschool, e);
+      return _failed(
+        changes,
+        Origin.smartschool,
+        StateError(
+          'Smartschool kon de klas ${_ss.name} niet verwijderen: '
+          // Redacted for the same reason the fault's own `toString` is: this
+          // is server-authored text and it may quote what we sent.
+          '"${ss.redactAccessCode(e.faultString)}". Dat is een fout aan de '
+          'kant van Smartschool, niet in wat wij verstuurden — opnieuw '
+          'toepassen lost ze niet op. Verwijder de klas voorlopig manueel in '
+          'Smartschool.',
+        ),
+      );
     } on Object catch (e) {
       return _failed(changes, Origin.smartschool, e);
     }

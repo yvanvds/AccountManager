@@ -1,6 +1,7 @@
 import 'package:xml/xml.dart';
 
 import 'credentials.dart';
+import 'redact.dart';
 
 /// Builds an RPC/encoded SOAP 1.1 envelope for a Smartschool V3 operation.
 ///
@@ -74,12 +75,64 @@ class SmartschoolSoapResponseException implements Exception {
 
 /// Thrown when the SOAP response carries a `<soap:Fault>`. Exposes the
 /// fault code and string so callers can log the Smartschool-side error.
+///
+/// A fault is a fault whether it arrives on a `200` or, as `delClass` does
+/// today, on a `500` (#361): the HTTP status decides the transport outcome,
+/// not whether the body is readable. When it arrived on a non-2xx reply the
+/// status travels along in [statusCode] for diagnostics — the log line stays
+/// the one readable sentence Smartschool wrote, never the envelope around it.
 class SmartschoolSoapFault implements Exception {
   final String code;
   final String faultString;
-  SmartschoolSoapFault(this.code, this.faultString);
+
+  /// The HTTP status the fault came back on, when it did not come back on a
+  /// 2xx. Null for a fault decoded out of an ordinary `200` response.
+  final int? statusCode;
+
+  SmartschoolSoapFault(this.code, this.faultString, {this.statusCode});
+
+  /// Whether [code] names the **server** as the faulting party (SOAP 1.1
+  /// `Server`, however it is prefixed) rather than our request (`Client`).
+  ///
+  /// A server fault is Smartschool's own failure, so re-sending the identical
+  /// request is not a fix — which is what lets a caller tell the operator to
+  /// go and do the thing by hand instead of offering the same write again.
+  bool get isServerFault =>
+      code.split(':').last.trim().toLowerCase() == 'server';
+
   @override
-  String toString() => 'SmartschoolSoapFault($code): $faultString';
+  String toString() {
+    final where = statusCode == null ? code : '$code, HTTP $statusCode';
+    return 'SmartschoolSoapFault($where): ${redactAccessCode(faultString)}';
+  }
+}
+
+/// Reads a `<soap:Fault>` out of [responseXml], or returns null when the body
+/// carries none — including when it is not XML at all (an HTML error page from
+/// a proxy, an empty body), which is why this never throws.
+///
+/// [statusCode] is stamped onto the fault when the body arrived on a non-2xx
+/// reply, so the transport can hand back a parsed fault without losing the
+/// status it came with.
+SmartschoolSoapFault? parseSoapFault(String responseXml, {int? statusCode}) {
+  final XmlDocument doc;
+  try {
+    doc = XmlDocument.parse(responseXml);
+  } on Object {
+    return null;
+  }
+  final fault = doc
+      .findAllElements(
+        'Fault',
+        namespace: 'http://schemas.xmlsoap.org/soap/envelope/',
+      )
+      .firstOrNull;
+  if (fault == null) return null;
+  return SmartschoolSoapFault(
+    fault.findElements('faultcode').firstOrNull?.innerText ?? '',
+    fault.findElements('faultstring').firstOrNull?.innerText ?? '',
+    statusCode: statusCode,
+  );
 }
 
 /// The `<return>` part of an RPC response: its inner text and the declared
@@ -149,5 +202,6 @@ void _throwIfFault(XmlDocument doc) {
   if (fault == null) return;
   final code = fault.findElements('faultcode').firstOrNull?.innerText ?? '';
   final str = fault.findElements('faultstring').firstOrNull?.innerText ?? '';
+  // No status: this body reached the decoder, so it arrived on a 2xx.
   throw SmartschoolSoapFault(code, str);
 }

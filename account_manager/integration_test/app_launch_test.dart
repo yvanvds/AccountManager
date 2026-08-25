@@ -53,7 +53,11 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
-    show DiscardSmartschoolGroup, SmartschoolConnector, SmartschoolSnapshot;
+    show
+        DiscardSmartschoolGroup,
+        SmartschoolConnector,
+        SmartschoolSnapshot,
+        smartschoolHttpFailure;
 import 'package:wisa_api/wisa_api.dart'
     show
         DontImportClass,
@@ -4595,6 +4599,97 @@ void main() {
         reason: 'the class beside it proposes the same delete, and still '
             'stands — one press, one class');
     expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a delete Smartschool kills on its own server error reads as one '
+      'sentence, never the SOAP envelope, end-to-end (#361)',
+      (WidgetTester tester) async {
+    // The reported failure, in the real app. `delClass` dies inside
+    // Smartschool on a PHP fatal error, so the reply is a `500` whose body is
+    // a SOAP Fault. A non-2xx used to short-circuit in the transport with the
+    // *unparsed* body, so the operator's whole verdict was
+    //
+    //   SmartschoolSoapHttpException(500): <?xml version="1.0" …
+    //   <SOAP-ENV:Fault><faultcode>SOAP-ENV:Server</faultcode><faultstring>…
+    //
+    // — a wall of XML that may echo the request envelope, accesscode included,
+    // and that says nothing about what to do next.
+    //
+    // Only a full run shows the whole chain: the reply becomes an exception in
+    // the connector's transport, the action turns that into a sentence, the
+    // controller writes it to the log sink, and the Klassen tab renders it in
+    // the real fonts on the real page. Every one of those is a different file.
+    useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    // What the live run got back, verbatim in shape. Routed through the same
+    // production mapper the HTTP transport uses, so the app meets exactly the
+    // exception a real socket would hand it — no test-only stand-in.
+    const String faultBody = '<?xml version="1.0" encoding="UTF-8"?>'
+        '<SOAP-ENV:Envelope '
+        'xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<SOAP-ENV:Body><SOAP-ENV:Fault>'
+        '<faultcode>SOAP-ENV:Server</faultcode>'
+        '<faultstring>Undefined constant '
+        '"Smsc\\Legacy\\Core\\_THE_OFFICIAL_CLASS"</faultstring>'
+        '</SOAP-ENV:Fault></SOAP-ENV:Body></SOAP-ENV:Envelope>';
+    harness.soap.throwFor = (String action) => action.endsWith('#delClass')
+        ? smartschoolHttpFailure(500, faultBody)
+        : null;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final entry = find.byKey(const ValueKey('entry-group-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Nothing was deleted, and the row stands — the write really did not land.
+    expect(harness.soap.deletedClasses, isEmpty);
+    expect(find.byKey(const ValueKey('class-row-9Z')), findsOneWidget);
+    expect(
+      harness.controller.applyResults!.single.outcome,
+      ActionOutcome.failed,
+    );
+
+    // The verdict an operator reads: Smartschool's own reason, and the one
+    // thing that does clear the class. Not "try again" — the same press
+    // tomorrow dies on the same missing constant.
+    final Finder verdict = find.textContaining('Undefined constant');
+    await tester.ensureVisible(verdict.first);
+    await tester.pumpAndSettle();
+    expect(verdict, findsWidgets);
+    expect(find.textContaining('manueel in Smartschool'), findsWidgets);
+
+    // …and nowhere on that page is there a scrap of the envelope it came
+    // wrapped in, which is what could carry the accesscode.
+    expect(find.textContaining('SOAP-ENV:Envelope'), findsNothing);
+    expect(find.textContaining('<?xml'), findsNothing);
+    expect(find.textContaining('faultstring'), findsNothing);
+    expect(find.textContaining('SmartschoolSoapHttpException'), findsNothing);
+
+    // The log panel an operator reconstructs the pass from carries the same
+    // sentence, and no more of the wire than the page does.
+    final List<String> errors = harness.log.entries
+        .where((e) => e.isError)
+        .map((e) => e.message)
+        .toList();
+    expect(errors, contains(contains('Undefined constant')));
+    expect(errors, contains(contains('manueel in Smartschool')));
+    expect(errors, everyElement(isNot(contains('SOAP-ENV:Envelope'))));
     expect(tester.takeException(), isNull);
   });
 
