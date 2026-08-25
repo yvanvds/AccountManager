@@ -15,6 +15,33 @@ void main() {
       expect(g.fullName, '1A');
     });
 
+    test('fullName omits a blank groupName too, separator and all (#362)', () {
+      // A blank `KLASGROEP` names no group, exactly like the `00` shell. The
+      // connector stopped dropping such a row when the sub-group split moved
+      // off ADMINGROEP, so this is what keeps it out of the class name.
+      const g = WisaClassGroup(
+        name: '1A',
+        groupName: '  ',
+        description: '',
+        adminCode: 'ASO',
+        schoolCode: '111',
+        schoolId: 1,
+      );
+      expect(g.fullName, '1A');
+    });
+
+    test('fullName trims the sub-group it appends (#362)', () {
+      const g = WisaClassGroup(
+        name: '2G',
+        groupName: ' LAT ',
+        description: '',
+        adminCode: '040092',
+        schoolCode: '111',
+        schoolId: 1,
+      );
+      expect(g.fullName, '2G LAT');
+    });
+
     test('year returns first digit', () {
       const g = WisaClassGroup(
         name: '5C',

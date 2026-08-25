@@ -167,6 +167,102 @@ void main() {
       expect(student.classChange, DateTime(2025, 9, 1));
     });
 
+    group(
+        'the sub-group split keys on a named KLASGROEP, not ADMINGROEP '
+        '(#362)', () {
+      /// A `SyncKlas` answer built from raw `KLAS,KLASGROEP` pairs, every row
+      /// in the same school.
+      _FakeTransport transportFor(List<(String, String, String)> rows) =>
+          _FakeTransport({
+            ...fixtures,
+            WisaQuery.syncClassGroups: <String>[
+              'KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER',
+              for (final (klas, groep, admin) in rows)
+                '$klas,$groep,Tweede jaar,$admin,125261',
+            ].join('\n'),
+          });
+
+      Future<List<String>> fullNamesFrom(
+        List<(String, String, String)> rows,
+      ) async {
+        final c = buildConnector(transportFor(rows));
+        final schools = await c.loadSchools();
+        final snapshot = await c.sync(
+          schools: [schools.firstWhere((s) => s.id == 25)],
+          workDate: DateTime(2024, 9, 1),
+        );
+        return snapshot.classGroups.map((g) => g.fullName).toList();
+      }
+
+      test('a class with a single named klasgroep still splits', () async {
+        // ISMAB's `2G`: the administrative `00` shell plus one named row, both
+        // sitting in ADMINGROEP `040092`. Counting distinct admin codes saw one
+        // code, called the class un-split, and let the `00` row win — so the
+        // class came in as a bare `2G` while all twelve of its students carry
+        // `KLASGROEP=LAT`, and the real Smartschool class `2G LAT` was proposed
+        // for deletion. The number of sub-classes must not decide the name.
+        expect(
+          await fullNamesFrom([
+            ('2G', '00', '040092'),
+            ('2G', 'LAT', '040092'),
+          ]),
+          <String>['2G LAT'],
+        );
+      });
+
+      test('a class split four ways is unchanged', () async {
+        // `2F`, the shape that always worked: four named rows in four admin
+        // groups. The old count-based rule and the new one agree here.
+        expect(
+          await fullNamesFrom([
+            ('2F', '00', '040092'),
+            ('2F', 'ECO', '040091'),
+            ('2F', 'MAW', '040094'),
+            ('2F', 'MOW', '040095'),
+            ('2F', 'STEMW', '040099'),
+          ]),
+          <String>['2F ECO', '2F MAW', '2F MOW', '2F STEMW'],
+        );
+      });
+
+      test('a class with no named klasgroep keeps its bare name', () async {
+        // The overwhelmingly common shape — 82 of the two schools' classes —
+        // and the one this must not disturb.
+        expect(
+          await fullNamesFrom([
+            ('1A', '00', '006246'),
+          ]),
+          <String>['1A'],
+        );
+      });
+
+      test('two same-named shell rows no longer erase the class', () async {
+        // The old rule's other failure mode: two `00` rows in different admin
+        // groups counted as two codes, so "uses sub-groups" was true and the
+        // filter that follows kept only non-`00` rows — of which there were
+        // none. The class vanished from the inventory entirely.
+        expect(
+          await fullNamesFrom([
+            ('2B1', '00', '040109'),
+            ('2B1', '00', '040110'),
+          ]),
+          <String>['2B1', '2B1'],
+        );
+      });
+
+      test('a blank KLASGROEP counts as a shell, not as a sub-group', () {
+        // A blank names no group any more than `00` does, so it must neither
+        // split the class nor reach its name as a trailing separator.
+        expect(
+          fullNamesFrom([
+            ('1A', '00', '006246'),
+            ('1A', '', '006246'),
+          ]),
+          completion(<String>['1A', '1A']),
+        );
+      });
+    });
+
     test('sends Werkdatum=dd/MM/yyyy', () async {
       final t = _FakeTransport(fixtures);
       final c = buildConnector(t);

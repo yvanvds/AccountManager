@@ -20,7 +20,9 @@ void main() {
       linked(
         wisa: wisaStudent(classGroup: classGroup),
         smartschool: smartschool ?? ssAccount(),
-        azure: azure ?? azureUser(),
+        // The Office 365 profile names the same class WISA does, so the class
+        // repair of #359 raises nothing in a file about the Smartschool move.
+        azure: azure ?? azureUser(department: classGroup),
       );
 
   // -------------------------------------------------------------------------

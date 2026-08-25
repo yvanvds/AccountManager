@@ -29,6 +29,20 @@ class WisaQuery {
 const String _getCsvDataSoapAction =
     'urn:WisaAPIService-WisaAPIService#GetCSVData';
 
+/// The `KLASGROEP` code WISA gives the administrative shell row that every
+/// class carries — it names no real sub-group. See [WisaClassGroup.fullName],
+/// which applies the same guard on the model side.
+const String _noSubGroupSentinel = '00';
+
+/// Whether a class-group row's `KLASGROEP` names a real sub-group — i.e. it is
+/// neither blank nor the [_noSubGroupSentinel] shell. A blank would otherwise
+/// survive [WisaConnector._dedupeClassGroups] and give the class the trailing
+/// name `'2G '`.
+bool _namesSubGroup(String groupName) {
+  final trimmed = groupName.trim();
+  return trimmed.isNotEmpty && trimmed != _noSubGroupSentinel;
+}
+
 /// One-instance WISA SOAP connector.
 ///
 /// Mirrors legacy single-instance behaviour (`legacy-wpf/AccountApi/Wisa/Connector.cs`):
@@ -280,18 +294,38 @@ class WisaConnector {
   /// legacy `ClassGroupManager.AddSchool` behaviour: when a class has any
   /// row with a non-`"00"` groupName, drop the `"00"` row; otherwise drop
   /// any non-`"00"` rows (defensive — shouldn't occur).
+  ///
+  /// The discriminator is the **existence of a named KLASGROEP row**, not the
+  /// number of distinct `ADMINGROEP` codes (#362). Legacy
+  /// `ClassGroupManager.UseSubGroups` counted admin codes and required `> 1`,
+  /// and this was a faithful port of that — but the two only agree while every
+  /// sub-group of a class happens to sit in its own administrative group.
+  /// ISMAB's `2G` (rows `00` + `LAT`, both `ADMINGROEP 040092`) is the case
+  /// where they part: one admin code made the count-based test say "no
+  /// sub-groups", the `00` row won, and the class came in as a bare `2G`
+  /// instead of `2G LAT` — dropping the only klasgroep its twelve students are
+  /// actually enrolled in, and proposing the deletion of the real Smartschool
+  /// class `2G LAT`. The number of sub-classes (one vs four) must not change
+  /// how a class is named.
+  ///
+  /// Note this is also what the paragraph above always claimed the rule was;
+  /// only the code disagreed. The state layer's twin test
+  /// (`PlacementResolver._subGroupClasses`, which decides whether a student's
+  /// `KLASGROEP` is appended to their target class name) moves with it — split
+  /// them and the class is renamed while its students stay behind.
+  ///
+  /// A class with no named row at all keeps its `00` row(s) unchanged, so the
+  /// overwhelmingly common single-group class is untouched.
   List<WisaClassGroup> _dedupeClassGroups(List<WisaClassGroup> groups) {
-    final adminCodesByClass = <String, Set<String>>{};
-    for (final g in groups) {
-      adminCodesByClass.putIfAbsent(g.name, () => <String>{}).add(g.adminCode);
-    }
-    bool useSubGroups(String className) =>
-        (adminCodesByClass[className]?.length ?? 0) > 1;
+    final subGrouped = <String>{
+      for (final g in groups)
+        if (_namesSubGroup(g.groupName)) g.name,
+    };
     return [
       for (final g in groups)
-        if ((useSubGroups(g.name) && g.groupName != '00') ||
-            (!useSubGroups(g.name) && g.groupName == '00'))
-          g,
+        // Keep the named rows of a sub-grouped class, and the shell rows of
+        // every other class — i.e. exactly one of the two shapes per class.
+        if (subGrouped.contains(g.name) == _namesSubGroup(g.groupName)) g,
     ];
   }
 

@@ -53,7 +53,11 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
-    show DiscardSmartschoolGroup, SmartschoolConnector, SmartschoolSnapshot;
+    show
+        DiscardSmartschoolGroup,
+        SmartschoolConnector,
+        SmartschoolSnapshot,
+        smartschoolHttpFailure;
 import 'package:wisa_api/wisa_api.dart'
     show
         DontImportClass,
@@ -4491,6 +4495,102 @@ void main() {
   });
 
   testWidgets(
+      'a class WISA splits into one named klasgroep is imported and linked '
+      'under that name, end-to-end (#362)', (WidgetTester tester) async {
+    // The reported bug, over the *production* WISA pull. ISMAB's `2G` carries
+    // the administrative `00` row plus one named klasgroep, `LAT`, and both sit
+    // in ADMINGROEP `040092`; all twelve of its students are enrolled in `LAT`,
+    // and Smartschool already holds the class as `2G LAT`. The import split a
+    // class by counting distinct admin codes, counted one, and let the `00` row
+    // win — so `2G` arrived bare, the real Smartschool class `2G LAT` had no
+    // WISA counterpart and was proposed for deletion, and the student was
+    // proposed for a move out of it into `2G`. `2F`, the same shape with four
+    // named klasgroepen in four admin groups, was always imported correctly:
+    // the *number* of sub-classes was deciding the name.
+    //
+    // Only a full run shows it. The class name is decided in the WISA
+    // connector's dedupe and the student's target class in the state layer's
+    // placement, two packages apart, and the bug is precisely that the two
+    // disagreed — a unit test of either one alone reads as self-consistent.
+    // The Klasgroepen inventory is where the operator saw the disagreement:
+    // two rows, one to create and one to delete, for the one class.
+    useTallWindow(tester);
+    final wire = RecordingWisaSoap(
+      classGroupRows: const <String>[
+        '2G,00,2e lj A Klassieke talen,040092,123',
+        '2G,LAT,2e lj A Klassieke talen,040092,123',
+      ],
+      studentRows: const <String>[
+        '2G,LAT,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,1/9/2025',
+      ],
+    );
+    final harness = ReconcileHarness(
+      wisaTransport: wire,
+      // Smartschool is already right: the class is `2G LAT` and Jane is in it.
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('2G LAT',
+              code: 'C2GLAT',
+              description: '2e lj A Klassieke talen',
+              instituteNumber: '123',
+              untis: '2G LAT'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+        ],
+        memberships: [member('jane', 'C2GLAT')],
+      ),
+      // Office 365 is in step too, and stays out of the way: a sub-grouped
+      // class maps to its parent group, so `2G LAT` is `GBS-2G` — which is
+      // where the bare `2G` pointed as well.
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe',
+              department: '2G'),
+        ],
+        groups: [
+          azClassGroup('2G', memberIds: const ['az1'])
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // One class, under the name both systems agree on.
+    expect(find.byKey(const ValueKey('class-row-2G LAT')), findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-2G')), findsNothing,
+        reason: 'the bare name is the `00` shell, not a class of its own');
+    expect(find.textContaining('Verwijder de klas 2G LAT'), findsNothing,
+        reason: 'the class WISA reports is this one — nothing to delete');
+    expect(find.textContaining('bestaat in Smartschool maar niet in WISA'),
+        findsNothing);
+
+    // And the student half moves with it: Jane's target class is `2G LAT`, the
+    // one Smartschool already has her in, so no class move is raised at all.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .map((c) => c.selected.changes.summary)
+          .where((s) => s.contains('2G')),
+      isEmpty,
+      reason: 'every system already agrees about this class',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a Smartschool class WISA does not have proposes its delete and nothing '
       'else, end-to-end (#313/#328)', (WidgetTester tester) async {
     // The reported bug, in the real app. Our school runs `1A`; Smartschool
@@ -4595,6 +4695,97 @@ void main() {
         reason: 'the class beside it proposes the same delete, and still '
             'stands — one press, one class');
     expect(row('1A'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a delete Smartschool kills on its own server error reads as one '
+      'sentence, never the SOAP envelope, end-to-end (#361)',
+      (WidgetTester tester) async {
+    // The reported failure, in the real app. `delClass` dies inside
+    // Smartschool on a PHP fatal error, so the reply is a `500` whose body is
+    // a SOAP Fault. A non-2xx used to short-circuit in the transport with the
+    // *unparsed* body, so the operator's whole verdict was
+    //
+    //   SmartschoolSoapHttpException(500): <?xml version="1.0" …
+    //   <SOAP-ENV:Fault><faultcode>SOAP-ENV:Server</faultcode><faultstring>…
+    //
+    // — a wall of XML that may echo the request envelope, accesscode included,
+    // and that says nothing about what to do next.
+    //
+    // Only a full run shows the whole chain: the reply becomes an exception in
+    // the connector's transport, the action turns that into a sentence, the
+    // controller writes it to the log sink, and the Klassen tab renders it in
+    // the real fonts on the real page. Every one of those is a different file.
+    useTallWindow(tester);
+    final harness = smartschoolLeftoverClassHarness();
+    // What the live run got back, verbatim in shape. Routed through the same
+    // production mapper the HTTP transport uses, so the app meets exactly the
+    // exception a real socket would hand it — no test-only stand-in.
+    const String faultBody = '<?xml version="1.0" encoding="UTF-8"?>'
+        '<SOAP-ENV:Envelope '
+        'xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<SOAP-ENV:Body><SOAP-ENV:Fault>'
+        '<faultcode>SOAP-ENV:Server</faultcode>'
+        '<faultstring>Undefined constant '
+        '"Smsc\\Legacy\\Core\\_THE_OFFICIAL_CLASS"</faultstring>'
+        '</SOAP-ENV:Fault></SOAP-ENV:Body></SOAP-ENV:Envelope>';
+    harness.soap.throwFor = (String action) => action.endsWith('#delClass')
+        ? smartschoolHttpFailure(500, faultBody)
+        : null;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    final entry = find.byKey(const ValueKey('entry-group-9Z'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    final apply = find.byKey(const ValueKey('entry-apply-9Z'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // Nothing was deleted, and the row stands — the write really did not land.
+    expect(harness.soap.deletedClasses, isEmpty);
+    expect(find.byKey(const ValueKey('class-row-9Z')), findsOneWidget);
+    expect(
+      harness.controller.applyResults!.single.outcome,
+      ActionOutcome.failed,
+    );
+
+    // The verdict an operator reads: Smartschool's own reason, and the one
+    // thing that does clear the class. Not "try again" — the same press
+    // tomorrow dies on the same missing constant.
+    final Finder verdict = find.textContaining('Undefined constant');
+    await tester.ensureVisible(verdict.first);
+    await tester.pumpAndSettle();
+    expect(verdict, findsWidgets);
+    expect(find.textContaining('manueel in Smartschool'), findsWidgets);
+
+    // …and nowhere on that page is there a scrap of the envelope it came
+    // wrapped in, which is what could carry the accesscode.
+    expect(find.textContaining('SOAP-ENV:Envelope'), findsNothing);
+    expect(find.textContaining('<?xml'), findsNothing);
+    expect(find.textContaining('faultstring'), findsNothing);
+    expect(find.textContaining('SmartschoolSoapHttpException'), findsNothing);
+
+    // The log panel an operator reconstructs the pass from carries the same
+    // sentence, and no more of the wire than the page does.
+    final List<String> errors = harness.log.entries
+        .where((e) => e.isError)
+        .map((e) => e.message)
+        .toList();
+    expect(errors, contains(contains('Undefined constant')));
+    expect(errors, contains(contains('manueel in Smartschool')));
+    expect(errors, everyElement(isNot(contains('SOAP-ENV:Envelope'))));
     expect(tester.takeException(), isNull);
   });
 
@@ -5198,17 +5389,19 @@ void main() {
           member('tom', '3D_ss'),
         ],
       ),
-      // Every Azure account already carries the WISA display name, so the only
-      // student action the pass raises anywhere is Sam's class move. (The WISA
-      // fixture names every student "Jane Doe"; the rows are addressed by id,
-      // so only the class each of them sits in matters here.)
+      // Every Azure account already carries the WISA display name *and* the WISA
+      // class (#359), so the only student action the pass raises anywhere is
+      // Sam's class move. (The WISA fixture names every student "Jane Doe"; the
+      // rows are addressed by id, so only the class each of them sits in
+      // matters here.)
       azure: azSnap(users: [
-        azUser(displayName: 'Jane Doe'),
+        azUser(displayName: 'Jane Doe', department: '1C'),
         azUser(
           id: 'az2',
           upn: 'jan.peeters@student.school.example',
           employeeId: '2',
           displayName: 'Jane Doe',
+          department: '1C',
         ),
         azUser(
           id: 'az3',
@@ -5221,6 +5414,7 @@ void main() {
           upn: 'tom.tas@student.school.example',
           employeeId: '4',
           displayName: 'Jane Doe',
+          department: '3D',
         ),
       ]),
       ourSchoolIds: const {1, 2},
@@ -6911,6 +7105,93 @@ void main() {
           .length,
       2,
     );
+  });
+
+  testWidgets(
+      'two Office 365 accounts on one WISA id are named on Synchronisatie with '
+      'the facts to choose by, and neither is proposed for deletion (#360)',
+      (WidgetTester tester) async {
+    // The live shape audited in Aug 2026, nothing constructed: one student, two
+    // Azure accounts carrying her WISA id, made months apart by two runs of this
+    // app, their UPNs differing only in the given name's hyphen. Driven through
+    // the real app because the whole failure was *silence*: the join picked one
+    // account and the other either vanished or turned up as somebody who had
+    // left — and either way the operator's screen said nothing about a pair.
+    useTallWindow(tester);
+    final harness = duplicateAzureAccountHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The overview names the pair, open and with no control — resolving it means
+    // deleting an account, and the app does not choose.
+    final tile = find.byKey(const ValueKey('azure-identity-collision-1'));
+    expect(tile, findsOneWidget);
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: tile,
+        matching: find.textContaining('Dubbel Office 365-account'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: tile, matching: find.textContaining('los dit op in')),
+      findsOneWidget,
+    );
+
+    // Both UPNs, side by side — the only thing that differs to the eye — and the
+    // licensing facts that say which account the student actually works in.
+    expect(
+      find.descendant(
+        of: tile,
+        matching:
+            find.textContaining('jane.doe@student.school.example · id az1'),
+      ),
+      findsOneWidget,
+    );
+    final twin = find.descendant(
+      of: tile,
+      matching:
+          find.textContaining('jane-doe@student.school.example · id az-twin'),
+    );
+    expect(twin, findsOneWidget);
+    expect(
+      tester.widget<Text>(twin).data,
+      allOf(contains('bedrijf GBS'), contains('functie —')),
+      reason: 'the twin misses the jobTitle half of the licensing rule',
+    );
+
+    // The log says it too, as an error, so a pass records what it found.
+    expect(
+      harness.log.entries
+          .where((e) =>
+              e.isError && e.message.contains('Dubbel Office 365-account'))
+          .length,
+      1,
+    );
+
+    // And Acties holds one card for one person, with no proposal to delete an
+    // Office 365 account. The twin used to be a second, WISA-less record there:
+    // carrying our companyName it read as a departed student and drew
+    // "Verwijder Azure account" — a coin flip between the abandoned account and
+    // the one holding her mail.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.linkedAccounts, hasLength(1));
+    final String student = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, student);
+    expect(find.text('Verwijder Azure account'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -10758,6 +11039,12 @@ void main() {
           'givenName': 'Tom',
           'surname': 'Peeters',
           'companyName': 'SSM',
+          // Graph answers the whole `$select`, job title included (#358) — so
+          // the row that lands is the account SSM holds, wrong school and
+          // right kind of pupil, and this pass is about the school alone. The
+          // class it names is his real one, for the same reason (#359).
+          'jobTitle': 'LeerlingSec',
+          'department': '3C',
           'accountEnabled': true,
         },
       ],
@@ -10923,6 +11210,12 @@ void main() {
           'employeeId': '1',
           'displayName': 'Jane Doe',
           'companyName': 'GBS',
+          // The `$select` reads it since #358, so the back-fill's row carries
+          // it — and it is already right, leaving the school the one thing this
+          // pass has to repair. Her class is right on it too (#359), for the
+          // same reason.
+          'jobTitle': 'LeerlingSec',
+          'department': '3C',
           'accountEnabled': true,
         },
       ],
@@ -11814,6 +12107,282 @@ void main() {
       isEmpty,
     );
     expect(find.byKey(ValueKey('entry-apply-$id')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a moved-up pupil whose Office 365 job title is wrong is repaired end to '
+      'end, so the licensing group finally admits them (#358)',
+      (WidgetTester tester) async {
+    // The report: Office 365 grants the student licence through a dynamic group
+    // whose rule reads *two* fields —
+    //
+    //     (user.companyName -eq "<PREFIX>") and (user.jobTitle -eq "LeerlingSec")
+    //
+    // — and nothing in this port ever read, compared or wrote `jobTitle`. The
+    // live audit found four pupils WISA lists in our secondary school whose
+    // account still carries the `LeerlingBas` a basisschool stamped on it years
+    // ago. All four hold no licence, and no pass the app made could say why.
+    //
+    // Jane below is one of them: her account is in step in every other respect,
+    // so the job title is the only thing this run can be about. Only the real
+    // app covers the whole of it — the pull that has to *read* a field the
+    // `$select` never asked for, the linker rebuilding the record, the action
+    // the operator reads off the card, the confirmation they answer, the Graph
+    // PATCH, and the relink that has to stop offering what was just written.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(displayName: 'Jane Doe', jobTitle: 'LeerlingBas'),
+        ],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Her card owes exactly one write, and it is the one that gets her licensed.
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de functietitel in Azure'],
+    );
+    final String id = entry.targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de functietitel in Azure'), findsOneWidget);
+
+    // Apply it, confirmation and all.
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // One real Graph PATCH went out, carrying that field and nothing else: her
+    // `companyName` was already right, and a one-field correction must not turn
+    // into a rewrite of the record.
+    final patches =
+        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
+    expect(patches, hasLength(1));
+    expect(
+      jsonDecode(patches.single.body!),
+      <String, dynamic>{'jobTitle': 'LeerlingSec'},
+    );
+
+    // The record the app holds carries both halves of the rule now — which is
+    // the whole point: the dynamic group can finally see her.
+    final user = harness.app.azure.snapshot!.users.single;
+    expect(user.jobTitle, 'LeerlingSec');
+    expect(user.companyName, 'GBS');
+
+    // And the operator sees the write reported on her card, with nothing left
+    // to apply on it.
+    final Finder verdict = find.byKey(ValueKey('entry-outcomes-student-$id'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de functietitel in Azure')),
+      findsOneWidget,
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a newly provisioned student is created with both halves of the '
+      'licensing rule, and is not then asked to repair one (#358)',
+      (WidgetTester tester) async {
+    // The other end of #358: every account this port ever created landed with a
+    // blank `jobTitle`, fell outside the licensing group, and stayed unlicensed
+    // until somebody assigned a licence by hand.
+    //
+    // The run has to reach past the create itself. What `createUser` sends and
+    // what the applier splices back into the snapshot are two different things,
+    // and if the projected record forgot the field, the relink behind the very
+    // same apply would raise the repair against an account that had just been
+    // created correctly — the operator's first sight of the new student being a
+    // correction to a write the app had made seconds earlier.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String id = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student')
+        .targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The account Graph was actually asked to make satisfies the rule on both
+    // fields. Before the fix the second one was simply absent from the body.
+    final created = harness.graph.createdUsers.single;
+    expect(created['companyName'], 'GBS');
+    expect(created['jobTitle'], 'LeerlingSec');
+
+    // …and so does the record the pass spliced in, so the pupil the app just
+    // provisioned is not immediately offered a repair of the app's own write.
+    expect(harness.app.azure.snapshot!.users.single.jobTitle, 'LeerlingSec');
+    expect(find.text('Wijzig de functietitel in Azure'), findsNothing);
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .map((c) => c.selected.changes.summary),
+      isNot(contains('Wijzig de functietitel in Azure')),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a pupil whose Office 365 class is last year\'s is repaired end to end, '
+      'and the app reads her class from WISA throughout (#359)',
+      (WidgetTester tester) async {
+    // The report: a student's Azure `department` holds their class group, and
+    // the app wrote it once — at account creation — and never again. The live
+    // tenant is full of accounts naming a class their holder left years ago,
+    // basisschool classes on secondary pupils among them.
+    //
+    // Jane below is one of them: `1B` on the profile, `3C` in WISA, and in step
+    // in every other respect, so the class is the only thing this run can be
+    // about. Two things have to hold at once, and only a run of the real app
+    // shows both — that the stale field is *repaired*, and that while it is
+    // stale nothing in the app believes it: she is a 3C pupil on every screen,
+    // because a class is resolved against WISA and the Azure field is output.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(
+        users: [azUser(displayName: 'Jane Doe', department: '1B')],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Before anything is written: the overview places her in the class WISA
+    // names, and last year's class is nowhere in the tree. This is the half of
+    // #359 that matters most — the Azure field is a stale copy, so nothing may
+    // resolve a class, a school level or an entitlement from it.
+    final classrooms = <String>[
+      for (final root in harness.controller.studentRollups)
+        ...harness.controller.studentChildrenOf(root).map((r) => r.classroom),
+    ];
+    expect(classrooms, contains('3C'));
+    expect(classrooms, isNot(contains('1B')),
+        reason: 'the class comes from WISA; the Azure copy is output only');
+
+    // Her card owes exactly one write.
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de klas in Azure'],
+    );
+    final String id = entry.targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de klas in Azure'), findsOneWidget);
+
+    // Apply it, confirmation and all.
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // One real Graph PATCH went out, carrying that field and nothing else: the
+    // rest of her profile was already right, and a one-field correction must not
+    // turn into a rewrite of the record.
+    final patches =
+        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
+    expect(patches, hasLength(1));
+    expect(
+      jsonDecode(patches.single.body!),
+      <String, dynamic>{'department': '3C'},
+    );
+
+    // The record the app holds names her real class now, with the two other
+    // stamped fields untouched.
+    final user = harness.app.azure.snapshot!.users.single;
+    expect(user.department, '3C');
+    expect(user.companyName, 'GBS');
+    expect(user.jobTitle, 'LeerlingSec');
+
+    // And the operator sees the write reported on her card, with nothing left
+    // to apply on it — the relink must not offer again what was just written.
+    final Finder verdict = find.byKey(ValueKey('entry-outcomes-student-$id'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de klas in Azure')),
+      findsOneWidget,
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+    );
     expect(tester.takeException(), isNull);
   });
 

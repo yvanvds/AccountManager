@@ -202,13 +202,21 @@ class UserManager {
     return found.values.toList();
   }
 
-  /// The single user carrying [employeeId], or `null` when the tenant has none.
+  /// **A** user carrying [employeeId], or `null` when the tenant has none.
   ///
   /// The pre-create guard of #224: `employeeId` is the one key that survives a
   /// transfer between group schools, so an account bearing it already belongs to
   /// this person and a second one must never be created. Graph resolves a UPN
   /// collision by suffixing, so without this check a duplicate create *succeeds*
   /// and is silent.
+  ///
+  /// **Not "the single user":** `employeeId` is not unique in this tenant
+  /// (INV-26, #360) — it answers with two accounts for a person who already has
+  /// a pair. That is harmless *here*, because the guard only asks whether any
+  /// account exists in order to refuse the create, and one is as good an answer
+  /// as two. Anything that needs to know **which** account, or how many, must
+  /// call [loadByEmployeeIds] and look at the whole list: it de-duplicates by
+  /// Azure object id, not by `employeeId`, so every match survives it.
   Future<AzureUser?> findByEmployeeId(String employeeId) async {
     final matches = await loadByEmployeeIds([employeeId]);
     return matches.isEmpty ? null : matches.first;
@@ -455,6 +463,7 @@ class UserManager {
       surname: surname,
       companyName: companyName,
       department: department,
+      jobTitle: jobTitle,
       accountEnabled: accountEnabled,
     );
   }
@@ -470,6 +479,7 @@ class UserManager {
     String? surname,
     String? companyName,
     String? department,
+    String? jobTitle,
     String? employeeId,
     bool? accountEnabled,
   }) async {
@@ -480,6 +490,7 @@ class UserManager {
       if (surname != null) 'surname': surname,
       if (companyName != null) 'companyName': companyName,
       if (department != null) 'department': department,
+      if (jobTitle != null) 'jobTitle': jobTitle,
       if (employeeId != null) 'employeeId': employeeId,
       if (accountEnabled != null) 'accountEnabled': accountEnabled,
     };

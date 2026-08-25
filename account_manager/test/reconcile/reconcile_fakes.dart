@@ -355,6 +355,7 @@ class StaleDeltaTokenGraph implements az.GraphTransport {
             'surname': u.surname,
             if (u.companyName != null) 'companyName': u.companyName,
             if (u.department != null) 'department': u.department,
+            if (u.jobTitle != null) 'jobTitle': u.jobTitle,
             'accountEnabled': u.accountEnabled,
           },
       ],
@@ -470,6 +471,7 @@ class TransferredAccountGraph implements az.GraphTransport {
             'userPrincipalName': u.upn,
             if (u.employeeId != null) 'employeeId': u.employeeId,
             if (u.companyName != null) 'companyName': u.companyName,
+            if (u.jobTitle != null) 'jobTitle': u.jobTitle,
             'accountEnabled': u.accountEnabled,
           },
       ],
@@ -552,6 +554,7 @@ class SharedDepartmentStaffGraph implements az.GraphTransport {
                     'companyName': changed.companyName,
                   if (changed.department != null)
                     'department': changed.department,
+                  if (changed.jobTitle != null) 'jobTitle': changed.jobTitle,
                   'accountEnabled': changed.accountEnabled,
                 },
               ],
@@ -803,6 +806,7 @@ class DriftedUserGraph implements az.GraphTransport {
         'surname': u.surname,
         if (u.companyName != null) 'companyName': u.companyName,
         if (u.department != null) 'department': u.department,
+        if (u.jobTitle != null) 'jobTitle': u.jobTitle,
         'accountEnabled': u.accountEnabled,
       };
 
@@ -901,6 +905,7 @@ class DepartedStaffGraph implements az.GraphTransport {
                     'companyName': account.companyName,
                   if (account.department != null)
                     'department': account.department,
+                  if (account.jobTitle != null) 'jobTitle': account.jobTitle,
                   'accountEnabled': account.accountEnabled,
                 },
               ]
@@ -1047,6 +1052,7 @@ class RenamedClassGroupGraph implements az.GraphTransport {
             'givenName': u.givenName,
             'surname': u.surname,
             if (u.companyName != null) 'companyName': u.companyName,
+            if (u.jobTitle != null) 'jobTitle': u.jobTitle,
             'accountEnabled': u.accountEnabled,
           },
       ],
@@ -1074,10 +1080,26 @@ class RenamedClassGroupGraph implements az.GraphTransport {
 class RecordingWisaSoap implements wapi.WisaSoapTransport {
   RecordingWisaSoap({
     this.schools = const <(int, String, String)>[(1, 'School 1', 'S1')],
+    this.classGroupRows = const <String>['3C,00,Derde jaar C,a1,111'],
+    this.studentRows = const <String>[
+      '3C,,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,1/9/2025',
+    ],
   });
 
   /// The schools `SMAGetInst` reports, as `(id, name, code)`.
   final List<(int, String, String)> schools;
+
+  /// The `SyncKlas` data rows, minus the header — one raw CSV line each, in the
+  /// column order of [_classGroupHeader]. Every school is served the same rows,
+  /// which is all a single-school fixture needs. Override to give a class the
+  /// shape the pull has to reason about: an administrative `00` row plus the
+  /// named `KLASGROEP` rows it is split into (#362).
+  final List<String> classGroupRows;
+
+  /// The `SmaSyncLln` data rows, minus the header — one raw CSV line each, in
+  /// the column order of [_studentHeader]. Column 2 is the student's own
+  /// `KLASGROEP`, so a sub-grouped fixture has to fill it in.
+  final List<String> studentRows;
 
   /// Every query issued, as `(queryCode, schoolId, werkdatum)` — the werkdatum
   /// exactly as it went on the wire (`dd/MM/yyyy`).
@@ -1111,18 +1133,20 @@ class RecordingWisaSoap implements wapi.WisaSoapTransport {
             for (final (id, name, code) in schools) '$id,$name,$code',
           ].join('\n'),
         wapi.WisaQuery.syncClassGroups =>
-          'KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER\n'
-              '3C,00,Derde jaar C,a1,111',
+          <String>[_classGroupHeader, ...classGroupRows].join('\n'),
         wapi.WisaQuery.syncStudents =>
-          'KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,'
-              'STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,'
-              'NATIONALITEIT,STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,'
-              'KLASWIJZIGING\n'
-              '3C,,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,'
-              '1/9/2025',
+          <String>[_studentHeader, ...studentRows].join('\n'),
         wapi.WisaQuery.syncStaff => 'CODE,WISAID,FAMILIENAAM,VOORNAAM',
         _ => '',
       };
+
+  static const String _classGroupHeader =
+      'KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER';
+
+  static const String _studentHeader =
+      'KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,'
+      'STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,NATIONALITEIT,'
+      'STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,KLASWIJZIGING';
 
   static String _envelope(String csv) {
     final encoded = base64.encode(latin1.encode(csv));
@@ -1438,6 +1462,17 @@ az.AzureUser azUser({
   // the account is in step; a fixture about a *stale* copy of it (#315/#316)
   // names another school here.
   String companyName = 'GBS',
+  // The other half of the Office 365 licensing rule (#358). In step by default
+  // for the same reason `companyName` is; a fixture about the unlicensed account
+  // passes null (the blank field this port's own creates left behind) or
+  // `LeerlingBas` (the pupil who moved up from a basisschool).
+  String? jobTitle = 'LeerlingSec',
+  // The class the Office 365 profile advertises (#359), which the app keeps
+  // equal to the WISA class. Defaults to [wisaStudent]'s own default class, so a
+  // record built from these fixtures is in step and raises no repair; a fixture
+  // whose student sits in another class passes it, and one about the *stale*
+  // copy the issue is named for passes last year's class or null.
+  String? department = '3C',
 }) =>
     az.AzureUser(
       id: id,
@@ -1447,6 +1482,8 @@ az.AzureUser azUser({
       givenName: givenName,
       surname: surname,
       companyName: companyName,
+      jobTitle: jobTitle,
+      department: department,
     );
 
 /// An Azure **staff** account. Staff carry no `companyName`; their school lives
@@ -1712,6 +1749,40 @@ ReconcileHarness idCollisionHarness({InMemoryLinkedStore? linkedStore}) =>
         memberships: const [],
       ),
       azure: azSnap(users: const []),
+    );
+
+/// A reconcile harness over the live #360 shape: **one student, two Office 365
+/// accounts** carrying the same `employeeId` (INV-26).
+///
+/// Modelled on the audited pairs. Both accounts were made by this app months
+/// apart, so both carry our `companyName`; the two UPNs differ only in how the
+/// given name was normalised — one keeps the internal hyphen, the other strips
+/// it. The twin is the **unlicensed** half: it has no `jobTitle` (the field this
+/// port only started writing in #358), so it falls outside the dynamic group
+/// that grants the student licence and has never held Office. That asymmetry is
+/// the point of the fixture — it is the pair of facts an operator picks by, and
+/// the app must show them rather than choose.
+///
+/// The default WISA/Smartschool fixtures link the *first* account, so the shape
+/// is one ordinary record whose Azure identity is ambiguous. The twin used to
+/// become a second record instead: an Azure-only orphan, which — carrying our
+/// `companyName` and no WISA row — reads as a departed student and raises
+/// `RemoveStudentFromAzure` on it. Which of the pair that lands on is decided by
+/// nothing but snapshot order.
+ReconcileHarness duplicateAzureAccountHarness({
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      linkedStore: linkedStore,
+      azure: azSnap(users: [
+        azUser(),
+        azUser(
+          id: 'az-twin',
+          upn: 'jane-doe@student.school.example',
+          jobTitle: null,
+          department: null,
+        ),
+      ]),
     );
 
 /// A reconcile harness over [count] WISA-departed, Smartschool-only active
@@ -2060,7 +2131,9 @@ ReconcileHarness appliedClassWorkHarness({
         memberships: [member('sam', '3C_ss'), member('tom', '3D_ss')],
       ),
       // Sam's display name is left blank (stale) so `ModifyAzureName` fires;
-      // Tom's already carries his WISA name, so his class is done.
+      // Tom's already carries his WISA name, so his class is done. Both profiles
+      // name the class WISA holds them in, so #359's class repair adds nothing
+      // to a fixture about one applyable action.
       azure: azSnap(users: [
         azUser(
           id: 'az3',
@@ -2072,6 +2145,7 @@ ReconcileHarness appliedClassWorkHarness({
           upn: 'tom.tas@student.school.example',
           employeeId: '4',
           displayName: 'Tom Tas',
+          department: '3D',
         ),
       ]),
       ourSchoolIds: const {1},
@@ -2159,6 +2233,7 @@ ReconcileHarness crossClassSituationHarness() => ReconcileHarness(
           id: kTom3D,
           upn: 'tom.tas@student.school.example',
           employeeId: '3',
+          department: '3D',
         ),
       ]),
       ourSchoolIds: const {1},
@@ -2245,22 +2320,29 @@ ReconcileHarness rolloverHarness({Future<void> Function()? applyGate}) =>
       ),
       // Only Sam's display name is stale, so only Sam carries a second decision.
       azure: azSnap(users: [
+        // Their Office 365 profiles already name `4A`, so the only thing the
+        // rollover owes here is the Smartschool move (plus Sam's stale name).
+        // The class repair of #359 has a rollover of its own and is not what
+        // this fixture is about.
         azUser(
           id: kSamRollover,
           upn: 'sam.sels@student.school.example',
           employeeId: '1',
+          department: '4A',
         ),
         azUser(
           id: kSaraRollover,
           upn: 'sara.segers@student.school.example',
           employeeId: '2',
           displayName: 'Sara Segers',
+          department: '4A',
         ),
         azUser(
           id: kTomRollover,
           upn: 'tom.tas@student.school.example',
           employeeId: '3',
           displayName: 'Tom Tas',
+          department: '4A',
         ),
       ]),
       ourSchoolIds: const {1},
@@ -2352,20 +2434,24 @@ ReconcileHarness foreignClassMoveHarness() => ReconcileHarness(
           member('tom', '3C_ss'),
         ],
       ),
-      // Every Office 365 account is in step, so the class move is the only
-      // decision any of these cards can carry.
+      // Every Office 365 account is in step — including the class each profile
+      // names (#359) — so the class move is the only decision any of these
+      // cards can carry. Tom's names the foreign class his WISA row does, which
+      // the same ours-classes guard leaves alone rather than writing on.
       azure: azSnap(users: [
         azUser(
           id: kSamRollover,
           upn: 'sam.sels@student.school.example',
           employeeId: '1',
           displayName: 'Sam Sels',
+          department: '4A',
         ),
         azUser(
           id: kSaraRollover,
           upn: 'sara.segers@student.school.example',
           employeeId: '2',
           displayName: 'Sara Segers',
+          department: '4B',
         ),
         azUser(
           id: kTomRollover,
@@ -2491,21 +2577,27 @@ ReconcileHarness azureClassGroupHarness({
       ),
       azure: azSnap(
         users: [
+          // Each profile names its holder's WISA class — the **bare** class, as
+          // the create writes it and #359 keeps it, never the sub-grouped
+          // `2F ECO` the Smartschool placement widens to.
           azUser(
               id: 'az1',
               upn: 'a1@student.school.example',
               employeeId: '1',
-              displayName: 'Jane Doe'),
+              displayName: 'Jane Doe',
+              department: '1A'),
           azUser(
               id: 'az2',
               upn: 'a2@student.school.example',
               employeeId: '2',
-              displayName: 'Jane Doe'),
+              displayName: 'Jane Doe',
+              department: '2F'),
           azUser(
               id: 'az3',
               upn: 'a3@student.school.example',
               employeeId: '3',
-              displayName: 'Jane Doe'),
+              displayName: 'Jane Doe',
+              department: '2F'),
         ],
         groups: [
           azClassGroup('1A', memberIds: const ['az1']),
@@ -2567,16 +2659,20 @@ ReconcileHarness unmanageableClassGroupHarness({bool manageable = false}) =>
       ),
       azure: azSnap(
         users: [
+          // Both profiles name their WISA class, so the group's shape is the
+          // only thing this fixture is about (#359).
           azUser(
               id: 'az1',
               upn: 'a1@student.school.example',
               employeeId: '1',
-              displayName: 'Jane Doe'),
+              displayName: 'Jane Doe',
+              department: '1A'),
           azUser(
               id: 'az2',
               upn: 'a2@student.school.example',
               employeeId: '2',
-              displayName: 'Joe Sels'),
+              displayName: 'Joe Sels',
+              department: '1A'),
         ],
         groups: [
           if (manageable)
@@ -2848,12 +2944,17 @@ ReconcileHarness azureClassMembershipHarness({
             upn: 'jane.doe@student.school.example',
             employeeId: '1',
             displayName: 'Jane Doe',
+            department: '1A',
           ),
           azUser(
             id: 'az2',
             upn: 'sam.sels@student.school.example',
             employeeId: '2',
             displayName: 'Sam Sels',
+            // Both profiles name the class WISA holds them in, so the roster is
+            // the only thing out of step — the class *field* repair of #359 is
+            // a different fixture's subject.
+            department: '1B',
           ),
         ],
         groups: [

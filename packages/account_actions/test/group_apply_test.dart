@@ -1,5 +1,6 @@
 import 'package:account_actions/account_actions.dart';
 import 'package:account_core/account_core.dart';
+import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 import 'package:test/test.dart';
 
@@ -286,6 +287,71 @@ void main() {
       expect(result.error, isNotNull);
       expect(result.removed, isFalse,
           reason: 'nothing was removed, so nothing may be dropped');
+    });
+
+    test(
+        'a server-side fault says the delete cannot be applied and names the '
+        'manual fix (#361)', () async {
+      // What Smartschool really answers today: `delClass` dies on a PHP fatal
+      // error inside their own code, so the write can never land however often
+      // it is pressed. The operator used to get the raw envelope and an action
+      // that looked ordinarily retryable.
+      final transport = RecordingSmartschoolTransport(
+        throwFor: (String action) => action.endsWith('#delClass')
+            ? ss.SmartschoolSoapFault(
+                'SOAP-ENV:Server',
+                'Undefined constant "Smsc\\Legacy\\Core\\_THE_OFFICIAL_CLASS"',
+                statusCode: 500,
+              )
+            : null,
+      );
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = DeleteSmartschoolClass(
+        linkedGroup(smartschool: ssGroup(code: 'C3A', name: '3A')),
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.removed, isFalse);
+      final String message = '${result.error}';
+      expect(message, contains('Undefined constant'),
+          reason: 'the Smartschool-side reason is the whole diagnosis');
+      expect(message, contains('3A'));
+      expect(message, contains('opnieuw toepassen lost ze niet op'));
+      expect(message, contains('manueel in Smartschool'));
+      expect(message, isNot(contains('Envelope')),
+          reason: 'the log line is a sentence, not the SOAP envelope');
+      expect(message, isNot(contains('<')),
+          reason: 'no XML reaches the operator at all');
+    });
+
+    test('a client-side fault is reported as itself, with no manual advice',
+        () async {
+      // A `Client` fault means Smartschool read the request and refused it —
+      // ours to fix, and no reason to send anyone into the web UI.
+      final transport = RecordingSmartschoolTransport(
+        throwFor: (String action) => action.endsWith('#delClass')
+            ? ss.SmartschoolSoapFault(
+                'SOAP-ENV:Client',
+                'procedure delClass not present',
+                statusCode: 500,
+              )
+            : null,
+      );
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = DeleteSmartschoolClass(
+        linkedGroup(smartschool: ssGroup(code: 'C3A', name: '3A')),
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.error, isA<ss.SmartschoolSoapFault>());
+      expect('${result.error}', contains('procedure delClass not present'));
+      expect('${result.error}', isNot(contains('manueel in Smartschool')));
     });
 
     test('a record naming no class code raises no delete', () {

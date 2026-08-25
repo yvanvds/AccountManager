@@ -1574,6 +1574,9 @@ void main() {
           upn: 'tom.tas@student.school.example',
           employeeId: '4',
           displayName: 'Tom Tas',
+          // His profile names the class WISA holds him in, so nothing is owed
+          // there either (#359) — this school really is done.
+          department: '3D',
         ),
       ]),
       ourSchoolIds: const {1},

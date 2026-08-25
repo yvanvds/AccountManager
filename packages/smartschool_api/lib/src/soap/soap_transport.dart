@@ -1,5 +1,8 @@
 import 'package:http/http.dart' as http;
 
+import 'redact.dart';
+import 'soap_envelope.dart';
+
 /// Sends a SOAP envelope and returns the response body.
 ///
 /// Abstracted so tests can replace the transport with an in-memory fake
@@ -14,11 +17,15 @@ abstract interface class SmartschoolSoapTransport {
   });
 }
 
-/// Thrown when the HTTP transport receives a non-2xx response.
+/// Thrown when the HTTP transport receives a non-2xx response **whose body is
+/// not a SOAP Fault** — an HTML error page, a proxy message, an empty body.
 ///
 /// The body may echo back the request envelope, which carries the
 /// accesscode in plaintext. [toString] redacts it so the exception is safe
 /// to log.
+///
+/// Since #361 a non-2xx body that *is* a SOAP Fault no longer lands here: see
+/// [smartschoolHttpFailure].
 class SmartschoolSoapHttpException implements Exception {
   final int statusCode;
   final String body;
@@ -28,15 +35,24 @@ class SmartschoolSoapHttpException implements Exception {
       'SmartschoolSoapHttpException($statusCode): ${redactAccessCode(body)}';
 }
 
-/// Replaces the contents of `<accesscode>…</accesscode>` elements with
-/// `[REDACTED]`. Used by transport exceptions and the capture script.
-/// Conservative — runs on plain strings, never throws.
-String redactAccessCode(String input) {
-  return input.replaceAllMapped(
-    RegExp(r'(<accesscode[^>]*>).*?(</accesscode>)', dotAll: true),
-    (m) => '${m.group(1)}[REDACTED]${m.group(2)}',
-  );
-}
+/// The exception a non-2xx reply `(statusCode, body)` becomes.
+///
+/// A SOAP Fault is a SOAP Fault whether it arrives with `200` or `500`: the
+/// status decides the transport outcome, not whether the body is parseable.
+/// Smartschool's `delClass` returns its PHP fatal error exactly that way, and
+/// short-circuiting on the status alone meant the fault parsing never ran and
+/// the whole envelope went into the operator's log line (#361).
+///
+/// So: a body carrying a `<soap:Fault>` becomes a [SmartschoolSoapFault] with
+/// the [statusCode] preserved for diagnostics; anything else keeps the old
+/// [SmartschoolSoapHttpException], body and redaction included.
+///
+/// Public because it is the *decision*, not the socket — an alternative
+/// transport (and the app's offline test doubles) can reach the same verdict
+/// from the same reply without re-deriving it.
+Object smartschoolHttpFailure(int statusCode, String body) =>
+    parseSoapFault(body, statusCode: statusCode) ??
+    SmartschoolSoapHttpException(statusCode, body);
 
 /// Default transport backed by `package:http`. Sends a SOAP 1.1 POST with
 /// `Content-Type: text/xml; charset=utf-8`, as the V3 service expects.
@@ -61,7 +77,7 @@ class HttpSmartschoolSoapTransport implements SmartschoolSoapTransport {
       body: envelope,
     );
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      throw SmartschoolSoapHttpException(resp.statusCode, resp.body);
+      throw smartschoolHttpFailure(resp.statusCode, resp.body);
     }
     return resp.body;
   }

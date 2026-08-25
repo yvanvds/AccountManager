@@ -49,6 +49,7 @@ export 'src/rules/import_rules.dart'
         applyImportRules,
         unmatchedImportRules;
 export 'src/rules/root_scope.dart' show scopeToRoots, unmatchedRootNames;
+export 'src/soap/redact.dart' show redactAccessCode;
 export 'src/snapshot.dart' show SmartschoolSnapshot;
 export 'src/soap/credentials.dart' show SmartschoolCredentials, SoapArg;
 export 'src/soap/soap_envelope.dart'
@@ -59,10 +60,11 @@ export 'src/soap/soap_envelope.dart'
         buildRpcEnvelope,
         decodeIntResult,
         decodeReturn,
+        parseSoapFault,
         soapActionFor;
 export 'src/soap/soap_transport.dart'
     show
         HttpSmartschoolSoapTransport,
         SmartschoolSoapHttpException,
         SmartschoolSoapTransport,
-        redactAccessCode;
+        smartschoolHttpFailure;

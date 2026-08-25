@@ -1,4 +1,4 @@
-// Property-based tests for the linker's invariants (INV-12/20/21/22/23).
+// Property-based tests for the linker's invariants (INV-12/20/21/22/23/26).
 //
 // `glados` re-exports `package:test`, so it is the only test import here.
 import 'package:account_core/account_core.dart';
@@ -159,16 +159,59 @@ void main() {
     );
 
     Glados(_scenario).test(
-      'INV-22: every school-prefixed Azure user appears in exactly one account',
+      'INV-22: every school-prefixed Azure user is retained exactly once',
       (specs) {
+        // Retained, not "sits on a record's `azure` slot" — the slot holds one
+        // account and `employeeId` is not unique (INV-26, #360), so a person's
+        // second account lands on `azureDuplicates` instead. What INV-22 is
+        // about is that no owned account is *lost*, and that is what this says:
+        // exactly one record claims it, in one place or the other. Read off the
+        // slot alone, this demanded the very orphan record #360 removed.
         final built = _build(specs, SeqResolver());
         final prefix = _norm(_prefix);
         final owned = built.users.where((u) => _norm(u.companyName) == prefix);
         for (final user in owned) {
           final hits = built.linked.accounts
-              .where((a) => identical(a.azure, user))
+              .where((a) => a.azureCandidates.any((u) => identical(u, user)))
               .length;
           expect(hits, 1, reason: 'azure ${user.id} appeared $hits×');
+        }
+      },
+    );
+
+    Glados(_scenario).test(
+      'INV-26: an employeeId on two accounts always warns, and loses neither',
+      (specs) {
+        final built = _build(specs, SeqResolver());
+
+        final byEmployeeId = <String, List<String>>{};
+        for (final user in built.users) {
+          final id = _norm(user.employeeId);
+          if (id != null) byEmployeeId.putIfAbsent(id, () => []).add(user.id);
+        }
+        final colliding =
+            byEmployeeId.entries.where((e) => e.value.length >= 2).toList();
+
+        final warnings = built.linked.warnings
+            .whereType<DuplicateAzureEmployeeId>()
+            .toList();
+        expect(warnings, hasLength(colliding.length));
+
+        for (final entry in colliding) {
+          final warning = warnings.firstWhere((w) => w.employeeId == entry.key);
+          // Every colliding account, in snapshot order — the adopted one first.
+          expect(warning.accounts.map((u) => u.id).toList(), entry.value);
+          // …and each of them still reachable from exactly one record, so a
+          // collision never becomes a way to lose an account.
+          for (final user in warning.accounts) {
+            expect(
+              built.linked.accounts.where(
+                (a) => a.azureCandidates.any((u) => identical(u, user)),
+              ),
+              hasLength(1),
+              reason: 'azure ${user.id} was not retained',
+            );
+          }
         }
       },
     );

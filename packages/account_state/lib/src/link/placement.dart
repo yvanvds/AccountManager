@@ -143,28 +143,36 @@ class PlacementResolver {
       }
     }
 
-    // Classes that use sub-groups: legacy `ClassGroupManager.UseSubGroups` —
-    // a class whose rows carry more than one distinct admin code.
+    // Classes that use sub-groups: a class that carries at least one KLASGROEP
+    // row whose code is not the `00` administrative shell.
     //
-    // The tally is keyed on `(schoolId, name)`, **not** on the name alone
-    // (#221). `ADMINGROEP` is only unique *within* a school, and this snapshot
-    // pools every school the shared WISA credentials reach — including sibling
-    // schools we do not manage. Two schools that each have their own
-    // single-group `1C` therefore contribute two distinct admin codes for the
-    // name `1C`, and a name-keyed tally reads that as "1C uses sub-groups" for
-    // both, which appended each student's `KLASGROEP` to their class name.
+    // This is the state-layer half of #362, and it has to move in lockstep with
+    // the connector's `_dedupeClassGroups` — which rows survive there decides
+    // what the class is *called*, and this decides whether a student's
+    // `KLASGROEP` is appended to the class name they are placed into. Split
+    // them and the class is renamed while its students stay behind in the old
+    // one. Both used to be legacy `ClassGroupManager.UseSubGroups` — "more than
+    // one distinct ADMINGROEP" — which mis-read ISMAB's `2G` (rows `00` + `LAT`
+    // sharing admin code `040092`) as un-split. See the connector for the full
+    // account.
+    //
+    // The tally stays keyed on `(schoolId, name)`, **not** on the name alone
+    // (#221/#222): this snapshot pools every school the shared WISA credentials
+    // reach — including sibling schools we do not manage — so a sibling's
+    // genuinely sub-grouped `1C` must never widen *our* single-group `1C`. A
+    // groupName-based rule no longer has the cross-school ADMINGROEP collision
+    // hazard #221 fixed, but the scoping answers a second question that outlives
+    // it: whose class is split.
     //
     // Also index WISA classes by fullName so [groupPlacementFor] can recover
     // the source class (bare name / year) from a [LinkedGroup] keyed by
     // fullName. That index stays name-keyed and first-wins on purpose: a
     // [LinkedGroup] carries no school, and the linker itself collapses
     // duplicate fullNames to the first record (INV-20), so this mirrors it.
-    final adminCodesByClass = <(int, String), Set<String>>{};
     for (final group in wisa.classGroups) {
       final name = normalizeGroupName(group.name);
-      if (name != null) {
-        adminCodesByClass.putIfAbsent(
-            (group.schoolId, name), () => <String>{}).add(group.adminCode);
+      if (name != null && _namesSubGroup(group.groupName)) {
+        _subGroupClasses.add((group.schoolId, name));
       }
       final fullName = normalizeGroupName(group.fullName);
       if (fullName != null) _wisaByFullName.putIfAbsent(fullName, () => group);
@@ -183,9 +191,6 @@ class PlacementResolver {
         if (name != null) _ourClassNames.add(name);
         if (fullName != null) _ourClassNames.add(fullName);
       }
-    }
-    for (final entry in adminCodesByClass.entries) {
-      if (entry.value.length > 1) _subGroupClasses.add(entry.key);
     }
   }
 
@@ -313,7 +318,7 @@ class PlacementResolver {
   String _classNameFor(wapi.WisaStudent student) {
     final classGroup = student.classGroup;
     final subGroup = student.classSubGroup.trim();
-    if (subGroup.isEmpty || subGroup == _noSubGroupSentinel) return classGroup;
+    if (!_namesSubGroup(subGroup)) return classGroup;
     final name = normalizeGroupName(classGroup);
     if (name == null) return classGroup;
     return _subGroupClasses.contains((student.schoolId, name))
@@ -354,6 +359,15 @@ class PlacementResolver {
 /// sentinel, not a group code, so it must never surface in a class name —
 /// see [wapi.WisaClassGroup.fullName], which guards the class-group side.
 const String _noSubGroupSentinel = '00';
+
+/// Whether a class-group row's `KLASGROEP` names a real sub-group — i.e. it is
+/// neither blank nor the [_noSubGroupSentinel] shell. This is the whole
+/// sub-group test since #362: a class is split exactly when one of its rows
+/// names a group, however few such rows there are.
+bool _namesSubGroup(String groupName) {
+  final trimmed = groupName.trim();
+  return trimmed.isNotEmpty && trimmed != _noSubGroupSentinel;
+}
 
 /// Trims and lower-cases [value] for case-insensitive, whitespace-tolerant
 /// matching (INV-12), returning `null` for a null or blank input so an empty

@@ -25,6 +25,8 @@ void main() {
       expect(user.surname, 'Peeters');
       expect(user.companyName, 'GBS');
       expect(user.department, '3A');
+      // Both halves of the licensing rule are read, not just the school (#358).
+      expect(user.jobTitle, 'LeerlingSec');
       expect(user.accountEnabled, isTrue);
     });
 
@@ -34,10 +36,14 @@ void main() {
         'id': 'x',
         'userPrincipalName': 'u@d',
         'employeeId': '',
+        'jobTitle': '',
       });
       expect(user.employeeId, isNull);
       expect(user.companyName, isNull);
       expect(user.department, isNull);
+      // A blank `jobTitle` is exactly what this port's own creates left behind
+      // (#358), so it must read as absent rather than as the empty string.
+      expect(user.jobTitle, isNull);
       expect(user.displayName, '');
     });
 
@@ -51,6 +57,7 @@ void main() {
         surname: 'Doe',
         companyName: 'GBS',
         department: '3C',
+        jobTitle: 'LeerlingSec',
       );
 
       test('a property the row omits keeps its current value', () {
@@ -70,6 +77,21 @@ void main() {
         expect(merged.employeeId, isNull);
         expect(merged.department, isNull);
         expect(merged.companyName, 'GBS', reason: 'unmentioned, so untouched');
+        expect(merged.jobTitle, 'LeerlingSec',
+            reason: 'unmentioned, so untouched');
+      });
+
+      test('a cleared jobTitle arrives as a null the row does send (#358)', () {
+        // Somebody stripping the field by hand is how an account silently drops
+        // out of the licensing group, so the delta walk has to be able to carry
+        // that away — the same presence-not-emptiness rule the other optional
+        // strings follow.
+        final merged = stored.mergeGraphJson(<String, dynamic>{
+          'id': 'az1',
+          'jobTitle': null,
+        });
+        expect(merged.jobTitle, isNull);
+        expect(merged.companyName, 'GBS');
       });
 
       test('accountEnabled follows presence, not truthiness', () {
@@ -113,6 +135,10 @@ void main() {
         'surname',
         'companyName',
         'department',
+        // #358: the second half of the licensing rule. Without it in the
+        // `$select` no pull can read the field, so nothing could compare or
+        // repair it.
+        'jobTitle',
         'accountEnabled',
       ]);
     });
@@ -127,9 +153,16 @@ void main() {
         surname: 'B',
         companyName: 'GBS',
         department: '3A',
+        jobTitle: 'LeerlingSec',
         accountEnabled: false,
       );
       expect(AzureUser.fromJson(user.toJson()), user);
+      // Value-based equality covers it too, so a snapshot restored from the
+      // cache cannot silently forget which pupils are licensed (#358).
+      expect(
+        AzureUser.fromJson(user.copyWith(jobTitle: 'LeerlingBas').toJson()),
+        isNot(user),
+      );
     });
 
     test('copyWith replaces only named fields', () {

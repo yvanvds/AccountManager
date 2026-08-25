@@ -595,6 +595,7 @@ class _OverviewSection extends StatelessWidget {
     final ColorScheme colors = Theme.of(context).colorScheme;
     final duplicates = controller.duplicateWarnings;
     final collisions = controller.linkIdCollisions;
+    final azureIdentities = controller.azureIdentityCollisions;
     final students = controller.studentSummary;
     final staff = controller.staffSummary;
     final groups = controller.groupSummary;
@@ -648,7 +649,73 @@ class _OverviewSection extends StatelessWidget {
           const SizedBox(height: PlinkSpacing.s3),
           for (final c in collisions) _IdCollisionTile(collision: c),
         ],
+        // Beneath those again (INV-26, #360). Not folded into the duplicate-mail
+        // list above it either: a shared mail is two Smartschool accounts to
+        // tidy, this is two Office 365 accounts for one person — one of which
+        // may hold their mailbox — and it is resolved in Entra, not here.
+        if (azureIdentities.isNotEmpty) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          for (final c in azureIdentities)
+            _AzureIdentityCollisionTile(collision: c),
+        ],
       ],
+    );
+  }
+}
+
+/// Two or more Office 365 accounts on one WISA id, as a plain, always-expanded
+/// notice (INV-26, #360): the headline says how many accounts share the id, and
+/// each account gets a line with the facts that tell the live one from the
+/// abandoned one — UPN, object id, whether it is enabled, and the
+/// `companyName`/`jobTitle` pair the licence group's rule turns on.
+///
+/// Shown open and with no control, for the same reason [_IdCollisionTile] is:
+/// there is nothing here for the app to do. Resolving the pair means deleting an
+/// account, and the wrong one holds the student's mail and OneDrive — so this
+/// states the case and leaves the decision, and the deletion, to the operator in
+/// Entra.
+class _AzureIdentityCollisionTile extends StatelessWidget {
+  const _AzureIdentityCollisionTile({required this.collision});
+
+  final AzureIdentityCollision collision;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+
+    return Container(
+      key: ValueKey('azure-identity-collision-${collision.employeeId}'),
+      margin: const EdgeInsets.only(top: PlinkSpacing.s2),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.error),
+        borderRadius: const BorderRadius.all(Radius.circular(PlinkRadius.base)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.person_search_outlined, size: 20, color: colors.error),
+          const SizedBox(width: PlinkSpacing.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'Dubbel Office 365-account: ${collision.accounts.length} '
+                  'accounts dragen WISA-id "${collision.employeeId}". '
+                  'De app kiest niet — los dit op in Entra.',
+                  style: text.bodyMedium,
+                ),
+                for (final a in collision.accounts) ...<Widget>[
+                  const SizedBox(height: PlinkSpacing.s2),
+                  Text(a, style: text.bodySmall),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

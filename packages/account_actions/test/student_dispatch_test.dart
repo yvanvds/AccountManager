@@ -212,8 +212,11 @@ void main() {
         ),
         cfg,
       );
-      expect(types(actions), [ModifyAzureSchool]);
-      final change = actions.single.describeChanges();
+      // The class the other school stamped is repaired in the same pass since
+      // #359 — adoption means taking over the whole profile, not just the field
+      // the `$filter` reads.
+      expect(types(actions), [ModifyAzureSchool, ModifyAzureDepartment]);
+      final change = actions.first.describeChanges();
       expect(change.fields.single.before, isNull);
       expect(change.fields.single.after, 'SSM');
     });

@@ -111,6 +111,12 @@ az.AzureUser azureUser({
   String displayName = 'Jan Peeters',
   String? companyName = 'SSM',
   String? department = '3A',
+  // The second half of the licensing rule (#358), defaulting to the value
+  // [config] is configured with — so an account built from these defaults is in
+  // step and raises no repair of its own. A fixture about the *unlicensed*
+  // account passes null (this port's own creates left it blank) or another
+  // school's kind (`LeerlingBas`, the moved-up basisschool pupil).
+  String? jobTitle = 'LeerlingSec',
 }) =>
     az.AzureUser(
       id: id,
@@ -121,6 +127,7 @@ az.AzureUser azureUser({
       surname: 'Peeters',
       companyName: companyName,
       department: department,
+      jobTitle: jobTitle,
     );
 
 /// Builds a [LinkedAccount] from optional per-system records. Omit a system to

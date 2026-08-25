@@ -92,6 +92,18 @@ class LinkedAccount {
   /// having left.
   final WisaPresence wisaPresence;
 
+  /// The **other** Azure accounts carrying this person's `employeeId` — the ones
+  /// the link could not adopt because [azure] holds one already (INV-26, #360).
+  ///
+  /// Empty for every ordinary record. Non-empty means this person's Office 365
+  /// identity is *ambiguous*, which is a third thing beside "linked" and
+  /// "missing": [azure] is not wrong, it is merely the one the join happened to
+  /// reach first, and the operator has to decide which account is the live one.
+  ///
+  /// See [DuplicateAzureEmployeeId] for why the extras are kept here rather than
+  /// dropped or turned into orphan records.
+  final List<AzureUser> azureDuplicates;
+
   const LinkedAccount({
     required this.id,
     required this.role,
@@ -101,7 +113,21 @@ class LinkedAccount {
     required this.confidence,
     this.wisaClassGroups = const <int, String>{},
     this.wisaPresence = WisaPresence.ours,
+    this.azureDuplicates = const <AzureUser>[],
   });
+
+  /// Whether more than one Azure account claims this person (INV-26, #360) — the
+  /// condition that makes [azure] a *pick* rather than a link, and the one thing
+  /// no automatic repair may act on.
+  bool get hasAmbiguousAzureIdentity => azureDuplicates.isNotEmpty;
+
+  /// Every Azure account claiming this person, the adopted one first — what a
+  /// view lists when it asks the operator to choose. A single entry (or none) in
+  /// the ordinary case.
+  List<AzureUser> get azureCandidates => <AzureUser>[
+        if (azure != null) azure!,
+        ...azureDuplicates,
+      ];
 
   /// Whether this student is present in WISA in a school we manage. False when
   /// absent from WISA entirely or present only in sibling group schools.
@@ -172,6 +198,10 @@ class LinkedStaff {
   /// [belongsToOurSchool] treats an unknown school as ours.
   final bool azureNamesOurSchool;
 
+  /// The other Azure accounts carrying this person's `employeeId` — the staff
+  /// twin of [LinkedAccount.azureDuplicates] (INV-26, #360).
+  final List<AzureUser> azureDuplicates;
+
   const LinkedStaff({
     required this.id,
     required this.role,
@@ -182,7 +212,18 @@ class LinkedStaff {
     this.wisaSchoolIds = const <int>{},
     this.wisaPresence = WisaPresence.ours,
     this.azureNamesOurSchool = false,
+    this.azureDuplicates = const <AzureUser>[],
   });
+
+  /// Whether more than one Azure account claims this staff member (INV-26,
+  /// #360). See [LinkedAccount.hasAmbiguousAzureIdentity].
+  bool get hasAmbiguousAzureIdentity => azureDuplicates.isNotEmpty;
+
+  /// Every Azure account claiming this staff member, the adopted one first.
+  List<AzureUser> get azureCandidates => <AzureUser>[
+        if (azure != null) azure!,
+        ...azureDuplicates,
+      ];
 
   /// Whether this staff member is present in WISA in a school we manage. False
   /// when absent from WISA entirely or listed only by sibling group schools.
@@ -307,6 +348,49 @@ class ResolveDuplicateMail extends LinkWarning {
   final List<SmartschoolAccount> accounts;
 
   const ResolveDuplicateMail({required this.mail, required this.accounts});
+}
+
+/// INV-26: two or more Azure accounts carry the same non-empty `employeeId`.
+///
+/// **`employeeId` is not unique in this tenant.** It holds the WISA id, so the
+/// linker treats it as the strong bridge to a person — but the tenant contains
+/// pairs of accounts that answer to one id, audited live in Aug 2026 (#360):
+/// nine enrolled students of one school held two accounts each, the two UPNs
+/// differing only in how the given name was normalised, created months apart by
+/// two different runs of this app. They are the fingerprint of a
+/// UPN-normalisation change, not of manual error, so more of them can appear.
+///
+/// A join keyed one-account-per-id therefore *picks* rather than links, and
+/// before this warning existed the account it did not pick had two silent fates:
+/// dropped outright, or — when it carried our `companyName` — kept as an
+/// Azure-only orphan, which reads as a departed student and draws a proposal to
+/// **delete** it. Both are wrong in the same way: the abandoned twin and the
+/// twin holding the student's mail and OneDrive are indistinguishable to the
+/// join, so acting on either is a coin flip.
+///
+/// So the collision is reported as what it is. Every colliding account is kept
+/// and reachable — the adopted one on [LinkedAccount.azure], the rest on
+/// [LinkedAccount.azureDuplicates] — and none of them becomes an orphan record,
+/// which is what stops the delete proposal. **Resolution is the operator's**
+/// (#360): merging is destructive, and the wrong choice deletes the mailbox.
+class DuplicateAzureEmployeeId extends LinkWarning {
+  /// The `employeeId` the colliding accounts share, normalized per INV-12
+  /// (trimmed, lower-cased) — the same form the linker joins on.
+  final String employeeId;
+
+  /// Every Azure account carrying [employeeId], in snapshot order; at least two.
+  ///
+  /// Typed as the narrow [AzureUser], so a view that wants the facts an operator
+  /// needs to choose between them — is it enabled, does it carry the
+  /// `companyName`/`jobTitle` pair the licence group's rule requires — narrows to
+  /// the connector's own record, exactly as the materializer does for a staff
+  /// `department`.
+  final List<AzureUser> accounts;
+
+  const DuplicateAzureEmployeeId({
+    required this.employeeId,
+    required this.accounts,
+  });
 }
 
 /// #225: a WISA class whose name already exists in Smartschool as a group the
