@@ -6,7 +6,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:account_actions/account_actions.dart'
-    show ActionOutcome, RemoveStaffFromAzure, RemoveStaffFromSmartschool;
+    show
+        ActionOutcome,
+        ReleaseStaffFromAzureSchool,
+        RemoveStaffFromAzure,
+        RemoveStaffFromSmartschool;
 import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
@@ -26,6 +30,7 @@ import 'package:account_state/account_state.dart'
         ChangeSignal,
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
+        InMemorySettingsStore,
         InMemorySignalHub,
         LiveSettings,
         MaterializedAccount,
@@ -10739,7 +10744,7 @@ void main() {
 
   testWidgets(
       'a staff member who left WISA still gets their Office 365 account '
-      'proposed for deletion (#269)', (WidgetTester tester) async {
+      'proposed for cleanup (#269/#349)', (WidgetTester tester) async {
     // The other half of #268, and the worse one. Anna Smit has left the school:
     // WISA no longer lists her and her Smartschool account is already gone. Her
     // Office 365 account is not — and our prefix sits *second* in the comma list
@@ -10766,7 +10771,23 @@ void main() {
     // Only this layer sees the whole thing: the Azure pull has to remember her
     // from the snapshot it already holds, the linker has to keep the row it
     // produces as an Azure-only staff record (INV-22), and the operator has to be
-    // handed the deletion in Acties → Personeel.
+    // handed the cleanup in Acties → Personeel.
+    //
+    // **What that cleanup is changed in #349.** Her `department` reads
+    // `SSM,GBS`: she is gone from WISA group-wide, but the list a *sibling*
+    // school maintains still names them. The account may not be deleted on that
+    // evidence — `department` is neither ours to write nor guaranteed current
+    // (#237), and destroying a live account of another school of the group is
+    // the loss #340 exists to prevent. So our own entry is struck out instead
+    // and the account is left standing, which is also what makes the group-wide
+    // outcome right: she drops out of *our* Azure pull, SSM's own instance then
+    // sees an account naming nobody but them, and the last school to release her
+    // is the one that deletes it.
+    //
+    // Everything this test is actually about is unchanged: the delta recovery,
+    // the targeted `employeeId` lookup that is the only leg left, the record
+    // surviving as an Azure-only LinkedStaff, and the operator being handed
+    // something to do about it.
     useTallWindow(tester);
     final azureWire = DepartedStaffGraph();
     final harness = ReconcileHarness(
@@ -10836,7 +10857,10 @@ void main() {
           .firstWhere((e) => e.family == 'staff')
           .targetId,
     );
-    expect(find.text('Verwijder Azure account'), findsOneWidget);
+    expect(find.text('Haal onze school uit het Office 365 account'),
+        findsOneWidget);
+    expect(find.text('Verwijder Azure account'), findsNothing,
+        reason: "the department list still names a sibling school (#349)");
   });
 
   testWidgets(
@@ -11645,9 +11669,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
-    // Nobody here has work — that is half the point — so turn off the "alleen
-    // met acties" switch and look at the whole personeel roster, which is what
-    // the operator counting 2574 was looking at.
+    // Anna has no work at all, so turn off the "alleen met acties" switch and
+    // look at the whole personeel roster — which is what the operator counting
+    // 2574 was looking at.
     final Finder toggle =
         find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
@@ -11660,25 +11684,42 @@ void main() {
     expect(find.text('Bert Vermeer'), findsNothing,
         reason: 'a teacher of a school we do not manage is none of our work');
 
-    // Nothing is proposed for anybody — and *nothing* is the whole point for
-    // Carla. Her WISA row survived the group-wide pull, so neither staff removal
-    // evaluates; a narrower pull would have left her `wisa` null and offered to
-    // delete both her accounts.
+    // Carla is the load-bearing case, and what she is *offered* changed in
+    // #349. She left us for a sibling school the group still employs her at, so
+    // her Smartschool account here is ours to clean up — that much used to be
+    // impossible to express, because both staff removals were gated on `wisa ==
+    // null`.
+    //
+    // Her Office 365 account is a different matter, and the #340 guarantee is
+    // unchanged: WISA still places her somewhere in the group, so nothing may
+    // delete it. Our claim is struck out of the `department` list instead and
+    // the account stands. A narrower WISA pull would have left her `wisa` null
+    // and, with the list naming us, taken the account outright.
     final staff = harness.controller.linked!.snapshot.staff;
     final carla = staff.singleWhere((s) => s.wisa?.code.value == 'DEGRC');
     expect(carla.wisa, isNotNull);
     expect(carla.smartschool, isNotNull);
     expect(carla.azure, isNotNull);
+    expect(carla.hasLeftGroup, isFalse, reason: 'the group still employs her');
     expect(
       harness.controller.linked!.staffActions
-          .whereType<RemoveStaffFromSmartschool>(),
-      isEmpty,
+          .whereType<RemoveStaffFromSmartschool>()
+          .map((a) => a.target.wisa?.code.value),
+      <String>['DEGRC'],
     );
     expect(
       harness.controller.linked!.staffActions.whereType<RemoveStaffFromAzure>(),
       isEmpty,
+      reason: 'deleting it would destroy the account of somebody WISA can see '
+          'is still employed by the group (#340)',
     );
-    expect(find.textContaining('Verwijder'), findsNothing);
+    expect(
+      harness.controller.linked!.staffActions
+          .whereType<ReleaseStaffFromAzureSchool>()
+          .map((a) => a.describeChanges().fields.single.after),
+      <String>['SSM'],
+      reason: "our prefix struck out, the sibling school's entry kept verbatim",
+    );
 
     // Bert's record is kept whole behind the filter — dropped from the view, not
     // from the link, which is exactly what keeps his Office 365 account safe.
@@ -11698,9 +11739,102 @@ void main() {
     // badge's count and, through the school-wide "Toepassen op alle", what one
     // press would write. Left in, that press would have offered to provision the
     // whole scholengroep — for people who appear in no list being confirmed.
-    expect(harness.controller.pendingEntries.where((e) => e.family == 'staff'),
-        isEmpty);
-    expect(harness.controller.staffPendingCount, 0);
+    expect(
+      harness.controller.pendingEntries
+          .where((e) => e.family == 'staff')
+          .map((e) => e.target),
+      <String>['Carla De Groote'],
+      reason: 'the one person of ours with work — never Bert, whose school we '
+          'do not manage',
+    );
+    expect(harness.controller.staffPendingCount, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a teacher HR never took out of service can be retired end-to-end (#349)',
+      (WidgetTester tester) async {
+    // The situation the command exists for, through the real app. WISA's staff
+    // export carries no employment status, so Anna — who will not be hired
+    // again, but whose dienstverband nobody closed — arrives in every pull in
+    // step with all three systems. Nothing about her is pending, and before
+    // #349 nothing ever could be.
+    useTallWindow(tester);
+    final settings = InMemorySettingsStore(const AppSettings());
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azStaffUser(department: 'GBS')]),
+      settingsStore: settings,
+      liveSettings: LiveSettings(const AppSettings()),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.staffPendingCount, 0,
+        reason: 'she looks exactly like a colleague who is staying');
+
+    // She has no work, so she is behind the "alleen met acties" switch.
+    final Finder toggle =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    final String id = harness.controller.linked!.snapshot.staff.single.id.value;
+    await selectAccount(tester, id);
+
+    // The command is the only thing on her card, and it says what it is for.
+    expect(find.text('Geen openstaande beslissingen voor dit account.'),
+        findsOneWidget);
+    expect(find.text('Uit dienst'), findsOneWidget);
+    final Finder retire = find.byKey(ValueKey('actions-retire-apply-$id'));
+    await tester.ensureVisible(retire);
+    await tester.tap(retire);
+    await tester.pumpAndSettle();
+
+    // One confirmation, naming every system this single press reaches.
+    expect(find.text('Anna Smit uit dienst?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    // The rule, the Smartschool account and the Office 365 account, off one
+    // press — and the rule is what keeps the next sync from proposing to build
+    // her accounts back.
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome),
+      everyElement(ActionOutcome.applied),
+    );
+    expect(
+      harness.soap.soapActions.any((a) => a.contains('setAccountStatus')),
+      isTrue,
+    );
+    expect(harness.graph.requests.any((r) => r.method == 'DELETE'), isTrue);
+    expect(
+      (await settings.load())
+          .wisaRules
+          .whereType<DontImportUserFromWisa>()
+          .single
+          .userCode,
+      'SMIT',
+      reason: 'the rule outlives the process, or the next launch proposes '
+          'building her accounts back (#276)',
+    );
+    expect(harness.controller.linked!.snapshot.staff, isEmpty);
+    expect(harness.controller.staffPendingCount, 0,
+        reason: 'nothing is proposed to re-create her');
     expect(tester.takeException(), isNull);
   });
 }

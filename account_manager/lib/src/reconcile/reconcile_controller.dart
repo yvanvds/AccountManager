@@ -2870,6 +2870,105 @@ class ReconcileController extends ChangeNotifier {
   Future<void> dryRunDecisions(Iterable<PendingDecision> decisions) =>
       _runBulk(decisions, dry: true);
 
+  // --- the staff departure command (#349) ------------------------------------
+  //
+  // "Medewerker uit dienst". Everything above resolves work the dispatch found;
+  // this one resolution the dispatch cannot find, because WISA reports the
+  // person as employed — HR never closed the dienstverband — and §6.3 is a pure
+  // function of the record as it stands. The judgement is the operator's, so the
+  // command exists for the one staff member they have open and for nobody else.
+  //
+  // It still runs through [_run] rather than reaching for the applier directly,
+  // because a retirement has to earn everything a dispatched apply earns: the
+  // WISA rule persisted with its provenance (#276/#285), the patched snapshots
+  // retained (#347), the shared document patched (#254), a verdict row per write
+  // the chain performed (#230/#240), and the progress dialog (#243).
+
+  /// Whether [staff] can be retired: the gate the command itself applies.
+  bool canRetireStaff(core.LinkedStaff staff) => retirementFor(staff) != null;
+
+  /// The **live** linked staff record behind a materialized row's id, or `null`
+  /// when this view has none.
+  ///
+  /// The details pane renders the materialized view — a flat document per
+  /// person, which is what the shared store holds and what another operator's
+  /// session reads. The command needs the linked record itself, because an
+  /// action is bound to the three connector records it will write. This is the
+  /// one bridge between them, and it fails closed: no linked view, no match, no
+  /// command.
+  core.LinkedStaff? liveStaffFor(String targetId) {
+    final snapshot = _linked?.snapshot;
+    if (snapshot == null) return null;
+    for (final staff in snapshot.staff) {
+      if (staff.id.value == targetId) return staff;
+    }
+    return null;
+  }
+
+  /// The retirement decision for [staff], or `null` when the command does not
+  /// apply — they have already left WISA, so the ordinary departure actions are
+  /// on their card and there is nothing left to open.
+  ///
+  /// Synthesized rather than looked up in [pendingEntries], which is the point:
+  /// [actions.staffActionsFor] deliberately never returns this action, so no
+  /// staff member carries it as a standing to-do, no badge counts it, and no
+  /// cohort can reach it. A decision of exactly one target, built on demand.
+  PendingDecision? retirementFor(core.LinkedStaff staff) {
+    if (_linked == null) return null;
+    final command = actions.RetireStaffMember(staff, applier.staffConfig);
+    if (!command.evaluate()) return null;
+    final label = _staffLabel(staff);
+    final option = PendingActionOption(
+      action: command,
+      kind: command.runtimeType.toString(),
+      group: null,
+      isDefault: true,
+      family: 'staff',
+      targetId: staff.id.value,
+      target: label,
+      changes: command.describeChanges(),
+      canApply: command.canApply,
+      // Always false, and asserted in `account_actions`. Read off the action
+      // rather than written as a literal here so the one place the sanction is
+      // recorded stays the one place it is read.
+      canApplyToAll: command.canApplyToAll,
+      unlockedSystems: command.unlockedSystems,
+    );
+    final entry = PendingAccountEntry(
+      family: 'staff',
+      targetId: staff.id.value,
+      target: label,
+      choices: <PendingChoice>[
+        PendingChoice(
+          alternatives: <PendingActionOption>[option],
+          selected: option,
+        ),
+      ],
+    );
+    return PendingDecision(entry: entry, choice: entry.choices.single);
+  }
+
+  /// Retires [staff] — one record, never a list. There is deliberately no
+  /// `retireStaffMembers`.
+  Future<void> retireStaff(core.LinkedStaff staff, {bool dry = false}) async {
+    final decision = retirementFor(staff);
+    if (decision == null) return;
+    return _run(
+      <PendingDecision>[decision],
+      dry: dry,
+      subject: '${_staffLabel(staff)} uit dienst',
+    );
+  }
+
+  /// What a confirmed retirement of [staff] would write (#234) — the WISA rule
+  /// itself, plus the systems the chain behind it reaches.
+  ApplyScope retirementScope(core.LinkedStaff staff) {
+    final decision = retirementFor(staff);
+    return decision == null
+        ? ApplyScope.empty
+        : applyScopeForDecisions(<PendingDecision>[decision]);
+  }
+
   /// [_run] over the members of [decisions] a bulk pass may write (#326).
   Future<void> _runBulk(
     Iterable<PendingDecision> decisions, {
@@ -2929,6 +3028,7 @@ class ReconcileController extends ChangeNotifier {
   Future<void> _run(
     Iterable<PendingDecision> decisions, {
     required bool dry,
+    String? subject,
   }) async {
     if (busy || _linked == null) return;
     final selected = _selectedActions(decisions);
@@ -2964,8 +3064,14 @@ class ReconcileController extends ChangeNotifier {
     final label = dry ? 'Dry-run' : 'Toepassen';
     log.addMessage(
       core.Origin.all,
-      '$label gestart voor ${selected.length} van ${pendingActions.length} '
-      'openstaande actie(s).',
+      // A pass over the pending list counts itself against that list. A
+      // [subject] pass — the retirement command of #349 — is not in it at all,
+      // so counting it "1 van 0 openstaande acties" would read as a bug; it
+      // names what it is doing instead.
+      subject != null
+          ? '$label gestart voor $subject.'
+          : '$label gestart voor ${selected.length} van '
+              '${pendingActions.length} openstaande actie(s).',
     );
 
     // The view [selected] is bound to, and the actions the view in hand raises

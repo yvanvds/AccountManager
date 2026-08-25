@@ -57,7 +57,13 @@ bool _bulkApplyableStaff(StaffAction a) => switch (a) {
       UpdateStaffWisaName() => false,
       SetStaffCopyCode() => false,
       DontImportStaffFromWisa() => false,
+      // The departure family (#349). Every member is withheld on purpose: a
+      // retirement has to be read and judged one name at a time, which is the
+      // safety property the command was designed around.
+      RetireStaffMember() => false,
+      DeactivateStaffInSmartschool() => false,
       RemoveStaffFromSmartschool() => false,
+      ReleaseStaffFromAzureSchool() => false,
       RemoveStaffFromAzure() => false,
     };
 
@@ -118,7 +124,10 @@ List<StaffAction> _staffActions() {
   return <StaffAction>[
     AddStaffToAzure(staff, cfg),
     AddStaffToSmartschool(staff, cfg),
+    RetireStaffMember(staff, cfg),
+    DeactivateStaffInSmartschool(staff, cfg),
     RemoveStaffFromSmartschool(staff, cfg),
+    ReleaseStaffFromAzureSchool(staff, cfg),
     RemoveStaffFromAzure(staff, cfg),
     DontImportStaffFromWisa(staff, cfg),
     UpdateStaffWisaName(staff, cfg),
@@ -243,8 +252,13 @@ void main() {
         UnregisterStudentFromSmartschool,
         DeleteStudentFromSmartschool,
         RemoveStudentFromAzure,
-        // Staff.
+        // Staff — the whole departure family (#349), destructive in effect even
+        // where it keeps the account: a release strikes our claim out of a
+        // shared Azure field, and a retirement opens the rest of the chain.
+        RetireStaffMember,
+        DeactivateStaffInSmartschool,
         RemoveStaffFromSmartschool,
+        ReleaseStaffFromAzureSchool,
         RemoveStaffFromAzure,
         // Groups.
         DeleteAzureClassGroup,
@@ -278,8 +292,8 @@ void main() {
       // at compile time but cannot tell that it was also added here.
       expect(_studentActions().map((a) => a.runtimeType).toSet(), hasLength(16),
           reason: 'StudentAction has 16 members');
-      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(8),
-          reason: 'StaffAction has 8 members');
+      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(11),
+          reason: 'StaffAction has 11 members');
       expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(12),
           reason: 'GroupAction has 12 members');
     });

@@ -1532,6 +1532,8 @@ class _AccountDetail extends StatelessWidget {
             entry: entry,
             onApplyToAll: onApplyToAll,
           ),
+        if (row.account.isStaff)
+          _RetireStaffBlock(controller: controller, row: row),
       ],
     );
   }
@@ -1561,6 +1563,110 @@ class _AccountDetail extends StatelessWidget {
       ),
     ];
   }
+}
+
+/// The "medewerker uit dienst" command for one staff member (#349).
+///
+/// **Why it is here and not in the pending list.** WISA's staff export carries
+/// no employment status; whether somebody is in actief dienstverband is decided
+/// from the werkdatum, server-side. When HR leaves a dienstverband open for a
+/// teacher who will not be hired again — which is the standing situation here,
+/// not an edge case — she arrives in every pull looking exactly like a colleague
+/// who is staying, so the dispatch (§6.3) has nothing to raise and her accounts
+/// can never be cleaned up. The judgement is the operator's, so this is a
+/// command on the record they have open rather than a decision on a card.
+///
+/// **One record at a time, deliberately.** There is no cohort, no "toepassen op
+/// alle", and `RetireStaffMember.canApplyToAll` is false so nothing downstream
+/// could offer one either. A departure has to be read and the name recognised,
+/// because the person who knows whether a teacher is coming back is the person
+/// looking at the screen.
+///
+/// It sits below the decisions and behind its own confirmation because it is not
+/// part of the card's work: applying every decision on the card must never carry
+/// a retirement with it.
+class _RetireStaffBlock extends StatelessWidget {
+  const _RetireStaffBlock({required this.controller, required this.row});
+
+  final ReconcileController controller;
+  final _AccountRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    final core.LinkedStaff? staff = controller.liveStaffFor(row.id);
+    // Nothing to open for somebody WISA has already let go: their departure is
+    // an ordinary decision on the card above.
+    if (staff == null || !controller.canRetireStaff(staff)) {
+      return const SizedBox.shrink();
+    }
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final String name = row.account.label;
+
+    return Column(
+      key: ValueKey('actions-retire-${row.id}'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const SizedBox(height: PlinkSpacing.s4),
+        const Divider(height: 1, thickness: 1),
+        const SizedBox(height: PlinkSpacing.s3),
+        Text('Uit dienst', style: text.titleSmall),
+        const SizedBox(height: PlinkSpacing.s1),
+        Text(
+          'WISA meldt dit personeelslid nog als in dienst. Gebruik dit enkel '
+          'wanneer je weet dat de persoon niet terugkomt: het account wordt '
+          'voortaan genegeerd bij het importeren uit WISA, en de accounts in '
+          'Smartschool en Office 365 worden opgeruimd.',
+          style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        Wrap(
+          spacing: PlinkSpacing.s2,
+          runSpacing: PlinkSpacing.s2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            OutlinedButton(
+              key: ValueKey('actions-retire-dry-run-${row.id}'),
+              onPressed: controller.busy
+                  ? null
+                  : () => runWithProgress(
+                        context,
+                        controller: controller,
+                        dry: true,
+                        run: () => controller.retireStaff(staff, dry: true),
+                      ),
+              child: const Text('Dry-run'),
+            ),
+            FilledButton(
+              key: ValueKey('actions-retire-apply-${row.id}'),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              onPressed:
+                  controller.busy ? null : () => _retire(context, staff, name),
+              child: const Text('Medewerker uit dienst'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Confirms, naming the systems the chain behind the rule will reach (#234) —
+  /// the WISA rule alone would understate what one press does.
+  Future<void> _retire(
+    BuildContext context,
+    core.LinkedStaff staff,
+    String name,
+  ) =>
+      confirmAndApply(
+        context,
+        controller: controller,
+        title: '$name uit dienst?',
+        scope: controller.retirementScope(staff),
+        apply: () => controller.retireStaff(staff),
+      );
 }
 
 /// The back affordance of the one-pane layout: on a window too narrow for two

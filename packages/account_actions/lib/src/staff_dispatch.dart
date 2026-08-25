@@ -27,6 +27,16 @@ import 'staff_action_config.dart';
 /// branch briefly carried (#233) fired for every teacher our prefix did not lead
 /// the list for, and rewrote `GBS,SSM` to a bare `SSM`.
 ///
+/// [RetireStaffMember] is **deliberately absent** (#349). Dispatch is a pure
+/// function of the record as it stands, and "this teacher is not coming back" is
+/// not in the record — WISA reports them employed, because HR never closed the
+/// dienstverband. Returning it here would give every staff member on the payroll
+/// a standing destructive to-do, inflate the Personeel badge by the size of the
+/// staff room, and put a retirement inside reach of a cohort apply. It is an
+/// operator command instead: the UI constructs it for the one record on screen
+/// and hands it to the applier, which is also why nothing in this file can
+/// bulk-apply it.
+///
 /// A staff member with no Smartschool account raises [DontImportStaffFromWisa]
 /// *and* exactly one of [AddStaffToAzure] / [AddStaffToSmartschool]. Those are
 /// not two to-dos: they share the [staffImportAlternative] key, so the pending
@@ -39,8 +49,15 @@ List<StaffAction> staffActionsFor(
   LinkedStaff staff,
   StaffActionConfig config,
 ) {
+  // "Complete" (modify branch) requires presence in *our* WISA, not merely
+  // anywhere in the group — the staff half of the same rule the student dispatch
+  // has followed since #134, adopted here in #349. A teacher who moved to a
+  // sibling group school still carries a WISA record, so the old
+  // `staff.wisa != null` test called them complete and offered nothing but field
+  // repairs; they have to fall to the lifecycle branch for the departure actions
+  // to fire at all.
   final complete =
-      staff.wisa != null && staff.smartschool != null && staff.azure != null;
+      staff.isInOurWisa && staff.smartschool != null && staff.azure != null;
 
   final candidates = complete
       ? <StaffAction>[
@@ -56,8 +73,17 @@ List<StaffAction> staffActionsFor(
           // blacklist.
           AddStaffToAzure(staff, config),
           AddStaffToSmartschool(staff, config),
+          // The departure pair (#349), conservative half first: that is the
+          // order the operator reads the radio pair in, and the order
+          // `_chainFollowUps` walks, so a retirement keeps the account by
+          // default and deleting it stays a deliberate pick.
+          DeactivateStaffInSmartschool(staff, config),
           RemoveStaffFromSmartschool(staff, config),
           DontImportStaffFromWisa(staff, config),
+          // Release before delete: the two are decided by the `department` list
+          // and are mutually exclusive by construction, so the order only fixes
+          // which one a follow-up walk meets first.
+          ReleaseStaffFromAzureSchool(staff, config),
           RemoveStaffFromAzure(staff, config),
         ];
 

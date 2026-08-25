@@ -30,9 +30,24 @@ void main() {
       expect(types(actions), [AddStaffToSmartschool, DontImportStaffFromWisa]);
     });
 
-    test('Smartschool-only staff → only RemoveStaffFromSmartschool', () {
+    test('Smartschool-only staff → the departure either/or (#349)', () {
+      // Deactivate *or* delete, conservative half first — the staff twin of the
+      // student departure pair. Before #349 the delete stood alone.
       final actions = staffActionsFor(
         linkedStaff(smartschool: ssStaff()),
+        cfg,
+      );
+      expect(types(actions),
+          [DeactivateStaffInSmartschool, RemoveStaffFromSmartschool]);
+    });
+
+    test(
+        'an already-disabled Smartschool account offers only the delete (#349)',
+        () {
+      // Nothing left to deactivate, so the either/or collapses to its one
+      // remaining answer rather than offering a no-op.
+      final actions = staffActionsFor(
+        linkedStaff(smartschool: ssStaff(status: 'uitgeschakeld')),
         cfg,
       );
       expect(types(actions), [RemoveStaffFromSmartschool]);
@@ -224,10 +239,26 @@ void main() {
 
     test('every other staff action stands on its own', () {
       // A stray key would pool unrelated actions into one radio group and hide
-      // all but the selected one from the operator.
+      // all but the selected one from the operator. Two keys are legitimate —
+      // the import either/or above and the departure either/or of #349 — and
+      // each may only ever be carried by its own declared members.
+      const known = <String, Set<Type>>{
+        staffImportAlternative: {
+          AddStaffToAzure,
+          AddStaffToSmartschool,
+          DontImportStaffFromWisa,
+        },
+        staffSmartschoolDepartureAlternative: {
+          DeactivateStaffInSmartschool,
+          RemoveStaffFromSmartschool,
+        },
+      };
       for (final staff in <LinkedStaff>[
+        linkedStaff(wisa: wisaStaff()),
+        linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
         linkedStaff(smartschool: ssStaff()),
         linkedStaff(azure: azureStaff()),
+        linkedStaff(smartschool: ssStaff(), azure: azureStaff()),
         linkedStaff(
           wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
           smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
@@ -235,10 +266,29 @@ void main() {
         ),
       ]) {
         for (final action in staffActionsFor(staff, cfg)) {
-          expect(action.alternativeGroup, isNull,
-              reason: '${action.runtimeType}');
+          final key = action.alternativeGroup;
+          if (key == null) continue;
+          expect(known.keys, contains(key), reason: '${action.runtimeType}');
+          expect(known[key], contains(action.runtimeType),
+              reason: '${action.runtimeType} carries $key');
         }
       }
+    });
+
+    test('the departure pair is one choice, keeping the account by default',
+        () {
+      final actions = staffActionsFor(linkedStaff(smartschool: ssStaff()), cfg);
+      final keep = actions.whereType<DeactivateStaffInSmartschool>().single;
+      final delete = actions.whereType<RemoveStaffFromSmartschool>().single;
+
+      expect(keep.alternativeGroup, staffSmartschoolDepartureAlternative);
+      expect(delete.alternativeGroup, keep.alternativeGroup);
+      // Polarity: the conservative half leads and is pre-selected — the same way
+      // round as the student departure, and deliberately the opposite of the
+      // import choice above.
+      expect(keep.isDefaultAlternative, isTrue);
+      expect(delete.isDefaultAlternative, isFalse);
+      expect(actions.indexOf(keep), lessThan(actions.indexOf(delete)));
     });
   });
 
@@ -286,12 +336,20 @@ void main() {
 
     test('every other staff action unlocks nothing', () {
       // The chain is opt-in per action; a stray declaration would make the
-      // applier write beyond what the operator selected.
+      // applier write beyond what the operator selected. Two chains are
+      // declared: provisioning (#240) and the departure of #349, whose
+      // Smartschool half pulls the Office 365 half along behind it.
+      const chaining = <Type>{
+        AddStaffToAzure,
+        DeactivateStaffInSmartschool,
+        RemoveStaffFromSmartschool,
+      };
       for (final staff in <LinkedStaff>[
         linkedStaff(wisa: wisaStaff()),
         linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
         linkedStaff(smartschool: ssStaff()),
         linkedStaff(azure: azureStaff()),
+        linkedStaff(smartschool: ssStaff(), azure: azureStaff()),
         linkedStaff(
           wisa: wisaStaff(code: 'SMIT', wisaId: '42'),
           smartschool: ssStaff(accountId: 'OLD', fax: '9999'),
@@ -299,12 +357,36 @@ void main() {
         ),
       ]) {
         for (final action in staffActionsFor(staff, cfg)) {
-          if (action is AddStaffToAzure) continue;
+          if (chaining.contains(action.runtimeType)) continue;
           expect(action.unlocks, isEmpty, reason: '${action.runtimeType}');
           // …and so claims no second system on the confirmation dialog (#234).
           expect(action.unlockedSystems, isEmpty,
               reason: '${action.runtimeType}');
         }
+      }
+    });
+
+    test('the Smartschool departure declares its Office 365 follow-up (#349)',
+        () {
+      // Retiring somebody is a chain for the same reason provisioning is: the
+      // dispatch can only ever offer the first link, so one click would clean
+      // Smartschool and leave the Office 365 account behind for a pass the
+      // operator has to notice and trigger.
+      final actions = staffActionsFor(
+        linkedStaff(smartschool: ssStaff(), azure: azureStaff()),
+        cfg,
+      );
+      for (final action in <StaffAction>[
+        actions.whereType<DeactivateStaffInSmartschool>().single,
+        actions.whereType<RemoveStaffFromSmartschool>().single,
+      ]) {
+        expect(
+          action.unlocks,
+          <Type>{ReleaseStaffFromAzureSchool, RemoveStaffFromAzure},
+          reason: '${action.runtimeType}',
+        );
+        expect(action.unlockedSystems, <Origin>{Origin.azure},
+            reason: '${action.runtimeType}');
       }
     });
 
@@ -327,6 +409,172 @@ void main() {
           expect(action.canApply, isTrue, reason: '${action.runtimeType}');
         }
       }
+    });
+  });
+
+  group('the departure command is never dispatched (#349)', () {
+    test('no staff shape raises RetireStaffMember', () {
+      // The safety property the whole design rests on: WISA reports a leaver as
+      // employed, so a state-derived dispatch cannot tell them from a colleague
+      // who is staying. Returning the command here would put a standing
+      // destructive to-do on every person in the staff room.
+      for (final staff in <LinkedStaff>[
+        fullySyncedStaff(),
+        linkedStaff(wisa: wisaStaff()),
+        linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
+        linkedStaff(wisa: wisaStaff(), smartschool: ssStaff()),
+        linkedStaff(smartschool: ssStaff()),
+        linkedStaff(azure: azureStaff()),
+        linkedStaff(smartschool: ssStaff(), azure: azureStaff()),
+      ]) {
+        expect(staffActionsFor(staff, cfg).whereType<RetireStaffMember>(),
+            isEmpty);
+      }
+    });
+
+    test('a staff member the school still employs raises no departure action',
+        () {
+      // The counterpart guard: relaxing the removal gates to hasLeftOurSchool
+      // must not make them fire for somebody who is simply here.
+      for (final staff in <LinkedStaff>[
+        fullySyncedStaff(),
+        linkedStaff(wisa: wisaStaff(), smartschool: ssStaff()),
+        linkedStaff(wisa: wisaStaff(), azure: azureStaff()),
+      ]) {
+        final actions = staffActionsFor(staff, cfg);
+        expect(actions.whereType<DeactivateStaffInSmartschool>(), isEmpty);
+        expect(actions.whereType<RemoveStaffFromSmartschool>(), isEmpty);
+        expect(actions.whereType<ReleaseStaffFromAzureSchool>(), isEmpty);
+        expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty);
+      }
+    });
+
+    test('the command applies to a WISA-listed member and to nobody else', () {
+      expect(RetireStaffMember(fullySyncedStaff(), cfg).evaluate(), isTrue);
+      expect(
+        RetireStaffMember(linkedStaff(wisa: wisaStaff()), cfg).evaluate(),
+        isTrue,
+      );
+      // Already departed: the rule has nothing left to hide, and the dispatch
+      // offers the removals directly.
+      expect(
+        RetireStaffMember(
+          linkedStaff(smartschool: ssStaff(), azure: azureStaff()),
+          cfg,
+        ).evaluate(),
+        isFalse,
+      );
+    });
+
+    test('it declares the whole cleanup, Smartschool before Office 365', () {
+      final command = RetireStaffMember(fullySyncedStaff(), cfg);
+      expect(command.unlocks, <Type>{
+        DeactivateStaffInSmartschool,
+        RemoveStaffFromSmartschool,
+        ReleaseStaffFromAzureSchool,
+        RemoveStaffFromAzure,
+      });
+      // Both systems are named on the confirmation (#234), because one click
+      // reaches both.
+      expect(
+          command.unlockedSystems, <Origin>{Origin.smartschool, Origin.azure});
+      // And it is a WISA-targeted action, so it writes nothing itself.
+      expect(command.describeChanges().system, Origin.wisa);
+    });
+  });
+
+  group('the Office 365 half splits on the department list (#349)', () {
+    LinkedStaff departed(String? department) => linkedStaff(
+          smartschool: ssStaff(),
+          azure: azureStaff(department: department),
+        );
+
+    test('another school still claims them → release, never delete', () {
+      for (final department in <String>['GBS,SSM', 'SSM,GBS', 'GBS, SSM']) {
+        final actions = staffActionsFor(departed(department), cfg);
+        expect(actions.whereType<ReleaseStaffFromAzureSchool>(), hasLength(1),
+            reason: department);
+        expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty,
+            reason: department);
+      }
+    });
+
+    test('nobody else claims them → delete, never release', () {
+      for (final department in <String?>['SSM', 'ssm', '', null]) {
+        final actions = staffActionsFor(departed(department), cfg);
+        expect(actions.whereType<RemoveStaffFromAzure>(), hasLength(1),
+            reason: '$department');
+        expect(actions.whereType<ReleaseStaffFromAzureSchool>(), isEmpty,
+            reason: '$department');
+      }
+    });
+
+    test('a longer school code that merely contains our prefix is not ours',
+        () {
+      // The write side matches list *items*, unlike the substring test the read
+      // side uses. `SSMB` is somebody else's school: striking it would be the
+      // #237 bug committed a second time, and deleting the account on the
+      // strength of it would be worse. So neither fires — the list carries no
+      // claim of ours, and there is nothing here to release or remove.
+      final actions = staffActionsFor(departed('SSMB'), cfg);
+      expect(actions.whereType<ReleaseStaffFromAzureSchool>(), isEmpty);
+      expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty);
+    });
+
+    test('a department naming nobody but another school is left alone', () {
+      // Same rule stated on the ordinary shape: the account is not ours, so the
+      // departure has nothing to say about it.
+      final actions = staffActionsFor(departed('GBS'), cfg);
+      expect(actions.whereType<ReleaseStaffFromAzureSchool>(), isEmpty);
+      expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty);
+    });
+
+    test('WISA still placing her somewhere in the group forbids the delete',
+        () {
+      // The #340 loss, from the other side. `department` is neither ours to
+      // write nor guaranteed current, so a teacher who moved to a sibling school
+      // may still be listed under our prefix alone. Deleting on the list alone
+      // would destroy the account of somebody WISA can see is still employed.
+      final moved = linkedStaff(
+        wisa: wisaStaff(),
+        smartschool: ssStaff(),
+        azure: azureStaff(department: 'SSM'),
+        wisaPresence: WisaPresence.groupOnly,
+      );
+      final actions = staffActionsFor(moved, cfg);
+      expect(actions.whereType<RemoveStaffFromAzure>(), isEmpty);
+      // Our claim is struck instead, and the account stands.
+      final release = actions.whereType<ReleaseStaffFromAzureSchool>().single;
+      expect(release.describeChanges().fields.single.after, '');
+    });
+
+    test('the release keeps every other entry verbatim, in order', () {
+      final release = staffActionsFor(departed('GBS,SSM,KAV'), cfg)
+          .whereType<ReleaseStaffFromAzureSchool>()
+          .single;
+      final change = release.describeChanges().fields.single;
+      expect(change.before, 'GBS,SSM,KAV');
+      expect(change.after, 'GBS,KAV');
+    });
+
+    test('a teacher who moved to a sibling group school is departed too', () {
+      // All three systems present, so before #349 this record was "complete"
+      // and got nothing but field repairs — even though WISA places them
+      // exclusively in a school we do not manage.
+      final actions = staffActionsFor(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(department: 'GBS,SSM'),
+          wisaPresence: WisaPresence.groupOnly,
+        ),
+        cfg,
+      );
+      expect(types(actions), [
+        DeactivateStaffInSmartschool,
+        RemoveStaffFromSmartschool,
+        ReleaseStaffFromAzureSchool,
+      ]);
     });
   });
 }

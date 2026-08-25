@@ -413,6 +413,139 @@ void main() {
     });
   });
 
+  group('the departure family writes what it says (#349)', () {
+    test('RetireStaffMember returns the rule and touches no connector',
+        () async {
+      final ssTransport = RecordingSmartschoolTransport();
+      final azTransport = RecordingGraphTransport();
+      final connectors = Connectors(
+        smartschool: smartschoolConnector(ssTransport),
+        azure: azureConnector(azTransport),
+      );
+      final action = RetireStaffMember(
+        linkedStaff(
+          wisa: wisaStaff(code: 'SMIT'),
+          smartschool: ssStaff(),
+          azure: azureStaff(),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.system, Origin.wisa);
+      expect(
+          (result.wisaRule! as wapi.DontImportUserFromWisa).userCode, 'SMIT');
+      // The command itself only writes the rule; the account cleanup is the
+      // chain's job, and the applier runs it against the relinked record.
+      expect(ssTransport.soapActions, isEmpty);
+      expect(azTransport.requests, isEmpty);
+    });
+
+    test('RetireStaffMember dry run yields the same rule, no writes', () async {
+      final action = RetireStaffMember(
+        linkedStaff(wisa: wisaStaff(code: 'SMIT')),
+        cfg,
+      );
+      final result = await action.apply(const Connectors(), ApplyOptions.dry);
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect(
+          (result.wisaRule! as wapi.DontImportUserFromWisa).userCode, 'SMIT');
+    });
+
+    test('DeactivateStaffInSmartschool: setAccountStatus, reported as gone',
+        () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = DeactivateStaffInSmartschool(
+        linkedStaff(smartschool: ssStaff(uid: 'anna.smit')),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(transport.calledMethod('setAccountStatus'), isTrue);
+      expect(transport.envelopes.single, contains('anna.smit'));
+      expect(transport.envelopes.single, contains('inactive'));
+      // The account still exists in Smartschool; it simply cannot reach any pull
+      // of ours any more, so the snapshot has to drop it.
+      expect(result.removed, isTrue);
+      expect(transport.calledMethod('delUser'), isFalse);
+    });
+
+    test('DeactivateStaffInSmartschool dry run: no SOAP call', () async {
+      final transport = RecordingSmartschoolTransport();
+      final connectors =
+          Connectors(smartschool: smartschoolConnector(transport));
+      final action = DeactivateStaffInSmartschool(
+        linkedStaff(smartschool: ssStaff()),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, ApplyOptions.dry);
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect(result.removed, isTrue);
+      expect(transport.soapActions, isEmpty);
+    });
+
+    test('ReleaseStaffFromAzureSchool: PATCHes department, keeps the rest',
+        () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ReleaseStaffFromAzureSchool(
+        linkedStaff(
+          smartschool: ssStaff(),
+          azure: azureStaff(id: 'az-keep', department: 'GBS,SSM,KAV'),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.removed, isFalse, reason: 'the account is kept');
+      expect(transport.sent('PATCH', pathContains: 'users'), isTrue);
+      expect(transport.sent('DELETE'), isFalse);
+      final body =
+          jsonDecode(transport.requests.single.body!) as Map<String, dynamic>;
+      expect(body['department'], 'GBS,KAV');
+      // The mutated record travels back so the snapshot patch matches the write.
+      expect((result.azure! as az.AzureUser).department, 'GBS,KAV');
+    });
+
+    test('ReleaseStaffFromAzureSchool dry run: no Graph call', () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ReleaseStaffFromAzureSchool(
+        linkedStaff(azure: azureStaff(department: 'GBS,SSM')),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, ApplyOptions.dry);
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect((result.azure! as az.AzureUser).department, 'GBS');
+      expect(transport.requests, isEmpty);
+    });
+
+    test('a failed release leaves the bound record untouched (INV-41)',
+        () async {
+      final transport = RecordingGraphTransport(
+        handler: (_) => const az.GraphResponse(statusCode: 503),
+      );
+      final connectors = Connectors(azure: azureConnector(transport));
+      final azure = azureStaff(department: 'GBS,SSM');
+      final action = ReleaseStaffFromAzureSchool(
+        linkedStaff(smartschool: ssStaff(), azure: azure),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.error, isNotNull);
+      expect(azure.department, 'GBS,SSM');
+    });
+  });
+
   group('apply is retry-safe (INV-41): a failed write does not corrupt state',
       () {
     test('a non-zero Smartschool result → failed outcome, error captured',
