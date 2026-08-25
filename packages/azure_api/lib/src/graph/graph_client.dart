@@ -80,15 +80,21 @@ class GraphClient {
   /// [onPage], when supplied, is invoked after each page with the running
   /// total of items gathered so far. Callers use it to emit progress while a
   /// large multi-page pull is advancing (issue #177).
+  ///
+  /// [expected] declares a failure shape the caller recovers from, on every
+  /// page; see [_send]. `GroupManager`'s per-group member read uses it to say
+  /// that a group deleted mid-walk is a reply it handles (#356), so a pull that
+  /// completed does not leave a red line behind (#229).
   Future<List<Map<String, dynamic>>> getCollection(
     Uri url, {
     Map<String, String>? headers,
     void Function(int total)? onPage,
+    GraphFailurePredicate? expected,
   }) async {
     final items = <Map<String, dynamic>>[];
     Uri? next = url;
     while (next != null) {
-      final body = await getJson(next, headers: headers);
+      final body = await getJson(next, headers: headers, expected: expected);
       items.addAll(_values(body));
       onPage?.call(items.length);
       next = _nextLink(body);

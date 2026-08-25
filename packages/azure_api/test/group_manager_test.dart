@@ -11,6 +11,19 @@ void main() {
         auth: const StaticAuthProvider('T'),
       );
 
+  /// A client that writes into the same sink the manager does — the wiring
+  /// `AzureConnector` builds. Needed wherever a test asserts on what a *failed*
+  /// Graph reply put in the log, since that line comes from the client (#229).
+  GraphClient loggingClientWith(
+    FakeGraphTransport transport,
+    RecordingLog log,
+  ) =>
+      GraphClient(
+        transport: transport,
+        auth: const StaticAuthProvider('T'),
+        log: log,
+      );
+
   group('listGroups', () {
     late FakeGraphTransport transport;
     late GroupManager groups;
@@ -703,6 +716,219 @@ void main() {
           reason: english,
         );
       }
+    });
+  });
+
+  // A directory is a live system with other writers. Both group reads fan out
+  // one member call per row the listing returned, so the list they are walking
+  // is stale by construction and the member call is the leg that finds out.
+  group('a group deleted between the listing and its member read (#356)', () {
+    const names = ['GBS-3A', 'GBS-3B', 'GBS-3C'];
+    const goneId = 'g-GBS-3B';
+
+    /// Graph's own reply for a directory object that is no longer there — the
+    /// one from the failing live run in #356, verbatim in shape.
+    GraphResponse resourceNotFound() => graphError(
+          404,
+          'Request_ResourceNotFound',
+          'Resource $goneId does not exist or one of its queried '
+              'reference-property objects are not present.',
+        );
+
+    /// A `/groups` listing of [names] whose member read answers [failure] for
+    /// [goneId] and an empty roster for everything else.
+    FakeGraphTransport listingWhereOneMemberReadFails(GraphResponse failure) =>
+        FakeGraphTransport((req) {
+          if (!req.url.path.contains('/members')) {
+            return jsonOk({
+              'value': [
+                for (final n in names)
+                  {'id': 'g-$n', 'displayName': n, 'securityEnabled': true},
+              ],
+            });
+          }
+          return req.url.path.contains(goneId)
+              ? failure
+              : jsonOk({'value': const <Object>[]});
+        });
+
+    test('drops that one group and finishes the walk', () async {
+      final transport = listingWhereOneMemberReadFails(resourceNotFound());
+      final groups = GroupManager(clientWith(transport));
+
+      final result = await groups.listGroups('GBS');
+
+      expect(result.map((g) => g.displayName), ['GBS-3A', 'GBS-3C']);
+      expect(
+        transport.requests.where((r) => r.url.path.contains('/members')),
+        hasLength(3),
+        reason: 'the walk carried on past the failure to the last group',
+      );
+    });
+
+    test('names the vanished group in Dutch, and logs no error', () async {
+      final transport = listingWhereOneMemberReadFails(resourceNotFound());
+      final log = RecordingLog();
+
+      await GroupManager(loggingClientWith(transport, log), log: log)
+          .listGroups('GBS');
+
+      expect(
+        log.messages,
+        contains(
+          'Azure: groep GBS-3B (g-GBS-3B) bestaat niet meer — ze is tijdens '
+          'het ophalen uit Office 365 verwijderd en wordt overgeslagen.',
+        ),
+      );
+      // The summary must not quietly claim a complete pull of two groups.
+      expect(
+        log.messages,
+        contains(
+          'Azure: 2 groepen opgehaald voor "GBS" (1 groep(en) overgeslagen '
+          'omdat ze tijdens het ophalen verdwenen).',
+        ),
+      );
+      // A pull that recovered is not a broken one (#229): the transport is told
+      // this reply was expected, so nothing paints the operator's log red.
+      expect(log.errors, isEmpty);
+    });
+
+    test('a group with no display name is still named by its object id',
+        () async {
+      final transport = FakeGraphTransport((req) {
+        if (!req.url.path.contains('/members')) {
+          return jsonOk({
+            'value': [
+              {'id': 'g-anon', 'securityEnabled': true},
+            ],
+          });
+        }
+        return resourceNotFound();
+      });
+      final log = RecordingLog();
+
+      final result =
+          await GroupManager(clientWith(transport), log: log).listGroups('GBS');
+
+      expect(result, isEmpty);
+      expect(
+        log.messages,
+        contains(startsWith('Azure: groep g-anon bestaat niet meer')),
+      );
+    });
+
+    test('loadByMailNicknames drops it the same way', () async {
+      final transport = FakeGraphTransport((req) {
+        if (!req.url.path.contains('/members')) {
+          return jsonOk({
+            'value': [
+              {'id': 'g-GBS-3A', 'displayName': 'Klas van juf An'},
+              {'id': goneId, 'displayName': 'GBS-3B'},
+            ],
+          });
+        }
+        return req.url.path.contains(goneId)
+            ? resourceNotFound()
+            : jsonOk({'value': const <Object>[]});
+      });
+      final log = RecordingLog();
+
+      final found =
+          await GroupManager(loggingClientWith(transport, log), log: log)
+              .loadByMailNicknames(['GBS-3A', 'GBS-3B']);
+
+      expect(found.map((g) => g.id), ['g-GBS-3A']);
+      expect(
+        log.messages,
+        contains(
+            startsWith('Azure: groep GBS-3B (g-GBS-3B) bestaat niet meer')),
+      );
+      expect(log.errors, isEmpty);
+    });
+
+    // The whole risk of the tolerance. Reporting any of these as "a tenant with
+    // fewer groups" would hand the action engine a pile of destructive
+    // proposals — it reads a missing Azure group as one to create, or as a
+    // class that is gone.
+    final stillFatal = <String, GraphResponse>{
+      'an expired token (401)': graphError(
+        401,
+        'InvalidAuthenticationToken',
+        'Access token has expired.',
+      ),
+      'a refusal (403)': graphError(
+        403,
+        'Authorization_RequestDenied',
+        'Insufficient privileges to complete the operation.',
+      ),
+      'throttling (429)': graphError(
+        429,
+        'TooManyRequests',
+        'Too many requests.',
+      ),
+      'a Graph outage (503)': graphError(
+        503,
+        'serviceNotAvailable',
+        'Service unavailable.',
+      ),
+      'a 404 with no Graph error envelope': const GraphResponse(
+        statusCode: 404,
+        body: '<html>Not Found</html>',
+      ),
+      'a 404 carrying some other code': graphError(
+        404,
+        'Request_BadRequest',
+        'Invalid object identifier.',
+      ),
+    };
+
+    stillFatal.forEach((label, failure) {
+      test('$label still fails the whole pull', () async {
+        final transport = listingWhereOneMemberReadFails(failure);
+        final log = RecordingLog();
+        final groups =
+            GroupManager(loggingClientWith(transport, log), log: log);
+
+        await expectLater(
+          groups.listGroups('GBS'),
+          throwsA(
+            isA<GraphException>().having(
+              (e) => e.statusCode,
+              'statusCode',
+              failure.statusCode,
+            ),
+          ),
+        );
+        expect(log.errors, isNotEmpty, reason: 'and it is logged as an error');
+        expect(
+          log.messages.any((m) => m.contains('bestaat niet meer')),
+          isFalse,
+          reason: 'and never dressed up as a group that simply vanished',
+        );
+      });
+    });
+
+    test('a 404 from the group listing itself still fails', () async {
+      // The tolerance is scoped to the member leg. A listing that 404s is not
+      // "one group vanished", it is a read that never happened.
+      final transport = FakeGraphTransport((_) => resourceNotFound());
+      final groups = GroupManager(clientWith(transport));
+
+      await expectLater(
+        groups.listGroups('GBS'),
+        throwsA(isA<GraphException>()),
+      );
+    });
+
+    test('loadMemberIds called directly is still loud', () async {
+      // A caller asking about one named group wants to hear that it is gone.
+      final transport = FakeGraphTransport((_) => resourceNotFound());
+      final groups = GroupManager(clientWith(transport));
+
+      await expectLater(
+        groups.loadMemberIds(goneId),
+        throwsA(isA<GraphException>()),
+      );
     });
   });
 }

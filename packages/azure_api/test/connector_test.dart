@@ -1154,4 +1154,71 @@ void main() {
       );
     });
   });
+
+  group('a group deleted mid-sync (#356)', () {
+    const goneId = 'g0000000-0000-0000-0000-0000000000a2';
+
+    GraphResponse routeWithVanishedGroup(GraphRequest req) {
+      if (req.url.path.contains('/members') && req.url.path.contains(goneId)) {
+        return graphError(
+          404,
+          'Request_ResourceNotFound',
+          'Resource $goneId does not exist or one of its queried '
+              'reference-property objects are not present.',
+        );
+      }
+      return route(req);
+    }
+
+    test('the pull completes and the snapshot holds the other groups',
+        () async {
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: FakeGraphTransport(routeWithVanishedGroup),
+        log: log,
+      );
+
+      final snapshot = await connector.sync();
+
+      // Before #356 this same reply aborted `sync` outright: no snapshot at
+      // all, and an operator left with nothing but an object id.
+      expect(snapshot.groups.map((g) => g.displayName), ['GBS-3A']);
+      expect(snapshot.users, hasLength(3));
+      expect(snapshot.deltaToken, 'PRIMEDTOKEN123');
+      expect(
+        log.messages.any((m) => m.contains('bestaat niet meer')),
+        isTrue,
+      );
+      expect(log.errors, isEmpty);
+    });
+
+    test('an expired token on the same leg still fails the sync', () async {
+      GraphResponse expiredToken(GraphRequest req) =>
+          req.url.path.contains('/members')
+              ? graphError(
+                  401,
+                  'InvalidAuthenticationToken',
+                  'Access token has expired.',
+                )
+              : route(req);
+
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: FakeGraphTransport(expiredToken),
+      );
+
+      // The failure mode the tolerance must never create: an auth error
+      // reported as a tenant with no groups, which downstream reads as "create
+      // them all" / "they are gone".
+      await expectLater(
+        connector.sync(),
+        throwsA(
+          isA<GraphException>().having((e) => e.statusCode, 'statusCode', 401),
+        ),
+      );
+    });
+  });
 }

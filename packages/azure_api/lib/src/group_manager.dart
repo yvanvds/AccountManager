@@ -2,6 +2,7 @@ import 'package:account_core/account_core.dart' as core;
 
 import 'graph/graph_batch.dart';
 import 'graph/graph_client.dart';
+import 'graph/graph_request.dart';
 import 'models/azure_group.dart';
 
 /// Reads and writes Azure AD groups and their memberships via Microsoft Graph.
@@ -45,9 +46,14 @@ class GroupManager {
     final rows =
         await _graph.getCollection(url, headers: _advancedQueryHeaders);
     final groups = <AzureGroup>[];
+    var vanished = 0;
     for (final row in rows) {
       final id = (row['id'] as String?) ?? '';
-      final members = await loadMemberIds(id);
+      final members = await _memberIdsIfStillThere(row, id);
+      if (members == null) {
+        vanished++;
+        continue;
+      }
       groups.add(AzureGroup.fromGraphJson(row, members: members));
       if (groups.length % _progressEvery == 0) {
         _log?.addMessage(
@@ -58,7 +64,9 @@ class GroupManager {
     }
     _log?.addMessage(
       core.Origin.azure,
-      'Azure: ${groups.length} groepen opgehaald voor "$schoolPrefix".',
+      'Azure: ${groups.length} groepen opgehaald voor "$schoolPrefix"'
+      '${vanished == 0 ? '' : ' ($vanished groep(en) overgeslagen omdat ze '
+          'tijdens het ophalen verdwenen)'}.',
     );
     return groups;
   }
@@ -130,10 +138,16 @@ class GroupManager {
 
     final groups = <AzureGroup>[];
     for (final entry in rowsById.entries) {
-      groups.add(AzureGroup.fromGraphJson(
-        entry.value,
-        members: withMembers ? await loadMemberIds(entry.key) : const [],
-      ));
+      var members = const <String>[];
+      if (withMembers) {
+        // The same time-of-check/time-of-use race as [listGroups] (#356): this
+        // read enumerated the group a moment ago, and the member call is where
+        // a deletion in between shows up.
+        final loaded = await _memberIdsIfStillThere(entry.value, entry.key);
+        if (loaded == null) continue;
+        members = loaded;
+      }
+      groups.add(AzureGroup.fromGraphJson(entry.value, members: members));
     }
     _log?.addMessage(
       core.Origin.azure,
@@ -226,13 +240,74 @@ class GroupManager {
     );
   }
 
+  /// [loadMemberIds] for a group this pass has just enumerated, or `null` when
+  /// the group is no longer in the directory (#356).
+  ///
+  /// Every group read here is a fan-out: one listing, then one member call per
+  /// row it returned. The listing is a snapshot of a live directory the moment
+  /// it was taken, so by the time the walk reaches the last row another writer
+  /// may have deleted a Team or a group — and the member call is where that
+  /// shows up, as a `404 Request_ResourceNotFound`. Letting it out aborted the
+  /// entire Azure pull over one group that no longer matters, and the sync is
+  /// not resumable from there: the operator retried and hoped the window
+  /// closed. A group that vanished is simply left out of the snapshot, which is
+  /// what the directory now says.
+  ///
+  /// Deliberately **not** a blanket `catch`, and the narrowness is the point.
+  /// An expired or under-permissioned token (`401`/`403`), throttling (`429`),
+  /// a Graph outage (`5xx`), and any `404` that is not Graph naming a missing
+  /// object all still propagate and still fail the sync. Swallowing those would
+  /// report a broken pull as a tenant with no groups — and downstream, an
+  /// absent Azure group reads as one to create or one whose class is gone, so a
+  /// quiet failure here would not stay quiet: it would come back as a screen
+  /// full of destructive proposals.
+  Future<List<String>?> _memberIdsIfStillThere(
+    Map<String, dynamic> row,
+    String groupId,
+  ) async {
+    try {
+      // Telling the transport this reply is expected is what keeps a pull that
+      // recovered from reading as a broken one (#229): without it the client
+      // logs the 404 as an error just above our own calm explanation of it.
+      return await _readMemberIds(
+        groupId,
+        expected: (e) => e.isResourceNotFound,
+      );
+    } on GraphException catch (e) {
+      if (!e.isResourceNotFound) rethrow;
+      _log?.addMessage(
+        core.Origin.azure,
+        'Azure: groep ${_label(row, groupId)} bestaat niet meer — ze is tijdens '
+        'het ophalen uit Office 365 verwijderd en wordt overgeslagen.',
+      );
+      return null;
+    }
+  }
+
+  /// How a group is named in the log: its display name where it has one, always
+  /// with the object id an operator can look up in Entra.
+  static String _label(Map<String, dynamic> row, String groupId) {
+    final name = ((row['displayName'] as String?) ?? '').trim();
+    return name.isEmpty ? groupId : '$name ($groupId)';
+  }
+
   /// Returns the object ids of a group's members, following pagination.
-  Future<List<String>> loadMemberIds(String groupId) async {
+  ///
+  /// A group that is not there is an error here, as it should be for a caller
+  /// that asked about one specific group. Only the fan-outs above, which read a
+  /// group *they* enumerated moments earlier, come prepared for that answer —
+  /// see [_memberIdsIfStillThere].
+  Future<List<String>> loadMemberIds(String groupId) => _readMemberIds(groupId);
+
+  Future<List<String>> _readMemberIds(
+    String groupId, {
+    GraphFailurePredicate? expected,
+  }) async {
     final url = _graph.uri(
       'groups/${Uri.encodeComponent(groupId)}/members',
       query: {r'$select': 'id'},
     );
-    final rows = await _graph.getCollection(url);
+    final rows = await _graph.getCollection(url, expected: expected);
     return rows.map((m) => m['id'] as String).toList();
   }
 

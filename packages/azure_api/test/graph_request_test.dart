@@ -39,5 +39,58 @@ void main() {
       expect(ex.message, isNull);
       expect(ex.toString(), contains('Internal Server Error'));
     });
+
+    group('isResourceNotFound (#356)', () {
+      GraphException notFoundWith(String code) => GraphException(
+            404,
+            '{"error":{"code":"$code","message":"Resource does not exist or '
+            'one of its queried reference-property objects are not present."}}',
+          );
+
+      test('true for a 404 naming Request_ResourceNotFound', () {
+        expect(notFoundWith('Request_ResourceNotFound').isResourceNotFound,
+            isTrue);
+      });
+
+      test('the code match is case-insensitive', () {
+        expect(notFoundWith('request_resourcenotfound').isResourceNotFound,
+            isTrue);
+      });
+
+      test('false for a 404 carrying any other code', () {
+        // Graph's directory "gone" code is the whole test: a 404 about a path
+        // it does not serve is a different fault and must stay loud.
+        expect(notFoundWith('Request_BadRequest').isResourceNotFound, isFalse);
+        expect(notFoundWith('UnknownError').isResourceNotFound, isFalse);
+      });
+
+      test('false for a 404 with no Graph error envelope at all', () {
+        // A proxy or gateway in front of Graph answers like this; it says
+        // nothing about whether the object exists.
+        const ex = GraphException(404, '<html>Not Found</html>');
+        expect(ex.code, isNull);
+        expect(ex.isResourceNotFound, isFalse);
+      });
+
+      test('false for every other status, including with the same code', () {
+        // The failures the tolerance must never swallow: an expired token, a
+        // refusal, throttling, an outage.
+        for (final status in [401, 403, 410, 429, 500, 503]) {
+          expect(
+            GraphException(
+              status,
+              '{"error":{"code":"Request_ResourceNotFound","message":"x"}}',
+            ).isResourceNotFound,
+            isFalse,
+            reason: '$status is not "the object is gone"',
+          );
+        }
+      });
+
+      test('is not confused with a rejected delta token', () {
+        final ex = notFoundWith('Request_ResourceNotFound');
+        expect(ex.isRejectedDeltaToken, isFalse);
+      });
+    });
   });
 }
