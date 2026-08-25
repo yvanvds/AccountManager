@@ -21,6 +21,24 @@ class StudentActionConfig {
   /// `student.<azureDomain>`.
   final String studentDomain;
 
+  /// The Azure `jobTitle` this school stamps on its own students (#358) — the
+  /// second half of the membership rule of the dynamic group that grants the
+  /// Office 365 student licence:
+  ///
+  ///     (user.companyName -eq "<PREFIX>") and (user.jobTitle -eq "LeerlingSec")
+  ///
+  /// Configuration rather than a literal in the action, because the two halves
+  /// of the group answer to different values: a secondary school writes
+  /// `LeerlingSec`, a basisschool `LeerlingBas`. Defaults to `LeerlingSec`, this
+  /// port's own kind of school.
+  ///
+  /// Never derived from [schoolPrefix]. Our prefix says which school an account
+  /// belongs to, not which *kind* of pupil holds it — a basisschool pupil whose
+  /// account wrongly carries our prefix would be handed a secondary licence they
+  /// are not entitled to. WISA is the authority, which is why the repair that
+  /// writes this reads a **linked** record and never an Azure-only orphan.
+  final String studentJobTitle;
+
   /// Password for a newly created account. Defaults to the domain [Password]
   /// generator. (Legacy used a `"FakeP4ssword"` placeholder that the holder
   /// resets on first login.)
@@ -37,11 +55,16 @@ class StudentActionConfig {
     required this.schoolPrefix,
     required this.azureDomain,
     String? studentDomain,
+    this.studentJobTitle = defaultStudentJobTitle,
     String Function()? newAccountPassword,
     String Function(String givenName, String surname)? smartschoolUid,
   })  : studentDomain = studentDomain ?? 'student.$azureDomain',
         newAccountPassword = newAccountPassword ?? _defaultPassword,
         smartschoolUid = smartschoolUid ?? _defaultUid;
+
+  /// The [studentJobTitle] a secondary school writes (#358). A basisschool
+  /// running this port would configure `LeerlingBas` instead.
+  static const String defaultStudentJobTitle = 'LeerlingSec';
 
   static String _defaultPassword() => Password.create();
 

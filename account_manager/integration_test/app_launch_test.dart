@@ -10758,6 +10758,10 @@ void main() {
           'givenName': 'Tom',
           'surname': 'Peeters',
           'companyName': 'SSM',
+          // Graph answers the whole `$select`, job title included (#358) — so
+          // the row that lands is the account SSM holds, wrong school and
+          // right kind of pupil, and this pass is about the school alone.
+          'jobTitle': 'LeerlingSec',
           'accountEnabled': true,
         },
       ],
@@ -10923,6 +10927,10 @@ void main() {
           'employeeId': '1',
           'displayName': 'Jane Doe',
           'companyName': 'GBS',
+          // The `$select` reads it since #358, so the back-fill's row carries
+          // it — and it is already right, leaving the school the one thing this
+          // pass has to repair.
+          'jobTitle': 'LeerlingSec',
           'accountEnabled': true,
         },
       ],
@@ -11814,6 +11822,176 @@ void main() {
       isEmpty,
     );
     expect(find.byKey(ValueKey('entry-apply-$id')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a moved-up pupil whose Office 365 job title is wrong is repaired end to '
+      'end, so the licensing group finally admits them (#358)',
+      (WidgetTester tester) async {
+    // The report: Office 365 grants the student licence through a dynamic group
+    // whose rule reads *two* fields —
+    //
+    //     (user.companyName -eq "<PREFIX>") and (user.jobTitle -eq "LeerlingSec")
+    //
+    // — and nothing in this port ever read, compared or wrote `jobTitle`. The
+    // live audit found four pupils WISA lists in our secondary school whose
+    // account still carries the `LeerlingBas` a basisschool stamped on it years
+    // ago. All four hold no licence, and no pass the app made could say why.
+    //
+    // Jane below is one of them: her account is in step in every other respect,
+    // so the job title is the only thing this run can be about. Only the real
+    // app covers the whole of it — the pull that has to *read* a field the
+    // `$select` never asked for, the linker rebuilding the record, the action
+    // the operator reads off the card, the confirmation they answer, the Graph
+    // PATCH, and the relink that has to stop offering what was just written.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount()],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(displayName: 'Jane Doe', jobTitle: 'LeerlingBas'),
+        ],
+      ),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // Her card owes exactly one write, and it is the one that gets her licensed.
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Wijzig de functietitel in Azure'],
+    );
+    final String id = entry.targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Wijzig de functietitel in Azure'), findsOneWidget);
+
+    // Apply it, confirmation and all.
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // One real Graph PATCH went out, carrying that field and nothing else: her
+    // `companyName` was already right, and a one-field correction must not turn
+    // into a rewrite of the record.
+    final patches =
+        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
+    expect(patches, hasLength(1));
+    expect(
+      jsonDecode(patches.single.body!),
+      <String, dynamic>{'jobTitle': 'LeerlingSec'},
+    );
+
+    // The record the app holds carries both halves of the rule now — which is
+    // the whole point: the dynamic group can finally see her.
+    final user = harness.app.azure.snapshot!.users.single;
+    expect(user.jobTitle, 'LeerlingSec');
+    expect(user.companyName, 'GBS');
+
+    // And the operator sees the write reported on her card, with nothing left
+    // to apply on it.
+    final Finder verdict = find.byKey(ValueKey('entry-outcomes-student-$id'));
+    await tester.ensureVisible(verdict);
+    expect(
+      find.descendant(
+          of: verdict, matching: find.text('Wijzig de functietitel in Azure')),
+      findsOneWidget,
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'student'),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a newly provisioned student is created with both halves of the '
+      'licensing rule, and is not then asked to repair one (#358)',
+      (WidgetTester tester) async {
+    // The other end of #358: every account this port ever created landed with a
+    // blank `jobTitle`, fell outside the licensing group, and stayed unlicensed
+    // until somebody assigned a licence by hand.
+    //
+    // The run has to reach past the create itself. What `createUser` sends and
+    // what the applier splices back into the snapshot are two different things,
+    // and if the projected record forgot the field, the relink behind the very
+    // same apply would raise the repair against an account that had just been
+    // created correctly — the operator's first sight of the new student being a
+    // correction to a write the app had made seconds earlier.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: 'W7', classGroup: '3C')],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    final String id = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'student')
+        .targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The account Graph was actually asked to make satisfies the rule on both
+    // fields. Before the fix the second one was simply absent from the body.
+    final created = harness.graph.createdUsers.single;
+    expect(created['companyName'], 'GBS');
+    expect(created['jobTitle'], 'LeerlingSec');
+
+    // …and so does the record the pass spliced in, so the pupil the app just
+    // provisioned is not immediately offered a repair of the app's own write.
+    expect(harness.app.azure.snapshot!.users.single.jobTitle, 'LeerlingSec');
+    expect(find.text('Wijzig de functietitel in Azure'), findsNothing);
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .map((c) => c.selected.changes.summary),
+      isNot(contains('Wijzig de functietitel in Azure')),
+    );
     expect(tester.takeException(), isNull);
   });
 

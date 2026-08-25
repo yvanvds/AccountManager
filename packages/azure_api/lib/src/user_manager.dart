@@ -455,6 +455,7 @@ class UserManager {
       surname: surname,
       companyName: companyName,
       department: department,
+      jobTitle: jobTitle,
       accountEnabled: accountEnabled,
     );
   }
@@ -470,6 +471,7 @@ class UserManager {
     String? surname,
     String? companyName,
     String? department,
+    String? jobTitle,
     String? employeeId,
     bool? accountEnabled,
   }) async {
@@ -480,6 +482,7 @@ class UserManager {
       if (surname != null) 'surname': surname,
       if (companyName != null) 'companyName': companyName,
       if (department != null) 'department': department,
+      if (jobTitle != null) 'jobTitle': jobTitle,
       if (employeeId != null) 'employeeId': employeeId,
       if (accountEnabled != null) 'accountEnabled': accountEnabled,
     };

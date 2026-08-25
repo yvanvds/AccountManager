@@ -280,6 +280,10 @@ class AddStudentToAzure extends StudentAction {
         FieldChange('displayName', after: wisa.fullName),
         FieldChange('employeeId', after: wisa.wisaId.value),
         FieldChange('companyName', after: config.schoolPrefix),
+        // Both halves of the licensing rule, or the account is created outside
+        // the dynamic group that grants the licence and stays unlicensed until
+        // somebody notices by hand (#358).
+        FieldChange('jobTitle', after: config.studentJobTitle),
       ],
     );
   }
@@ -307,6 +311,7 @@ class AddStudentToAzure extends StudentAction {
           surname: wisa.name,
           companyName: config.schoolPrefix,
           department: wisa.classGroup,
+          jobTitle: config.studentJobTitle,
         ),
       );
     }
@@ -348,6 +353,7 @@ class AddStudentToAzure extends StudentAction {
         employeeId: wisa.wisaId.value,
         companyName: config.schoolPrefix,
         department: wisa.classGroup,
+        jobTitle: config.studentJobTitle,
         forceChangePasswordNextSignIn: true,
       );
       return ActionResult(
@@ -921,6 +927,69 @@ class ModifyAzureSchool extends StudentAction {
         describeChanges(),
         (users) => users.updateUser(_az.id, companyName: config.schoolPrefix),
         () => _az.copyWith(companyName: config.schoolPrefix),
+      );
+}
+
+/// Correct a student's Azure `jobTitle` to the school's configured student job
+/// title (#358) — the twin of [ModifyAzureSchool] for the *other* half of the
+/// licensing rule.
+///
+/// Office 365 grants the student licence through a dynamic group whose rule
+/// reads both fields:
+///
+///     (user.companyName -eq "<PREFIX>") and (user.jobTitle -eq "LeerlingSec")
+///
+/// The port wrote `companyName` and never `jobTitle`; the legacy app wrote
+/// `JobTitle` and never `CompanyName`. Each generation satisfied one half of a
+/// two-half rule, so accounts landed outside the group and stayed unlicensed
+/// until an operator assigned a licence directly.
+///
+/// A **missing** `jobTitle` counts as differing, for the same reason it does in
+/// [ModifyAzureSchool]: a blank field is exactly the state this port's own
+/// creates left behind, and a repair that refused to fire on it would leave
+/// every one of them unlicensed forever.
+///
+/// **Derived from the linked record, never from `companyName`.** The dispatch
+/// only ever constructs this in the modify branch, which requires the student to
+/// be present in *our* WISA as well as in Smartschool and Azure — so what gets
+/// stamped follows from WISA saying "this is a pupil of this school", not from
+/// what the Azure account happens to carry. Stamping the value on everything
+/// bearing our prefix instead would hit genuine basisschool pupils whose account
+/// wrongly carries it and hand them secondary licences they are not entitled to
+/// (20 accounts in the live tenant carry `LeerlingBas` under our prefix).
+class ModifyAzureJobTitle extends StudentAction {
+  const ModifyAzureJobTitle(super.account, super.config);
+
+  @override
+  bool evaluate() => !_eq(_az.jobTitle, config.studentJobTitle);
+
+  /// Mechanical, like its [ModifyAzureSchool] twin: the value follows from the
+  /// kind of school the student is enrolled in, so it goes in bulk — the four
+  /// moved-up pupils the live audit found are one cohort, not four judgements.
+  @override
+  bool get canApplyToAll => true;
+
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'Wijzig de functietitel in Azure',
+        fields: [
+          FieldChange(
+            'jobTitle',
+            before: _az.jobTitle,
+            after: config.studentJobTitle,
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      _azurePatch(
+        connectors,
+        options,
+        describeChanges(),
+        (users) => users.updateUser(_az.id, jobTitle: config.studentJobTitle),
+        () => _az.copyWith(jobTitle: config.studentJobTitle),
       );
 }
 

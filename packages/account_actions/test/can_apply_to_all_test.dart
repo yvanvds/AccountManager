@@ -30,6 +30,10 @@ bool _bulkApplyable(StudentAction a) => switch (a) {
       AddStudentToSmartschool() => true,
       ModifyAzureStudentEmail() => true,
       ModifyAzureSchool() => true,
+      // No legacy answer to port — decided in #358, alongside its
+      // `ModifyAzureSchool` twin: the two halves of one licensing rule, both
+      // mechanical consequences of the school the student is enrolled in.
+      ModifyAzureJobTitle() => true,
       ModifyAccountId() => true,
       ModifySmartschoolStemId() => true,
       ModifySmartschoolBirthPlace() => true,
@@ -107,6 +111,7 @@ List<StudentAction> _studentActions() {
     ModifyAzureStudentEmail(account, cfg),
     ModifyAzureName(account, cfg),
     ModifyAzureSchool(account, cfg),
+    ModifyAzureJobTitle(account, cfg),
     ModifySmartschoolStudentAddress(account, cfg),
     ModifyAccountId(account, cfg),
     ModifySmartschoolStemId(account, cfg),
@@ -168,7 +173,7 @@ Set<Type> _granted<T>(List<T> actions, bool Function(T) flag) => {
 
 void main() {
   group('canApplyToAll (#293)', () {
-    test('the student family grants it to exactly nine actions', () {
+    test('the student family grants it to exactly ten actions', () {
       expect(
         _granted<StudentAction>(_studentActions(), (a) => a.canApplyToAll),
         <Type>{
@@ -176,6 +181,7 @@ void main() {
           AddStudentToSmartschool,
           ModifyAzureStudentEmail,
           ModifyAzureSchool,
+          ModifyAzureJobTitle,
           ModifyAccountId,
           ModifySmartschoolStemId,
           ModifySmartschoolBirthPlace,
@@ -281,7 +287,7 @@ void main() {
       // are the proof that "not overridden" reads as withheld.
       expect(
         _studentActions().where((a) => a.canApplyToAll),
-        hasLength(9),
+        hasLength(10),
       );
       expect(_staffActions().where((a) => a.canApplyToAll), hasLength(2));
       expect(_groupActions().where((a) => a.canApplyToAll), hasLength(4));
@@ -290,8 +296,8 @@ void main() {
     test('each family list covers its whole sealed family', () {
       // A count, because the exhaustive switches above catch a *new* subclass
       // at compile time but cannot tell that it was also added here.
-      expect(_studentActions().map((a) => a.runtimeType).toSet(), hasLength(16),
-          reason: 'StudentAction has 16 members');
+      expect(_studentActions().map((a) => a.runtimeType).toSet(), hasLength(17),
+          reason: 'StudentAction has 17 members');
       expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(11),
           reason: 'StaffAction has 11 members');
       expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(12),

@@ -951,6 +951,10 @@ StudentActionConfig _uniqueStudentConfig(
       schoolPrefix: base.schoolPrefix,
       azureDomain: base.azureDomain,
       studentDomain: base.studentDomain,
+      // Carried through, or the wrapper would silently reset the school's
+      // configured student job title to the default and the licensing repair
+      // would write the wrong half of the rule (#358).
+      studentJobTitle: base.studentJobTitle,
       newAccountPassword: base.newAccountPassword,
       smartschoolUid: _uniqueUid(base.smartschoolUid, taken),
     );

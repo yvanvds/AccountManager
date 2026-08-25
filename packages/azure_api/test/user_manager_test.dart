@@ -36,7 +36,7 @@ void main() {
       expect(
         first.url.queryParameters[r'$select'],
         'id,userPrincipalName,employeeId,displayName,givenName,surname,'
-        'companyName,department,accountEnabled',
+        'companyName,department,jobTitle,accountEnabled',
       );
       expect(first.url.queryParameters[r'$count'], 'true');
     });
@@ -182,9 +182,9 @@ void main() {
   });
 
   group('a resumed delta row is sparse (#288)', () {
-    /// The nine fields [AzureUser] reads, as one `$select` value.
+    /// The ten fields [AzureUser] reads, as one `$select` value.
     const allFields = 'id,userPrincipalName,employeeId,displayName,givenName,'
-        'surname,companyName,department,accountEnabled';
+        'surname,companyName,department,jobTitle,accountEnabled';
 
     /// One delta page carrying [rows], closed by a deltaLink.
     FakeGraphTransport walkOf(List<Map<String, dynamic>> rows) =>
@@ -421,6 +421,12 @@ void main() {
         false,
       );
       expect(created.id, 'new-id');
+      // The create response echoes only id + UPN here, so the projection has to
+      // fall back to the request value — otherwise the record the applier
+      // splices into the snapshot claims a blank job title for an account that
+      // has one, and the licensing repair is raised against a fresh create
+      // (#358).
+      expect(created.jobTitle, 'LeerlingSec');
     });
   });
 
@@ -433,6 +439,19 @@ void main() {
       expect(transport.last.method, 'PATCH');
       expect(body.keys, containsAll(<String>['department', 'employeeId']));
       expect(body.containsKey('displayName'), isFalse);
+    });
+
+    test('PATCHes jobTitle on its own, touching nothing else (#358)', () async {
+      // The licensing repair's write. It has to be able to travel alone: the
+      // moved-up pupil it exists for has a correct `companyName` already, and
+      // re-sending the rest of the record would make a one-field correction
+      // into a rewrite.
+      final transport = FakeGraphTransport.constant(noContent());
+      final users = UserManager(clientWith(transport));
+      await users.updateUser('id-1', jobTitle: 'LeerlingSec');
+      final body = jsonDecode(transport.last.body!) as Map<String, dynamic>;
+      expect(transport.last.method, 'PATCH');
+      expect(body, <String, dynamic>{'jobTitle': 'LeerlingSec'});
     });
 
     test('no-op when nothing to change (no request issued)', () async {
@@ -728,7 +747,7 @@ void main() {
       expect(
         req.url.queryParameters[r'$select'],
         'id,userPrincipalName,employeeId,displayName,givenName,surname,'
-        'companyName,department,accountEnabled',
+        'companyName,department,jobTitle,accountEnabled',
       );
     });
 

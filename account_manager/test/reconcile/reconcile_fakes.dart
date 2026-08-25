@@ -355,6 +355,7 @@ class StaleDeltaTokenGraph implements az.GraphTransport {
             'surname': u.surname,
             if (u.companyName != null) 'companyName': u.companyName,
             if (u.department != null) 'department': u.department,
+            if (u.jobTitle != null) 'jobTitle': u.jobTitle,
             'accountEnabled': u.accountEnabled,
           },
       ],
@@ -470,6 +471,7 @@ class TransferredAccountGraph implements az.GraphTransport {
             'userPrincipalName': u.upn,
             if (u.employeeId != null) 'employeeId': u.employeeId,
             if (u.companyName != null) 'companyName': u.companyName,
+            if (u.jobTitle != null) 'jobTitle': u.jobTitle,
             'accountEnabled': u.accountEnabled,
           },
       ],
@@ -552,6 +554,7 @@ class SharedDepartmentStaffGraph implements az.GraphTransport {
                     'companyName': changed.companyName,
                   if (changed.department != null)
                     'department': changed.department,
+                  if (changed.jobTitle != null) 'jobTitle': changed.jobTitle,
                   'accountEnabled': changed.accountEnabled,
                 },
               ],
@@ -803,6 +806,7 @@ class DriftedUserGraph implements az.GraphTransport {
         'surname': u.surname,
         if (u.companyName != null) 'companyName': u.companyName,
         if (u.department != null) 'department': u.department,
+        if (u.jobTitle != null) 'jobTitle': u.jobTitle,
         'accountEnabled': u.accountEnabled,
       };
 
@@ -901,6 +905,7 @@ class DepartedStaffGraph implements az.GraphTransport {
                     'companyName': account.companyName,
                   if (account.department != null)
                     'department': account.department,
+                  if (account.jobTitle != null) 'jobTitle': account.jobTitle,
                   'accountEnabled': account.accountEnabled,
                 },
               ]
@@ -1047,6 +1052,7 @@ class RenamedClassGroupGraph implements az.GraphTransport {
             'givenName': u.givenName,
             'surname': u.surname,
             if (u.companyName != null) 'companyName': u.companyName,
+            if (u.jobTitle != null) 'jobTitle': u.jobTitle,
             'accountEnabled': u.accountEnabled,
           },
       ],
@@ -1438,6 +1444,11 @@ az.AzureUser azUser({
   // the account is in step; a fixture about a *stale* copy of it (#315/#316)
   // names another school here.
   String companyName = 'GBS',
+  // The other half of the Office 365 licensing rule (#358). In step by default
+  // for the same reason `companyName` is; a fixture about the unlicensed account
+  // passes null (the blank field this port's own creates left behind) or
+  // `LeerlingBas` (the pupil who moved up from a basisschool).
+  String? jobTitle = 'LeerlingSec',
 }) =>
     az.AzureUser(
       id: id,
@@ -1447,6 +1458,7 @@ az.AzureUser azUser({
       givenName: givenName,
       surname: surname,
       companyName: companyName,
+      jobTitle: jobTitle,
     );
 
 /// An Azure **staff** account. Staff carry no `companyName`; their school lives

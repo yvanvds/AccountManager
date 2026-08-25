@@ -36,6 +36,22 @@ class AzureUser implements core.AzureUser {
   /// Holds the school prefix for staff; the student class group for students.
   final String? department;
 
+  /// The account's function in the school — `LeerlingSec` for a secondary-school
+  /// pupil, `LeerlingBas` for a basisschool one (#358).
+  ///
+  /// Half of the membership rule of the dynamic group that grants the student
+  /// licence — the other half being [companyName]:
+  ///
+  ///     (user.companyName -eq "<PREFIX>") and (user.jobTitle -eq "LeerlingSec")
+  ///
+  /// An account with a blank or wrong `jobTitle` falls outside that group and is
+  /// never licensed, however right its `companyName` is — which is why the field
+  /// is read on every pull rather than only written.
+  ///
+  /// Staff carry values other software's own dynamic rules depend on, so this
+  /// port reads the field for everybody and writes it for students only.
+  final String? jobTitle;
+
   /// Whether the account is enabled for sign-in.
   final bool accountEnabled;
 
@@ -48,6 +64,7 @@ class AzureUser implements core.AzureUser {
     this.surname = '',
     this.companyName,
     this.department,
+    this.jobTitle,
     this.accountEnabled = true,
   });
 
@@ -62,6 +79,10 @@ class AzureUser implements core.AzureUser {
     'surname',
     'companyName',
     'department',
+    // Read for every account, student and staff alike (#358): it is the second
+    // half of the licensing rule, so a pull that cannot see it cannot tell a
+    // student who will never be licensed from one who already is.
+    'jobTitle',
     'accountEnabled',
   ];
 
@@ -84,6 +105,7 @@ class AzureUser implements core.AzureUser {
       surname: str('surname'),
       companyName: nullable('companyName'),
       department: nullable('department'),
+      jobTitle: nullable('jobTitle'),
       accountEnabled: (json['accountEnabled'] as bool?) ?? true,
     );
   }
@@ -129,6 +151,7 @@ class AzureUser implements core.AzureUser {
       surname: str('surname', surname),
       companyName: nullable('companyName', companyName),
       department: nullable('department', department),
+      jobTitle: nullable('jobTitle', jobTitle),
       accountEnabled: json.containsKey('accountEnabled')
           ? ((json['accountEnabled'] as bool?) ?? true)
           : accountEnabled,
@@ -146,6 +169,7 @@ class AzureUser implements core.AzureUser {
         'surname': surname,
         if (companyName != null) 'companyName': companyName,
         if (department != null) 'department': department,
+        if (jobTitle != null) 'jobTitle': jobTitle,
         'accountEnabled': accountEnabled,
       };
 
@@ -158,6 +182,7 @@ class AzureUser implements core.AzureUser {
         surname: (json['surname'] as String?) ?? '',
         companyName: json['companyName'] as String?,
         department: json['department'] as String?,
+        jobTitle: json['jobTitle'] as String?,
         accountEnabled: (json['accountEnabled'] as bool?) ?? true,
       );
 
@@ -172,6 +197,7 @@ class AzureUser implements core.AzureUser {
     String? surname,
     String? companyName,
     String? department,
+    String? jobTitle,
     bool? accountEnabled,
   }) =>
       AzureUser(
@@ -183,6 +209,7 @@ class AzureUser implements core.AzureUser {
         surname: surname ?? this.surname,
         companyName: companyName ?? this.companyName,
         department: department ?? this.department,
+        jobTitle: jobTitle ?? this.jobTitle,
         accountEnabled: accountEnabled ?? this.accountEnabled,
       );
 
@@ -197,6 +224,7 @@ class AzureUser implements core.AzureUser {
       other.surname == surname &&
       other.companyName == companyName &&
       other.department == department &&
+      other.jobTitle == jobTitle &&
       other.accountEnabled == accountEnabled;
 
   @override
@@ -209,6 +237,7 @@ class AzureUser implements core.AzureUser {
         surname,
         companyName,
         department,
+        jobTitle,
         accountEnabled,
       );
 

@@ -66,6 +66,12 @@ List<StudentAction> studentActionsFor(
           ModifyAzureStudentEmail(account, config),
           ModifyAzureName(account, config),
           ModifyAzureSchool(account, config),
+          // The other half of the licensing rule, beside the half that stamps
+          // the school (#358). It lives here — the modify branch — on purpose:
+          // the branch is only reached for a student present in *our* WISA, so
+          // the job title is derived from what WISA says they are and never from
+          // an Azure-only orphan's `companyName`.
+          ModifyAzureJobTitle(account, config),
           ModifySmartschoolStudentAddress(account, config),
           ModifyAccountId(account, config),
           // The class move sits **before** the stamboeknummer write (#338), and
