@@ -1080,10 +1080,26 @@ class RenamedClassGroupGraph implements az.GraphTransport {
 class RecordingWisaSoap implements wapi.WisaSoapTransport {
   RecordingWisaSoap({
     this.schools = const <(int, String, String)>[(1, 'School 1', 'S1')],
+    this.classGroupRows = const <String>['3C,00,Derde jaar C,a1,111'],
+    this.studentRows = const <String>[
+      '3C,,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,1/9/2025',
+    ],
   });
 
   /// The schools `SMAGetInst` reports, as `(id, name, code)`.
   final List<(int, String, String)> schools;
+
+  /// The `SyncKlas` data rows, minus the header — one raw CSV line each, in the
+  /// column order of [_classGroupHeader]. Every school is served the same rows,
+  /// which is all a single-school fixture needs. Override to give a class the
+  /// shape the pull has to reason about: an administrative `00` row plus the
+  /// named `KLASGROEP` rows it is split into (#362).
+  final List<String> classGroupRows;
+
+  /// The `SmaSyncLln` data rows, minus the header — one raw CSV line each, in
+  /// the column order of [_studentHeader]. Column 2 is the student's own
+  /// `KLASGROEP`, so a sub-grouped fixture has to fill it in.
+  final List<String> studentRows;
 
   /// Every query issued, as `(queryCode, schoolId, werkdatum)` — the werkdatum
   /// exactly as it went on the wire (`dd/MM/yyyy`).
@@ -1117,18 +1133,20 @@ class RecordingWisaSoap implements wapi.WisaSoapTransport {
             for (final (id, name, code) in schools) '$id,$name,$code',
           ].join('\n'),
         wapi.WisaQuery.syncClassGroups =>
-          'KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER\n'
-              '3C,00,Derde jaar C,a1,111',
+          <String>[_classGroupHeader, ...classGroupRows].join('\n'),
         wapi.WisaQuery.syncStudents =>
-          'KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,'
-              'STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,'
-              'NATIONALITEIT,STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,'
-              'KLASWIJZIGING\n'
-              '3C,,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,'
-              '1/9/2025',
+          <String>[_studentHeader, ...studentRows].join('\n'),
         wapi.WisaQuery.syncStaff => 'CODE,WISAID,FAMILIENAAM,VOORNAAM',
         _ => '',
       };
+
+  static const String _classGroupHeader =
+      'KLAS,KLASGROEP,OMSCHRIJVING,ADMINGROEP,INSTELLINGSNUMMER';
+
+  static const String _studentHeader =
+      'KLAS,KLASGROEP,NAAM,VOORNAAM,ROEPNAAM,GEBOORTEDATUM,WISAID,'
+      'STAMBOEKNUMMER,GESLACHT,RIJKSREGISTERNR,GEBOORTEPLAATS,NATIONALITEIT,'
+      'STRAAT,STRAATNR,BUSNR,POSTCODE,WOONPLAATS,KLASWIJZIGING';
 
   static String _envelope(String csv) {
     final encoded = base64.encode(latin1.encode(csv));

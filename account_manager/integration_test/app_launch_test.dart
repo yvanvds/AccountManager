@@ -4495,6 +4495,102 @@ void main() {
   });
 
   testWidgets(
+      'a class WISA splits into one named klasgroep is imported and linked '
+      'under that name, end-to-end (#362)', (WidgetTester tester) async {
+    // The reported bug, over the *production* WISA pull. ISMAB's `2G` carries
+    // the administrative `00` row plus one named klasgroep, `LAT`, and both sit
+    // in ADMINGROEP `040092`; all twelve of its students are enrolled in `LAT`,
+    // and Smartschool already holds the class as `2G LAT`. The import split a
+    // class by counting distinct admin codes, counted one, and let the `00` row
+    // win — so `2G` arrived bare, the real Smartschool class `2G LAT` had no
+    // WISA counterpart and was proposed for deletion, and the student was
+    // proposed for a move out of it into `2G`. `2F`, the same shape with four
+    // named klasgroepen in four admin groups, was always imported correctly:
+    // the *number* of sub-classes was deciding the name.
+    //
+    // Only a full run shows it. The class name is decided in the WISA
+    // connector's dedupe and the student's target class in the state layer's
+    // placement, two packages apart, and the bug is precisely that the two
+    // disagreed — a unit test of either one alone reads as self-consistent.
+    // The Klasgroepen inventory is where the operator saw the disagreement:
+    // two rows, one to create and one to delete, for the one class.
+    useTallWindow(tester);
+    final wire = RecordingWisaSoap(
+      classGroupRows: const <String>[
+        '2G,00,2e lj A Klassieke talen,040092,123',
+        '2G,LAT,2e lj A Klassieke talen,040092,123',
+      ],
+      studentRows: const <String>[
+        '2G,LAT,Doe,Jane,,1/7/2010,1,,V,,,,Straat,1,,2000,Antwerpen,1/9/2025',
+      ],
+    );
+    final harness = ReconcileHarness(
+      wisaTransport: wire,
+      // Smartschool is already right: the class is `2G LAT` and Jane is in it.
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('2G LAT',
+              code: 'C2GLAT',
+              description: '2e lj A Klassieke talen',
+              instituteNumber: '123',
+              untis: '2G LAT'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+        ],
+        memberships: [member('jane', 'C2GLAT')],
+      ),
+      // Office 365 is in step too, and stays out of the way: a sub-grouped
+      // class maps to its parent group, so `2G LAT` is `GBS-2G` — which is
+      // where the bare `2G` pointed as well.
+      azure: azSnap(
+        users: [
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              displayName: 'Jane Doe',
+              department: '2G'),
+        ],
+        groups: [
+          azClassGroup('2G', memberIds: const ['az1'])
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // One class, under the name both systems agree on.
+    expect(find.byKey(const ValueKey('class-row-2G LAT')), findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-2G')), findsNothing,
+        reason: 'the bare name is the `00` shell, not a class of its own');
+    expect(find.textContaining('Verwijder de klas 2G LAT'), findsNothing,
+        reason: 'the class WISA reports is this one — nothing to delete');
+    expect(find.textContaining('bestaat in Smartschool maar niet in WISA'),
+        findsNothing);
+
+    // And the student half moves with it: Jane's target class is `2G LAT`, the
+    // one Smartschool already has her in, so no class move is raised at all.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .map((c) => c.selected.changes.summary)
+          .where((s) => s.contains('2G')),
+      isEmpty,
+      reason: 'every system already agrees about this class',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a Smartschool class WISA does not have proposes its delete and nothing '
       'else, end-to-end (#313/#328)', (WidgetTester tester) async {
     // The reported bug, in the real app. Our school runs `1A`; Smartschool

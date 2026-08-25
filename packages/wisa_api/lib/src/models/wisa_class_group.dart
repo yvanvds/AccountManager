@@ -52,7 +52,16 @@ class WisaClassGroup {
 
   /// `"name groupName"` when subgroups apply, otherwise just `name`.
   /// Mirrors legacy `ClassGroup.FullName`.
-  String get fullName => groupName == '00' ? name : '$name $groupName';
+  ///
+  /// A **blank** [groupName] is treated like the `"00"` sentinel: it names no
+  /// group either, so appending it would only leave the trailing separator of
+  /// `'1A '`. Since #362 the connector no longer drops such a row on the way in
+  /// — a class must not vanish because one of its rows is malformed — so this
+  /// is the guard that keeps it from reaching a class name.
+  String get fullName {
+    final group = groupName.trim();
+    return group.isEmpty || group == '00' ? name : '$name $group';
+  }
 
   /// First numeric character of [name] — e.g. `'1A'` ⇒ `1`. Returns `-1`
   /// when [name] is empty or doesn't start with a digit (legacy returns

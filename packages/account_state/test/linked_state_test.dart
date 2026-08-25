@@ -255,7 +255,7 @@ void main() {
       expect(placement.className, '1A A');
     });
 
-    test('uses the bare class name when the class has a single admin code', () {
+    test('uses the bare class name when no row names a sub-group', () {
       final student =
           _wStudent(wisaId: '1', classGroup: '3C', classSubGroup: 'x');
       final resolver = PlacementResolver(
@@ -270,6 +270,91 @@ void main() {
           .classPlacementFor(_linkedStudent(wisaId: '1', wisa: student));
 
       expect(placement.className, '3C');
+    });
+
+    test('a class with a single named klasgroep still widens (#362)', () {
+      // ISMAB's `2G`: an administrative `00` shell plus one named row, both in
+      // ADMINGROEP `040092`. The old test counted distinct admin codes and
+      // required more than one, so this class read as un-split and its twelve
+      // `KLASGROEP=LAT` students were placed in a bare `2G` — beside the real
+      // Smartschool class `2G LAT`, which was then proposed for deletion. This
+      // is the state-layer half of the connector's `_dedupeClassGroups` fix;
+      // move one without the other and the class is renamed while its students
+      // stay behind.
+      final student =
+          _wStudent(wisaId: '1', classGroup: '2G', classSubGroup: 'LAT');
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [student],
+          // The snapshot the connector emits post-fix: the `00` shell is gone.
+          classGroups: [_wClass('2G', groupName: 'LAT', adminCode: '040092')],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      final placement = resolver
+          .classPlacementFor(_linkedStudent(wisaId: '1', wisa: student));
+
+      expect(placement.className, '2G LAT');
+      expect(placement.isOurClass('2G LAT'), isTrue,
+          reason: 'the widened form is the one the placement will be asked to '
+              'write, so the guard has to recognize it');
+    });
+
+    test(
+        'a sibling school\'s split class never widens ours of the same name '
+        '(#221/#362)', () {
+      // The `(schoolId, name)` scoping the groupName-based rule keeps. School
+      // 2's `1C` really is split into `A`/`B`; ours is a single-group class. A
+      // name-keyed tally would put `1c` in the split set once and widen our
+      // student — who carries a stray `KLASGROEP` — into the class `1C A`,
+      // which our school does not have.
+      final ours = _wStudent(wisaId: '1', classGroup: '1C', classSubGroup: 'A');
+      final sibling = _wStudent(
+          wisaId: '2', classGroup: '1C', classSubGroup: 'A', schoolId: 2);
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [ours, sibling],
+          classGroups: [
+            _wClass('1C', adminCode: 'a1', schoolId: 1),
+            _wClass('1C', groupName: 'A', adminCode: 'b1', schoolId: 2),
+            _wClass('1C', groupName: 'B', adminCode: 'b2', schoolId: 2),
+          ],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: ours))
+              .className,
+          '1C');
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '2', wisa: sibling))
+              .className,
+          '1C A');
+    });
+
+    test('a blank KLASGROEP row never marks a class as split (#362)', () {
+      // A row whose `KLASGROEP` is blank names no group either, so it must not
+      // put the class in the split set — otherwise a student with a real
+      // sub-group would be widened by a row that cannot name one.
+      final student =
+          _wStudent(wisaId: '1', classGroup: '4D', classSubGroup: 'X');
+      final resolver = PlacementResolver(
+        wisa: _wSnap(
+          students: [student],
+          classGroups: [_wClass('4D', groupName: '  ', adminCode: 'd1')],
+        ),
+        smartschool: _sSnap(),
+      );
+
+      expect(
+          resolver
+              .classPlacementFor(_linkedStudent(wisaId: '1', wisa: student))
+              .className,
+          '4D');
     });
 
     test(
