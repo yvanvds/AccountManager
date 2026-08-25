@@ -106,6 +106,27 @@ class GraphException implements Exception {
         detail.contains('delta token');
   }
 
+  /// Whether this is Graph's *"that object is not in the directory"* — a `404`
+  /// carrying the `Request_ResourceNotFound` code.
+  ///
+  /// The one failure a per-item fan-out comes prepared for (#356).
+  /// `GroupManager.listGroups` enumerates the tenant's groups and then asks
+  /// each one for its members, and a directory is a live system with other
+  /// writers: a Team or a group deleted inside that window answers the member
+  /// read with exactly this, and until it was classified that single reply
+  /// killed the whole Azure pull — the operator got no snapshot at all, just an
+  /// object id.
+  ///
+  /// **The code, not the status, is the test.** A bare `404` also comes back
+  /// from a mistyped path, from a proxy sitting in front of Graph, and from an
+  /// endpoint the tenant does not have — none of which means "the object is
+  /// gone", and all of which must keep failing a sync loudly rather than
+  /// quietly shrinking the snapshot. Like [isRejectedDeltaToken], the
+  /// classification lives on the reply so both the caller that recovers and the
+  /// transport that decides how loudly to log agree on what it means.
+  bool get isResourceNotFound =>
+      statusCode == 404 && code?.toLowerCase() == 'request_resourcenotfound';
+
   String? _errorField(String field) {
     try {
       final decoded = jsonDecode(body);
