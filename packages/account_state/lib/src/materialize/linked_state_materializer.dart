@@ -1,5 +1,6 @@
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
+import 'package:azure_api/azure_api.dart' as az;
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 import 'package:wisa_api/wisa_api.dart' as wapi;
 
@@ -143,6 +144,7 @@ MaterializedView materialize(
       inWisa: staff.wisa != null,
       inSmartschool: staff.smartschool != null,
       inAzure: staff.azure != null,
+      departmentSchools: _departmentSchools(staff),
       warnings: _warningsFor(staff.smartschool, warningsByUid),
       candidates: byStaff[staff.id.value] ?? const [],
     ));
@@ -566,6 +568,31 @@ List<OtherEnrolment> _otherEnrolments(
         classroom: account.wisaClassGroups[id]!.trim(),
       ),
   ];
+}
+
+/// The schools a staff member's Azure `department` lists, in the field's own
+/// order and casing (#352) — empty for a record with no Office 365 account, and
+/// for one whose `department` is blank.
+///
+/// The whole list, ours included: "nobody but us claims this account" is the
+/// condition under which a departure *deletes* rather than releases, so it is
+/// precisely the thing an operator needs confirmed before pressing. Filtering
+/// our own prefix out (as [core.departmentSchoolsExcept] does for the *write*)
+/// would withhold exactly that.
+///
+/// Read through the concrete [az.AzureUser] because [core.LinkedStaff.azure] is
+/// the narrow interface, which carries no `department` — the same reason the
+/// linker evaluates `azureNamesOurSchool` off the record rather than the link
+/// (#340), and the same narrowing [_otherEnrolments] does for a WISA row's
+/// school id. A record built from some other implementation of the interface
+/// simply has nothing to say here.
+///
+/// Never a value to write: `department` is maintained by other software and is
+/// not ours to touch (#237). This states it and stops.
+List<String> _departmentSchools(core.LinkedStaff staff) {
+  final azure = staff.azure;
+  if (azure is! az.AzureUser) return const [];
+  return core.departmentSchools(azure.department);
 }
 
 /// The grade-year bucket for a WISA class group: its leading run of digits

@@ -48,7 +48,8 @@ import 'package:account_state/account_state.dart'
         WisaSchoolProfile,
         WisaSchoolProfileLabel,
         WorkDateSetting,
-        signalRRecordSeparator;
+        signalRRecordSeparator,
+        staffPartition;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
@@ -12016,6 +12017,109 @@ void main() {
     expect(harness.controller.linked!.snapshot.staff, isEmpty);
     expect(harness.controller.staffPendingCount, 0,
         reason: 'nothing is proposed to re-create her');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Office 365 cell of a staff card names the schools its Azure '
+      'department lists, and a session that never pulled reads the same list '
+      '(#352)', (WidgetTester tester) async {
+    // The reading that makes the "uit dienst" decision above legible. The two
+    // Office 365 halves of a departure are mutually exclusive by construction
+    // and this one field is the whole discriminator: with a sibling school still
+    // in the list Anna's account is *released*, with ours alone it is *deleted*.
+    // Until now the app decided on a field the operator could not see anywhere.
+    //
+    // Only a full run shows it works. The list has to survive the whole pipeline
+    // — the linker (whose `LinkedStaff.azure` is the narrow interface and
+    // carries no `department` at all), the materializer, the document, the
+    // shared store, a second session's adoption, and the card — and land in the
+    // one cell it explains. A widget test renders the pane over a document
+    // handed to it; it cannot show that the document ever carries this.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+
+    // Operator A pulls: Anna is in step in all three systems, and `department`
+    // names our school second beside a sibling group school — the ordinary
+    // state, not an edge case (#268).
+    await ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azStaffUser(department: 'SSM,GBS')]),
+      store: snapshots,
+      linkedStore: linkedStore,
+      syncedBy: 'jan@school.example',
+    ).controller.sync();
+
+    // It is on the stored document, which is what makes the rest of this
+    // possible: the transient record it was read off does not outlive the pass.
+    final List<MaterializedAccount> stored = await linkedStore.readClassroom(
+      school: staffPartition,
+      classroom: 'Personeel',
+    );
+    expect(stored.single.departmentSchools, ['SSM', 'GBS']);
+
+    // Operator B launches the real app onto the shared stores and never pulls.
+    final operatorB = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: operatorB.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+
+    // She is in step everywhere, so she sits behind the work-list filter.
+    final Finder toggle =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    final String anna = accountId(operatorB, 'Anna Smit');
+    await selectAccount(tester, anna);
+
+    // Under the Office 365 tag, in the field's own order and casing, with our
+    // own prefix left in: "ours alone" is the state that makes a deletion safe,
+    // so it is exactly the one worth confirming on screen.
+    const String line = 'Scholen: SSM, GBS';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$anna-azure')),
+        matching: find.text(line),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(line), findsOneWidget,
+        reason: 'the details pane only — an extra line per collapsed card on a '
+            'Personeel roster is noise, and the two share one widget');
+
+    // Read by an operator who pulled nothing: no connector round-trip anywhere
+    // in this session, and the shared view untouched.
+    expect(operatorB.wisaSyncs, 0);
+    expect(operatorB.ssSyncs, 0);
+    expect(operatorB.azSyncs, 0);
+    // And it stays a reading: `department` is maintained by other software and
+    // is not ours to write (#237), so nothing in the pass proposes touching it.
+    expect(
+      operatorB.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .expand((a) => a.changes.fields)
+          .map((f) => f.field),
+      isNot(contains('department')),
+    );
     expect(tester.takeException(), isNull);
   });
 }

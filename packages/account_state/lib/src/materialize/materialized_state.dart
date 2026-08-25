@@ -350,6 +350,7 @@ class MaterializedAccount {
     required this.inSmartschool,
     required this.inAzure,
     this.otherEnrolments = const [],
+    this.departmentSchools = const [],
     this.warnings = const [],
     this.candidates = const [],
     this.decisions = const [],
@@ -395,6 +396,30 @@ class MaterializedAccount {
   /// that synced is a card that says it to nobody.
   final List<OtherEnrolment> otherEnrolments;
 
+  /// The schools an Azure **staff** account's `department` lists — every entry,
+  /// ours included, in the field's own order and casing (#352).
+  ///
+  /// The discriminator the two Office 365 departure actions split on, made
+  /// legible: `ReleaseStaffFromAzureSchool` strikes our entry and keeps the
+  /// account because another school still claims the person, while
+  /// `RemoveStaffFromAzure` **deletes** it because nothing but our own prefix is
+  /// left ([departmentSchoolsExcept] came back empty). An operator deciding a
+  /// destructive, per-record "uit dienst" should be able to read the field the
+  /// app decided on, and to sanity-check it first — `department` is maintained
+  /// by other software and is not ours to write (#237), so this is stated and
+  /// never repaired.
+  ///
+  /// Baked into the document for the same reason [otherEnrolments] is: the Azure
+  /// record behind it lives in the transient linked view — and `LinkedStaff
+  /// .azure` is the narrow `AzureUser` interface, which carries no `department`
+  /// at all — so a card that could only say it in the session that synced would
+  /// say it to nobody (#214/#255).
+  ///
+  /// Empty for a student (their school is `companyName`, one exact value, INV-22
+  /// — there is no list), for a staff record with no Azure account, and for a
+  /// document written before this existed.
+  final List<String> departmentSchools;
+
   /// Account-scoped warnings (e.g. the duplicate-mail message naming this uid).
   ///
   /// Read type-blind by `decisions_merge` as evidence that an accepted
@@ -429,6 +454,7 @@ class MaterializedAccount {
         inSmartschool: inSmartschool,
         inAzure: inAzure,
         otherEnrolments: otherEnrolments,
+        departmentSchools: departmentSchools,
         warnings: warnings,
         candidates: candidates,
         decisions: decisions,
@@ -452,6 +478,13 @@ class MaterializedAccount {
         // document but a handful — keeps exactly the shape it had.
         if (otherEnrolments.isNotEmpty)
           'otherEnrolments': [for (final e in otherEnrolments) e.toJson()],
+        // Likewise written only when there is one, so a student document — and
+        // a staff document whose Azure `department` says nothing — keeps exactly
+        // the shape it had. An absent key therefore reads as "nothing recorded",
+        // never as "recorded, and empty", which is what keeps a document written
+        // before #352 from being reported as a blank list.
+        if (departmentSchools.isNotEmpty)
+          'departmentSchools': departmentSchools,
         if (warnings.isNotEmpty) 'warnings': warnings,
         if (candidates.isNotEmpty)
           'candidates': [for (final c in candidates) c.toJson()],
@@ -476,6 +509,10 @@ class MaterializedAccount {
         otherEnrolments: [
           for (final e in (json['otherEnrolments'] as List? ?? const []))
             OtherEnrolment.fromJson(e as Map<String, dynamic>),
+        ],
+        departmentSchools: [
+          for (final s in (json['departmentSchools'] as List? ?? const []))
+            s as String,
         ],
         warnings: [
           for (final w in (json['warnings'] as List? ?? const [])) w as String,

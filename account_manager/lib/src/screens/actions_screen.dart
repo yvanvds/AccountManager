@@ -1402,7 +1402,11 @@ class _AccountListRow extends StatelessWidget {
 /// the shared vocabulary of #298 — red missing, orange work pending, green in
 /// order.
 class _SystemRow extends StatelessWidget {
-  const _SystemRow({required this.row, this.keyPrefix = 'account-cell'});
+  const _SystemRow({
+    required this.row,
+    this.keyPrefix = 'account-cell',
+    this.showAzureSchools = false,
+  });
 
   final _AccountRow row;
 
@@ -1411,17 +1415,34 @@ class _SystemRow extends StatelessWidget {
   /// exactly when a row is selected, which is every interesting case.
   final String keyPrefix;
 
+  /// Whether the Office 365 cell also names the schools that account's Azure
+  /// `department` lists (#352) — the details pane only.
+  ///
+  /// The same split #334 made for the sibling-enrolment line, and for the same
+  /// reason: this is context for reading *one* card at the moment of a
+  /// destructive per-record decision, not a column to scan. On a list of staff
+  /// an extra
+  /// line under every card's third cell is noise. Because the two sets of cells
+  /// share this widget, the gate has to be here — a `detail` handed to the cell
+  /// unconditionally would appear in both.
+  final bool showAzureSchools;
+
   @override
   Widget build(BuildContext context) {
     // Each cell is addressable on its own — `account-cell-<id>-<systeem>` —
     // exactly as a Klasgroepen row's cells are (`class-cell-<klas>-<systeem>`),
     // so a test can ask one row what it says about one system rather than
     // counting icons across three.
+    final List<String> schools = row.account.departmentSchools;
+    final String? azureSchools = showAzureSchools && schools.isNotEmpty
+        ? _departmentSchoolsLine(schools)
+        : null;
     Widget cell(core.Origin system) => Expanded(
           child: SystemIndicatorCell(
             key: ValueKey('$keyPrefix-${row.id}-${system.name}'),
             system: system,
             state: row.stateFor(system),
+            detail: system == core.Origin.azure ? azureSchools : null,
           ),
         );
 
@@ -1450,6 +1471,23 @@ class _SystemRow extends StatelessWidget {
 /// baked in by the materializer), and the class is *that* school's — read here
 /// and nowhere else. Every value this app writes comes from our own school's row
 /// (INV-25).
+/// What the Office 365 cell says about the schools a staff member's Azure
+/// `department` lists (#352): "Scholen: SSM, GBS".
+///
+/// The field's own content, verbatim — its order, its casing, its entries,
+/// separated the way it separates them. No re-sorting, no case-folding, no
+/// label invented for an unknown prefix: this is a quotation of a field
+/// maintained by other software (#237), offered so the operator can read what
+/// the app's two Office 365 departure actions split on and check it before
+/// pressing.
+///
+/// Our own school stays in the list. "SSM only" is the case that makes a
+/// deletion safe, so it is the one worth stating out loud — the release/delete
+/// split filters our prefix out (`departmentSchoolsExcept`), and the reading
+/// must not.
+String _departmentSchoolsLine(List<String> schools) =>
+    'Scholen: ${schools.join(', ')}';
+
 String _otherEnrolmentLine(OtherEnrolment e) {
   final String klas = e.classroom.trim();
   final String where = klas.isEmpty ? 'zonder klas' : 'klas $klas';
@@ -1460,9 +1498,11 @@ String _otherEnrolmentLine(OtherEnrolment e) {
 /// about it, and every decision it raises.
 ///
 /// Since #334 it also states the other group schools the person is enrolled in,
-/// directly under the class facts they qualify. Only here, and not on the
-/// collapsed list row: the row is one dense line per account across a roster of
-/// thousands, and this is context for reading *one* card, not a way to scan.
+/// directly under the class facts they qualify, and since #352 the schools a
+/// staff member's Azure `department` lists, under the Office 365 cell. Only
+/// here, and not on the collapsed list row: the row is one dense line per
+/// account across a roster of thousands, and both are context for reading *one*
+/// card, not a way to scan.
 ///
 /// The decisions are [entryDetail] verbatim — one block per decision, each led
 /// by its own heading and its system, then the radios or the field diff, then
@@ -1513,7 +1553,11 @@ class _AccountDetail extends StatelessWidget {
         // Repeated from the row on purpose: on a narrow window the list is not
         // on screen at all, so the pane has to be able to say what the account's
         // three systems look like.
-        _SystemRow(row: row, keyPrefix: 'account-detail-cell'),
+        _SystemRow(
+          row: row,
+          keyPrefix: 'account-detail-cell',
+          showAzureSchools: true,
+        ),
         for (final w in row.account.warnings) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s2),
           Text(w, style: text.bodySmall),

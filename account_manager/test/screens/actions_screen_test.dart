@@ -1713,6 +1713,80 @@ void main() {
     expect(find.textContaining('Ook ingeschreven'), findsNothing);
   });
 
+  // --- The Azure department schools of a staff record (#352) ---------------
+
+  testWidgets(
+      'a staff card names the schools its Azure department lists, under the '
+      'Office 365 cell of the details pane alone (#352)',
+      (WidgetTester tester) async {
+    _useWideWindow(tester);
+    // Anna is fully in step in all three systems; her `department` names our
+    // school second, beside a sibling group school — the ordinary state, and the
+    // whole discriminator between releasing her Office 365 account and deleting
+    // it. Bram has no Office 365 account at all; Jane is a student, whose school
+    // is `companyName` and not a list (INV-22).
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [
+        wisaStudent()
+      ], staff: [
+        wisaStaff(),
+        wisaStaff(
+            code: 'JANS', wisaId: '43', firstName: 'Bram', lastName: 'Jansen'),
+      ]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssAccount(), ssStaffAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azUser(), azStaffUser(department: 'SSM,GBS')]),
+    );
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    final anna = _idOf(harness.controller, 'Anna Smit');
+    final bram = _idOf(harness.controller, 'Bram Jansen');
+
+    await _select(tester, anna);
+    // The field's own content: its order, its casing, our own prefix included —
+    // "ours alone" is what makes a deletion safe, so it is the reading the
+    // operator most needs, and the release/delete split is the only thing
+    // entitled to filter our prefix out.
+    const String line = 'Scholen: SSM, GBS';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$anna-azure')),
+        matching: find.text(line),
+      ),
+      findsOneWidget,
+    );
+    // Under Office 365 and nowhere else: not WISA, not Smartschool.
+    expect(find.text(line), findsOneWidget);
+    // And not on the collapsed row — on a Personeel list an extra line under
+    // every card's third cell is noise, so the two sets of cells differ here.
+    expect(
+      find.descendant(
+        of: _cell(anna, Origin.azure),
+        matching: find.textContaining('Scholen'),
+      ),
+      findsNothing,
+    );
+
+    // No Office 365 account, so there is no field to quote.
+    await _select(tester, bram);
+    expect(find.textContaining('Scholen'), findsNothing);
+
+    // A student is untouched: one exact `companyName`, no list to print.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-leerlingen')));
+    await tester.pumpAndSettle();
+    await _select(tester, _idOf(harness.controller, 'Jane Doe'));
+    expect(find.textContaining('Scholen'), findsNothing);
+  });
+
   // --- The list / detail split on a narrow window (#295) -------------------
 
   testWidgets(
