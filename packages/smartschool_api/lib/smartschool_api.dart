@@ -48,6 +48,7 @@ export 'src/rules/import_rules.dart'
         SmartschoolImportRule,
         applyImportRules,
         unmatchedImportRules;
+export 'src/rules/root_scope.dart' show scopeToRoots, unmatchedRootNames;
 export 'src/snapshot.dart' show SmartschoolSnapshot;
 export 'src/soap/credentials.dart' show SmartschoolCredentials, SoapArg;
 export 'src/soap/soap_envelope.dart'

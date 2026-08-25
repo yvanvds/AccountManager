@@ -4050,7 +4050,24 @@ class GatedApplier extends StateApplier {
 /// Wire it as [ReconcileHarness.smartschoolTransport] to drive the *production*
 /// Smartschool pull, which reads the operator's rules from the live settings
 /// document at pull time (#246).
+///
+/// [tree] and [accounts] override the fixture for a test that needs a tree of
+/// its own shape — the root-scoping end-to-end (#351) needs a forest with the
+/// two managed roots plus a third the pull must not visit, and accounts sitting
+/// in it.
 class GroupTreeSoap implements ss.SmartschoolSoapTransport {
+  GroupTreeSoap({String? tree, Map<String, String>? accounts})
+      : tree = tree ?? _tree,
+        accounts = accounts ?? const <String, String>{};
+
+  /// The `getAllGroupsAndClasses` payload, before base64 encoding.
+  final String tree;
+
+  /// The `getAllAccountsExtended` JSON per group code. A code with no entry
+  /// answers "no direct accounts" (Smartschool code 19), which is what every
+  /// group did before this seam existed.
+  final Map<String, String> accounts;
+
   /// The group codes `getAllAccountsExtended` was called for, in walk order.
   final List<String> accountCodes = <String>[];
 
@@ -4080,19 +4097,31 @@ class GroupTreeSoap implements ss.SmartschoolSoapTransport {
     if (method == ss.SmartschoolMethod.getAllGroupsAndClasses) {
       return _wrap(
         method,
-        base64.encode(utf8.encode(_tree)),
+        base64.encode(utf8.encode(tree)),
         'xsd:base64Binary',
       );
     }
     if (method == ss.SmartschoolMethod.getAllAccountsExtended) {
-      accountCodes.add(
-        RegExp(r'<code[^>]*>([^<]*)</code>').firstMatch(envelope)?.group(1) ??
-            '',
-      );
-      return _wrap(method, '19', 'xsd:int'); // Smartschool: no direct accounts.
+      final String code =
+          RegExp(r'<code[^>]*>([^<]*)</code>').firstMatch(envelope)?.group(1) ??
+              '';
+      accountCodes.add(code);
+      final String? json = accounts[code];
+      if (json == null) {
+        // Smartschool: no direct accounts.
+        return _wrap(method, '19', 'xsd:int');
+      }
+      return _wrap(method, _escape(json), 'xsd:string');
     }
     return _wrap(method, '0', 'xsd:int');
   }
+
+  /// XML-escapes a `<return>` payload — the account JSON carries `&` and `"`,
+  /// which the real service escapes on the wire and `decodeReturn` unescapes.
+  String _escape(String value) => value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
 
   String _wrap(String method, String value, String type) =>
       '<?xml version="1.0" encoding="utf-8"?>'
@@ -4242,6 +4271,10 @@ class ReconcileHarness {
         final live = this.liveSettings.current.smartschoolRules;
         return connector.sync(
           rules: live.isEmpty ? smartschoolRules : live,
+          // The roots come straight off the document, like the app's own pull
+          // (#351) — there is no fixture to stand in, because the document
+          // always carries roots: its own defaults until a test saves others.
+          roots: this.liveSettings.current.smartschoolRoots,
         );
       };
     } else {

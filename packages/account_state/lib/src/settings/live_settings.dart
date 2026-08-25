@@ -96,7 +96,8 @@ String _workDateKey(WorkDateSetting setting) =>
     setting.isNow ? 'now' : (setting.date?.toIso8601String() ?? 'unset');
 
 /// A stable identity for the settings a **Smartschool** pull depends on: the
-/// operator's import rules (#259).
+/// operator's import rules (#259) and the group roots the walk is scoped to
+/// (#351).
 ///
 /// The counterpart of [wisaPullFingerprint] for the second connector. #99's
 /// smart sync re-pulls Smartschool only when this session does not hold a
@@ -106,13 +107,23 @@ String _workDateKey(WorkDateSetting setting) =>
 /// nodig" over the save it had not applied. A moved fingerprint is what tells
 /// the smart sync that leaving the held snapshot alone is no longer valid.
 ///
-/// Order-sensitive on purpose: the rules are applied in sequence, so two
-/// permutations of the same set are two different pulls.
+/// The roots belong here for the same reason: editing them in Instellingen
+/// changes which subtrees the walk visits and therefore which accounts and
+/// groups the snapshot holds at all, and a drift pass — which never re-pulls
+/// Smartschool — would otherwise relink against the tree the new roots never
+/// reached.
+///
+/// Order-sensitive on purpose for the rules: they are applied in sequence, so
+/// two permutations of the same set are two different pulls. The roots are
+/// encoded as given for the cheaper reason — they are matched against the tree
+/// and visited in *its* order, so a reordering is the same pull, and reading it
+/// as a changed one merely costs that pull again.
 String smartschoolPullFingerprint(AppSettings settings) =>
     'regels=${jsonEncode(<Map<String, dynamic>>[
           for (final rule in settings.smartschoolRules)
             encodeSmartschoolRule(rule),
-        ])}';
+        ])};'
+    'hoofdgroepen=${jsonEncode(settings.smartschoolRoots)}';
 
 /// A stable identity for the settings an **Azure** pull depends on: the school
 /// prefix the whole read is scoped by, and the managed-school set the

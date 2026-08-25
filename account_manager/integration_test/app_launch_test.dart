@@ -8210,6 +8210,187 @@ void main() {
   });
 
   testWidgets(
+      'the Smartschool pull is scoped to the roots Instellingen names, so a '
+      'beheerder account never becomes a staff record (#351)',
+      (WidgetTester tester) async {
+    // As reported on the live platform: several staff members keep a second,
+    // admin-featured Smartschool account that shares the mail of their normal
+    // one. That is intended and must stay — but the pull walked the *whole*
+    // group forest and asked every node for its accounts, so the admin account
+    // came in too. The student/staff split happens far downstream, in the
+    // linker, on `Basisrol` alone, at which point it is indistinguishable from
+    // a real staff member: it became a `LinkedStaff` of its own, took the
+    // Office 365 user off the real record by mail (so Anna was offered "Maak
+    // een nieuw Office 365 account" for an account that plainly exists), and —
+    // having no WISA counterpart — read as *departed*, which since #349 offers
+    // to delete the very Azure account it had just captured.
+    //
+    // Only a full run puts that on screen. The pull, the link, the dispatch and
+    // two screens are all involved, and so is the second half of the change:
+    // scoping drops out-of-root groups from the snapshot, so the official class
+    // sitting under Beheerders no longer seeds a Klasgroepen orphan (#52/#225).
+    useTallWindow(tester);
+    // A tenant tree with the two managed roots and a third beside them. The
+    // beheerders subtree comes *first*, which is what put its account ahead of
+    // the real one in snapshot order and let it claim the shared mail.
+    const String tree = '<groups>'
+        '<group><name>School</name><type>G</type><code>SCH</code>'
+        '<visible>1</visible><children>'
+        '<group><name>Beheerders</name><type>G</type><code>BEH</code>'
+        '<visible>1</visible><children>'
+        '<group><name>9Z</name><type>K</type><code>C9Z</code>'
+        '<visible>1</visible><isOfficial>1</isOfficial></group>'
+        '</children></group>'
+        '<group><name>Leerlingen</name><type>G</type><code>LLN</code>'
+        '<visible>1</visible><children>'
+        '<group><name>1A</name><type>K</type><code>C1A</code>'
+        '<visible>1</visible><isOfficial>1</isOfficial></group>'
+        '</children></group>'
+        '<group><name>Personeel</name><type>G</type><code>PERS</code>'
+        '<visible>1</visible></group>'
+        '</children></group></groups>';
+    final wire = GroupTreeSoap(
+      tree: tree,
+      accounts: <String, String>{
+        // Anna's real account: the WISA staff code as internal number, her
+        // zero-padded wisaId in `fax`, in step with WISA and Azure.
+        'PERS': '[{"voornaam":"Anna","naam":"Smit",'
+            '"gebruikersnaam":"anna.smit","internnummer":"SMIT",'
+            '"status":"actief","basisrol":"13","geslacht":"f",'
+            '"emailadres":"anna.smit@school.example","fax":"0042",'
+            '"stamboeknummer":"0",'
+            '"groups":[{"id":"201","code":"PERS","name":"Personeel"}]}]',
+        // Her admin account: same mail, no WISA counterpart, a teacher
+        // Basisrol like every beheerder here carries.
+        'BEH': '[{"voornaam":"Anna","naam":"Smit (beheer)",'
+            '"gebruikersnaam":"anna.smit.admin","internnummer":"SMITADM",'
+            '"status":"actief","basisrol":"13","geslacht":"f",'
+            '"emailadres":"anna.smit@school.example","fax":"",'
+            '"stamboeknummer":"0",'
+            '"groups":[{"id":"301","code":"BEH","name":"Beheerders"}]}]',
+      },
+    );
+    // One LiveSettings for both bootstraps, exactly as `main()` wires them, so
+    // what Instellingen saves is what the next pull is scoped by (#238/#246).
+    final live = LiveSettings();
+    final harness = ReconcileHarness(
+      smartschoolTransport: wire,
+      liveSettings: live,
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: const [],
+        staff: [wisaStaff()],
+        schools: [wisaSchool(1)],
+      ),
+      // Her Office 365 account, `department` naming our school and ours alone —
+      // the shape that makes the departure branch offer to delete it outright.
+      azure: azSnap(users: [azStaffUser(department: 'GBS')]),
+    );
+    final settings = SettingsHarness(liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // The operator opens Instellingen and finds the roots already named — the
+    // document says what the pull is scoped to rather than leaving an empty box
+    // that would mean "everything".
+    await tester.tap(find.text('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-smartschool');
+    final Finder roots = find.byKey(const ValueKey('settings-ss-roots'));
+    await tester.ensureVisible(roots);
+    expect(tester.widget<TextField>(roots).controller!.text,
+        'Leerlingen, Personeel');
+
+    // They retype them the way anyone types a list, and it still names the same
+    // two groups: the roots are matched on the normalized name (#241), not raw.
+    await tester.enterText(roots, 'leerlingen,  personeel ');
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+    expect((await settings.store.load()).smartschoolRoots,
+        <String>['leerlingen', 'personeel']);
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The pull visited the two roots and nothing else — and never even asked
+    // Smartschool about the beheerders subtree, which is a SOAP call per node
+    // saved as well as an account kept out.
+    expect(
+      harness.app.smartschool.snapshot?.groups.map((g) => g.id.value).toList(),
+      <String>['LLN', 'C1A', 'PERS'],
+    );
+    expect(wire.accountCodes, <String>['LLN', 'C1A', 'PERS']);
+    expect(
+      harness.app.smartschool.snapshot?.accounts.map((a) => a.uid).toList(),
+      <String>['anna.smit'],
+    );
+    // …and the pass says so, so a scoped pull is never a silently short one.
+    expect(
+      harness.log.entries.map((e) => e.message),
+      contains('De ophaalbeurt is beperkt tot: Leerlingen, Personeel.'),
+    );
+
+    // One staff record, holding all three systems: the Office 365 user is on
+    // the real account, because nothing else was there to claim it by mail.
+    final staff = harness.controller.linked!.snapshot.staff;
+    expect(staff, hasLength(1));
+    expect(staff.single.smartschool?.uid, 'anna.smit');
+    expect(staff.single.wisa, isNotNull);
+    expect(staff.single.azure?.id, 'az-staff');
+
+    // Nothing anywhere in the pass proposes the four things the phantom record
+    // used to: two Smartschool removals aimed at a live, wanted admin account,
+    // the Azure delete aimed at a real staff member's account, and the create
+    // that fired on the real record once its Azure user had been taken.
+    final kinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toSet();
+    expect(kinds, isNot(contains('RemoveStaffFromAzure')));
+    expect(kinds, isNot(contains('RemoveStaffFromSmartschool')));
+    expect(kinds, isNot(contains('DeactivateStaffInSmartschool')));
+    expect(kinds, isNot(contains('AddStaffToAzure')));
+
+    // And that is what the operator sees on the tab they reported this from.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final Finder toggle =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Anna Smit'), findsOneWidget);
+    expect(find.textContaining('beheer'), findsNothing,
+        reason: 'the admin account is no longer a person on this list');
+    expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
+        reason: 'her account exists — it was simply attached to the wrong '
+            'record');
+    expect(find.text('Verwijder Azure account'), findsNothing);
+
+    // The second half of the change: an out-of-root group is gone from the
+    // snapshot, so the official class under Beheerders no longer reads as a
+    // Smartschool class WISA has never heard of. The in-root one still does —
+    // scoping narrows what we look at, it does not blunt what we find there.
+    await openKlasgroepen(tester);
+    expect(find.byKey(const ValueKey('class-row-1A')), findsOneWidget);
+    expect(find.byKey(const ValueKey('class-row-9Z')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a werkdatum saved in Instellingen reaches the very next Synchroniseer, '
       'and Check for drift refuses until it has (#238)',
       (WidgetTester tester) async {

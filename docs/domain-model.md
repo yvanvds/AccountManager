@@ -285,6 +285,8 @@ See INV-40, INV-41, INV-42. `ApplyOptions` carries `dryRun: bool` (PAIN-3).
 
 Rules are applied **at snapshot construction time** (inside the connector or just after), not at link time. The legacy code interleaves them; we don't.
 
+Beside the rules, the Smartschool pull is **scoped to named group roots** — `AppSettings.smartschoolRoots`, defaulting to `Leerlingen` and `Personeel` and editable in Instellingen, since the tree is tenant-specific (#351). The connector walks those subtrees and no others, so an account that sits only in a beheerders or externen group never enters the snapshot at all: the student/staff split happens downstream, in the linker, on `Basisrol` alone, where such an account is indistinguishable from a real staff member. Roots are matched on `normalizeGroupName`, like the rules, and applied **after** them. An empty list means unscoped; a root that matches no group leaves the pull unscoped too and says so in the log, because scoping to whatever happened to match would empty a whole population out of the snapshot — where "absent" reads as *departed*, not as "not pulled".
+
 The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `MarkAsOurs` are **not** ported. Both flagged a `WisaSchool` by its short code, and both flags are the operator's WISA-scholen list in Instellingen instead, keyed by school **id**: `AppSettings.virtualWisaSchoolIds` decides which schools pull with the virtual werkdatum (#277) and `AppSettings.managedWisaSchoolIds` which schools we manage (#286). A settings document that still carries either rule loads; a persisted `MarkAsVirtual` is migrated onto the matching school's `virtual` flag on the way in.
 
 ## 4. Identity scheme
