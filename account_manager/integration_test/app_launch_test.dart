@@ -10121,6 +10121,97 @@ void main() {
   });
 
   testWidgets(
+      "an admin co-account does not take the staff member's Office 365 "
+      'account away from her (#354)', (WidgetTester tester) async {
+    // The pair INV-23 keeps, in its staff shape: Anna Smit has an admin account
+    // next to her normal one, and it carries her mail. Both records claim that
+    // mail, so the Azure user's UPN points at the pair rather than at one
+    // record, and the linker took the first with a free slot — snapshot order,
+    // with the admin account first. Because a mail target was found, the strong
+    // `employeeId ≡ wisaId` bridge never ran.
+    //
+    // Only the whole app shows what that costs: her real record then looks
+    // Azure-less, so Acties → Personeel offers to *create* the Office 365
+    // account she already has — the same silent duplicate #231 is about,
+    // reached from an entirely ordinary pair of accounts.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          // The admin account: her mail, no WISA counterpart, and first in the
+          // snapshot. Named apart so the two cards are distinguishable.
+          ssStaffAccount(
+            uid: 'anna.smit-beheer',
+            accountId: 'SMITADM',
+            surname: 'Smit-beheer',
+          ),
+          ssStaffAccount(),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [azStaffUser()]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The Azure user sits on the WISA-anchored record — the one whose
+    // `accountId` is her staff code and whose `wisaId` is the Azure
+    // `employeeId` — not on the admin account that merely shares her mail.
+    final staff = harness.controller.linked!.snapshot.staff;
+    final anna = staff.singleWhere((s) => s.wisa != null);
+    expect(anna.smartschool?.uid, 'anna.smit');
+    expect(anna.azure?.id, 'az-staff');
+    expect(
+      staff.singleWhere((s) => s.wisa == null).azure,
+      isNull,
+      reason: 'the admin co-account has no Azure account of its own',
+    );
+    // Both accounts are still kept and the mail collision is still reported —
+    // INV-13/INV-23 are untouched; only the attachment moved.
+    expect(staff.map((s) => s.smartschool?.uid),
+        <String?>['anna.smit-beheer', 'anna.smit']);
+    expect(
+      find.byKey(const ValueKey('dup-warning-anna.smit@school.example')),
+      findsOneWidget,
+    );
+
+    // Nowhere in the pass is an Azure account proposed for her.
+    expect(
+      harness.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((a) => a.kind),
+      isNot(contains('AddStaffToAzure')),
+    );
+
+    // And that is what the operator reads on Acties → Personeel: her three
+    // systems agree, so she has no card there at all. Before the fix she had
+    // one, offering the Office 365 account she was holding all along.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(ValueKey('account-row-${anna.id.value}')), findsNothing,
+        reason: 'nothing is pending for her — all three systems agree');
+    expect(find.text('Maak een nieuw Office 365 account'), findsNothing,
+        reason: 'she already has one — creating another duplicates it');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       "a moved staff member's Azure department is left exactly as the other "
       'software wrote it (#237)', (WidgetTester tester) async {
     // The counterpart of the #231 test above, one pass later: Anna Smit's

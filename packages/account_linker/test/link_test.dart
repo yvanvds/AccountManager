@@ -165,6 +165,78 @@ void main() {
       );
     });
 
+    test(
+        'the WISA-anchored account of a duplicate-mail pair takes the Azure '
+        'user (#354)', () {
+      // Two accounts share a mail (INV-23), so `byMail` holds both and the
+      // Azure user's upn points at the pair rather than at one record. The
+      // walk used to take the first with a free slot — snapshot order, and
+      // because a target was found the `employeeId` bridge never ran. Here the
+      // co-account is first and the person's real account second, so order
+      // alone hands the Azure user to the wrong record.
+      final snapshot = link(
+        wisaSnap([wisaStudent('W7')]),
+        ssSnap([
+          ssAccount(uid: 'twin-co', accountId: 'W9', mail: 'twin@s.be'),
+          ssAccount(uid: 'twin-real', accountId: 'W7', mail: 'TWIN@s.be'),
+        ]),
+        azSnap([
+          azureUser(
+            id: 'az-7',
+            upn: 'twin@s.be',
+            employeeId: ' W7 ',
+            companyName: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final holder = snapshot.accounts.singleWhere((a) => a.azure != null);
+      expect(holder.smartschool?.uid, 'twin-real',
+          reason: 'the WISA-anchored candidate wins, not the first in order');
+      expect(holder.wisa?.wisaId.value, 'W7');
+      // Nothing else about the collision moves: both accounts kept (INV-13/
+      // INV-23) and the warning still raised.
+      expect(snapshot.accounts.map((a) => a.smartschool?.uid),
+          ['twin-co', 'twin-real']);
+      expect(
+        (snapshot.warnings.single as ResolveDuplicateMail).mail,
+        'twin@s.be',
+      );
+    });
+
+    test('a single mail candidate still beats a disagreeing employeeId (#354)',
+        () {
+      // The tie-break lives *inside* the mail candidates. With one candidate
+      // per mail there is nothing to break, so the mail leg keeps deciding
+      // even though another record's wisaId is what the `employeeId` names —
+      // a stale or mistyped employeeId may not steal an account the mail
+      // resolves correctly.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap([
+          ssAccount(uid: 'by-mail', accountId: 'W1', mail: 'hit@s.be'),
+          ssAccount(uid: 'by-id', accountId: 'W2', mail: 'miss@s.be'),
+        ]),
+        azSnap([
+          azureUser(
+            id: 'az-1',
+            upn: 'hit@s.be',
+            employeeId: 'W2',
+            companyName: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(
+        snapshot.accounts.singleWhere((a) => a.azure != null).smartschool?.uid,
+        'by-mail',
+      );
+    });
+
     test('co-account (non-student) Smartschool records are ignored', () {
       // The concrete model only emits primary student accounts via
       // `accountType`; staff are filtered by role (see staff scenarios). A
@@ -1278,6 +1350,48 @@ void main() {
       final warning = snapshot.warnings.single as ResolveDuplicateMail;
       expect(warning.mail, 'twin@s.be');
       expect(warning.accounts.map((a) => a.uid).toSet(), {'twin-a', 'twin-b'});
+    });
+
+    test(
+        "the staff member's normal account takes the Azure user, not their "
+        'admin one (#354)', () {
+      // The case that produced the bug: an admin account carrying the mail of
+      // the person's normal account. Only the normal one is WISA-anchored —
+      // its `accountId` is the WISA `code` and its `wisaId` is the Azure
+      // `employeeId`; the admin account has no WISA counterpart at all. The
+      // admin account arrives first, so first-with-a-free-slot gave it the
+      // Azure user and the person's real record looked Azure-less.
+      final snapshot = link(
+        wisaSnap(const [], staff: [wisaStaff('SMIT', wisaId: '42')]),
+        ssSnap([
+          ssStaffAccount(
+              uid: 'smit-admin', accountId: 'SMITADM', mail: 'smit@s.be'),
+          ssStaffAccount(uid: 'smit', accountId: 'SMIT', mail: 'SMIT@s.be'),
+        ]),
+        azSnap([
+          azureUser(
+            id: 'az-42',
+            upn: 'smit@s.be',
+            employeeId: '42',
+            department: 'Arcadia',
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final holder = snapshot.staff.singleWhere((s) => s.azure != null);
+      expect(holder.smartschool?.uid, 'smit',
+          reason: 'the WISA-anchored account wins, not the first in order');
+      expect(holder.wisa?.wisaId?.value, '42');
+      // Both accounts are still there and the mail collision is still the
+      // operator's to resolve — only the Azure attachment moved.
+      expect(snapshot.staff.map((s) => s.smartschool?.uid),
+          ['smit-admin', 'smit']);
+      expect(
+        (snapshot.warnings.single as ResolveDuplicateMail).mail,
+        'smit@s.be',
+      );
     });
 
     test('staff member with no wisaId still links via code + mail', () {
