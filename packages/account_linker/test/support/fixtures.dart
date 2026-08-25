@@ -317,22 +317,32 @@ class CollidingResolver implements PersonIdResolver {
 /// confidence, and which systems are present (plus their keys), the warnings,
 /// and the per-system counts.
 List<String> structuralSignature(LinkedSnapshot snapshot) {
-  String acc(LinkedAccount a) => [
+  // The Azure accounts a record could not adopt (INV-26, #360) — part of the
+  // record's meaning, since it is what keeps them off an orphan record. Omitted
+  // entirely when empty so every pre-#360 signature is unchanged.
+  String dup(List<AzureUser> extras) =>
+      extras.isEmpty ? '' : '|d:${extras.map((x) => x.id).join(',')}';
+
+  String acc(LinkedAccount a) =>
+      <String>[
         a.id.value,
         a.confidence.name,
         'w:${a.wisa?.wisaId.value ?? '-'}',
         's:${a.smartschool?.uid ?? '-'}',
         'a:${a.azure?.id ?? '-'}',
-      ].join('|');
+      ].join('|') +
+      dup(a.azureDuplicates);
 
-  String stf(LinkedStaff s) => [
+  String stf(LinkedStaff s) =>
+      <String>[
         s.id.value,
         s.role.name,
         s.confidence.name,
         'w:${s.wisa?.code.value ?? '-'}',
         's:${s.smartschool?.uid ?? '-'}',
         'a:${s.azure?.id ?? '-'}',
-      ].join('|');
+      ].join('|') +
+      dup(s.azureDuplicates);
 
   // Groups have no linker-minted id; the WISA name anchors the record when
   // present, else the Smartschool/Azure name of the orphan (#52).
@@ -362,6 +372,10 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
         // a shift in *which* record claimed the id first is a real difference.
         DuplicateLinkedId(:final id, :final holdings) =>
           'dupid:${id.value}:${holdings.map(holding).join(',')}',
+        // INV-26 (#360). Snapshot order again, and deliberately not sorted: the
+        // first account listed is the one the join adopted.
+        DuplicateAzureEmployeeId(:final employeeId, :final accounts) =>
+          'dupempid:$employeeId:${accounts.map((x) => x.id).join(',')}',
       };
 
   return [

@@ -1733,6 +1733,40 @@ ReconcileHarness idCollisionHarness({InMemoryLinkedStore? linkedStore}) =>
       azure: azSnap(users: const []),
     );
 
+/// A reconcile harness over the live #360 shape: **one student, two Office 365
+/// accounts** carrying the same `employeeId` (INV-26).
+///
+/// Modelled on the audited pairs. Both accounts were made by this app months
+/// apart, so both carry our `companyName`; the two UPNs differ only in how the
+/// given name was normalised — one keeps the internal hyphen, the other strips
+/// it. The twin is the **unlicensed** half: it has no `jobTitle` (the field this
+/// port only started writing in #358), so it falls outside the dynamic group
+/// that grants the student licence and has never held Office. That asymmetry is
+/// the point of the fixture — it is the pair of facts an operator picks by, and
+/// the app must show them rather than choose.
+///
+/// The default WISA/Smartschool fixtures link the *first* account, so the shape
+/// is one ordinary record whose Azure identity is ambiguous. The twin used to
+/// become a second record instead: an Azure-only orphan, which — carrying our
+/// `companyName` and no WISA row — reads as a departed student and raises
+/// `RemoveStudentFromAzure` on it. Which of the pair that lands on is decided by
+/// nothing but snapshot order.
+ReconcileHarness duplicateAzureAccountHarness({
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      linkedStore: linkedStore,
+      azure: azSnap(users: [
+        azUser(),
+        azUser(
+          id: 'az-twin',
+          upn: 'jane-doe@student.school.example',
+          jobTitle: null,
+          department: null,
+        ),
+      ]),
+    );
+
 /// A reconcile harness over [count] WISA-departed, Smartschool-only active
 /// accounts (no WISA, no Azure): each raises the mutually-exclusive
 /// unregister/delete choice (#110), so the pending list holds [count] entries in

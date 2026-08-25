@@ -37,6 +37,17 @@ bridges.
 
 All comparisons are trimmed and case-insensitive (INV-12).
 
+**`employeeId` is not unique in the tenant** (INV-26, #360). It is the strongest
+bridge there is, but the live tenant holds pairs of Azure accounts answering to
+one WISA id — two runs of this app made them months apart, under different UPN
+normalisations. So the Azure bridge *picks* rather than links: the extra accounts
+land on `LinkedAccount.azureDuplicates` / `LinkedStaff.azureDuplicates` (with
+`azureCandidates` giving the whole set, adopted first), and every colliding id
+raises a `DuplicateAzureEmployeeId` warning. They are deliberately **not** kept
+as Azure orphans — an orphan reads as a departed student and draws a delete on
+an account that may be the one holding the mailbox. Resolving the pair is the
+operator's job; the linker only reports it.
+
 Azure "orphans" — users present only in Azure, kept so the action engine can
 raise a removal — are split per INV-22: a student carries `companyName ==
 schoolPrefix`; a staff member carries a `department` that **contains** the

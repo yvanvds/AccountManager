@@ -2026,4 +2026,210 @@ void main() {
       expect(snapshot.wisa.total, 3);
     });
   });
+
+  group('two Azure accounts on one employeeId (INV-26, #360)', () {
+    /// The live shape audited in Aug 2026: one person, two Office 365 accounts
+    /// created months apart by two runs of this app, their UPNs differing only
+    /// in how the given name was normalised. The first carries our
+    /// `companyName`, so before #360 it was the one kept — as an *orphan*.
+    LinkedSnapshot linkTwins({
+      String? secondCompanyName = _prefix,
+      String? secondEmployeeId = 'W7',
+    }) =>
+        link(
+          wisaSnap([wisaStudent('W7', classGroup: '3A')]),
+          ssSnap([
+            ssAccount(uid: 'marie', accountId: 'W7', mail: 'marie@s.be'),
+          ]),
+          azSnap([
+            azureUser(
+              id: 'az-live',
+              upn: 'marie@s.be',
+              employeeId: 'W7',
+              companyName: _prefix,
+            ),
+            azureUser(
+              id: 'az-twin',
+              upn: 'marie-jeanne.doe@s.be',
+              employeeId: secondEmployeeId,
+              companyName: secondCompanyName,
+            ),
+          ]),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+        );
+
+    test('the twin lands on the person\'s record, not on one of its own', () {
+      final snapshot = linkTwins();
+
+      // One record for one person. The twin used to become a second, WISA-less
+      // record — which reads as a departed student and draws a delete.
+      expect(snapshot.accounts, hasLength(1));
+      final a = snapshot.accounts.single;
+      expect(a.wisa?.wisaId.value, 'W7');
+      expect(a.azure?.id, 'az-live');
+      expect(a.azureDuplicates.map((u) => u.id), ['az-twin']);
+      expect(a.hasAmbiguousAzureIdentity, isTrue);
+      expect(a.azureCandidates.map((u) => u.id), ['az-live', 'az-twin']);
+    });
+
+    test('the shared id is reported as a warning', () {
+      final snapshot = linkTwins();
+
+      final warning =
+          snapshot.warnings.whereType<DuplicateAzureEmployeeId>().single;
+      expect(warning.employeeId, 'w7');
+      expect(warning.accounts.map((u) => u.id), ['az-live', 'az-twin']);
+    });
+
+    test('the twin is kept even when nothing marks it as ours', () {
+      // The unlicensed half of a live pair may carry no `companyName` at all,
+      // which is exactly the account INV-22 would have dropped without a word.
+      final snapshot = linkTwins(secondCompanyName: null);
+
+      final a = snapshot.accounts.single;
+      expect(a.azureDuplicates.map((u) => u.id), ['az-twin']);
+      expect(snapshot.accounts, hasLength(1));
+    });
+
+    test('a person keeps counting once, so the tally stays honest', () {
+      final snapshot = linkTwins();
+
+      // Two accounts, one person: the orphan record used to make this 2.
+      expect(snapshot.azure.total, 1);
+      expect(snapshot.wisa.total, 1);
+    });
+
+    test('one account per id stays an ordinary link', () {
+      final snapshot = linkTwins(secondEmployeeId: 'W8');
+
+      final a = snapshot.accounts.firstWhere((x) => x.wisa != null);
+      expect(a.azureDuplicates, isEmpty);
+      expect(a.hasAmbiguousAzureIdentity, isFalse);
+      expect(a.azureCandidates.map((u) => u.id), ['az-live']);
+      expect(snapshot.warnings.whereType<DuplicateAzureEmployeeId>(), isEmpty);
+      // …and the unrelated account is still the orphan INV-22 makes it.
+      expect(snapshot.accounts, hasLength(2));
+    });
+
+    test('a WISA-less pair is still reported, and still not merged', () {
+      // Both accounts of a departed student: nothing to link to, but the pair
+      // is exactly as ambiguous, and a delete proposal on either is a coin flip.
+      final snapshot = link(
+        wisaSnap(const []),
+        ssSnap(const []),
+        azSnap([
+          azureUser(
+            id: 'az-a',
+            upn: 'gone.a@s.be',
+            employeeId: 'W7',
+            companyName: _prefix,
+          ),
+          azureUser(
+            id: 'az-b',
+            upn: 'gone.b@s.be',
+            employeeId: 'W7',
+            companyName: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      // With no record claiming the id, both stay the orphans INV-22 makes of
+      // them — nothing is merged away — and the collision is still named.
+      expect(snapshot.accounts.map((a) => a.azure?.id), ['az-a', 'az-b']);
+      expect(
+        snapshot.warnings
+            .whereType<DuplicateAzureEmployeeId>()
+            .single
+            .accounts
+            .map((u) => u.id),
+        ['az-a', 'az-b'],
+      );
+    });
+
+    test('the staff half behaves the same way', () {
+      final snapshot = link(
+        wisaSnap(const [], staff: [wisaStaff('PEE', wisaId: 'S3')]),
+        ssSnap([
+          ssStaffAccount(uid: 'pee', accountId: 'PEE', mail: 'pee@s.be'),
+        ]),
+        azSnap([
+          azureUser(
+            id: 'az-live',
+            upn: 'pee@s.be',
+            employeeId: 'S3',
+            department: _prefix,
+          ),
+          azureUser(
+            id: 'az-twin',
+            upn: 'p.ee@s.be',
+            employeeId: 'S3',
+            department: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.staff, hasLength(1));
+      final s = snapshot.staff.single;
+      expect(s.azure?.id, 'az-live');
+      expect(s.azureDuplicates.map((u) => u.id), ['az-twin']);
+      expect(s.hasAmbiguousAzureIdentity, isTrue);
+      expect(
+        snapshot.warnings.whereType<DuplicateAzureEmployeeId>(),
+        hasLength(1),
+      );
+    });
+
+    test('an account adopted by mail alone is untouched by this (#354)', () {
+      // The neighbouring shape this must not swallow: the Azure slot is taken
+      // by an account that matched the *mail*, and a second account carries the
+      // employeeId. Those two are not twins — they disagree on the id — so the
+      // second keeps whatever fate INV-22 gives it, and no collision is claimed.
+      final snapshot = link(
+        wisaSnap([wisaStudent('W7')]),
+        ssSnap([ssAccount(uid: 'marie', accountId: 'W7', mail: 'marie@s.be')]),
+        azSnap([
+          azureUser(id: 'az-mail', upn: 'marie@s.be', companyName: _prefix),
+          azureUser(
+            id: 'az-id',
+            upn: 'other@s.be',
+            employeeId: 'W7',
+            companyName: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      final linked = snapshot.accounts.firstWhere((a) => a.wisa != null);
+      expect(linked.azure?.id, 'az-mail');
+      expect(linked.azureDuplicates, isEmpty);
+      expect(snapshot.warnings.whereType<DuplicateAzureEmployeeId>(), isEmpty);
+      expect(snapshot.accounts, hasLength(2));
+    });
+
+    test('an ordinary pass reports nothing', () {
+      final snapshot = link(
+        wisaSnap([wisaStudent('W1')]),
+        ssSnap([ssAccount(uid: 'jane', accountId: 'W1', mail: 'jane@s.be')]),
+        azSnap([
+          azureUser(
+            id: 'az1',
+            upn: 'jane@s.be',
+            employeeId: 'W1',
+            companyName: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.warnings, isEmpty);
+      expect(snapshot.accounts.single.azureDuplicates, isEmpty);
+    });
+  });
 }

@@ -3185,6 +3185,81 @@ void main() {
     });
   });
 
+  group('two Office 365 accounts on one WISA id (INV-26, #360)', () {
+    test('the collision reaches the controller with both accounts', () async {
+      final h = duplicateAzureAccountHarness();
+      await h.controller.sync();
+
+      final collisions = h.controller.azureIdentityCollisions;
+      expect(collisions, hasLength(1));
+      expect(collisions.single.employeeId, '1');
+      expect(collisions.single.accounts, hasLength(2));
+
+      // The linked account first, then the twin — each with the facts that tell
+      // the live one from the abandoned one.
+      final live = collisions.single.accounts.first;
+      expect(live, contains('jane.doe@student.school.example'));
+      expect(live, contains('id az1'));
+      expect(live, contains('bedrijf GBS'));
+      expect(live, contains('functie LeerlingSec'));
+
+      final twin = collisions.single.accounts.last;
+      expect(twin, contains('jane-doe@student.school.example'));
+      expect(twin, contains('id az-twin'));
+      // The half of the licensing rule this one is missing — which is what says
+      // it has never held Office, and so which of the two is the live account.
+      expect(twin, contains('bedrijf GBS'));
+      expect(twin, contains('functie —'));
+    });
+
+    test('the twin does not become a departed student to delete', () async {
+      final h = duplicateAzureAccountHarness();
+      await h.controller.sync();
+
+      // Nothing anywhere proposes deleting an Office 365 account. The twin used
+      // to be kept as an Azure-only orphan — a record with no WISA side but with
+      // our `companyName` — which reads as a departed student and raised exactly
+      // that, on whichever of the two the join did not pick.
+      final allKinds = h.controller.pendingEntries
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((x) => x.kind);
+      expect(allKinds, isNot(contains('RemoveStudentFromAzure')));
+
+      // One record for one person, and one document below it.
+      expect(h.controller.linkedAccounts, hasLength(1));
+      final a = h.controller.linked!.snapshot.accounts.single;
+      expect(a.hasAmbiguousAzureIdentity, isTrue);
+      expect(a.azureDuplicates.map((u) => u.id), ['az-twin']);
+    });
+
+    test('the sync log names it as an error, so a pass records it', () async {
+      final h = duplicateAzureAccountHarness();
+      await h.controller.sync();
+
+      final named = h.log.entries
+          .where((e) => e.message.contains('Dubbel Office 365-account'))
+          .toList();
+      expect(named, hasLength(1));
+      expect(named.single.isError, isTrue);
+      expect(named.single.message, contains('WISA-id "1"'));
+      expect(named.single.message, contains('az-twin'));
+    });
+
+    test('an ordinary sync reports no collision', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      expect(h.controller.azureIdentityCollisions, isEmpty);
+      expect(
+        h.log.entries
+            .map((e) => e.message)
+            .where((l) => l.contains('Dubbel Office 365-account')),
+        isEmpty,
+      );
+    });
+  });
+
   group('a class entry that owes two writes (#272)', () {
     /// The Smartschool half: the recorded SOAP action is the fully-qualified
     /// `…V3#saveClass`.

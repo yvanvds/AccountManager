@@ -554,6 +554,29 @@ class LinkIdCollision {
   final List<String> records;
 }
 
+/// Two or more Office 365 accounts answering to one WISA id (INV-26, #360),
+/// shaped for the reconcile screen: the [employeeId] they share and one
+/// already-rendered line per account.
+///
+/// Like [LinkIdCollision] and unlike a duplicate mail there is nothing to
+/// *accept* here — but unlike either, there is something to **do**, and it is
+/// deliberately not something this app does. Merging two accounts is
+/// destructive: the wrong choice deletes the one holding the student's mail and
+/// OneDrive. So the app states the facts and stops; the operator resolves it in
+/// Entra.
+class AzureIdentityCollision {
+  const AzureIdentityCollision({
+    required this.employeeId,
+    required this.accounts,
+  });
+
+  /// The `employeeId` — the WISA id — the [accounts] share.
+  final String employeeId;
+
+  /// One line per claiming account; at least two, the linked one first.
+  final List<String> accounts;
+}
+
 /// A per-category summary for the Reconcile overview (#163): how many accounts
 /// (or class groups) the category holds, and how many of them carry an applyable
 /// pending action. Derived from the stored [Rollup]s, so it is readable in a
@@ -1574,6 +1597,55 @@ class ReconcileController extends ChangeNotifier {
             records: [for (final h in w.holdings) _describeHolding(h)],
           ),
     ];
+  }
+
+  /// The Office 365 accounts sharing one WISA id in the current linked view
+  /// (INV-26, #360), each account rendered with the facts an operator picks by.
+  /// Empty before a sync this session, and — normally — empty afterwards too.
+  List<AzureIdentityCollision> get azureIdentityCollisions {
+    final l = _linked;
+    if (l == null) return const [];
+    return [
+      for (final w in l.snapshot.warnings)
+        if (w is core.DuplicateAzureEmployeeId)
+          AzureIdentityCollision(
+            employeeId: w.employeeId,
+            accounts: [for (final u in w.accounts) _describeAzureAccount(u)],
+          ),
+    ];
+  }
+
+  /// One claiming Office 365 account as a single line — everything the pull
+  /// carries that tells a live account from an abandoned one.
+  ///
+  /// The UPN first, because in the live pairs it is the *only* thing that
+  /// differs to the eye: the two spellings of one given name, one keeping an
+  /// internal hyphen and one stripping it. Then the object id, so the operator
+  /// can address the right account in Entra without retyping a name.
+  ///
+  /// Then the licensing facts, which are the ones that decide. The student
+  /// licence is granted by a dynamic group whose rule is
+  /// `companyName eq '<PREFIX>' and jobTitle eq 'LeerlingSec'` (#358), so those
+  /// two fields plus `accountEnabled` say which twin can hold Office at all —
+  /// the difference between the account a student actually works in and the one
+  /// that has never had a licence. Read through the concrete [az.AzureUser],
+  /// since [core.AzureUser] carries only the linking keys; a record from any
+  /// other implementation simply shows its keys.
+  ///
+  /// Two facts #360 also asked for are missing because the pull does not read
+  /// them: the creation date and the last sign-in. Both need new Graph
+  /// `$select` fields (and `signInActivity` an extra consented permission), so
+  /// they are #363 rather than a field added blind here — a `$select` Graph
+  /// rejects fails every Azure pull, incremental ones included.
+  static String _describeAzureAccount(core.AzureUser user) {
+    final parts = <String>[user.upn, 'id ${user.id}'];
+    if (user is az.AzureUser) {
+      parts.add(user.accountEnabled ? 'ingeschakeld' : 'uitgeschakeld');
+      parts.add('bedrijf ${_nonEmpty(user.companyName ?? '') ?? '—'}');
+      parts.add('functie ${_nonEmpty(user.jobTitle ?? '') ?? '—'}');
+      parts.add('afdeling ${_nonEmpty(user.department ?? '') ?? '—'}');
+    }
+    return parts.join(' · ');
   }
 
   /// One colliding record as a single line: its role and the key it carries in
@@ -3385,6 +3457,7 @@ class ReconcileController extends ChangeNotifier {
     );
     _logSkippedNamesakes(s.warnings);
     _logIdCollisions(s.warnings);
+    _logAzureIdentityCollisions(s.warnings);
   }
 
   Future<void> _relink() async {
@@ -3463,6 +3536,31 @@ class ReconcileController extends ChangeNotifier {
         'Koppelingsfout: ${w.holdings.length} records delen id '
         '"${w.id.value}", zodat hun acties op één kaart terechtkomen. '
         'Records: ${w.holdings.map(_describeHolding).join(' | ')}.',
+      );
+    }
+  }
+
+  /// Names every WISA id that more than one Office 365 account answers to
+  /// (INV-26, #360).
+  ///
+  /// An **error** line, not a message: one of these accounts is very likely
+  /// unlicensed and signed into by a student who therefore has no Office at all,
+  /// and one live pair even blocks the licence assignment outright because the
+  /// twin already owns the conflicting proxy address. Every one of those
+  /// consequences is silent in the tenant, so the log is the place they stop
+  /// being silent — and it is where an operator reconstructs a pass afterwards.
+  ///
+  /// Logged as well as shown on the Synchronisatie overview because the two
+  /// answer different questions: the overview says what is wrong now, the log
+  /// says it was already wrong last week.
+  void _logAzureIdentityCollisions(List<core.LinkWarning> warnings) {
+    for (final w in warnings) {
+      if (w is! core.DuplicateAzureEmployeeId) continue;
+      log.addError(
+        core.Origin.azure,
+        'Dubbel Office 365-account: ${w.accounts.length} accounts dragen '
+        'WISA-id "${w.employeeId}". Los dit op in Entra; de app kiest niet. '
+        'Accounts: ${w.accounts.map(_describeAzureAccount).join(' | ')}.',
       );
     }
   }

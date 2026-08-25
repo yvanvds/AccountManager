@@ -638,6 +638,22 @@ Map<String, List<String>> _warningsByUid(List<core.LinkWarning> warnings) {
         // record holds. Both are reachable with no Smartschool account at all,
         // which a uid-keyed message would not be.
         break;
+      case core.DuplicateAzureEmployeeId():
+        // Names an *Office 365 identity*, not a Smartschool account (INV-26,
+        // #360) — and the abandoned twin is precisely the account with no
+        // Smartschool side to hang a uid message on, so a per-uid string would
+        // report the pair on whichever half happens to have one, or on neither.
+        // The `decisions_merge` hazard above applies here too: warning strings
+        // on a `MaterializedAccount` are read type-blind as a live
+        // duplicate-*mail* collision, so an unrelated one would keep a stale
+        // acceptance alive.
+        //
+        // Surfaced snapshot-wide instead, like the collision above: the sync log
+        // names every shared employeeId and the Synchronisatie overview lists
+        // each claiming account with the facts an operator picks by. The record
+        // itself still carries the ambiguity, on
+        // `LinkedAccount.azureDuplicates`.
+        break;
     }
   }
   return byUid;

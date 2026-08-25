@@ -6917,6 +6917,93 @@ void main() {
   });
 
   testWidgets(
+      'two Office 365 accounts on one WISA id are named on Synchronisatie with '
+      'the facts to choose by, and neither is proposed for deletion (#360)',
+      (WidgetTester tester) async {
+    // The live shape audited in Aug 2026, nothing constructed: one student, two
+    // Azure accounts carrying her WISA id, made months apart by two runs of this
+    // app, their UPNs differing only in the given name's hyphen. Driven through
+    // the real app because the whole failure was *silence*: the join picked one
+    // account and the other either vanished or turned up as somebody who had
+    // left — and either way the operator's screen said nothing about a pair.
+    useTallWindow(tester);
+    final harness = duplicateAzureAccountHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    // The overview names the pair, open and with no control — resolving it means
+    // deleting an account, and the app does not choose.
+    final tile = find.byKey(const ValueKey('azure-identity-collision-1'));
+    expect(tile, findsOneWidget);
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: tile,
+        matching: find.textContaining('Dubbel Office 365-account'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: tile, matching: find.textContaining('los dit op in')),
+      findsOneWidget,
+    );
+
+    // Both UPNs, side by side — the only thing that differs to the eye — and the
+    // licensing facts that say which account the student actually works in.
+    expect(
+      find.descendant(
+        of: tile,
+        matching:
+            find.textContaining('jane.doe@student.school.example · id az1'),
+      ),
+      findsOneWidget,
+    );
+    final twin = find.descendant(
+      of: tile,
+      matching:
+          find.textContaining('jane-doe@student.school.example · id az-twin'),
+    );
+    expect(twin, findsOneWidget);
+    expect(
+      tester.widget<Text>(twin).data,
+      allOf(contains('bedrijf GBS'), contains('functie —')),
+      reason: 'the twin misses the jobTitle half of the licensing rule',
+    );
+
+    // The log says it too, as an error, so a pass records what it found.
+    expect(
+      harness.log.entries
+          .where((e) =>
+              e.isError && e.message.contains('Dubbel Office 365-account'))
+          .length,
+      1,
+    );
+
+    // And Acties holds one card for one person, with no proposal to delete an
+    // Office 365 account. The twin used to be a second, WISA-less record there:
+    // carrying our companyName it read as a departed student and drew
+    // "Verwijder Azure account" — a coin flip between the abandoned account and
+    // the one holding her mail.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    expect(harness.controller.linkedAccounts, hasLength(1));
+    final String student = accountId(harness, 'Jane Doe');
+    await selectAccount(tester, student);
+    expect(find.text('Verwijder Azure account'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an admin co-account gets its own card instead of merging its actions '
       'onto the student\'s (#323)', (WidgetTester tester) async {
     // The live cause of the #319 card, and nothing about it is constructed: the

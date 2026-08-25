@@ -52,6 +52,14 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 ///   (#323). It also means the Azure user matching that one mail has two
 ///   records to choose from: the WISA-anchored one wins, never snapshot order —
 ///   see [_preferredMailCandidate] (#354).
+/// - **INV-26:** `employeeId` is **not unique in this tenant** (#360). Two Azure
+///   accounts answering to one WISA id are both kept — the join adopts one onto
+///   `azure` and the rest land on [LinkedAccount.azureDuplicates] — and a
+///   [DuplicateAzureEmployeeId] warning names the id. Neither of the previous
+///   fates is available to the extra account any more: silently dropped, or
+///   kept as an Azure-only orphan, which reads as a departed student and draws a
+///   proposal to delete an account that may be the one holding the mailbox.
+///   Resolution stays the operator's; nothing here merges or deletes.
 /// - **INV-24:** two records that resolve to the same [LinkedAccountId] raise a
 ///   [DuplicateLinkedId] warning (#319). The check is not written here: it lives
 ///   in [LinkedSnapshot.fromRecords], which this function returns through, so it
@@ -125,6 +133,12 @@ LinkedSnapshot link(
     schoolPrefix: schoolPrefix,
     warnings: warnings,
   );
+  // INV-26 (#360): report the `employeeId` collisions themselves, once for the
+  // whole pull rather than once per population — the ambiguity is a property of
+  // the Azure snapshot, and both populations join on the same field. Raised
+  // after the two builders so the per-population duplicate-mail warnings keep
+  // the order they have always had.
+  _reportDuplicateEmployeeIds(azureSnapshot, warnings);
 
   // Resolve a stable identity and confidence for each record — students first,
   // then staff, so [resolver.resolve] is called in the same order as before
@@ -148,6 +162,7 @@ LinkedSnapshot link(
         confidence: _confidence(rec),
         wisaClassGroups: rec.wisaClassGroups,
         wisaPresence: _presence(rec.wisaSchoolIds, effectiveOurSchoolIds),
+        azureDuplicates: List<AzureUser>.unmodifiable(rec.azureDuplicates),
       ),
   ];
   final staff = <LinkedStaff>[
@@ -168,6 +183,7 @@ LinkedSnapshot link(
         // ours" can never disagree.
         azureNamesOurSchool:
             staffBelongsToSchool(rec.azure?.department, schoolPrefix),
+        azureDuplicates: List<AzureUser>.unmodifiable(rec.azureDuplicates),
       ),
   ];
 
@@ -340,7 +356,9 @@ List<_Record> _buildStudentRecords(
   }
 
   // 3. Attach Azure users: by upn → mail, else by employeeId → wisaId, else
-  //    keep school-prefix orphans (INV-22), else discard (another school).
+  //    keep the twin of an account already attached by that same employeeId
+  //    (INV-26), else keep school-prefix orphans (INV-22), else discard
+  //    (another school).
   for (final user in azureSnapshot.users) {
     final upn = _norm(user.upn);
     final employeeId = _norm(user.employeeId);
@@ -362,13 +380,15 @@ List<_Record> _buildStudentRecords(
         );
       }
     }
-    if (target == null && employeeId != null) {
-      final rec = byWisaId[employeeId];
-      if (rec != null && rec.azure == null) target = rec;
+    final claimant = employeeId == null ? null : byWisaId[employeeId];
+    if (target == null && claimant != null && claimant.azure == null) {
+      target = claimant;
     }
 
     if (target != null) {
       target.azure = user;
+    } else if (claimant != null && _holdsTwinOf(claimant.azure, employeeId)) {
+      claimant.azureDuplicates.add(user);
     } else if (studentBelongsToSchool(user.companyName, schoolPrefix)) {
       records.add(_Record(azure: user));
     }
@@ -377,6 +397,25 @@ List<_Record> _buildStudentRecords(
 
   return records;
 }
+
+/// Whether the account a record already [held] is a **twin** of the user being
+/// attached: both carry the same non-empty, normalized [employeeId] (INV-26,
+/// #360).
+///
+/// This is the exact condition that makes the `employeeId` leg give up — the
+/// slot is taken by an account answering to the same WISA id — and it is
+/// everything the ambiguity is. Two accounts on one id is a fact about this
+/// person, so the extra one belongs on their record: dropping it hides the pair,
+/// and keeping it as an Azure-only orphan misreads it as a departed student and
+/// draws a proposal to *delete* it — a coin flip between the abandoned twin and
+/// the one holding the mailbox.
+///
+/// Deliberately narrow. It says nothing about the *other* way a record's Azure
+/// slot can be occupied — an account adopted through the mail leg whose
+/// `employeeId` differs, or is absent — which is #354's business and keeps its
+/// existing orphan/drop behaviour untouched.
+bool _holdsTwinOf(az.AzureUser? held, String? employeeId) =>
+    held != null && employeeId != null && _norm(held.employeeId) == employeeId;
 
 /// Builds one staff [_StaffRecord] per linked staff member, mirroring
 /// [_buildStudentRecords] but using the staff-specific bridges (see the [link]
@@ -468,13 +507,16 @@ List<_StaffRecord> _buildStaffRecords(
         );
       }
     }
-    if (target == null && employeeId != null) {
-      final rec = byWisaId[employeeId];
-      if (rec != null && rec.azure == null) target = rec;
+    final claimant = employeeId == null ? null : byWisaId[employeeId];
+    if (target == null && claimant != null && claimant.azure == null) {
+      target = claimant;
     }
 
     if (target != null) {
       target.azure = user;
+    } else if (claimant != null && _holdsTwinOf(claimant.azure, employeeId)) {
+      // INV-26 (#360), the staff half — same shape, same reason.
+      claimant.azureDuplicates.add(user);
     } else if (staffBelongsToSchool(user.department, schoolPrefix)) {
       records.add(_StaffRecord(azure: user));
     }
@@ -482,6 +524,29 @@ List<_StaffRecord> _buildStaffRecords(
   }
 
   return records;
+}
+
+/// Raises one [DuplicateAzureEmployeeId] per `employeeId` the Azure pull
+/// returned on more than one account (INV-26, #360).
+///
+/// Population-agnostic on purpose: the collision is a property of the snapshot,
+/// not of whether the person turned out to be a student or a staff member, and
+/// both builders join on the same field. Ordered as
+/// [az.AzureSnapshot.duplicateEmployeeIds] answers — first-seen id order, users
+/// in snapshot order — so the warnings a given input produces are deterministic
+/// (INV-20).
+void _reportDuplicateEmployeeIds(
+  az.AzureSnapshot azureSnapshot,
+  List<LinkWarning> warnings,
+) {
+  for (final entry in azureSnapshot.duplicateEmployeeIds.entries) {
+    warnings.add(
+      DuplicateAzureEmployeeId(
+        employeeId: entry.key,
+        accounts: List<AzureUser>.unmodifiable(entry.value),
+      ),
+    );
+  }
 }
 
 /// Links the class-group population, ported from legacy
@@ -810,6 +875,11 @@ class _Record {
   /// The school ids of [wisaClassGroups] — what [_presence] classifies.
   Set<int> get wisaSchoolIds => wisaClassGroups.keys.toSet();
 
+  /// Further Azure accounts carrying this person's `employeeId` that [azure] had
+  /// no room for (INV-26, #360). Accumulated in pass 3; frozen onto
+  /// [LinkedAccount.azureDuplicates]. Empty for every ordinary record.
+  final List<az.AzureUser> azureDuplicates = <az.AzureUser>[];
+
   _Record({this.smartschool, this.wisa, this.azure});
 }
 
@@ -830,6 +900,9 @@ class _StaffRecord {
   /// two rows, because `code` is the staff primary key and the connector merges
   /// on it.
   Set<int> get wisaSchoolIds => wisa?.schoolIds ?? const <int>{};
+
+  /// The staff twin of [_Record.azureDuplicates] (INV-26, #360).
+  final List<az.AzureUser> azureDuplicates = <az.AzureUser>[];
 
   _StaffRecord({this.smartschool, this.wisa, this.azure});
 }
