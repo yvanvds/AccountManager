@@ -210,12 +210,40 @@ class SystemIndicatorCell extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Tooltip(
-            message: systemIndicatorTooltip(system, state),
-            child: Icon(
-              systemIndicatorIcon(state),
-              size: 16,
-              color: systemIndicatorColor(context, state),
+          // The `container: true` is load-bearing, not decoration (#350).
+          //
+          // A `Tooltip` is an `OverlayPortal`, and the overlay half is joined to
+          // its anchor by a traversal-parent identifier rather than by position
+          // in the tree. That identifier is dropped when the anchor's
+          // `SemanticsConfiguration` is absorbed into a neighbour's — the
+          // upstream defect flutter/flutter#182444, diagnosed in
+          // flutter/flutter#190344, still open as of Flutter 3.44.0. The orphan
+          // node is then serialized as a child nobody can reach, and on Windows
+          // `ui::AXTree::Unserialize` rejects the entire update:
+          // `N will not be in the tree and is not the new root`. The
+          // accessibility tree freezes for the life of the window, and the
+          // process has been seen to die outright with no Dart exception.
+          //
+          // Three of these cells sit side by side in a row of a `ListView`,
+          // whose viewport describes itself with two-pane semantics — precisely
+          // the recipe upstream reproduces. Asking for a container gives the
+          // anchor a semantics node of its own, so there is nothing left to
+          // absorb it and the identifier survives. `excludeFromSemantics` does
+          // not help: it only suppresses the anchor's tooltip string, while the
+          // grafting that breaks is the portal's.
+          //
+          // system_indicator_semantics_test.dart holds this down by replaying
+          // the real update traffic through the engine's reachability rule.
+          // Drop the container and it records ~90 rejected updates.
+          Semantics(
+            container: true,
+            child: Tooltip(
+              message: systemIndicatorTooltip(system, state),
+              child: Icon(
+                systemIndicatorIcon(state),
+                size: 16,
+                color: systemIndicatorColor(context, state),
+              ),
             ),
           ),
           const SizedBox(width: PlinkSpacing.s1),
