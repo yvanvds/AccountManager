@@ -37,11 +37,19 @@ class AzureCredentials {
   /// `Directory.AccessAsUser.All` also works but hands the app everything the
   /// signed-in operator can do directory-wide, so it is deliberately not used.
   ///
-  /// The permission requires **admin consent** on the app registration, and a
+  /// `AuditLog.Read.All` is requested for `signInActivity`, which the
+  /// duplicate-account report reads per colliding account
+  /// (`UserManager.withSignInActivity`, #363). `User.Read.All`-class
+  /// permissions do not cover it, and without this scope the read answers
+  /// `403` and the report renders `laatste aanmelding —`.
+  ///
+  /// These permissions require **admin consent** on the app registration, and a
   /// scope only reaches a token after re-consent (a cached refresh token keeps
   /// the scope set it was issued for). Until consent is granted the token
   /// request for this scope set is refused, so the tenant-side grant belongs
-  /// with — not after — a rollout of this default.
+  /// with — not after — a rollout of this default. Both grants are in place in
+  /// the Arcadia tenant: `AuditLog.Read.All` was consented for
+  /// `Arcadia Account Manager (Desktop)` on 2026-08-26 (#379).
   final List<String> scopes;
 
   AzureCredentials({
@@ -58,6 +66,7 @@ class AzureCredentials {
               'https://graph.microsoft.com/User.ReadWrite.All',
               'https://graph.microsoft.com/Group.ReadWrite.All',
               'https://graph.microsoft.com/User-PasswordProfile.ReadWrite.All',
+              'https://graph.microsoft.com/AuditLog.Read.All',
               'offline_access',
             ];
 

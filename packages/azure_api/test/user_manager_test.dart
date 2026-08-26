@@ -559,6 +559,34 @@ void main() {
             'Directory.AccessAsUser.All')),
       );
     });
+
+    // #379: `signInActivity` sits behind AuditLog.Read.All, and nothing else
+    // in the default set covers it. Without the scope in the request the
+    // per-account read in `withSignInActivity` answers 403 and the
+    // duplicate-account report falls back to "laatste aanmelding —" (#363).
+    test('requests AuditLog.Read.All so signInActivity is readable', () {
+      final credentials = AzureCredentials(
+        clientId: 'c',
+        tenantId: 't',
+        azureDomain: 'school.example',
+        schoolPrefix: 'GBS',
+      );
+      expect(
+        credentials.scopes,
+        contains('https://graph.microsoft.com/AuditLog.Read.All'),
+      );
+    });
+
+    test('an explicit scope list still overrides the default', () {
+      final credentials = AzureCredentials(
+        clientId: 'c',
+        tenantId: 't',
+        azureDomain: 'school.example',
+        schoolPrefix: 'GBS',
+        scopes: const ['https://graph.microsoft.com/User.Read.All'],
+      );
+      expect(credentials.scopes, ['https://graph.microsoft.com/User.Read.All']);
+    });
   });
 
   group('deleteUser', () {
