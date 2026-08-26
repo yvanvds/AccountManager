@@ -380,6 +380,28 @@ class PasswordController extends ChangeNotifier {
   bool _busy = false;
   bool get busy => _busy;
 
+  // --- Progress of the running generate/reset (#369) -------------------------
+
+  /// How many pushes of the running generate/reset have finished — the `n` of
+  /// the modal progress dialog's "n van N".
+  ///
+  /// Deliberately a plain counter published on the existing [notifyListeners]
+  /// rather than a stream: the screen already rebuilds on every notification,
+  /// so the dialog reading these two numbers needs no extra plumbing.
+  int _progressDone = 0;
+  int get progressDone => _progressDone;
+
+  /// How many pushes the running generate/reset will make in total — the `N`.
+  ///
+  /// Captured **before** the run starts, because [generate] clears each row's
+  /// selection as it goes, so [selectedCount] shrinks under it.
+  int _progressTotal = 0;
+  int get progressTotal => _progressTotal;
+
+  /// The finished fraction of the run, `0.0`..`1.0`, for the determinate bar.
+  double get progress =>
+      _progressTotal == 0 ? 0 : _progressDone / _progressTotal;
+
   String? _message;
   String? get message => _message;
 
@@ -433,7 +455,7 @@ class PasswordController extends ChangeNotifier {
   /// field left blank; the selection is cleared on success.
   Future<void> generate() async {
     if (_busy || selectedCount == 0) return;
-    _setBusy(true);
+    _beginRun(selectedCount);
     _rightsProblem = null;
     try {
       final entries = await _queue.load();
@@ -485,6 +507,9 @@ class PasswordController extends ChangeNotifier {
                   'Co-account $slot niet gezet voor ${row.username}.');
             }
           }
+          // Landed or refused, this push is done: the dialog's count is of work
+          // completed, not of work that succeeded (#369).
+          _advance();
         }
 
         if (ssPw != null || azPw != null) {
@@ -975,7 +1000,7 @@ class PasswordController extends ChangeNotifier {
   }) async {
     final row = _selectedStaff;
     if (row == null || _busy || (!smartschool && !office365)) return null;
-    _setBusy(true);
+    _beginRun((smartschool ? 1 : 0) + (office365 ? 1 : 0));
     _rightsProblem = null;
     row.problem = null;
     try {
@@ -998,11 +1023,13 @@ class PasswordController extends ChangeNotifier {
         } else {
           failed = true;
         }
+        _advance();
       }
       if (office365) {
         final pw = smartschool ? shared : _generate();
         azPw = await _pushStaffAzurePassword(row, pw);
         if (azPw == null) failed = true;
+        _advance();
       }
 
       final rights = _rightsProblem;
@@ -1036,6 +1063,24 @@ class PasswordController extends ChangeNotifier {
     } finally {
       _setBusy(false);
     }
+  }
+
+  /// Opens a run of [total] pushes: resets the counter and goes busy in one
+  /// notification, so the modal progress dialog the screen puts up never shows
+  /// the previous run's numbers (#369).
+  void _beginRun(int total) {
+    _progressTotal = total;
+    _progressDone = 0;
+    _setBusy(true);
+  }
+
+  /// Records one finished push. The counters are deliberately **not** cleared
+  /// when the run ends: the dialog is dismissed by the screen the moment the
+  /// future completes, and leaving them at "N van N" means any last frame that
+  /// does render shows a finished run rather than an empty one.
+  void _advance() {
+    _progressDone++;
+    notifyListeners();
   }
 
   void _setBusy(bool value) {

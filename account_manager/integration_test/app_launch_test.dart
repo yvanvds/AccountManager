@@ -6263,6 +6263,104 @@ void main() {
   });
 
   testWidgets(
+      'a password run holds the operator in a modal progress dialog that '
+      'counts the live pushes and closes itself end-to-end (#369)',
+      (WidgetTester tester) async {
+    // The real app, real fonts, real window, real navigation. Generating for a
+    // class is one live push per selected (row, target) against Azure and
+    // Smartschool — seconds each, tens of seconds for a class — and all it used
+    // to show for that was greyed-out buttons plus a 4px bar in the page
+    // header. A run in flight was indistinguishable from a lost click, and
+    // nothing stopped the operator clicking again or navigating away mid-write.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(ssInitial: passwordsSnap());
+    // One fresh gate per push, so the run can be walked push by push and the
+    // dialog read on each — being unable to watch the run go by is the bug.
+    final gates = <Completer<void>>[];
+    harness.passwordBackends.gate = () async {
+      final gate = Completer<void>();
+      gates.add(gate);
+      await gate.future;
+    };
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    final Finder dialog =
+        find.byKey(const ValueKey('passwords-progress-dialog'));
+    String count() => tester
+        .widget<Text>(find.byKey(const ValueKey('passwords-progress-count')))
+        .data!;
+    int railIndex() => tester
+        .widget<NavigationRail>(find.byType(NavigationRail))
+        .selectedIndex!;
+
+    await tester.tap(railTab('Wachtwoorden'));
+    await tester.pumpAndSettle();
+    expect(dialog, findsNothing);
+
+    // 3C holds two students; ticking the Smartschool column makes a two-push
+    // run out of them.
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-bulk-smartschool')));
+    await tester.pumpAndSettle();
+    final int onPasswords = railIndex();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+
+    // Parked on the first push: the dialog is up, says what it is doing and how
+    // far along it is — determinate, since `selectedCount` gives the total up
+    // front — and the header hairline it replaces is gone.
+    expect(dialog, findsOneWidget);
+    expect(gates, hasLength(1));
+    expect(find.text('Wachtwoorden genereren…'), findsOneWidget);
+    expect(count(), '0 van 2');
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(
+            find.byKey(const ValueKey('passwords-progress-bar')),
+          )
+          .value,
+      0.0,
+    );
+
+    // Modal: the barrier, Escape and even the navigation rail all leave it
+    // standing. A class pushed half-way is exactly the state to avoid.
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(dialog, findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(dialog, findsOneWidget);
+    await tester.tap(railTab('Instellingen'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(dialog, findsOneWidget);
+    expect(railIndex(), onPasswords,
+        reason: 'the modal barrier swallowed the rail tap');
+
+    // The second push: the count follows the run.
+    gates[0].complete();
+    await tester.pumpAndSettle();
+    expect(gates, hasLength(2));
+    expect(count(), '1 van 2');
+
+    // The run ends: the dialog closes by itself, leaving the outcome message on
+    // the screen exactly as before.
+    gates[1].complete();
+    await tester.pumpAndSettle();
+    expect(dialog, findsNothing);
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(2));
+    expect(find.byKey(const ValueKey('passwords-message')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Passwords personeel tab searches staff by any part of the name, in '
       'either order, with no field picker end-to-end (#186/#215)',
       (WidgetTester tester) async {

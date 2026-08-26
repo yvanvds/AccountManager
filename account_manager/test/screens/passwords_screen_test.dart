@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:account_core/account_core.dart' as core;
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
 
@@ -318,5 +320,151 @@ void main() {
     expect(find.byKey(const ValueKey('passwords-staff-bob')), findsOneWidget);
     expect(
         find.byKey(const ValueKey('passwords-staff-charlie')), findsOneWidget);
+  });
+
+  group('a generate/reset runs behind a modal progress dialog (#369)', () {
+    // Generating for a class is one live password push per selected (row,
+    // target) against Azure and Smartschool — seconds each, tens of seconds for
+    // a class. All it used to show for that was greyed-out buttons and a 4px
+    // bar in the page header: the grid kept the old rows, nothing said how far
+    // along the run was, and the natural reaction to that is to click again
+    // while a live push sequence is in flight.
+
+    final Finder dialog =
+        find.byKey(const ValueKey('passwords-progress-dialog'));
+
+    /// The dialog's "n van N" line.
+    String count(WidgetTester tester) => tester
+        .widget<Text>(find.byKey(const ValueKey('passwords-progress-count')))
+        .data!;
+
+    double bar(WidgetTester tester) => tester
+        .widget<LinearProgressIndicator>(
+          find.byKey(const ValueKey('passwords-progress-bar')),
+        )
+        .value!;
+
+    /// A fresh gate per push, so a run can be walked push by push and the
+    /// dialog observed on each — being unable to see the run go by is the whole
+    /// bug.
+    List<Completer<void>> gatePushes(ReconcileHarness harness) {
+      final gates = <Completer<void>>[];
+      harness.passwordBackends.gate = () async {
+        final gate = Completer<void>();
+        gates.add(gate);
+        await gate.future;
+      };
+      return gates;
+    }
+
+    /// Drives frames without waiting for quiescence: once a dialog has taken
+    /// and handed back focus, the Personeel tab's filter field blinks a cursor
+    /// and `pumpAndSettle` never settles.
+    Future<void> frames(WidgetTester tester, [int n = 12]) async {
+      for (var i = 0; i < n; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    testWidgets(
+        'Leerlingen: the dialog holds the operator, counts the pushes up and '
+        'closes itself when the run ends', (WidgetTester tester) async {
+      final harness = ReconcileHarness(ssInitial: passwordsSnap());
+      final gates = gatePushes(harness);
+      await tester
+          .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      // Idle: no dialog.
+      expect(dialog, findsNothing);
+
+      // 3C holds two students; ticking the Smartschool column makes a two-push
+      // run out of them.
+      await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const ValueKey('passwords-bulk-smartschool')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+      await tester.pumpAndSettle();
+
+      // Parked on the first push: the dialog is up, says what it is doing and
+      // how far along it is — determinately, since the total is known up front.
+      expect(dialog, findsOneWidget);
+      expect(gates, hasLength(1));
+      expect(find.text('Wachtwoorden genereren…'), findsOneWidget);
+      expect(count(tester), '0 van 2');
+      expect(bar(tester), 0.0);
+
+      // Modal: neither the barrier nor Escape gets rid of it mid-run. A
+      // half-pushed class is exactly the state this must not allow.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+
+      // The second push: the count follows the run. Note that the first row's
+      // selection has already been cleared by now, so a total re-read off
+      // `selectedCount` would read "1 van 1" here.
+      gates[0].complete();
+      await tester.pumpAndSettle();
+      expect(gates, hasLength(2));
+      expect(dialog, findsOneWidget);
+      expect(count(tester), '1 van 2');
+      expect(bar(tester), 0.5);
+
+      // The run ends: the dialog closes by itself and the outcome message is on
+      // the screen behind it, exactly as before.
+      gates[1].complete();
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(harness.passwordBackends.smartschoolPushes, hasLength(2));
+      expect(find.byKey(const ValueKey('passwords-message')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Personeel: a per-member reset gets the same dialog',
+        (WidgetTester tester) async {
+      final harness = ReconcileHarness(ssInitial: passwordsSnap());
+      final gates = gatePushes(harness);
+      await tester
+          .pumpWidget(_wrap(PasswordsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('passwords-staff-anna.smit')));
+      await tester.pumpAndSettle();
+
+      await tester
+          .tap(find.byKey(const ValueKey('passwords-staff-reset-both')));
+      await frames(tester);
+      await tester
+          .tap(find.byKey(const ValueKey('passwords-staff-reset-confirm')));
+      await frames(tester);
+
+      // "Beide" is one run of two pushes — the same problem on a smaller scale.
+      expect(dialog, findsOneWidget);
+      expect(find.text('Wachtwoord resetten…'), findsOneWidget);
+      expect(count(tester), '0 van 2');
+      expect(gates, hasLength(1));
+
+      gates[0].complete();
+      await frames(tester);
+      expect(dialog, findsOneWidget);
+      expect(count(tester), '1 van 2');
+
+      gates[1].complete();
+      await frames(tester);
+      expect(dialog, findsNothing);
+      expect(harness.passwordBackends.smartschoolPushes, hasLength(1));
+      expect(harness.passwordBackends.azurePushes, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
   });
 }

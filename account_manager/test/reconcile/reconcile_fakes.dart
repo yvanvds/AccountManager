@@ -1247,12 +1247,21 @@ class RecordingPasswordBackends implements PasswordBackends {
   /// route — rather than the address lookup.
   final List<String> azureIdPushes = <String>[];
 
+  /// When set, every push parks here before it runs — the seam that freezes a
+  /// generate/reset mid-flight so a test can observe the modal progress dialog
+  /// counting up (#369), the password twin of [ReconcileHarness.applyGate].
+  ///
+  /// Mutable rather than a constructor argument because the harness builds its
+  /// own recorder, exactly as [failAzure] is added to after the fact.
+  Future<void> Function()? gate;
+
   @override
   Future<bool> setSmartschoolPassword(
     String uid,
     core.AccountType slot,
     String password,
   ) async {
+    await _wait();
     if (failSmartschool.contains(uid)) return false;
     smartschoolPushes.add((uid, slot, password));
     return true;
@@ -1268,7 +1277,13 @@ class RecordingPasswordBackends implements PasswordBackends {
   Future<bool> setAzurePassword(String mailOrUpn, String password) async =>
       _push(mailOrUpn, password);
 
+  Future<void> _wait() async {
+    final Future<void> Function()? hold = gate;
+    if (hold != null) await hold();
+  }
+
   Future<bool> _push(String key, String password) async {
+    await _wait();
     final mailOrUpn = key;
     if (denyAzure.contains(mailOrUpn)) {
       throw az.AzurePasswordPermissionException(
