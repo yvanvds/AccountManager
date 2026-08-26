@@ -51,6 +51,13 @@ List<String> _values(PasswordSheet sheet) => <String>[
         for (final f in b.fields) f.value,
     ];
 
+/// The `label: value` pairs of the sheet's WiFi block.
+List<(String, String)> _wifiFields(PasswordSheet sheet) => <(String, String)>[
+      for (final b in sheet.blocks)
+        if (b.heading == 'WiFi')
+          for (final f in b.fields) (f.label, f.value),
+    ];
+
 /// The number of page objects in a rendered PDF. Page dictionaries are written
 /// plainly even in a compressed document, so this reads the real production
 /// bytes.
@@ -121,6 +128,40 @@ void main() {
       expect(office.fields.last.value, 'Ku9dQy');
     });
 
+    test('the WiFi block prints the configured network (#368)', () {
+      final sheet = studentPasswordSheets(
+        [_account()],
+        wifi: const WifiNetwork(ssid: 'Testnet-L', code: 'l-sleutel'),
+      ).single;
+      expect(_wifiFields(sheet), <(String, String)>[
+        ('Netwerk', 'Testnet-L'),
+        ('Code', 'l-sleutel'),
+      ]);
+    });
+
+    test('an unconfigured network omits the whole WiFi block (#368)', () {
+      // No half-empty block and no bare `Netwerk :` line — the block simply is
+      // not built, exactly as an ungenerated password omits its own.
+      final sheet = studentPasswordSheets(
+        [_account()],
+        wifi: const WifiNetwork(code: 'orphan-key'),
+      ).single;
+      expect(_headings(sheet),
+          <String>['', 'Office 365', 'Smartschool', 'Privacy']);
+      expect(_values(sheet), isNot(contains('orphan-key')));
+    });
+
+    test('the default network is the literal the sheets used to hardcode', () {
+      // The upgrade path: a settings document written before #368 carries no
+      // WiFi fields, and every caller that passes none must still print what it
+      // always printed.
+      final sheet = studentPasswordSheets([_account()]).single;
+      expect(_wifiFields(sheet), <(String, String)>[
+        ('Netwerk', 'Smifi-L'),
+        ('Code', 'SmifiDeWifi:)'),
+      ]);
+    });
+
     test('a name with markup characters is carried through verbatim', () {
       // The HTML sheet had to escape these; a PDF string does not, so the
       // operator sees the real name.
@@ -152,6 +193,66 @@ void main() {
       );
       expect(_headings(sheet),
           <String>['Office 365', 'WiFi', 'Smartschool', 'Privacy']);
+    });
+
+    test('the WiFi block prints the configured staff network (#368)', () {
+      final sheet = staffPasswordSheet(
+        name: 'Anna Smit',
+        username: 'anna.smit',
+        mail: 'anna@school',
+        smartschoolPassword: 'Zz9!',
+        wifi: const WifiNetwork(ssid: 'Testnet-P', code: 'p-sleutel'),
+      );
+      expect(_wifiFields(sheet), <(String, String)>[
+        ('Netwerk', 'Testnet-P'),
+        ('Code', 'p-sleutel'),
+      ]);
+    });
+
+    test('an unconfigured staff network omits the block (#368)', () {
+      final sheet = staffPasswordSheet(
+        name: 'Anna Smit',
+        username: 'anna.smit',
+        mail: 'anna@school',
+        smartschoolPassword: 'Zz9!',
+        wifi: const WifiNetwork(),
+      );
+      expect(_headings(sheet), <String>['Smartschool', 'Privacy']);
+    });
+
+    test('the default staff network is the literal it used to hardcode', () {
+      final sheet = staffPasswordSheet(
+        name: 'Anna Smit',
+        username: 'anna.smit',
+        mail: 'anna@school',
+        smartschoolPassword: 'Zz9!',
+      );
+      expect(_wifiFields(sheet), <(String, String)>[
+        ('Netwerk', 'Smifi-P'),
+        ('Code', '!TEAM!SMA!'),
+      ]);
+    });
+  });
+
+  group('the WiFi key label', () {
+    test('reads "Code" on both sheets, not "Wachtwoord" (#368)', () {
+      // A deliberate unification, not a leftover: legacy said "Wachtwoord" to
+      // students and "Code" to staff for the same shared network key. Every
+      // other `Wachtwoord` line on a sheet is personal, one-time, and carries a
+      // note telling the reader to change it at first sign-in — the network key
+      // is none of those, and now says so on both sheets.
+      const wifi = WifiNetwork(ssid: 'Net', code: 'sleutel');
+      final student = studentPasswordSheets([_account()], wifi: wifi).single;
+      final staff = staffPasswordSheet(
+        name: 'Anna Smit',
+        username: 'anna.smit',
+        mail: 'anna@school',
+        smartschoolPassword: 'Zz9!',
+        wifi: wifi,
+      );
+      expect(
+          _wifiFields(student).map((f) => f.$1), <String>['Netwerk', 'Code']);
+      expect(_wifiFields(staff).map((f) => f.$1), <String>['Netwerk', 'Code']);
     });
   });
 
@@ -199,6 +300,38 @@ void main() {
       expect(stream, contains('(Smartschool)'));
       // No Azure password was generated, so it is nowhere on the sheet.
       expect(stream, isNot(contains('(Ku9dQy)')));
+    });
+
+    test('the configured WiFi network really lands on the page (#368)',
+        () async {
+      // Same uncompressed / base-14 seam as above, so the test reads the words
+      // actually drawn: the sheet is the only artefact this app puts on paper,
+      // and a WiFi block that silently kept the old literal would be discovered
+      // in front of a class.
+      final stream = latin1.decode(await passwordSheetsPdf(
+        studentPasswordSheets(
+          [_account()],
+          wifi: const WifiNetwork(ssid: 'Testnet-L', code: 'l-sleutel'),
+        ),
+        title: 'Leerling-wachtwoorden',
+        compress: false,
+        fonts: PasswordSheetFonts.fallback(),
+      ));
+      expect(stream, contains('(Testnet-L)'));
+      expect(stream, contains('(l-sleutel)'));
+      expect(stream, isNot(contains('(Smifi-L)')));
+    });
+
+    test('an unconfigured WiFi network prints no WiFi heading (#368)',
+        () async {
+      final stream = latin1.decode(await passwordSheetsPdf(
+        studentPasswordSheets([_account()], wifi: const WifiNetwork()),
+        title: 'Leerling-wachtwoorden',
+        compress: false,
+        fonts: PasswordSheetFonts.fallback(),
+      ));
+      expect(stream, isNot(contains('(WiFi)')));
+      expect(stream, isNot(contains('(Netwerk)')));
     });
   });
 

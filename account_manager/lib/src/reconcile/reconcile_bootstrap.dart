@@ -12,10 +12,22 @@ import '../passwords/password_export.dart';
 import 'log_buffer.dart';
 import 'reconcile_controller.dart';
 
-/// Where the centralized stores live. These are deployment constants of the
+/// Where the centralized stores live: the deployment identity of the
 /// provisioned infrastructure (docs/port-plan.md, Phase B) — not secrets and
-/// not per-school config, so they default to the real resources and can be
-/// overridden per environment with `--dart-define`.
+/// not per-school config.
+///
+/// Three layers resolve them, outermost first (#370): the machine's own
+/// `connection.json` ([ConnectionStore]), then the `--dart-define` values this
+/// build carried, then the shipped defaults in [StoreEndpoints.fromEnvironment].
+/// A build with no file behaves exactly as it did before the file existed, and
+/// a public build — where `--dart-define` is no longer available to whoever runs
+/// it (#371) — can still be pointed at another backend from Instellingen.
+///
+/// Deliberately *not* stored in the Cosmos settings document: that document
+/// lives behind these very coordinates, so it cannot say where it is. The split
+/// is also the honest one — this is deployment identity, [AppSettings] is school
+/// configuration, and two operators of one school share the second while
+/// legitimately differing on the first.
 class StoreEndpoints {
   const StoreEndpoints({
     required this.cosmosEndpoint,
@@ -76,6 +88,85 @@ class StoreEndpoints {
 
   /// The SignalR hub operators connect to and writers broadcast on (#116).
   final String signalrHub;
+
+  /// The keys the connection file uses, in the order the Verbinding section
+  /// lists them. Named constants because [toJson] writes them and
+  /// [StoreEndpoints.fromJson] reads them back, and a typo in one of the two
+  /// would silently drop a coordinate to its default (#370).
+  static const String cosmosEndpointKey = 'cosmosEndpoint';
+  static const String cosmosDatabaseKey = 'cosmosDatabase';
+  static const String vaultUriKey = 'vaultUri';
+  static const String blobEndpointKey = 'blobEndpoint';
+  static const String blobContainerKey = 'blobContainer';
+  static const String signalrEndpointKey = 'signalrEndpoint';
+  static const String signalrHubKey = 'signalrHub';
+
+  /// Serializes to the `connection.json` shape (#370). Endpoint URIs only —
+  /// never a key or a token, which is why the file needs no DPAPI wrapper the
+  /// way the token cache does.
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        cosmosEndpointKey: cosmosEndpoint,
+        cosmosDatabaseKey: cosmosDatabase,
+        vaultUriKey: vaultUri,
+        blobEndpointKey: blobEndpoint,
+        blobContainerKey: blobContainer,
+        signalrEndpointKey: signalrEndpoint,
+        signalrHubKey: signalrHub,
+      };
+
+  /// Reads a connection file over [fallback] — the `--dart-define`/compiled
+  /// layer — so resolution is **per field**: a file that names only the Cosmos
+  /// account leaves every other coordinate exactly where the build put it.
+  ///
+  /// Never throws. A key holding the wrong type (a number where a URI belongs)
+  /// is treated as absent rather than as a reason to fail the launch: the point
+  /// of the file is to rescue a misconfigured install, so it must not be able to
+  /// brick one. A key present with an **empty** string is honoured — that is how
+  /// an install says "no SignalR here", which is not the same as "unset".
+  factory StoreEndpoints.fromJson(
+    Map<String, dynamic> json, {
+    required StoreEndpoints fallback,
+  }) {
+    String read(String key, String fallbackValue) {
+      final Object? value = json[key];
+      return value is String ? value : fallbackValue;
+    }
+
+    return StoreEndpoints(
+      cosmosEndpoint: read(cosmosEndpointKey, fallback.cosmosEndpoint),
+      cosmosDatabase: read(cosmosDatabaseKey, fallback.cosmosDatabase),
+      vaultUri: read(vaultUriKey, fallback.vaultUri),
+      blobEndpoint: read(blobEndpointKey, fallback.blobEndpoint),
+      blobContainer: read(blobContainerKey, fallback.blobContainer),
+      signalrEndpoint: read(signalrEndpointKey, fallback.signalrEndpoint),
+      signalrHub: read(signalrHubKey, fallback.signalrHub),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is StoreEndpoints &&
+      other.cosmosEndpoint == cosmosEndpoint &&
+      other.cosmosDatabase == cosmosDatabase &&
+      other.vaultUri == vaultUri &&
+      other.blobEndpoint == blobEndpoint &&
+      other.blobContainer == blobContainer &&
+      other.signalrEndpoint == signalrEndpoint &&
+      other.signalrHub == signalrHub;
+
+  @override
+  int get hashCode => Object.hash(
+        cosmosEndpoint,
+        cosmosDatabase,
+        vaultUri,
+        blobEndpoint,
+        blobContainer,
+        signalrEndpoint,
+        signalrHub,
+      );
+
+  @override
+  String toString() => 'StoreEndpoints($cosmosEndpoint/$cosmosDatabase)';
 }
 
 /// The assembled reconcile stack for one signed-in session: settings loaded

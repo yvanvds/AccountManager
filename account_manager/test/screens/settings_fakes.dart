@@ -3,6 +3,9 @@
 /// the screen expects.
 library;
 
+import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart'
+    show StoreEndpoints;
+import 'package:account_manager/src/settings/connection_config.dart';
 import 'package:account_manager/src/settings/settings_bootstrap.dart';
 import 'package:account_state/account_state.dart';
 import 'package:wisa_api/wisa_api.dart';
@@ -48,6 +51,51 @@ class SettingsHarness {
 
   /// A ready-made bootstrap closure for [SettingsScreen]/[AccountManagerApp].
   Future<SettingsServices> Function() get bootstrap => () async => services;
+}
+
+/// A [SettingsStore] whose every call fails — the "Cosmos is unreachable or
+/// misconfigured" state the Verbinding section exists for (#370).
+///
+/// Models what the real [CosmosSettingsStore] does behind a wrong endpoint or a
+/// database that is not there: the seams assemble fine (nothing talks to Cosmos
+/// until a document is read), and the failure lands on [load]. Which is exactly
+/// why the Settings screen may not gate itself on a loaded document.
+class FailingSettingsStore implements SettingsStore {
+  FailingSettingsStore([
+    this.message = 'CosmosException(404 NotFound: Resource Not Found)',
+  ]);
+
+  final String message;
+
+  /// How many times a load was attempted, so a test can prove the retry ran.
+  int loads = 0;
+
+  @override
+  Future<AppSettings> load() async {
+    loads++;
+    throw StateError(message);
+  }
+
+  @override
+  Future<void> save(AppSettings settings) async => throw StateError(message);
+}
+
+/// A [ConnectionProbe] that answers from a script instead of the network, and
+/// records the coordinates it was handed (#370).
+class FakeConnectionProbe {
+  FakeConnectionProbe(this.results);
+
+  /// What every call answers.
+  List<ConnectionProbeResult> results;
+
+  int calls = 0;
+  StoreEndpoints? lastEndpoints;
+
+  Future<List<ConnectionProbeResult>> call(StoreEndpoints endpoints) async {
+    calls++;
+    lastEndpoints = endpoints;
+    return results;
+  }
 }
 
 /// A scripted [WisaSchoolFetcher] for tests: returns a canned school list and

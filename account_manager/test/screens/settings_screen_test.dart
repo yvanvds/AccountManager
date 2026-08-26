@@ -156,6 +156,108 @@ void main() {
     expect(saved.wisa.server, 'wisa.host');
   });
 
+  group('the printed WiFi networks (#368)', () {
+    testWidgets('the fields open on the stored networks',
+        (WidgetTester tester) async {
+      // Read-back matters here: the operator opens this section to check what is
+      // being printed, which is exactly why the key is a plain field and not a
+      // write-only secret.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: const AppSettings(
+          staffWifi: WifiNetwork(ssid: 'Personeelsnet', code: 'p-sleutel'),
+          studentWifi: WifiNetwork(ssid: 'Leerlingennet', code: 'l-sleutel'),
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      String fieldText(String key) =>
+          tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
+      expect(fieldText('settings-wifi-staff-ssid'), 'Personeelsnet');
+      expect(fieldText('settings-wifi-staff-code'), 'p-sleutel');
+      expect(fieldText('settings-wifi-student-ssid'), 'Leerlingennet');
+      expect(fieldText('settings-wifi-student-code'), 'l-sleutel');
+    });
+
+    testWidgets('edit → save round-trips both networks to the store',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final live = LiveSettings();
+      final harness = SettingsHarness(liveSettings: live);
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      // A fresh document opens on the literals the sheets used to hardcode, so
+      // an operator sees what is being printed rather than empty boxes.
+      expect(
+        tester
+            .widget<TextField>(
+                find.byKey(const ValueKey('settings-wifi-student-ssid')))
+            .controller!
+            .text,
+        'Smifi-L',
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-wifi-staff-ssid')),
+        ' Personeelsnet ',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-wifi-staff-code')),
+        'p-sleutel',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-wifi-student-ssid')),
+        'Leerlingennet',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-wifi-student-code')),
+        'l-sleutel',
+      );
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      // Trimmed: whitespace around a network name is invisible on paper and
+      // unreproducible by whoever types it back in.
+      expect(saved.staffWifi,
+          const WifiNetwork(ssid: 'Personeelsnet', code: 'p-sleutel'));
+      expect(saved.studentWifi,
+          const WifiNetwork(ssid: 'Leerlingennet', code: 'l-sleutel'));
+      // …and the saved document is the one the running stack now reads (#238),
+      // so the next printed sheet carries it without a relaunch.
+      expect(live.current.studentWifi.ssid, 'Leerlingennet');
+    });
+
+    testWidgets('clearing an SSID turns that sheet\'s WiFi block off',
+        (WidgetTester tester) async {
+      // Present-but-empty is a decision the document keeps — it must not be
+      // re-defaulted back to the literal on the next load.
+      _useTallWindow(tester);
+      final harness = SettingsHarness();
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-wifi-student-ssid')),
+        '',
+      );
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final saved = await harness.store.load();
+      expect(saved.studentWifi.isConfigured, isFalse);
+      expect(AppSettings.fromJson(saved.toJson()).studentWifi.isConfigured,
+          isFalse);
+      // The staff network was untouched and still prints.
+      expect(saved.staffWifi.isConfigured, isTrue);
+    });
+  });
+
   testWidgets('Smartschool group paths and useGrades round-trip',
       (WidgetTester tester) async {
     _useTallWindow(tester);

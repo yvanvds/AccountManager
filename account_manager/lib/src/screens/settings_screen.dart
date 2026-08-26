@@ -4,6 +4,8 @@ import 'package:plink_design_system/plink_design_system.dart';
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
+import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
+import '../settings/connection_config.dart';
 import '../settings/settings_bootstrap.dart';
 import '../settings/wisa_rule_labels.dart';
 
@@ -51,28 +53,108 @@ import '../settings/wisa_rule_labels.dart';
 /// hand-typed one. The reconcile stack's `WisaImportRules` holder still carries
 /// its own copy for the life of the process — that is what re-syncs WISA the
 /// instant the rule is earned — but the document is now the record.
+///
+/// **The screen opens even when the settings document does not (#370).** The tab
+/// frame, the header and the **Verbinding** tab render from the first frame, and
+/// only the four document-backed tabs wait on the load. That is the whole point
+/// of the Verbinding tab: it edits the local `connection.json` the store's own
+/// coordinates come from, so a wrong Cosmos endpoint must not be able to lock the
+/// operator out of the one screen that can fix it. A failed load brings that tab
+/// forward by itself rather than leaving a dead end behind a retry button.
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.bootstrap});
+  const SettingsScreen({
+    super.key,
+    required this.bootstrap,
+    this.connection,
+  });
 
   /// Assembles (or returns the already-assembled) settings seams, or `null` when
   /// Azure AD is not configured for this build (no session to mint the Cosmos /
   /// Key Vault tokens the stores need).
   final Future<SettingsServices> Function()? bootstrap;
 
+  /// Where this machine's backend coordinates are read and written (#370).
+  ///
+  /// `null` falls back to an [InMemoryConnectionStore] with no probe: a build
+  /// (or a test) that wires nothing still renders the section, editing a
+  /// throwaway copy rather than the operator's real `connection.json`.
+  final ConnectionServices? connection;
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+/// The index of the **Verbinding** tab — after the four document-backed ones
+/// (#370) — and the resulting tab count.
+const int _connectionTabIndex = 4;
+const int _settingsTabCount = _connectionTabIndex + 1;
+
+class _SettingsScreenState extends State<SettingsScreen>
+    with SingleTickerProviderStateMixin {
   SettingsServices? _services;
   AppSettings? _loaded;
   Object? _error;
   bool _busy = false;
   int _attempts = 0;
 
+  // ---------------------------------------------------------------------------
+  // Verbinding (#370) — the local connection.json, not the settings document.
+  // Deliberately independent of everything above: none of it is loaded, saved or
+  // disabled by the state of the Cosmos store, because the Cosmos store is what
+  // this section repairs.
+  // ---------------------------------------------------------------------------
+
+  late final ConnectionServices _connection =
+      widget.connection ?? ConnectionServices(store: InMemoryConnectionStore());
+
+  final _cosmosEndpoint = TextEditingController();
+  final _cosmosDatabase = TextEditingController();
+  final _vaultUri = TextEditingController();
+  final _blobEndpoint = TextEditingController();
+  final _blobContainer = TextEditingController();
+  final _signalrEndpoint = TextEditingController();
+  final _signalrHub = TextEditingController();
+
+  /// The last resolution read from the store — the values on screen and, more
+  /// importantly, where they came from and any warning the file earned.
+  ResolvedConnection? _resolved;
+
+  /// What this session bootstrapped against, captured the first time the screen
+  /// resolves. A save that differs from it is the one that needs a relaunch to
+  /// take effect; a save that matches it changes nothing that is running.
+  StoreEndpoints? _connectionAtOpen;
+
+  bool _connectionBusy = false;
+  bool _connectionNeedsRelaunch = false;
+  String _connectionMessage = '';
+  List<ConnectionProbeResult>? _probed;
+
+  /// The tab frame, owned here rather than by a [DefaultTabController] so a
+  /// failed settings load can bring the Verbinding tab forward (#370).
+  ///
+  /// Built in [initState] rather than lazily: a `late final` initializer would
+  /// first run inside [dispose] on a build that never rendered the tabs (the
+  /// not-configured panel), and creating a ticker off a deactivated element
+  /// trips the framework's ancestor-lookup assertion.
+  late final TabController _tabs;
+
+  /// Whether the Verbinding tab has already been revealed by a failed load, so
+  /// a retry the operator abandons cannot yank them back off the tab they went
+  /// to next.
+  bool _revealedConnection = false;
+
   // Global.
   final _schoolPrefix = TextEditingController();
   bool _debugMode = false;
+
+  // The two WiFi networks printed on the password sheets (#368). Plain fields
+  // rather than `_SecretField`s on purpose: the key is handed to every student
+  // on paper, and the operator opens this section precisely to read what is
+  // being printed.
+  final _staffWifiSsid = TextEditingController();
+  final _staffWifiCode = TextEditingController();
+  final _studentWifiSsid = TextEditingController();
+  final _studentWifiCode = TextEditingController();
 
   // WISA profile.
   final _wisaServer = TextEditingController();
@@ -144,13 +226,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: _settingsTabCount, vsync: this);
+    // Two independent loads. The connection file is local and cannot fail the
+    // way the Cosmos document can, so its section is on screen either way.
+    _loadConnection();
     _load();
   }
 
   @override
   void dispose() {
+    _tabs.dispose();
     for (final c in <TextEditingController>[
+      _cosmosEndpoint,
+      _cosmosDatabase,
+      _vaultUri,
+      _blobEndpoint,
+      _blobContainer,
+      _signalrEndpoint,
+      _signalrHub,
       _schoolPrefix,
+      _staffWifiSsid,
+      _staffWifiCode,
+      _studentWifiSsid,
+      _studentWifiCode,
       _wisaServer,
       _wisaPort,
       _wisaDatabase,
@@ -194,10 +292,140 @@ class _SettingsScreenState extends State<SettingsScreen> {
       });
       _populate(settings);
     } on Object catch (e) {
-      if (mounted) setState(() => _error = e);
+      if (!mounted) return;
+      setState(() => _error = e);
+      _revealConnection();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Verbinding (#370)
+  // ---------------------------------------------------------------------------
+
+  /// Reads this machine's coordinates into the Verbinding fields.
+  ///
+  /// [ConnectionStore.read] never throws — a malformed or unreadable file comes
+  /// back as the compiled defaults plus a [ResolvedConnection.warning] the
+  /// section renders — so this has no failure path of its own to handle. That is
+  /// deliberate: dying here would take down the screen the file is fixed on.
+  Future<void> _loadConnection() async {
+    final ResolvedConnection resolved = await _connection.store.read();
+    if (!mounted) return;
+    setState(() {
+      _resolved = resolved;
+      _connectionAtOpen ??= resolved.endpoints;
+    });
+    _populateConnection(resolved.endpoints);
+  }
+
+  void _populateConnection(StoreEndpoints e) {
+    _cosmosEndpoint.text = e.cosmosEndpoint;
+    _cosmosDatabase.text = e.cosmosDatabase;
+    _vaultUri.text = e.vaultUri;
+    _blobEndpoint.text = e.blobEndpoint;
+    _blobContainer.text = e.blobContainer;
+    _signalrEndpoint.text = e.signalrEndpoint;
+    _signalrHub.text = e.signalrHub;
+  }
+
+  StoreEndpoints _collectConnection() => StoreEndpoints(
+        cosmosEndpoint: _cosmosEndpoint.text.trim(),
+        cosmosDatabase: _cosmosDatabase.text.trim(),
+        vaultUri: _vaultUri.text.trim(),
+        blobEndpoint: _blobEndpoint.text.trim(),
+        blobContainer: _blobContainer.text.trim(),
+        signalrEndpoint: _signalrEndpoint.text.trim(),
+        signalrHub: _signalrHub.text.trim(),
+      );
+
+  /// Writes the typed coordinates to this machine's connection file.
+  ///
+  /// Separate from the document's **Opslaan** on purpose: the two write to
+  /// different places (a local file vs the shared Cosmos document) and only one
+  /// of them still works when the store is unreachable.
+  ///
+  /// The running stack is *not* re-bootstrapped. It is memoized and already
+  /// handed out — its connectors, its controller and the password queue are held
+  /// by four other screens — so quietly swapping the Cosmos client underneath
+  /// them would be the dishonest half of the choice the issue leaves open. The
+  /// section says a relaunch is needed instead, and only when the saved values
+  /// actually differ from what this session started on.
+  Future<void> _saveConnection() async {
+    final StoreEndpoints next = _collectConnection();
+    setState(() {
+      _connectionBusy = true;
+      _connectionMessage = '';
+      _probed = null;
+    });
+    try {
+      await _connection.store.write(next);
+      final ResolvedConnection resolved = await _connection.store.read();
+      if (!mounted) return;
+      setState(() {
+        _resolved = resolved;
+        if (next != _connectionAtOpen) _connectionNeedsRelaunch = true;
+        _connectionMessage =
+            'Verbinding bewaard in ${_connection.store.location}.';
+      });
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() => _connectionMessage = 'Kon de verbinding niet '
+            'bewaren: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _connectionBusy = false);
+    }
+  }
+
+  /// Probes the coordinates **as typed**, before they are committed — so a typo
+  /// in a Cosmos URI costs a button press rather than a relaunch.
+  Future<void> _testConnection() async {
+    final ConnectionProbe? probe = _connection.probe;
+    if (probe == null) return;
+    setState(() {
+      _connectionBusy = true;
+      _connectionMessage = '';
+      _probed = null;
+    });
+    try {
+      final List<ConnectionProbeResult> results = await probe(
+        _collectConnection(),
+      );
+      if (mounted) setState(() => _probed = results);
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() => _connectionMessage = 'De verbindingstest kon niet '
+            'uitgevoerd worden: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _connectionBusy = false);
+    }
+  }
+
+  /// Fills the fields with what this build ships — the escape hatch for an
+  /// install that saved coordinates nobody can reach any more. It only fills
+  /// them in; **Verbinding bewaren** is still what commits.
+  void _fillConnectionDefaults() {
+    setState(() {
+      _connectionMessage = 'Standaardwaarden ingevuld. Bewaar om ze te '
+          'gebruiken.';
+      _probed = null;
+    });
+    _populateConnection(StoreEndpoints.fromEnvironment());
+  }
+
+  /// Brings the Verbinding tab forward the first time the settings document
+  /// cannot be loaded (#370).
+  ///
+  /// The index is set rather than animated so the tab is simply *there*, and
+  /// once only: a second failed retry must not drag the operator off whichever
+  /// tab they moved to in the meantime.
+  void _revealConnection() {
+    if (_revealedConnection || _loaded != null) return;
+    _revealedConnection = true;
+    _tabs.index = _connectionTabIndex;
   }
 
   /// Re-reads the stored document into the form, discarding unsaved edits — the
@@ -229,6 +457,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _populate(AppSettings s) {
     _schoolPrefix.text = s.schoolPrefix;
     _debugMode = s.debugMode;
+
+    _staffWifiSsid.text = s.staffWifi.ssid;
+    _staffWifiCode.text = s.staffWifi.code;
+    _studentWifiSsid.text = s.studentWifi.ssid;
+    _studentWifiCode.text = s.studentWifi.code;
 
     _wisaServer.text = s.wisa.server;
     _wisaPort.text = s.wisa.port;
@@ -526,6 +759,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return base.copyWith(
       schoolPrefix: _schoolPrefix.text.trim(),
       debugMode: _debugMode,
+      // Trimmed like every other field: the value is printed on paper and typed
+      // back in by hand, so leading or trailing whitespace in a network name or
+      // key is invisible on the sheet and unreproducible by the reader.
+      staffWifi: WifiNetwork(
+        ssid: _staffWifiSsid.text.trim(),
+        code: _staffWifiCode.text.trim(),
+      ),
+      studentWifi: WifiNetwork(
+        ssid: _studentWifiSsid.text.trim(),
+        code: _studentWifiCode.text.trim(),
+      ),
       wisa: base.wisa.copyWith(
         server: _wisaServer.text.trim(),
         port: _wisaPort.text.trim(),
@@ -637,22 +881,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             '--dart-define-waarden mee en start opnieuw op.',
       );
     }
-    final error = _error;
-    if (error != null && _loaded == null) {
-      final retryNote = _attempts > 1 ? '\n\n(Poging $_attempts mislukt.)' : '';
-      return _MessagePanel(
-        eyebrow: 'Arcadia · instellingen',
-        title: 'Kon de instellingen niet laden',
-        message: '$error$retryNote',
-        action: FilledButton(
-          key: const ValueKey('settings-retry'),
-          onPressed: _load,
-          child: const Text('Opnieuw proberen'),
-        ),
-      );
-    }
-    final loaded = _loaded;
-    if (loaded == null) {
+    // No early return for a failed or pending load any more (#370): the frame,
+    // the header and the Verbinding tab render regardless, and only the four
+    // document-backed tabs stand in with a panel until the document arrives.
+    return _SettingsForm(state: this);
+  }
+
+  /// What the four document-backed tabs show while [_loaded] is `null` — the
+  /// load in flight, or the failure that stopped it.
+  ///
+  /// The retry lives here rather than in the header because this *is* the state
+  /// it belongs to; the header's Herladen is wired to the same [_load] so either
+  /// press does the same thing.
+  Widget documentPanel() {
+    final Object? error = _error;
+    if (error == null) {
       return const _MessagePanel(
         eyebrow: 'Arcadia · instellingen',
         title: 'Laden…',
@@ -660,7 +903,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         progress: true,
       );
     }
-    return _SettingsForm(state: this);
+    final String retryNote =
+        _attempts > 1 ? '\n\n(Poging $_attempts mislukt.)' : '';
+    return _MessagePanel(
+      eyebrow: 'Arcadia · instellingen',
+      title: 'Kon de instellingen niet laden',
+      message: '$error$retryNote\n\nDe backend-coördinaten waar deze '
+          'instellingen vandaan komen, staan onder het tabblad Verbinding.',
+      action: FilledButton(
+        key: const ValueKey('settings-retry'),
+        onPressed: _busy ? null : _load,
+        child: const Text('Opnieuw proberen'),
+      ),
+    );
   }
 }
 
@@ -677,89 +932,112 @@ class _SettingsForm extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final bool ink = Theme.of(context).brightness == Brightness.dark;
 
+    final bool hasDocument = state._loaded != null;
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
-        child: DefaultTabController(
-          length: 4,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              // Shared header + actions: kept above the tabs so Save/Herladen
-              // act on the whole document regardless of the active tab.
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  PlinkSpacing.s6,
-                  PlinkSpacing.s6,
-                  PlinkSpacing.s6,
-                  PlinkSpacing.s4,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Eyebrow('Arcadia · instellingen', onInk: ink),
-                    const SizedBox(height: PlinkSpacing.s4),
-                    Text('Instellingen', style: text.headlineMedium),
-                    const SizedBox(height: PlinkSpacing.s3),
-                    Text(
-                      'Bewerk de configuratie en bewaar. Wachtwoorden worden '
-                      'alleen geschreven — laat een veld leeg om de bestaande '
-                      'waarde te behouden.',
-                      style: text.bodyMedium,
-                    ),
-                    const SizedBox(height: PlinkSpacing.s4),
-                    Wrap(
-                      spacing: PlinkSpacing.s3,
-                      runSpacing: PlinkSpacing.s2,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: <Widget>[
-                        FilledButton.icon(
-                          key: const ValueKey('settings-save'),
-                          onPressed: state._busy ? null : state._save,
-                          icon: const Icon(Icons.save_outlined),
-                          label: const Text('Opslaan'),
-                        ),
-                        OutlinedButton.icon(
-                          key: const ValueKey('settings-reload'),
-                          onPressed: state._busy ? null : state._reload,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Herladen'),
-                        ),
-                      ],
-                    ),
-                    if (state._busy) ...<Widget>[
-                      const SizedBox(height: PlinkSpacing.s4),
-                      const LinearProgressIndicator(),
-                    ],
-                  ],
-                ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            // Shared header + actions: kept above the tabs so Save/Herladen
+            // act on the whole document regardless of the active tab.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                PlinkSpacing.s6,
+                PlinkSpacing.s6,
+                PlinkSpacing.s6,
+                PlinkSpacing.s4,
               ),
-              const TabBar(
-                key: ValueKey('settings-tabs'),
-                isScrollable: true,
-                tabAlignment: TabAlignment.start,
-                tabs: <Widget>[
-                  Tab(key: ValueKey('settings-tab-algemeen'), text: 'Algemeen'),
-                  Tab(key: ValueKey('settings-tab-wisa'), text: 'Wisa'),
-                  Tab(
-                    key: ValueKey('settings-tab-smartschool'),
-                    text: 'Smartschool',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Eyebrow('Arcadia · instellingen', onInk: ink),
+                  const SizedBox(height: PlinkSpacing.s4),
+                  Text('Instellingen', style: text.headlineMedium),
+                  const SizedBox(height: PlinkSpacing.s3),
+                  Text(
+                    'Bewerk de configuratie en bewaar. Wachtwoorden worden '
+                    'alleen geschreven — laat een veld leeg om de bestaande '
+                    'waarde te behouden.',
+                    style: text.bodyMedium,
                   ),
-                  Tab(key: ValueKey('settings-tab-azure'), text: 'Azure'),
+                  const SizedBox(height: PlinkSpacing.s4),
+                  Wrap(
+                    spacing: PlinkSpacing.s3,
+                    runSpacing: PlinkSpacing.s2,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[
+                      FilledButton.icon(
+                        key: const ValueKey('settings-save'),
+                        // Nothing to save without a document to base the save
+                        // on (#370) — `_collect` needs one, and an enabled
+                        // button that silently does nothing is worse than a
+                        // disabled one.
+                        onPressed:
+                            state._busy || !hasDocument ? null : state._save,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('Opslaan'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('settings-reload'),
+                        // The same button is the retry while the document is
+                        // missing: `_reload` needs the seams `_load`
+                        // bootstraps, so a failed bootstrap has to go through
+                        // `_load` or nothing happens at all.
+                        onPressed: state._busy
+                            ? null
+                            : (hasDocument ? state._reload : state._load),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Herladen'),
+                      ),
+                    ],
+                  ),
+                  if (state._busy) ...<Widget>[
+                    const SizedBox(height: PlinkSpacing.s4),
+                    const LinearProgressIndicator(),
+                  ],
                 ],
               ),
-              Expanded(
-                child: TabBarView(
-                  children: <Widget>[
+            ),
+            TabBar(
+              key: const ValueKey('settings-tabs'),
+              controller: state._tabs,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              tabs: const <Widget>[
+                Tab(key: ValueKey('settings-tab-algemeen'), text: 'Algemeen'),
+                Tab(key: ValueKey('settings-tab-wisa'), text: 'Wisa'),
+                Tab(
+                  key: ValueKey('settings-tab-smartschool'),
+                  text: 'Smartschool',
+                ),
+                Tab(key: ValueKey('settings-tab-azure'), text: 'Azure'),
+                // Last, and the only tab that does not need the document
+                // (#370).
+                Tab(
+                  key: ValueKey('settings-tab-verbinding'),
+                  text: 'Verbinding',
+                ),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: state._tabs,
+                children: <Widget>[
+                  if (hasDocument) ...<Widget>[
                     _algemeenTab(),
                     _wisaTab(),
                     _smartschoolTab(),
                     _azureTab(),
-                  ],
-                ),
+                  ] else
+                    for (var i = 0; i < _connectionTabIndex; i++)
+                      state.documentPanel(),
+                  _connectionTab(),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -820,7 +1098,190 @@ class _SettingsForm extends StatelessWidget {
           ),
         ],
       ),
+      _wifiSection(),
     ]);
+  }
+
+  /// The per-machine backend coordinates (#370).
+  ///
+  /// A tab rather than a section under Algemeen, and the last one, because it is
+  /// the only body here that does not read the settings document: everything
+  /// else on this screen is unreachable exactly when this is needed. Kept as a
+  /// list of sections so a second one — the running version, for the public
+  /// builds of #371 — slots in beside it without touching the first.
+  Widget _connectionTab() {
+    return _tab('settings-tab-verbinding-body', <Widget>[
+      _connectionSection(),
+    ]);
+  }
+
+  Widget _connectionSection() {
+    final ResolvedConnection? resolved = state._resolved;
+    final ConnectionProbe? probe = state._connection.probe;
+    final List<ConnectionProbeResult>? probed = state._probed;
+    final bool busy = state._connectionBusy;
+
+    return _Section(
+      title: 'Verbinding',
+      children: <Widget>[
+        _Note(
+          keyValue: 'settings-connection-note',
+          text: 'Waar de gedeelde opslag van deze installatie staat. Deze '
+              'waarden staan lokaal op deze machine — niet in het gedeelde '
+              'instellingendocument, want dat document staat er zelf achter.',
+        ),
+        _Note(
+          keyValue: 'settings-connection-source',
+          text: switch (resolved?.source) {
+            null => 'De verbindingsgegevens worden gelezen…',
+            ConnectionSource.file =>
+              'Huidige bron: uit ${state._connection.store.location}.',
+            ConnectionSource.defaults =>
+              'Huidige bron: standaardwaarde van deze build '
+                  '(${state._connection.store.location} bestaat nog niet).',
+          },
+        ),
+        if (resolved != null && resolved.hasWarning)
+          _Note(
+            keyValue: 'settings-connection-warning',
+            text: resolved.warning,
+          ),
+        _Field(
+          keyValue: 'settings-connection-cosmos-endpoint',
+          label: 'Cosmos-endpoint',
+          controller: state._cosmosEndpoint,
+        ),
+        _Field(
+          keyValue: 'settings-connection-cosmos-database',
+          label: 'Cosmos-database',
+          controller: state._cosmosDatabase,
+        ),
+        _Field(
+          keyValue: 'settings-connection-vault-uri',
+          label: 'Key Vault-URI',
+          controller: state._vaultUri,
+        ),
+        _Field(
+          keyValue: 'settings-connection-blob-endpoint',
+          label: 'Blob-endpoint',
+          controller: state._blobEndpoint,
+        ),
+        _Field(
+          keyValue: 'settings-connection-blob-container',
+          label: 'Blob-container',
+          controller: state._blobContainer,
+        ),
+        _Field(
+          keyValue: 'settings-connection-signalr-endpoint',
+          label: 'SignalR-endpoint (leeg = geen realtime updates)',
+          controller: state._signalrEndpoint,
+        ),
+        _Field(
+          keyValue: 'settings-connection-signalr-hub',
+          label: 'SignalR-hub',
+          controller: state._signalrHub,
+        ),
+        Wrap(
+          spacing: PlinkSpacing.s3,
+          runSpacing: PlinkSpacing.s2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            FilledButton.icon(
+              key: const ValueKey('settings-connection-save'),
+              onPressed: busy ? null : state._saveConnection,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Verbinding bewaren'),
+            ),
+            // Absent rather than present-and-inert on a build with no session to
+            // mint tokens from: a button that can never answer is worse than no
+            // button.
+            if (probe != null)
+              OutlinedButton.icon(
+                key: const ValueKey('settings-connection-test'),
+                onPressed: busy ? null : state._testConnection,
+                icon: const Icon(Icons.network_check_outlined),
+                label: const Text('Verbinding testen'),
+              ),
+            OutlinedButton(
+              key: const ValueKey('settings-connection-defaults'),
+              onPressed: busy ? null : state._fillConnectionDefaults,
+              child: const Text('Standaardwaarden invullen'),
+            ),
+          ],
+        ),
+        if (busy) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          const LinearProgressIndicator(
+            key: ValueKey('settings-connection-busy'),
+          ),
+        ],
+        if (state._connectionMessage.isNotEmpty) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          _Note(
+            keyValue: 'settings-connection-message',
+            text: state._connectionMessage,
+          ),
+        ],
+        if (state._connectionNeedsRelaunch)
+          _Note(
+            keyValue: 'settings-connection-relaunch',
+            text: 'Herstart de app om deze verbinding te gebruiken. De huidige '
+                'sessie praat nog met de opslag waarmee ze opgestart is.',
+          ),
+        if (probed != null) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          for (final ConnectionProbeResult r in probed)
+            _Note(
+              keyValue: 'settings-connection-probe-${r.id}',
+              text: r.ok
+                  ? '${r.label}: bereikbaar.'
+                  : '${r.label}: niet bereikbaar — ${r.detail}',
+            ),
+        ],
+      ],
+    );
+  }
+
+  /// The two networks printed on the password sheets (#368).
+  ///
+  /// They used to be string literals in the export code, so rotating a WiFi key
+  /// — the ordinary reason to change one, or the urgent one after it leaks —
+  /// meant editing Dart and redistributing the app. Emptying an SSID omits that
+  /// sheet's WiFi block entirely, the same way the Office 365 and Smartschool
+  /// blocks disappear when there is no password to print.
+  Widget _wifiSection() {
+    return _Section(
+      title: 'WiFi op de wachtwoordbladen',
+      children: <Widget>[
+        _Note(
+          keyValue: 'settings-wifi-note',
+          text:
+              'Deze netwerken worden op de afgedrukte wachtwoordbladen gezet. '
+              'Laat een netwerknaam leeg om het WiFi-blok van dat blad weg te '
+              'laten.',
+        ),
+        _Field(
+          keyValue: 'settings-wifi-staff-ssid',
+          label: 'WiFi personeel — netwerknaam',
+          controller: state._staffWifiSsid,
+        ),
+        _Field(
+          keyValue: 'settings-wifi-staff-code',
+          label: 'WiFi personeel — code',
+          controller: state._staffWifiCode,
+        ),
+        _Field(
+          keyValue: 'settings-wifi-student-ssid',
+          label: 'WiFi leerlingen — netwerknaam',
+          controller: state._studentWifiSsid,
+        ),
+        _Field(
+          keyValue: 'settings-wifi-student-code',
+          label: 'WiFi leerlingen — code',
+          controller: state._studentWifiCode,
+        ),
+      ],
+    );
   }
 
   /// WISA connector config: connection, credentials, managed-school list, and
@@ -998,6 +1459,29 @@ class _Section extends StatelessWidget {
           const SizedBox(height: PlinkSpacing.s3),
           ...children,
         ],
+      ),
+    );
+  }
+}
+
+/// One line of explanation above a section's fields — the same muted prose the
+/// rule editors put over their lists.
+class _Note extends StatelessWidget {
+  const _Note({required this.keyValue, required this.text});
+
+  final String keyValue;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s3),
+      child: Text(
+        text,
+        key: ValueKey(keyValue),
+        style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
       ),
     );
   }

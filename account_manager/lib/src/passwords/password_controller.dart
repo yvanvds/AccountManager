@@ -47,6 +47,11 @@ enum PasswordTarget {
 /// the only roster, and an Office 365 push resolves by address.
 core.LinkedSnapshot? _noLinkedSnapshot() => null;
 
+/// The default settings provider: an empty document. Its defaults carry the
+/// WiFi networks the sheets hardcoded before #368, so a controller built
+/// without one prints exactly what it printed before.
+AppSettings _defaultSettings() => const AppSettings();
+
 /// One student in the currently-selected class, with its per-target selection.
 class StudentRow {
   StudentRow(this.account, {this.linked});
@@ -159,6 +164,7 @@ class PasswordController extends ChangeNotifier {
     required PasswordQueueStore queue,
     required PasswordBackends backends,
     core.LinkedSnapshot? Function() linked = _noLinkedSnapshot,
+    AppSettings Function() settings = _defaultSettings,
     PasswordFileWriter writer = writePasswordExport,
     PasswordFileOpener opener = openPasswordExport,
     String Function() generatePassword = core.Password.create,
@@ -167,6 +173,7 @@ class PasswordController extends ChangeNotifier {
     core.ILog? log,
   })  : _snapshotOf = snapshot,
         _linkedOf = linked,
+        _settingsOf = settings,
         _studentGroupName = studentGroupName,
         _staffGroupName = staffGroupName,
         _queue = queue,
@@ -200,6 +207,16 @@ class PasswordController extends ChangeNotifier {
   /// is a real state, not a failure: everything falls back to the pre-#372
   /// behaviour so the screen stays usable.
   final core.LinkedSnapshot? Function() _linkedOf;
+
+  /// The operator's live settings document, read the same way (#368).
+  ///
+  /// The screen hands over `() => services.liveSettings.current`, so a WiFi
+  /// network saved in Instellingen reaches the very next printed sheet rather
+  /// than the next launch — the same discipline the reconcile stack follows for
+  /// every other settings-derived value (#238/#246). Captured at construction it
+  /// would freeze on whatever the document said when Wachtwoorden was first
+  /// opened, which for a screen that outlives a save is the wrong answer.
+  final AppSettings Function() _settingsOf;
 
   /// The snapshot the index below was built from, so [refresh] can tell a real
   /// change from a repaint and cost nothing on the latter.
@@ -325,7 +342,7 @@ class PasswordController extends ChangeNotifier {
     _rows.clear();
     if (again != null) {
       _rows.addAll(_directAccounts(again).map(
-        (a) => _studentRow(a)..selected.addAll(ticked[a.uid] ?? _bulk),
+        (a) => _studentRow(a)..selected.addAll(ticked[a.uid] ?? _bulkSeed),
       ));
     }
     notifyListeners();
@@ -371,14 +388,53 @@ class PasswordController extends ChangeNotifier {
   final List<StudentRow> _rows = <StudentRow>[];
   List<StudentRow> get rows => List<StudentRow>.unmodifiable(_rows);
 
-  /// The bulk "select all" state per target, inherited by a freshly-loaded
+  /// The bulk "select all" **seed** per target, inherited by a freshly-loaded
   /// class so the header toggles persist across class selections (legacy
-  /// `StudentPasswords` seeds each new list from the header checkboxes).
-  final Set<PasswordTarget> _bulk = <PasswordTarget>{};
-  bool bulkSelected(PasswordTarget t) => _bulk.contains(t);
+  /// `StudentPasswords` seeds each new list from the header checkboxes). It is
+  /// what a class the operator opens next starts out ticked with — not what the
+  /// column header on screen reads. That is [bulkSelected].
+  ///
+  /// Cleared by a completed [generate] along with the rows it spent, so an
+  /// arming survives navigation but not a run (#376).
+  final Set<PasswordTarget> _bulkSeed = <PasswordTarget>{};
+
+  /// Whether the column header for [t] reads ticked — **derived** from the rows
+  /// on screen, so it can never claim a selection they do not have (#376).
+  ///
+  /// Rendering the header out of the seed set above was the bug: a successful
+  /// [generate] clears every row's selection but has no reason to touch a seed
+  /// meant to outlive the class, so the header went on reading ticked over an
+  /// empty column. The one control that looks like it re-arms the column then
+  /// *cleared* it on the first tap, and the operator had to click twice —
+  /// exactly where a generate gets repeated (one push failed, run the class
+  /// again).
+  bool bulkSelected(PasswordTarget t) =>
+      _rows.isNotEmpty && _rows.every((r) => r.selected.contains(t));
 
   bool _busy = false;
   bool get busy => _busy;
+
+  // --- Progress of the running generate/reset (#369) -------------------------
+
+  /// How many pushes of the running generate/reset have finished — the `n` of
+  /// the modal progress dialog's "n van N".
+  ///
+  /// Deliberately a plain counter published on the existing [notifyListeners]
+  /// rather than a stream: the screen already rebuilds on every notification,
+  /// so the dialog reading these two numbers needs no extra plumbing.
+  int _progressDone = 0;
+  int get progressDone => _progressDone;
+
+  /// How many pushes the running generate/reset will make in total — the `N`.
+  ///
+  /// Captured **before** the run starts, because [generate] clears each row's
+  /// selection as it goes, so [selectedCount] shrinks under it.
+  int _progressTotal = 0;
+  int get progressTotal => _progressTotal;
+
+  /// The finished fraction of the run, `0.0`..`1.0`, for the determinate bar.
+  double get progress =>
+      _progressTotal == 0 ? 0 : _progressDone / _progressTotal;
 
   String? _message;
   String? get message => _message;
@@ -390,7 +446,7 @@ class PasswordController extends ChangeNotifier {
     _rows
       ..clear()
       ..addAll(_directAccounts(group).map((a) {
-        final row = _studentRow(a)..selected.addAll(_bulk);
+        final row = _studentRow(a)..selected.addAll(_bulkSeed);
         return row;
       }));
     notifyListeners();
@@ -405,13 +461,13 @@ class PasswordController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Toggles [target] for every loaded row and records the bulk state so the
+  /// Toggles [target] for every loaded row and records the bulk seed so the
   /// next class inherits it.
   void toggleBulk(PasswordTarget target, bool on) {
     if (on) {
-      _bulk.add(target);
+      _bulkSeed.add(target);
     } else {
-      _bulk.remove(target);
+      _bulkSeed.remove(target);
     }
     for (final row in _rows) {
       if (on) {
@@ -433,7 +489,7 @@ class PasswordController extends ChangeNotifier {
   /// field left blank; the selection is cleared on success.
   Future<void> generate() async {
     if (_busy || selectedCount == 0) return;
-    _setBusy(true);
+    _beginRun(selectedCount);
     _rightsProblem = null;
     try {
       final entries = await _queue.load();
@@ -485,6 +541,9 @@ class PasswordController extends ChangeNotifier {
                   'Co-account $slot niet gezet voor ${row.username}.');
             }
           }
+          // Landed or refused, this push is done: the dialog's count is of work
+          // completed, not of work that succeeded (#369).
+          _advance();
         }
 
         if (ssPw != null || azPw != null) {
@@ -495,6 +554,14 @@ class PasswordController extends ChangeNotifier {
         }
         row.selected.clear();
       }
+      // The run spent the selection, so nothing stays armed behind it (#376):
+      // the rows above are cleared, and so is the seed that would otherwise
+      // silently re-tick the whole of the next class the operator opens — with
+      // the header then honestly reading "ticked" over a selection nobody asked
+      // for, and the obvious tap on it clearing the column again. Arming a
+      // column across classes stays possible; it just has to be asked for once
+      // per generate rather than surviving one.
+      _bulkSeed.clear();
 
       await _queue.save(byKey.values.toList());
       await _reloadQueue();
@@ -763,7 +830,7 @@ class PasswordController extends ChangeNotifier {
     final sheets = List<PasswordEntry>.of(_studentSheets);
     final path = await _writer(
       'leerling-wachtwoorden.pdf',
-      await studentPasswordsPdf(sheets),
+      await studentPasswordsPdf(sheets, wifi: _settingsOf().studentWifi),
     );
     await _drain(sheets);
     _message =
@@ -975,7 +1042,7 @@ class PasswordController extends ChangeNotifier {
   }) async {
     final row = _selectedStaff;
     if (row == null || _busy || (!smartschool && !office365)) return null;
-    _setBusy(true);
+    _beginRun((smartschool ? 1 : 0) + (office365 ? 1 : 0));
     _rightsProblem = null;
     row.problem = null;
     try {
@@ -998,11 +1065,13 @@ class PasswordController extends ChangeNotifier {
         } else {
           failed = true;
         }
+        _advance();
       }
       if (office365) {
         final pw = smartschool ? shared : _generate();
         azPw = await _pushStaffAzurePassword(row, pw);
         if (azPw == null) failed = true;
+        _advance();
       }
 
       final rights = _rightsProblem;
@@ -1019,6 +1088,7 @@ class PasswordController extends ChangeNotifier {
           mail: row.mail,
           smartschoolPassword: ssPw,
           office365Password: azPw,
+          wifi: _settingsOf().staffWifi,
         ),
       );
       final exported = _exportMessage(
@@ -1036,6 +1106,24 @@ class PasswordController extends ChangeNotifier {
     } finally {
       _setBusy(false);
     }
+  }
+
+  /// Opens a run of [total] pushes: resets the counter and goes busy in one
+  /// notification, so the modal progress dialog the screen puts up never shows
+  /// the previous run's numbers (#369).
+  void _beginRun(int total) {
+    _progressTotal = total;
+    _progressDone = 0;
+    _setBusy(true);
+  }
+
+  /// Records one finished push. The counters are deliberately **not** cleared
+  /// when the run ends: the dialog is dismissed by the screen the moment the
+  /// future completes, and leaving them at "N van N" means any last frame that
+  /// does render shows a finished run rather than an empty one.
+  void _advance() {
+    _progressDone++;
+    notifyListeners();
   }
 
   void _setBusy(bool value) {

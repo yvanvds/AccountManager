@@ -242,6 +242,17 @@ ports the three existing seams, retiring the SQL/ODBC layer:
   dev/emulator account) is created where the identity may, and otherwise surfaces
   loudly at startup — closing the gap where the never-stood-up `decisions`
   container turned "accept duplicate mail" into a silent item-write 404 (#150).
+- **Where the account lives (#370).** `StoreEndpoints` — Cosmos endpoint +
+  database, Key Vault URI, Blob endpoint + container, SignalR endpoint + hub —
+  resolves in three layers: this machine's
+  `%APPDATA%\AccountManager\connection.json`, then `--dart-define`, then the
+  compiled defaults, merged **per field**. The file is edited in Instellingen →
+  Verbinding, which renders and saves without a loaded settings document: the
+  settings document lives behind these very coordinates, so it cannot store them,
+  and a wrong endpoint may not lock the operator out of the screen that repairs
+  it. A malformed file degrades to the defaults with a visible warning instead of
+  failing the launch. Endpoint URIs only — every secret stays in Key Vault behind
+  `SecretProvider`, and tokens stay in the AAD broker cache.
 - **Live test.** Write-capable round-trip (`cosmos_live_test.dart`), manual/opt-in
   per the live-testing policy — restores or deletes everything it writes, never
   in the read-only CI set. Run via `/live-tests cosmos`.

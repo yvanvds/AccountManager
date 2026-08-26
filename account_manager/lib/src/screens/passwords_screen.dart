@@ -104,6 +104,10 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
         // account comes from, and — for Personeel — where the roster comes from,
         // so an account that sits in no Smartschool group is still reachable.
         linked: () => services.controller.linked?.snapshot,
+        // The live settings document (#368): what the printed WiFi block says.
+        // Read at export time so a network edited in Instellingen reaches the
+        // next sheet, not the next launch.
+        settings: () => services.liveSettings.current,
         queue: services.passwordQueue,
         backends: services.passwordBackends,
         writer: services.passwordFileWriter,
@@ -237,10 +241,9 @@ class _PasswordsBodyState extends State<_PasswordsBody>
                       ),
                     ),
                   ],
-                  if (controller.busy) ...<Widget>[
-                    const SizedBox(height: PlinkSpacing.s3),
-                    const LinearProgressIndicator(),
-                  ],
+                  // No busy bar here any more (#369): a run puts up a modal
+                  // progress dialog that says how far along it is, and two
+                  // indicators for one operation is worse than either alone.
                   const SizedBox(height: PlinkSpacing.s3),
                   TabBar(
                     controller: _tabs,
@@ -561,7 +564,14 @@ class _LeerlingenActionBar extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed ?? false) await controller.generate();
+    if (!(confirmed ?? false)) return;
+    if (!context.mounted) return;
+    await _runWithProgress(
+      context,
+      controller: controller,
+      title: 'Wachtwoorden genereren…',
+      run: controller.generate,
+    );
   }
 }
 
@@ -791,12 +801,119 @@ class _StaffDetail extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed ?? false) {
-      await controller.resetStaff(
+    if (!(confirmed ?? false)) return;
+    if (!context.mounted) return;
+    // The same dialog as the class generate (#369): a per-member reset is the
+    // same live push sequence, only shorter.
+    await _runWithProgress(
+      context,
+      controller: controller,
+      title: 'Wachtwoord resetten…',
+      run: () => controller.resetStaff(
         smartschool: smartschool,
         office365: office365,
-      );
-    }
+      ),
+    );
+  }
+}
+
+/// Runs one generate/reset behind a **modal** progress dialog (#369).
+///
+/// A class generate is one live password push per selected (row, target)
+/// against Azure and Smartschool — seconds each, so tens of seconds for a
+/// class. Its only feedback used to be greyed-out buttons and a 4px bar in the
+/// page header: the grid kept showing the old rows, nothing said how far along
+/// the run was, and the natural operator reaction to that is to click again
+/// while a live push sequence is in flight.
+///
+/// Mirrors [runWithProgress] on the Acties screen, deliberately: the two are
+/// the same kind of slow sequential write pass, and they should behave the same
+/// wherever the operator meets them.
+///
+/// The dialog's lifetime is bound to [run]'s future rather than to any observed
+/// controller state, so a run that throws — or one that returns immediately
+/// because another is already in flight — can never strand the operator behind
+/// a modal barrier.
+Future<void> _runWithProgress(
+  BuildContext context, {
+  required PasswordController controller,
+  required String title,
+  required Future<void> Function() run,
+}) async {
+  final NavigatorState navigator = Navigator.of(context, rootNavigator: true);
+  unawaited(showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) =>
+        _PasswordProgressDialog(controller: controller, title: title),
+  ));
+  try {
+    await run();
+  } finally {
+    if (navigator.mounted) navigator.pop();
+  }
+}
+
+/// The modal dialog a generate/reset runs behind (#369): what it is doing, and
+/// how far along it is.
+///
+/// Non-dismissible on purpose — no barrier dismiss, no Escape, no close button.
+/// A half-pushed class is exactly the state to avoid, so there is nothing
+/// useful to do behind this and plenty of harm in navigating away mid-write.
+class _PasswordProgressDialog extends StatelessWidget {
+  const _PasswordProgressDialog(
+      {required this.controller, required this.title});
+
+  final PasswordController controller;
+
+  /// What is running: a class generate, or a per-member reset.
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        key: const ValueKey('passwords-progress-dialog'),
+        title: Text(title),
+        content: SizedBox(
+          // A [LinearProgressIndicator] takes all the width it is offered, so
+          // without a bound the dialog stretches across a desktop window.
+          width: (MediaQuery.sizeOf(context).width - 112).clamp(240.0, 400.0),
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  // Determinate: `selectedCount` gives the total up front, so
+                  // there is no reason to show a sweep that says nothing.
+                  LinearProgressIndicator(
+                    key: const ValueKey('passwords-progress-bar'),
+                    value: controller.progress,
+                  ),
+                  const SizedBox(height: PlinkSpacing.s4),
+                  Text(
+                    key: const ValueKey('passwords-progress-count'),
+                    '${controller.progressDone} van '
+                    '${controller.progressTotal}',
+                    style: text.titleSmall,
+                  ),
+                  const SizedBox(height: PlinkSpacing.s3),
+                  Text(
+                    'Elk wachtwoord wordt live naar Smartschool en Office 365 '
+                    'verstuurd. Sluit het venster niet tot de reeks klaar is.',
+                    style: text.bodySmall,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 }
 

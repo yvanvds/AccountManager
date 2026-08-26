@@ -40,10 +40,22 @@ redirect there. See
 [README-aad-broker.md](account_manager/windows/runner/README-aad-broker.md) for
 the loopback flow and the (not yet wired) native WAM broker.
 
-Everything else — Cosmos, Key Vault, Blob, SignalR endpoints — defaults to the
-provisioned infrastructure in `StoreEndpoints`
-([reconcile_bootstrap.dart](account_manager/lib/src/reconcile/reconcile_bootstrap.dart))
-and only needs a `--dart-define` to point at a different environment.
+Everything else — Cosmos, Key Vault, Blob, SignalR endpoints — resolves in three
+layers (#370): this machine's `%APPDATA%\AccountManager\connection.json`, then
+the `--dart-define` values the build carried, then the provisioned-infrastructure
+defaults in `StoreEndpoints`
+([reconcile_bootstrap.dart](account_manager/lib/src/reconcile/reconcile_bootstrap.dart)).
+The merge is per field, so a file naming only the Cosmos account leaves the rest
+where the build put them, and an install with no file behaves exactly as it did
+before the file existed.
+
+The file is written from **Instellingen → Verbinding**, which also has a
+*Verbinding testen* button (a read-only round-trip to Cosmos and Key Vault). That
+tab renders and saves even when the settings document cannot be loaded — a wrong
+endpoint must not lock the operator out of the screen that fixes the endpoint. A
+malformed or unreadable `connection.json` falls back to the defaults with a
+warning on that tab rather than failing the launch. It holds endpoint URIs only,
+never a key or a token.
 
 The `.*.env` files in the repo root are unrelated to running the app: they hold
 credentials for the opt-in live integration tests

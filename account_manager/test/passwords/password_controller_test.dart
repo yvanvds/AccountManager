@@ -157,12 +157,16 @@ void main() {
     // One stable snapshot per controller: the provider is read live (#287), so
     // handing it a factory that mints a fresh object each call would make every
     // read look like a changed tree.
-    PasswordController build({String Function()? gen}) {
+    PasswordController build({
+      String Function()? gen,
+      AppSettings Function()? settings,
+    }) {
       final snap = _snapshot();
       return PasswordController(
           snapshot: () => snap,
           queue: queue,
           backends: backends,
+          settings: settings ?? () => const AppSettings(),
           generatePassword: gen ?? _seqGenerator(),
           writer: (name, bytes) async {
             writes.add((name, List<int>.of(bytes)));
@@ -263,6 +267,67 @@ void main() {
           isTrue);
     });
 
+    test(
+        'the column header follows the rows, so a generate unticks it and the '
+        'next tap re-arms the column (#376)', () async {
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c
+        ..selectClass(klas)
+        ..toggleBulk(PasswordTarget.smartschool, true);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isTrue);
+
+      await c.generate();
+
+      // The rows are cleared, so the header is too: it used to be rendered from
+      // a parallel set a generate never touched, and went on reading ticked
+      // over an empty column.
+      expect(c.selectedCount, 0);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isFalse);
+
+      // One tap — the obvious way to run the column again — fills it, rather
+      // than clearing a selection that no longer exists.
+      c.toggleBulk(PasswordTarget.smartschool, true);
+      expect(c.selectedCount, c.rows.length);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isTrue);
+    });
+
+    test('a generate does not leave the next class opened armed (#376)',
+        () async {
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c
+        ..selectClass(klas)
+        ..toggleBulk(PasswordTarget.smartschool, true);
+
+      // Before a run the arming still travels between classes, the way legacy
+      // seeds each freshly-loaded list from the header checkboxes.
+      c.selectClass(klas);
+      expect(c.selectedCount, c.rows.length);
+
+      await c.generate();
+      c.selectClass(klas);
+
+      // After one, it does not: the run spent it, so the class comes up empty
+      // and the header agrees rather than summarising a selection nobody asked
+      // for.
+      expect(c.selectedCount, 0);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isFalse);
+    });
+
+    test('unticking one row unticks the column header (#376)', () {
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c
+        ..selectClass(klas)
+        ..toggleBulk(PasswordTarget.smartschool, true);
+      c.toggleRow(c.rows.first, PasswordTarget.smartschool, false);
+
+      // "Every row" is no longer true, so the header stops saying it is.
+      expect(c.bulkSelected(PasswordTarget.smartschool), isFalse);
+      expect(c.bulkSelected(PasswordTarget.office365), isFalse);
+    });
+
     test('a failed Azure push leaves the field blank and counts as failed',
         () async {
       backends = RecordingPasswordBackends(failAzure: {'jane@student.school'});
@@ -325,8 +390,10 @@ void main() {
       expect(backends.azurePushes, isEmpty);
     });
 
-    Future<PasswordController> queuedStudent() async {
-      final c = build();
+    Future<PasswordController> queuedStudent({
+      AppSettings Function()? settings,
+    }) async {
+      final c = build(settings: settings);
       final klas = c.childrenOf(c.studentRoot!).single;
       c.selectClass(klas);
       final jane = c.rows.firstWhere((r) => r.username == 'jane');
@@ -352,6 +419,29 @@ void main() {
       expect(c.message, contains(path));
       // Drained from the queue afterwards.
       expect(c.studentSheets, isEmpty);
+    });
+
+    test(
+        'the sheet reads the WiFi networks at export time, not at build (#368)',
+        () async {
+      // The screen outlives a save on the Instellingen tab, so a network
+      // captured when Wachtwoorden was first opened is the wrong answer. The
+      // provider must be consulted when the PDF is built.
+      final live = LiveSettings();
+      final read = <WifiNetwork>[];
+      final c = await queuedStudent(settings: () {
+        read.add(live.current.studentWifi);
+        return live.current;
+      });
+      expect(read, isEmpty, reason: 'nothing is read before an export');
+
+      live.publish(const AppSettings(
+        studentWifi: WifiNetwork(ssid: 'Testnet-L', code: 'l-sleutel'),
+      ));
+      await c.exportStudentSheets();
+
+      expect(
+          read.single, const WifiNetwork(ssid: 'Testnet-L', code: 'l-sleutel'));
     });
 
     test('a viewer that will not launch keeps the file and the drain (#195)',

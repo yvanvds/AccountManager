@@ -5,6 +5,7 @@ import '../apply/wisa_import_rules.dart';
 import 'connection.dart';
 import 'import_rule_codec.dart';
 import 'rule_provenance.dart';
+import 'wifi_network.dart';
 import 'wisa_school_profile.dart';
 
 /// The Smartschool group roots a pull is scoped to when the operator has
@@ -55,6 +56,8 @@ class AppSettings {
     this.smartschoolRules = const [],
     this.smartschoolRoots = defaultSmartschoolRoots,
     this.wisaSchools = const [],
+    this.staffWifi = defaultStaffWifi,
+    this.studentWifi = defaultStudentWifi,
   }) : _smartschool = smartschool;
 
   /// The school prefix used by the linker to scope Azure users to this school
@@ -118,6 +121,18 @@ class AppSettings {
   /// hatch for a tenant whose tree has no such roots.
   final List<String> smartschoolRoots;
 
+  /// The WiFi network printed on a **staff** password sheet (#368).
+  ///
+  /// [defaultStaffWifi] until an operator says otherwise, so a document written
+  /// before the fields existed prints exactly what it printed before. An empty
+  /// [WifiNetwork.ssid] is a decision, not a gap: it omits the WiFi block from
+  /// the sheet entirely.
+  final WifiNetwork staffWifi;
+
+  /// The WiFi network printed on a **student** password sheet (#368) — the
+  /// [staffWifi] counterpart, defaulting to [defaultStudentWifi].
+  final WifiNetwork studentWifi;
+
   /// Per-WISA-school ownership entries, keyed by school id. Empty means no
   /// school has been marked managed yet — the group-membership plumbing #113
   /// slice 2 reads, but no action fires here.
@@ -157,6 +172,8 @@ class AppSettings {
     List<SmartschoolImportRule>? smartschoolRules,
     List<String>? smartschoolRoots,
     List<WisaSchoolProfile>? wisaSchools,
+    WifiNetwork? staffWifi,
+    WifiNetwork? studentWifi,
   }) {
     return AppSettings(
       schoolPrefix: schoolPrefix ?? this.schoolPrefix,
@@ -169,6 +186,8 @@ class AppSettings {
       smartschoolRules: smartschoolRules ?? this.smartschoolRules,
       smartschoolRoots: smartschoolRoots ?? this.smartschoolRoots,
       wisaSchools: wisaSchools ?? this.wisaSchools,
+      staffWifi: staffWifi ?? this.staffWifi,
+      studentWifi: studentWifi ?? this.studentWifi,
     );
   }
 
@@ -191,6 +210,8 @@ class AppSettings {
       'smartschoolRules': smartschoolRules.map(encodeSmartschoolRule).toList(),
       'smartschoolRoots': smartschoolRoots,
       'wisaSchools': wisaSchools.map((p) => p.toJson()).toList(),
+      'staffWifi': staffWifi.toJson(),
+      'studentWifi': studentWifi.toJson(),
     };
   }
 
@@ -217,6 +238,8 @@ class AppSettings {
     final smartschoolConn = json['smartschool'] as Map<String, dynamic>?;
     final azureConn = json['azure'] as Map<String, dynamic>?;
     final wisaSchools = (json['wisaSchools'] as List<dynamic>?) ?? const [];
+    final staffWifi = json['staffWifi'] as Map<String, dynamic>?;
+    final studentWifi = json['studentWifi'] as Map<String, dynamic>?;
     // The rule and its provenance share one object on the wire (#285) and are
     // two values in memory, so they are split in one pass rather than by
     // decoding the list twice.
@@ -269,6 +292,17 @@ class AppSettings {
       smartschoolRoots: roots == null
           ? defaultSmartschoolRoots
           : <String>[for (final r in roots) r as String],
+      // Absent ⇒ the literals the sheets used to hardcode (#368), for the same
+      // reason the roots above adopt their defaults: a document written before
+      // the fields existed never chose to print no WiFi block, and re-defaulting
+      // is what keeps the first sheets after an upgrade whole. Present is taken
+      // as given — an emptied SSID is the operator turning the block off.
+      staffWifi: staffWifi == null
+          ? defaultStaffWifi
+          : WifiNetwork.fromJson(staffWifi),
+      studentWifi: studentWifi == null
+          ? defaultStudentWifi
+          : WifiNetwork.fromJson(studentWifi),
       wisaSchools: adoptRetiredVirtualMarks(
         <WisaSchoolProfile>[
           for (final p in wisaSchools)

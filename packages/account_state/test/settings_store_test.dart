@@ -46,6 +46,8 @@ AppSettings _sampleSettings() => AppSettings(
         NoSmartschoolSubgroups('Klassen'),
       ],
       smartschoolRoots: const ['Leerlingen', 'Personeelsleden'],
+      staffWifi: const WifiNetwork(ssid: 'Personeelsnet', code: 'p-sleutel'),
+      studentWifi: const WifiNetwork(ssid: 'Leerlingennet', code: 'l-sleutel'),
       wisaSchools: const [
         WisaSchoolProfile(schoolId: 1, ours: true, prefix: 'SMA'),
         WisaSchoolProfile(schoolId: 2),
@@ -64,6 +66,8 @@ void expectSameSettings(AppSettings a, AppSettings b) {
       equals(encodeRules(b.smartschoolRules, encodeSmartschoolRule)));
   expect(a.smartschoolRoots, equals(b.smartschoolRoots));
   expect(a.wisaSchools, equals(b.wisaSchools));
+  expect(a.staffWifi, equals(b.staffWifi));
+  expect(a.studentWifi, equals(b.studentWifi));
 }
 
 List<Map<String, dynamic>> encodeRules<T>(
@@ -91,6 +95,30 @@ void main() {
       // …and one predating the Smartschool roots (#351) adopts them: it never
       // chose to pull the whole tree, it had no say in the matter.
       expect(settings.smartschoolRoots, <String>['Leerlingen', 'Personeel']);
+      // …and one predating the configurable WiFi networks (#368) keeps printing
+      // the literals the sheets used to hardcode, so nobody hands out a blank
+      // sheet between the upgrade and the first visit to Instellingen.
+      expect(settings.staffWifi,
+          const WifiNetwork(ssid: 'Smifi-P', code: '!TEAM!SMA!'));
+      expect(settings.studentWifi,
+          const WifiNetwork(ssid: 'Smifi-L', code: 'SmifiDeWifi:)'));
+    });
+
+    test('an explicitly emptied WiFi network is honoured (#368)', () {
+      // Present-but-empty is a choice — the operator turning the WiFi block off
+      // for that sheet — and must not be re-defaulted back to the literals on
+      // the next load.
+      final settings = AppSettings.fromJson(<String, dynamic>{
+        'studentWifi': <String, dynamic>{'ssid': '', 'code': ''},
+      });
+      expect(settings.studentWifi.isConfigured, isFalse);
+      expect(settings.studentWifi, const WifiNetwork());
+      // The staff half was genuinely absent, so it still adopts its literal.
+      expect(settings.staffWifi, defaultStaffWifi);
+      expect(
+        AppSettings.fromJson(settings.toJson()).studentWifi.isConfigured,
+        isFalse,
+      );
     });
 
     test('an explicitly emptied root list is honoured (#351)', () {

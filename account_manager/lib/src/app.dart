@@ -5,6 +5,7 @@ import 'auth/aad_resource.dart';
 import 'auth/sign_in_gate.dart';
 import 'auth/sign_in_session.dart';
 import 'reconcile/reconcile_bootstrap.dart';
+import 'settings/connection_config.dart';
 import 'settings/settings_bootstrap.dart';
 import 'shell/app_shell.dart';
 
@@ -26,6 +27,7 @@ class AccountManagerApp extends StatelessWidget {
     required this.graph,
     this.reconcileBootstrap,
     this.settingsBootstrap,
+    this.connection,
   });
 
   /// The operator's Azure AD session, used by the sign-in gate and, later, by
@@ -44,6 +46,14 @@ class AccountManagerApp extends StatelessWidget {
   /// screen is first opened, or `null` when AAD is not configured. Injectable so
   /// tests can bind the screen to fakes; the real closure is built in `main()`.
   final Future<SettingsServices> Function()? settingsBootstrap;
+
+  /// Where this machine's backend coordinates are read and written (#370), and
+  /// the reachability probe behind **Verbinding testen**.
+  ///
+  /// `null` binds the Verbinding section to an [InMemoryConnectionStore], which
+  /// is what every test that does not care about it gets: a headless run then
+  /// edits a throwaway copy instead of the operator's real `connection.json`.
+  final ConnectionServices? connection;
 
   ThemeData _themed(ThemeData base) => base.copyWith(
         extensions: const <ThemeExtension<dynamic>>[
@@ -64,6 +74,7 @@ class AccountManagerApp extends StatelessWidget {
         child: AppShell(
           reconcileBootstrap: reconcileBootstrap,
           settingsBootstrap: settingsBootstrap,
+          connection: connection,
         ),
       ),
     );
