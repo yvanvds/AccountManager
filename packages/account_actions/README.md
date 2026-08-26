@@ -184,7 +184,7 @@ branches are mutually exclusive just like the student parser. The staff
 lifecycle set is `AddStaffToAzure`, `AddStaffToSmartschool`,
 `RemoveStaffFromSmartschool`, `DontImportStaffFromWisa`, `RemoveStaffFromAzure`;
 the modify set is `UpdateStaffWisaName`, `ModifySmartschoolStaffEmail`,
-`SetStaffCopyCode`. Staff bridge to Smartschool
+`SetStaffCopyCode`, `ClaimStaffForAzureSchool`. Staff bridge to Smartschool
 by `WisaStaff.code` (not `wisaId`) — `AddStaffToSmartschool` and
 `UpdateStaffWisaName` write the code into `accountId` (spec §4, OQ-1), while the
 numeric `wisaId` becomes the copy-code.
@@ -438,22 +438,35 @@ write waiting on the class that can take it.
   the action converges after one apply.
 - **Staff gender on create.** Legacy `AddToSmartschool` hard-codes `Female` for
   new staff (WISA staff rows carry no gender); preserved verbatim.
-- **No staff `department` repair — the field is not ours to write (#237).** A
+- **No staff `department` *repair* — the list is not ours to rewrite (#237).** A
   staff member's Azure `department` is maintained by other software and holds a
   **comma-separated list of school prefixes** (`GBS,SSM`), one per school the
   teacher is currently active at. We read it — the linker's `contains` test
   (INV-22) is exactly the right question, "is this teacher active at our
-  school?" — and we never write it on an account that already exists.
-  `ModifyStaffAzureSchool` (#233) did, and it was destructive: it fired whenever
-  the list did not *start with* our prefix, which is every teacher we are not
-  listed first for, and its "repair" split on a ` - ` separator a comma list has
-  none of, so `GBS,SSM` was rewritten to a bare `SSM` — deleting the sibling
-  school's claim. Removed whole rather than narrowed. `AddStaffToAzure` still
-  writes the bare prefix when it **creates** an account, which destroys nothing.
-  The two problems #233 was actually aimed at — the bulk read's
-  `startswith(department, …)` leg missing staff whose list does not lead with us,
-  and a staff member who leaves WISA going invisible instead of raising
-  `RemoveStaffFromAzure` — are tracked as their own issues.
+  school?" — and nothing here rewrites it. `ModifyStaffAzureSchool` (#233) did,
+  and it was destructive: it fired whenever the list did not *start with* our
+  prefix, which is every teacher we are not listed first for, and its "repair"
+  split on a ` - ` separator a comma list has none of, so `GBS,SSM` was rewritten
+  to a bare `SSM` — deleting the sibling school's claim. Removed whole rather
+  than narrowed.
+
+  **What we do instead is our own entry, and only ever our own entry.**
+  `ClaimStaffForAzureSchool` (#373) *appends* our prefix for a staff member WISA
+  places in a school we manage whose list does not name us (`SBE` → `SBE,SSM`),
+  and `ReleaseStaffFromAzureSchool` (#349) *strikes* that same entry back out
+  when they leave (`GBS,SSM,KAV` → `GBS,KAV`). Both leave every other entry
+  verbatim and in order, and both decide "are we in the list" by an exact
+  list-item match (`departmentSchools` / `departmentSchoolsExcept`) rather than
+  by the substring test the read side uses — read wide, write narrow, so a
+  longer school code that merely contains our prefix is never struck and never
+  suppresses a claim. `AddStaffToAzure` still writes the bare prefix when it
+  **creates** an account, which destroys nothing. What stays forbidden is a
+  rewrite: re-ordering, case-folding, de-duplicating, or replacing the list.
+
+  The claim is also what keeps the other #233 problem shrinking without widening
+  the Azure bulk read's `startswith(department, …)` `$filter`, which #268 ruled
+  cannot be widened: every account it claims is one the fast path finds next
+  time, instead of one that depends on the `employeeId` back-fill forever.
 - Smartschool `uid` uniqueness for new accounts is the caller's concern (the
   State layer holds the account set); the default builder is deliberately
   simple.

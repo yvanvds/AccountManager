@@ -56,10 +56,18 @@ bool _bulkApplyable(StudentAction a) => switch (a) {
     };
 
 /// Legacy `Action\StaffAccount\*` granted three; `AddToStaffGroup` is not
-/// ported (the deferred `-Personeel` placement), leaving two.
+/// ported (the deferred `-Personeel` placement), leaving two — plus one grant
+/// made here, `ClaimStaffForAzureSchool` (#373), which has no legacy twin.
 bool _bulkApplyableStaff(StaffAction a) => switch (a) {
       AddStaffToAzure() => true,
       ModifySmartschoolStaffEmail() => true,
+      // Not a legacy grant: an intake of staff adopted from sibling group
+      // schools is a real cohort, the trigger is a fact WISA already states, the
+      // write is additive (every other `department` entry survives), and a
+      // mistaken claim is undone by `ReleaseStaffFromAzureSchool` on the next
+      // pass. It lands with `AddStaffToAzure`, which stamps the same prefix in
+      // bulk on a create, and not with the #349 departure pair.
+      ClaimStaffForAzureSchool() => true,
       // Legacy passes `true, false` here, unlike the student twin.
       AddStaffToSmartschool() => false,
       UpdateStaffWisaName() => false,
@@ -143,6 +151,7 @@ List<StaffAction> _staffActions() {
     UpdateStaffWisaName(staff, cfg),
     ModifySmartschoolStaffEmail(staff, cfg),
     SetStaffCopyCode(staff, cfg),
+    ClaimStaffForAzureSchool(staff, cfg),
   ];
 }
 
@@ -199,12 +208,17 @@ void main() {
       );
     });
 
-    test('the staff family grants it to exactly two actions', () {
+    test('the staff family grants it to exactly three actions', () {
       expect(
         _granted<StaffAction>(_staffActions(), (a) => a.canApplyToAll),
-        <Type>{AddStaffToAzure, ModifySmartschoolStaffEmail},
+        <Type>{
+          AddStaffToAzure,
+          ModifySmartschoolStaffEmail,
+          ClaimStaffForAzureSchool,
+        },
         reason: 'legacy granted AddToAzure, ModifySmartschoolStaffEmail and '
-            'AddToStaffGroup; the last is not ported',
+            'AddToStaffGroup; the last is not ported. ClaimStaffForAzureSchool '
+            'is a grant made in #373, not a legacy one',
       );
     });
 
@@ -295,7 +309,7 @@ void main() {
         _studentActions().where((a) => a.canApplyToAll),
         hasLength(11),
       );
-      expect(_staffActions().where((a) => a.canApplyToAll), hasLength(2));
+      expect(_staffActions().where((a) => a.canApplyToAll), hasLength(3));
       expect(_groupActions().where((a) => a.canApplyToAll), hasLength(4));
     });
 
@@ -304,8 +318,8 @@ void main() {
       // at compile time but cannot tell that it was also added here.
       expect(_studentActions().map((a) => a.runtimeType).toSet(), hasLength(18),
           reason: 'StudentAction has 18 members');
-      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(11),
-          reason: 'StaffAction has 11 members');
+      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(12),
+          reason: 'StaffAction has 12 members');
       expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(12),
           reason: 'GroupAction has 12 members');
     });

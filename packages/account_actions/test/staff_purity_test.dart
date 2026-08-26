@@ -97,37 +97,72 @@ void main() {
     });
   });
 
-  group("a staff member's Azure `department` is never written (#237)", () {
+  group("a staff member's Azure `department` is never rewritten (#237/#373)",
+      () {
     // `department` belongs to other software: it is a comma-separated list of
     // the school prefixes the teacher is active at, so our prefix appearing
-    // anywhere in it is the *normal* state and any write of ours would evict
+    // anywhere in it is the *normal* state and a rewrite of ours would evict
     // another school's claim. The action that used to do this
     // (`ModifyStaffAzureSchool`, #233) fired on `!startsWith(prefix)` and
-    // "repaired" `GBS,SSM` to a bare `SSM`. Nothing may propose a department
-    // change again.
+    // "repaired" `GBS,SSM` to a bare `SSM`.
+    //
+    // Since #373 the dispatch does carry one `department` write — the additive
+    // claim — so "nothing proposes a change" is no longer the invariant to
+    // assert. The invariant that survives, and the one #237 was actually about,
+    // is that **no proposal touches an entry that is not ours**: whatever any
+    // action writes, the other schools come out of it verbatim and in the same
+    // order they went in.
     for (final department in <String?>[
       null,
       'GBS,SSM', // our school, listed second — the ordinary multi-school case
       'SSM,GBS',
       'GBS',
+      'GBS, KAV', // whitespace around a sibling entry
+      'SSMB', // a longer code that merely contains our prefix — not ours
       'OTHER - Wiskunde',
       '',
     ]) {
-      test('no action touches `department` == ${department ?? '<null>'}', () {
+      test(
+          'no action evicts a sibling school from `department` == '
+          '${department ?? '<null>'}', () {
         final staff = linkedStaff(
           wisa: wisaStaff(),
           smartschool: ssStaff(),
           azure: azureStaff(department: department),
         );
+        final others = departmentSchoolsExcept(department, cfg.schoolPrefix);
         for (final action in staffActionsFor(staff, cfg)) {
-          expect(
-            action.describeChanges().fields.map((f) => f.field),
-            isNot(contains('department')),
-            reason: '${action.runtimeType} proposes a department write',
-          );
+          for (final field in action.describeChanges().fields) {
+            if (field.field != 'department') continue;
+            expect(
+              departmentSchoolsExcept(field.after, cfg.schoolPrefix),
+              others,
+              reason: '${action.runtimeType} rewrites a sibling school claim',
+            );
+          }
         }
       });
     }
+
+    test('the only department write the modify branch offers is the claim', () {
+      // Named rather than merely counted: this is the branch #237 removed the
+      // rewrite from, and the one the note in `staff_dispatch.dart` forbids it
+      // growing back into.
+      final staff = linkedStaff(
+        wisa: wisaStaff(),
+        smartschool: ssStaff(),
+        azure: azureStaff(department: 'GBS'),
+      );
+      final writers = <Type>[
+        for (final action in staffActionsFor(staff, cfg))
+          if (action
+              .describeChanges()
+              .fields
+              .any((f) => f.field == 'department'))
+            action.runtimeType,
+      ];
+      expect(writers, <Type>[ClaimStaffForAzureSchool]);
+    });
   });
 
   group('staffActions over a LinkedSnapshot', () {

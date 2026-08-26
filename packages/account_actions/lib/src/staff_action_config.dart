@@ -12,10 +12,15 @@ class StaffActionConfig {
   /// new account is created (legacy `CreateStaffMember` sets
   /// `Department = Connector.Prefix`).
   ///
-  /// **Create only** (#237). On an account that already exists, `department` is
-  /// read-only from our side: other software maintains it as a comma-separated
-  /// list of every school prefix the teacher is active at, so writing our prefix
-  /// over it would evict a sibling school's claim. No staff action patches it.
+  /// **Never written *over* (#237).** Other software maintains `department` as a
+  /// comma-separated list of every school prefix the teacher is active at, so
+  /// rewriting the field would evict a sibling school's claim — which is what
+  /// `ModifyStaffAzureSchool` did before it was removed.
+  ///
+  /// Three writes use this value, and all three leave the other entries alone:
+  /// `AddStaffToAzure` stamps it on an account it is *creating*,
+  /// `ClaimStaffForAzureSchool` appends it as one more list item (#373), and
+  /// `ReleaseStaffFromAzureSchool` strikes exactly that item out again (#349).
   final String schoolPrefix;
 
   /// The base UPN domain, e.g. `arcadiascholen.be`. New staff UPNs are minted

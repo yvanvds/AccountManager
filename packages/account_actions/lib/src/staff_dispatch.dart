@@ -27,12 +27,23 @@ import 'staff_placement.dart';
 /// without it [AddStaffToSmartschool] creates the account and leaves it in the
 /// platform default group, exactly as it did before #374.
 ///
-/// The modify branch has **no** Azure `department` repair, and must not grow one
-/// (#237): a staff member's `department` is owned by other software and holds a
-/// comma-separated list of the school prefixes they are active at, so the only
-/// correct thing to do with it is read it. The `ModifyStaffAzureSchool` this
-/// branch briefly carried (#233) fired for every teacher our prefix did not lead
-/// the list for, and rewrote `GBS,SSM` to a bare `SSM`.
+/// The modify branch has **no** Azure `department` *repair*, and must not grow
+/// one (#237): a staff member's `department` is owned by other software and
+/// holds a comma-separated list of the school prefixes they are active at, so
+/// nothing here may rewrite it. The `ModifyStaffAzureSchool` this branch briefly
+/// carried (#233) fired for every teacher our prefix did not lead the list for,
+/// and rewrote `GBS,SSM` to a bare `SSM`.
+///
+/// [ClaimStaffForAzureSchool] is admissible under exactly that rule rather than
+/// an exception to it (#373). It is **additive and scoped to our own entry**:
+/// every existing item survives verbatim and in order, our prefix is appended,
+/// and "are we already listed" is an exact list-item match, not the substring
+/// test the read side uses. It fires only for a staff member WISA places in a
+/// school we manage, so it states a fact WISA already holds instead of guessing
+/// one from the field. A **rewrite** of the list — re-ordering it, case-folding
+/// it, de-duplicating it, or replacing it with our prefix — stays forbidden, and
+/// this action may not grow into one. Its subtractive mirror lives in the
+/// lifecycle branch as [ReleaseStaffFromAzureSchool] (#349).
 ///
 /// [RetireStaffMember] is **deliberately absent** (#349). Dispatch is a pure
 /// function of the record as it stands, and "this teacher is not coming back" is
@@ -72,6 +83,11 @@ List<StaffAction> staffActionsFor(
           UpdateStaffWisaName(staff, config),
           ModifySmartschoolStaffEmail(staff, config),
           SetStaffCopyCode(staff, config),
+          // The one Office 365 write in this branch (#373), last because the
+          // three above are Smartschool field repairs and this one claims the
+          // account for us — see the note above for why it is not the #237
+          // rewrite.
+          ClaimStaffForAzureSchool(staff, config),
         ]
       : <StaffAction>[
           // The creates lead [DontImportStaffFromWisa], which they are mutually

@@ -12563,6 +12563,119 @@ void main() {
   });
 
   testWidgets(
+      'a teacher adopted from a sibling school is claimed for ours, and the '
+      'other schools survive the write end-to-end (#373)',
+      (WidgetTester tester) async {
+    // As reported from the live tenant. A teacher who just started here already
+    // held an Office 365 account from a sibling group school, so her
+    // `department` names that school and not us. Her Acties → Personeel card
+    // showed WISA + Smartschool + Office 365 all green and "Geen openstaande
+    // beslissingen voor dit account" — nothing anywhere offered to add us.
+    //
+    // She is in the snapshot at all only because the `employeeId` back-fill
+    // (#231) adopts every staff member WISA lists: the Azure bulk read's
+    // server-side `$filter` (`startswith(department,'GBS')`) cannot see her, and
+    // #268 ruled that leg cannot be widened. So the day WISA stops listing her
+    // there is no id to back-fill from and no `department` naming us, she drops
+    // out of `belongsToOurSchool` entirely, and the cleanup
+    // `ReleaseStaffFromAzureSchool` / `RemoveStaffFromAzure` exist for can no
+    // longer be reached.
+    //
+    // Only a run of the real app covers this: the silence was the *dispatch's*
+    // modify branch meeting a record the linker had marked `azureNamesOurSchool
+    // == false`, and what the fix has to reach is the card the operator reads
+    // and the Graph write their click performs — with every sibling claim in a
+    // field we do not own (#237) still standing afterwards.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: const [],
+        schools: [wisaSchool(1)],
+        staff: [wisaStaff()],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      // Two sibling schools of the group, ours (GBS) named by neither.
+      azure: azSnap(users: [azStaffUser(department: 'SSM,KAV')]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // The state the report describes: complete in all three systems, WISA
+    // placing her here, and the Azure field naming somebody else.
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.isInOurWisa, isTrue);
+    expect(linked.smartschool, isNotNull);
+    expect(linked.azure?.id, 'az-staff');
+    expect(linked.azureNamesOurSchool, isFalse);
+
+    // Her card owes exactly one write now, where it used to owe none.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'staff');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Voeg onze school toe aan het Office 365 account'],
+    );
+    final String id = entry.targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Voeg onze school toe aan het Office 365 account'),
+        findsOneWidget);
+
+    // Apply it, confirmation and all.
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
+
+    // One Graph PATCH went out, carrying that field and nothing else — and our
+    // entry is *appended*: both sibling claims survive verbatim and in order,
+    // which is the whole difference between this and the rewrite #237 removed.
+    final patches =
+        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
+    expect(patches, hasLength(1));
+    expect(
+      jsonDecode(patches.single.body!),
+      <String, dynamic>{'department': 'SSM,KAV,GBS'},
+    );
+    expect(harness.graph.requests.any((r) => r.method == 'DELETE'), isFalse);
+
+    // The record the app holds says so off the incremental patch, so the very
+    // next pull's narrow `$filter` would find her without the back-fill.
+    expect(harness.app.azure.snapshot!.users.single.department, 'SSM,KAV,GBS');
+
+    // And the relinked record now names us, with nothing left to apply on it —
+    // the claim converges, it does not re-offer itself.
+    expect(
+      harness.controller.linked!.snapshot.staff.single.azureNamesOurSchool,
+      isTrue,
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'staff'),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a new staff member offers one either/or choice, and applying it '
       'provisions every hire without blacklisting any end-to-end (#248)',
       (WidgetTester tester) async {

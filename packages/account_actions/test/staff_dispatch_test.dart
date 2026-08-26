@@ -137,18 +137,19 @@ void main() {
       expect(types(actions), [SetStaffCopyCode]);
     });
 
-    test('an Azure department naming other schools raises nothing (#237)', () {
+    test('an Azure department already naming us raises nothing (#237)', () {
       // `department` is a comma-separated list of the schools the teacher is
-      // active at, maintained by other software. Our prefix appearing second —
-      // or not at all on a record the back-fill adopted by employeeId — is not
-      // a defect we may "repair": the write that used to do it (#233) collapsed
-      // the list to our prefix alone and destroyed the sibling school's claim.
+      // active at, maintained by other software. Our prefix appearing second is
+      // the ordinary state, not a defect we may "repair": the write that used to
+      // do it (#233) collapsed the list to our prefix alone and destroyed the
+      // sibling school's claim. Wherever we already sit in the list, the modify
+      // branch has nothing to say about the field at all.
       for (final department in <String?>[
         'GBS,SSM',
         'SSM,GBS',
-        'GBS',
-        'OTHER - Wiskunde',
-        null,
+        'SSM',
+        'GBS, SSM',
+        'ssm,GBS', // INV-12: the match trims and case-folds
       ]) {
         final actions = staffActionsFor(
           linkedStaff(
@@ -575,6 +576,151 @@ void main() {
         RemoveStaffFromSmartschool,
         ReleaseStaffFromAzureSchool,
       ]);
+    });
+  });
+
+  group('an adopted staff member is claimed for our school (#373)', () {
+    LinkedStaff adopted(
+      String? department, {
+      WisaPresence wisaPresence = WisaPresence.ours,
+    }) =>
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(department: department),
+          wisaPresence: wisaPresence,
+        );
+
+    ClaimStaffForAzureSchool claim(
+      String? department, {
+      StaffActionConfig? config,
+      WisaPresence wisaPresence = WisaPresence.ours,
+    }) =>
+        ClaimStaffForAzureSchool(
+          adopted(department, wisaPresence: wisaPresence),
+          config ?? cfg,
+        );
+
+    test('the list does not name us → the claim fires', () {
+      for (final department in <String?>['GBS', 'GBS,KAV', '', null]) {
+        expect(claim(department).evaluate(), isTrue, reason: '$department');
+      }
+    });
+
+    test('the list already names us → nothing to claim', () {
+      // Anywhere in the list, in any casing, with any surrounding whitespace —
+      // being listed second is the ordinary state (#237), not a defect.
+      for (final department in <String>[
+        'SSM',
+        'GBS,SSM',
+        'SSM,GBS',
+        'GBS, SSM',
+        'ssm',
+        'GBS,ssm,KAV',
+      ]) {
+        expect(claim(department).evaluate(), isFalse, reason: department);
+      }
+    });
+
+    test('a longer school code that merely contains our prefix does not count',
+        () {
+      // The read side's `staffBelongsToSchool` substring test says `SSMB`
+      // contains `SSM` and so marks the account as ours — which is why
+      // `LinkedStaff.azureNamesOurSchool` is the wrong thing to gate a *write*
+      // on. `SSMB` is somebody else's school: our claim is genuinely absent and
+      // has to be added beside it, never mistaken for it.
+      final action = claim('SSMB');
+      expect(action.evaluate(), isTrue);
+      expect(action.describeChanges().fields.single.after, 'SSMB,SSM');
+    });
+
+    test('a blank prefix claims nobody', () {
+      // Every list "lacks" an unconfigured prefix, so without this guard the
+      // claim would fire on the entire tenant and append an empty item.
+      final blank = staffConfig(schoolPrefix: '');
+      for (final department in <String?>['GBS', '', null]) {
+        expect(claim(department, config: blank).evaluate(), isFalse,
+            reason: '$department');
+      }
+    });
+
+    test('WISA has to place them in a school we manage', () {
+      // A colleague at a sibling group school is not ours to claim — the
+      // departure pair is what applies to them.
+      expect(
+        claim('GBS', wisaPresence: WisaPresence.groupOnly).evaluate(),
+        isFalse,
+      );
+      expect(
+        ClaimStaffForAzureSchool(
+          linkedStaff(
+              smartschool: ssStaff(), azure: azureStaff(department: '')),
+          cfg,
+        ).evaluate(),
+        isFalse,
+        reason: 'gone from WISA entirely',
+      );
+    });
+
+    test('no Office 365 account, nothing to claim', () {
+      expect(
+        ClaimStaffForAzureSchool(
+          linkedStaff(wisa: wisaStaff(), smartschool: ssStaff()),
+          cfg,
+        ).evaluate(),
+        isFalse,
+      );
+    });
+
+    test('the append keeps every existing entry verbatim, in order', () {
+      for (final MapEntry(key: before, value: after) in <String?, String>{
+        'SBE': 'SBE,SSM',
+        '': 'SSM',
+        null: 'SSM',
+        'GBS,SBE': 'GBS,SBE,SSM',
+        // Casing is the field's own and is not "corrected"; only surrounding
+        // whitespace and empty items go, exactly as the release normalises.
+        'gbs, KaV ': 'gbs,KaV,SSM',
+      }.entries) {
+        final change = claim(before).describeChanges().fields.single;
+        expect(change.field, 'department');
+        expect(change.before, before, reason: 'the whole field, before');
+        expect(change.after, after, reason: '$before');
+      }
+    });
+
+    test('it is dispatched from the modify branch, after the field repairs',
+        () {
+      final actions = staffActionsFor(adopted('GBS'), cfg);
+      expect(types(actions), [ClaimStaffForAzureSchool]);
+      expect(actions.single.describeChanges().system, Origin.azure);
+    });
+
+    test('it rides along with the Smartschool repairs, never replacing them',
+        () {
+      final actions = staffActionsFor(
+        linkedStaff(
+          wisa: wisaStaff(code: 'SMIT'),
+          smartschool: ssStaff(accountId: 'OLD'),
+          azure: azureStaff(department: 'GBS'),
+        ),
+        cfg,
+      );
+      expect(types(actions), [UpdateStaffWisaName, ClaimStaffForAzureSchool]);
+    });
+
+    test('it stands on its own — no alternative group, no chain', () {
+      final action = claim('GBS');
+      expect(action.alternativeGroup, isNull);
+      expect(action.unlocks, isEmpty);
+      expect(action.canApply, isTrue);
+    });
+
+    test('applying it makes the claim converge — it does not re-fire', () {
+      // The additive twin of `SetStaffCopyCode`'s idempotency: the value it
+      // writes is one `evaluate` reads as "already listed".
+      final written = claim('GBS').describeChanges().fields.single.after;
+      expect(claim(written).evaluate(), isFalse);
     });
   });
 }
