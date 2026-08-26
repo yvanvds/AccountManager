@@ -8,6 +8,8 @@ import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 import '../settings/connection_config.dart';
 import '../settings/settings_bootstrap.dart';
 import '../settings/wisa_rule_labels.dart';
+import '../update/app_release.dart' show AppRelease;
+import '../update/update_controller.dart';
 
 /// The Settings view (#106): edit the full [AppSettings] config document and
 /// write the two credentials (WISA password, Smartschool passphrase) through the
@@ -66,6 +68,7 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     required this.bootstrap,
     this.connection,
+    this.update,
   });
 
   /// Assembles (or returns the already-assembled) settings seams, or `null` when
@@ -79,6 +82,13 @@ class SettingsScreen extends StatefulWidget {
   /// (or a test) that wires nothing still renders the section, editing a
   /// throwaway copy rather than the operator's real `connection.json`.
   final ConnectionServices? connection;
+
+  /// This session's update check (#371) — owned by the [AppShell], which is why
+  /// it arrives as a live controller rather than as seams to assemble.
+  ///
+  /// `null` renders the Versie section with the version unknown and no check
+  /// button, which is what a build with no update mechanism honestly is.
+  final UpdateController? update;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -1106,13 +1116,28 @@ class _SettingsForm extends StatelessWidget {
   ///
   /// A tab rather than a section under Algemeen, and the last one, because it is
   /// the only body here that does not read the settings document: everything
-  /// else on this screen is unreachable exactly when this is needed. Kept as a
-  /// list of sections so a second one — the running version, for the public
-  /// builds of #371 — slots in beside it without touching the first.
+  /// else on this screen is unreachable exactly when this is needed. The second
+  /// section is the running version and its update check (#371), which slots in
+  /// here for the same reason: it is deployment identity, not school
+  /// configuration, and it has to be readable on an install whose settings
+  /// document will not load — "which version is this operator on?" is the first
+  /// question a support conversation asks.
   Widget _connectionTab() {
     return _tab('settings-tab-verbinding-body', <Widget>[
       _connectionSection(),
+      _versionSection(),
     ]);
+  }
+
+  /// The running build's version, and the check for a newer one (#371).
+  Widget _versionSection() {
+    final UpdateController? update = state.widget.update;
+    if (update == null) return const _VersionSection(controller: null);
+    return ListenableBuilder(
+      listenable: update,
+      builder: (BuildContext context, Widget? _) =>
+          _VersionSection(controller: update),
+    );
   }
 
   Widget _connectionSection() {
@@ -1460,6 +1485,87 @@ class _Section extends StatelessWidget {
           ...children,
         ],
       ),
+    );
+  }
+}
+
+/// The running build's version and its update check (#371).
+///
+/// Deliberately the *only* place the update mechanism can be operated from — the
+/// shell's offer bar reacts to a check, but the check itself, the version it
+/// compares against and the failure that stopped it are all read here, on
+/// demand. That split is what keeps a failed check silent: the news has a place
+/// to sit without going looking for the operator.
+class _VersionSection extends StatelessWidget {
+  const _VersionSection({required this.controller});
+
+  /// This session's check, or `null` on a build with no update mechanism — the
+  /// version then reads as unknown and no button is offered, rather than a
+  /// button that can never answer.
+  final UpdateController? controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final UpdateController? update = controller;
+    final String installed = update?.installedVersion ?? '';
+    final AppRelease? offered = update?.availableRelease;
+    final bool busy = update?.busy ?? false;
+
+    return _Section(
+      title: 'Versie',
+      children: <Widget>[
+        _Note(
+          keyValue: 'settings-version-current',
+          text: installed.isEmpty
+              ? 'Geïnstalleerde versie: onbekend.'
+              : 'Geïnstalleerde versie: $installed.',
+        ),
+        _Note(
+          keyValue: 'settings-version-status',
+          text: switch (update?.phase) {
+            null => 'Deze build heeft geen updatecontrole.',
+            UpdatePhase.idle => 'Er is nog niet gecontroleerd op updates.',
+            UpdatePhase.checking => 'Er wordt gecontroleerd op updates…',
+            _ => update!.message,
+          },
+        ),
+        if (offered != null && offered.notes.trim().isNotEmpty)
+          _Note(
+            keyValue: 'settings-version-notes',
+            text: offered.notes.trim(),
+          ),
+        if (update != null)
+          Wrap(
+            spacing: PlinkSpacing.s3,
+            runSpacing: PlinkSpacing.s2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              OutlinedButton.icon(
+                key: const ValueKey('settings-version-check'),
+                onPressed: busy ? null : update.check,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Controleren op updates'),
+              ),
+              // Present only when there is genuinely something to apply. This is
+              // the consent gate: no code path reaches `apply()` except this
+              // button and the shell's **Bijwerken**.
+              if (offered != null)
+                FilledButton.icon(
+                  key: const ValueKey('settings-version-apply'),
+                  onPressed: busy ? null : update.apply,
+                  icon: const Icon(Icons.system_update_alt_outlined),
+                  label: Text('Bijwerken naar ${offered.version}'),
+                ),
+            ],
+          ),
+        if (update?.phase == UpdatePhase.downloading) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          LinearProgressIndicator(
+            key: const ValueKey('settings-version-progress'),
+            value: update!.progress > 0 ? update.progress : null,
+          ),
+        ],
+      ],
     );
   }
 }

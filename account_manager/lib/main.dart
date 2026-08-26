@@ -7,6 +7,7 @@ import 'package:azure_api/azure_api.dart'
         InMemoryTokenCache,
         LoopbackAuthorizer,
         TokenCache;
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 
 import 'src/app.dart';
@@ -21,6 +22,7 @@ import 'src/auth/sign_in_session.dart';
 import 'src/reconcile/reconcile_bootstrap.dart';
 import 'src/settings/connection_config.dart';
 import 'src/settings/settings_bootstrap.dart';
+import 'src/update/update_bootstrap.dart';
 
 void main() {
   // Azure AD app-registration values come from --dart-define (see
@@ -84,6 +86,16 @@ void main() {
         probe: (StoreEndpoints ends) =>
             probeConnectionLive(ends, session: session),
       ),
+      // The update check (#371). Wired unconditionally too — an install whose
+      // AAD or Cosmos config is wrong is exactly the one that most needs to be
+      // able to move to a build where it is not.
+      //
+      // `autoCheck: kReleaseMode` is the only gate: a release build is an
+      // *installed* build, which is the only kind there is anything to update.
+      // A `flutter run` checkout and every integration-test launch would
+      // otherwise reach out to api.github.com on every start, and neither has an
+      // installer to apply. The manual button in Instellingen still works.
+      update: productionUpdateServices(autoCheck: kReleaseMode),
       // The reconcile stack (settings from Azure SQL, secrets from Key Vault,
       // the three connectors) is assembled lazily, the first time a screen that
       // needs it is opened — after the sign-in gate has a session to mint tokens

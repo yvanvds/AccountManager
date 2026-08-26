@@ -13,6 +13,7 @@ import '../screens/reconcile_screen.dart';
 import '../screens/settings_screen.dart';
 import '../settings/connection_config.dart';
 import '../settings/settings_bootstrap.dart';
+import '../update/update_controller.dart';
 import 'shell_navigation.dart';
 
 export 'shell_navigation.dart';
@@ -53,6 +54,7 @@ class AppShell extends StatefulWidget {
     this.reconcileBootstrap,
     this.settingsBootstrap,
     this.connection,
+    this.update,
   });
 
   /// Assembles the reconcile stack on first use, or `null` when Azure AD is
@@ -68,6 +70,14 @@ class AppShell extends StatefulWidget {
   /// bootstraps it is never gated on AAD: it is what an operator reaches for
   /// when the rest of the configuration is wrong.
   final ConnectionServices? connection;
+
+  /// How this build finds out about newer published releases (#371).
+  ///
+  /// The shell owns the controller rather than `main()` because the shell is
+  /// what has a lifecycle to hang it on — and because the two surfaces that read
+  /// it (the offer bar above the rail, and the Versie section in Instellingen)
+  /// are both below this point in the tree.
+  final UpdateServices? update;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -120,9 +130,18 @@ class _AppShellState extends State<AppShell> {
       builder: (_) => SettingsScreen(
         bootstrap: widget.settingsBootstrap,
         connection: widget.connection,
+        update: _update,
       ),
     ),
   ];
+
+  /// The update check for this session (#371), or `null` on a build with no
+  /// update mechanism wired.
+  ///
+  /// Built in [initState] — before `_destinations` is first read, which happens
+  /// on the first build — so the Settings destination closes over the same
+  /// instance the offer bar renders from.
+  UpdateController? _update;
 
   /// Index 0 is Synchronisatie, so a launch lands on the screen the session
   /// actually begins on (#366) rather than on a placeholder to click past.
@@ -144,6 +163,23 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     unawaited(_adopt());
+
+    // Fired and forgotten, which is the whole non-blocking requirement (#371):
+    // the first frame is built from this same `initState`, so nothing on screen
+    // is waiting on a network round-trip. `start()` never throws — a failed or
+    // offline check is a log line and nothing else.
+    final UpdateServices? services = widget.update;
+    if (services != null) {
+      final UpdateController controller = UpdateController(services);
+      _update = controller;
+      unawaited(controller.start());
+    }
+  }
+
+  @override
+  void dispose() {
+    _update?.dispose();
+    super.dispose();
   }
 
   /// Takes hold of the (memoized) reconcile stack so the rail can count what
@@ -283,6 +319,7 @@ class _AppShellState extends State<AppShell> {
       body: Column(
         children: <Widget>[
           const PlinkIdentityRule(),
+          _updateOffer(),
           Expanded(
             child: Row(
               children: <Widget>[
@@ -302,6 +339,26 @@ class _AppShellState extends State<AppShell> {
           ),
         ],
       ),
+    );
+  }
+
+  /// The update offer (#371), or nothing at all — which is what it is almost
+  /// always.
+  ///
+  /// A bar across the top of the shell rather than a dialog, and that is the
+  /// design decision rather than a styling one: an update must never interrupt
+  /// what an operator is doing, so it takes a strip of chrome and waits. It
+  /// appears only once a check has actually found a newer release, so a build
+  /// that never checks, a check that failed, and a check that came back
+  /// up-to-date all render identically: nothing.
+  Widget _updateOffer() {
+    final UpdateController? update = _update;
+    if (update == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: update,
+      builder: (BuildContext context, Widget? _) => update.isOffering
+          ? _UpdateOfferBar(controller: update)
+          : const SizedBox.shrink(),
     );
   }
 
@@ -368,6 +425,79 @@ class _AppShellState extends State<AppShell> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The strip that offers a newer release (#371).
+///
+/// Two buttons and no third: **Bijwerken** applies it, **Later** puts the bar
+/// away for this session. There is deliberately no "always update" — the
+/// consent is per update, because the cost of getting it wrong is a restart in
+/// the middle of a sync.
+class _UpdateOfferBar extends StatelessWidget {
+  const _UpdateOfferBar({required this.controller});
+
+  final UpdateController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final TextTheme text = Theme.of(context).textTheme;
+    final bool working = controller.phase != UpdatePhase.available;
+
+    return Material(
+      key: const ValueKey('update-offer'),
+      color: colors.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: PlinkSpacing.s5,
+          vertical: PlinkSpacing.s3,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(
+                  Icons.system_update_alt_outlined,
+                  color: colors.onSecondaryContainer,
+                ),
+                const SizedBox(width: PlinkSpacing.s3),
+                Expanded(
+                  child: Text(
+                    controller.message,
+                    key: const ValueKey('update-offer-message'),
+                    style: text.bodyMedium
+                        ?.copyWith(color: colors.onSecondaryContainer),
+                  ),
+                ),
+                const SizedBox(width: PlinkSpacing.s3),
+                FilledButton(
+                  key: const ValueKey('update-offer-apply'),
+                  onPressed: working ? null : controller.apply,
+                  child: const Text('Bijwerken'),
+                ),
+                const SizedBox(width: PlinkSpacing.s2),
+                TextButton(
+                  key: const ValueKey('update-offer-dismiss'),
+                  onPressed: working ? null : controller.dismiss,
+                  child: const Text('Later'),
+                ),
+              ],
+            ),
+            if (controller.phase == UpdatePhase.downloading) ...<Widget>[
+              const SizedBox(height: PlinkSpacing.s2),
+              LinearProgressIndicator(
+                key: const ValueKey('update-offer-progress'),
+                // Indeterminate until the server tells us how big the download
+                // is: a bar frozen at 0% reads as a hang.
+                value: controller.progress > 0 ? controller.progress : null,
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
