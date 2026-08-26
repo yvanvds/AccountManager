@@ -1,5 +1,6 @@
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
+import 'package:account_manager/src/format/timestamps.dart';
 import 'package:account_manager/src/reconcile/log_buffer.dart';
 import 'package:account_manager/src/reconcile/reconcile_controller.dart';
 import 'package:account_state/account_state.dart';
@@ -3210,6 +3211,61 @@ void main() {
       // it has never held Office, and so which of the two is the live account.
       expect(twin, contains('bedrijf GBS'));
       expect(twin, contains('functie —'));
+    });
+
+    test('each line carries the creation date and the last sign-in (#363)',
+        () async {
+      // The two facts #360 asked for and could not have. They are the ones that
+      // *contradict* the licensing fields here: the licensed account was made
+      // last January and abandoned in February, while the unlicensed twin — the
+      // older one, from before this port wrote `jobTitle` — was signed into last
+      // week. Without them the tile argues for the wrong account.
+      final h = duplicateAzureAccountHarness();
+      await h.controller.sync();
+
+      final accounts = h.controller.azureIdentityCollisions.single.accounts;
+      expect(
+        accounts.first,
+        allOf(
+          contains(
+              'aangemaakt ${formatRuleStamp(DateTime.utc(2026, 1, 15, 12))}'),
+          contains(
+              'laatste aanmelding ${formatRuleStamp(DateTime.utc(2026, 2, 2, 12))}'),
+        ),
+      );
+      expect(
+        accounts.last,
+        allOf(
+          contains(
+              'aangemaakt ${formatRuleStamp(DateTime.utc(2025, 9, 1, 12))}'),
+          contains(
+              'laatste aanmelding ${formatRuleStamp(DateTime.utc(2026, 8, 20, 12))}'),
+        ),
+      );
+      // Absolute, with the year: these two dates are compared against each
+      // other across years, so a stamp whose year is only implied is worthless.
+      expect(accounts.first, contains('/2026 '));
+      expect(accounts.last, contains('/2025 '));
+    });
+
+    test('a fact the pull could not read shows as unknown, never guessed',
+        () async {
+      // `signInActivity` needs AuditLog.Read.All, which the app has not been
+      // granted yet, so a refused read is the ordinary case — and an account
+      // cached from before #363's `$select` has no creation date either. Both
+      // must read as unknown rather than as "never signed in".
+      final h = ReconcileHarness(
+        azure: azSnap(users: [
+          azUser(),
+          azUser(id: 'az-twin', upn: 'jane-doe@student.school.example'),
+        ]),
+      );
+      await h.controller.sync();
+
+      for (final line in h.controller.azureIdentityCollisions.single.accounts) {
+        expect(line, contains('aangemaakt —'));
+        expect(line, contains('laatste aanmelding —'));
+      }
     });
 
     test('the twin does not become a departed student to delete', () async {

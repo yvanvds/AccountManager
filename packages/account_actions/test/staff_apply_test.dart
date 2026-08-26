@@ -325,18 +325,24 @@ void main() {
     });
 
     test(
-        'no staff action ever PATCHes an existing account\'s department (#237)',
-        () async {
+        'no staff action ever rewrites an existing account\'s department '
+        '(#237/#373)', () async {
       // `department` is owned by other software and lists every school the
       // teacher is active at (`GBS,SSM`). The removed #233 repair fired on any
       // list our prefix did not lead and rewrote it to a bare `SSM`, deleting
-      // the sibling school's claim. Nothing may write it again — asserted over
-      // the whole staff family, not one action, so a reintroduction anywhere
-      // fails here.
+      // the sibling school's claim.
+      //
+      // Since #373 the family does PATCH the field — additively, our own item
+      // only — so the assertion is the one that always mattered: whatever
+      // actually goes over the wire, every school that is not ours comes back
+      // out of it verbatim and in order. Asserted over the whole staff family
+      // rather than one action, so a rewrite reintroduced anywhere fails here.
       for (final department in <String?>[
         'GBS,SSM',
         'SSM,GBS',
         'GBS',
+        'GBS, KAV',
+        'SSMB',
         'OTHER - Wiskunde',
         null,
       ]) {
@@ -353,11 +359,25 @@ void main() {
         for (final action in staffActionsFor(staff, cfg)) {
           await action.apply(connectors, const ApplyOptions());
         }
-        expect(
-          transport.requests.where((r) => r.method == 'PATCH'),
-          isEmpty,
-          reason: 'department: $department',
-        );
+        final others = departmentSchoolsExcept(department, cfg.schoolPrefix);
+        for (final patch in transport.requests.where(
+          (r) => r.method == 'PATCH',
+        )) {
+          final body = jsonDecode(patch.body!) as Map<String, dynamic>;
+          expect(
+            body.keys,
+            <String>['department'],
+            reason: 'a department write must touch nothing else: $department',
+          );
+          expect(
+            departmentSchoolsExcept(
+              body['department'] as String?,
+              cfg.schoolPrefix,
+            ),
+            others,
+            reason: 'a sibling claim was evicted: $department',
+          );
+        }
       }
     });
 
@@ -525,6 +545,68 @@ void main() {
       expect(result.outcome, ActionOutcome.dryRun);
       expect((result.azure! as az.AzureUser).department, 'GBS');
       expect(transport.requests, isEmpty);
+    });
+
+    test('ClaimStaffForAzureSchool: PATCHes department, appends our entry',
+        () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ClaimStaffForAzureSchool(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(id: 'az-adopted', department: 'GBS,SBE'),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.applied);
+      expect(result.removed, isFalse, reason: 'nothing is deleted');
+      expect(transport.sent('PATCH', pathContains: 'users'), isTrue);
+      expect(transport.requests.single.url.path, contains('az-adopted'));
+      final body =
+          jsonDecode(transport.requests.single.body!) as Map<String, dynamic>;
+      // The whole write, so the assertion also proves nothing else on the
+      // account is touched.
+      expect(body, <String, dynamic>{'department': 'GBS,SBE,SSM'});
+      // The mutated record travels back so the snapshot patch matches the write.
+      expect((result.azure! as az.AzureUser).department, 'GBS,SBE,SSM');
+    });
+
+    test('ClaimStaffForAzureSchool dry run: no Graph call', () async {
+      final transport = RecordingGraphTransport();
+      final connectors = Connectors(azure: azureConnector(transport));
+      final action = ClaimStaffForAzureSchool(
+        linkedStaff(
+          wisa: wisaStaff(),
+          smartschool: ssStaff(),
+          azure: azureStaff(department: 'GBS'),
+        ),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, ApplyOptions.dry);
+      expect(result.outcome, ActionOutcome.dryRun);
+      expect((result.azure! as az.AzureUser).department, 'GBS,SSM');
+      expect(transport.requests, isEmpty);
+    });
+
+    test('a failed claim leaves the bound record untouched (INV-41)', () async {
+      final transport = RecordingGraphTransport(
+        handler: (_) => const az.GraphResponse(statusCode: 503),
+      );
+      final connectors = Connectors(azure: azureConnector(transport));
+      final azure = azureStaff(department: 'GBS');
+      final action = ClaimStaffForAzureSchool(
+        linkedStaff(wisa: wisaStaff(), smartschool: ssStaff(), azure: azure),
+        cfg,
+      );
+
+      final result = await action.apply(connectors, const ApplyOptions());
+      expect(result.outcome, ActionOutcome.failed);
+      expect(result.error, isNotNull);
+      expect(azure.department, 'GBS');
     });
 
     test('a failed release leaves the bound record untouched (INV-41)',

@@ -666,8 +666,9 @@ class _OverviewSection extends StatelessWidget {
 /// Two or more Office 365 accounts on one WISA id, as a plain, always-expanded
 /// notice (INV-26, #360): the headline says how many accounts share the id, and
 /// each account gets a line with the facts that tell the live one from the
-/// abandoned one — UPN, object id, whether it is enabled, and the
-/// `companyName`/`jobTitle` pair the licence group's rule turns on.
+/// abandoned one — UPN, object id, whether it is enabled, the
+/// `companyName`/`jobTitle` pair the licence group's rule turns on, and since
+/// #363 when the account was created and when somebody last signed into it.
 ///
 /// Shown open and with no control, for the same reason [_IdCollisionTile] is:
 /// there is nothing here for the app to do. Resolving the pair means deleting an

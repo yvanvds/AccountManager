@@ -318,6 +318,34 @@ LinkedStaff linkedStaff({
       wisaPresence: wisaPresence,
     );
 
+/// The Smartschool group seat a staff create needs (#374). Defaults to the
+/// happy path: a resolvable, non-official `Leerkrachten` node and a resolvable
+/// `Leerlingen` node.
+///
+/// Pass `withStaffGroup: false` for a tenant whose tree carries no staff group
+/// (the add cannot be addressed at all — `saveUserToClassesAndGroups` takes a
+/// **code**), or `withDefaultGroup: false` for a pull whose roots never reached
+/// the default group (the removal is addressed by **name** and still goes out;
+/// only the local splice has nothing to drop).
+StaffPlacement staffPlacement({
+  Group? staffGroup,
+  Group? defaultGroup,
+  bool withStaffGroup = true,
+  bool withDefaultGroup = true,
+  String defaultGroupName = smartschoolDefaultGroupName,
+}) =>
+    StaffPlacement(
+      staffGroup: staffGroup ??
+          (withStaffGroup
+              ? ssGroupNode(code: 'LK', name: smartschoolStaffGroupName)
+              : null),
+      defaultGroup: defaultGroup ??
+          (withDefaultGroup
+              ? ssGroupNode(code: 'LLN', name: defaultGroupName)
+              : null),
+      defaultGroupName: defaultGroupName,
+    );
+
 /// A fully-synced staff member present in all three systems with matching
 /// fields — no staff action should apply to it.
 LinkedStaff fullySyncedStaff() => linkedStaff(

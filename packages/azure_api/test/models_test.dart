@@ -140,7 +140,114 @@ void main() {
         // repair it.
         'jobTitle',
         'accountEnabled',
+        // #363: the creation date rides along on the bulk read because it needs
+        // no permission the pull does not already hold. `signInActivity` is
+        // deliberately *not* here — it needs AuditLog.Read.All, so in this list
+        // it would fail every pull instead of one extra targeted read.
+        'createdDateTime',
       ]);
+      expect(AzureUser.graphSelectFields, isNot(contains('signInActivity')));
+    });
+
+    group('createdDateTime and signInActivity (#363)', () {
+      test('a Graph row carries the creation date through as UTC', () {
+        final user = AzureUser.fromGraphJson(<String, dynamic>{
+          'id': 'az1',
+          'userPrincipalName': 'a@b',
+          'createdDateTime': '2025-09-01T12:00:00Z',
+        });
+        expect(user.createdAt, DateTime.utc(2025, 9, 1, 12));
+        // Not selected on any bulk read, so a plain row leaves it unknown.
+        expect(user.lastSignIn, isNull);
+      });
+
+      test('a row with no creation date leaves it unknown, not epoch', () {
+        final user = AzureUser.fromGraphJson(
+          <String, dynamic>{'id': 'az1', 'userPrincipalName': 'a@b'},
+        );
+        expect(user.createdAt, isNull);
+      });
+
+      test('signInActivity takes the later of the two timestamps', () {
+        // A student who only ever meets the account through a signed-in Outlook
+        // produces nothing but non-interactive refreshes; calling that "last
+        // used in February" would be exactly the wrong answer.
+        expect(
+          AzureUser.parseSignInActivity(<String, dynamic>{
+            'lastSignInDateTime': '2026-02-02T09:00:00Z',
+            'lastNonInteractiveSignInDateTime': '2026-08-20T07:30:00Z',
+          }),
+          DateTime.utc(2026, 8, 20, 7, 30),
+        );
+        expect(
+          AzureUser.parseSignInActivity(<String, dynamic>{
+            'lastSignInDateTime': '2026-08-20T07:30:00Z',
+            'lastNonInteractiveSignInDateTime': '2026-02-02T09:00:00Z',
+          }),
+          DateTime.utc(2026, 8, 20, 7, 30),
+        );
+      });
+
+      test('signInActivity survives either half being absent or null', () {
+        expect(
+          AzureUser.parseSignInActivity(<String, dynamic>{
+            'lastSignInDateTime': '2026-02-02T09:00:00Z',
+            'lastNonInteractiveSignInDateTime': null,
+          }),
+          DateTime.utc(2026, 2, 2, 9),
+        );
+        expect(
+          AzureUser.parseSignInActivity(<String, dynamic>{
+            'lastNonInteractiveSignInDateTime': '2026-02-02T09:00:00Z',
+          }),
+          DateTime.utc(2026, 2, 2, 9),
+        );
+        // An account that has never signed in: Graph sends the object with
+        // every timestamp null.
+        expect(
+          AzureUser.parseSignInActivity(<String, dynamic>{
+            'lastSignInDateTime': null,
+            'lastNonInteractiveSignInDateTime': null,
+          }),
+          isNull,
+        );
+        expect(AzureUser.parseSignInActivity(null), isNull);
+      });
+
+      test('a delta row that never mentions them keeps both (#288)', () {
+        // `signInActivity` cannot be in a delta `$select` at all, so a resumed
+        // row that blanked it would throw away the targeted read of the pass
+        // that fetched it.
+        final stored = AzureUser(
+          id: 'az1',
+          upn: 'a@b',
+          createdAt: DateTime.utc(2025, 9, 1, 12),
+          lastSignIn: DateTime.utc(2026, 8, 20, 7, 30),
+        );
+        final merged = stored.mergeGraphJson(
+          <String, dynamic>{'id': 'az1', 'displayName': 'A B'},
+        );
+        expect(merged.createdAt, DateTime.utc(2025, 9, 1, 12));
+        expect(merged.lastSignIn, DateTime.utc(2026, 8, 20, 7, 30));
+      });
+
+      test('both round-trip through the cache shape', () {
+        final user = AzureUser(
+          id: 'az1',
+          upn: 'a@b',
+          createdAt: DateTime.utc(2025, 9, 1, 12),
+          lastSignIn: DateTime.utc(2026, 8, 20, 7, 30),
+        );
+        expect(AzureUser.fromJson(user.toJson()), user);
+        // Value-based equality covers them, so a snapshot restored from the
+        // cache cannot silently forget which twin was signed into.
+        expect(
+          AzureUser.fromJson(
+            user.copyWith(lastSignIn: DateTime.utc(2026, 8, 21)).toJson(),
+          ),
+          isNot(user),
+        );
+      });
     });
 
     test('toJson/fromJson round-trip', () {

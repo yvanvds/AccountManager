@@ -7737,6 +7737,79 @@ void main() {
   });
 
   testWidgets(
+      'the duplicate tile dates each account and says which one is being '
+      'signed into (#363)', (WidgetTester tester) async {
+    // The two facts #360 asked for and could not have, because neither field
+    // was read: `createdDateTime` and `signInActivity`. They matter because in
+    // this pair — the audited live one — they *contradict* the licensing
+    // fields already on the tile. The licensed account was made last January
+    // and abandoned in February; the twin with no `jobTitle`, made months
+    // earlier by an older run of this app, was signed into last week. Read
+    // without them the tile argues confidently for the wrong account, and the
+    // wrong account is the one holding the student's mail and OneDrive.
+    //
+    // Driven through the real app rather than the widget alone: the tile is one
+    // open notice among several on Synchronisatie, each account is a single
+    // wrapping line of `·`-separated facts, and two more facts per line is
+    // exactly the kind of growth that reads fine in isolation and overflows in
+    // the real column at the real font.
+    useTallWindow(tester);
+    final harness = duplicateAzureAccountHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    final tile = find.byKey(const ValueKey('azure-identity-collision-1'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+
+    String lineFor(String upn) => tester
+        .widget<Text>(find.descendant(
+          of: tile,
+          matching: find.textContaining('$upn@student.school.example · id'),
+        ))
+        .data!;
+
+    // The account the join linked: created this January, last signed into in
+    // February. Only month and year are asserted — the stamp is rendered in the
+    // operator's own time zone, and the test must not depend on the runner's.
+    final linked = lineFor('jane.doe');
+    expect(linked, contains('aangemaakt '));
+    expect(linked, contains('/01/2026'));
+    expect(linked, contains('laatste aanmelding '));
+    expect(linked, contains('/02/2026'));
+
+    // The unlicensed twin: older, and the one actually in use.
+    final twin = lineFor('jane-doe');
+    expect(twin, contains('/09/2025'));
+    expect(twin, contains('/08/2026'));
+    // Still the same line as before, with the licensing facts intact — the two
+    // dates were added to it, they did not displace anything.
+    expect(twin, contains('bedrijf GBS'));
+    expect(twin, contains('functie —'));
+
+    // The log carries the same facts, which is where an operator reconstructs a
+    // pass from afterwards.
+    final logged = harness.log.entries
+        .where((e) => e.message.contains('Dubbel Office 365-account'))
+        .single
+        .message;
+    expect(logged, contains('aangemaakt '));
+    expect(logged, contains('laatste aanmelding '));
+
+    // Nothing overflowed and nothing threw laying the longer lines out.
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an admin co-account gets its own card instead of merging its actions '
       'onto the student\'s (#323)', (WidgetTester tester) async {
     // The live cause of the #319 card, and nothing about it is constructed: the
@@ -12472,6 +12545,207 @@ void main() {
     final messages = harness.log.entries.map((e) => e.message);
     expect(messages, contains(contains('Maak een nieuw Office 365 account')));
     expect(messages, contains(contains('Maak een nieuw Smartschool account')));
+  });
+
+  testWidgets(
+      'a staff account created in Acties → Personeel lands in Leerkrachten and '
+      'leaves the default group end-to-end (#374)',
+      (WidgetTester tester) async {
+    // Smartschool seats **every** account `saveUser` creates in the platform
+    // default group, `Leerlingen`, whatever role it carries. Legacy compensated
+    // for that inside the staff create with two follow-up writes; the port
+    // dropped both, so every staff account it had ever made sat in the student
+    // subtree and in no staff group at all — invisible to anything that walks
+    // Personeel, and noise in everything that walks Leerlingen.
+    //
+    // Only a run of the real app covers the path this lived on end to end: the
+    // seat is resolved by the State layer from the Smartschool snapshot the
+    // sync produced, threaded into the dispatch the Acties screen renders, and
+    // performed by the create the #240 chain runs against the *relinked*
+    // record — so the account the operator's one click makes has to be the one
+    // that gets seated, and the local snapshot has to show it with no re-pull.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('Personeel',
+              code: 'PERS', official: false, type: GroupType.group),
+          ssGroup('Leerkrachten',
+              code: 'LK', official: false, type: GroupType.group),
+          ssGroup('Leerlingen',
+              code: 'LLN', official: false, type: GroupType.group),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Browse Acties → Personeel and apply the new hire's one decision, exactly
+    // as the operator does.
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'staff');
+    final id = entry.targetId;
+    await selectAccount(tester, id);
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+
+    // The create landed, and so did both compensating writes — the add by group
+    // **code**, the removal by group **name**, which is the asymmetry the
+    // Smartschool API imposes on these two calls.
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
+    expect(harness.soap.joinedGroups, <String>['LK']);
+    expect(harness.soap.leftGroups, <String>['Leerlingen']);
+    expect(harness.soap.movedToClasses, isEmpty,
+        reason: 'a staff seat is a group membership, never an official class');
+
+    // And the local snapshot says so, off the incremental patch rather than a
+    // second pull: the teacher is in Leerkrachten and in no student group.
+    final uid = harness.app.smartschool.snapshot!.accounts.single.uid;
+    expect(
+      harness.app.smartschool.snapshot!.memberships
+          .where((m) => m.uid == uid)
+          .map((m) => m.groupId.value),
+      <String>['LK'],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a teacher adopted from a sibling school is claimed for ours, and the '
+      'other schools survive the write end-to-end (#373)',
+      (WidgetTester tester) async {
+    // As reported from the live tenant. A teacher who just started here already
+    // held an Office 365 account from a sibling group school, so her
+    // `department` names that school and not us. Her Acties → Personeel card
+    // showed WISA + Smartschool + Office 365 all green and "Geen openstaande
+    // beslissingen voor dit account" — nothing anywhere offered to add us.
+    //
+    // She is in the snapshot at all only because the `employeeId` back-fill
+    // (#231) adopts every staff member WISA lists: the Azure bulk read's
+    // server-side `$filter` (`startswith(department,'GBS')`) cannot see her, and
+    // #268 ruled that leg cannot be widened. So the day WISA stops listing her
+    // there is no id to back-fill from and no `department` naming us, she drops
+    // out of `belongsToOurSchool` entirely, and the cleanup
+    // `ReleaseStaffFromAzureSchool` / `RemoveStaffFromAzure` exist for can no
+    // longer be reached.
+    //
+    // Only a run of the real app covers this: the silence was the *dispatch's*
+    // modify branch meeting a record the linker had marked `azureNamesOurSchool
+    // == false`, and what the fix has to reach is the card the operator reads
+    // and the Graph write their click performs — with every sibling claim in a
+    // field we do not own (#237) still standing afterwards.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: const [],
+        schools: [wisaSchool(1)],
+        staff: [wisaStaff()],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      // Two sibling schools of the group, ours (GBS) named by neither.
+      azure: azSnap(users: [azStaffUser(department: 'SSM,KAV')]),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenActions(tester);
+    expect(harness.controller.error, isNull);
+
+    // The state the report describes: complete in all three systems, WISA
+    // placing her here, and the Azure field naming somebody else.
+    final linked = harness.controller.linked!.snapshot.staff.single;
+    expect(linked.isInOurWisa, isTrue);
+    expect(linked.smartschool, isNotNull);
+    expect(linked.azure?.id, 'az-staff');
+    expect(linked.azureNamesOurSchool, isFalse);
+
+    // Her card owes exactly one write now, where it used to owe none.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final entry = harness.controller.pendingEntries
+        .singleWhere((e) => e.family == 'staff');
+    expect(
+      entry.choices.map((c) => c.selected.changes.summary),
+      <String>['Voeg onze school toe aan het Office 365 account'],
+    );
+    final String id = entry.targetId;
+    await selectAccount(tester, id);
+    expect(find.text('Voeg onze school toe aan het Office 365 account'),
+        findsOneWidget);
+
+    // Apply it, confirmation and all.
+    final Finder apply = find.byKey(ValueKey('entry-apply-$id'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
+
+    // One Graph PATCH went out, carrying that field and nothing else — and our
+    // entry is *appended*: both sibling claims survive verbatim and in order,
+    // which is the whole difference between this and the rewrite #237 removed.
+    final patches =
+        harness.graph.requests.where((r) => r.method == 'PATCH').toList();
+    expect(patches, hasLength(1));
+    expect(
+      jsonDecode(patches.single.body!),
+      <String, dynamic>{'department': 'SSM,KAV,GBS'},
+    );
+    expect(harness.graph.requests.any((r) => r.method == 'DELETE'), isFalse);
+
+    // The record the app holds says so off the incremental patch, so the very
+    // next pull's narrow `$filter` would find her without the back-fill.
+    expect(harness.app.azure.snapshot!.users.single.department, 'SSM,KAV,GBS');
+
+    // And the relinked record now names us, with nothing left to apply on it —
+    // the claim converges, it does not re-offer itself.
+    expect(
+      harness.controller.linked!.snapshot.staff.single.azureNamesOurSchool,
+      isTrue,
+    );
+    expect(
+      harness.controller.pendingEntries.where((e) => e.family == 'staff'),
+      isEmpty,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

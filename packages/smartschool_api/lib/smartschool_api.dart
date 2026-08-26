@@ -41,6 +41,16 @@ export 'src/parsing/mappings.dart'
         smartschoolRole,
         smartschoolUserIdFrom,
         statusFromAccountState;
+export 'src/repair/staff_seating.dart'
+    show
+        MisSeatedStaffAccount,
+        StaffSeatRepair,
+        misSeatedStaffAccounts,
+        repairStaffSeating,
+        resolveStaffGroup,
+        smartschoolDefaultGroupName,
+        smartschoolStaffGroupName,
+        smartschoolStaffRootName;
 export 'src/rules/import_rules.dart'
     show
         DiscardSmartschoolGroup,

@@ -53,6 +53,18 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// "a move happened" is not "this class is the one it wrote".
   final List<String> movedToClasses = <String>[];
 
+  /// The group codes of every `saveUserToClassesAndGroups` this transport
+  /// accepted, in order — the **non-official** groups an account was actually
+  /// added to (#374). Separate from [movedToClasses] because the two are
+  /// different writes on different kinds of group, and read off the envelope
+  /// for the same reason: "the account was seated" is not "it was seated here".
+  final List<String> joinedGroups = <String>[];
+
+  /// The group **names** of every `removeUserFromGroup` this transport
+  /// accepted, in order (#374) — names, not codes, because that is what the
+  /// API takes here, the one place it does.
+  final List<String> leftGroups = <String>[];
+
   /// The `stamboeknummer` every `saveUser` carried, in order (#338). A
   /// schoolloopbaan keeps one stamnummer **per row** and `saveUser` writes it to
   /// the *last* row, so what matters is not that a save happened but which
@@ -82,6 +94,7 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
 
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
   static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
+  static final RegExp _csvListArg = RegExp(r'<csvList[^>]*>([^<]*)</csvList>');
   static final RegExp _stamboekArg =
       RegExp(r'<stamboeknummer[^>]*>([^<]*)</stamboeknummer>');
   static final RegExp _schoolYearArg =
@@ -108,6 +121,16 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.endsWith('#saveUserToClass')) {
       final match = _classArg.firstMatch(envelope);
       if (match != null) movedToClasses.add(match.group(1)!);
+    }
+    if (soapAction.endsWith('#saveUserToClassesAndGroups')) {
+      final match = _csvListArg.firstMatch(envelope);
+      if (match != null) joinedGroups.add(match.group(1)!);
+    }
+    // `removeUserFromGroup` names its target in the same `class` part the
+    // official move uses, but by **name** rather than by code.
+    if (soapAction.endsWith('#removeUserFromGroup')) {
+      final match = _classArg.firstMatch(envelope);
+      if (match != null) leftGroups.add(match.group(1)!);
     }
     // Likewise exact: `saveUserParameter` shares the prefix but carries no
     // stamboeknummer at all.
@@ -1511,6 +1534,12 @@ az.AzureUser azUser({
   // whose student sits in another class passes it, and one about the *stale*
   // copy the issue is named for passes last year's class or null.
   String? department = '3C',
+  // When Entra made the account, and when somebody last signed into it (#363).
+  // Unknown by default — nothing outside the duplicate-identity report reads
+  // them, and `null` is what an account pulled before #363's `$select` (or one
+  // whose sign-in read was refused) really carries.
+  DateTime? createdAt,
+  DateTime? lastSignIn,
 }) =>
     az.AzureUser(
       id: id,
@@ -1522,6 +1551,8 @@ az.AzureUser azUser({
       companyName: companyName,
       jobTitle: jobTitle,
       department: department,
+      createdAt: createdAt,
+      lastSignIn: lastSignIn,
     );
 
 /// An Azure **staff** account. Staff carry no `companyName`; their school lives
@@ -1894,18 +1925,32 @@ ReconcileHarness idCollisionHarness({InMemoryLinkedStore? linkedStore}) =>
 /// `companyName` and no WISA row — reads as a departed student and raises
 /// `RemoveStudentFromAzure` on it. Which of the pair that lands on is decided by
 /// nothing but snapshot order.
+///
+/// The two life dates (#363) complete the pathology, and they contradict the
+/// licensing ones on purpose. The twin is the **older** account — made before
+/// this port started writing `jobTitle` (#358), which is why it has none — and
+/// it is the one with recent sign-in activity. So the licensed account is the
+/// one nobody uses, and the account the student actually works in is the one
+/// that has never held Office. That is the whole reason these two facts had to
+/// reach the operator: without them the tile argues confidently for the wrong
+/// account.
 ReconcileHarness duplicateAzureAccountHarness({
   InMemoryLinkedStore? linkedStore,
 }) =>
     ReconcileHarness(
       linkedStore: linkedStore,
       azure: azSnap(users: [
-        azUser(),
+        azUser(
+          createdAt: DateTime.utc(2026, 1, 15, 12),
+          lastSignIn: DateTime.utc(2026, 2, 2, 12),
+        ),
         azUser(
           id: 'az-twin',
           upn: 'jane-doe@student.school.example',
           jobTitle: null,
           department: null,
+          createdAt: DateTime.utc(2025, 9, 1, 12),
+          lastSignIn: DateTime.utc(2026, 8, 20, 12),
         ),
       ]),
     );

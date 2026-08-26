@@ -44,10 +44,12 @@ class LinkedState {
   /// Applicable student actions, in snapshot order, with class placement wired.
   final List<actions.StudentAction> studentActions;
 
-  /// Applicable staff actions, in snapshot order. Staff carry no placement
-  /// (their Office 365 group actions are out of the port's scope), so this is a
-  /// plain dispatch — included here so [LinkedState] is the one derived view of
-  /// every family, not just the placement-bearing two.
+  /// Applicable staff actions, in snapshot order, with the Smartschool group
+  /// seat a new staff account needs wired (#374). Their *Office 365* group
+  /// actions remain out of the port's scope, so unlike the student and group
+  /// families this placement is one value for the whole snapshot rather than a
+  /// per-record callback: it answers where two fixed-name groups are, nothing
+  /// about the person.
   final List<actions.StaffAction> staffActions;
 
   /// Applicable group actions, in snapshot order, with group placement wired.
@@ -119,7 +121,11 @@ class LinkedState {
         placementFor: placements.classPlacementFor,
         azurePlacementFor: azureClassGroups.placementFor,
       ),
-      staffActions: actions.staffActions(snapshot, staffConfig),
+      staffActions: actions.staffActions(
+        snapshot,
+        staffConfig,
+        placement: placements.staffPlacement,
+      ),
       groupActions: actions.groupActions(
         snapshot,
         placementFor: placements.groupPlacementFor,

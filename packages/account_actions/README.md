@@ -184,7 +184,7 @@ branches are mutually exclusive just like the student parser. The staff
 lifecycle set is `AddStaffToAzure`, `AddStaffToSmartschool`,
 `RemoveStaffFromSmartschool`, `DontImportStaffFromWisa`, `RemoveStaffFromAzure`;
 the modify set is `UpdateStaffWisaName`, `ModifySmartschoolStaffEmail`,
-`SetStaffCopyCode`. Staff bridge to Smartschool
+`SetStaffCopyCode`, `ClaimStaffForAzureSchool`. Staff bridge to Smartschool
 by `WisaStaff.code` (not `wisaId`) — `AddStaffToSmartschool` and
 `UpdateStaffWisaName` write the code into `accountId` (spec §4, OQ-1), while the
 numeric `wisaId` becomes the copy-code.
@@ -338,6 +338,49 @@ Smartschool yet, so gating on `resolveClass != null` would suppress the very
 moves the action exists for. A class that is ours but missing from Smartschool
 still fails loudly at apply time.
 
+## Staff group seat (#374)
+
+Smartschool's `saveUser` seats **every** account it creates in the platform
+default group, `Leerlingen`, whatever role the account carries. A staff create
+therefore has two unconditional follow-up writes, which legacy
+`Action\StaffAccount\AddToSmartschool.Apply` performs and this port had dropped:
+
+```csharp
+await GroupManager.AddUserToGroup(smartschool, Root.Find("Leerkrachten"));
+await GroupManager.RemoveUserFromGroup(smartschool, Root.Find("Leerlingen"));
+```
+
+`AddStaffToSmartschool` takes a third injectable, `StaffPlacement`, carrying the
+resolved `Leerkrachten` node and the default group's name (plus its node, when
+the snapshot has one). The asymmetry is the API's:
+`saveUserToClassesAndGroups` addresses a group by **code**, so the add needs the
+resolved node, while `removeUserFromGroup` addresses one by **name** and happens
+whether or not our root-scoped pull saw the node. It is **opt-in** on
+`staffActions` / `staffActionsFor` — one value for the whole snapshot, not a
+per-record callback, because the seat asks nothing about the person. Without it
+the create behaves exactly as it did before #374.
+
+Both writes are **best-effort** (INV-41), like the student class placement: the
+create is the success criterion, and a failed seat must not fail — and so retry
+— a `saveUser` that already landed. Unlike the student placement, though,
+*every* way a seat misses produces an `ActionResult.warnings` line, not only a
+throw: a mis-placed student is re-caught next pass by
+`MoveToSmartschoolClassGroup`, whereas nothing re-examines a staff member's
+Smartschool group membership at all, so a missed seat has no safety net and the
+operator has to hear about it.
+
+Each write that lands names its group (`ActionResult.joinedGroup` /
+`leftGroup`), so the State layer can splice the membership without a re-pull.
+That splice is deliberately not the class one: a class seat *replaces* the one
+official class Smartschool allows, while these are plain group rows, so the
+patch adds one row and drops another and leaves everything else alone.
+
+The group **names** are constants (`smartschoolStaffGroupName`,
+`smartschoolDefaultGroupName`), not settings. #374 asked the question and this is
+the answer: `Leerkrachten` was already being guessed in several places, and a
+fourth configurable name beside `AppSettings.smartschoolRoots` and the Passwords
+screen's own `staffGroupName` would add a guess rather than remove one.
+
 ## Office 365 class placement (#245)
 
 `AzureClassGroupMembership` is the Azure counterpart of
@@ -373,11 +416,25 @@ write waiting on the class that can take it.
 
 ## Deferred (documented divergences)
 
-- **`AddToAzureStaffGroup`** / **`AddToStaffGroup`** and the `-Personeel` /
-  `Leerkrachten` group placements inside `AddStaffToAzure` /
-  `AddStaffToSmartschool` are **not** ported: they evaluate against Office 365 /
-  Smartschool group membership, which `LinkedStaff` does not carry. Same
+- **`AddToAzureStaffGroup`** / **`AddToStaffGroup`** and the `-Personeel` group
+  placement inside `AddStaffToAzure` are **not** ported: they evaluate against
+  Office 365 group membership, which `LinkedStaff` does not carry. Same
   membership-aware follow-up.
+
+  The Smartschool half of that sentence used to be here too, and it was wrong
+  (#374). `AddStaffToSmartschool`'s `Leerkrachten` / `Leerlingen` writes evaluate
+  against nothing at all — they are unconditional post-create plumbing, add to
+  one fixed-name group and remove from another — so they were dropped by
+  association with the two actions that really do read membership. See
+  [Staff group seat](#staff-group-seat-374). That fix is forward-only, and #378
+  decided what to do about the accounts mis-seated before it: **a one-off tool**,
+  [`packages/smartschool_api/tool/staff_seat_repair.dart`](../smartschool_api/tool/staff_seat_repair.dart),
+  not a standing action. A standing action would have to carry Smartschool group
+  membership on `LinkedStaff` — the same follow-up above — to keep proposing a
+  repair that, after #374, nothing can produce any more. The audit half of that
+  tool counted **0** mis-seated accounts on this school's tenant, which is the
+  other reason: this create is not bulk-applyable (#293), so it appears never to
+  have run in anger before the fix landed.
 - **`ChangeEmail`** (legacy) is dead code — not wired into the parser — and is
   intentionally omitted.
 - **`SetStaffCopyCode` idempotency fix.** Legacy `SetCopyCode` compares the
@@ -387,22 +444,35 @@ write waiting on the class that can take it.
   the action converges after one apply.
 - **Staff gender on create.** Legacy `AddToSmartschool` hard-codes `Female` for
   new staff (WISA staff rows carry no gender); preserved verbatim.
-- **No staff `department` repair — the field is not ours to write (#237).** A
+- **No staff `department` *repair* — the list is not ours to rewrite (#237).** A
   staff member's Azure `department` is maintained by other software and holds a
   **comma-separated list of school prefixes** (`GBS,SSM`), one per school the
   teacher is currently active at. We read it — the linker's `contains` test
   (INV-22) is exactly the right question, "is this teacher active at our
-  school?" — and we never write it on an account that already exists.
-  `ModifyStaffAzureSchool` (#233) did, and it was destructive: it fired whenever
-  the list did not *start with* our prefix, which is every teacher we are not
-  listed first for, and its "repair" split on a ` - ` separator a comma list has
-  none of, so `GBS,SSM` was rewritten to a bare `SSM` — deleting the sibling
-  school's claim. Removed whole rather than narrowed. `AddStaffToAzure` still
-  writes the bare prefix when it **creates** an account, which destroys nothing.
-  The two problems #233 was actually aimed at — the bulk read's
-  `startswith(department, …)` leg missing staff whose list does not lead with us,
-  and a staff member who leaves WISA going invisible instead of raising
-  `RemoveStaffFromAzure` — are tracked as their own issues.
+  school?" — and nothing here rewrites it. `ModifyStaffAzureSchool` (#233) did,
+  and it was destructive: it fired whenever the list did not *start with* our
+  prefix, which is every teacher we are not listed first for, and its "repair"
+  split on a ` - ` separator a comma list has none of, so `GBS,SSM` was rewritten
+  to a bare `SSM` — deleting the sibling school's claim. Removed whole rather
+  than narrowed.
+
+  **What we do instead is our own entry, and only ever our own entry.**
+  `ClaimStaffForAzureSchool` (#373) *appends* our prefix for a staff member WISA
+  places in a school we manage whose list does not name us (`SBE` → `SBE,SSM`),
+  and `ReleaseStaffFromAzureSchool` (#349) *strikes* that same entry back out
+  when they leave (`GBS,SSM,KAV` → `GBS,KAV`). Both leave every other entry
+  verbatim and in order, and both decide "are we in the list" by an exact
+  list-item match (`departmentSchools` / `departmentSchoolsExcept`) rather than
+  by the substring test the read side uses — read wide, write narrow, so a
+  longer school code that merely contains our prefix is never struck and never
+  suppresses a claim. `AddStaffToAzure` still writes the bare prefix when it
+  **creates** an account, which destroys nothing. What stays forbidden is a
+  rewrite: re-ordering, case-folding, de-duplicating, or replacing the list.
+
+  The claim is also what keeps the other #233 problem shrinking without widening
+  the Azure bulk read's `startswith(department, …)` `$filter`, which #268 ruled
+  cannot be widened: every account it claims is one the fast path finds next
+  time, instead of one that depends on the `employeeId` back-fill forever.
 - Smartschool `uid` uniqueness for new accounts is the caller's concern (the
   State layer holds the account set); the default builder is deliberately
   simple.

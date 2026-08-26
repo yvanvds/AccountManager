@@ -202,6 +202,104 @@ class UserManager {
     return found.values.toList();
   }
 
+  /// The `$select` of the targeted sign-in read. Its own list, never merged
+  /// into [AzureUser.graphSelectFields] — see [withSignInActivity].
+  static const String _signInActivitySelect = 'id,signInActivity';
+
+  /// [accounts] again, each carrying [AzureUser.lastSignIn] where Graph knows
+  /// one (#363).
+  ///
+  /// The one fact that says which of two accounts sharing an `employeeId` the
+  /// student is actually working in — and in at least one live pair that is the
+  /// *unlicensed* twin, so the student has no Office at all. Everything else on
+  /// the collision line describes what an account *may* do; this describes what
+  /// somebody *did* with it.
+  ///
+  /// **One request per account, and only for a collision.** `signInActivity`
+  /// cannot be read the way every other field here is:
+  ///
+  /// * It needs `AuditLog.Read.All` (Entra ID P1+) on top of the app's grant.
+  ///   In [AzureUser.graphSelectFields] that would make every pull — full and
+  ///   incremental, for every school — fail on a permission this one rare
+  ///   report wants, which is the blast radius #363 was split off #360 to
+  ///   avoid.
+  /// * A *collection* read that selects it silently drops `$filter`. Verified
+  ///   against the live tenant: `/users?$select=id,signInActivity&$filter=id in
+  ///   (…)` answered with accounts that were never asked about and an
+  ///   `@odata.nextLink` walking the whole directory — no error, just the
+  ///   full-tenant read PAIN-2 exists to prevent. So there is no batched shape
+  ///   to fall back on; `/users/{id}` is the only safe one.
+  ///
+  /// The caller passes only the accounts a collision names, so the set is tiny
+  /// and bounded (nine pairs in the audited school) and the bulk read is
+  /// untouched.
+  ///
+  /// **Never fails the pass.** This is a decoration on a report, not part of
+  /// the snapshot's meaning, so every refusal is swallowed and the account
+  /// comes back exactly as it went in — a line that says "unknown" is worth far
+  /// more than a sync that died enriching it. A `403` in particular means the
+  /// permission is not consented yet — which is the state of the tenant today,
+  /// so it is the *ordinary* answer until #379 grants it: it is logged once, by
+  /// name, and the walk stops rather than repeating the same refusal for every
+  /// remaining account.
+  Future<List<AzureUser>> withSignInActivity(
+      Iterable<AzureUser> accounts) async {
+    final targets = accounts.toList();
+    if (targets.isEmpty) return targets;
+
+    final result = <AzureUser>[];
+    var refused = false;
+    var read = 0;
+    for (final account in targets) {
+      if (refused || account.id.isEmpty) {
+        result.add(account);
+        continue;
+      }
+      try {
+        final json = await _graph.getJson(
+          _graph.uri(
+            'users/${Uri.encodeComponent(account.id)}',
+            query: {r'$select': _signInActivitySelect},
+          ),
+          // Every failure on this leg is one this method recovers from, so the
+          // transport logs it as a detail rather than as an error the operator
+          // should act on (#229) — the un-consented `403` is the *normal*
+          // answer today, and it must not paint a healthy pass red.
+          expected: (_) => true,
+        );
+        final at = AzureUser.parseSignInActivity(json['signInActivity']);
+        result.add(at == null ? account : account.copyWith(lastSignIn: at));
+        read++;
+      } on Object catch (e) {
+        if (e is GraphException && e.statusCode == 403) {
+          refused = true;
+          _log?.addMessage(
+            core.Origin.azure,
+            'Azure: de laatste aanmelding kon niet gelezen worden — de app '
+            'heeft daarvoor de Graph-toestemming AuditLog.Read.All nodig '
+            '(met beheerderstoestemming). De dubbele accounts worden zonder '
+            'die datum getoond. Graph zei: $e',
+          );
+        } else {
+          _log?.addMessage(
+            core.Origin.azure,
+            'Azure: de laatste aanmelding van ${account.upn} kon niet '
+            'gelezen worden: $e',
+          );
+        }
+        result.add(account);
+      }
+    }
+    if (read > 0) {
+      _log?.addMessage(
+        core.Origin.azure,
+        'Azure: laatste aanmelding opgezocht voor $read van '
+        '${targets.length} account(s) met een dubbel WISA-id.',
+      );
+    }
+    return result;
+  }
+
   /// **A** user carrying [employeeId], or `null` when the tenant has none.
   ///
   /// The pre-create guard of #224: `employeeId` is the one key that survives a

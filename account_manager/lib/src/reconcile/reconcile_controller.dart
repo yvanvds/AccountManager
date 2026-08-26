@@ -1632,11 +1632,26 @@ class ReconcileController extends ChangeNotifier {
   /// since [core.AzureUser] carries only the linking keys; a record from any
   /// other implementation simply shows its keys.
   ///
-  /// Two facts #360 also asked for are missing because the pull does not read
-  /// them: the creation date and the last sign-in. Both need new Graph
-  /// `$select` fields (and `signInActivity` an extra consented permission), so
-  /// they are #363 rather than a field added blind here — a `$select` Graph
-  /// rejects fails every Azure pull, incremental ones included.
+  /// Last, the two facts about the account's *life* rather than its
+  /// entitlements (#363), and they are last because they are what an operator
+  /// re-reads once the licensing fields have failed to decide it:
+  ///
+  /// * **aangemaakt** — the audit's own discriminator. The twins were made by
+  ///   different runs of this app, months apart, so the date says which
+  ///   UPN-normalisation rule made which account, and which of the two the rest
+  ///   of the tenant has been treating as the student's ever since.
+  /// * **laatste aanmelding** — the only fact here that reports on the student
+  ///   rather than on the directory. In at least one audited pair it is the
+  ///   *unlicensed* twin that shows recent activity, which is the difference
+  ///   between "one of these has no licence" and "this student has no Office".
+  ///
+  /// Either can read `—`: `createdDateTime` when the record predates #363's
+  /// `$select`, `signInActivity` also while the app has not been granted
+  /// `AuditLog.Read.All` — which is the tenant's state until #379, and it is
+  /// fetched per colliding account rather than in the bulk read precisely so
+  /// that missing consent costs this one fact and not the pull
+  /// (`UserManager.withSignInActivity`). An unknown fact is shown as unknown;
+  /// nothing here guesses.
   static String _describeAzureAccount(core.AzureUser user) {
     final parts = <String>[user.upn, 'id ${user.id}'];
     if (user is az.AzureUser) {
@@ -1644,9 +1659,19 @@ class ReconcileController extends ChangeNotifier {
       parts.add('bedrijf ${_nonEmpty(user.companyName ?? '') ?? '—'}');
       parts.add('functie ${_nonEmpty(user.jobTitle ?? '') ?? '—'}');
       parts.add('afdeling ${_nonEmpty(user.department ?? '') ?? '—'}');
+      parts.add('aangemaakt ${_stamp(user.createdAt)}');
+      parts.add('laatste aanmelding ${_stamp(user.lastSignIn)}');
     }
     return parts.join(' · ');
   }
+
+  /// One absolute date-and-time on a collision line, or `—` when it is not
+  /// known.
+  ///
+  /// [formatRuleStamp]'s shape rather than [formatFreshnessStamp]'s: these two
+  /// dates are compared against *each other*, years apart, so a stamp whose
+  /// year is only implied would be worth nothing.
+  static String _stamp(DateTime? at) => at == null ? '—' : formatRuleStamp(at);
 
   /// One colliding record as a single line: its role and the key it carries in
   /// each system, so two records on one id can be told apart at a glance.

@@ -8,6 +8,7 @@ import 'apply_options.dart';
 import 'change_set.dart';
 import 'connectors.dart';
 import 'staff_action_config.dart';
+import 'staff_placement.dart';
 
 /// The staff action family (spec `docs/domain-model.md` §3.10). One subclass
 /// per legacy `Action\StaffAccount\*` class, mirroring [StudentAction].
@@ -27,10 +28,11 @@ import 'staff_action_config.dart';
 /// [wapi.WisaStaff.code] (not `wisaId`) — `AddToSmartschool` and
 /// `UpdateWisaName` write the code into `accountId` (spec §4, OQ-1). Staff live
 /// on the base [StaffActionConfig.azureDomain] (no student sub-domain). The
-/// office-365 / Smartschool **group** placements the legacy add-actions perform
-/// are out of scope here (see the package README) — they need a
-/// membership-aware input, tracked as the `AddToAzureStaffGroup` /
-/// `AddToStaffGroup` follow-up.
+/// **Office 365** group placement the legacy add-actions perform is out of
+/// scope here (see the package README) — it needs a membership-aware input,
+/// tracked as the `AddToAzureStaffGroup` / `AddToStaffGroup` follow-up. The
+/// Smartschool one is not: since #374 [AddStaffToSmartschool] seats its new
+/// account from an injected [StaffPlacement], which needs no membership at all.
 sealed class StaffAction {
   /// The linked staff record this action targets, bound at construction.
   final LinkedStaff staff;
@@ -345,8 +347,9 @@ class AddStaffToAzure extends StaffAction {
 /// Create a Smartschool account for a staff member present in WISA and Azure
 /// but not Smartschool. Ported from `Action\StaffAccount\AddToSmartschool` —
 /// the account is built from the Azure record with the WISA [wapi.WisaStaff.code]
-/// as its `accountId` (spec §4) and the WISA `wisaId` as its copy-code (`fax`);
-/// the group placement (Leerkrachten / Leerlingen) is deferred (see README).
+/// as its `accountId` (spec §4) and the WISA `wisaId` as its copy-code (`fax`),
+/// and the new account is then seated in [smartschoolStaffGroupName] and taken
+/// out of the platform default group (#374, see [_seatNewAccount]).
 ///
 /// **Not bulk-applyable** (#293), deliberately unlike its student twin
 /// [AddStudentToSmartschool]: legacy passed `AddToSmartschool(…, true, false)`
@@ -357,7 +360,14 @@ class AddStaffToAzure extends StaffAction {
 /// ordinary new-hire path is unaffected: [AddStaffToAzure] is bulk-applyable and
 /// [unlocks] this create behind it, per record.
 class AddStaffToSmartschool extends StaffAction {
-  const AddStaffToSmartschool(super.staff, super.config);
+  const AddStaffToSmartschool(super.staff, super.config, {this.placement});
+
+  /// Where the freshly created account has to be seated (#374): the staff group
+  /// to add it to and the platform default group to take it out of. `null`
+  /// leaves the account exactly where `saveUser` put it — the behaviour every
+  /// release before #374 had, kept as the no-context default so a headless
+  /// caller or a test that is not about the seat reads unchanged.
+  final StaffPlacement? placement;
 
   @override
   bool evaluate() =>
@@ -456,17 +466,199 @@ class AddStaffToSmartschool extends StaffAction {
           StateError('Smartschool saveAccount returned failure'),
         );
       }
+      // The seat is best-effort, so it cannot change this action's outcome —
+      // the create is the success criterion (INV-41), exactly as the student
+      // create's class placement is. Each write that *did* land names its
+      // group, so the State layer can splice the membership without a re-pull;
+      // each one that did not says so in a warning.
+      final seated = await _seatNewAccount(connectors, built);
       return ActionResult(
         outcome: ActionOutcome.applied,
         changes: changes,
         system: Origin.smartschool,
         smartschool: built,
+        joinedGroup: seated.joined,
+        leftGroup: seated.left,
+        warnings: seated.warnings,
         generatedPassword: password,
       );
     } on Object catch (e) {
       return _failed(changes, Origin.smartschool, e);
     }
   }
+
+  /// Seats a freshly created staff account (#374), mirroring the two follow-up
+  /// writes legacy `AddToSmartschool.Apply` chains after its `Save`:
+  ///
+  /// ```csharp
+  /// await GroupManager.AddUserToGroup(smartschool, Root.Find("Leerkrachten"));
+  /// await GroupManager.RemoveUserFromGroup(smartschool, Root.Find("Leerlingen"));
+  /// ```
+  ///
+  /// Both are unconditional plumbing rather than a decision: Smartschool seats
+  /// **every** `saveUser` account in the platform default group, whatever role
+  /// it carries, so a staff create has to add the staff group and leave the
+  /// default one or the teacher lands in the student subtree — where the port
+  /// has been putting every staff account it ever made, and where nothing later
+  /// finds them. That is why the writes need no membership knowledge and were
+  /// wrongly deferred with the genuinely membership-aware `AddToStaffGroup` /
+  /// `AddToAzureStaffGroup` (see the README).
+  ///
+  /// **Best-effort, by design.** The create is this action's success criterion;
+  /// a failed seat must not fail — and so retry — the create (INV-41), which
+  /// would write `saveUser` a second time for an account that already exists.
+  /// Legacy likewise logs and continues.
+  ///
+  /// **Every way a seat misses warns**, and here the student create's rule (only
+  /// a *throw* warns, #343) does not carry over: a mis-placed student is
+  /// re-caught next pass by `MoveToSmartschoolClassGroup`, whereas nothing at all
+  /// re-examines a staff member's Smartschool group membership — a `LinkedStaff`
+  /// does not carry it, so no action can propose the repair. A seat that misses
+  /// here is a mis-seated account with no safety net, so the operator reads "the
+  /// account was made, the group was not" for a refusal and an unresolved group
+  /// just as much as for a throw.
+  ///
+  /// The two writes are independent: the removal is attempted even when the add
+  /// missed, because leaving the account in the student subtree is the worse
+  /// half of the same bug and the two failures have nothing to do with each
+  /// other.
+  Future<_SeatOutcome> _seatNewAccount(
+    Connectors connectors,
+    ss.SmartschoolAccount built,
+  ) async {
+    final placement = this.placement;
+    if (placement == null) return const _SeatOutcome();
+
+    final warnings = <String>[];
+    final joined =
+        await _joinStaffGroup(connectors, built, placement, warnings);
+    final left =
+        await _leaveDefaultGroup(connectors, built, placement, warnings);
+    return _SeatOutcome(joined: joined, left: left, warnings: warnings);
+  }
+
+  /// Adds [built] to the staff group, returning it only when the write landed.
+  ///
+  /// `saveUserToClassesAndGroups` addresses a group by **code**, so an
+  /// unresolved group cannot be written to at all — and an official one is
+  /// refused by Smartschool (legacy guards it in `AddUserToGroup`; the ported
+  /// connector leaves the guard to the caller, like `moveUserToClass`).
+  Future<Group?> _joinStaffGroup(
+    Connectors connectors,
+    ss.SmartschoolAccount built,
+    StaffPlacement placement,
+    List<String> warnings,
+  ) async {
+    final target = placement.staffGroup;
+    if (target == null) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar de groep '
+        '$smartschoolStaffGroupName is niet gevonden in Smartschool. Voeg het '
+        'account daar handmatig aan toe.',
+      );
+      return null;
+    }
+    if (target.official) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar ${target.name} is een '
+        'officiële klas: accounts kunnen daar niet als groepslid aan '
+        'toegevoegd worden. Voeg het account handmatig toe aan de juiste '
+        'personeelsgroep.',
+      );
+      return null;
+    }
+
+    try {
+      final ok = await _requireSmartschool(connectors)
+          .addUserToGroup(built.uid, target.id.value);
+      if (ok) return target;
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar Smartschool weigerde het '
+        'toe te voegen aan ${target.name}. Voeg het account daar handmatig aan '
+        'toe.',
+      );
+    } on Object catch (e) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar het toevoegen aan '
+        '${target.name} is mislukt: $e. Voeg het account daar handmatig aan '
+        'toe.',
+      );
+    }
+    return null;
+  }
+
+  /// Removes [built] from the platform default group, returning the group whose
+  /// local membership row the State layer may drop.
+  ///
+  /// `removeUserFromGroup` addresses a group by **name**, so this write does not
+  /// need the group to be in the snapshot — the account is seated there by
+  /// Smartschool itself whether our root-scoped pull saw the node or not. The
+  /// resolved node only decides whether there is a local row to splice away, so
+  /// a successful removal against an unresolved group names nothing and is not
+  /// a warning either.
+  Future<Group?> _leaveDefaultGroup(
+    Connectors connectors,
+    ss.SmartschoolAccount built,
+    StaffPlacement placement,
+    List<String> warnings,
+  ) async {
+    final name = placement.defaultGroupName;
+    final resolved = placement.defaultGroup;
+    if (resolved != null && resolved.official) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar $name is een officiële '
+        'klas: leden kunnen daar niet uit verwijderd worden.',
+      );
+      return null;
+    }
+
+    try {
+      // Legacy stamps the removal with the moment of the write
+      // (`GroupManager.RemoveUserFromGroup`); the date carries no meaning for a
+      // non-official group, but the API requires one.
+      final ok = await _requireSmartschool(connectors)
+          .removeUserFromGroup(built.uid, name, DateTime.now());
+      if (ok) return resolved;
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar Smartschool weigerde het '
+        'uit de groep $name te verwijderen. Verwijder het account daar '
+        'handmatig uit.',
+      );
+    } on Object catch (e) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar het verwijderen uit de '
+        'groep $name is mislukt: $e. Verwijder het account daar handmatig uit.',
+      );
+    }
+    return null;
+  }
+}
+
+/// What [AddStaffToSmartschool]'s best-effort seat step ended up doing (#374):
+/// the groups it demonstrably joined and left, plus the operator-facing notes
+/// the caller must not drop.
+///
+/// The staff twin of the student create's placement outcome, with two groups
+/// rather than one class because the seat is two independent writes.
+class _SeatOutcome {
+  const _SeatOutcome({
+    this.joined,
+    this.left,
+    this.warnings = const <String>[],
+  });
+
+  /// The staff group the account was actually added to, or null for every way
+  /// the add declined, was refused, or threw.
+  final Group? joined;
+
+  /// The default group the account was actually removed from **and** whose node
+  /// the snapshot in hand carries — null when the removal missed, and also when
+  /// it landed against a group our pull never saw (there is no row to drop).
+  final Group? left;
+
+  /// Reasons a seat did not land that the operator must still see, since
+  /// nothing downstream re-proposes a staff group placement.
+  final List<String> warnings;
 }
 
 /// The [StaffAction.alternativeGroup] key shared by the two mutually exclusive
@@ -684,15 +876,23 @@ class RemoveStaffFromSmartschool extends StaffAction {
 /// So an account may be deleted only when **nothing** claims it: WISA has no row
 /// for the person anywhere in the group, and the list names no school but ours.
 /// Anything less is a release — our entry struck out, the account left standing.
-extension _DepartedSchools on StaffAction {
+///
+/// [_listNamesUs] is asked from both directions (#373): the release strikes our
+/// entry only when it is there, and [ClaimStaffForAzureSchool] appends it only
+/// when it is not. One definition, so the two can never both fire — or both
+/// decline — on the same list.
+extension _DepartmentClaims on StaffAction {
   /// The other group schools the `department` list names.
   List<String> get _otherSchools =>
       departmentSchoolsExcept(_az.department, config.schoolPrefix);
 
-  /// Whether the list still names *us*, i.e. whether there is a claim of ours
-  /// left to strike. False for a blank or absent `department`, which nobody has
-  /// maintained and which a release could only rewrite to itself.
-  bool get _weStillClaim =>
+  /// Whether the list names *us* — an exact list-item match
+  /// ([departmentSchoolsExcept]), never the substring test the read side uses.
+  /// False for a blank or absent `department`, which nobody has maintained.
+  ///
+  /// For a departure it answers "is there a claim of ours left to strike"; for
+  /// [ClaimStaffForAzureSchool] it answers "are we already in the list".
+  bool get _listNamesUs =>
       departmentSchools(_az.department).length != _otherSchools.length;
 
   /// Whether the account is ours alone — nobody else in the group has a claim on
@@ -703,7 +903,7 @@ extension _DepartedSchools on StaffAction {
 /// Release a departed staff member from **our** school by striking our prefix
 /// out of the Azure `department` list, leaving the account itself alone (#349).
 /// Fires whenever the list still carries a claim of ours and the account is not
-/// ours alone to delete — see [_DepartedSchools]. Striking our only entry leaves
+/// ours alone to delete — see [_DepartmentClaims]. Striking our only entry leaves
 /// the field empty, which is the correct statement about an account no school of
 /// ours has a claim on any more.
 ///
@@ -732,7 +932,7 @@ class ReleaseStaffFromAzureSchool extends StaffAction {
   bool evaluate() =>
       staff.hasLeftOurSchool &&
       staff.azure != null &&
-      _weStillClaim &&
+      _listNamesUs &&
       !_accountIsOursAlone;
 
   /// Never in bulk: a departure is read and recognised one name at a time
@@ -799,7 +999,7 @@ class ReleaseStaffFromAzureSchool extends StaffAction {
 /// through their Smartschool account being removed first. It now asks the two
 /// questions that actually matter — have they left *us*
 /// ([LinkedStaff.hasLeftOurSchool]), and is the account ours alone
-/// ([_DepartedSchools._accountIsOursAlone]) — and defers to
+/// ([_DepartmentClaims._accountIsOursAlone]) — and defers to
 /// [ReleaseStaffFromAzureSchool] whenever anybody else has a claim.
 class RemoveStaffFromAzure extends StaffAction {
   const RemoveStaffFromAzure(super.staff, super.config);
@@ -999,31 +1199,166 @@ class RetireStaffMember extends StaffAction {
 // Modify actions — evaluated only when all three systems are present (§6.3).
 // ---------------------------------------------------------------------------
 
-// There is deliberately **no** staff `department` repair here (#237). A staff
-// member's `department` is not ours to write: it is maintained by other
-// software as a comma-separated list of the school prefixes the teacher is
-// currently active at (`GBS,SSM`), and we only ever *read* it — the linker's
-// `contains` test (INV-22) is the correct way to ask "is this teacher active at
-// our school?".
+// There is deliberately **no** staff `department` *repair* here (#237), and
+// there must never be one. A staff member's `department` is not ours to own: it
+// is maintained by other software as a comma-separated list of the school
+// prefixes the teacher is currently active at (`GBS,SSM`), and the linker's
+// `contains` test (INV-22) is the only thing we read out of it.
 //
-// The `ModifyStaffAzureSchool` action added in #233 wrote it, and both halves
+// The `ModifyStaffAzureSchool` action added in #233 rewrote it, and both halves
 // were wrong. It fired whenever `department` did not *start with* our prefix,
 // so it fired for every teacher whose list merely names us second — an ordinary
 // state, not an edge case. And its repair looked for a ` - ` separator that a
 // comma list does not contain, so applying it collapsed `GBS,SSM` to a bare
 // `SSM` and silently destroyed the sibling school's claim in a field we do not
-// own. Removed whole rather than narrowed: there is no value of this field we
-// are entitled to write onto an account that already exists.
+// own. Removed whole rather than narrowed.
+//
+// What *is* admissible is an edit scoped to **our own entry**, leaving every
+// other entry verbatim and in place, matched as an exact list item rather than
+// by the substring test the read side uses. #349 established that shape
+// subtractively with [ReleaseStaffFromAzureSchool]; [ClaimStaffForAzureSchool]
+// below is the same operation with the sign flipped (#373). Neither is a repair
+// of the list, and neither may grow into one.
 //
 // [AddStaffToAzure] still writes the bare prefix when it *creates* an account,
 // which cannot destroy anything — the account, and therefore the field, did not
 // exist a moment earlier.
 //
-// The two real problems #233 was aimed at survive the removal and are tracked
-// separately: the bulk read's `startswith(department, …)` leg misses staff
-// whose list does not lead with us, and a staff member who leaves WISA drops
-// out of the `employeeId` back-fill and so goes invisible instead of raising a
-// [RemoveStaffFromAzure].
+// The other real problem #233 was aimed at survives the removal and is tracked
+// separately: the bulk read's `startswith(department, …)` leg misses staff whose
+// list does not lead with us (#268), which the claim below makes rarer over time
+// rather than by widening the `$filter`.
+
+/// Claim an **adopted** staff member for our school by appending our prefix to
+/// the Azure `department` list (#373) — the additive mirror of
+/// [ReleaseStaffFromAzureSchool].
+///
+/// **The state it repairs.** A teacher who starts here while already holding an
+/// Office 365 account from a sibling group school arrives with a `department`
+/// that names that school and not us. The Azure bulk read's server-side
+/// `$filter` (`companyName eq '<prefix>' or startswith(department,'<prefix>')`)
+/// cannot see them at all, so they are only in the snapshot because the
+/// `employeeId` back-fill (#231) adopts every staff member WISA lists — and the
+/// back-fill is fed from the *current* WISA rows. The day WISA stops listing
+/// them there is no id to back-fill from and no `department` naming us, so
+/// [LinkedStaff.belongsToOurSchool] goes false and the account becomes invisible
+/// to us — which is exactly when [RemoveStaffFromAzure] /
+/// [ReleaseStaffFromAzureSchool] were supposed to clean it up. Claiming them now
+/// is what keeps that cleanup reachable later.
+///
+/// **Why this is allowed to write `department` at all.** See the note above: it
+/// touches our own item and nothing else, so `SBE` becomes `SBE,SSM`, `` becomes
+/// `SSM`, and `GBS,SBE` becomes `GBS,SBE,SSM` — every sibling claim survives
+/// verbatim and in order. It is not the #237 rewrite and must never become one.
+///
+/// **The "are we already listed" test is [_DepartmentClaims._listNamesUs]**, the
+/// exact list-item match the release uses, deliberately *not*
+/// [LinkedStaff.azureNamesOurSchool] — which is built from the read side's
+/// `staffBelongsToSchool` substring test (INV-22). The two differ on exactly one
+/// shape, a longer school code that merely contains our prefix (`SSMB`), and
+/// there the substring answer is the wrong one: it would suppress a claim we do
+/// not in fact hold, and leave the account unclaimed forever. Read-wide,
+/// write-narrow is the same asymmetry [departmentSchoolsExcept] documents.
+///
+/// **A blank prefix claims nobody.** An unconfigured prefix would otherwise
+/// append an empty item to every staff account in the tenant, and `''` is not a
+/// school (INV-22's own rule).
+class ClaimStaffForAzureSchool extends StaffAction {
+  const ClaimStaffForAzureSchool(super.staff, super.config);
+
+  /// True iff WISA places them in a school we manage, they hold an Office 365
+  /// account, and the `department` list does not already name us.
+  ///
+  /// [LinkedStaff.isInOurWisa] rather than a bare `wisa != null`: a teacher WISA
+  /// lists only at a sibling group school is not ours to claim, and the
+  /// departure pair is what applies to them.
+  @override
+  bool evaluate() =>
+      staff.isInOurWisa &&
+      staff.azure != null &&
+      config.schoolPrefix.trim().isNotEmpty &&
+      !_listNamesUs;
+
+  /// **Bulk-applyable** (#373), and the decision is deliberate.
+  ///
+  /// The cohort is real: an intake of new staff adopted from sibling group
+  /// schools arrives together, at the start of a term, and every one of them is
+  /// in the same unclaimed state for the same mechanical reason. Withholding the
+  /// grant means the repair is never done, and the accounts stay one WISA pull
+  /// away from invisible.
+  ///
+  /// Nothing about it is judgement work. WISA has already decided the person
+  /// works here; this action only writes that decision into a field the read
+  /// side needs it in. It destroys nothing — every existing entry survives — and
+  /// it is exactly reversible by [ReleaseStaffFromAzureSchool], which is the
+  /// action a mistaken claim raises on the very next pass.
+  ///
+  /// So it lands with [AddStaffToAzure], which already stamps the same prefix in
+  /// bulk on a create, and not with the #349 pair, whose refusal is about a
+  /// *departure* having to be read one name at a time — one of them deletes an
+  /// account, and neither is triggered by a fact WISA states.
+  @override
+  bool get canApplyToAll => true;
+
+  /// The existing entries verbatim and in order, with our prefix appended.
+  ///
+  /// Built from [departmentSchools], so the only normalisation is the one the
+  /// release already performs: surrounding whitespace and empty items go, and
+  /// every surviving entry keeps its own casing.
+  String get _claimed => <String>[
+        ...departmentSchools(_az.department),
+        config.schoolPrefix.trim(),
+      ].join(',');
+
+  /// Shows the whole field before and after, not just our addition, so the
+  /// operator can see the sibling claims survive the write (#352 makes the same
+  /// list legible on the card).
+  @override
+  ChangeSet describeChanges() => ChangeSet(
+        system: Origin.azure,
+        summary: 'Voeg onze school toe aan het Office 365 account',
+        fields: [
+          FieldChange(
+            'department',
+            before: _az.department,
+            after: _claimed,
+          ),
+        ],
+      );
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+    final claimed = _claimed;
+    final updated = _az.copyWith(department: claimed);
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.azure,
+        azure: updated,
+      );
+    }
+
+    try {
+      await _requireAzure(connectors)
+          .users
+          .updateUser(_az.id, department: claimed);
+      return ActionResult(
+        outcome: ActionOutcome.applied,
+        changes: changes,
+        system: Origin.azure,
+        azure: updated,
+      );
+    } on Object catch (e) {
+      return _failed(changes, Origin.azure, e);
+    }
+  }
+}
 
 /// Correct the Smartschool internal number to equal the WISA staff
 /// [wapi.WisaStaff.code] (staff bridge to Smartschool, spec §4). Ported from
@@ -1204,10 +1539,11 @@ class SetStaffCopyCode extends StaffAction {
 // Shared apply helpers for the modify actions.
 // ---------------------------------------------------------------------------
 
-// The staff family has no Azure-PATCH helper: the only staff modify action that
-// ever wrote to Azure was the `department` repair removed in #237, and
-// `RemoveStaffFromAzure` deletes rather than patches. The student family keeps
-// its own `_azurePatch`.
+// The staff family has no shared Azure-PATCH helper. The two actions that do
+// PATCH — `ReleaseStaffFromAzureSchool` (#349) and `ClaimStaffForAzureSchool`
+// (#373) — write the one field `department` from a value each derives itself,
+// so a helper would abstract over nothing; `RemoveStaffFromAzure` deletes rather
+// than patches. The student family keeps its own `_azurePatch`.
 
 extension _SmartschoolSave on StaffAction {
   /// Saves [updated] to Smartschool (`saveUser` with an unchanged password)

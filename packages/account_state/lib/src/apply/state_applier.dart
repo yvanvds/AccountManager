@@ -516,11 +516,18 @@ class StateApplier {
           // record it returns says nothing about the class it was written
           // into, so without this the student arrives in the snapshot with no
           // membership and is offered the move they no longer need.
+          // A staff create seats its new account the same way from the other
+          // side (#374): `saveUser` puts every account in the platform default
+          // group, so the create adds the staff group and leaves that one, and
+          // names both — otherwise the relink reads a teacher sitting in the
+          // student subtree until Smartschool is pulled again.
           app.smartschool.patch(
             _putAccount(
               current,
               result.smartschool!,
               movedTo: result.movedToClass,
+              joined: result.joinedGroup,
+              left: result.leftGroup,
             ),
           );
         }
@@ -766,6 +773,8 @@ ss.SmartschoolSnapshot _putAccount(
   ss.SmartschoolSnapshot current,
   core.SmartschoolAccount account, {
   core.Group? movedTo,
+  core.Group? joined,
+  core.Group? left,
 }) {
   final record = account as ss.SmartschoolAccount;
   final accounts = [
@@ -773,13 +782,22 @@ ss.SmartschoolSnapshot _putAccount(
       if (a.uid != record.uid) a,
     record,
   ];
+  var memberships = movedTo == null
+      ? current.memberships
+      : _reseat(current, uid: record.uid, target: movedTo);
+  if (joined != null || left != null) {
+    memberships = _regroup(
+      memberships,
+      uid: record.uid,
+      joined: joined,
+      left: left,
+    );
+  }
   return ss.SmartschoolSnapshot(
     fetchedAt: current.fetchedAt,
     groups: current.groups,
     accounts: accounts,
-    memberships: movedTo == null
-        ? current.memberships
-        : _reseat(current, uid: record.uid, target: movedTo),
+    memberships: memberships,
   );
 }
 
@@ -818,6 +836,42 @@ List<ss.SmartschoolMembership> _reseat(
     for (final m in current.memberships)
       if (!isMovedFrom(m)) m,
     ss.SmartschoolMembership(uid: uid, groupId: target.id),
+  ];
+}
+
+/// [memberships] with [uid]'s row in [left] dropped and a row in [joined] added
+/// — the membership half of a staff create's group seat (#374).
+///
+/// Deliberately **not** [_reseat], which is about the one **official class**
+/// Smartschool allows an account: `saveUserToClass` re-seats, so every official
+/// row goes and the target's replaces them. `Leerkrachten` and `Leerlingen` are
+/// non-official groups, where membership is a set — so this touches exactly the
+/// two rows the two writes touched and leaves every other group, official class
+/// included, where it is.
+///
+/// A create's account holds no rows yet, so in the ordinary case there is
+/// nothing to drop and one row to add; the drop matters for an account that was
+/// already sitting in the default group. [joined]'s own row is dropped first as
+/// well, so re-running the seat cannot leave the account in the same group
+/// twice.
+///
+/// The uid is matched the way [PlacementResolver] keys its membership index
+/// (trimmed, case-insensitive), like [_reseat].
+List<ss.SmartschoolMembership> _regroup(
+  List<ss.SmartschoolMembership> memberships, {
+  required String uid,
+  core.Group? joined,
+  core.Group? left,
+}) {
+  final key = uid.trim().toLowerCase();
+  final dropped = <core.GroupId>{
+    if (joined != null) joined.id,
+    if (left != null) left.id,
+  };
+  return [
+    for (final m in memberships)
+      if (m.uid.trim().toLowerCase() != key || !dropped.contains(m.groupId)) m,
+    if (joined != null) ss.SmartschoolMembership(uid: uid, groupId: joined.id),
   ];
 }
 
