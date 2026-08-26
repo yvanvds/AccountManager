@@ -1,7 +1,8 @@
+import 'dart:async';
+
 import 'package:account_core/account_core.dart' as core;
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
-import 'package:smartschool_api/smartschool_api.dart' as ss;
 
 import '../passwords/password_controller.dart';
 import '../reconcile/reconcile_bootstrap.dart';
@@ -19,10 +20,16 @@ import '../reconcile/reconcile_bootstrap.dart';
 ///   Office 365, CoAccount 1–6). A guarded "Genereer wachtwoorden" pushes a
 ///   fresh password live for each checked target and queues the result for the
 ///   printable student sheet (a real PDF, #195) and the co-account CSV.
-/// - **Personeel**: the "Personeel" group, searchable by any part of the full
-///   name (#215 — one box, no field picker); a per-member reset mints a fresh
-///   Smartschool and/or Office 365 password, pushes it live, and exports a
-///   per-staff PDF sheet.
+/// - **Personeel**: the staff the *linker* holds (#372), searchable by any part
+///   of the full name (#215 — one box, no field picker); a per-member reset
+///   mints a fresh Smartschool and/or Office 365 password, pushes it live, and
+///   exports a per-staff PDF sheet.
+///
+/// Both tabs resolve the Office 365 account through the linked snapshot rather
+/// than by handing Graph the Smartschool mail as a UPN (#372), so a student
+/// whose two addresses have drifted apart still gets their password — and where
+/// the linker holds no Azure account at all, the row says so instead of quietly
+/// producing nothing.
 ///
 /// Shares the one memoized [ReconcileServices] with the Reconcile and Actions
 /// screens, so the class/staff tree comes from the same synced Smartschool
@@ -61,13 +68,15 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
     super.dispose();
   }
 
-  /// Re-reads the live Smartschool snapshot after a pass on another tab (#287).
+  /// Re-reads the live Smartschool and linked snapshots after a pass on another
+  /// tab (#287, #372).
   ///
-  /// The tree this screen draws is the one the *session* holds, and the session
-  /// can acquire a newer one at any time — a sync, a drift check, or an apply
-  /// that patched an account. The reconcile controller notifies on all three;
-  /// [PasswordController.refresh] is identity-guarded, so a notification that
-  /// changed nothing here costs nothing.
+  /// The tree and the roster this screen draws are the ones the *session* holds,
+  /// and the session can acquire newer ones at any time — a sync, a drift check,
+  /// an apply that patched an account, or the opening adoption of the shared
+  /// state. The reconcile controller notifies on all of them;
+  /// [PasswordController.refresh] is identity-guarded on both snapshots, so a
+  /// notification that changed nothing here costs nothing.
   void _adoptSnapshot() => _controller?.refresh();
 
   /// Bootstraps the shared stack (once), then builds the [PasswordController]
@@ -91,6 +100,10 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
         // stay on whatever tree it held at that instant, for the rest of its
         // life.
         snapshot: () => services.app.smartschool.snapshot,
+        // The linker's view of the same people (#372): where the Office 365
+        // account comes from, and — for Personeel — where the roster comes from,
+        // so an account that sits in no Smartschool group is still reachable.
+        linked: () => services.controller.linked?.snapshot,
         queue: services.passwordQueue,
         backends: services.passwordBackends,
         writer: services.passwordFileWriter,
@@ -106,6 +119,13 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
       _services = services;
       services.controller.addListener(_adoptSnapshot);
       setState(() => _controller = controller);
+      // The session's opening read, exactly as the other three screens do it
+      // (#287): the shared overview, then the linked view built from the same
+      // shared state when the cold seed allows it. Without it this screen was
+      // the one view that never asked for a linked snapshot, so an operator who
+      // opened Wachtwoorden first had no roster but the group tree (#372).
+      // Fire-and-forget; the controller notifies, and [_adoptSnapshot] adopts.
+      unawaited(services.controller.openSession());
     } on Object catch (e) {
       if (mounted) setState(() => _error = e);
     } finally {
@@ -422,6 +442,13 @@ class _StudentGrid extends StatelessWidget {
 
   Widget _studentRow(BuildContext context, StudentRow row) {
     final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    // What this row could not do, on the row (#372). A generate that skipped
+    // Office 365 for a handful of an intake used to leave nothing on screen at
+    // all — only a line in the Log panel — so it read exactly like a run that
+    // succeeded for everyone.
+    final String? note = row.problem ??
+        (row.hasNoAzureAccount ? PasswordController.noAzureAccountNote : null);
     return Padding(
       padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
       child: Row(
@@ -433,8 +460,14 @@ class _StudentGrid extends StatelessWidget {
                 Text(row.name, style: text.bodyMedium),
                 Text(row.username,
                     style: text.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      color: colors.onSurfaceVariant,
                     )),
+                if (note != null)
+                  Text(
+                    note,
+                    key: ValueKey('passwords-note-${row.username}'),
+                    style: text.bodySmall?.copyWith(color: colors.error),
+                  ),
               ],
             ),
           ),
@@ -550,7 +583,7 @@ class _PersoneelTab extends StatelessWidget {
         padding: const EdgeInsets.all(PlinkSpacing.s6),
         child: Text(
           'Geen personeel gevonden. Synchroniseer eerst op het tabblad '
-          'Synchronisatie zodat de "Personeel"-groep geladen is.',
+          'Synchronisatie zodat het personeel geladen is.',
           key: const ValueKey('passwords-no-personeel'),
           style: text.bodyMedium,
         ),
@@ -583,8 +616,8 @@ class _PersoneelTab extends StatelessWidget {
               Expanded(
                 child: ListView(
                   children: <Widget>[
-                    for (final account in controller.staff)
-                      _StaffTile(controller: controller, account: account),
+                    for (final row in controller.staff)
+                      _StaffTile(controller: controller, row: row),
                   ],
                 ),
               ),
@@ -599,23 +632,31 @@ class _PersoneelTab extends StatelessWidget {
 }
 
 class _StaffTile extends StatelessWidget {
-  const _StaffTile({required this.controller, required this.account});
+  const _StaffTile({required this.controller, required this.row});
 
   final PasswordController controller;
-  final ss.SmartschoolAccount account;
+  final StaffRow row;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final selected = controller.selectedStaff?.uid == account.uid;
+    final selected = controller.selectedStaff?.key == row.key;
     return ListTile(
-      key: ValueKey('passwords-staff-${account.uid}'),
+      key: ValueKey('passwords-staff-${row.key}'),
       dense: true,
       selected: selected,
-      title: Text('${account.givenName} ${account.surname}'.trim(),
-          style: text.bodyMedium),
-      subtitle: Text(account.uid, style: text.bodySmall),
-      onTap: () => controller.selectStaff(account),
+      title: Text(row.name, style: text.bodyMedium),
+      // A row off the linked roster need not hold a Smartschool account at all
+      // (#372); say which one it is rather than showing a blank line.
+      subtitle: Text(
+        row.hasSmartschoolAccount
+            ? row.uid
+            : (row.mail.isNotEmpty
+                ? row.mail
+                : PasswordController.noSmartschoolAccountNote),
+        style: text.bodySmall,
+      ),
+      onTap: () => controller.selectStaff(row),
     );
   }
 }
@@ -628,8 +669,9 @@ class _StaffDetail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final account = controller.selectedStaff;
-    if (account == null) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final row = controller.selectedStaff;
+    if (row == null) {
       return Padding(
         padding: const EdgeInsets.all(PlinkSpacing.s6),
         child: Text(
@@ -639,17 +681,33 @@ class _StaffDetail extends StatelessWidget {
         ),
       );
     }
+    // What cannot be reset for this person, stated before the operator presses
+    // anything (#372) — and which of the two buttons that disables.
+    final bool noSmartschool = !row.hasSmartschoolAccount;
+    final bool noAzure = row.hasNoAzureAccount;
+    final String? note = row.problem ??
+        (noSmartschool
+            ? PasswordController.noSmartschoolAccountNote
+            : noAzure
+                ? PasswordController.noAzureAccountNote
+                : null);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(PlinkSpacing.s6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text('${account.givenName} ${account.surname}'.trim(),
-              style: text.titleMedium),
+          Text(row.name, style: text.titleMedium),
           const SizedBox(height: PlinkSpacing.s1),
-          Text(account.uid, style: text.bodySmall),
-          if (account.mail.isNotEmpty)
-            Text(account.mail, style: text.bodySmall),
+          if (row.hasSmartschoolAccount) Text(row.uid, style: text.bodySmall),
+          if (row.mail.isNotEmpty) Text(row.mail, style: text.bodySmall),
+          if (note != null) ...<Widget>[
+            const SizedBox(height: PlinkSpacing.s2),
+            Text(
+              note,
+              key: const ValueKey('passwords-staff-note'),
+              style: text.bodySmall?.copyWith(color: colors.error),
+            ),
+          ],
           const SizedBox(height: PlinkSpacing.s4),
           Text(
               'Reset een wachtwoord — het nieuwe wordt live verstuurd en in '
@@ -662,7 +720,7 @@ class _StaffDetail extends StatelessWidget {
             children: <Widget>[
               OutlinedButton(
                 key: const ValueKey('passwords-staff-reset-ss'),
-                onPressed: controller.busy
+                onPressed: controller.busy || noSmartschool
                     ? null
                     : () => _confirmAndReset(
                           context,
@@ -674,7 +732,7 @@ class _StaffDetail extends StatelessWidget {
               ),
               OutlinedButton(
                 key: const ValueKey('passwords-staff-reset-o365'),
-                onPressed: controller.busy
+                onPressed: controller.busy || noAzure
                     ? null
                     : () => _confirmAndReset(
                           context,
@@ -686,7 +744,7 @@ class _StaffDetail extends StatelessWidget {
               ),
               FilledButton(
                 key: const ValueKey('passwords-staff-reset-both'),
-                onPressed: controller.busy
+                onPressed: controller.busy || noSmartschool || noAzure
                     ? null
                     : () => _confirmAndReset(
                           context,
@@ -709,9 +767,9 @@ class _StaffDetail extends StatelessWidget {
     required bool smartschool,
     required bool office365,
   }) async {
-    final account = controller.selectedStaff;
-    if (account == null) return;
-    final who = '${account.givenName} ${account.surname}'.trim();
+    final row = controller.selectedStaff;
+    if (row == null) return;
+    final who = row.name;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

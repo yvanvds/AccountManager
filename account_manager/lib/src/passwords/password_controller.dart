@@ -5,6 +5,7 @@ import 'package:account_state/account_state.dart';
 import 'package:azure_api/azure_api.dart' as az;
 import 'package:flutter/foundation.dart';
 import 'package:smartschool_api/smartschool_api.dart' as ss;
+import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import '../search/name_query.dart';
 import 'password_backends.dart';
@@ -41,21 +42,111 @@ enum PasswordTarget {
       };
 }
 
+/// The default linked-snapshot provider: none. A [PasswordController] built
+/// without one behaves exactly as it did before #372 — the Smartschool tree is
+/// the only roster, and an Office 365 push resolves by address.
+core.LinkedSnapshot? _noLinkedSnapshot() => null;
+
 /// One student in the currently-selected class, with its per-target selection.
 class StudentRow {
-  StudentRow(this.account);
+  StudentRow(this.account, {this.linked});
 
   final ss.SmartschoolAccount account;
+
+  /// The linker's record for this person, when a linked snapshot is in hand
+  /// (#372) — the **only** place the Office 365 account is read from.
+  ///
+  /// `null` means "this session has not linked", not "no Azure account": see
+  /// [hasNoAzureAccount], which is the positive statement and the one the row
+  /// reports on screen.
+  final core.LinkedAccount? linked;
+
   final Set<PasswordTarget> selected = <PasswordTarget>{};
+
+  /// What the last generate could **not** do for this row, in one short line
+  /// shown beside the row (#372).
+  ///
+  /// A miss used to leave nothing but a line in the Log panel, so a class-wide
+  /// generate that silently skipped Office 365 for a handful of students read
+  /// exactly like one that succeeded for all of them.
+  String? problem;
 
   String get username => account.uid;
   String get name => '${account.givenName} ${account.surname}'.trim();
+
+  /// The Graph object id of the Azure account the linker attached, or `null`
+  /// when there is none to push to.
+  String? get azureObjectId {
+    final id = linked?.azure?.id;
+    return id == null || id.isEmpty ? null : id;
+  }
+
+  /// Whether the linker **positively holds no** Office 365 account for this
+  /// student — a fact worth stating before a generate, not only after one.
+  bool get hasNoAzureAccount => linked != null && azureObjectId == null;
+}
+
+/// One person on the Personeel tab.
+///
+/// Since #372 the roster is the linker's, not the Smartschool group tree's, so
+/// a row is no longer necessarily backed by a group membership — or even by a
+/// Smartschool account. What a row always carries is a name and at least one
+/// account a password can be reset on.
+class StaffRow {
+  StaffRow({
+    required this.name,
+    required this.uid,
+    required this.mail,
+    this.linked,
+  });
+
+  /// The linker's record, when this row came from the linked snapshot (or the
+  /// group walk found a uid the linker also holds). `null` for a row the group
+  /// walk contributed that the linker has no staff record for.
+  final core.LinkedStaff? linked;
+
+  /// Display name, "Voornaam Naam".
+  final String name;
+
+  /// Smartschool username — empty for someone the linker holds who has no
+  /// Smartschool account at all. Only the Office 365 reset is open to them.
+  final String uid;
+
+  final String mail;
+
+  /// What the last reset could **not** do for this person, in one short line
+  /// shown in the detail panel (#372) — the staff twin of [StudentRow.problem].
+  String? problem;
+
+  /// A stable identity for this row across a rebuild, so a snapshot landing
+  /// mid-selection keeps the operator's place. The uid where there is one, so
+  /// the tile keys stay what they have always been.
+  String get key => uid.isNotEmpty ? uid : (linked?.id.value ?? name);
+
+  /// The Graph object id of the Azure account the linker attached, or `null`.
+  String? get azureObjectId {
+    final id = linked?.azure?.id;
+    return id == null || id.isEmpty ? null : id;
+  }
+
+  /// Whether the linker positively holds no Office 365 account for this person.
+  bool get hasNoAzureAccount => linked != null && azureObjectId == null;
+
+  bool get hasSmartschoolAccount => uid.isNotEmpty;
 }
 
 /// Drives the reworked Passwords screen (#180): on-demand password generation
 /// for students (per-class, per-target, bulk) and staff (per-member resets),
-/// reading the current Smartschool group tree from the last sync and pushing
-/// fresh passwords live through [PasswordBackends].
+/// reading the Smartschool class tree **and the linked snapshot** from the last
+/// sync and pushing fresh passwords live through [PasswordBackends].
+///
+/// The linked snapshot is what identifies people here since #372. The class tree
+/// is still the spine of the Leerlingen tab — it is how an operator navigates to
+/// a class — but who a row *is* comes from the linker: which Office 365 account
+/// belongs to this person, and (on the Personeel tab) which people exist at all.
+/// Reading either fact out of the group tree was the bug: a Smartschool `mail`
+/// is not a UPN, and an account Smartschool has seated in no group has no
+/// membership row to be found by.
 ///
 /// The key correction over the old distribution-only queue: passwords are
 /// generated **on demand from this screen**, not as a side effect of account
@@ -67,6 +158,7 @@ class PasswordController extends ChangeNotifier {
     required ss.SmartschoolSnapshot? Function() snapshot,
     required PasswordQueueStore queue,
     required PasswordBackends backends,
+    core.LinkedSnapshot? Function() linked = _noLinkedSnapshot,
     PasswordFileWriter writer = writePasswordExport,
     PasswordFileOpener opener = openPasswordExport,
     String Function() generatePassword = core.Password.create,
@@ -74,6 +166,7 @@ class PasswordController extends ChangeNotifier {
     String staffGroupName = 'Personeel',
     core.ILog? log,
   })  : _snapshotOf = snapshot,
+        _linkedOf = linked,
         _studentGroupName = studentGroupName,
         _staffGroupName = staffGroupName,
         _queue = queue,
@@ -94,9 +187,27 @@ class PasswordController extends ChangeNotifier {
   /// then synced, is the *older* of the two trees.
   final ss.SmartschoolSnapshot? Function() _snapshotOf;
 
+  /// Where the **linked snapshot** comes from, read live like the tree above
+  /// (#372).
+  ///
+  /// The screen hands over `() => services.controller.linked?.snapshot`. This is
+  /// what makes the Office 365 account resolvable (`employeeId ≡ wisaId`, the
+  /// bridge `link()` already applied) and the Personeel roster complete: an
+  /// account that sits in no Smartschool group has no membership row for the
+  /// group walk to find, but the linker holds it all the same.
+  ///
+  /// `null` — a session that has neither synced nor adopted the shared state —
+  /// is a real state, not a failure: everything falls back to the pre-#372
+  /// behaviour so the screen stays usable.
+  final core.LinkedSnapshot? Function() _linkedOf;
+
   /// The snapshot the index below was built from, so [refresh] can tell a real
   /// change from a repaint and cost nothing on the latter.
   ss.SmartschoolSnapshot? _indexed;
+
+  /// The linked snapshot the index below was built from — the second half of
+  /// [refresh]'s identity guard, since either can move on its own.
+  core.LinkedSnapshot? _indexedLink;
 
   final String _studentGroupName;
   final String _staffGroupName;
@@ -116,6 +227,18 @@ class PasswordController extends ChangeNotifier {
   final Map<String, List<String>> _uidsByGroup = <String, List<String>>{};
   final Map<String, core.Group> _groupsById = <String, core.Group>{};
 
+  // --- Linked index (#372) ---------------------------------------------------
+
+  /// The linker's student record per Smartschool username — how a row on the
+  /// Leerlingen tab reaches the Azure account attached to that person.
+  final Map<String, core.LinkedAccount> _linkedStudentsByUid =
+      <String, core.LinkedAccount>{};
+
+  /// The linker's staff record per Smartschool username, for the rows the group
+  /// walk contributes.
+  final Map<String, core.LinkedStaff> _linkedStaffByUid =
+      <String, core.LinkedStaff>{};
+
   /// The "Leerlingen" root of the student class tree, or `null` when the last
   /// sync carried no such group (or there was no sync this session).
   core.Group? studentRoot;
@@ -124,12 +247,26 @@ class PasswordController extends ChangeNotifier {
   /// Rebuilds every index from the snapshot the provider answers with now.
   void _reindex() {
     final snap = _snapshotOf();
+    final linked = _linkedOf();
     _indexed = snap;
+    _indexedLink = linked;
     _childrenByParent.clear();
     _accountByUid.clear();
     _uidsByGroup.clear();
     _groupsById.clear();
+    _linkedStudentsByUid.clear();
+    _linkedStaffByUid.clear();
     _allStaff.clear();
+    if (linked != null) {
+      for (final record in linked.accounts) {
+        final uid = record.smartschool?.uid ?? '';
+        if (uid.isNotEmpty) _linkedStudentsByUid[uid] = record;
+      }
+      for (final record in linked.staff) {
+        final uid = record.smartschool?.uid ?? '';
+        if (uid.isNotEmpty) _linkedStaffByUid[uid] = record;
+      }
+    }
     if (snap != null) {
       for (final account in snap.accounts) {
         _accountByUid[account.uid] = account;
@@ -155,36 +292,50 @@ class PasswordController extends ChangeNotifier {
     _applyStaffFilter();
   }
 
-  /// Adopts a Smartschool snapshot that arrived after this screen opened — a
-  /// sync, a drift check, or an apply that patched the tree (#287).
+  /// Adopts a Smartschool snapshot — or a linked snapshot (#372) — that arrived
+  /// after this screen opened: a sync, a drift check, an apply that patched the
+  /// tree, or the session's opening adoption of the shared state (#287).
   ///
-  /// A no-op while the live snapshot is the one already indexed, so a listener
-  /// may call it on every repaint. When it does rebuild, the operator's place is
-  /// kept wherever it still exists: the open class is re-resolved by id and its
-  /// rows keep the targets already ticked, so a colleague's sync landing
-  /// mid-selection does not silently discard the work.
+  /// A no-op while **both** live snapshots are the ones already indexed, so a
+  /// listener may call it on every repaint. Either can move without the other:
+  /// an apply patches the tree, and a link replaces the linked view alone. When
+  /// it does rebuild, the operator's place is kept wherever it still exists: the
+  /// open class is re-resolved by id and its rows keep the targets already
+  /// ticked, so a colleague's sync landing mid-selection does not silently
+  /// discard the work.
   void refresh() {
-    if (identical(_snapshotOf(), _indexed)) return;
+    if (identical(_snapshotOf(), _indexed) &&
+        identical(_linkedOf(), _indexedLink)) {
+      return;
+    }
     final String? openClassId = _selectedClass?.id.value;
-    final String? openStaffUid = _selectedStaff?.uid;
+    final String? openStaffKey = _selectedStaff?.key;
     final ticked = <String, Set<PasswordTarget>>{
       for (final row in _rows) row.username: <PasswordTarget>{...row.selected},
     };
 
     _reindex();
 
-    _selectedStaff = openStaffUid == null ? null : _accountByUid[openStaffUid];
+    _selectedStaff = openStaffKey == null
+        ? null
+        : _allStaff.where((r) => r.key == openStaffKey).firstOrNull;
     final core.Group? again =
         openClassId == null ? null : _groupsById[openClassId];
     _selectedClass = again;
     _rows.clear();
     if (again != null) {
       _rows.addAll(_directAccounts(again).map(
-        (a) => StudentRow(a)..selected.addAll(ticked[a.uid] ?? _bulk),
+        (a) => _studentRow(a)..selected.addAll(ticked[a.uid] ?? _bulk),
       ));
     }
     notifyListeners();
   }
+
+  /// The row for [account], carrying the linker's record for that person so the
+  /// Office 365 push resolves through the link rather than through the mail
+  /// (#372).
+  StudentRow _studentRow(ss.SmartschoolAccount account) =>
+      StudentRow(account, linked: _linkedStudentsByUid[account.uid]);
 
   core.Group? _findGroupByName(String name, ss.SmartschoolSnapshot? snap) {
     for (final group in snap?.groups ?? const <core.Group>[]) {
@@ -239,7 +390,7 @@ class PasswordController extends ChangeNotifier {
     _rows
       ..clear()
       ..addAll(_directAccounts(group).map((a) {
-        final row = StudentRow(a)..selected.addAll(_bulk);
+        final row = _studentRow(a)..selected.addAll(_bulk);
         return row;
       }));
     notifyListeners();
@@ -295,6 +446,9 @@ class PasswordController extends ChangeNotifier {
 
       for (final row in _rows) {
         if (row.selected.isEmpty) continue;
+        // The previous run's verdict is not this run's; clear it before the
+        // pushes so a row that succeeds stops claiming a problem (#372).
+        row.problem = null;
         String? ssPw;
         String? azPw;
         final coPws = <int, String>{};
@@ -312,8 +466,7 @@ class PasswordController extends ChangeNotifier {
                   'Smartschool-wachtwoord niet gezet voor ${row.username}.');
             }
           } else if (target == PasswordTarget.office365) {
-            final set =
-                await _pushAzurePassword(row.account.mail, row.name, password);
+            final set = await _pushStudentAzurePassword(row, password);
             if (set != null) {
               azPw = set;
               pushed++;
@@ -365,8 +518,124 @@ class PasswordController extends ChangeNotifier {
   /// Cleared at the start of each run so a fixed tenant stops reporting it.
   String? _rightsProblem;
 
+  /// What a row says when the linker holds no Office 365 account for the person
+  /// on it — sub-problem 2 of #372: a miss during a bulk generation for a whole
+  /// intake must be distinguishable from a success.
+  static const String noAzureAccountNote = 'Geen Office 365-account gekoppeld.';
+
+  /// What a row says when the account exists but the write did not land. The
+  /// long diagnosis (rights, Graph error) stays in [message] and the log.
+  static const String azureNotSetNote = 'Office 365-wachtwoord niet gezet.';
+
+  /// What a Personeel row says when the linker holds this person but no
+  /// Smartschool account for them (#372).
+  static const String noSmartschoolAccountNote = 'Geen Smartschool-account.';
+
+  /// Pushes [password] to the Office 365 account of a staff [row], the staff
+  /// twin of [_pushStudentAzurePassword] (#372).
+  Future<String?> _pushStaffAzurePassword(StaffRow row, String password) async {
+    final objectId = row.azureObjectId;
+    if (objectId != null) {
+      final set = await _pushAzure(
+        () => _backends.setAzurePasswordById(objectId, password),
+        row.name,
+        password,
+      );
+      if (set == null) row.problem ??= azureNotSetNote;
+      return set;
+    }
+    if (row.hasNoAzureAccount) {
+      row.problem ??= noAzureAccountNote;
+      _log?.addError(
+        core.Origin.azure,
+        'Geen Office 365-account gekoppeld voor ${row.name} — wachtwoord '
+        'niet gezet.',
+      );
+      return null;
+    }
+    final set = await _pushAzurePassword(row.mail, row.name, password);
+    if (set == null) row.problem ??= azureNotSetNote;
+    return set;
+  }
+
+  /// The file name of a per-staff sheet: the username where there is one, and
+  /// otherwise the person's name reduced to filename-safe characters — a row
+  /// off the linked roster need not have a Smartschool account to name it by.
+  static String _sheetName(StaffRow row) {
+    if (row.uid.isNotEmpty) return row.uid;
+    final safe = row.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '-');
+    return safe.isEmpty ? 'personeelslid' : safe;
+  }
+
+  /// Pushes [password] to the Office 365 account of [row] and records what went
+  /// wrong **on the row** as well as in the log (#372).
+  ///
+  /// The account is resolved through the linked record — the `employeeId ≡
+  /// wisaId` bridge `link()` already applied — rather than by handing Graph the
+  /// Smartschool `mail` as if it were a UPN. Where the two have drifted apart
+  /// (a collision suffix, a private address, a differently folded accent) that
+  /// lookup answered `Request_ResourceNotFound` and the push silently did
+  /// nothing for a student who does have an account.
+  ///
+  /// Three outcomes, and the row can tell them apart:
+  /// - the linker attached an account ⇒ push to its object id;
+  /// - the linker holds this person and attached none ⇒ say so, push nothing;
+  /// - no linked snapshot at all ⇒ fall back to the address lookup, which is
+  ///   the best key a session that has not linked has.
+  Future<String?> _pushStudentAzurePassword(
+    StudentRow row,
+    String password,
+  ) async {
+    final objectId = row.azureObjectId;
+    if (objectId != null) {
+      final set = await _pushAzure(
+        () => _backends.setAzurePasswordById(objectId, password),
+        row.name,
+        password,
+      );
+      if (set == null) row.problem = azureNotSetNote;
+      return set;
+    }
+    if (row.hasNoAzureAccount) {
+      row.problem = noAzureAccountNote;
+      _log?.addError(
+        core.Origin.azure,
+        'Geen Office 365-account gekoppeld voor ${row.name} '
+        '(${row.username}) — wachtwoord niet gezet.',
+      );
+      return null;
+    }
+    final set = await _pushAzurePassword(row.account.mail, row.name, password);
+    if (set == null) row.problem = azureNotSetNote;
+    return set;
+  }
+
   /// Pushes [password] to Azure for [mail], returning it when the write landed
   /// and `null` when it did not.
+  ///
+  /// The pre-#372 path, kept as the fallback for a session holding no linked
+  /// snapshot: an address is then the only key available.
+  Future<String?> _pushAzurePassword(
+    String mail,
+    String who,
+    String password,
+  ) async {
+    if (mail.isEmpty) {
+      _log?.addError(
+        core.Origin.azure,
+        'Office 365-wachtwoord niet gezet voor $who.',
+      );
+      return null;
+    }
+    return _pushAzure(
+      () => _backends.setAzurePassword(mail, password),
+      who,
+      password,
+    );
+  }
+
+  /// Runs one Azure password write and turns its outcome into the operator's
+  /// language, returning [password] when it landed and `null` when it did not.
   ///
   /// A refused write — Graph `403`, because the sign-in lacks the
   /// `User-PasswordProfile.ReadWrite.All` permission or the operator holds no
@@ -375,15 +644,13 @@ class PasswordController extends ChangeNotifier {
   /// [who] instead (#216). Both tabs push through here, so the class-wide
   /// generate and the per-staff reset report the same diagnosis, and a refusal
   /// ends only this one push: the rest of a class batch still runs.
-  Future<String?> _pushAzurePassword(
-    String mail,
+  Future<String?> _pushAzure(
+    Future<bool> Function() push,
     String who,
     String password,
   ) async {
     try {
-      if (mail.isNotEmpty && await _backends.setAzurePassword(mail, password)) {
-        return password;
-      }
+      if (await push()) return password;
       _log?.addError(
         core.Origin.azure,
         'Office 365-wachtwoord niet gezet voor $who.',
@@ -553,42 +820,113 @@ class PasswordController extends ChangeNotifier {
 
   // --- Personeel tab ---------------------------------------------------------
 
-  final List<ss.SmartschoolAccount> _allStaff = <ss.SmartschoolAccount>[];
-  List<ss.SmartschoolAccount> _filteredStaff = <ss.SmartschoolAccount>[];
+  final List<StaffRow> _allStaff = <StaffRow>[];
+  List<StaffRow> _filteredStaff = <StaffRow>[];
 
   /// The filtered staff list shown in the Personeel tab.
-  List<ss.SmartschoolAccount> get staff =>
-      List<ss.SmartschoolAccount>.unmodifiable(_filteredStaff);
+  List<StaffRow> get staff => List<StaffRow>.unmodifiable(_filteredStaff);
 
   String _filterText = '';
   String get filterText => _filterText;
 
-  ss.SmartschoolAccount? _selectedStaff;
-  ss.SmartschoolAccount? get selectedStaff => _selectedStaff;
+  StaffRow? _selectedStaff;
+  StaffRow? get selectedStaff => _selectedStaff;
 
+  /// Builds the Personeel roster from the **linked snapshot**, unioned with the
+  /// Smartschool "Personeel" group walk (#372).
+  ///
+  /// The walk alone could only ever list people Smartschool had already seated
+  /// in a group, so a staff account this app had just created through
+  /// `AddStaffToSmartschool` — which writes the account and nothing else — was
+  /// invisible here while the Acties card beside it showed Smartschool green. A
+  /// re-sync could not rescue it either: the Smartschool pull assembles its
+  /// snapshot by walking the group forest, so a group-less account never enters
+  /// it. The linker holds the person regardless, which is what this reads.
+  ///
+  /// The walk is kept as the second half of a **union**, never replaced: it
+  /// carries whoever the linked view does not (a session that has not linked at
+  /// all; an account the linker classified by its Smartschool role as something
+  /// other than staff). Nobody who was reachable before #372 stops being
+  /// reachable.
   void _loadStaff() {
-    final root = _staffRoot;
-    if (root == null) return;
     final seen = <String>{};
-    void walk(core.Group group) {
-      for (final uid in _uidsByGroup[group.id.value] ?? const <String>[]) {
-        final account = _accountByUid[uid];
-        if (account != null && seen.add(uid)) _allStaff.add(account);
-      }
-      for (final child in childrenOf(group)) {
-        walk(child);
+    final linked = _indexedLink;
+    if (linked != null) {
+      for (final record in linked.staff) {
+        if (!_isResettableStaff(record)) continue;
+        final uid = record.smartschool?.uid ?? '';
+        if (uid.isNotEmpty && !seen.add(uid)) continue;
+        _allStaff.add(_staffRowFor(record, uid));
       }
     }
+    final root = _staffRoot;
+    if (root != null) {
+      void walk(core.Group group) {
+        for (final uid in _uidsByGroup[group.id.value] ?? const <String>[]) {
+          final account = _accountByUid[uid];
+          if (account == null || !seen.add(uid)) continue;
+          _allStaff.add(StaffRow(
+            name: '${account.givenName} ${account.surname}'.trim(),
+            uid: account.uid,
+            mail: account.mail,
+            linked: _linkedStaffByUid[uid],
+          ));
+        }
+        for (final child in childrenOf(group)) {
+          walk(child);
+        }
+      }
 
-    walk(root);
+      walk(root);
+    }
     // Alphabetical by the displayed "Voornaam Naam" name, case-insensitive, so
     // the list is easy to scan when locating a person to (re)generate a
     // password for (#186).
-    _allStaff.sort((a, b) => '${a.givenName} ${a.surname}'
-        .trim()
-        .toLowerCase()
-        .compareTo('${b.givenName} ${b.surname}'.trim().toLowerCase()));
+    _allStaff.sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
     _applyStaffFilter();
+  }
+
+  /// Whether a linked staff record has anything this screen could reset.
+  ///
+  /// One of ours ([core.LinkedStaff.belongsToOurSchool]) holding a Smartschool
+  /// account, or — for someone who has none — a current WISA row *and* an Azure
+  /// account, so an Office 365 reset is meaningful. Excludes the two shapes with
+  /// nothing to offer: a WISA-only row (no account anywhere) and an Azure-only
+  /// leftover of someone who has left the group, which belongs on the deletion
+  /// side of the app rather than in a password roster.
+  static bool _isResettableStaff(core.LinkedStaff record) =>
+      record.belongsToOurSchool &&
+      (record.smartschool != null ||
+          (record.wisa != null && record.azure != null));
+
+  /// A row for a linked staff record: the concrete Smartschool account supplies
+  /// the display name where there is one (the linker's own `smartschool` is the
+  /// narrow `account_core` interface, which carries no name), then the WISA row,
+  /// then the Azure address, then the username.
+  StaffRow _staffRowFor(core.LinkedStaff record, String uid) {
+    final account = uid.isEmpty ? null : _accountByUid[uid];
+    final wisa = record.wisa;
+    final upn = record.azure?.upn ?? '';
+    final String name;
+    if (account != null &&
+        '${account.givenName} ${account.surname}'.trim().isNotEmpty) {
+      name = '${account.givenName} ${account.surname}'.trim();
+    } else if (wisa is wapi.WisaStaff &&
+        '${wisa.firstName} ${wisa.lastName}'.trim().isNotEmpty) {
+      name = '${wisa.firstName} ${wisa.lastName}'.trim();
+    } else if (upn.isNotEmpty) {
+      name = upn.split('@').first;
+    } else {
+      name = uid;
+    }
+    return StaffRow(
+      name: name,
+      uid: uid,
+      mail: account?.mail ?? upn,
+      linked: record,
+    );
   }
 
   void setStaffFilterText(String text) {
@@ -597,8 +935,8 @@ class PasswordController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void selectStaff(ss.SmartschoolAccount account) {
-    _selectedStaff = account;
+  void selectStaff(StaffRow row) {
+    _selectedStaff = row;
     notifyListeners();
   }
 
@@ -611,12 +949,12 @@ class PasswordController extends ChangeNotifier {
   void _applyStaffFilter() {
     final query = NameQuery(_filterText);
     if (query.isEmpty) {
-      _filteredStaff = List<ss.SmartschoolAccount>.of(_allStaff);
+      _filteredStaff = List<StaffRow>.of(_allStaff);
       return;
     }
-    _filteredStaff = <ss.SmartschoolAccount>[
-      for (final a in _allStaff)
-        if (query.matches('${a.givenName} ${a.surname}')) a,
+    _filteredStaff = <StaffRow>[
+      for (final row in _allStaff)
+        if (query.matches(row.name)) row,
     ];
   }
 
@@ -625,25 +963,37 @@ class PasswordController extends ChangeNotifier {
   /// legacy `NewPasswords` does), pushes them live, exports a one-page per-staff
   /// PDF sheet and opens it for printing (#195). Returns the written path, or
   /// `null` when nothing was pushed.
+  ///
+  /// Both halves resolve their target the way the Leerlingen tab now does
+  /// (#372): the Smartschool push needs a username this person may not have,
+  /// and the Office 365 push goes to the account the linker attached rather than
+  /// to whatever address Smartschool holds. Either missing target is named in
+  /// [message] and on the row instead of counted as an unexplained failure.
   Future<String?> resetStaff({
     required bool smartschool,
     required bool office365,
   }) async {
-    final account = _selectedStaff;
-    if (account == null || _busy || (!smartschool && !office365)) return null;
+    final row = _selectedStaff;
+    if (row == null || _busy || (!smartschool && !office365)) return null;
     _setBusy(true);
     _rightsProblem = null;
+    row.problem = null;
     try {
       final shared = _generate();
-      final who = '${account.givenName} ${account.surname}'.trim();
+      final who = row.name;
       String? ssPw;
       String? azPw;
       var failed = false;
 
       if (smartschool) {
         final pw = office365 ? shared : _generate();
-        if (await _backends.setSmartschoolPassword(
-            account.uid, core.AccountType.student, pw)) {
+        if (!row.hasSmartschoolAccount) {
+          failed = true;
+          row.problem = noSmartschoolAccountNote;
+          _log?.addError(core.Origin.smartschool,
+              'Geen Smartschool-account voor $who — wachtwoord niet gezet.');
+        } else if (await _backends.setSmartschoolPassword(
+            row.uid, core.AccountType.student, pw)) {
           ssPw = pw;
         } else {
           failed = true;
@@ -651,21 +1001,22 @@ class PasswordController extends ChangeNotifier {
       }
       if (office365) {
         final pw = smartschool ? shared : _generate();
-        azPw = await _pushAzurePassword(account.mail, who, pw);
+        azPw = await _pushStaffAzurePassword(row, pw);
         if (azPw == null) failed = true;
       }
 
       final rights = _rightsProblem;
       if (ssPw == null && azPw == null) {
-        _message = rights ?? 'Geen wachtwoord gezet — zie het logboek.';
+        _message =
+            rights ?? row.problem ?? 'Geen wachtwoord gezet — zie het logboek.';
         return null;
       }
       final path = await _writer(
-        '${account.uid}.pdf',
+        '${_sheetName(row)}.pdf',
         await staffPasswordPdf(
           name: who,
-          username: account.uid,
-          mail: account.mail,
+          username: row.uid,
+          mail: row.mail,
           smartschoolPassword: ssPw,
           office365Password: azPw,
         ),
