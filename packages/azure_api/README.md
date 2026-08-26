@@ -32,7 +32,17 @@ The legacy connector downloads roughly **6000** tenant users to keep the
 
 `$select` is pinned to exactly the fields the port uses: `id`,
 `userPrincipalName`, `employeeId`, `displayName`, `givenName`, `surname`,
-`companyName`, `department`, `accountEnabled`.
+`companyName`, `department`, `jobTitle`, `accountEnabled`, `createdDateTime`.
+
+`signInActivity` is deliberately **not** in that list (#363). It needs
+`AuditLog.Read.All` on top of the app's grant, so in the bulk `$select` a
+missing consent would fail every pull rather than one optional read; and a
+collection read that selects it silently drops its `$filter` — verified live,
+`/users?$select=id,signInActivity&$filter=id in (…)` came back paging the whole
+directory. It is therefore read one account at a time
+(`UserManager.withSignInActivity`), only for the accounts a duplicated
+`employeeId` names, and every refusal is swallowed: the fact goes missing, the
+pull does not.
 
 ### Delta-token lifetime (#213)
 

@@ -1534,6 +1534,12 @@ az.AzureUser azUser({
   // whose student sits in another class passes it, and one about the *stale*
   // copy the issue is named for passes last year's class or null.
   String? department = '3C',
+  // When Entra made the account, and when somebody last signed into it (#363).
+  // Unknown by default — nothing outside the duplicate-identity report reads
+  // them, and `null` is what an account pulled before #363's `$select` (or one
+  // whose sign-in read was refused) really carries.
+  DateTime? createdAt,
+  DateTime? lastSignIn,
 }) =>
     az.AzureUser(
       id: id,
@@ -1545,6 +1551,8 @@ az.AzureUser azUser({
       companyName: companyName,
       jobTitle: jobTitle,
       department: department,
+      createdAt: createdAt,
+      lastSignIn: lastSignIn,
     );
 
 /// An Azure **staff** account. Staff carry no `companyName`; their school lives
@@ -1917,18 +1925,32 @@ ReconcileHarness idCollisionHarness({InMemoryLinkedStore? linkedStore}) =>
 /// `companyName` and no WISA row — reads as a departed student and raises
 /// `RemoveStudentFromAzure` on it. Which of the pair that lands on is decided by
 /// nothing but snapshot order.
+///
+/// The two life dates (#363) complete the pathology, and they contradict the
+/// licensing ones on purpose. The twin is the **older** account — made before
+/// this port started writing `jobTitle` (#358), which is why it has none — and
+/// it is the one with recent sign-in activity. So the licensed account is the
+/// one nobody uses, and the account the student actually works in is the one
+/// that has never held Office. That is the whole reason these two facts had to
+/// reach the operator: without them the tile argues confidently for the wrong
+/// account.
 ReconcileHarness duplicateAzureAccountHarness({
   InMemoryLinkedStore? linkedStore,
 }) =>
     ReconcileHarness(
       linkedStore: linkedStore,
       azure: azSnap(users: [
-        azUser(),
+        azUser(
+          createdAt: DateTime.utc(2026, 1, 15, 12),
+          lastSignIn: DateTime.utc(2026, 2, 2, 12),
+        ),
         azUser(
           id: 'az-twin',
           upn: 'jane-doe@student.school.example',
           jobTitle: null,
           department: null,
+          createdAt: DateTime.utc(2025, 9, 1, 12),
+          lastSignIn: DateTime.utc(2026, 8, 20, 12),
         ),
       ]),
     );

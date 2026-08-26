@@ -58,6 +58,29 @@ void main() {
         expect(snapshot.deltaToken, isNotNull);
       });
 
+      test('the pull carries each account\'s creation date back (#363)',
+          () async {
+        // Read-only, and the one thing a fake transport cannot prove: that
+        // `createdDateTime` in the `$select` is *accepted* and answered. This
+        // is the check #363 was split off #360 for — a `$select` Graph refuses
+        // fails the whole pull, incremental included, for every school at once,
+        // and no offline suite can tell an accepted field from a rejected one.
+        //
+        // `sync()` exercises both reads that carry the `$select`: the
+        // `$filter`ed bulk read, and the `$deltatoken=latest` priming whose
+        // query options Graph replays on every later resume (#288).
+        final snapshot = await connector.sync();
+        expect(snapshot.users, isNotEmpty);
+        expect(
+          snapshot.users.where((u) => u.createdAt != null),
+          isNotEmpty,
+          reason: 'createdDateTime is missing from the read if nothing has one',
+        );
+        // Nothing here asserts on `signInActivity`. It is never part of a bulk
+        // read, it is fetched only for a duplicated `employeeId`, and whether
+        // it answers at all depends on a consent this test must not encode.
+      });
+
       test('groups come back with the shape that says who manages them (#331)',
           () async {
         // Read-only, per the live-testing policy: this asserts the *shape* is

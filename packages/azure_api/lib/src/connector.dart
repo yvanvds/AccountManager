@@ -175,11 +175,42 @@ class AzureConnector {
       expectedEmployeeIds,
       prefix,
     );
-    return AzureSnapshot(
+    return _withDuplicateSignIns(AzureSnapshot(
       fetchedAt: _now(),
       deltaToken: delta.deltaToken,
       users: userList,
       groups: groupList,
+    ));
+  }
+
+  /// [snapshot] with [AzureUser.lastSignIn] filled in for the accounts a
+  /// duplicated `employeeId` names, and nothing else touched (#363).
+  ///
+  /// The last leg of every pull, full and incremental alike, and normally a
+  /// no-op: [AzureSnapshot.duplicateEmployeeIds] is empty unless the tenant
+  /// really does hold two accounts for one person, and an empty answer costs
+  /// no request at all.
+  ///
+  /// It runs *here*, on the finished snapshot, rather than inside the reads,
+  /// because the collision is only observable once the whole pull is in one
+  /// place — and because that keeps the extra permission and the extra request
+  /// off the bulk read entirely ([UserManager.withSignInActivity] explains why
+  /// both matter). The enriched accounts are spliced back by object id, so the
+  /// snapshot's order — which INV-20 makes load-bearing — is preserved.
+  Future<AzureSnapshot> _withDuplicateSignIns(AzureSnapshot snapshot) async {
+    final duplicates = snapshot.duplicateEmployeeIds;
+    if (duplicates.isEmpty) return snapshot;
+
+    final enriched = <String, AzureUser>{
+      for (final user in await users
+          .withSignInActivity([for (final pair in duplicates.values) ...pair]))
+        user.id: user,
+    };
+    return AzureSnapshot(
+      fetchedAt: snapshot.fetchedAt,
+      deltaToken: snapshot.deltaToken,
+      users: [for (final u in snapshot.users) enriched[u.id] ?? u],
+      groups: snapshot.groups,
     );
   }
 
@@ -199,12 +230,12 @@ class AzureConnector {
       expectedEmployeeIds,
       schoolPrefix,
     );
-    return AzureSnapshot(
+    return _withDuplicateSignIns(AzureSnapshot(
       fetchedAt: _now(),
       deltaToken: token,
       users: userList,
       groups: groupList,
-    );
+    ));
   }
 
   /// Completes [current] with the accounts the prefix-scoped read cannot see

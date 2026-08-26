@@ -7737,6 +7737,79 @@ void main() {
   });
 
   testWidgets(
+      'the duplicate tile dates each account and says which one is being '
+      'signed into (#363)', (WidgetTester tester) async {
+    // The two facts #360 asked for and could not have, because neither field
+    // was read: `createdDateTime` and `signInActivity`. They matter because in
+    // this pair — the audited live one — they *contradict* the licensing
+    // fields already on the tile. The licensed account was made last January
+    // and abandoned in February; the twin with no `jobTitle`, made months
+    // earlier by an older run of this app, was signed into last week. Read
+    // without them the tile argues confidently for the wrong account, and the
+    // wrong account is the one holding the student's mail and OneDrive.
+    //
+    // Driven through the real app rather than the widget alone: the tile is one
+    // open notice among several on Synchronisatie, each account is a single
+    // wrapping line of `·`-separated facts, and two more facts per line is
+    // exactly the kind of growth that reads fine in isolation and overflows in
+    // the real column at the real font.
+    useTallWindow(tester);
+    final harness = duplicateAzureAccountHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    final tile = find.byKey(const ValueKey('azure-identity-collision-1'));
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+
+    String lineFor(String upn) => tester
+        .widget<Text>(find.descendant(
+          of: tile,
+          matching: find.textContaining('$upn@student.school.example · id'),
+        ))
+        .data!;
+
+    // The account the join linked: created this January, last signed into in
+    // February. Only month and year are asserted — the stamp is rendered in the
+    // operator's own time zone, and the test must not depend on the runner's.
+    final linked = lineFor('jane.doe');
+    expect(linked, contains('aangemaakt '));
+    expect(linked, contains('/01/2026'));
+    expect(linked, contains('laatste aanmelding '));
+    expect(linked, contains('/02/2026'));
+
+    // The unlicensed twin: older, and the one actually in use.
+    final twin = lineFor('jane-doe');
+    expect(twin, contains('/09/2025'));
+    expect(twin, contains('/08/2026'));
+    // Still the same line as before, with the licensing facts intact — the two
+    // dates were added to it, they did not displace anything.
+    expect(twin, contains('bedrijf GBS'));
+    expect(twin, contains('functie —'));
+
+    // The log carries the same facts, which is where an operator reconstructs a
+    // pass from afterwards.
+    final logged = harness.log.entries
+        .where((e) => e.message.contains('Dubbel Office 365-account'))
+        .single
+        .message;
+    expect(logged, contains('aangemaakt '));
+    expect(logged, contains('laatste aanmelding '));
+
+    // Nothing overflowed and nothing threw laying the longer lines out.
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'an admin co-account gets its own card instead of merging its actions '
       'onto the student\'s (#323)', (WidgetTester tester) async {
     // The live cause of the #319 card, and nothing about it is constructed: the

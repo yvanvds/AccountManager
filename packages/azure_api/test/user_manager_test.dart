@@ -36,7 +36,7 @@ void main() {
       expect(
         first.url.queryParameters[r'$select'],
         'id,userPrincipalName,employeeId,displayName,givenName,surname,'
-        'companyName,department,jobTitle,accountEnabled',
+        'companyName,department,jobTitle,accountEnabled,createdDateTime',
       );
       expect(first.url.queryParameters[r'$count'], 'true');
     });
@@ -182,9 +182,11 @@ void main() {
   });
 
   group('a resumed delta row is sparse (#288)', () {
-    /// The ten fields [AzureUser] reads, as one `$select` value.
+    /// The fields [AzureUser] reads on every pull, as one `$select` value.
+    /// `signInActivity` is not among them, deliberately (#363).
     const allFields = 'id,userPrincipalName,employeeId,displayName,givenName,'
-        'surname,companyName,department,jobTitle,accountEnabled';
+        'surname,companyName,department,jobTitle,accountEnabled,'
+        'createdDateTime';
 
     /// One delta page carrying [rows], closed by a deltaLink.
     FakeGraphTransport walkOf(List<Map<String, dynamic>> rows) =>
@@ -747,7 +749,7 @@ void main() {
       expect(
         req.url.queryParameters[r'$select'],
         'id,userPrincipalName,employeeId,displayName,givenName,surname,'
-        'companyName,department,jobTitle,accountEnabled',
+        'companyName,department,jobTitle,accountEnabled,createdDateTime',
       );
     });
 
@@ -986,6 +988,134 @@ void main() {
           reason: english,
         );
       }
+    });
+  });
+
+  group('withSignInActivity (#363)', () {
+    /// Graph's reply for one account, `$select`ed down to the two fields the
+    /// targeted read asks for.
+    GraphResponse activity(String id, {String? interactive, String? passive}) =>
+        jsonOk(<String, dynamic>{
+          'id': id,
+          'signInActivity': <String, dynamic>{
+            'lastSignInDateTime': interactive,
+            'lastNonInteractiveSignInDateTime': passive,
+          },
+        });
+
+    const pair = <AzureUser>[
+      AzureUser(id: 'az1', upn: 'jane.doe@school.example', employeeId: '1'),
+      AzureUser(id: 'az-twin', upn: 'jane-doe@school.example', employeeId: '1'),
+    ];
+
+    test('asks per account, and never on a filtered collection read', () async {
+      // The load-bearing shape, verified against the live tenant: a *collection*
+      // read that selects `signInActivity` silently drops its `$filter` and
+      // walks the whole directory. So there is no batched form to fall back on,
+      // and a `$filter` here would be the full-tenant read PAIN-2 forbids.
+      final transport = FakeGraphTransport(
+        (req) => activity(
+          req.url.pathSegments.last,
+          interactive: '2026-02-02T09:00:00Z',
+        ),
+      );
+      final users = UserManager(clientWith(transport));
+
+      final enriched = await users.withSignInActivity(pair);
+
+      expect(transport.requests, hasLength(2));
+      for (final req in transport.requests) {
+        expect(req.method, 'GET');
+        expect(req.url.queryParameters[r'$select'], 'id,signInActivity');
+        expect(req.url.queryParameters[r'$filter'], isNull);
+      }
+      expect(transport.requests.map((r) => r.url.pathSegments.last),
+          ['az1', 'az-twin']);
+      expect(
+        enriched.map((u) => u.lastSignIn),
+        everyElement(DateTime.utc(2026, 2, 2, 9)),
+      );
+      // Nothing else about the accounts moved.
+      expect(enriched.map((u) => u.upn), pair.map((u) => u.upn));
+    });
+
+    test('keeps the later of the interactive and non-interactive stamps',
+        () async {
+      final transport = FakeGraphTransport(
+        (req) => activity(
+          req.url.pathSegments.last,
+          interactive: '2026-02-02T09:00:00Z',
+          passive: '2026-08-20T07:30:00Z',
+        ),
+      );
+      final enriched =
+          await UserManager(clientWith(transport)).withSignInActivity(pair);
+      expect(enriched.first.lastSignIn, DateTime.utc(2026, 8, 20, 7, 30));
+    });
+
+    test('a 403 is named once and stops the walk, leaving the pull intact',
+        () async {
+      // Until `AuditLog.Read.All` is consented this is the *normal* answer, on
+      // every pass that finds a collision. It must cost one refusal and one
+      // explanation — not one refusal per account, and not a failed sync.
+      final transport = FakeGraphTransport.constant(graphError(
+        403,
+        'Authorization_RequestDenied',
+        'Insufficient privileges to complete the operation.',
+      ));
+      final log = RecordingLog();
+      final users = UserManager(clientWith(transport), log: log);
+
+      final enriched = await users.withSignInActivity(pair);
+
+      expect(transport.requests, hasLength(1));
+      expect(enriched, pair);
+      expect(enriched.map((u) => u.lastSignIn), everyElement(isNull));
+      expect(log.errors, isEmpty,
+          reason: 'a missing decoration is not a fault');
+      expect(
+        log.messages.where((m) => m.contains('AuditLog.Read.All')),
+        hasLength(1),
+      );
+    });
+
+    test('any other refusal skips one account and carries on', () async {
+      // A twin deleted in Entra between the pull and this read, say. The other
+      // account still gets its date.
+      final transport = FakeGraphTransport((req) =>
+          req.url.pathSegments.last == 'az1'
+              ? activity('az1', interactive: '2026-02-02T09:00:00Z')
+              : graphError(404, 'Request_ResourceNotFound', 'gone'));
+      final log = RecordingLog();
+
+      final enriched = await UserManager(clientWith(transport), log: log)
+          .withSignInActivity(pair);
+
+      expect(transport.requests, hasLength(2));
+      expect(enriched.first.lastSignIn, DateTime.utc(2026, 2, 2, 9));
+      expect(enriched.last.lastSignIn, isNull);
+      expect(log.errors, isEmpty);
+    });
+
+    test('an account Graph knows nothing about stays unknown, not epoch',
+        () async {
+      final transport = FakeGraphTransport(
+        (req) => jsonOk(<String, dynamic>{'id': req.url.pathSegments.last}),
+      );
+      final enriched =
+          await UserManager(clientWith(transport)).withSignInActivity(pair);
+      expect(enriched.map((u) => u.lastSignIn), everyElement(isNull));
+    });
+
+    test('an empty set costs no request at all', () async {
+      final transport =
+          FakeGraphTransport.constant(jsonOk(<String, dynamic>{}));
+      expect(
+        await UserManager(clientWith(transport))
+            .withSignInActivity(const <AzureUser>[]),
+        isEmpty,
+      );
+      expect(transport.requests, isEmpty);
     });
   });
 }

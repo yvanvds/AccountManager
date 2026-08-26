@@ -1221,4 +1221,130 @@ void main() {
       );
     });
   });
+
+  group('last sign-in for a duplicated employeeId (#363)', () {
+    /// The live #360 shape: two accounts, one WISA id, created months apart —
+    /// and the *unlicensed* twin is the one somebody is signing into.
+    Map<String, dynamic> account(String id, String upn, String created) =>
+        <String, dynamic>{
+          'id': id,
+          'userPrincipalName': upn,
+          'employeeId': 'W1001',
+          'displayName': 'Jane Doe',
+          'companyName': 'GBS',
+          'department': '3A',
+          'accountEnabled': true,
+          'createdDateTime': created,
+        };
+
+    /// [route], but the bulk read answers with the colliding pair and
+    /// `/users/{id}` answers the targeted sign-in read.
+    GraphResponse collidingRoute(GraphRequest req) {
+      final last = req.url.pathSegments.last;
+      if (last == 'az1' || last == 'az-twin') {
+        return jsonOk(<String, dynamic>{
+          'id': last,
+          'signInActivity': <String, dynamic>{
+            'lastSignInDateTime':
+                last == 'az-twin' ? '2026-08-20T07:30:00Z' : null,
+            'lastNonInteractiveSignInDateTime': null,
+          },
+        });
+      }
+      if (req.url.path.contains('users/delta') ||
+          req.url.path.contains('groups')) {
+        return route(req);
+      }
+      return jsonOk(<String, dynamic>{
+        'value': <Map<String, dynamic>>[
+          account(
+              'az1', 'jane.doe@student.school.example', '2026-01-15T12:00:00Z'),
+          account('az-twin', 'jane-doe@student.school.example',
+              '2025-09-01T12:00:00Z'),
+        ],
+      });
+    }
+
+    test('the creation date arrives on the ordinary bulk read', () async {
+      // No extra request buys it: `createdDateTime` is in the pull's own
+      // `$select`, live-verified on the `$filter`ed bulk read and the delta
+      // walk alike.
+      final transport = FakeGraphTransport(collidingRoute);
+
+      final snapshot = await connectorWith(transport).sync();
+
+      expect(
+        snapshot.users.map((u) => u.createdAt),
+        [DateTime.utc(2026, 1, 15, 12), DateTime.utc(2025, 9, 1, 12)],
+      );
+      final bulk = transport.requests
+          .firstWhere((r) => r.url.path.endsWith('/users'))
+          .url
+          .queryParameters[r'$select'];
+      expect(bulk, contains('createdDateTime'));
+      expect(bulk, isNot(contains('signInActivity')));
+    });
+
+    test('the sign-in read is targeted at exactly the colliding accounts',
+        () async {
+      final transport = FakeGraphTransport(collidingRoute);
+
+      final snapshot = await connectorWith(transport).sync();
+
+      final targeted = transport.requests
+          .where(
+              (r) => r.url.queryParameters[r'$select'] == 'id,signInActivity')
+          .toList();
+      expect(targeted.map((r) => r.url.pathSegments.last), ['az1', 'az-twin']);
+
+      // And it lands on the right account: the twin with no licence is the one
+      // the student is actually working in.
+      final byId = {for (final u in snapshot.users) u.id: u};
+      expect(byId['az1']!.lastSignIn, isNull);
+      expect(byId['az-twin']!.lastSignIn, DateTime.utc(2026, 8, 20, 7, 30));
+      // Snapshot order is load-bearing (INV-20) and the splice preserves it.
+      expect(snapshot.users.map((u) => u.id), ['az1', 'az-twin']);
+    });
+
+    test('an ordinary pull with no collision makes no extra request', () async {
+      final transport = FakeGraphTransport(route);
+
+      await connectorWith(transport).sync();
+
+      expect(
+        transport.requests.where(
+            (r) => r.url.queryParameters[r'$select'] == 'id,signInActivity'),
+        isEmpty,
+      );
+    });
+
+    test('a refused sign-in read still yields a complete snapshot', () async {
+      // The state of the tenant today: `AuditLog.Read.All` is not consented, so
+      // every pass that finds a collision meets a 403. It must cost the date
+      // and nothing else — the snapshot, and the creation date on it, survive.
+      final transport = FakeGraphTransport((req) =>
+          req.url.queryParameters[r'$select'] == 'id,signInActivity'
+              ? graphError(403, 'Authorization_RequestDenied',
+                  'Insufficient privileges to complete the operation.')
+              : collidingRoute(req));
+      final log = RecordingLog();
+      final connector = AzureConnector(
+        credentials: credentials,
+        authProvider: const StaticAuthProvider('T'),
+        transport: transport,
+        log: log,
+      );
+
+      final snapshot = await connector.sync();
+
+      expect(snapshot.users.map((u) => u.id), ['az1', 'az-twin']);
+      expect(snapshot.users.map((u) => u.lastSignIn), everyElement(isNull));
+      expect(snapshot.users.first.createdAt, DateTime.utc(2026, 1, 15, 12));
+      expect(log.errors, isEmpty);
+      expect(
+        log.messages.where((m) => m.contains('AuditLog.Read.All')),
+        hasLength(1),
+      );
+    });
+  });
 }
