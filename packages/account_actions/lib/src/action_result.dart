@@ -90,6 +90,32 @@ class ActionResult {
   /// fact, so only a write that demonstrably landed may name a class.
   final Group? movedToClass;
 
+  /// The **non-official** Smartschool group an account-targeted action added the
+  /// account to (#374) — today only the staff-group seat
+  /// [AddStaffToSmartschool] performs after its create.
+  ///
+  /// The staff twin of [movedToClass], and separate from it because the two
+  /// splice differently: Smartschool gives an account exactly one official
+  /// class, so a class seat *replaces* whatever official row the account held,
+  /// while a plain group membership is simply one more row beside the others.
+  ///
+  /// Null unless that one write demonstrably landed — a dry run, a refusal, a
+  /// throw, and an unresolved target all name nothing. This field is spliced
+  /// into the snapshot as fact, so silence is the only honest answer to a write
+  /// that did not happen.
+  final Group? joinedGroup;
+
+  /// The **non-official** Smartschool group an account-targeted action removed
+  /// the account from (#374) — today only the default-group
+  /// ([smartschoolDefaultGroupName]) seat [AddStaffToSmartschool] undoes after
+  /// its create, because `saveUser` puts every account it makes there.
+  ///
+  /// Null unless the removal both landed *and* named a group the snapshot in
+  /// hand carries: the write is addressed by name, so it can succeed against a
+  /// group our root-scoped pull never saw, and there is then no local row to
+  /// drop.
+  final Group? leftGroup;
+
   /// True when the record is **gone from the snapshot** for [system], so the
   /// State layer drops it rather than patching it.
   ///
@@ -154,6 +180,8 @@ class ActionResult {
     this.group,
     this.azureGroup,
     this.movedToClass,
+    this.joinedGroup,
+    this.leftGroup,
     this.removed = false,
     this.wisaRule,
     this.generatedPassword,

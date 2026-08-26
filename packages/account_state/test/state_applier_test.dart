@@ -1171,6 +1171,193 @@ void main() {
     });
   });
 
+  group('a new staff account is seated in Leerkrachten, not Leerlingen (#374)',
+      () {
+    /// A new hire who already has her Office 365 account, so the dispatch
+    /// offers the Smartschool create directly, over a tree that carries both
+    /// the staff group and the platform default group.
+    _Harness hire({
+      List<core.Group>? groups,
+      List<ss.SmartschoolMembership> memberships = const [],
+      int? Function(String soapAction)? soapResultFor,
+    }) =>
+        _Harness(
+          wisa: _wSnap(staff: [_wStaff(code: 'SMIT', wisaId: '42')]),
+          wisaBaseStaff: [_wStaff(code: 'SMIT', wisaId: '42')],
+          smartschool: _sSnap(
+            groups: groups ??
+                [
+                  _ssNode('Leerkrachten', code: 'LK'),
+                  _ssNode('Leerlingen', code: 'LLN'),
+                ],
+            memberships: memberships,
+          ),
+          azure: _aSnap(users: [_azStaff()]),
+          soapResultFor: soapResultFor,
+        );
+
+    Future<AddStaffToSmartschool> create(_Harness harness) async =>
+        (await harness.applier.link())
+            .staffActions
+            .whereType<AddStaffToSmartschool>()
+            .single;
+
+    test('the linker wires the seat, so the create issues both writes',
+        () async {
+      final harness = hire();
+
+      final applied = await harness.applier.applyStaff(await create(harness));
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(
+        harness.soap.soapActions.map((a) => a.split('#').last),
+        containsAllInOrder(
+          <String>[
+            'saveUser',
+            'saveUserToClassesAndGroups',
+            'removeUserFromGroup'
+          ],
+        ),
+      );
+      expect(applied.result.joinedGroup?.id.value, 'LK');
+      expect(applied.result.leftGroup?.id.value, 'LLN');
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the seat rides the incremental refresh — no re-pull');
+    });
+
+    test('the snapshot patch seats the account without a re-pull', () async {
+      final harness = hire();
+
+      await harness.applier.applyStaff(await create(harness));
+
+      final uid = harness.app.smartschool.snapshot!.accounts.single.uid;
+      expect(
+        harness.app.smartschool.snapshot!.memberships
+            .where((m) => m.uid == uid)
+            .map((m) => m.groupId.value),
+        <String>['LK'],
+        reason: 'the teacher is in Leerkrachten and in no student group',
+      );
+    });
+
+    test('an account already sitting in Leerlingen has that row dropped',
+        () async {
+      // The shape of the backlog this bug left behind: an account the app
+      // created into the default group. The removal is what takes it out, and
+      // the patch has to say so or the relink keeps reading a teacher in the
+      // student subtree.
+      final harness = hire(memberships: [_member('anna.smit', 'LLN')]);
+
+      await harness.applier.applyStaff(await create(harness));
+
+      expect(
+        harness.app.smartschool.snapshot!.memberships
+            .where((m) => m.uid == 'anna.smit')
+            .map((m) => m.groupId.value),
+        <String>['LK'],
+      );
+    });
+
+    test('the splice leaves other memberships alone', () async {
+      // Another account's rows, and this account's membership of a group
+      // neither write touched: a group seat is one row in, one row out.
+      final harness = hire(
+        groups: [
+          _ssNode('Leerkrachten', code: 'LK'),
+          _ssNode('Leerlingen', code: 'LLN'),
+          _ssNode('Vakgroep wiskunde', code: 'VWI'),
+          _ssClass('3A'),
+        ],
+        memberships: [
+          _member('anna.smit', 'VWI'),
+          _member('jan.peeters', 'LLN'),
+          _member('jan.peeters', '3A'),
+        ],
+      );
+
+      await harness.applier.applyStaff(await create(harness));
+
+      final rows = harness.app.smartschool.snapshot!.memberships
+          .map((m) => '${m.uid}:${m.groupId.value}');
+      expect(rows, containsAll(<String>['jan.peeters:LLN', 'jan.peeters:3A']));
+      expect(rows, contains('anna.smit:VWI'));
+      expect(rows, contains('anna.smit:LK'));
+    });
+
+    test('a refused seat leaves the create applied and does not splice',
+        () async {
+      final harness = hire(
+        soapResultFor: (a) => a.endsWith('#saveUserToClassesAndGroups') ? 1 : 0,
+      );
+
+      final applied = await harness.applier.applyStaff(await create(harness));
+
+      expect(applied.result.outcome, ActionOutcome.applied,
+          reason: 'a failed seat must not fail — and so retry — the create');
+      expect(applied.result.warnings, isNotEmpty);
+      expect(applied.refreshed, isTrue);
+      expect(harness.app.smartschool.snapshot!.accounts, hasLength(1));
+      expect(
+        harness.app.smartschool.snapshot!.memberships
+            .where((m) => m.uid == 'anna.smit'),
+        isEmpty,
+        reason: 'nothing landed, so the snapshot may claim nothing',
+      );
+    });
+
+    test('a tree with no Leerkrachten node still takes her out of Leerlingen',
+        () async {
+      final harness = hire(groups: [_ssNode('Leerlingen', code: 'LLN')]);
+
+      final applied = await harness.applier.applyStaff(await create(harness));
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.result.joinedGroup, isNull);
+      expect(applied.result.leftGroup?.id.value, 'LLN');
+      expect(applied.result.warnings.single, contains('Leerkrachten'));
+    });
+
+    test('a dry run seats nobody', () async {
+      final harness = hire();
+
+      final applied = await harness.applier
+          .applyStaff(await create(harness), options: ApplyOptions.dry);
+
+      expect(applied.result.outcome, ActionOutcome.dryRun);
+      expect(harness.soap.soapActions, isEmpty);
+      expect(harness.app.smartschool.snapshot!.memberships, isEmpty);
+    });
+
+    test('the #240 chain seats the account it provisions', () async {
+      // The ordinary new-hire path: the operator applies the Office 365 create
+      // and the Smartschool create rides along (#240). The follow-up is taken
+      // from the *relinked* view, so it has to carry the placement too.
+      final harness = _Harness(
+        wisa: _wSnap(staff: [_wStaff(code: 'SMIT', wisaId: '42')]),
+        wisaBaseStaff: [_wStaff(code: 'SMIT', wisaId: '42')],
+        smartschool: _sSnap(groups: [
+          _ssNode('Leerkrachten', code: 'LK'),
+          _ssNode('Leerlingen', code: 'LLN'),
+        ]),
+      );
+      final azureCreate = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied = await harness.applier.applyStaff(azureCreate);
+
+      expect(applied.followUps.single.joinedGroup?.id.value, 'LK');
+      final uid = harness.app.smartschool.snapshot!.accounts.single.uid;
+      expect(
+        harness.app.smartschool.snapshot!.memberships
+            .where((m) => m.uid == uid)
+            .map((m) => m.groupId.value),
+        <String>['LK'],
+      );
+    });
+  });
+
   group('Smartschool uid uniqueness for created accounts (#72)', () {
     test(
         'suffixes a colliding login and stays unique across sequential creates',

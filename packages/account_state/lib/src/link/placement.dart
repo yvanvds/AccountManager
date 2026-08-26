@@ -326,6 +326,24 @@ class PlacementResolver {
         : classGroup;
   }
 
+  /// The [StaffPlacement] every staff create is seated by (#374): the
+  /// [smartschoolStaffGroupName] node a new staff account must be added to, and
+  /// the platform default group it must be taken out of, both resolved against
+  /// the same name index [ClassPlacement.resolveClass] searches.
+  ///
+  /// One value for the whole snapshot rather than one per record: the seat asks
+  /// nothing about the person, only where the two fixed-name groups are. Either
+  /// may be `null` — a tenant whose tree has no such node, or a pull scoped to
+  /// roots that exclude it — and the action decides what that means for each
+  /// write (the add cannot happen without a code; the removal is addressed by
+  /// name and happens anyway).
+  StaffPlacement get staffPlacement => StaffPlacement(
+        staffGroup:
+            _groupsByName[normalizeGroupName(smartschoolStaffGroupName)],
+        defaultGroup:
+            _groupsByName[normalizeGroupName(smartschoolDefaultGroupName)],
+      );
+
   /// Builds the [GroupPlacement] for one WISA-only class (the dispatcher only
   /// calls this for `wisa != null && smartschool == null` groups).
   ///

@@ -53,6 +53,18 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// "a move happened" is not "this class is the one it wrote".
   final List<String> movedToClasses = <String>[];
 
+  /// The group codes of every `saveUserToClassesAndGroups` this transport
+  /// accepted, in order — the **non-official** groups an account was actually
+  /// added to (#374). Separate from [movedToClasses] because the two are
+  /// different writes on different kinds of group, and read off the envelope
+  /// for the same reason: "the account was seated" is not "it was seated here".
+  final List<String> joinedGroups = <String>[];
+
+  /// The group **names** of every `removeUserFromGroup` this transport
+  /// accepted, in order (#374) — names, not codes, because that is what the
+  /// API takes here, the one place it does.
+  final List<String> leftGroups = <String>[];
+
   /// The `stamboeknummer` every `saveUser` carried, in order (#338). A
   /// schoolloopbaan keeps one stamnummer **per row** and `saveUser` writes it to
   /// the *last* row, so what matters is not that a save happened but which
@@ -82,6 +94,7 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
 
   static final RegExp _codeArg = RegExp(r'<code[^>]*>([^<]*)</code>');
   static final RegExp _classArg = RegExp(r'<class[^>]*>([^<]*)</class>');
+  static final RegExp _csvListArg = RegExp(r'<csvList[^>]*>([^<]*)</csvList>');
   static final RegExp _stamboekArg =
       RegExp(r'<stamboeknummer[^>]*>([^<]*)</stamboeknummer>');
   static final RegExp _schoolYearArg =
@@ -108,6 +121,16 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.endsWith('#saveUserToClass')) {
       final match = _classArg.firstMatch(envelope);
       if (match != null) movedToClasses.add(match.group(1)!);
+    }
+    if (soapAction.endsWith('#saveUserToClassesAndGroups')) {
+      final match = _csvListArg.firstMatch(envelope);
+      if (match != null) joinedGroups.add(match.group(1)!);
+    }
+    // `removeUserFromGroup` names its target in the same `class` part the
+    // official move uses, but by **name** rather than by code.
+    if (soapAction.endsWith('#removeUserFromGroup')) {
+      final match = _classArg.firstMatch(envelope);
+      if (match != null) leftGroups.add(match.group(1)!);
     }
     // Likewise exact: `saveUserParameter` shares the prefix but carries no
     // stamboeknummer at all.

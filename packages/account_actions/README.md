@@ -338,6 +338,49 @@ Smartschool yet, so gating on `resolveClass != null` would suppress the very
 moves the action exists for. A class that is ours but missing from Smartschool
 still fails loudly at apply time.
 
+## Staff group seat (#374)
+
+Smartschool's `saveUser` seats **every** account it creates in the platform
+default group, `Leerlingen`, whatever role the account carries. A staff create
+therefore has two unconditional follow-up writes, which legacy
+`Action\StaffAccount\AddToSmartschool.Apply` performs and this port had dropped:
+
+```csharp
+await GroupManager.AddUserToGroup(smartschool, Root.Find("Leerkrachten"));
+await GroupManager.RemoveUserFromGroup(smartschool, Root.Find("Leerlingen"));
+```
+
+`AddStaffToSmartschool` takes a third injectable, `StaffPlacement`, carrying the
+resolved `Leerkrachten` node and the default group's name (plus its node, when
+the snapshot has one). The asymmetry is the API's:
+`saveUserToClassesAndGroups` addresses a group by **code**, so the add needs the
+resolved node, while `removeUserFromGroup` addresses one by **name** and happens
+whether or not our root-scoped pull saw the node. It is **opt-in** on
+`staffActions` / `staffActionsFor` — one value for the whole snapshot, not a
+per-record callback, because the seat asks nothing about the person. Without it
+the create behaves exactly as it did before #374.
+
+Both writes are **best-effort** (INV-41), like the student class placement: the
+create is the success criterion, and a failed seat must not fail — and so retry
+— a `saveUser` that already landed. Unlike the student placement, though,
+*every* way a seat misses produces an `ActionResult.warnings` line, not only a
+throw: a mis-placed student is re-caught next pass by
+`MoveToSmartschoolClassGroup`, whereas nothing re-examines a staff member's
+Smartschool group membership at all, so a missed seat has no safety net and the
+operator has to hear about it.
+
+Each write that lands names its group (`ActionResult.joinedGroup` /
+`leftGroup`), so the State layer can splice the membership without a re-pull.
+That splice is deliberately not the class one: a class seat *replaces* the one
+official class Smartschool allows, while these are plain group rows, so the
+patch adds one row and drops another and leaves everything else alone.
+
+The group **names** are constants (`smartschoolStaffGroupName`,
+`smartschoolDefaultGroupName`), not settings. #374 asked the question and this is
+the answer: `Leerkrachten` was already being guessed in several places, and a
+fourth configurable name beside `AppSettings.smartschoolRoots` and the Passwords
+screen's own `staffGroupName` would add a guess rather than remove one.
+
 ## Office 365 class placement (#245)
 
 `AzureClassGroupMembership` is the Azure counterpart of
@@ -373,11 +416,19 @@ write waiting on the class that can take it.
 
 ## Deferred (documented divergences)
 
-- **`AddToAzureStaffGroup`** / **`AddToStaffGroup`** and the `-Personeel` /
-  `Leerkrachten` group placements inside `AddStaffToAzure` /
-  `AddStaffToSmartschool` are **not** ported: they evaluate against Office 365 /
-  Smartschool group membership, which `LinkedStaff` does not carry. Same
+- **`AddToAzureStaffGroup`** / **`AddToStaffGroup`** and the `-Personeel` group
+  placement inside `AddStaffToAzure` are **not** ported: they evaluate against
+  Office 365 group membership, which `LinkedStaff` does not carry. Same
   membership-aware follow-up.
+
+  The Smartschool half of that sentence used to be here too, and it was wrong
+  (#374). `AddStaffToSmartschool`'s `Leerkrachten` / `Leerlingen` writes evaluate
+  against nothing at all — they are unconditional post-create plumbing, add to
+  one fixed-name group and remove from another — so they were dropped by
+  association with the two actions that really do read membership. See
+  [Staff group seat](#staff-group-seat-374). That fix is forward-only — the
+  accounts already mis-seated are tracked as #378, which is where the decision
+  between a one-off repair and a membership-aware standing action lives.
 - **`ChangeEmail`** (legacy) is dead code — not wired into the parser — and is
   intentionally omitted.
 - **`SetStaffCopyCode` idempotency fix.** Legacy `SetCopyCode` compares the

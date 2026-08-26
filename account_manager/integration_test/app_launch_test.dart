@@ -12475,6 +12475,94 @@ void main() {
   });
 
   testWidgets(
+      'a staff account created in Acties → Personeel lands in Leerkrachten and '
+      'leaves the default group end-to-end (#374)',
+      (WidgetTester tester) async {
+    // Smartschool seats **every** account `saveUser` creates in the platform
+    // default group, `Leerlingen`, whatever role it carries. Legacy compensated
+    // for that inside the staff create with two follow-up writes; the port
+    // dropped both, so every staff account it had ever made sat in the student
+    // subtree and in no staff group at all — invisible to anything that walks
+    // Personeel, and noise in everything that walks Leerlingen.
+    //
+    // Only a run of the real app covers the path this lived on end to end: the
+    // seat is resolved by the State layer from the Smartschool snapshot the
+    // sync produced, threaded into the dispatch the Acties screen renders, and
+    // performed by the create the #240 chain runs against the *relinked*
+    // record — so the account the operator's one click makes has to be the one
+    // that gets seated, and the local snapshot has to show it with no re-pull.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('Personeel',
+              code: 'PERS', official: false, type: GroupType.group),
+          ssGroup('Leerkrachten',
+              code: 'LK', official: false, type: GroupType.group),
+          ssGroup('Leerlingen',
+              code: 'LLN', official: false, type: GroupType.group),
+        ],
+        accounts: const [],
+        memberships: const [],
+      ),
+      azure: azSnap(users: const []),
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Browse Acties → Personeel and apply the new hire's one decision, exactly
+    // as the operator does.
+    await tester.tap(find.text('Acties'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final entry = harness.controller.pendingEntries
+        .firstWhere((e) => e.family == 'staff');
+    final id = entry.targetId;
+    await selectAccount(tester, id);
+    await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+
+    // The create landed, and so did both compensating writes — the add by group
+    // **code**, the removal by group **name**, which is the asymmetry the
+    // Smartschool API imposes on these two calls.
+    expect(
+      harness.controller.applyResults!.map((r) => r.outcome.name),
+      everyElement('applied'),
+    );
+    expect(harness.soap.joinedGroups, <String>['LK']);
+    expect(harness.soap.leftGroups, <String>['Leerlingen']);
+    expect(harness.soap.movedToClasses, isEmpty,
+        reason: 'a staff seat is a group membership, never an official class');
+
+    // And the local snapshot says so, off the incremental patch rather than a
+    // second pull: the teacher is in Leerkrachten and in no student group.
+    final uid = harness.app.smartschool.snapshot!.accounts.single.uid;
+    expect(
+      harness.app.smartschool.snapshot!.memberships
+          .where((m) => m.uid == uid)
+          .map((m) => m.groupId.value),
+      <String>['LK'],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a new staff member offers one either/or choice, and applying it '
       'provisions every hire without blacklisting any end-to-end (#248)',
       (WidgetTester tester) async {

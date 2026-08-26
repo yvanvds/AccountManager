@@ -2,6 +2,7 @@ import 'package:account_core/account_core.dart';
 
 import 'staff_action.dart';
 import 'staff_action_config.dart';
+import 'staff_placement.dart';
 
 /// Derives the applicable [StaffAction]s for one [LinkedStaff], ported from the
 /// legacy `StaffMemberActionParser.AddActions` dispatch (§6.3).
@@ -19,6 +20,12 @@ import 'staff_action_config.dart';
 /// The legacy `AddToAzureStaffGroup` / `AddToStaffGroup` actions are **not**
 /// dispatched here: they evaluate against Office 365 group membership, which a
 /// [LinkedStaff] does not carry (see the package README).
+///
+/// [placement] is the Smartschool group seat a *new* staff account needs (#374)
+/// — the same one for every record, so it arrives as a value rather than as the
+/// per-record callback the student and group dispatches take. It is **opt-in**:
+/// without it [AddStaffToSmartschool] creates the account and leaves it in the
+/// platform default group, exactly as it did before #374.
 ///
 /// The modify branch has **no** Azure `department` repair, and must not grow one
 /// (#237): a staff member's `department` is owned by other software and holds a
@@ -47,8 +54,9 @@ import 'staff_action_config.dart';
 /// the blacklist.
 List<StaffAction> staffActionsFor(
   LinkedStaff staff,
-  StaffActionConfig config,
-) {
+  StaffActionConfig config, {
+  StaffPlacement? placement,
+}) {
   // "Complete" (modify branch) requires presence in *our* WISA, not merely
   // anywhere in the group — the staff half of the same rule the student dispatch
   // has followed since #134, adopted here in #349. A teacher who moved to a
@@ -72,7 +80,7 @@ List<StaffAction> staffActionsFor(
           // ever forgotten — so the provisioning half comes first, never the
           // blacklist.
           AddStaffToAzure(staff, config),
-          AddStaffToSmartschool(staff, config),
+          AddStaffToSmartschool(staff, config, placement: placement),
           // The departure pair (#349), conservative half first: that is the
           // order the operator reads the radio pair in, and the order
           // `_chainFollowUps` walks, so a retirement keeps the account by
@@ -100,8 +108,10 @@ List<StaffAction> staffActionsFor(
 /// by their own families.
 List<StaffAction> staffActions(
   LinkedSnapshot snapshot,
-  StaffActionConfig config,
-) =>
+  StaffActionConfig config, {
+  StaffPlacement? placement,
+}) =>
     [
-      for (final staff in snapshot.staff) ...staffActionsFor(staff, config),
+      for (final staff in snapshot.staff)
+        ...staffActionsFor(staff, config, placement: placement),
     ];

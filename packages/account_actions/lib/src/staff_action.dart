@@ -8,6 +8,7 @@ import 'apply_options.dart';
 import 'change_set.dart';
 import 'connectors.dart';
 import 'staff_action_config.dart';
+import 'staff_placement.dart';
 
 /// The staff action family (spec `docs/domain-model.md` §3.10). One subclass
 /// per legacy `Action\StaffAccount\*` class, mirroring [StudentAction].
@@ -27,10 +28,11 @@ import 'staff_action_config.dart';
 /// [wapi.WisaStaff.code] (not `wisaId`) — `AddToSmartschool` and
 /// `UpdateWisaName` write the code into `accountId` (spec §4, OQ-1). Staff live
 /// on the base [StaffActionConfig.azureDomain] (no student sub-domain). The
-/// office-365 / Smartschool **group** placements the legacy add-actions perform
-/// are out of scope here (see the package README) — they need a
-/// membership-aware input, tracked as the `AddToAzureStaffGroup` /
-/// `AddToStaffGroup` follow-up.
+/// **Office 365** group placement the legacy add-actions perform is out of
+/// scope here (see the package README) — it needs a membership-aware input,
+/// tracked as the `AddToAzureStaffGroup` / `AddToStaffGroup` follow-up. The
+/// Smartschool one is not: since #374 [AddStaffToSmartschool] seats its new
+/// account from an injected [StaffPlacement], which needs no membership at all.
 sealed class StaffAction {
   /// The linked staff record this action targets, bound at construction.
   final LinkedStaff staff;
@@ -345,8 +347,9 @@ class AddStaffToAzure extends StaffAction {
 /// Create a Smartschool account for a staff member present in WISA and Azure
 /// but not Smartschool. Ported from `Action\StaffAccount\AddToSmartschool` —
 /// the account is built from the Azure record with the WISA [wapi.WisaStaff.code]
-/// as its `accountId` (spec §4) and the WISA `wisaId` as its copy-code (`fax`);
-/// the group placement (Leerkrachten / Leerlingen) is deferred (see README).
+/// as its `accountId` (spec §4) and the WISA `wisaId` as its copy-code (`fax`),
+/// and the new account is then seated in [smartschoolStaffGroupName] and taken
+/// out of the platform default group (#374, see [_seatNewAccount]).
 ///
 /// **Not bulk-applyable** (#293), deliberately unlike its student twin
 /// [AddStudentToSmartschool]: legacy passed `AddToSmartschool(…, true, false)`
@@ -357,7 +360,14 @@ class AddStaffToAzure extends StaffAction {
 /// ordinary new-hire path is unaffected: [AddStaffToAzure] is bulk-applyable and
 /// [unlocks] this create behind it, per record.
 class AddStaffToSmartschool extends StaffAction {
-  const AddStaffToSmartschool(super.staff, super.config);
+  const AddStaffToSmartschool(super.staff, super.config, {this.placement});
+
+  /// Where the freshly created account has to be seated (#374): the staff group
+  /// to add it to and the platform default group to take it out of. `null`
+  /// leaves the account exactly where `saveUser` put it — the behaviour every
+  /// release before #374 had, kept as the no-context default so a headless
+  /// caller or a test that is not about the seat reads unchanged.
+  final StaffPlacement? placement;
 
   @override
   bool evaluate() =>
@@ -456,17 +466,199 @@ class AddStaffToSmartschool extends StaffAction {
           StateError('Smartschool saveAccount returned failure'),
         );
       }
+      // The seat is best-effort, so it cannot change this action's outcome —
+      // the create is the success criterion (INV-41), exactly as the student
+      // create's class placement is. Each write that *did* land names its
+      // group, so the State layer can splice the membership without a re-pull;
+      // each one that did not says so in a warning.
+      final seated = await _seatNewAccount(connectors, built);
       return ActionResult(
         outcome: ActionOutcome.applied,
         changes: changes,
         system: Origin.smartschool,
         smartschool: built,
+        joinedGroup: seated.joined,
+        leftGroup: seated.left,
+        warnings: seated.warnings,
         generatedPassword: password,
       );
     } on Object catch (e) {
       return _failed(changes, Origin.smartschool, e);
     }
   }
+
+  /// Seats a freshly created staff account (#374), mirroring the two follow-up
+  /// writes legacy `AddToSmartschool.Apply` chains after its `Save`:
+  ///
+  /// ```csharp
+  /// await GroupManager.AddUserToGroup(smartschool, Root.Find("Leerkrachten"));
+  /// await GroupManager.RemoveUserFromGroup(smartschool, Root.Find("Leerlingen"));
+  /// ```
+  ///
+  /// Both are unconditional plumbing rather than a decision: Smartschool seats
+  /// **every** `saveUser` account in the platform default group, whatever role
+  /// it carries, so a staff create has to add the staff group and leave the
+  /// default one or the teacher lands in the student subtree — where the port
+  /// has been putting every staff account it ever made, and where nothing later
+  /// finds them. That is why the writes need no membership knowledge and were
+  /// wrongly deferred with the genuinely membership-aware `AddToStaffGroup` /
+  /// `AddToAzureStaffGroup` (see the README).
+  ///
+  /// **Best-effort, by design.** The create is this action's success criterion;
+  /// a failed seat must not fail — and so retry — the create (INV-41), which
+  /// would write `saveUser` a second time for an account that already exists.
+  /// Legacy likewise logs and continues.
+  ///
+  /// **Every way a seat misses warns**, and here the student create's rule (only
+  /// a *throw* warns, #343) does not carry over: a mis-placed student is
+  /// re-caught next pass by `MoveToSmartschoolClassGroup`, whereas nothing at all
+  /// re-examines a staff member's Smartschool group membership — a `LinkedStaff`
+  /// does not carry it, so no action can propose the repair. A seat that misses
+  /// here is a mis-seated account with no safety net, so the operator reads "the
+  /// account was made, the group was not" for a refusal and an unresolved group
+  /// just as much as for a throw.
+  ///
+  /// The two writes are independent: the removal is attempted even when the add
+  /// missed, because leaving the account in the student subtree is the worse
+  /// half of the same bug and the two failures have nothing to do with each
+  /// other.
+  Future<_SeatOutcome> _seatNewAccount(
+    Connectors connectors,
+    ss.SmartschoolAccount built,
+  ) async {
+    final placement = this.placement;
+    if (placement == null) return const _SeatOutcome();
+
+    final warnings = <String>[];
+    final joined =
+        await _joinStaffGroup(connectors, built, placement, warnings);
+    final left =
+        await _leaveDefaultGroup(connectors, built, placement, warnings);
+    return _SeatOutcome(joined: joined, left: left, warnings: warnings);
+  }
+
+  /// Adds [built] to the staff group, returning it only when the write landed.
+  ///
+  /// `saveUserToClassesAndGroups` addresses a group by **code**, so an
+  /// unresolved group cannot be written to at all — and an official one is
+  /// refused by Smartschool (legacy guards it in `AddUserToGroup`; the ported
+  /// connector leaves the guard to the caller, like `moveUserToClass`).
+  Future<Group?> _joinStaffGroup(
+    Connectors connectors,
+    ss.SmartschoolAccount built,
+    StaffPlacement placement,
+    List<String> warnings,
+  ) async {
+    final target = placement.staffGroup;
+    if (target == null) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar de groep '
+        '$smartschoolStaffGroupName is niet gevonden in Smartschool. Voeg het '
+        'account daar handmatig aan toe.',
+      );
+      return null;
+    }
+    if (target.official) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar ${target.name} is een '
+        'officiële klas: accounts kunnen daar niet als groepslid aan '
+        'toegevoegd worden. Voeg het account handmatig toe aan de juiste '
+        'personeelsgroep.',
+      );
+      return null;
+    }
+
+    try {
+      final ok = await _requireSmartschool(connectors)
+          .addUserToGroup(built.uid, target.id.value);
+      if (ok) return target;
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar Smartschool weigerde het '
+        'toe te voegen aan ${target.name}. Voeg het account daar handmatig aan '
+        'toe.',
+      );
+    } on Object catch (e) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar het toevoegen aan '
+        '${target.name} is mislukt: $e. Voeg het account daar handmatig aan '
+        'toe.',
+      );
+    }
+    return null;
+  }
+
+  /// Removes [built] from the platform default group, returning the group whose
+  /// local membership row the State layer may drop.
+  ///
+  /// `removeUserFromGroup` addresses a group by **name**, so this write does not
+  /// need the group to be in the snapshot — the account is seated there by
+  /// Smartschool itself whether our root-scoped pull saw the node or not. The
+  /// resolved node only decides whether there is a local row to splice away, so
+  /// a successful removal against an unresolved group names nothing and is not
+  /// a warning either.
+  Future<Group?> _leaveDefaultGroup(
+    Connectors connectors,
+    ss.SmartschoolAccount built,
+    StaffPlacement placement,
+    List<String> warnings,
+  ) async {
+    final name = placement.defaultGroupName;
+    final resolved = placement.defaultGroup;
+    if (resolved != null && resolved.official) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar $name is een officiële '
+        'klas: leden kunnen daar niet uit verwijderd worden.',
+      );
+      return null;
+    }
+
+    try {
+      // Legacy stamps the removal with the moment of the write
+      // (`GroupManager.RemoveUserFromGroup`); the date carries no meaning for a
+      // non-official group, but the API requires one.
+      final ok = await _requireSmartschool(connectors)
+          .removeUserFromGroup(built.uid, name, DateTime.now());
+      if (ok) return resolved;
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar Smartschool weigerde het '
+        'uit de groep $name te verwijderen. Verwijder het account daar '
+        'handmatig uit.',
+      );
+    } on Object catch (e) {
+      warnings.add(
+        'Het Smartschool-account is aangemaakt, maar het verwijderen uit de '
+        'groep $name is mislukt: $e. Verwijder het account daar handmatig uit.',
+      );
+    }
+    return null;
+  }
+}
+
+/// What [AddStaffToSmartschool]'s best-effort seat step ended up doing (#374):
+/// the groups it demonstrably joined and left, plus the operator-facing notes
+/// the caller must not drop.
+///
+/// The staff twin of the student create's placement outcome, with two groups
+/// rather than one class because the seat is two independent writes.
+class _SeatOutcome {
+  const _SeatOutcome({
+    this.joined,
+    this.left,
+    this.warnings = const <String>[],
+  });
+
+  /// The staff group the account was actually added to, or null for every way
+  /// the add declined, was refused, or threw.
+  final Group? joined;
+
+  /// The default group the account was actually removed from **and** whose node
+  /// the snapshot in hand carries — null when the removal missed, and also when
+  /// it landed against a group our pull never saw (there is no row to drop).
+  final Group? left;
+
+  /// Reasons a seat did not land that the operator must still see, since
+  /// nothing downstream re-proposes a staff group placement.
+  final List<String> warnings;
 }
 
 /// The [StaffAction.alternativeGroup] key shared by the two mutually exclusive
