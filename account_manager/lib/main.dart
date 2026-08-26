@@ -19,6 +19,7 @@ import 'src/auth/loopback_aad_broker.dart';
 import 'src/auth/method_channel_aad_broker.dart';
 import 'src/auth/sign_in_session.dart';
 import 'src/reconcile/reconcile_bootstrap.dart';
+import 'src/settings/connection_config.dart';
 import 'src/settings/settings_bootstrap.dart';
 
 void main() {
@@ -61,10 +62,28 @@ void main() {
   // copy and a save reached the connectors only on the next launch.
   final liveSettings = LiveSettings();
 
+  // Where this machine's backend lives (#370). Read per bootstrap rather than
+  // once here: `main()` is synchronous, and resolving inside the (memoized)
+  // closures means a machine whose connection.json was fixed between launch and
+  // the first screen that needs a store gets the corrected coordinates. The
+  // resolution never throws — a malformed file degrades to the compiled
+  // defaults and says so in Instellingen → Verbinding.
+  final connection = connectionStoreForThisMachine();
+  Future<StoreEndpoints> endpoints() async =>
+      (await connection.read()).endpoints;
+
   runApp(
     AccountManagerApp(
       session: session,
       graph: config.isConfigured ? config.graph : null,
+      // The Verbinding section's own seams. Wired unconditionally — including
+      // on a build where AAD is not configured — because this is the section
+      // that exists to be reachable when nothing else is.
+      connection: ConnectionServices(
+        store: connection,
+        probe: (StoreEndpoints ends) =>
+            probeConnectionLive(ends, session: session),
+      ),
       // The reconcile stack (settings from Azure SQL, secrets from Key Vault,
       // the three connectors) is assembled lazily, the first time a screen that
       // needs it is opened — after the sign-in gate has a session to mint tokens
@@ -73,10 +92,11 @@ void main() {
       // failed attempt is not cached, so the reconcile screen's retry re-runs it.
       reconcileBootstrap: config.isConfigured
           ? _memoizeOnSuccess(
-              () => bootstrapReconcile(
+              () async => bootstrapReconcile(
                 session: session,
                 aad: config,
                 liveSettings: liveSettings,
+                endpoints: await endpoints(),
               ),
             )
           : null,
@@ -88,9 +108,10 @@ void main() {
       // successfully.
       settingsBootstrap: config.isConfigured
           ? _memoizeOnSuccess(
-              () => bootstrapSettings(
+              () async => bootstrapSettings(
                 session: session,
                 liveSettings: liveSettings,
+                endpoints: await endpoints(),
               ),
             )
           : null,

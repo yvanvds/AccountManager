@@ -11,6 +11,7 @@ import '../screens/class_groups_screen.dart';
 import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
 import '../screens/settings_screen.dart';
+import '../settings/connection_config.dart';
 import '../settings/settings_bootstrap.dart';
 import 'shell_navigation.dart';
 
@@ -51,6 +52,7 @@ class AppShell extends StatefulWidget {
     super.key,
     this.reconcileBootstrap,
     this.settingsBootstrap,
+    this.connection,
   });
 
   /// Assembles the reconcile stack on first use, or `null` when Azure AD is
@@ -60,6 +62,12 @@ class AppShell extends StatefulWidget {
   /// Assembles the settings seams (store + secret provider) on first use, or
   /// `null` when Azure AD is not configured for this build.
   final Future<SettingsServices> Function()? settingsBootstrap;
+
+  /// This machine's backend coordinates and the reachability probe (#370),
+  /// handed straight to the Settings view's Verbinding section. Unlike the two
+  /// bootstraps it is never gated on AAD: it is what an operator reaches for
+  /// when the rest of the configuration is wrong.
+  final ConnectionServices? connection;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -109,7 +117,10 @@ class _AppShellState extends State<AppShell> {
       tab: ShellTab.instellingen,
       label: 'Instellingen',
       icon: Icons.settings_outlined,
-      builder: (_) => SettingsScreen(bootstrap: widget.settingsBootstrap),
+      builder: (_) => SettingsScreen(
+        bootstrap: widget.settingsBootstrap,
+        connection: widget.connection,
+      ),
     ),
   ];
 

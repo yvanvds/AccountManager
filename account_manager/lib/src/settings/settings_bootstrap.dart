@@ -107,13 +107,15 @@ class SettingsServices {
 
 /// Wires the Settings view's two seams for one signed-in session: a
 /// [CosmosSettingsStore] over the operator's Cosmos data-plane token and a
-/// [KeyVaultSecretProvider] over their Key Vault token (#114). Both default to
-/// the provisioned infrastructure in [StoreEndpoints] and can be overridden per
-/// environment with `--dart-define`.
+/// [KeyVaultSecretProvider] over their Key Vault token (#114). Both are built
+/// from [StoreEndpoints], which `main()` resolves per call from this machine's
+/// `connection.json` over `--dart-define` over the compiled defaults (#370).
 ///
 /// The optional parameters are test seams; production callers pass only
-/// [session]. This never *loads* the settings — the screen does that itself, so
-/// a reload affordance can re-read without re-bootstrapping.
+/// [session] and [endpoints]. This never *loads* the settings — the screen does
+/// that itself, so a reload affordance can re-read without re-bootstrapping, and
+/// so a store this assembles against unreachable coordinates still lets the
+/// Settings screen open (the load is where that failure lands, not here).
 Future<SettingsServices> bootstrapSettings({
   required SignInSession session,
   LiveSettings? liveSettings,

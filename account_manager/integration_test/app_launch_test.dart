@@ -4,7 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show ZLibDecoder;
+import 'dart:io' show Directory, File, Platform, ZLibDecoder;
 
 import 'package:account_actions/account_actions.dart'
     show
@@ -24,6 +24,11 @@ import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
 import 'package:account_manager/src/screens/system_indicator.dart';
+import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart'
+    show StoreEndpoints;
+import 'package:account_manager/src/settings/connection_config.dart';
+import 'package:account_manager/src/settings/settings_bootstrap.dart'
+    show SettingsServices;
 import 'package:account_manager/src/shell/app_shell.dart';
 import 'package:account_state/account_state.dart'
     show
@@ -32,6 +37,7 @@ import 'package:account_state/account_state.dart'
         ChangeSignal,
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
+        InMemorySecretProvider,
         InMemorySettingsStore,
         InMemorySignalHub,
         LiveSettings,
@@ -13229,6 +13235,150 @@ void main() {
           .map((f) => f.field),
       isNot(contains('department')),
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Instellingen opens with an unreachable Cosmos, and the Verbinding tab '
+      'writes a corrected connection.json to disk (#370)',
+      (WidgetTester tester) async {
+    // The failure this issue exists for, driven end to end in the real app. Every
+    // backend coordinate used to be a compile-time constant, so an install
+    // pointed at a Cosmos account that is gone (a typo'd endpoint, a decommissioned
+    // resource group) had no way back: the settings document could not load, and
+    // the screen that would fix it refused to render without one. A public build
+    // has no `--dart-define` to fall back on either (#371).
+    //
+    // Only a full run proves the way out. The widget test binds the screen
+    // directly; it cannot show that the rail still reaches Instellingen, that the
+    // tab frame survives a failed bootstrap inside the real shell, or that the
+    // bytes land in a real file on a real filesystem. Everything here is
+    // therefore the real thing except the probe (which would need a live Azure)
+    // and the store (which is *supposed* to be broken).
+    useTallWindow(tester);
+
+    // A throwaway connection.json, so the run cannot touch the operator's own
+    // %APPDATA%. This is a real FileConnectionStore over a real file — the file
+    // round-trip is half of what is being asserted.
+    final Directory dir = Directory.systemTemp.createTempSync('am-conn-e2e-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    final File connectionFile = File(
+      '${dir.path}${Platform.pathSeparator}$connectionFileName',
+    );
+
+    // The install is pointed at an account that answers nothing.
+    final broken = FailingSettingsStore();
+    final probe = FakeConnectionProbe(const <ConnectionProbeResult>[
+      ConnectionProbeResult(
+        id: 'cosmos',
+        label: 'Cosmos DB',
+        ok: false,
+        detail: 'Failed host lookup: weg.documents.azure.com',
+      ),
+      ConnectionProbeResult(id: 'vault', label: 'Key Vault', ok: true),
+    ]);
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: () async => SettingsServices(
+        store: broken,
+        secrets: InMemorySecretProvider(const <SecretRef, String>{}),
+      ),
+      connection: ConnectionServices(
+        store: FileConnectionStore(connectionFile),
+        probe: probe.call,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The rail still gets there — a failed settings bootstrap is not a locked
+    // door.
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-tabs')), findsOneWidget);
+    expect(broken.loads, 1, reason: 'the document was genuinely attempted');
+
+    // …and it opens *on* Verbinding, so the operator does not have to know
+    // which tab repairs this.
+    final int selected = tester
+        .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
+        .controller!
+        .index;
+    expect(selected, 4);
+
+    // With no file yet, the fields show what the build shipped.
+    final Finder cosmos =
+        find.byKey(const ValueKey('settings-connection-cosmos-endpoint'));
+    await tester.ensureVisible(cosmos);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(cosmos).controller!.text,
+      StoreEndpoints.fromEnvironment().cosmosEndpoint,
+    );
+    expect(connectionFile.existsSync(), isFalse);
+
+    // Test before committing: the typo costs a button press, not a relaunch.
+    final Finder test = find.byKey(const ValueKey('settings-connection-test'));
+    await tester.ensureVisible(test);
+    await tester.tap(test);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Cosmos DB: niet bereikbaar'),
+      findsOneWidget,
+    );
+
+    // Correct the account and save.
+    const String fixed = 'https://hersteld.documents.azure.com:443/';
+    await tester.enterText(cosmos, fixed);
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-connection-cosmos-database')),
+      'accountmanager-2',
+    );
+    probe.results = const <ConnectionProbeResult>[
+      ConnectionProbeResult(id: 'cosmos', label: 'Cosmos DB', ok: true),
+      ConnectionProbeResult(id: 'vault', label: 'Key Vault', ok: true),
+    ];
+    await tester.tap(test);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Cosmos DB: bereikbaar'), findsOneWidget);
+    expect(probe.lastEndpoints!.cosmosEndpoint, fixed);
+
+    final Finder save = find.byKey(const ValueKey('settings-connection-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    // The bytes are on disk, under the documented keys — the whole coordinate
+    // set, so the file is a complete answer rather than a fragment.
+    expect(connectionFile.existsSync(), isTrue);
+    final decoded =
+        jsonDecode(connectionFile.readAsStringSync()) as Map<String, dynamic>;
+    expect(decoded[StoreEndpoints.cosmosEndpointKey], fixed);
+    expect(decoded[StoreEndpoints.cosmosDatabaseKey], 'accountmanager-2');
+    expect(
+      decoded[StoreEndpoints.vaultUriKey],
+      StoreEndpoints.fromEnvironment().vaultUri,
+    );
+
+    // The section now says where the values come from, and is honest about the
+    // running session still talking to the old account.
+    expect(find.textContaining(connectionFile.path), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('settings-connection-relaunch')),
+      findsOneWidget,
+    );
+
+    // A relaunch reads the corrected file back — the resolution order doing its
+    // job on the same disk the save just wrote to.
+    final ResolvedConnection next =
+        await FileConnectionStore(connectionFile).read();
+    expect(next.source, ConnectionSource.file);
+    expect(next.endpoints.cosmosEndpoint, fixed);
+
     expect(tester.takeException(), isNull);
   });
 }
