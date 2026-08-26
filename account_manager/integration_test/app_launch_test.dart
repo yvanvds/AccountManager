@@ -6722,16 +6722,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('password-class-3C')));
       await tester.pumpAndSettle();
-      // The column header is sticky (#376): a generate clears every row's
-      // checkbox but leaves the header ticked, so a plain tap on the second run
-      // would *clear* the column instead of filling it. Drive it to off first
-      // where it is already on.
-      final bulk = find.byKey(const ValueKey('passwords-bulk-smartschool'));
-      if (tester.widget<Checkbox>(bulk).value ?? false) {
-        await tester.tap(bulk);
-        await tester.pumpAndSettle();
-      }
-      await tester.tap(bulk);
+      // One tap fills the column on every round: the header follows the rows,
+      // which the previous round's generate cleared (#376).
+      await tester
+          .tap(find.byKey(const ValueKey('passwords-bulk-smartschool')));
       await tester.pumpAndSettle();
       final generate = find.byKey(const ValueKey('passwords-generate'));
       await tester.ensureVisible(generate);
@@ -6776,6 +6770,101 @@ void main() {
     expect(withoutWifi, isNot(contains('WiFi')));
     expect(withoutWifi, isNot(contains('Netwerk')));
     expect(withoutWifi, isNot(contains('nieuwesleutel')));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a generate unticks the Wachtwoorden column header, so one tap re-arms '
+      'the column instead of clearing it (#376)', (WidgetTester tester) async {
+    // The real app, real rail, real grid. The header checkbox used to be
+    // rendered from a set the controller kept beside the rows, which a generate
+    // never touched: the rows went empty, the header stayed ticked, and the one
+    // control that looks like it re-arms the column *cleared* it on the first
+    // tap. This is exactly the loop an operator lands in — generate for a class,
+    // see one push fail, run the column again — so drive it end to end.
+    useTallWindow(tester);
+    final harness = ReconcileHarness(ssInitial: passwordsSnap());
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    final Finder bulk =
+        find.byKey(const ValueKey('passwords-bulk-smartschool'));
+    final Finder generate = find.byKey(const ValueKey('passwords-generate'));
+    bool headerTicked() => tester.widget<Checkbox>(bulk).value ?? false;
+    bool rowTicked(String uid) =>
+        tester
+            .widget<Checkbox>(
+                find.byKey(ValueKey('passwords-cell-$uid-smartschool')))
+            .value ??
+        false;
+
+    await tester.tap(railTab('Wachtwoorden'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+
+    // Round one: tick the column, both students follow, and the button counts
+    // the two pushes it would make.
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    expect(headerTicked(), isTrue);
+    expect(rowTicked('jane'), isTrue);
+    expect(rowTicked('bob'), isTrue);
+    expect(find.text('Genereer wachtwoorden (2)'), findsOneWidget);
+
+    await tester.ensureVisible(generate);
+    await tester.tap(generate);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(2));
+
+    // The selection is spent, and the header says so rather than summarising a
+    // selection that no longer exists.
+    expect(rowTicked('jane'), isFalse);
+    expect(rowTicked('bob'), isFalse);
+    expect(headerTicked(), isFalse);
+    expect(find.text('Genereer wachtwoorden'), findsOneWidget);
+
+    // Round two: a single tap on the header fills the column again — the whole
+    // point of the fix — and the generate it arms really runs.
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    expect(headerTicked(), isTrue);
+    expect(rowTicked('jane'), isTrue);
+    expect(rowTicked('bob'), isTrue);
+    expect(find.text('Genereer wachtwoorden (2)'), findsOneWidget);
+
+    await tester.ensureVisible(generate);
+    await tester.tap(generate);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+    expect(harness.passwordBackends.smartschoolPushes, hasLength(4));
+
+    // Nor does the column come back armed behind the operator's back: leaving
+    // the screen and re-opening the class starts from an empty column, because
+    // the run spent the arming that used to be re-seeded into every freshly
+    // loaded class — where the header read ticked over a selection nobody had
+    // asked for and the obvious tap cleared it again.
+    await tester.tap(railTab('Klasgroepen'));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Wachtwoorden'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    expect(headerTicked(), isFalse);
+    expect(rowTicked('jane'), isFalse);
+    expect(rowTicked('bob'), isFalse);
+    expect(find.text('Genereer wachtwoorden'), findsOneWidget);
+
+    await tester.tap(bulk);
+    await tester.pumpAndSettle();
+    expect(find.text('Genereer wachtwoorden (2)'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

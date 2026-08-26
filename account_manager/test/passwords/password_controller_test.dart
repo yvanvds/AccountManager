@@ -267,6 +267,67 @@ void main() {
           isTrue);
     });
 
+    test(
+        'the column header follows the rows, so a generate unticks it and the '
+        'next tap re-arms the column (#376)', () async {
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c
+        ..selectClass(klas)
+        ..toggleBulk(PasswordTarget.smartschool, true);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isTrue);
+
+      await c.generate();
+
+      // The rows are cleared, so the header is too: it used to be rendered from
+      // a parallel set a generate never touched, and went on reading ticked
+      // over an empty column.
+      expect(c.selectedCount, 0);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isFalse);
+
+      // One tap — the obvious way to run the column again — fills it, rather
+      // than clearing a selection that no longer exists.
+      c.toggleBulk(PasswordTarget.smartschool, true);
+      expect(c.selectedCount, c.rows.length);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isTrue);
+    });
+
+    test('a generate does not leave the next class opened armed (#376)',
+        () async {
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c
+        ..selectClass(klas)
+        ..toggleBulk(PasswordTarget.smartschool, true);
+
+      // Before a run the arming still travels between classes, the way legacy
+      // seeds each freshly-loaded list from the header checkboxes.
+      c.selectClass(klas);
+      expect(c.selectedCount, c.rows.length);
+
+      await c.generate();
+      c.selectClass(klas);
+
+      // After one, it does not: the run spent it, so the class comes up empty
+      // and the header agrees rather than summarising a selection nobody asked
+      // for.
+      expect(c.selectedCount, 0);
+      expect(c.bulkSelected(PasswordTarget.smartschool), isFalse);
+    });
+
+    test('unticking one row unticks the column header (#376)', () {
+      final c = build();
+      final klas = c.childrenOf(c.studentRoot!).single;
+      c
+        ..selectClass(klas)
+        ..toggleBulk(PasswordTarget.smartschool, true);
+      c.toggleRow(c.rows.first, PasswordTarget.smartschool, false);
+
+      // "Every row" is no longer true, so the header stops saying it is.
+      expect(c.bulkSelected(PasswordTarget.smartschool), isFalse);
+      expect(c.bulkSelected(PasswordTarget.office365), isFalse);
+    });
+
     test('a failed Azure push leaves the field blank and counts as failed',
         () async {
       backends = RecordingPasswordBackends(failAzure: {'jane@student.school'});

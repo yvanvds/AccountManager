@@ -342,7 +342,7 @@ class PasswordController extends ChangeNotifier {
     _rows.clear();
     if (again != null) {
       _rows.addAll(_directAccounts(again).map(
-        (a) => _studentRow(a)..selected.addAll(ticked[a.uid] ?? _bulk),
+        (a) => _studentRow(a)..selected.addAll(ticked[a.uid] ?? _bulkSeed),
       ));
     }
     notifyListeners();
@@ -388,11 +388,28 @@ class PasswordController extends ChangeNotifier {
   final List<StudentRow> _rows = <StudentRow>[];
   List<StudentRow> get rows => List<StudentRow>.unmodifiable(_rows);
 
-  /// The bulk "select all" state per target, inherited by a freshly-loaded
+  /// The bulk "select all" **seed** per target, inherited by a freshly-loaded
   /// class so the header toggles persist across class selections (legacy
-  /// `StudentPasswords` seeds each new list from the header checkboxes).
-  final Set<PasswordTarget> _bulk = <PasswordTarget>{};
-  bool bulkSelected(PasswordTarget t) => _bulk.contains(t);
+  /// `StudentPasswords` seeds each new list from the header checkboxes). It is
+  /// what a class the operator opens next starts out ticked with — not what the
+  /// column header on screen reads. That is [bulkSelected].
+  ///
+  /// Cleared by a completed [generate] along with the rows it spent, so an
+  /// arming survives navigation but not a run (#376).
+  final Set<PasswordTarget> _bulkSeed = <PasswordTarget>{};
+
+  /// Whether the column header for [t] reads ticked — **derived** from the rows
+  /// on screen, so it can never claim a selection they do not have (#376).
+  ///
+  /// Rendering the header out of the seed set above was the bug: a successful
+  /// [generate] clears every row's selection but has no reason to touch a seed
+  /// meant to outlive the class, so the header went on reading ticked over an
+  /// empty column. The one control that looks like it re-arms the column then
+  /// *cleared* it on the first tap, and the operator had to click twice —
+  /// exactly where a generate gets repeated (one push failed, run the class
+  /// again).
+  bool bulkSelected(PasswordTarget t) =>
+      _rows.isNotEmpty && _rows.every((r) => r.selected.contains(t));
 
   bool _busy = false;
   bool get busy => _busy;
@@ -429,7 +446,7 @@ class PasswordController extends ChangeNotifier {
     _rows
       ..clear()
       ..addAll(_directAccounts(group).map((a) {
-        final row = _studentRow(a)..selected.addAll(_bulk);
+        final row = _studentRow(a)..selected.addAll(_bulkSeed);
         return row;
       }));
     notifyListeners();
@@ -444,13 +461,13 @@ class PasswordController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Toggles [target] for every loaded row and records the bulk state so the
+  /// Toggles [target] for every loaded row and records the bulk seed so the
   /// next class inherits it.
   void toggleBulk(PasswordTarget target, bool on) {
     if (on) {
-      _bulk.add(target);
+      _bulkSeed.add(target);
     } else {
-      _bulk.remove(target);
+      _bulkSeed.remove(target);
     }
     for (final row in _rows) {
       if (on) {
@@ -537,6 +554,14 @@ class PasswordController extends ChangeNotifier {
         }
         row.selected.clear();
       }
+      // The run spent the selection, so nothing stays armed behind it (#376):
+      // the rows above are cleared, and so is the seed that would otherwise
+      // silently re-tick the whole of the next class the operator opens — with
+      // the header then honestly reading "ticked" over a selection nobody asked
+      // for, and the obvious tap on it clearing the column again. Arming a
+      // column across classes stays possible; it just has to be asked for once
+      // per generate rather than surviving one.
+      _bulkSeed.clear();
 
       await _queue.save(byKey.values.toList());
       await _reloadQueue();
