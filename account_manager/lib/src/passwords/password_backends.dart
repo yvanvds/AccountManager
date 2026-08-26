@@ -20,9 +20,29 @@ abstract interface class PasswordBackends {
     String password,
   );
 
+  /// Resets the Azure / Office 365 password of the user with Graph object id
+  /// [objectId] — **the account the linker attached to this person** (#372).
+  ///
+  /// This is the write the Passwords screen performs whenever a linked snapshot
+  /// is in hand. The lookup-by-address variant below cannot be trusted to find
+  /// the right account: a Smartschool `mail` and an Azure `userPrincipalName`
+  /// drift apart (a collision suffix, a private address, a differently folded
+  /// accent), and a `GET /users/<smartschool mail>` then answers
+  /// `Request_ResourceNotFound` for a student who *has* an Office 365 account.
+  /// The `employeeId ≡ wisaId` bridge already resolved that account; taking the
+  /// object id from the linked record uses it instead of guessing again.
+  ///
+  /// Returns `true` when the write landed, `false` when it did not. Throws
+  /// [az.AzurePasswordPermissionException] on a refusal, as below.
+  Future<bool> setAzurePasswordById(String objectId, String password);
+
   /// Resets the Azure / Office 365 password of the user identified by
   /// [mailOrUpn]. Returns `true` when the user was found and updated, `false`
   /// when no such user exists (mirroring the legacy "No account for …" skip).
+  ///
+  /// The **fallback** since #372: used only while this session holds no linked
+  /// snapshot to resolve the account through, which is the one situation in
+  /// which an address is the best key available.
   ///
   /// Throws [az.AzurePasswordPermissionException] when the directory refuses
   /// the write (#216). That is a permission/role gap the operator can act on,
@@ -53,6 +73,16 @@ class ConnectorPasswordBackends implements PasswordBackends {
     final connector = smartschool;
     if (connector == null) return false;
     return connector.setPassword(uid, slot, password);
+  }
+
+  @override
+  Future<bool> setAzurePasswordById(String objectId, String password) async {
+    final connector = azure;
+    if (connector == null || objectId.isEmpty) return false;
+    // No lookup: the linker already resolved this account, and Graph accepts an
+    // object id wherever it accepts a principal name (#372).
+    await connector.users.setPassword(objectId, password);
+    return true;
   }
 
   @override

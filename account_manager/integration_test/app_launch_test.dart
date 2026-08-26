@@ -6268,6 +6268,101 @@ void main() {
   });
 
   testWidgets(
+      'the Passwords view resolves Office 365 through the linked snapshot, '
+      'reports a student with no Azure account, and lists a group-less staff '
+      'account end-to-end (#372)', (WidgetTester tester) async {
+    // The real app, real fonts, real navigation, over a real sync + link().
+    // Three defects of one design choice — the screen read the Smartschool group
+    // tree and never asked the linker — walked the way the operator meets them:
+    //
+    //  - Emely's Smartschool mail carries a collision suffix her Azure UPN does
+    //    not, so `GET /users/<smartschool mail>` answers Request_ResourceNotFound
+    //    and her Office 365 password was silently never set;
+    //  - Nora has no Azure account at all, and the row said nothing about it;
+    //  - Piet was created by AddStaffToSmartschool into no Smartschool group, so
+    //    the Personeel tab could not see him, before or after a re-sync.
+    useTallWindow(tester);
+    final harness = passwordsLinkedHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    // Sync so the session holds a linked view, then open Wachtwoorden.
+    await tester.tap(find.text('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+    await tester.tap(find.text('Wachtwoorden'));
+    await tester.pumpAndSettle();
+
+    // Leerlingen: Nora's row states the missing account before anything is
+    // pressed; Emely's — who does have one — says nothing.
+    await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('passwords-note-nora')), findsOneWidget);
+    expect(find.text('Geen Office 365-account gekoppeld.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-note-emely')), findsNothing);
+
+    // Generate the Office 365 password for both of them.
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-cell-emely-office365')));
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-cell-nora-office365')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+    await tester.pumpAndSettle();
+
+    // Emely's push went to the Azure account the linker attached — by object id,
+    // never by the Smartschool address the tenant has no user on.
+    expect(harness.passwordBackends.azureIdPushes, <String>['az-emely']);
+    expect(
+      harness.passwordBackends.azurePushes.map((p) => p.$1),
+      <String>['az-emely'],
+    );
+    // Nora's produced nothing, and the row still says why — one succeeded, one
+    // could not, and the two are distinguishable on screen.
+    expect(find.byKey(const ValueKey('passwords-note-nora')), findsOneWidget);
+    expect(find.byKey(const ValueKey('passwords-note-emely')), findsNothing);
+    final String shown = tester
+        .widget<Text>(find.byKey(const ValueKey('passwords-message')))
+        .data!;
+    expect(shown, contains('1 verstuurd'));
+    expect(shown, contains('1 mislukt'));
+
+    // Personeel: the account created into no group is selectable straight away.
+    await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
+    await tester.pumpAndSettle();
+    final Finder piet =
+        find.byKey(const ValueKey('passwords-staff-piet.nieuw'));
+    expect(piet, findsOneWidget);
+    await tester.tap(piet);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('passwords-staff-note')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('passwords-staff-reset-both')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester
+        .tap(find.byKey(const ValueKey('passwords-staff-reset-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(
+        harness.passwordBackends.smartschoolPushes
+            .where((p) => p.$1 == 'piet.nieuw'),
+        hasLength(1));
+    expect(harness.passwordBackends.azureIdPushes, contains('az-piet'));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Passwords view prints the queued sheets as a real PDF and opens it '
       'for printing end-to-end (#195)', (WidgetTester tester) async {
     // The real app, real fonts, real window. Printing used to drop browser-

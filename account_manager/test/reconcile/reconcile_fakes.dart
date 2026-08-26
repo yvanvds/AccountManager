@@ -1210,14 +1210,18 @@ class PasswordWriteDeniedGraph implements az.GraphTransport {
 class RecordingPasswordBackends implements PasswordBackends {
   RecordingPasswordBackends({
     this.failSmartschool = const <String>{},
-    this.failAzure = const <String>{},
+    Set<String>? failAzure,
     this.denyAzure = const <String>{},
-  });
+  }) : failAzure = failAzure ?? <String>{};
 
   /// Smartschool usernames whose push should fail.
   final Set<String> failSmartschool;
 
   /// Azure mails/UPNs whose push should fail (models "no Azure account").
+  ///
+  /// Mutable, because the [ReconcileHarness] builds its own recorder: a fixture
+  /// modelling Graph's `Request_ResourceNotFound` on a drifted address (#372)
+  /// adds the address after the harness exists.
   final Set<String> failAzure;
 
   /// Azure mails/UPNs the directory *refuses* to write (#216): Graph answers
@@ -1231,8 +1235,17 @@ class RecordingPasswordBackends implements PasswordBackends {
   final List<(String, core.AccountType, String)> smartschoolPushes =
       <(String, core.AccountType, String)>[];
 
-  /// Every Azure push: `(mailOrUpn, password)`.
+  /// Every Azure push: `(mailOrUpnOrObjectId, password)`.
+  ///
+  /// Since #372 the Passwords screen pushes by Graph **object id** whenever a
+  /// linked snapshot resolved the account, and by address only as the fallback
+  /// for a session that has not linked. Both land here, so a test asserts on the
+  /// key that was used — which is the whole point of the fix.
   final List<(String, String)> azurePushes = <(String, String)>[];
+
+  /// Which of those pushes went through [setAzurePasswordById] — the object-id
+  /// route — rather than the address lookup.
+  final List<String> azureIdPushes = <String>[];
 
   @override
   Future<bool> setSmartschoolPassword(
@@ -1246,7 +1259,17 @@ class RecordingPasswordBackends implements PasswordBackends {
   }
 
   @override
-  Future<bool> setAzurePassword(String mailOrUpn, String password) async {
+  Future<bool> setAzurePasswordById(String objectId, String password) async {
+    azureIdPushes.add(objectId);
+    return _push(objectId, password);
+  }
+
+  @override
+  Future<bool> setAzurePassword(String mailOrUpn, String password) async =>
+      _push(mailOrUpn, password);
+
+  Future<bool> _push(String key, String password) async {
+    final mailOrUpn = key;
     if (denyAzure.contains(mailOrUpn)) {
       throw az.AzurePasswordPermissionException(
         mailOrUpn,
@@ -1618,6 +1641,93 @@ ss.SmartschoolSnapshot passwordsSnap() => ss.SmartschoolSnapshot(
         member('anna.smit', 'personeel'),
       ],
     );
+
+/// The three-system fixture for the Passwords screen reading the **linked
+/// snapshot** instead of the Smartschool group tree (#372).
+///
+/// The same "Leerlingen"/"Personeel" shape as [passwordsSnap], seeded so that a
+/// real sync + `link()` reproduces each of the issue's three defects at once:
+///
+/// - **Emely** is one of the 42 live students whose Smartschool `mail` carries a
+///   collision suffix her Azure UPN does not (`emely.buvens1@` vs
+///   `emely.buvens@`). The `upn ≡ mail` bridge misses her; `employeeId ≡ wisaId`
+///   links her fine. Handing Graph her Smartschool address answers
+///   `Request_ResourceNotFound`, which is what [failAzure] models here.
+/// - **Nora** is in WISA and Smartschool but has no Azure account at all: the
+///   row has to *say so* rather than quietly produce nothing.
+/// - **Piet** is a staff member this app has just created through
+///   `AddStaffToSmartschool`: an account in **no Smartschool group**, so the
+///   group walk cannot see him though the linker holds him.
+ReconcileHarness passwordsLinkedHarness() {
+  final harness = ReconcileHarness(
+    wisa: wisaSnap(
+      students: [
+        wisaStudent(
+            wisaId: '4', classGroup: '3C', firstName: 'Emely', name: 'Buvens'),
+        wisaStudent(
+            wisaId: '5', classGroup: '3C', firstName: 'Nora', name: 'Nolens'),
+      ],
+      staff: [
+        wisaStaff(
+            code: 'PNIE', wisaId: '77', firstName: 'Piet', lastName: 'Nieuw'),
+      ],
+      schools: [wisaSchool(1)],
+      classGroups: [wisaClassGroup('3C')],
+    ),
+    smartschool: ss.SmartschoolSnapshot(
+      fetchedAt: kFixtureDate,
+      groups: passwordsSnap().groups,
+      accounts: <ss.SmartschoolAccount>[
+        ssAccount(
+          uid: 'emely',
+          accountId: '4',
+          mail: 'emely.buvens1@student.school.example',
+          givenName: 'Emely',
+          surname: 'Buvens',
+        ),
+        ssAccount(
+          uid: 'nora',
+          accountId: '5',
+          mail: 'nora.nolens@student.school.example',
+          givenName: 'Nora',
+          surname: 'Nolens',
+        ),
+        ssStaffAccount(
+          uid: 'piet.nieuw',
+          accountId: 'PNIE',
+          mail: 'piet.nieuw@school.example',
+          givenName: 'Piet',
+          surname: 'Nieuw',
+        ),
+      ],
+      memberships: <ss.SmartschoolMembership>[
+        member('emely', '3C'),
+        member('nora', '3C'),
+        // Piet has none: `AddStaffToSmartschool` writes the account and stops.
+      ],
+    ),
+    azure: azSnap(users: [
+      azUser(
+        id: 'az-emely',
+        upn: 'emely.buvens@student.school.example',
+        employeeId: '4',
+        displayName: 'Buvens Emely',
+      ),
+      azStaffUser(
+        id: 'az-piet',
+        upn: 'piet.nieuw@school.example',
+        employeeId: '77',
+        displayName: 'Nieuw Piet',
+      ),
+      // No account for Nora.
+    ]),
+  );
+  // Graph as it really answers for Emely: there is no user on the Smartschool
+  // address, so the pre-#372 lookup-by-mail push silently set nothing.
+  harness.passwordBackends.failAzure
+      .add('emely.buvens1@student.school.example');
+  return harness;
+}
 
 /// A Smartschool snapshot with a "Personeel" group holding three staff members
 /// seeded **out of alphabetical order** and across mixed casing (Charlie/alice/
