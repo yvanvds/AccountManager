@@ -1,0 +1,201 @@
+# Publishes a Windows installer to GitHub Releases (#371).
+#
+# Trigger: pushing a `vX.Y.Z` tag. That is the whole release process — see
+# docs/release-process.md for what to tag and how to roll back.
+#
+# `workflow_dispatch` runs the identical build and installer compile but
+# publishes nothing: the installer lands as a workflow artifact instead. That
+# exists so the pipeline can be exercised — after a change to this file, to the
+# .iss, or to the Flutter version — without minting a release that operators
+# would then be offered.
+#
+# `account_manager/pubspec.yaml` is the single source of truth for the version.
+# The tag does not *set* the version, it *claims* one: the build refuses to run
+# if the two disagree, so a tag pushed against an un-bumped pubspec fails loudly
+# instead of shipping an installer that reports the wrong version to the update
+# check.
+#
+# Action pinning: every JavaScript action here must run on Node 24 — Node 20 is
+# deprecated and only shimmed for now (#219). `actions/checkout` reached node24
+# at v5 and `actions/upload-artifact` at v6 (see the note in ci.yml: the
+# artifact actions shipped a node20 major *after* the one pinned there).
+# `subosito/flutter-action@v2` is a composite action with no Node runtime.
+# Publishing goes through the `gh` CLI — preinstalled on the runner — rather
+# than a release action, which keeps one less JavaScript action to re-pin.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+# Two tags pushed back to back must not race each other onto the same release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Build + publish Windows installer
+    runs-on: windows-latest
+    permissions:
+      # Only the tag-triggered publish needs this; a dispatch run simply does
+      # not use it.
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.0
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # ---------------------------------------------------------------------
+      # The version, and the check that the tag and pubspec.yaml agree on it.
+      # ---------------------------------------------------------------------
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `version: 1.2.3+4` -> `1.2.3`. The build number after `+` is not part
+          # of a release identity: the installer, the tag and the update check
+          # all compare on the semantic version alone.
+          pubspec=$(grep -m1 -E '^version:' account_manager/pubspec.yaml \
+            | sed -E 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/')
+          if [ -z "$pubspec" ]; then
+            echo "::error::No version: field found in account_manager/pubspec.yaml"
+            exit 1
+          fi
+          echo "pubspec version: $pubspec"
+
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            claimed="${tag#v}"
+            if [ "$claimed" != "$pubspec" ]; then
+              echo "::error::Tag $tag claims version $claimed but account_manager/pubspec.yaml says $pubspec. Bump pubspec.yaml (it is the single source of truth), commit, then re-tag."
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          else
+            # A dry run builds whatever the checked-out pubspec says and
+            # publishes nothing.
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "tag=v$pubspec" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$pubspec" >> "$GITHUB_OUTPUT"
+
+      - name: flutter build windows --release
+        working-directory: account_manager
+        run: flutter build windows --release
+
+      # ---------------------------------------------------------------------
+      # Inno Setup is preinstalled on the GitHub windows runner image (6.7.1 at
+      # the time of writing). Located rather than assumed: a runner-image change
+      # that moves or drops it should fail here with a readable message, not
+      # with "the term ISCC is not recognized" three steps later.
+      # ---------------------------------------------------------------------
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            Write-Host "::error::Inno Setup (ISCC.exe) was not found on this runner. Install it in a setup step, or pin an image that ships it."
+            exit 1
+          }
+          Write-Host "Using $iscc"
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" "installer\AccountManager.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check the installer exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="build/installer/AccountManager-Setup-v${{ steps.version.outputs.version }}.exe"
+          test -f "$asset"
+          ls -l "$asset"
+
+      # A dry run stops here, with the installer downloadable from the run's
+      # summary page for hand-testing.
+      - name: Upload installer artifact (dry run)
+        if: steps.version.outputs.publish != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: AccountManager-Setup-v${{ steps.version.outputs.version }}
+          path: build/installer/AccountManager-Setup-v${{ steps.version.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      # ---------------------------------------------------------------------
+      # Publish. The notes are written here rather than auto-generated because
+      # the SmartScreen warning is the single thing an operator most needs to
+      # read *before* they double-click: an unsigned installer with no
+      # explanation reads as a virus warning.
+      # ---------------------------------------------------------------------
+      - name: Write release notes
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          ## Installeren
+
+          Download het `.exe`-bestand onderaan deze release en voer het uit.
+          De installatie gebeurt **per gebruiker**, in
+          `%LOCALAPPDATA%\Programs\AccountManager` — er is geen
+          beheerderswachtwoord voor nodig.
+
+          ### "Windows heeft uw pc beveiligd"
+
+          Dit installatieprogramma is **niet ondertekend** (er is geen
+          code-signing-certificaat). Windows SmartScreen toont daarom bij de
+          eerste installatie een blauw scherm. Dat is verwacht:
+
+          1. Klik op **Meer informatie**.
+          2. Klik op **Toch uitvoeren**.
+
+          Latere updates worden door de app zelf gedownload en gestart, en
+          krijgen die waarschuwing normaal gezien niet.
+
+          ### Bijwerken
+
+          Een geïnstalleerde app controleert bij het opstarten zelf of er een
+          nieuwere versie is en biedt die aan. Bijwerken gebeurt **nooit**
+          zonder dat je het aanvaardt. Je kan ook handmatig controleren via
+          **Instellingen → Verbinding → Versie**.
+
+          Je aanmelding en je verbindingsinstellingen
+          (`%APPDATA%\AccountManager\`) blijven bij een update bewaard.
+          NOTES
+          {
+            echo ""
+            echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/commits/${{ steps.version.outputs.tag }}"
+          } >> release-notes.md
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            "build/installer/AccountManager-Setup-v${{ steps.version.outputs.version }}.exe"

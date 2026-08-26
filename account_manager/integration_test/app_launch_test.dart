@@ -30,6 +30,10 @@ import 'package:account_manager/src/settings/connection_config.dart';
 import 'package:account_manager/src/settings/settings_bootstrap.dart'
     show SettingsServices;
 import 'package:account_manager/src/shell/app_shell.dart';
+import 'package:account_manager/src/update/app_release.dart'
+    show parseReleaseTag;
+import 'package:account_manager/src/update/update_bootstrap.dart'
+    show readInstalledVersion;
 import 'package:account_state/account_state.dart'
     show
         AppSettings,
@@ -83,6 +87,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../test/reconcile/reconcile_fakes.dart';
 import '../test/screens/settings_fakes.dart';
+import '../test/update/update_fakes.dart';
 
 /// End-to-end runs of the *real* app in the real engine, with the Plink fonts
 /// bundled by the design-system package. This is the layer that catches
@@ -13744,6 +13749,178 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'the running build reads the version pubspec.yaml declared (#371)',
+      (WidgetTester tester) async {
+    // The one claim in this issue that only a real engine can settle. The
+    // version is read from the Windows executable's own version resource, which
+    // the Flutter tool populates from `pubspec.yaml` — and the `version.json`
+    // asset that serves this purpose elsewhere is *not* written into a Windows
+    // bundle, so a headless widget test cannot tell whether the production
+    // reader works. It is also the whole basis of the update check: a build that
+    // cannot say what it is cannot be compared against what is published.
+    final String? version = await readInstalledVersion();
+    expect(
+      version,
+      isNotNull,
+      reason: 'the exe version resource could not be read on the real engine',
+    );
+    expect(parseReleaseTag(version!), isNotNull,
+        reason: '"$version" is not a version the release check can compare');
+
+    // And it is genuinely the single source of truth, not a constant that
+    // happens to agree today.
+    final File? pubspec = _findAppPubspec();
+    expect(pubspec, isNotNull,
+        reason: 'no account_manager/pubspec.yaml found above '
+            '${Directory.current.path}');
+    final RegExpMatch? declared =
+        RegExp(r'^version:\s*([^\s+]+)', multiLine: true)
+            .firstMatch(pubspec!.readAsStringSync());
+    expect(declared, isNotNull);
+    expect(version, declared!.group(1));
+  });
+
+  testWidgets(
+      'a launch on an installed build offers the newer release, shows its own '
+      'version in Instellingen, and applies only on consent (#371)',
+      (WidgetTester tester) async {
+    // The user-visible flow end to end in the real app. A widget test can pump
+    // the shell or the Settings screen; it cannot show that the offer survives
+    // the sign-in gate, that it sits above a real navigation rail without
+    // pushing it off-screen, that the rail still reaches Instellingen with the
+    // bar on stage, or that the Versie section lays out in the real font on the
+    // same tab the connection coordinates live on.
+    useTallWindow(tester);
+
+    final backend = FakeUpdateBackend(
+      version: '1.0.0',
+      latest: fakeRelease('1.4.0', notes: 'Wachtwoordbladen tonen nu de WiFi.'),
+    );
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: SettingsHarness().bootstrap,
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+      update: backend.services(autoCheck: true),
+    ));
+    await tester.pumpAndSettle();
+
+    // Offered above the rail, without a dialog and without having interrupted
+    // the launch: the shell is fully usable underneath it.
+    expect(find.byKey(const ValueKey('update-offer')), findsOneWidget);
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('update-offer-message')))
+          .data,
+      contains('1.4.0'),
+    );
+    // Offered is not applied.
+    expect(backend.downloads, 0);
+    expect(backend.launched, isEmpty);
+
+    // The rail still works with the bar up, and Instellingen states which build
+    // this is — on the Verbinding tab, beside where the backend it talks to is
+    // configured (#370).
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-verbinding');
+
+    final Finder current =
+        find.byKey(const ValueKey('settings-version-current'));
+    await tester.ensureVisible(current);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(current).data, contains('1.0.0'));
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-version-status')))
+          .data,
+      contains('1.4.0'),
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-version-notes')))
+          .data,
+      contains('Wachtwoordbladen'),
+    );
+
+    // Consent, and only then: the installer is fetched and handed to Windows.
+    final Finder apply = find.byKey(const ValueKey('update-offer-apply'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pump();
+
+    expect(backend.downloads, 1);
+    expect(backend.launched, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an offline launch never mentions the update check at all (#371)',
+      (WidgetTester tester) async {
+    // An operator without network has to be able to work. Only a full launch
+    // shows that a failed check leaves *the whole app* exactly as it was —
+    // no bar, no dialog, no stalled first frame.
+    useTallWindow(tester);
+    final backend = FakeUpdateBackend(
+      version: '1.0.0',
+      feedError: StateError('Failed host lookup: api.github.com'),
+    );
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: SettingsHarness().bootstrap,
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+      update: backend.services(autoCheck: true),
+    ));
+
+    // The rail is on stage before the check has answered — nothing waited.
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(NavigationRail), findsOneWidget);
+
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('update-offer')), findsNothing);
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.byType(NavigationRail), findsOneWidget);
+
+    // The reason is not lost, only unpushed: it is readable on demand.
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-verbinding');
+    final Finder status = find.byKey(const ValueKey('settings-version-status'));
+    await tester.ensureVisible(status);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(status).data, contains('Failed host lookup'));
+    expect(tester.takeException(), isNull);
+  });
+}
+
+/// The Flutter app's own `pubspec.yaml`, found by walking up from wherever the
+/// test process happens to have been started.
+File? _findAppPubspec() {
+  Directory? dir = Directory.current;
+  for (var depth = 0; dir != null && depth < 8; depth++) {
+    for (final String candidate in <String>[
+      '${dir.path}${Platform.pathSeparator}pubspec.yaml',
+      '${dir.path}${Platform.pathSeparator}account_manager'
+          '${Platform.pathSeparator}pubspec.yaml',
+    ]) {
+      final File file = File(candidate);
+      if (file.existsSync() &&
+          file.readAsStringSync().contains('name: account_manager')) {
+        return file;
+      }
+    }
+    final Directory parent = dir.parent;
+    dir = parent.path == dir.path ? null : parent;
+  }
+  return null;
 }
 
 /// The words actually drawn onto a rendered password sheet, read back out of

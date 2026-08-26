@@ -12,8 +12,30 @@ This repository is in transition from a WPF / .NET Framework 4.8 desktop applica
 - **Architectural reference:** [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)
 - **Spec for the port:** [docs/domain-model.md](docs/domain-model.md)
 - **Legacy WPF code (read-only reference):** [legacy-wpf/](legacy-wpf/)
+- **Releasing / installing:** [docs/release-process.md](docs/release-process.md)
 
-## Running the app (Windows)
+## Installing the app (Windows)
+
+Operators install from a [GitHub
+Release](https://github.com/yvanvds/AccountManager/releases): download
+`AccountManager-Setup-vX.Y.Z.exe` and run it. The install is **per user**, into
+`%LOCALAPPDATA%\Programs\AccountManager` — no administrator password needed.
+
+The installer is **not code-signed**, so the first install shows *"Windows heeft
+uw pc beveiligd"*. That is expected, not a virus warning: click **Meer
+informatie**, then **Toch uitvoeren**.
+
+An installed app checks GitHub for a newer release on launch and offers it in a
+bar above the navigation rail. The check is non-blocking and silent when it
+fails, and an update is **never** applied without the operator accepting it. The
+running version, a manual check and the reason a check failed all live in
+**Instellingen → Verbinding → Versie**. Sign-in and connection settings
+(`%APPDATA%\AccountManager\`) survive an update.
+
+Tagging, rolling back, and the rest of the process: see
+[docs/release-process.md](docs/release-process.md).
+
+## Running the app from source (Windows)
 
 The Azure AD app-registration values are school-specific and are **not** baked
 into the binary — they come from `--dart-define` at run time

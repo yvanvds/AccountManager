@@ -41,6 +41,18 @@ dependencies:
   # persisted token cache at rest (#103).
   ffi: ^2.1.0
 
+  # The running build's own version (#371), read from the Windows executable's
+  # version resource — which Flutter populates from the `version:` field above.
+  # That keeps this file the single source of truth: the installer, the release
+  # tag and the number the app shows itself all derive from it.
+  package_info_plus: ^8.0.0
+
+  # Semantic-version ordering for the update check (#371). Hand-rolling the
+  # comparison is where an update check quietly starts offering 1.0.10 as older
+  # than 1.0.9; this is the Dart team's own parser, pure Dart, already in the
+  # lock file as a transitive dependency.
+  pub_semver: ^2.1.0
+
   # Password sheets render as real PDFs (#195). `pdf` is pure Dart: no platform
   # plugin, so nothing to register in the Windows CMake build, and it runs
   # headlessly under `flutter test` — which is why the sheet bytes are asserted

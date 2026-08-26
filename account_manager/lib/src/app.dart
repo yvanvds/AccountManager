@@ -8,6 +8,7 @@ import 'reconcile/reconcile_bootstrap.dart';
 import 'settings/connection_config.dart';
 import 'settings/settings_bootstrap.dart';
 import 'shell/app_shell.dart';
+import 'update/update_controller.dart';
 
 /// This app's per-product accent (Plink DS-5): one colour that is clearly
 /// *not* the magenta spark, layered onto the paper/ink foundations. Arcadia
@@ -28,6 +29,7 @@ class AccountManagerApp extends StatelessWidget {
     this.reconcileBootstrap,
     this.settingsBootstrap,
     this.connection,
+    this.update,
   });
 
   /// The operator's Azure AD session, used by the sign-in gate and, later, by
@@ -55,6 +57,15 @@ class AccountManagerApp extends StatelessWidget {
   /// edits a throwaway copy instead of the operator's real `connection.json`.
   final ConnectionServices? connection;
 
+  /// How this build finds out about newer published releases (#371), or `null`
+  /// on a build (or a test) with no update mechanism at all.
+  ///
+  /// `null` is a real configuration rather than a test-only one: the Versie
+  /// section still renders, saying the version is unknown and offering no
+  /// check, which is exactly what a build with nowhere to update from should
+  /// say.
+  final UpdateServices? update;
+
   ThemeData _themed(ThemeData base) => base.copyWith(
         extensions: const <ThemeExtension<dynamic>>[
           PlinkProductAccent(kProductAccent),
@@ -75,6 +86,7 @@ class AccountManagerApp extends StatelessWidget {
           reconcileBootstrap: reconcileBootstrap,
           settingsBootstrap: settingsBootstrap,
           connection: connection,
+          update: update,
         ),
       ),
     );
