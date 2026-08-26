@@ -17,7 +17,6 @@ import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/screens/actions_screen.dart';
 import 'package:account_manager/src/screens/class_groups_screen.dart';
-import 'package:account_manager/src/screens/home_screen.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
 import 'package:account_manager/src/screens/reconcile_screen.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
@@ -106,6 +105,18 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
+  /// The navigation-rail entry labelled [label].
+  ///
+  /// Scoped to the rail on purpose (#366). The app lands on Synchronisatie now,
+  /// so that screen's own heading is on stage from the very first frame and a
+  /// bare `find.text('Synchronisatie')` matches the rail entry *and* the
+  /// heading it leads to. Every rail tap goes through here, so the same holds
+  /// for whichever destination the shell happens to open on.
+  Finder railTab(String label) => find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.text(label),
+      );
+
   /// Switches the Settings view to the tab with [tabKey] (#140: config is split
   /// across Algemeen / Wisa / Smartschool / Azure tabs).
   Future<void> openSettingsTab(WidgetTester tester, String tabKey) async {
@@ -179,19 +190,37 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('the app launches into the Plink-themed Home shell',
-      (WidgetTester tester) async {
+  testWidgets(
+      'the app launches straight onto Synchronisatie, with the rail in work '
+      'order and no Start placeholder (#366)', (WidgetTester tester) async {
     // The real main(): with no --dart-define config, AAD is not configured, so
     // the sign-in gate reveals the shell directly.
+    //
+    // Only a full launch can state where the app *lands*. A widget test pumps
+    // whichever screen it names; the first frame the operator actually gets —
+    // and the first click they no longer have to spend leaving Start — is a
+    // property of the real app booting through its own main().
     app.main();
     await tester.pumpAndSettle();
 
-    // The real navigation shell and its Home destination rendered.
+    // The real navigation shell, showing the screen the session begins on
+    // rather than a placeholder above it.
     expect(find.byType(AccountManagerApp), findsOneWidget);
     expect(find.byType(AppShell), findsOneWidget);
-    expect(find.byType(HomeScreen), findsOneWidget);
     expect(find.byType(NavigationRail), findsOneWidget);
-    expect(find.text('Start'), findsOneWidget);
+    expect(find.byType(ReconcileScreen), findsOneWidget);
+
+    // Start is gone, placeholder and rail entry both — nothing merely
+    // unselected behind the first destination.
+    expect(find.text('Start'), findsNothing);
+    expect(find.text('Account Manager'), findsNothing);
+    expect(
+      find.textContaining('Stemt gebruikersaccounts en klasgroepen op elkaar '
+          'af tussen WISA, Smartschool en Azure AD / Office 365.'),
+      findsNothing,
+    );
+    expect(find.textContaining('Reconciles user accounts'), findsNothing);
+    expect(find.textContaining('Phase C slice'), findsNothing);
 
     // Wrapped in the Plink design system: MaterialApp carries both the paper
     // and ink themes, and this app's per-product accent is layered on.
@@ -200,7 +229,7 @@ void main() {
     expect(material.theme, isNotNull);
     expect(material.darkTheme, isNotNull);
 
-    final BuildContext context = tester.element(find.byType(HomeScreen));
+    final BuildContext context = tester.element(find.byType(ReconcileScreen));
     final PlinkProductAccent? accent =
         Theme.of(context).extension<PlinkProductAccent>();
     expect(accent?.accent, kProductAccent);
@@ -209,58 +238,59 @@ void main() {
     // proving the design system's fonts ship with the app.
     final TextStyle? display = Theme.of(context).textTheme.displaySmall;
     expect(display?.fontFamily, contains('Fraunces'));
-    expect(find.text('Account Manager'), findsOneWidget);
 
-    // The Start placeholder is the first screen the operator lands on, and it
-    // was the last one left in English (#265) — eyebrow and body both.
-    expect(find.text('ARCADIA · ACCOUNTSYNCHRONISATIE'), findsOneWidget);
-    expect(
-      find.textContaining('Stemt gebruikersaccounts en klasgroepen op elkaar '
-          'af tussen WISA, Smartschool en Azure AD / Office 365.'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('te beginnen met aanmelden en het tabblad '
-          'Synchronisatie.'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Reconciles user accounts'), findsNothing);
-    expect(find.textContaining('Phase C slice'), findsNothing);
+    // The shell does not read as headerless now that Start's identity framing
+    // is gone: the landing screen carries its own eyebrow and heading (#265).
+    expect(find.text('ARCADIA · SYNCHRONISATIE'), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
 
-    // Every destination on the rail names itself in the operator's language
-    // (#257). The rail is read together with the heading it leads to, and it
-    // used to read Home / Reconcile / Actions over pages titled in Dutch.
-    for (final String label in <String>[
-      'Start',
-      'Synchronisatie',
-      'Acties',
-      'Klasgroepen',
-      'Wachtwoorden',
-      'Instellingen',
-    ]) {
-      expect(find.text(label), findsOneWidget,
-          reason: '"$label" is the rail label for its destination');
-    }
+    // The rail holds exactly five destinations, each naming itself in the
+    // operator's language (#257) — it is read together with the heading it
+    // leads to, and it used to read Home / Reconcile / Actions over Dutch
+    // pages.
+    final NavigationRail rail =
+        tester.widget<NavigationRail>(find.byType(NavigationRail));
+    expect(
+      rail.destinations.map((d) => (d.label as Text).data).toList(),
+      <String>[
+        'Synchronisatie',
+        'Klasgroepen',
+        'Acties',
+        'Wachtwoorden',
+        'Instellingen',
+      ],
+    );
+    expect(rail.selectedIndex, 0, reason: 'a launch lands on Synchronisatie');
+
+    // …and that order is what the operator sees down the real rail, laid out
+    // in the real window: class-group work is upstream of account work, so
+    // Klasgroepen sits above Acties.
+    double railLabelY(String label) => tester.getTopLeft(railTab(label)).dy;
+    expect(railLabelY('Synchronisatie'), lessThan(railLabelY('Klasgroepen')));
+    expect(railLabelY('Klasgroepen'), lessThan(railLabelY('Acties')));
+    expect(railLabelY('Acties'), lessThan(railLabelY('Wachtwoorden')));
+    expect(railLabelY('Wachtwoorden'), lessThan(railLabelY('Instellingen')));
 
     // With no AAD config each screen renders its "not configured" panel
     // instead of bootstrapping — in Dutch on every one of them (#253/#257),
     // since a panel standing in for a view is as operator-facing as the view.
-    await tester.tap(find.text('Synchronisatie'));
+    // Synchronisatie already showed its own above, without a click.
+    await tester.tap(railTab('Klasgroepen'));
     await tester.pumpAndSettle();
-    expect(find.byType(ReconcileScreen), findsOneWidget);
+    expect(find.byType(ClassGroupsScreen), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
 
-    await tester.tap(find.text('Wachtwoorden'));
+    await tester.tap(railTab('Wachtwoorden'));
     await tester.pumpAndSettle();
     expect(find.byType(PasswordsScreen), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
 
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
@@ -284,7 +314,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // The two buttons under the heading, and the explainer that names them in
@@ -362,7 +392,7 @@ void main() {
     expect(find.byType(AppShell), findsOneWidget);
 
     // Open the reconcile screen; the stack bootstraps lazily.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-sync')), findsOneWidget);
 
@@ -399,7 +429,7 @@ void main() {
 
     // Switch to the Actions tab: since #295 the actions are one flat,
     // school-wide list of accounts — no jaar → klas tree to walk down.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.byType(ActionsScreen), findsOneWidget);
     expect(
@@ -460,7 +490,7 @@ void main() {
     // "no changes needed" and leaves Smartschool / Azure unread.
     harness.wisaResult =
         wisaSnap(fetchedAt: kFixtureDate.add(const Duration(hours: 1)));
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
@@ -544,7 +574,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -614,7 +644,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // Idle: no progress bar at all.
@@ -645,11 +675,11 @@ void main() {
   /// Syncs on Reconcile and lands on the Actions tab, the way the operator gets
   /// to the apply affordances.
   Future<void> syncThenOpenActions(WidgetTester tester) async {
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
   }
 
@@ -1057,13 +1087,13 @@ void main() {
   /// Opens the Klasgroepen tab from the navigation rail (#227). The class
   /// inventory is a destination of its own now, not a node inside Acties.
   Future<void> openKlasgroepen(WidgetTester tester) async {
-    await tester.tap(find.text('Klasgroepen'));
+    await tester.tap(railTab('Klasgroepen'));
     await tester.pumpAndSettle();
   }
 
   /// Syncs on Reconcile and lands on the Klasgroepen tab.
   Future<void> syncThenOpenKlasgroepen(WidgetTester tester) async {
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -1225,7 +1255,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // Before syncing there is no last-sync box yet.
@@ -1281,7 +1311,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -1351,7 +1381,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -1407,7 +1437,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Klasgroepen'));
+    await tester.tap(railTab('Klasgroepen'));
     await tester.pumpAndSettle();
 
     // Derived independently of the production formatter: the store was stamped
@@ -1453,7 +1483,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AppShell), findsOneWidget);
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -1491,7 +1521,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // Start the sync; while the persist hangs the pass is busy and Synchronise
@@ -1561,7 +1591,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -1635,7 +1665,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // The persist is a few hundred real round trips; let each pass finish.
@@ -1718,14 +1748,14 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
     // The departed account is one row of the flat Actions list, filed under the
     // "Zonder klas" bucket a leaver falls into.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     // One entry for the departed account (not two independent rows).
@@ -1780,7 +1810,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -1800,7 +1830,7 @@ void main() {
     // Browse it on the Actions tab: because school 2 is one we do NOT manage,
     // the student has no class of ours, so the row files them under "Zonder
     // klas" and their Smartschool cleanup stays actionable (#178).
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.text('School 2'), findsNothing,
         reason: 'a school we do not manage never appears in Actions (#178)');
@@ -1850,7 +1880,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -1883,7 +1913,7 @@ void main() {
     // On screen: the row files them under **our** class — the placement comes
     // from the ours-school row, not from whichever school the concatenated pull
     // read first (the sibling's `4ECO` arrives ahead of our `3BO` here).
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final Finder row = find.byKey(ValueKey('account-row-${entry.targetId}'));
     expect(row, findsOneWidget);
@@ -1933,7 +1963,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Synchronisatie'));
+      await tester.tap(railTab('Synchronisatie'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
       await tester.pumpAndSettle();
@@ -1966,7 +1996,7 @@ void main() {
 
       // Browse it the way the operator does. She has no work of her own, so the
       // list is the whole school with the filter off.
-      await tester.tap(find.text('Acties'));
+      await tester.tap(railTab('Acties'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
       await tester.pumpAndSettle();
@@ -2081,12 +2111,12 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     // The non-managed school is nowhere on the screen…
     expect(find.text('School 2'), findsNothing,
@@ -2121,12 +2151,12 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final String id = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student')
@@ -2166,12 +2196,12 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.text('School 25'), findsNothing,
         reason: 'the numeric id is the last resort, not the rendering (#204)');
@@ -2230,12 +2260,12 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     // The label lives in the shared documents now that #210 took the school
     // level out of the tree — it must be neither inverted nor the bare id, and
@@ -2266,7 +2296,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -2311,7 +2341,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -2335,7 +2365,7 @@ void main() {
     // sits in the class their own WISA record names — dropping the class-group
     // records moved nobody. The list spans every managed school (#210/#295), so
     // the virtual school's 1V student is a row beside our own school's.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final String inVirtual = harness.controller.linkedAccounts
         .firstWhere((a) => a.classroom == '1V')
@@ -2371,7 +2401,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -2467,7 +2497,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -2540,7 +2570,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -2971,7 +3001,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -3744,7 +3774,7 @@ void main() {
     // …and it stays gone. "Synchroniseer Azure opnieuw" is what the refusal
     // used to advise and what nothing could satisfy; a second pass now adopts
     // the group again rather than re-offering the create.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -3849,7 +3879,7 @@ void main() {
 
     // And the same list is not maintained in two places: no class is a row of
     // the Acties list, which holds accounts only.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('rollup-groups')), findsNothing);
     expect(find.byKey(const ValueKey('class-row-1A')), findsNothing);
@@ -4924,7 +4954,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -4945,7 +4975,7 @@ void main() {
       findsWidgets,
     );
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     // Nothing applyable hangs off either class's *students*, so the work list
@@ -5055,7 +5085,7 @@ void main() {
 
     // And the student who is missing from it is told where the remedy lives,
     // instead of being sent to a class card that no longer offers one.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
@@ -5173,7 +5203,7 @@ void main() {
     // The students the same fact is reported on are informational only, so
     // nothing over on Acties turns orange for them: their rows still carry the
     // diagnosis in the details pane, and colour no cell at all.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     await tester.ensureVisible(toggle);
@@ -5237,7 +5267,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     expect(resumed.controller.linked, isNull,
@@ -5280,12 +5310,12 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.text('Jaar 1'), findsNothing);
     expect(find.text('School 1'), findsNothing);
@@ -5425,7 +5455,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -5443,7 +5473,7 @@ void main() {
     expect(pendingByClass['1|1C'], 0);
     expect(pendingByClass['2|1C'], 0);
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     // One switch, on the Acties tab itself, already on.
@@ -5522,13 +5552,13 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
     // The student the shared view just materialized, in the class it names.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final String id = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student')
@@ -5547,7 +5577,7 @@ void main() {
       fetchedAt: kFixtureDate.add(const Duration(hours: 1)),
       students: [wisaStudent(classGroup: '3D')],
     );
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
@@ -5561,7 +5591,7 @@ void main() {
     // Back on Acties: the row reads the class the fresh link gives it, not the
     // one the generation before the failed write still says. Before the fix the
     // screen was still joined to that previous generation's documents.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final String moved = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student')
@@ -5704,7 +5734,7 @@ void main() {
       reconcileBootstrap: operatorB.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // B is offered the work — read from the shared documents, with no pull and
@@ -5739,7 +5769,7 @@ void main() {
 
     // …and Acties gives B the one blocking notice it owes a session that
     // cannot link, rather than a second, inert way to browse the same rows.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('actions-read-only')), findsOneWidget);
     expect(find.byKey(const ValueKey('actions-list')), findsNothing);
@@ -5780,7 +5810,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -5805,7 +5835,7 @@ void main() {
 
     // Browse it the way the operator does: both schools' students are rows of
     // the one list, each naming the class their own WISA record does.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     // Nobody has work, so the list is the whole school with the filter off.
     await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
@@ -5903,12 +5933,12 @@ void main() {
     // do after a rollover pass — **Controleer op drift**, which re-pulls
     // Smartschool and Azure without touching the WISA roster.
     harness.ssResult = smartschoolWith('5adb_ss');
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
     await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     // The move is settled, so the number is offered — and now it lands on the
@@ -6038,13 +6068,13 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
     // On the Actions tab the family tab bar carries both families.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(
         find.byKey(const ValueKey('actions-tab-leerlingen')), findsOneWidget);
@@ -6092,7 +6122,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Open the Passwords view: the two family tabs render.
-    await tester.tap(find.text('Wachtwoorden'));
+    await tester.tap(railTab('Wachtwoorden'));
     await tester.pumpAndSettle();
     expect(find.byType(PasswordsScreen), findsOneWidget);
     expect(
@@ -6159,7 +6189,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Wachtwoorden'));
+    await tester.tap(railTab('Wachtwoorden'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
     await tester.pumpAndSettle();
@@ -6230,7 +6260,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Wachtwoorden'));
+    await tester.tap(railTab('Wachtwoorden'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('passwords-tab-personeel')));
     await tester.pumpAndSettle();
@@ -6291,12 +6321,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // Sync so the session holds a linked view, then open Wachtwoorden.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
-    await tester.tap(find.text('Wachtwoorden'));
+    await tester.tap(railTab('Wachtwoorden'));
     await tester.pumpAndSettle();
 
     // Leerlingen: Nora's row states the missing account before anything is
@@ -6379,7 +6409,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Wachtwoorden'));
+    await tester.tap(railTab('Wachtwoorden'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('password-class-3C')));
     await tester.pumpAndSettle();
@@ -6459,7 +6489,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -6467,7 +6497,7 @@ void main() {
     // Browse the student on the Actions tab and select her row: the
     // previously-hidden differing field shows in the details pane, and
     // unchanged fields are not rendered as misleading "X → X" rows.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student');
@@ -6496,12 +6526,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     // All 1000 accounts are in this one school-wide list, but only a small
@@ -6552,7 +6582,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     final panel = find.byKey(const ValueKey('reconcile-log-panel'));
@@ -6588,7 +6618,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-sync')), findsOneWidget);
 
@@ -6626,7 +6656,7 @@ void main() {
 
     // The stored rollups render on Synchronisatie, straight from the store and
     // with no Synchronise tapped.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-category-students')),
         findsOneWidget);
@@ -6637,7 +6667,7 @@ void main() {
 
     // Acties has nothing to act on, so it is the one blocking notice (#295) —
     // never a second, inert way to browse the same documents.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('actions-read-only')), findsOneWidget);
     expect(find.byKey(const ValueKey('actions-list')), findsNothing);
@@ -6671,7 +6701,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // The per-category overview renders straight from the stored rollups — no
@@ -6766,7 +6796,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(resumed.controller.linked, isNull);
 
@@ -6793,7 +6823,7 @@ void main() {
         find.byKey(const ValueKey('class-groups-read-only')), findsOneWidget);
     expect(find.text('Alleen-lezen overzicht'), findsOneWidget);
     expect(find.byIcon(Icons.lock_outline), findsWidgets);
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     // Take the offered way out, from the notice itself: WISA is pulled and the
@@ -6851,7 +6881,7 @@ void main() {
 
     // Synchronisatie says whose pull this session is working from — and both
     // passes stay available for an operator who wants something fresher.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-adopted')), findsOneWidget);
     expect(find.textContaining('jan@school.example'), findsWidgets);
@@ -6873,7 +6903,7 @@ void main() {
 
     // Acties: the list is there and its rows are the interactive ones —
     // choices, dry-run, apply — with the same notice above them.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final String seeded = operatorB.controller.pendingEntries
         .firstWhere((e) => e.family == 'student')
@@ -6920,7 +6950,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // The shared per-system last-sync box renders (#162/#188) straight from the
@@ -6969,7 +6999,7 @@ void main() {
       reconcileBootstrap: resumed.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // Nothing locked yet — Synchronise is live.
@@ -7058,7 +7088,7 @@ void main() {
     await tester.pumpAndSettle();
     // Read on Klasgroepen: since #309 that is the action view carrying the
     // shared state's freshness stamp, which is what this run watches move.
-    await tester.tap(find.text('Klasgroepen'));
+    await tester.tap(railTab('Klasgroepen'));
     await tester.pumpAndSettle();
 
     // The overview rendered at generation 1 and the subscriber connected.
@@ -7113,7 +7143,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -7157,7 +7187,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -7221,7 +7251,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -7280,7 +7310,7 @@ void main() {
     // carrying our companyName it read as a departed student and drew
     // "Verwijder Azure account" — a coin flip between the abandoned account and
     // the one holding her mail.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(harness.controller.linkedAccounts, hasLength(1));
     final String student = accountId(harness, 'Jane Doe');
@@ -7309,7 +7339,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -7331,7 +7361,7 @@ void main() {
     expect(harness.controller.linkIdCollisions, isEmpty);
 
     // Two cards on Acties, one per Smartschool account, each with its own id.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final String student = accountId(harness, 'Jane Doe');
     final String coAccount = accountId(harness, 'Jane Doe-beheer');
@@ -7385,14 +7415,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // Reconcile → sync → the create is pending. The queue starts empty.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(await harness.passwordQueue.load(), isEmpty);
 
     // Browse the create on the Actions tab and select the student's row.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final String createId = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student')
@@ -7416,7 +7446,7 @@ void main() {
     // Switch to the Passwords view: the freshly captured account sheet is
     // surfaced as a printable student sheet (the reworked view no longer shows
     // a per-entry distribute card — the queue feeds the print/CSV exports).
-    await tester.tap(find.text('Wachtwoorden'));
+    await tester.tap(railTab('Wachtwoorden'));
     await tester.pumpAndSettle();
     expect(find.byType(PasswordsScreen), findsOneWidget);
     final exportBtn = find.byKey(const ValueKey('passwords-export-students'));
@@ -7462,7 +7492,7 @@ void main() {
     expect(find.byType(AppShell), findsOneWidget);
 
     // Open Settings; the stored document is read into the real, laid-out form.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     // The app-wide prefix shows on the default Algemeen tab.
@@ -7522,7 +7552,7 @@ void main() {
 
     // Open Settings; the seeded school renders in the real, laid-out form with
     // its managed switch off.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     // The known-school list lives under the Wisa tab now (#140); open it and
@@ -7572,7 +7602,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-wisa');
@@ -7639,7 +7669,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Open Settings → Wisa tab; the fetch action is available for a valid config.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-wisa');
@@ -7702,7 +7732,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-wisa');
@@ -7782,7 +7812,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-wisa');
 
@@ -7873,7 +7903,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Before any sync: the bug, in the real grid.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-wisa');
     final tile = find.byKey(const ValueKey('settings-wisa-school-25-ours'));
@@ -7893,13 +7923,13 @@ void main() {
     );
 
     // One ordinary sync on the Reconcile view.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
     // Back to Settings and re-read the document — no Opslaan was ever pressed.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
     await tester.tap(find.byKey(const ValueKey('settings-reload')));
@@ -7964,7 +7994,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
     await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
@@ -7986,7 +8016,7 @@ void main() {
 
     // …and having pulled it, the pass repaired the stored school profiles with
     // it — the real grid, re-read from the document, with no Opslaan pressed.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-wisa');
     await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
@@ -8021,7 +8051,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Open Settings; the werkdatum controls sit on the default Algemeen tab.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
 
@@ -8069,7 +8099,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
 
@@ -8095,7 +8125,9 @@ void main() {
     expect(broker.silentCalls, ['graph']);
     expect(broker.interactiveCalls, isEmpty);
     expect(find.byType(AppShell), findsOneWidget);
-    expect(find.text('Start'), findsOneWidget);
+    // Straight onto the screen the session begins on (#366), not a placeholder.
+    expect(find.byType(ReconcileScreen), findsOneWidget);
+    expect(find.text('Synchronisatie'), findsOneWidget);
   });
 
   testWidgets('interactive fallback then retry reaches the shell',
@@ -8207,7 +8239,7 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -8215,7 +8247,7 @@ void main() {
 
     // Open the Actions tab. The work-list filter is on by default since #226
     // and sits above the family tab bar; this test starts from the full list.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
     expect(toggle, findsOneWidget);
@@ -8312,7 +8344,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // A real pass fills the panel; then a known tail so the drag has stable
@@ -8397,7 +8429,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
 
     // A real pass fills the panel, then a known short tail so the row the
@@ -8464,7 +8496,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-smartschool');
@@ -8537,7 +8569,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-smartschool');
 
@@ -8555,7 +8587,7 @@ void main() {
     expect(saved.smartschoolRules, hasLength(3));
     harness.smartschoolRules = saved.smartschoolRules;
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -8675,7 +8707,7 @@ void main() {
     // The operator opens Instellingen and finds the roots already named — the
     // document says what the pull is scoped to rather than leaving an empty box
     // that would mean "everything".
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-smartschool');
     final Finder roots = find.byKey(const ValueKey('settings-ss-roots'));
@@ -8692,7 +8724,7 @@ void main() {
     expect((await settings.store.load()).smartschoolRoots,
         <String>['leerlingen', 'personeel']);
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -8739,7 +8771,7 @@ void main() {
     expect(kinds, isNot(contains('AddStaffToAzure')));
 
     // And that is what the operator sees on the tab they reported this from.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -8798,7 +8830,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // A first Synchroniseer pulls WISA with the stored werkdatum.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -8806,7 +8838,7 @@ void main() {
 
     // Now the operator moves the werkdatum, the way they do: Instellingen →
     // Algemeen → Kies datum → Opslaan.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     final pick = find.byKey(const ValueKey('settings-workdate-pick'));
@@ -8836,7 +8868,7 @@ void main() {
     // and says why. A drift pass never re-reads WISA, so running one now would
     // relink against the roster the change never reached and publish that to
     // every other operator.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('reconcile-drift-blocked')),
@@ -8914,14 +8946,14 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
 
     // School 2 is not ours yet, so its student is re-bucketed as a leaver and
     // their row names no class of ours.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     String studentRowKey() =>
         'account-row-${harness.controller.pendingEntries.firstWhere((e) => e.family == 'student').targetId}';
@@ -8934,7 +8966,7 @@ void main() {
     );
 
     // Instellingen → Wisa → tick "beheerd" for Sint-Pieter → Opslaan.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-wisa');
     final ours = find.byKey(const ValueKey('settings-wisa-school-2-ours'));
@@ -8950,7 +8982,7 @@ void main() {
     // Back on Reconcile, Check for drift is offered: ownership is applied when
     // the view is relinked, not when WISA is pulled, so the #238 gate — which
     // guards the WISA pull inputs — must not stand in the way here.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
     expect(find.byKey(const ValueKey('reconcile-relaunch-required')),
@@ -8960,7 +8992,7 @@ void main() {
 
     // …and the student is out of the leaver bucket, their row naming their own
     // class, with no relaunch anywhere in this test.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final Finder studentRow = find.byKey(ValueKey(studentRowKey()));
     await tester.ensureVisible(studentRow);
@@ -9000,7 +9032,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // A first pass, on the rules as they stand: the whole tree comes in.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9010,7 +9042,7 @@ void main() {
     );
 
     // The operator authors the rule that drops "Organisatie" and saves.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-smartschool');
     await addSmartschoolRule(tester, 'discardGroup', 'Organisatie');
@@ -9025,7 +9057,7 @@ void main() {
     // Back on Reconcile the screen names the save that is still waiting — the
     // silence #259 closed. Nothing is refused: an import rule is not a WISA
     // pull input, so #238's drift gate stays open too.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
     expect(
@@ -9100,7 +9132,7 @@ void main() {
 
     // A first Synchroniseer, on the rules as they stand: the whole roster comes
     // in, class 3C included.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9112,7 +9144,7 @@ void main() {
     );
 
     // Instellingen → Wisa carries no import rule yet.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-wisa');
@@ -9141,7 +9173,7 @@ void main() {
     // Back on Reconcile the change is *visible*: a drift pass never re-reads
     // WISA, so running one now would relink the roster the rule never reached
     // and publish that to every other operator.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('reconcile-drift-blocked')),
@@ -9213,7 +9245,7 @@ void main() {
 
     // A first Synchroniseer, on the rules as they stand: the whole roster comes
     // in, class 3C included.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9225,7 +9257,7 @@ void main() {
     );
 
     // Instellingen → Wisa: no rule yet, and an editor to author one in.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-wisa');
@@ -9249,7 +9281,7 @@ void main() {
 
     // Back on Reconcile the save is *visible*: a drift pass never re-reads WISA,
     // so running one now would relink the roster the rule never reached.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('reconcile-drift-blocked')),
@@ -9274,7 +9306,7 @@ void main() {
 
     // …and it survives a reload of the document, so the next session (and every
     // other operator) gets the same pull.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
     await tester.tap(find.byKey(const ValueKey('settings-reload')));
@@ -9324,7 +9356,7 @@ void main() {
     // The production WISA pull runs on the document as stored: the surviving
     // rule still prunes 3C, and the retired one changes nothing (as it never
     // did).
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9337,7 +9369,7 @@ void main() {
 
     // Instellingen → Wisa lists the live rule and nothing about "beheerd" —
     // there is no rule kind left to render, and no dead row to puzzle over.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-wisa');
@@ -9421,7 +9453,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9441,7 +9473,7 @@ void main() {
     // Instellingen → Wisa: the mark now lives on the grid's own checkbox, and
     // that checkbox is editable — the #273 lock existed only because a rule
     // could contradict it.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     await openSettingsTab(tester, 'settings-tab-wisa');
@@ -9546,7 +9578,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // A first Synchroniseer: the whole roster comes in, class 3C included.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9624,13 +9656,13 @@ void main() {
     // The snapshot in hand already reflects the rule — the apply filtered it in
     // place — so **Controleer op drift** must not now refuse over the document
     // that apply just wrote (#238).
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
 
     // The operator reads the rule back off the *stored* document — what a
     // relaunch, and every other operator, gets.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
     await tester.tap(find.byKey(const ValueKey('settings-reload')));
@@ -9639,7 +9671,7 @@ void main() {
     expect(find.text('Klas niet importeren uit WISA: 3C'), findsOneWidget);
 
     // …and that document still prunes the pull it is read for.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9652,7 +9684,7 @@ void main() {
 
     // A rule applied in error is undone where every other rule is: the #273
     // editor, which now owns this one too.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-wisa');
     final remove = find.byKey(const ValueKey('settings-wisa-rule-0-remove'));
@@ -9728,7 +9760,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9750,7 +9782,7 @@ void main() {
 
     // Read it back off the *stored* document — what a relaunch, and every other
     // operator, gets.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('settings-reload')));
     await tester.tap(find.byKey(const ValueKey('settings-reload')));
@@ -9858,7 +9890,7 @@ void main() {
     /// Opens Acties and selects the student's row, which puts the proposed
     /// `userPrincipalName` in the details pane beside it.
     Future<void> openStudentRow() async {
-      await tester.tap(find.text('Acties'));
+      await tester.tap(railTab('Acties'));
       await tester.pumpAndSettle();
       await selectAccount(
         tester,
@@ -9869,7 +9901,7 @@ void main() {
     }
 
     // A first Synchroniseer, on the domain as it stands.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -9882,7 +9914,7 @@ void main() {
     );
 
     // Instellingen → Azure → the school moves to its new domain → Opslaan.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-azure');
     await tester.enterText(
@@ -9897,7 +9929,7 @@ void main() {
     // Back on Reconcile the screen names the save that is still waiting — and
     // names it as the *link*, because no pull is involved. Nothing is refused:
     // the domain is not a WISA pull input, so #238's drift gate stays open.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
     expect(
@@ -9978,7 +10010,7 @@ void main() {
 
     // The app is up and the screen the controller drives renders.
     expect(find.byType(AccountManagerApp), findsOneWidget);
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byType(ReconcileScreen), findsOneWidget);
 
@@ -9988,7 +10020,7 @@ void main() {
 
     // Instellingen: the operator moves the school to a new Azure domain and
     // saves — a change that arms the link gate for a *wired* session (#264).
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     await openSettingsTab(tester, 'settings-tab-azure');
     await tester.enterText(
@@ -10002,7 +10034,7 @@ void main() {
 
     // Back on Synchronisatie nothing nags and nothing is refused: a controller
     // with no document to compare against holds no opinion about a save.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('reconcile-drift-blocked')), findsNothing);
     expect(
@@ -10070,7 +10102,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -10122,7 +10154,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -10131,7 +10163,7 @@ void main() {
     // The overview names the school year it describes, in the wire's own
     // dd/MM/yyyy, on the same line as the generation and the operator. Read on
     // Klasgroepen since #309 took the stamp off Acties.
-    await tester.tap(find.text('Klasgroepen'));
+    await tester.tap(railTab('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('Generatie 1 · ', skipOffstage: false),
@@ -10145,7 +10177,7 @@ void main() {
     // The operator moves the werkdatum in Instellingen and saves. That is the
     // *next* pull's input; the view on Klasgroepen is still the one pulled as
     // of 01/09/2025 and must keep saying so.
-    await tester.tap(find.text('Instellingen'));
+    await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     final pick = find.byKey(const ValueKey('settings-workdate-pick'));
     await tester.ensureVisible(pick);
@@ -10166,7 +10198,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings-save')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Klasgroepen'));
+    await tester.tap(railTab('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('· werkdatum 01/09/2025', skipOffstage: false),
@@ -10179,13 +10211,13 @@ void main() {
     );
 
     // Only the Synchroniseer moves it — the same pass that moves the roster.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(wire.werkdatums, <String>['01/09/2025', '15/09/2025']);
 
-    await tester.tap(find.text('Klasgroepen'));
+    await tester.tap(railTab('Klasgroepen'));
     await tester.pumpAndSettle();
     expect(
       find.textContaining('· werkdatum 15/09/2025', skipOffstage: false),
@@ -10224,7 +10256,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // Yesterday's session: WISA + Smartschool pull, the seeded Azure snapshot
     // is reused untouched (its token is not spent yet).
@@ -10356,7 +10388,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -10386,7 +10418,7 @@ void main() {
 
     // And that is what the operator sees: browse Acties → Leerlingen the way
     // they did when they reported this.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await selectAccount(
       tester,
@@ -10446,7 +10478,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -10476,7 +10508,7 @@ void main() {
 
     // And that is what the operator sees: browse Acties → Personeel the way
     // they did when they reported this.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -10536,7 +10568,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -10575,7 +10607,7 @@ void main() {
     // And that is what the operator reads on Acties → Personeel: her three
     // systems agree, so she has no card there at all. Before the fix she had
     // one, offering the Office 365 account she was holding all along.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -10629,7 +10661,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -10660,7 +10692,7 @@ void main() {
     );
 
     // And the operator sees it: Acties has no staff work to show.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -10720,7 +10752,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // Yesterday's session: the seeded Azure snapshot is reused untouched, its
     // token unspent.
@@ -10755,7 +10787,7 @@ void main() {
     final linked = harness.controller.linked!.snapshot.staff.single;
     expect(linked.azure?.id, 'az-staff',
         reason: 'joined by employeeId once the UPN stopped matching');
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -10829,7 +10861,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // Yesterday's session: the seeded Azure snapshot is reused untouched, its
     // token unspent, and the student has nothing to do.
@@ -10872,7 +10904,7 @@ void main() {
     // And the operator is handed the one to-do it means: put the WISA name back
     // on the Office 365 account. Exactly one — a blanked record would have
     // raised "Wijzig de school in Azure" beside it.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final entry = harness.controller.pendingEntries
         .singleWhere((e) => e.family == 'student');
@@ -10941,7 +10973,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // No settings change, no drift button — the button the operator presses all
     // day.
@@ -10970,7 +11002,7 @@ void main() {
 
     // And it reached the operator as the one to-do it means: put the WISA name
     // back on the Office 365 account.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final aged = harness.controller.pendingEntries
         .singleWhere((e) => e.family == 'student');
@@ -11032,7 +11064,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // The seeded Azure snapshot is reused untouched, its token unspent — so the
     // linked view is built on the stale copy, exactly as the operator's was.
@@ -11042,7 +11074,7 @@ void main() {
     expect(azureWire.bulkReads, 0);
 
     // And there is the phantom, on screen, the way it was reported.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final stale = harness.controller.pendingEntries
         .singleWhere((e) => e.family == 'student');
@@ -11055,7 +11087,7 @@ void main() {
 
     // So the operator does the one thing the screen offers for exactly this:
     // Controleer op drift.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-drift')));
     await tester.tap(find.byKey(const ValueKey('reconcile-drift')));
@@ -11077,7 +11109,7 @@ void main() {
       harness.controller.pendingEntries.where((e) => e.family == 'student'),
       isEmpty,
     );
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.text('Wijzig de school in Azure'), findsNothing);
 
@@ -11194,7 +11226,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // Yesterday's session: the seeded Azure snapshot is reused untouched, its
     // token unspent — so the linked view is built on the stale copies.
@@ -11204,7 +11236,7 @@ void main() {
 
     // And there is the dangerous one, on screen: a delete proposed for an
     // account we no longer own. Tom has nothing to do — he is in step.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final phantom = harness.controller.pendingEntries
         .singleWhere((e) => e.family == 'student');
@@ -11219,7 +11251,7 @@ void main() {
     // Synchroniseer re-pulls Azure (#259) — incrementally, from the stored token.
     // Since #316 that is the pass which resumes a delta at all; Controleer op
     // drift re-reads in full, and a full read never sees this row.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     harness.markSchoolManaged(1);
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
@@ -11245,7 +11277,7 @@ void main() {
         harness.controller.linked!.snapshot.accounts
             .where((a) => a.azure?.id == 'az1'),
         isEmpty);
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.text('Verwijder Azure account'), findsNothing);
 
@@ -11341,7 +11373,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // The seeded Azure snapshot is reused untouched, its token unspent — so the
     // linked view is built on the adopted copy, exactly as the operator's was.
@@ -11351,7 +11383,7 @@ void main() {
     expect(azureWire.bulkReads, 0);
 
     // And there is the phantom, on screen, the way it was reported.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final stale = harness.controller.pendingEntries
         .singleWhere((e) => e.family == 'student');
@@ -11365,7 +11397,7 @@ void main() {
     // Now the ordinary pass. A saved Azure pull input moves (#259) — the
     // operator flips a school beheerd — so Synchroniseer re-pulls Azure
     // **incrementally**, which is the leg that used to be unable to help.
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     harness.markSchoolManaged(1);
     await tester.ensureVisible(find.byKey(const ValueKey('reconcile-sync')));
@@ -11390,7 +11422,7 @@ void main() {
       harness.controller.pendingEntries.where((e) => e.family == 'student'),
       isEmpty,
     );
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     expect(find.text('Wijzig de school in Azure'), findsNothing);
 
@@ -11472,7 +11504,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     // Yesterday's session: the seeded Azure snapshot is reused untouched, its
     // token unspent.
@@ -11508,7 +11540,7 @@ void main() {
 
     // And that is what the operator sees: Acties → Personeel, the way they
     // would look.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -11560,13 +11592,13 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     final entry = harness.controller.pendingEntries
@@ -11652,7 +11684,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -11660,7 +11692,7 @@ void main() {
 
     // Browse Acties → Leerlingen the way the operator did when they reported
     // this: the student's row names their own class.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     final entry = harness.controller.pendingEntries
         .firstWhere((e) => e.family == 'student');
@@ -11958,7 +11990,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -11966,7 +11998,7 @@ void main() {
 
     // Browse Acties → Personeel: the staff member is a row of that tab's list,
     // with the first link of the chain offered and only that one.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -12051,14 +12083,14 @@ void main() {
       reconcileBootstrap: harness.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
     expect(harness.controller.error, isNull);
 
     // Browse Acties → Personeel, where the operator met this.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -12578,7 +12610,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -12602,7 +12634,7 @@ void main() {
     );
 
     // And that is what Acties → Personeel shows.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();
@@ -12830,7 +12862,7 @@ void main() {
       reconcileBootstrap: operatorB.bootstrap,
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
 
     // She is in step everywhere, so she sits behind the work-list filter.

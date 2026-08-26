@@ -7,10 +7,9 @@ import 'package:flutter/widgets.dart';
 /// index the navigation rail happens to give it, so reordering the rail cannot
 /// silently re-aim a link.
 enum ShellTab {
-  start,
   synchronisatie,
-  acties,
   klasgroepen,
+  acties,
   wachtwoorden,
   instellingen,
 }

@@ -4,7 +4,6 @@ import 'package:plink_design_system/plink_design_system.dart';
 import '../reconcile/reconcile_bootstrap.dart';
 import '../screens/actions_screen.dart';
 import '../screens/class_groups_screen.dart';
-import '../screens/home_screen.dart';
 import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
 import '../screens/settings_screen.dart';
@@ -32,10 +31,13 @@ class ShellDestination {
 
 /// The navigation frame for the whole app.
 ///
-/// Deliberately minimal: Home plus the reconcile screen today. Each Phase C
-/// view slice (settings, passwords, …) adds one entry to the destinations —
-/// the shell is built to grow, not to mirror the seven legacy WPF pages up
-/// front.
+/// Deliberately minimal: each Phase C view slice (settings, passwords, …) adds
+/// one entry to the destinations — the shell is built to grow, not to mirror
+/// the seven legacy WPF pages up front.
+///
+/// The rail is ordered as the work is done (#366) — Synchronisatie,
+/// Klasgroepen, Acties, Wachtwoorden, Instellingen — and there is no landing
+/// page above it: a Start placeholder cost the first click of every session.
 class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
@@ -60,32 +62,34 @@ class _AppShellState extends State<AppShell> {
     // Every label is the operator's language and the name of the page behind
     // it (#257): the rail is read together with the heading it leads to, so a
     // rail saying "Actions" over a page titled "Acties" reads as two apps.
-    ShellDestination(
-      tab: ShellTab.start,
-      label: 'Start',
-      icon: Icons.home_outlined,
-      builder: (_) => const HomeScreen(),
-    ),
+    // First, and the destination a launch lands on (#366): the session begins
+    // by pulling, or by deciding the shared state is fresh enough.
     ShellDestination(
       tab: ShellTab.synchronisatie,
       label: 'Synchronisatie',
       icon: Icons.sync_alt_outlined,
       builder: (_) => ReconcileScreen(bootstrap: widget.reconcileBootstrap),
     ),
-    ShellDestination(
-      tab: ShellTab.acties,
-      label: 'Acties',
-      icon: Icons.checklist_outlined,
-      builder: (_) => ActionsScreen(bootstrap: widget.reconcileBootstrap),
-    ),
     // The class inventory (#227). A destination of its own rather than a node
     // inside Acties: it lists *every* class, so it answers "is this right?",
     // which the action list structurally cannot.
+    //
+    // Above Acties (#366) because class-group work is upstream of account work:
+    // a class that has to be created, renamed or split must be applied before
+    // the account actions that place students into it, or those actions land
+    // against a group that is about to change. The rail reads top-to-bottom in
+    // the order the operator is meant to work.
     ShellDestination(
       tab: ShellTab.klasgroepen,
       label: 'Klasgroepen',
       icon: Icons.groups_outlined,
       builder: (_) => ClassGroupsScreen(bootstrap: widget.reconcileBootstrap),
+    ),
+    ShellDestination(
+      tab: ShellTab.acties,
+      label: 'Acties',
+      icon: Icons.checklist_outlined,
+      builder: (_) => ActionsScreen(bootstrap: widget.reconcileBootstrap),
     ),
     ShellDestination(
       tab: ShellTab.wachtwoorden,
@@ -101,6 +105,8 @@ class _AppShellState extends State<AppShell> {
     ),
   ];
 
+  /// Index 0 is Synchronisatie, so a launch lands on the screen the session
+  /// actually begins on (#366) rather than on a placeholder to click past.
   int _selected = 0;
 
   /// Selects the destination named [tab] (#301) — how a screen follows its own
