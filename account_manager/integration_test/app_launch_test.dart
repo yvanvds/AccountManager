@@ -7762,7 +7762,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -12588,7 +12588,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Synchronisatie'));
+    await tester.tap(railTab('Synchronisatie'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
     await tester.pumpAndSettle();
@@ -12596,7 +12596,7 @@ void main() {
 
     // Browse Acties → Personeel and apply the new hire's one decision, exactly
     // as the operator does.
-    await tester.tap(find.text('Acties'));
+    await tester.tap(railTab('Acties'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
     await tester.pumpAndSettle();

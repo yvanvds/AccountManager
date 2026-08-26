@@ -1,4 +1,5 @@
 import 'package:account_core/account_core.dart';
+import 'package:smartschool_api/smartschool_api.dart' as ss;
 
 /// The name of the Smartschool group a staff account belongs in (#374).
 ///
@@ -11,7 +12,13 @@ import 'package:account_core/account_core.dart';
 /// remove the first three. A tenant that renames the group changes this
 /// constant (or injects a [StaffPlacement] naming another node) — a one-line
 /// change in a port that is otherwise faithful to the names the school uses.
-const String smartschoolStaffGroupName = 'Leerkrachten';
+///
+/// The one place is [ss.smartschoolStaffGroupName], in the connector package,
+/// since #378: the repair that re-seats the accounts created *before* #374 has
+/// to name the same group as the create, and it cannot import this package
+/// (the dependency runs the other way). This alias keeps the action engine's
+/// callers reading unchanged while there is still exactly one literal.
+const String smartschoolStaffGroupName = ss.smartschoolStaffGroupName;
 
 /// The name of the group Smartschool seats **every** `saveUser` account in,
 /// whatever role the account carries (#374).
@@ -19,7 +26,9 @@ const String smartschoolStaffGroupName = 'Leerkrachten';
 /// This is platform behaviour, not a choice of ours: the create cannot opt out
 /// of it, so a staff create has to compensate afterwards by leaving the group
 /// again. A student create deliberately does not — a student belongs here.
-const String smartschoolDefaultGroupName = 'Leerlingen';
+///
+/// Aliased from [ss.smartschoolDefaultGroupName] for the reason above.
+const String smartschoolDefaultGroupName = ss.smartschoolDefaultGroupName;
 
 /// The Smartschool group-placement context for a freshly created **staff**
 /// account (#374) — the staff twin of `ClassPlacement`.

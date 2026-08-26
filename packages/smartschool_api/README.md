@@ -100,3 +100,36 @@ The script dumps raw SOAP XML (accesscode redacted) + decoded payloads
 under `packages/smartschool_api/captures/<timestamp>/` (gitignored,
 local-only). Use it to refresh the record-and-replay test fixtures from
 real data.
+
+### Staff-seat repair (one-off, #378)
+
+`saveUser` seats **every** account it creates in the platform default group
+(`Leerlingen`), whatever role it carries. The staff create is supposed to
+compensate with two follow-up writes; before #374 the port did not, so every
+staff account it had made sat in the student subtree and in no staff group.
+#374 fixed the create going forward — this repairs the backlog:
+
+```sh
+# read-only: count and list, no write
+dart run packages/smartschool_api/tool/staff_seat_repair.dart
+# opt-in: add to Leerkrachten, remove from Leerlingen
+dart run packages/smartschool_api/tool/staff_seat_repair.dart --apply
+```
+
+Read-only by default; `--apply` issues exactly the pair
+`AddStaffToSmartschool` now issues. **Manual only** — it writes, and the
+project's live-testing policy keeps write-capable runs out of CI. `--only
+a,b` limits it to named uids, which is worth doing after reading the audit:
+an account that also sits in `Stagiairs` or `Beheerders` was put there by an
+operator, not by our create.
+
+A one-off rather than a standing action, because after #374 the mis-seating
+cannot recur through the app; a standing action would need Smartschool group
+membership on `LinkedStaff` (the membership-aware follow-up `AddToStaffGroup`
+/ `AddToAzureStaffGroup` also wait on) to keep proposing a repair nothing can
+produce any more. The detection ([`misSeatedStaffAccounts`](lib/src/repair/staff_seating.dart))
+and the writes (`repairStaffSeating`) are library functions, unit-tested
+offline; the tool is the CLI over them. On the 2026-08-24 snapshot of this
+school's tenant (1409 accounts, 184 staff-role) it found **0** — the create
+that would have produced them is not bulk-applyable (#293), so it looks never
+to have run in anger before #374 landed.

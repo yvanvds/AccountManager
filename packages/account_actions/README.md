@@ -426,9 +426,15 @@ write waiting on the class that can take it.
   against nothing at all — they are unconditional post-create plumbing, add to
   one fixed-name group and remove from another — so they were dropped by
   association with the two actions that really do read membership. See
-  [Staff group seat](#staff-group-seat-374). That fix is forward-only — the
-  accounts already mis-seated are tracked as #378, which is where the decision
-  between a one-off repair and a membership-aware standing action lives.
+  [Staff group seat](#staff-group-seat-374). That fix is forward-only, and #378
+  decided what to do about the accounts mis-seated before it: **a one-off tool**,
+  [`packages/smartschool_api/tool/staff_seat_repair.dart`](../smartschool_api/tool/staff_seat_repair.dart),
+  not a standing action. A standing action would have to carry Smartschool group
+  membership on `LinkedStaff` — the same follow-up above — to keep proposing a
+  repair that, after #374, nothing can produce any more. The audit half of that
+  tool counted **0** mis-seated accounts on this school's tenant, which is the
+  other reason: this create is not bulk-applyable (#293), so it appears never to
+  have run in anger before the fix landed.
 - **`ChangeEmail`** (legacy) is dead code — not wired into the parser — and is
   intentionally omitted.
 - **`SetStaffCopyCode` idempotency fix.** Legacy `SetCopyCode` compares the
