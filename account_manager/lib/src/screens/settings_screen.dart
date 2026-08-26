@@ -74,6 +74,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _schoolPrefix = TextEditingController();
   bool _debugMode = false;
 
+  // The two WiFi networks printed on the password sheets (#368). Plain fields
+  // rather than `_SecretField`s on purpose: the key is handed to every student
+  // on paper, and the operator opens this section precisely to read what is
+  // being printed.
+  final _staffWifiSsid = TextEditingController();
+  final _staffWifiCode = TextEditingController();
+  final _studentWifiSsid = TextEditingController();
+  final _studentWifiCode = TextEditingController();
+
   // WISA profile.
   final _wisaServer = TextEditingController();
   final _wisaPort = TextEditingController();
@@ -151,6 +160,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     for (final c in <TextEditingController>[
       _schoolPrefix,
+      _staffWifiSsid,
+      _staffWifiCode,
+      _studentWifiSsid,
+      _studentWifiCode,
       _wisaServer,
       _wisaPort,
       _wisaDatabase,
@@ -229,6 +242,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _populate(AppSettings s) {
     _schoolPrefix.text = s.schoolPrefix;
     _debugMode = s.debugMode;
+
+    _staffWifiSsid.text = s.staffWifi.ssid;
+    _staffWifiCode.text = s.staffWifi.code;
+    _studentWifiSsid.text = s.studentWifi.ssid;
+    _studentWifiCode.text = s.studentWifi.code;
 
     _wisaServer.text = s.wisa.server;
     _wisaPort.text = s.wisa.port;
@@ -526,6 +544,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return base.copyWith(
       schoolPrefix: _schoolPrefix.text.trim(),
       debugMode: _debugMode,
+      // Trimmed like every other field: the value is printed on paper and typed
+      // back in by hand, so leading or trailing whitespace in a network name or
+      // key is invisible on the sheet and unreproducible by the reader.
+      staffWifi: WifiNetwork(
+        ssid: _staffWifiSsid.text.trim(),
+        code: _staffWifiCode.text.trim(),
+      ),
+      studentWifi: WifiNetwork(
+        ssid: _studentWifiSsid.text.trim(),
+        code: _studentWifiCode.text.trim(),
+      ),
       wisa: base.wisa.copyWith(
         server: _wisaServer.text.trim(),
         port: _wisaPort.text.trim(),
@@ -820,7 +849,50 @@ class _SettingsForm extends StatelessWidget {
           ),
         ],
       ),
+      _wifiSection(),
     ]);
+  }
+
+  /// The two networks printed on the password sheets (#368).
+  ///
+  /// They used to be string literals in the export code, so rotating a WiFi key
+  /// — the ordinary reason to change one, or the urgent one after it leaks —
+  /// meant editing Dart and redistributing the app. Emptying an SSID omits that
+  /// sheet's WiFi block entirely, the same way the Office 365 and Smartschool
+  /// blocks disappear when there is no password to print.
+  Widget _wifiSection() {
+    return _Section(
+      title: 'WiFi op de wachtwoordbladen',
+      children: <Widget>[
+        _Note(
+          keyValue: 'settings-wifi-note',
+          text:
+              'Deze netwerken worden op de afgedrukte wachtwoordbladen gezet. '
+              'Laat een netwerknaam leeg om het WiFi-blok van dat blad weg te '
+              'laten.',
+        ),
+        _Field(
+          keyValue: 'settings-wifi-staff-ssid',
+          label: 'WiFi personeel — netwerknaam',
+          controller: state._staffWifiSsid,
+        ),
+        _Field(
+          keyValue: 'settings-wifi-staff-code',
+          label: 'WiFi personeel — code',
+          controller: state._staffWifiCode,
+        ),
+        _Field(
+          keyValue: 'settings-wifi-student-ssid',
+          label: 'WiFi leerlingen — netwerknaam',
+          controller: state._studentWifiSsid,
+        ),
+        _Field(
+          keyValue: 'settings-wifi-student-code',
+          label: 'WiFi leerlingen — code',
+          controller: state._studentWifiCode,
+        ),
+      ],
+    );
   }
 
   /// WISA connector config: connection, credentials, managed-school list, and
@@ -998,6 +1070,29 @@ class _Section extends StatelessWidget {
           const SizedBox(height: PlinkSpacing.s3),
           ...children,
         ],
+      ),
+    );
+  }
+}
+
+/// One line of explanation above a section's fields — the same muted prose the
+/// rule editors put over their lists.
+class _Note extends StatelessWidget {
+  const _Note({required this.keyValue, required this.text});
+
+  final String keyValue;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s3),
+      child: Text(
+        text,
+        key: ValueKey(keyValue),
+        style: textTheme.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
       ),
     );
   }

@@ -102,6 +102,7 @@ export 'src/settings/live_settings.dart';
 export 'src/settings/rule_provenance.dart';
 export 'src/settings/secret_provider.dart';
 export 'src/settings/settings_store.dart';
+export 'src/settings/wifi_network.dart';
 export 'src/settings/wisa_rule_merge.dart';
 export 'src/settings/wisa_school_label.dart';
 export 'src/settings/wisa_school_merge.dart';

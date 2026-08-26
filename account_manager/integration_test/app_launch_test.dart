@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show ZLibDecoder;
 
 import 'package:account_actions/account_actions.dart'
     show
@@ -6642,6 +6643,137 @@ void main() {
   });
 
   testWidgets(
+      'a WiFi network saved in Instellingen is on the very next printed sheet, '
+      'and an emptied one takes the whole block off it (#368)',
+      (WidgetTester tester) async {
+    // The reason to change a WiFi key is that it rotated, or leaked. Both
+    // networks were string literals in the export code, so either meant editing
+    // Dart and redistributing the app. This is the loop that replaces it, end to
+    // end in the real app: open Wachtwoorden (which builds the password
+    // controller), change the network in Instellingen, save, come back, print —
+    // and read the words off the PDF that was actually written.
+    //
+    // Both bootstraps share **one** LiveSettings, exactly as `main()` wires
+    // them, so the save reaches the running stack rather than the next launch
+    // (#238). Wachtwoorden is visited *before* the save on purpose: a controller
+    // that captured the networks when the screen was first opened would still
+    // print the old ones here.
+    useTallWindow(tester);
+    final live = LiveSettings();
+    final harness =
+        ReconcileHarness(ssInitial: passwordsSnap(), liveSettings: live);
+    final settings = SettingsHarness(liveSettings: live);
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: settings.bootstrap,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Wachtwoorden'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PasswordsScreen), findsOneWidget);
+
+    // Instellingen → Algemeen (the default tab) → the WiFi section. The fields
+    // open on the literals the sheets used to hardcode, so the operator reads
+    // what is being printed rather than four empty boxes.
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    final Finder studentSsid =
+        find.byKey(const ValueKey('settings-wifi-student-ssid'));
+    await tester.ensureVisible(studentSsid);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(studentSsid).controller!.text,
+      'Smifi-L',
+    );
+
+    /// Presses Opslaan and lets the confirmation toast expire.
+    ///
+    /// The SnackBar is anchored to the bottom of the window, which is where the
+    /// Wachtwoorden action bar sits — leaving it up means the next tap lands on
+    /// the toast instead of "Genereer wachtwoorden".
+    Future<void> saveSettings() async {
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    }
+
+    await tester.enterText(studentSsid, 'Testnet-L');
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-wifi-student-code')),
+      'nieuwesleutel',
+    );
+    await saveSettings();
+
+    /// Generates a Smartschool password for all of 3C and prints the sheets,
+    /// returning the words on the written PDF.
+    Future<Set<String>> printSheets() async {
+      await tester.tap(railTab('Wachtwoorden'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('password-class-3C')));
+      await tester.pumpAndSettle();
+      // The column header is sticky (#376): a generate clears every row's
+      // checkbox but leaves the header ticked, so a plain tap on the second run
+      // would *clear* the column instead of filling it. Drive it to off first
+      // where it is already on.
+      final bulk = find.byKey(const ValueKey('passwords-bulk-smartschool'));
+      if (tester.widget<Checkbox>(bulk).value ?? false) {
+        await tester.tap(bulk);
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(bulk);
+      await tester.pumpAndSettle();
+      final generate = find.byKey(const ValueKey('passwords-generate'));
+      await tester.ensureVisible(generate);
+      await tester.pumpAndSettle();
+      await tester.tap(generate);
+      await tester.pumpAndSettle();
+      await tester
+          .tap(find.byKey(const ValueKey('passwords-generate-confirm')));
+      await tester.pumpAndSettle();
+      final printButton =
+          find.byKey(const ValueKey('passwords-export-students'));
+      await tester.ensureVisible(printButton);
+      await tester.tap(printButton);
+      await tester.pumpAndSettle();
+      return _pdfWords(harness.passwordWrites.last.$2);
+    }
+
+    final printed = await printSheets();
+    // The sanity check that the extraction works at all: the login is on the
+    // page, and so is the section the WiFi block sits under.
+    expect(printed, contains('Smartschool'));
+    expect(printed, contains('WiFi'));
+    // The saved network reached the paper, and the compiled-in one did not.
+    expect(printed, contains('Testnet-L'));
+    expect(printed, contains('nieuwesleutel'));
+    expect(printed, isNot(contains('Smifi-L')));
+    expect(printed, isNot(contains('SmifiDeWifi:)')));
+
+    // Now empty the network name — the way an install with no student WiFi to
+    // advertise turns the block off. A half-empty block, or a bare `Netwerk :`
+    // line, would be worse than none.
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(studentSsid);
+    await tester.pumpAndSettle();
+    await tester.enterText(studentSsid, '');
+    await saveSettings();
+
+    final withoutWifi = await printSheets();
+    expect(withoutWifi, contains('Smartschool'),
+        reason: 'the rest of the sheet is untouched');
+    expect(withoutWifi, isNot(contains('WiFi')));
+    expect(withoutWifi, isNot(contains('Netwerk')));
+    expect(withoutWifi, isNot(contains('nieuwesleutel')));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Smartschool address action only fires on a real field drift and its '
       'diff shows the differing field, not an identical row (#153)',
       (WidgetTester tester) async {
@@ -13099,6 +13231,71 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+}
+
+/// The words actually drawn onto a rendered password sheet, read back out of
+/// the PDF the app wrote (#368).
+///
+/// The sheets are typeset in the bundled TrueType faces, so a page's content
+/// stream carries runs of glyph ids (`<001200A1…>`) rather than readable text,
+/// and both the content and the `/ToUnicode` tables that translate them are
+/// Flate-compressed. This inflates every stream in the document, collects each
+/// `beginbfchar` table it finds, and decodes every hex run under each of them —
+/// a word comes back as long as *some* face on the page drew it, which is all an
+/// "is this value on the paper" assertion needs. Literal `(…)` strings are
+/// collected too, so the base-14 stand-in faces are readable the same way.
+Set<String> _pdfWords(List<int> bytes) {
+  final source = latin1.decode(bytes, allowInvalid: true);
+  final segments = <String>[];
+  for (final m in RegExp(r'stream\r?\n').allMatches(source)) {
+    final start = m.end;
+    final end = source.indexOf('endstream', start);
+    if (end < 0) continue;
+    try {
+      segments.add(latin1.decode(
+        ZLibDecoder().convert(bytes.sublist(start, end)),
+        allowInvalid: true,
+      ));
+    } on Object {
+      segments.add(source.substring(start, end));
+    }
+  }
+
+  // glyph id → character, one table per embedded face.
+  final tables = <Map<int, String>>[];
+  for (final segment in segments) {
+    for (final block
+        in RegExp(r'beginbfchar([\s\S]*?)endbfchar').allMatches(segment)) {
+      final table = <int, String>{};
+      for (final entry in RegExp(r'<([0-9A-Fa-f]{4})>\s*<([0-9A-Fa-f]{4})>')
+          .allMatches(block.group(1)!)) {
+        table[int.parse(entry.group(1)!, radix: 16)] =
+            String.fromCharCode(int.parse(entry.group(2)!, radix: 16));
+      }
+      if (table.isNotEmpty) tables.add(table);
+    }
+  }
+
+  final words = <String>{};
+  for (final segment in segments) {
+    for (final m in RegExp(r'\(([^()]*)\)').allMatches(segment)) {
+      words.add(m.group(1)!);
+    }
+    for (final m in RegExp(r'<([0-9A-Fa-f]{8,})>').allMatches(segment)) {
+      final hex = m.group(1)!;
+      if (hex.length % 4 != 0) continue;
+      final ids = <int>[
+        for (var i = 0; i < hex.length; i += 4)
+          int.parse(hex.substring(i, i + 4), radix: 16),
+      ];
+      for (final table in tables) {
+        if (ids.every(table.containsKey)) {
+          words.add(<String>[for (final id in ids) table[id]!].join());
+        }
+      }
+    }
+  }
+  return words;
 }
 
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.

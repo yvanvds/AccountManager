@@ -104,6 +104,10 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
         // account comes from, and — for Personeel — where the roster comes from,
         // so an account that sits in no Smartschool group is still reachable.
         linked: () => services.controller.linked?.snapshot,
+        // The live settings document (#368): what the printed WiFi block says.
+        // Read at export time so a network edited in Instellingen reaches the
+        // next sheet, not the next launch.
+        settings: () => services.liveSettings.current,
         queue: services.passwordQueue,
         backends: services.passwordBackends,
         writer: services.passwordFileWriter,

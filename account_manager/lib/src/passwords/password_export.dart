@@ -133,12 +133,41 @@ class PasswordSheet {
 const String _oneTimeNote = 'Dit is een eenmalig wachtwoord; kies zelf een '
     'nieuw wachtwoord bij de eerste aanmelding.';
 
+/// The WiFi block, or `null` when [wifi] has no SSID to print (#368).
+///
+/// The label is **Code** on both sheets, deliberately. Legacy said "Wachtwoord"
+/// to students and "Code" to staff, which was a leftover rather than a decision:
+/// every other `Wachtwoord` line on a sheet is personal, one-time, and sits
+/// under a note telling the reader to change it at first sign-in. The network
+/// key is none of those things — it is shared, permanent, and the same on every
+/// sheet in the stack — so it reads as what it is on both.
+PasswordSheetBlock? _wifiBlock(WifiNetwork wifi) {
+  if (!wifi.isConfigured) return null;
+  return PasswordSheetBlock(
+    heading: 'WiFi',
+    fields: <PasswordSheetField>[
+      PasswordSheetField('Netwerk', wifi.ssid),
+      PasswordSheetField('Code', wifi.code),
+    ],
+  );
+}
+
 /// The student sheets, one per queued entry, ported from the legacy
 /// `PasswordManager.exportToPDF` layout (#180) and kept identical in content
 /// and section order when the format became a real PDF (#195): the login, the
 /// Office 365 and Smartschool blocks (only for the passwords that were actually
 /// generated), a WiFi block, and a privacy note.
-List<PasswordSheet> studentPasswordSheets(Iterable<PasswordEntry> entries) {
+///
+/// [wifi] is the network the sheet tells students to join, read from the
+/// settings document (#368). It defaults to the literal these sheets carried
+/// before it was configurable, so a caller that knows nothing about settings —
+/// and a settings document written before the field existed — prints what it
+/// always printed. An unconfigured network omits the block, like the two
+/// password blocks above it.
+List<PasswordSheet> studentPasswordSheets(
+  Iterable<PasswordEntry> entries, {
+  WifiNetwork wifi = defaultStudentWifi,
+}) {
   final sheets = <PasswordSheet>[];
   for (final e in entries) {
     final klas = e.classGroup;
@@ -176,13 +205,8 @@ List<PasswordSheet> studentPasswordSheets(Iterable<PasswordEntry> entries) {
         notes: const <String>[_oneTimeNote],
       ));
     }
-    blocks.add(const PasswordSheetBlock(
-      heading: 'WiFi',
-      fields: <PasswordSheetField>[
-        PasswordSheetField('Netwerk', 'Smifi-L'),
-        PasswordSheetField('Wachtwoord', 'SmifiDeWifi:)'),
-      ],
-    ));
+    final wifiBlock = _wifiBlock(wifi);
+    if (wifiBlock != null) blocks.add(wifiBlock);
     blocks.add(const PasswordSheetBlock(
       heading: 'Privacy',
       notes: <String>[
@@ -198,12 +222,16 @@ List<PasswordSheet> studentPasswordSheets(Iterable<PasswordEntry> entries) {
 /// The single-staff sheet, ported from legacy `ExportStaffPasswordToPDF`
 /// (#180). A `null` password omits that whole block, which is how the three
 /// staff reset buttons choose which sections appear.
+///
+/// [wifi] is the staff network, read from the settings document (#368) and
+/// defaulting to the literal this sheet carried before it was configurable.
 PasswordSheet staffPasswordSheet({
   required String name,
   required String username,
   required String mail,
   String? smartschoolPassword,
   String? office365Password,
+  WifiNetwork wifi = defaultStaffWifi,
 }) {
   final blocks = <PasswordSheetBlock>[];
   if (office365Password != null && office365Password.isNotEmpty) {
@@ -216,13 +244,8 @@ PasswordSheet staffPasswordSheet({
       notes: const <String>[_oneTimeNote],
     ));
   }
-  blocks.add(const PasswordSheetBlock(
-    heading: 'WiFi',
-    fields: <PasswordSheetField>[
-      PasswordSheetField('Netwerk', 'Smifi-P'),
-      PasswordSheetField('Code', '!TEAM!SMA!'),
-    ],
-  ));
+  final wifiBlock = _wifiBlock(wifi);
+  if (wifiBlock != null) blocks.add(wifiBlock);
   if (smartschoolPassword != null && smartschoolPassword.isNotEmpty) {
     blocks.add(PasswordSheetBlock(
       heading: 'Smartschool',
@@ -342,20 +365,26 @@ Future<Uint8List> passwordSheetsPdf(
   return doc.save();
 }
 
-/// The student sheets as a PDF — one page per student.
-Future<Uint8List> studentPasswordsPdf(Iterable<PasswordEntry> entries) =>
+/// The student sheets as a PDF — one page per student, on the configured
+/// student [wifi] network (#368).
+Future<Uint8List> studentPasswordsPdf(
+  Iterable<PasswordEntry> entries, {
+  WifiNetwork wifi = defaultStudentWifi,
+}) =>
     passwordSheetsPdf(
-      studentPasswordSheets(entries),
+      studentPasswordSheets(entries, wifi: wifi),
       title: 'Leerling-wachtwoorden',
     );
 
-/// A single staff member sheet as a one-page PDF.
+/// A single staff member sheet as a one-page PDF, on the configured staff
+/// [wifi] network (#368).
 Future<Uint8List> staffPasswordPdf({
   required String name,
   required String username,
   required String mail,
   String? smartschoolPassword,
   String? office365Password,
+  WifiNetwork wifi = defaultStaffWifi,
 }) =>
     passwordSheetsPdf(
       <PasswordSheet>[
@@ -365,6 +394,7 @@ Future<Uint8List> staffPasswordPdf({
           mail: mail,
           smartschoolPassword: smartschoolPassword,
           office365Password: office365Password,
+          wifi: wifi,
         ),
       ],
       title: 'Personeelswachtwoord — $name',

@@ -47,6 +47,11 @@ enum PasswordTarget {
 /// the only roster, and an Office 365 push resolves by address.
 core.LinkedSnapshot? _noLinkedSnapshot() => null;
 
+/// The default settings provider: an empty document. Its defaults carry the
+/// WiFi networks the sheets hardcoded before #368, so a controller built
+/// without one prints exactly what it printed before.
+AppSettings _defaultSettings() => const AppSettings();
+
 /// One student in the currently-selected class, with its per-target selection.
 class StudentRow {
   StudentRow(this.account, {this.linked});
@@ -159,6 +164,7 @@ class PasswordController extends ChangeNotifier {
     required PasswordQueueStore queue,
     required PasswordBackends backends,
     core.LinkedSnapshot? Function() linked = _noLinkedSnapshot,
+    AppSettings Function() settings = _defaultSettings,
     PasswordFileWriter writer = writePasswordExport,
     PasswordFileOpener opener = openPasswordExport,
     String Function() generatePassword = core.Password.create,
@@ -167,6 +173,7 @@ class PasswordController extends ChangeNotifier {
     core.ILog? log,
   })  : _snapshotOf = snapshot,
         _linkedOf = linked,
+        _settingsOf = settings,
         _studentGroupName = studentGroupName,
         _staffGroupName = staffGroupName,
         _queue = queue,
@@ -200,6 +207,16 @@ class PasswordController extends ChangeNotifier {
   /// is a real state, not a failure: everything falls back to the pre-#372
   /// behaviour so the screen stays usable.
   final core.LinkedSnapshot? Function() _linkedOf;
+
+  /// The operator's live settings document, read the same way (#368).
+  ///
+  /// The screen hands over `() => services.liveSettings.current`, so a WiFi
+  /// network saved in Instellingen reaches the very next printed sheet rather
+  /// than the next launch — the same discipline the reconcile stack follows for
+  /// every other settings-derived value (#238/#246). Captured at construction it
+  /// would freeze on whatever the document said when Wachtwoorden was first
+  /// opened, which for a screen that outlives a save is the wrong answer.
+  final AppSettings Function() _settingsOf;
 
   /// The snapshot the index below was built from, so [refresh] can tell a real
   /// change from a repaint and cost nothing on the latter.
@@ -788,7 +805,7 @@ class PasswordController extends ChangeNotifier {
     final sheets = List<PasswordEntry>.of(_studentSheets);
     final path = await _writer(
       'leerling-wachtwoorden.pdf',
-      await studentPasswordsPdf(sheets),
+      await studentPasswordsPdf(sheets, wifi: _settingsOf().studentWifi),
     );
     await _drain(sheets);
     _message =
@@ -1046,6 +1063,7 @@ class PasswordController extends ChangeNotifier {
           mail: row.mail,
           smartschoolPassword: ssPw,
           office365Password: azPw,
+          wifi: _settingsOf().staffWifi,
         ),
       );
       final exported = _exportMessage(

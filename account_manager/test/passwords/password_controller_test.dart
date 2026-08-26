@@ -157,12 +157,16 @@ void main() {
     // One stable snapshot per controller: the provider is read live (#287), so
     // handing it a factory that mints a fresh object each call would make every
     // read look like a changed tree.
-    PasswordController build({String Function()? gen}) {
+    PasswordController build({
+      String Function()? gen,
+      AppSettings Function()? settings,
+    }) {
       final snap = _snapshot();
       return PasswordController(
           snapshot: () => snap,
           queue: queue,
           backends: backends,
+          settings: settings ?? () => const AppSettings(),
           generatePassword: gen ?? _seqGenerator(),
           writer: (name, bytes) async {
             writes.add((name, List<int>.of(bytes)));
@@ -325,8 +329,10 @@ void main() {
       expect(backends.azurePushes, isEmpty);
     });
 
-    Future<PasswordController> queuedStudent() async {
-      final c = build();
+    Future<PasswordController> queuedStudent({
+      AppSettings Function()? settings,
+    }) async {
+      final c = build(settings: settings);
       final klas = c.childrenOf(c.studentRoot!).single;
       c.selectClass(klas);
       final jane = c.rows.firstWhere((r) => r.username == 'jane');
@@ -352,6 +358,29 @@ void main() {
       expect(c.message, contains(path));
       // Drained from the queue afterwards.
       expect(c.studentSheets, isEmpty);
+    });
+
+    test(
+        'the sheet reads the WiFi networks at export time, not at build (#368)',
+        () async {
+      // The screen outlives a save on the Instellingen tab, so a network
+      // captured when Wachtwoorden was first opened is the wrong answer. The
+      // provider must be consulted when the PDF is built.
+      final live = LiveSettings();
+      final read = <WifiNetwork>[];
+      final c = await queuedStudent(settings: () {
+        read.add(live.current.studentWifi);
+        return live.current;
+      });
+      expect(read, isEmpty, reason: 'nothing is read before an export');
+
+      live.publish(const AppSettings(
+        studentWifi: WifiNetwork(ssid: 'Testnet-L', code: 'l-sleutel'),
+      ));
+      await c.exportStudentSheets();
+
+      expect(
+          read.single, const WifiNetwork(ssid: 'Testnet-L', code: 'l-sleutel'));
     });
 
     test('a viewer that will not launch keeps the file and the drain (#195)',
