@@ -15,6 +15,8 @@ import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
+import 'package:account_manager/src/screens/action_tiles.dart'
+    show PendingBadge;
 import 'package:account_manager/src/screens/actions_screen.dart';
 import 'package:account_manager/src/screens/class_groups_screen.dart';
 import 'package:account_manager/src/screens/passwords_screen.dart';
@@ -294,6 +296,96 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the rail carries a counter chip for what Klasgroepen and Acties are '
+      'holding, appearing on a pull and clearing on an apply (#367)',
+      (WidgetTester tester) async {
+    // Only a full run can state this. The chips are derived on the shared
+    // controller, hung off the icons of the *real* NavigationRail in the real
+    // font, and the operator is meant to read them without opening either tab —
+    // so the claim spans the shell, both screens' derivations and the rail's own
+    // layout at once, which a widget test of any one screen structurally cannot
+    // assemble. Whether a badge hung off a rail icon actually fits the rail's
+    // column is a real-layout question by definition.
+    //
+    // The fixture in miniature: `3C` and `3D` both lack their Office 365 group
+    // (two classes), and of the two students only Sam's Office 365 display name
+    // is stale (one account).
+    useTallWindow(tester);
+    final harness = appliedClassWorkHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    Finder chip(String tab) => find.byKey(ValueKey<String>('rail-count-$tab'));
+    int? chipCount(String tab) => chip(tab).evaluate().isEmpty
+        ? null
+        : tester.widget<PendingBadge>(chip(tab)).count;
+
+    // Nothing pulled yet, so nothing is claimed: an unknown count is not a
+    // zero, and a rail inventing one is worse than a silent one.
+    expect(chipCount('klasgroepen'), isNull);
+    expect(chipCount('acties'), isNull);
+
+    // The pull, from the screen the app lands on (#366).
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // The rail now says what is waiting, and where — with neither destination
+    // ever opened. That is the whole point: the operator learns whether this
+    // session needs work without spending a click to find out.
+    expect(chipCount('klasgroepen'), 2);
+    expect(chipCount('acties'), 1);
+    expect(find.byType(ClassGroupsScreen), findsNothing);
+    expect(find.byType(ActionsScreen), findsNothing);
+    expect(railTab('2'), findsOneWidget);
+    expect(railTab('1'), findsOneWidget);
+
+    // …and it fits. The chip overhangs its icon, so in a real window it must
+    // still land inside the rail's own column rather than across the divider
+    // onto the view beside it.
+    final Rect rail = tester.getRect(find.byType(NavigationRail));
+    for (final String tab in <String>['klasgroepen', 'acties']) {
+      final Rect badge = tester.getRect(chip(tab));
+      expect(badge.left, greaterThanOrEqualTo(rail.left));
+      expect(badge.right, lessThanOrEqualTo(rail.right));
+      expect(badge.top, greaterThanOrEqualTo(rail.top));
+    }
+
+    // Following a chip lands on a page stating the very same number, so the
+    // rail cannot look like it is disagreeing with the view it leads to.
+    await tester.tap(railTab('Klasgroepen'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('2 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget);
+    expect(chipCount('klasgroepen'), 2);
+
+    // An apply moves the chip in place — no re-sync, no revisit.
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+    final String sam = accountId(harness, 'Sam Sels');
+    await selectAccount(tester, sam);
+    final Finder apply = find.byKey(ValueKey('entry-apply-$sam'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(chipCount('acties'), isNull,
+        reason: 'a destination holding nothing reads as "nothing here", '
+            'not as a 0 to interpret');
+    expect(railTab('1'), findsNothing);
+    // Only the count the pass actually changed moved: the class work it never
+    // touched is still on the rail.
+    expect(chipCount('klasgroepen'), 2);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
