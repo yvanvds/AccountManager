@@ -1,16 +1,19 @@
-/// The per-machine connection bootstrap (#370): where this install's backend
-/// lives, read from a local JSON file rather than from the settings document.
+/// The per-machine connection bootstrap (#370, #384): where this install's
+/// backend lives and which Azure AD app registration it signs in with, read from
+/// a local JSON file rather than from the settings document.
 ///
 /// There is a genuine chicken-and-egg behind the split, worth stating plainly:
 /// **the settings document lives in Cosmos, so the Cosmos coordinates cannot
 /// live in the settings document.** The resolution is to keep the two apart —
 /// deployment identity in this file, school configuration in `AppSettings` —
-/// not to try to nest one inside the other.
+/// not to try to nest one inside the other. The Azure AD app registration (#384)
+/// is the same argument one layer earlier: signing in is what gets you to
+/// Cosmos, so it cannot be stored behind the sign-in either.
 ///
-/// The file holds endpoint URIs and nothing else. No key, no token, no
-/// credential: authentication is the operator's own AAD token either way, which
-/// is why this sits in plain JSON next to the DPAPI-encrypted token cache rather
-/// than inside it.
+/// The file holds endpoint URIs and app-registration identifiers, and nothing
+/// else. No key, no token, no credential: authentication is the operator's own
+/// AAD token either way, which is why this sits in plain JSON next to the
+/// DPAPI-encrypted token cache rather than inside it.
 library;
 
 import 'dart:convert';
@@ -18,6 +21,7 @@ import 'dart:io';
 
 import 'package:account_state/account_state.dart';
 
+import '../auth/aad_app_config.dart';
 import '../auth/sign_in_session.dart';
 import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 
@@ -25,9 +29,9 @@ import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 /// `%APPDATA%\AccountManager\` root as the token cache.
 const String connectionFileName = 'connection.json';
 
-/// Where the resolved [StoreEndpoints] actually came from (#370) — what the
-/// Verbinding section reports, so the operator can tell a value they set from
-/// one the build shipped.
+/// Where a resolved half of the bootstrap actually came from (#370) — what the
+/// Verbinding tab reports, so the operator can tell a value they set from one
+/// the build shipped.
 enum ConnectionSource {
   /// This machine's [connectionFileName].
   file,
@@ -37,20 +41,34 @@ enum ConnectionSource {
   defaults,
 }
 
-/// One resolution of the bootstrap coordinates: the values, where they came
-/// from, and anything that went wrong on the way.
+/// One resolution of the bootstrap file: the values, where each half came from,
+/// and anything that went wrong on the way.
 class ResolvedConnection {
   const ResolvedConnection({
     required this.endpoints,
     required this.source,
+    this.aad = const AadAppConfig(),
+    this.aadSource = ConnectionSource.defaults,
     this.warning = '',
   });
 
   /// The coordinates the app should bootstrap against.
   final StoreEndpoints endpoints;
 
-  /// Which layer [endpoints] came from.
+  /// Which layer [endpoints] came from — [ConnectionSource.file] when the file
+  /// named at least one endpoint key, the build's own values otherwise.
   final ConnectionSource source;
+
+  /// The Azure AD app registration this install signs in with (#384).
+  final AadAppConfig aad;
+
+  /// Which layer [aad] came from, tracked apart from [source] because the two
+  /// halves genuinely differ on an install that predates #384: a file the #370
+  /// version of the app wrote names every endpoint and no AAD key at all, so its
+  /// endpoints come from the file while its sign-in config comes from the build.
+  /// Reporting one source for both would tell the operator their empty client id
+  /// was read out of a file that never mentioned it.
+  final ConnectionSource aadSource;
 
   /// Why a connection file that *was* there did not win — malformed JSON, an
   /// unreadable file, an empty one.
@@ -71,13 +89,20 @@ class ResolvedConnection {
 /// headlessly: a test binds an [InMemoryConnectionStore] (or a temp-file
 /// [FileConnectionStore]) and never touches the operator's real `%APPDATA%`.
 abstract interface class ConnectionStore {
-  /// Resolves the coordinates: the file over the `--dart-define`/compiled
-  /// layer, per field. Never throws — see [ResolvedConnection.warning].
+  /// Resolves the bootstrap: the file over the `--dart-define`/compiled layer,
+  /// per field. Never throws — see [ResolvedConnection.warning].
   Future<ResolvedConnection> read();
 
-  /// Persists [endpoints] as this machine's connection file, replacing whatever
-  /// was there.
-  Future<void> write(StoreEndpoints endpoints);
+  /// Persists [endpoints] and [aad] as this machine's connection file, replacing
+  /// whatever was there.
+  ///
+  /// Both halves in one call because they are one file: an install configured
+  /// through Instellingen → Verbinding writes a complete answer rather than a
+  /// fragment layered over whatever the build happened to carry.
+  Future<void> write({
+    required StoreEndpoints endpoints,
+    required AadAppConfig aad,
+  });
 
   /// Where the values live, as the operator should read it — the file path in
   /// production. Shown in the Verbinding section so "I edited connection.json
@@ -87,8 +112,12 @@ abstract interface class ConnectionStore {
 
 /// The production [ConnectionStore]: a plain JSON file on disk.
 class FileConnectionStore implements ConnectionStore {
-  FileConnectionStore(this.file, {StoreEndpoints? fallback})
-      : _fallback = fallback ?? StoreEndpoints.fromEnvironment();
+  FileConnectionStore(
+    this.file, {
+    StoreEndpoints? fallback,
+    AadAppConfig? aadFallback,
+  })  : _fallback = fallback ?? StoreEndpoints.fromEnvironment(),
+        _aadFallback = aadFallback ?? AadAppConfig.fromEnvironment();
 
   /// The connection file, which need not exist — an install that never had one
   /// resolves to [ConnectionSource.defaults], which is exactly how every install
@@ -96,6 +125,7 @@ class FileConnectionStore implements ConnectionStore {
   final File file;
 
   final StoreEndpoints _fallback;
+  final AadAppConfig _aadFallback;
 
   @override
   String get location => file.path;
@@ -105,6 +135,8 @@ class FileConnectionStore implements ConnectionStore {
     ResolvedConnection defaults([String warning = '']) => ResolvedConnection(
           endpoints: _fallback,
           source: ConnectionSource.defaults,
+          aad: _aadFallback,
+          aadSource: ConnectionSource.defaults,
           warning: warning,
         );
     try {
@@ -119,9 +151,20 @@ class FileConnectionStore implements ConnectionStore {
         return defaults('${file.path} bevat geen JSON-object. De '
             'standaardwaarden van deze build worden gebruikt.');
       }
+      // Each half reports the layer that actually answered for it (#384). A file
+      // written before this issue names every endpoint key and no AAD key, so it
+      // reads as "endpoints uit connection.json, Azure AD standaardwaarde" —
+      // which is the truth, and is what tells a fresh install that its sign-in
+      // config is still the empty compiled one.
       return ResolvedConnection(
         endpoints: StoreEndpoints.fromJson(decoded, fallback: _fallback),
-        source: ConnectionSource.file,
+        source: StoreEndpoints.namedIn(decoded)
+            ? ConnectionSource.file
+            : ConnectionSource.defaults,
+        aad: AadAppConfig.fromJson(decoded, fallback: _aadFallback),
+        aadSource: AadAppConfig.namedIn(decoded)
+            ? ConnectionSource.file
+            : ConnectionSource.defaults,
       );
     } on Object catch (e) {
       // Any failure at all — unparseable JSON, a locked or unreadable file —
@@ -132,10 +175,17 @@ class FileConnectionStore implements ConnectionStore {
   }
 
   @override
-  Future<void> write(StoreEndpoints endpoints) async {
+  Future<void> write({
+    required StoreEndpoints endpoints,
+    required AadAppConfig aad,
+  }) async {
     file.parent.createSync(recursive: true);
     const JsonEncoder encoder = JsonEncoder.withIndent('  ');
-    await file.writeAsString('${encoder.convert(endpoints.toJson())}\n');
+    final Map<String, dynamic> json = <String, dynamic>{
+      ...endpoints.toJson(),
+      ...aad.toJson(),
+    };
+    await file.writeAsString('${encoder.convert(json)}\n');
   }
 }
 
@@ -146,16 +196,29 @@ class FileConnectionStore implements ConnectionStore {
 /// APPDATA-less) run falls back to — where sign-in is already per-run only, so a
 /// per-run connection is no worse.
 class InMemoryConnectionStore implements ConnectionStore {
-  InMemoryConnectionStore({StoreEndpoints? stored, StoreEndpoints? fallback})
-      : _stored = stored,
-        _fallback = fallback ?? StoreEndpoints.fromEnvironment();
+  InMemoryConnectionStore({
+    StoreEndpoints? stored,
+    AadAppConfig? storedAad,
+    StoreEndpoints? fallback,
+    AadAppConfig? aadFallback,
+  })  : _stored = stored,
+        _storedAad = storedAad,
+        _fallback = fallback ?? StoreEndpoints.fromEnvironment(),
+        _aadFallback = aadFallback ?? AadAppConfig.fromEnvironment();
 
   StoreEndpoints? _stored;
+  AadAppConfig? _storedAad;
   final StoreEndpoints _fallback;
+  final AadAppConfig _aadFallback;
 
   /// What a [write] last put here, or `null` while nothing has been written —
-  /// the stand-in for "the file exists".
+  /// the stand-in for "the file names the endpoints".
   StoreEndpoints? get stored => _stored;
+
+  /// The same for the Azure AD half (#384). Held apart from [stored] so a test
+  /// can model the realistic in-between file: one the #370 version of the app
+  /// wrote, with endpoints and no sign-in config.
+  AadAppConfig? get storedAad => _storedAad;
 
   @override
   String get location => '$connectionFileName (niet bewaard op deze machine)';
@@ -163,16 +226,25 @@ class InMemoryConnectionStore implements ConnectionStore {
   @override
   Future<ResolvedConnection> read() async {
     final StoreEndpoints? stored = _stored;
-    return stored == null
-        ? ResolvedConnection(
-            endpoints: _fallback,
-            source: ConnectionSource.defaults,
-          )
-        : ResolvedConnection(endpoints: stored, source: ConnectionSource.file);
+    final AadAppConfig? storedAad = _storedAad;
+    return ResolvedConnection(
+      endpoints: stored ?? _fallback,
+      source:
+          stored == null ? ConnectionSource.defaults : ConnectionSource.file,
+      aad: storedAad ?? _aadFallback,
+      aadSource:
+          storedAad == null ? ConnectionSource.defaults : ConnectionSource.file,
+    );
   }
 
   @override
-  Future<void> write(StoreEndpoints endpoints) async => _stored = endpoints;
+  Future<void> write({
+    required StoreEndpoints endpoints,
+    required AadAppConfig aad,
+  }) async {
+    _stored = endpoints;
+    _storedAad = aad;
+  }
 }
 
 /// The connection store for the machine this process is running on:
@@ -301,7 +373,11 @@ Future<ConnectionProbeResult> _probe({
 /// exactly what is broken when the operator needs this section. The Verbinding
 /// section depends on nothing that a wrong Cosmos endpoint can take away.
 class ConnectionServices {
-  const ConnectionServices({required this.store, this.probe});
+  const ConnectionServices({
+    required this.store,
+    this.probe,
+    this.forgetTokens,
+  });
 
   /// Where the coordinates are read and written.
   final ConnectionStore store;
@@ -310,4 +386,19 @@ class ConnectionServices {
   /// with no session to mint tokens from — the button is then absent rather than
   /// present and inert.
   final ConnectionProbe? probe;
+
+  /// Drops this machine's cached AAD tokens (#384), called when a save changes
+  /// the **tenant**.
+  ///
+  /// A cached token is issued by one tenant's STS for one tenant's resources, so
+  /// after a tenant change every token on disk has the wrong audience: keeping
+  /// them means the next launch tries a silent acquisition that can only fail,
+  /// and fails in a way that reads as "sign-in is broken" rather than as "you
+  /// changed tenant". #381 asks the same question for an upgrade, where the
+  /// answer is no because nothing moved; here it is unambiguously yes.
+  ///
+  /// A seam, and `null` on a build with nowhere to clear (a test, a machine with
+  /// no `%APPDATA%` and therefore an in-memory cache that dies with the process
+  /// anyway).
+  final Future<void> Function()? forgetTokens;
 }

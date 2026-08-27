@@ -11,7 +11,6 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 
 import 'src/app.dart';
-import 'src/auth/aad_app_config.dart';
 import 'src/auth/aad_broker.dart';
 import 'src/auth/composite_broker.dart';
 import 'src/auth/dpapi.dart';
@@ -24,11 +23,38 @@ import 'src/settings/connection_config.dart';
 import 'src/settings/settings_bootstrap.dart';
 import 'src/update/update_bootstrap.dart';
 
-void main() {
-  // Azure AD app-registration values come from --dart-define (see
-  // AadAppConfig); an unconfigured build still launches, gated into a
-  // "not configured" state rather than a failed sign-in.
-  final config = AadAppConfig.fromEnvironment();
+void main() => launchAccountManager();
+
+/// The real launch, with exactly one seam in it.
+///
+/// [connection] is where this machine's bootstrap file lives; production passes
+/// nothing and gets `%APPDATA%\AccountManager\connection.json`. An integration
+/// test passes a throwaway store, so driving the *real* entry point can neither
+/// depend on nor touch the operator's own configuration — which matters more
+/// since #384, because that file now decides whether the app signs in at all.
+Future<void> launchAccountManager({ConnectionStore? connection}) async {
+  // Resolving the bootstrap is an async file read, and the values it carries
+  // decide what `runApp` is handed, so the binding has to exist before the
+  // await.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Where this machine's backend lives and which Azure AD app registration it
+  // signs in with (#370 endpoints, #384 AAD). Resolved **once**, here, and the
+  // whole launch runs on that one answer: a launch that read the file twice
+  // could sign in against one version of it and talk to the backend of another,
+  // and the Verbinding tab promises a relaunch rather than a live swap anyway.
+  //
+  // The resolution never throws — a malformed file degrades to the compiled
+  // defaults and says so in Instellingen → Verbinding.
+  final store = connection ?? connectionStoreForThisMachine();
+  final resolved = await store.read();
+
+  // Azure AD app-registration values: this machine's connection.json over the
+  // --dart-define values over the (empty) compiled defaults — see AadAppConfig.
+  // An unconfigured build still launches, gated into a "not configured" state
+  // rather than a failed sign-in, and Instellingen → Verbinding → Azure AD is
+  // where that gate is opened from.
+  final config = resolved.aad;
 
   // Two brokers, tried in order (see CompositeBroker):
   //   1. the native Windows WAM broker — silent, no prompt, on a school-account
@@ -64,27 +90,24 @@ void main() {
   // copy and a save reached the connectors only on the next launch.
   final liveSettings = LiveSettings();
 
-  // Where this machine's backend lives (#370). Read per bootstrap rather than
-  // once here: `main()` is synchronous, and resolving inside the (memoized)
-  // closures means a machine whose connection.json was fixed between launch and
-  // the first screen that needs a store gets the corrected coordinates. The
-  // resolution never throws — a malformed file degrades to the compiled
-  // defaults and says so in Instellingen → Verbinding.
-  final connection = connectionStoreForThisMachine();
-  Future<StoreEndpoints> endpoints() async =>
-      (await connection.read()).endpoints;
+  // The backend coordinates this launch runs on — the same single resolution
+  // the sign-in config above came from.
+  final endpoints = resolved.endpoints;
 
   runApp(
     AccountManagerApp(
       session: session,
       graph: config.isConfigured ? config.graph : null,
-      // The Verbinding section's own seams. Wired unconditionally — including
-      // on a build where AAD is not configured — because this is the section
-      // that exists to be reachable when nothing else is.
+      // The Verbinding tab's own seams. Wired unconditionally — including on a
+      // build where AAD is not configured — because this is the tab that exists
+      // to be reachable when nothing else is.
       connection: ConnectionServices(
-        store: connection,
+        store: store,
         probe: (StoreEndpoints ends) =>
             probeConnectionLive(ends, session: session),
+        // A saved tenant change makes every cached token the wrong audience
+        // (#384), so they go.
+        forgetTokens: _forgetCachedTokens,
       ),
       // The update check (#371). Wired unconditionally too — an install whose
       // AAD or Cosmos config is wrong is exactly the one that most needs to be
@@ -108,7 +131,7 @@ void main() {
                 session: session,
                 aad: config,
                 liveSettings: liveSettings,
-                endpoints: await endpoints(),
+                endpoints: endpoints,
               ),
             )
           : null,
@@ -123,7 +146,7 @@ void main() {
               () async => bootstrapSettings(
                 session: session,
                 liveSettings: liveSettings,
-                endpoints: await endpoints(),
+                endpoints: endpoints,
               ),
             )
           : null,
@@ -160,12 +183,40 @@ TokenCache _persistentTokenCache(String resourceId) {
   if (!Platform.isWindows || appData == null || appData.isEmpty) {
     return InMemoryTokenCache();
   }
-  final path = '$appData\\AccountManager\\auth\\$resourceId.token';
+  final path = '$_authCacheDirectory\\$resourceId.token';
   return EncryptedTokenCache(
     inner: FileTokenCache(path),
     encrypt: Dpapi.protect,
     decrypt: Dpapi.unprotect,
   );
+}
+
+/// Where [_persistentTokenCache] keeps its ciphertext, named once so the eraser
+/// below cannot drift from the writer.
+String get _authCacheDirectory =>
+    '${Platform.environment['APPDATA']}\\AccountManager\\auth';
+
+/// Deletes every cached token on this machine (#384).
+///
+/// Called when a save in Instellingen → Verbinding changes the **tenant**: the
+/// cached tokens were issued by the old tenant's STS for the old tenant's
+/// resources, so after the change every one of them has the wrong audience.
+/// Keeping them buys nothing and costs a confusing failure — the next launch
+/// would attempt a silent acquisition that can only be rejected, and would
+/// report that as a broken sign-in rather than as the tenant change it is.
+///
+/// Best effort by design. A locked file means one stale ciphertext lingers,
+/// which the broker discards on its first rejection anyway; it must never be a
+/// reason for the save itself to fail.
+Future<void> _forgetCachedTokens() async {
+  final appData = Platform.environment['APPDATA'];
+  if (!Platform.isWindows || appData == null || appData.isEmpty) return;
+  final dir = Directory(_authCacheDirectory);
+  try {
+    if (await dir.exists()) await dir.delete(recursive: true);
+  } on FileSystemException {
+    // Best effort — see above.
+  }
 }
 
 /// Opens [url] in the operator's default browser for the interactive

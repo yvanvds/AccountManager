@@ -11,6 +11,7 @@ import '../format/timestamps.dart';
 import '../reconcile/log_buffer.dart';
 import '../reconcile/reconcile_bootstrap.dart';
 import '../reconcile/reconcile_controller.dart';
+import '../shell/shell_navigation.dart';
 
 /// The core screen of the app (#99): drives the reconcile loop — sync →
 /// linked overview → pending actions → dry-run → apply — with the inline log
@@ -68,12 +69,26 @@ class _ReconcileScreenState extends State<ReconcileScreen> {
   @override
   Widget build(BuildContext context) {
     if (widget.bootstrap == null) {
-      return const _MessagePanel(
+      // The first screen a fresh install lands on, so this is *the* dead end
+      // #384 exists to end: it used to say "geef de AAD --dart-define-waarden
+      // mee", which an operator who installed the app can never do. It names the
+      // tab that fixes it and — inside the shell — takes them there, rather than
+      // asking them to go find it.
+      final ShellNavigation? shell = ShellNavigation.maybeOf(context);
+      return _MessagePanel(
         eyebrow: 'Arcadia · synchronisatie',
         title: 'Niet geconfigureerd',
-        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
-            'instellingenopslag en de connectoren zijn onbereikbaar. Geef de '
-            'AAD --dart-define-waarden mee en start opnieuw op.',
+        message: 'Azure AD is niet geconfigureerd, dus de instellingenopslag '
+            'en de connectoren zijn onbereikbaar. Vul de app-registratie in '
+            'onder Instellingen → Verbinding → Azure AD, bewaar, en start de '
+            'app opnieuw op.',
+        action: shell == null
+            ? null
+            : FilledButton(
+                key: const ValueKey('reconcile-open-settings'),
+                onPressed: () => shell.go(ShellTab.instellingen),
+                child: const Text('Naar Instellingen'),
+              ),
       );
     }
     final error = _bootstrapError;

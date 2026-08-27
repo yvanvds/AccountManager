@@ -101,6 +101,25 @@ class StoreEndpoints {
   static const String signalrEndpointKey = 'signalrEndpoint';
   static const String signalrHubKey = 'signalrHub';
 
+  /// Every key these coordinates occupy in the connection file. The Azure AD
+  /// app registration shares that file since #384, so a reader has to be able to
+  /// ask which half of it a given file actually says anything about.
+  static const List<String> jsonKeys = <String>[
+    cosmosEndpointKey,
+    cosmosDatabaseKey,
+    vaultUriKey,
+    blobEndpointKey,
+    blobContainerKey,
+    signalrEndpointKey,
+    signalrHubKey,
+  ];
+
+  /// Whether [json] names any backend coordinate — what the Verbinding section's
+  /// "uit connection.json" / "standaardwaarde" label is decided on, so a file
+  /// that only configures sign-in cannot claim to have supplied the endpoints.
+  static bool namedIn(Map<String, dynamic> json) =>
+      jsonKeys.any(json.containsKey);
+
   /// Serializes to the `connection.json` shape (#370). Endpoint URIs only —
   /// never a key or a token, which is why the file needs no DPAPI wrapper the
   /// way the token cache does.

@@ -8,6 +8,7 @@
 /// `CosmosTokenProvider` / `KeyVaultTokenProvider` seams.
 library;
 
+export 'aad_app_config.dart' show AadAppConfig;
 export 'aad_broker.dart' show AadBroker, AadBrokerException, BrokerToken;
 export 'aad_resource.dart' show AadResource;
 export 'composite_broker.dart' show CompositeBroker;

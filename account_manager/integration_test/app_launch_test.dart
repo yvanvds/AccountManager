@@ -207,14 +207,18 @@ void main() {
   testWidgets(
       'the app launches straight onto Synchronisatie, with the rail in work '
       'order and no Start placeholder (#366)', (WidgetTester tester) async {
-    // The real main(): with no --dart-define config, AAD is not configured, so
-    // the sign-in gate reveals the shell directly.
+    // The real launch path, with one substitution: an empty connection store in
+    // place of this machine's `%APPDATA%\AccountManager\connection.json`. Since
+    // #384 that file carries the Azure AD app registration, so a run against the
+    // operator's real one would either sign in for real or not, depending on
+    // whose machine the suite is on. With nothing in it AAD is unconfigured, as
+    // it is on a fresh install, and the sign-in gate reveals the shell directly.
     //
     // Only a full launch can state where the app *lands*. A widget test pumps
     // whichever screen it names; the first frame the operator actually gets —
     // and the first click they no longer have to spend leaving Start — is a
-    // property of the real app booting through its own main().
-    app.main();
+    // property of the real app booting through its own entry point.
+    await app.launchAccountManager(connection: InMemoryConnectionStore());
     await tester.pumpAndSettle();
 
     // The real navigation shell, showing the screen the session begins on
@@ -304,10 +308,25 @@ void main() {
     expect(find.byType(PasswordsScreen), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
 
+    // …except Instellingen, which is the one that must *not* stand down (#384).
+    // It opens on Verbinding, where the app registration is typed in, because a
+    // screen that supplies the sign-in configuration cannot sit behind the
+    // sign-in.
     await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
-    expect(find.text('Niet geconfigureerd'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-tabs')), findsOneWidget);
+    expect(
+      tester
+          .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
+          .controller!
+          .index,
+      4,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-aad-client-id')),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -13935,6 +13954,133 @@ void main() {
         await FileConnectionStore(connectionFile).read();
     expect(next.source, ConnectionSource.file);
     expect(next.endpoints.cosmosEndpoint, fixed);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'an install that cannot sign in at all reaches Instellingen and writes a '
+      'working Azure AD app registration to disk (#384)',
+      (WidgetTester tester) async {
+    // The failure v1.0.0 shipped with, driven end to end in the real app. The
+    // four AAD values came from `--dart-define` with no default, so an
+    // *installed* build — which never meets a command line (#371) — had all four
+    // empty, `isConfigured` false, and gated itself into "niet geconfigureerd"
+    // on every screen including the only one that could have fixed it.
+    //
+    // Only a full run proves the way out. A widget test binds one screen; it
+    // cannot show that the sign-in gate lets an unconfigured launch through at
+    // all, that the rail still reaches Instellingen with every other screen
+    // stood down, that the tab frame survives a null bootstrap inside the real
+    // shell, or that the bytes land in a real file on a real filesystem. This is
+    // the real thing throughout: real gate, real shell, real navigation, real
+    // FileConnectionStore over a real file.
+    useTallWindow(tester);
+
+    // A throwaway connection.json, so the run cannot touch the operator's own
+    // %APPDATA%.
+    final Directory dir = Directory.systemTemp.createTempSync('am-aad-e2e-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    final File file = File(
+      '${dir.path}${Platform.pathSeparator}$connectionFileName',
+    );
+
+    // Exactly what `main()` builds on a fresh install: nothing is configured, so
+    // `graph`, `reconcileBootstrap` and `settingsBootstrap` are all null — and
+    // the connection seams are wired anyway, because they are the way out.
+    var forgotten = 0;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: null,
+      connection: ConnectionServices(
+        store: FileConnectionStore(file),
+        forgetTokens: () async => forgotten++,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The gate did not block on an acquisition it has no client id to make, and
+    // the landing screen says what is wrong and offers to take the operator
+    // there rather than naming a command-line flag they cannot pass.
+    expect(find.byType(AppShell), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
+    expect(find.textContaining('--dart-define'), findsNothing);
+    final Finder toSettings =
+        find.byKey(const ValueKey('reconcile-open-settings'));
+    expect(toSettings, findsOneWidget);
+    await tester.tap(toSettings);
+    await tester.pumpAndSettle();
+
+    // …and it lands on the tab that fixes it, without the operator having to
+    // know which one that is.
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(
+      tester
+          .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
+          .controller!
+          .index,
+      4,
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-aad-incomplete')))
+          .data,
+      contains('Aanmelden is nog niet mogelijk'),
+    );
+    expect(file.existsSync(), isFalse);
+
+    // Type the app registration in, in the real window and the real font.
+    Future<void> type(String key, String value) async {
+      final Finder field = find.byKey(ValueKey(key));
+      await tester.ensureVisible(field);
+      await tester.pumpAndSettle();
+      await tester.enterText(field, value);
+      await tester.pump();
+    }
+
+    await type('settings-aad-client-id', 'da407efb-e2e-test-client');
+    await type('settings-aad-tenant-id', 'arcadia-tenant-id');
+    await type('settings-aad-domain', 'arcadia.onmicrosoft.com');
+    await type('settings-aad-school-prefix', 'GBS');
+
+    final Finder save = find.byKey(const ValueKey('settings-connection-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    // The bytes are on disk, under the documented keys, beside the endpoints —
+    // one file, one save, a complete answer.
+    expect(file.existsSync(), isTrue);
+    final decoded = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    expect(decoded[AadAppConfig.clientIdKey], 'da407efb-e2e-test-client');
+    expect(decoded[AadAppConfig.tenantIdKey], 'arcadia-tenant-id');
+    expect(decoded[AadAppConfig.azureDomainKey], 'arcadia.onmicrosoft.com');
+    expect(decoded[AadAppConfig.schoolPrefixKey], 'GBS');
+    expect(
+      decoded[StoreEndpoints.cosmosEndpointKey],
+      StoreEndpoints.fromEnvironment().cosmosEndpoint,
+    );
+
+    // Nothing was cached to invalidate on a first install, so the tokens were
+    // left alone — the drop is for a tenant that actually moved.
+    expect(forgotten, 0);
+
+    // The session is honest about still running on the client id it started
+    // with…
+    expect(
+      find.byKey(const ValueKey('settings-connection-relaunch')),
+      findsOneWidget,
+    );
+
+    // …and the next launch reads a configured app registration back off the
+    // same disk, which is the whole claim: no rebuild, no command line.
+    final ResolvedConnection next = await FileConnectionStore(file).read();
+    expect(next.aadSource, ConnectionSource.file);
+    expect(next.aad.isConfigured, isTrue);
+    expect(next.aad.clientId, 'da407efb-e2e-test-client');
+    expect(next.aad.tenantId, 'arcadia-tenant-id');
 
     expect(tester.takeException(), isNull);
   });

@@ -15,8 +15,11 @@ import 'sign_in_session.dart';
 /// by the connectors, so the operator signs in once.
 ///
 /// When AAD is not configured ([graph] is `null`), the gate reveals [child]
-/// directly with an inline "not configured" note — the app still runs so the
-/// (future) settings screen can supply the values.
+/// directly rather than blocking on an acquisition it has no app registration
+/// to make. That is not a courtesy: since #384 the app registration itself is
+/// configured in Instellingen → Verbinding → Azure AD, so gating the shell
+/// behind sign-in would put the screen that fixes sign-in behind sign-in. Every
+/// screen that does need a token says so and points at that tab.
 class SignInGate extends StatefulWidget {
   const SignInGate({
     super.key,

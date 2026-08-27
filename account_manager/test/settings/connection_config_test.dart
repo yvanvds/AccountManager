@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:account_manager/src/auth/aad_app_config.dart';
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart'
     show StoreEndpoints;
 import 'package:account_manager/src/settings/connection_config.dart';
@@ -32,6 +33,24 @@ const StoreEndpoints _fromFile = StoreEndpoints(
   signalrHub: 'school-hub',
 );
 
+/// The same stand-in for the sign-in half (#384): what a `--dart-define` build
+/// carried. On a build with no defines the real thing is four empty strings, so
+/// a non-empty stand-in is what lets a test tell "the file won" apart from "the
+/// build won" for these four.
+const AadAppConfig _buildAad = AadAppConfig(
+  clientId: 'build-client',
+  tenantId: 'build-tenant',
+  azureDomain: 'build.example',
+  schoolPrefix: 'BLD',
+);
+
+const AadAppConfig _aadFromFile = AadAppConfig(
+  clientId: 'school-client',
+  tenantId: 'school-tenant',
+  azureDomain: 'school.example',
+  schoolPrefix: 'GBS',
+);
+
 void main() {
   /// A fresh temp directory, removed when the test ends, so no test can touch
   /// the operator's real `%APPDATA%\AccountManager\connection.json`.
@@ -46,7 +65,8 @@ void main() {
   group('resolution order — file over define over compiled default (#370)', () {
     test('no file resolves to the layer under it, flagged as the default',
         () async {
-      final store = FileConnectionStore(connectionFile(), fallback: _build);
+      final store = FileConnectionStore(connectionFile(),
+          fallback: _build, aadFallback: _buildAad);
 
       final resolved = await store.read();
 
@@ -59,7 +79,8 @@ void main() {
       final File file = connectionFile();
       file.parent.createSync(recursive: true);
       file.writeAsStringSync(jsonEncode(_fromFile.toJson()));
-      final store = FileConnectionStore(file, fallback: _build);
+      final store =
+          FileConnectionStore(file, fallback: _build, aadFallback: _buildAad);
 
       final resolved = await store.read();
 
@@ -77,7 +98,8 @@ void main() {
       file.writeAsStringSync(jsonEncode(<String, dynamic>{
         StoreEndpoints.cosmosEndpointKey: _fromFile.cosmosEndpoint,
       }));
-      final store = FileConnectionStore(file, fallback: _build);
+      final store =
+          FileConnectionStore(file, fallback: _build, aadFallback: _buildAad);
 
       final resolved = await store.read();
 
@@ -101,7 +123,8 @@ void main() {
       file.writeAsStringSync(jsonEncode(<String, dynamic>{
         StoreEndpoints.signalrEndpointKey: '',
       }));
-      final store = FileConnectionStore(file, fallback: _build);
+      final store =
+          FileConnectionStore(file, fallback: _build, aadFallback: _buildAad);
 
       final resolved = await store.read();
 
@@ -132,25 +155,35 @@ void main() {
     });
   });
 
-  group('round-trip through the file (#370)', () {
+  group('round-trip through the file (#370, #384)', () {
     test('what is written is what is read back, as the file layer', () async {
       final File file = connectionFile();
-      final store = FileConnectionStore(file, fallback: _build);
+      final store = FileConnectionStore(
+        file,
+        fallback: _build,
+        aadFallback: _buildAad,
+      );
 
-      await store.write(_fromFile);
+      await store.write(endpoints: _fromFile, aad: _aadFromFile);
       final resolved = await store.read();
 
       expect(resolved.endpoints, _fromFile);
       expect(resolved.source, ConnectionSource.file);
+      expect(resolved.aad, _aadFromFile);
+      expect(resolved.aadSource, ConnectionSource.file);
       expect(resolved.hasWarning, isFalse);
     });
 
     test('the file is plain JSON under the documented keys, and no secret',
         () async {
       final File file = connectionFile();
-      final store = FileConnectionStore(file, fallback: _build);
+      final store = FileConnectionStore(
+        file,
+        fallback: _build,
+        aadFallback: _buildAad,
+      );
 
-      await store.write(_fromFile);
+      await store.write(endpoints: _fromFile, aad: _aadFromFile);
 
       final decoded =
           jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
@@ -162,9 +195,40 @@ void main() {
         StoreEndpoints.blobContainerKey,
         StoreEndpoints.signalrEndpointKey,
         StoreEndpoints.signalrHubKey,
+        AadAppConfig.clientIdKey,
+        AadAppConfig.tenantIdKey,
+        AadAppConfig.azureDomainKey,
+        AadAppConfig.schoolPrefixKey,
       });
       expect(
           decoded[StoreEndpoints.cosmosEndpointKey], _fromFile.cosmosEndpoint);
+      expect(decoded[AadAppConfig.clientIdKey], _aadFromFile.clientId);
+      expect(decoded[AadAppConfig.tenantIdKey], _aadFromFile.tenantId);
+    });
+
+    test('a file written before #384 still loads, sign-in config and all',
+        () async {
+      // The upgrade path, and the one that decides whether this ships without a
+      // migration: every install that took #370 has a connection.json with the
+      // seven endpoint keys and no AAD key at all. It must keep resolving its
+      // endpoints from the file and its sign-in config from the build — and it
+      // must *say* so, rather than claiming the file supplied four values it
+      // never mentioned.
+      final File file = connectionFile();
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(jsonEncode(_fromFile.toJson()));
+
+      final resolved = await FileConnectionStore(
+        file,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.endpoints, _fromFile);
+      expect(resolved.source, ConnectionSource.file);
+      expect(resolved.aad, _buildAad);
+      expect(resolved.aadSource, ConnectionSource.defaults);
+      expect(resolved.hasWarning, isFalse);
     });
 
     test('a write creates the parent directory on a first-run machine',
@@ -178,9 +242,122 @@ void main() {
         '${Platform.pathSeparator}$connectionFileName',
       );
 
-      await FileConnectionStore(nested, fallback: _build).write(_fromFile);
+      await FileConnectionStore(
+        nested,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).write(endpoints: _fromFile, aad: _aadFromFile);
 
       expect(nested.existsSync(), isTrue);
+    });
+  });
+
+  group('the Azure AD half resolves file over define over default (#384)', () {
+    Future<ResolvedConnection> readWith(Map<String, dynamic> json) async {
+      final File file = connectionFile();
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(jsonEncode(json));
+      return FileConnectionStore(
+        file,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+    }
+
+    test('no file at all resolves to the layer under it', () async {
+      final resolved = await FileConnectionStore(
+        connectionFile(),
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.aad, _buildAad);
+      expect(resolved.aadSource, ConnectionSource.defaults);
+    });
+
+    test('a complete AAD block in the file wins over the build', () async {
+      final resolved = await readWith(_aadFromFile.toJson());
+
+      expect(resolved.aad, _aadFromFile);
+      expect(resolved.aadSource, ConnectionSource.file);
+      // …and it says nothing about the endpoints, so those stay where the build
+      // put them.
+      expect(resolved.endpoints, _build);
+      expect(resolved.source, ConnectionSource.defaults);
+    });
+
+    test('a partial AAD block overrides only the keys it names', () async {
+      final resolved = await readWith(<String, dynamic>{
+        AadAppConfig.clientIdKey: _aadFromFile.clientId,
+      });
+
+      expect(resolved.aadSource, ConnectionSource.file);
+      expect(resolved.aad.clientId, _aadFromFile.clientId);
+      expect(resolved.aad.tenantId, _buildAad.tenantId);
+      expect(resolved.aad.azureDomain, _buildAad.azureDomain);
+      expect(resolved.aad.schoolPrefix, _buildAad.schoolPrefix);
+    });
+
+    test('an AAD key of the wrong type is ignored, not fatal', () async {
+      // The same discipline the endpoints get, and it matters more here: a
+      // half-hand-edited file must not be able to lock the install out of
+      // sign-in, because sign-in is what reaches everything else.
+      final resolved = await readWith(<String, dynamic>{
+        AadAppConfig.clientIdKey: 42,
+        AadAppConfig.tenantIdKey: _aadFromFile.tenantId,
+      });
+
+      expect(resolved.aad.clientId, _buildAad.clientId);
+      expect(resolved.aad.tenantId, _aadFromFile.tenantId);
+    });
+
+    test('the compiled AAD defaults are empty, deliberately', () {
+      // The bottom layer, and the reason this issue exists. These four are not
+      // in this (public) repository, so a build carrying no --dart-define has
+      // nothing to fall back on: `isConfigured` is false and the app has to be
+      // configurable from Instellingen.
+      final defaults = AadAppConfig.fromEnvironment();
+
+      expect(defaults.clientId, isEmpty);
+      expect(defaults.tenantId, isEmpty);
+      expect(defaults.azureDomain, isEmpty);
+      expect(defaults.schoolPrefix, isEmpty);
+      expect(defaults.isConfigured, isFalse);
+    });
+
+    test('a client and a tenant are what "configured" means', () {
+      expect(
+        const AadAppConfig(clientId: 'c', tenantId: 't').isConfigured,
+        isTrue,
+      );
+      expect(const AadAppConfig(clientId: 'c').isConfigured, isFalse);
+      expect(const AadAppConfig(tenantId: 't').isConfigured, isFalse);
+      // A domain and a prefix are not enough on their own — the broker needs the
+      // other two.
+      expect(
+        const AadAppConfig(azureDomain: 'd', schoolPrefix: 'p').isConfigured,
+        isFalse,
+      );
+    });
+
+    test('a file with a saved AAD block makes an unconfigured build sign in',
+        () async {
+      // The end-to-end claim of the issue, at the store layer: a build with no
+      // --dart-define (empty compiled defaults, `isConfigured` false) becomes
+      // configured purely because a file on this machine says so.
+      final File file = connectionFile();
+      final store = FileConnectionStore(file); // real compiled fallbacks
+      expect((await store.read()).aad.isConfigured, isFalse);
+
+      await store.write(
+        endpoints: StoreEndpoints.fromEnvironment(),
+        aad: _aadFromFile,
+      );
+
+      final resolved = await store.read();
+      expect(resolved.aad.isConfigured, isTrue);
+      expect(resolved.aad, _aadFromFile);
+      expect(resolved.aadSource, ConnectionSource.file);
     });
   });
 
@@ -189,7 +366,11 @@ void main() {
       final File file = connectionFile();
       file.parent.createSync(recursive: true);
       file.writeAsStringSync(raw);
-      return FileConnectionStore(file, fallback: _build).read();
+      return FileConnectionStore(
+        file,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
     }
 
     test('malformed JSON falls back to the defaults with a warning', () async {
@@ -197,6 +378,10 @@ void main() {
 
       expect(resolved.endpoints, _build);
       expect(resolved.source, ConnectionSource.defaults);
+      // Both halves degrade together — a file that cannot be parsed says
+      // nothing about either, and neither half may take the launch down (#384).
+      expect(resolved.aad, _buildAad);
+      expect(resolved.aadSource, ConnectionSource.defaults);
       expect(resolved.hasWarning, isTrue);
       expect(resolved.warning, contains(connectionFileName));
     });
@@ -233,18 +418,40 @@ void main() {
 
   group('InMemoryConnectionStore', () {
     test('reads as the defaults until something is written', () async {
-      final store = InMemoryConnectionStore(fallback: _build);
+      final store = InMemoryConnectionStore(
+        fallback: _build,
+        aadFallback: _buildAad,
+      );
 
       final before = await store.read();
       expect(before.endpoints, _build);
       expect(before.source, ConnectionSource.defaults);
+      expect(before.aad, _buildAad);
+      expect(before.aadSource, ConnectionSource.defaults);
 
-      await store.write(_fromFile);
+      await store.write(endpoints: _fromFile, aad: _aadFromFile);
 
       final after = await store.read();
       expect(after.endpoints, _fromFile);
       expect(after.source, ConnectionSource.file);
+      expect(after.aad, _aadFromFile);
+      expect(after.aadSource, ConnectionSource.file);
       expect(store.stored, _fromFile);
+      expect(store.storedAad, _aadFromFile);
+    });
+
+    test('it can model a #370-era file: endpoints stored, AAD not', () async {
+      final store = InMemoryConnectionStore(
+        stored: _fromFile,
+        fallback: _build,
+        aadFallback: _buildAad,
+      );
+
+      final resolved = await store.read();
+
+      expect(resolved.source, ConnectionSource.file);
+      expect(resolved.aadSource, ConnectionSource.defaults);
+      expect(resolved.aad, _buildAad);
     });
   });
 }

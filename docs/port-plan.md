@@ -253,6 +253,18 @@ ports the three existing seams, retiring the SQL/ODBC layer:
   it. A malformed file degrades to the defaults with a visible warning instead of
   failing the launch. Endpoint URIs only — every secret stays in Key Vault behind
   `SecretProvider`, and tokens stay in the AAD broker cache.
+- **Which app registration signs in (#384).** `AadAppConfig` — client id, tenant
+  id, Azure domain, school prefix — rides in the same file, resolved through the
+  same three layers and the same per-field merge, with its own source label
+  because a file written before #384 names the endpoints and none of these four.
+  Same argument one layer earlier: signing in is what reaches Cosmos, so the
+  sign-in config cannot live in the settings document either. The compiled
+  defaults are **empty** — these identifiers are kept out of this public
+  repository — so an installed build starts unconfigured by design, and
+  Instellingen → Verbinding → Azure AD renders with `isConfigured` false: the
+  screen that supplies the sign-in configuration may not sit behind the sign-in.
+  Saving takes effect on the next launch, and a changed tenant drops the cached
+  tokens, which now have the wrong audience. Identifiers only; no secret.
 - **Live test.** Write-capable round-trip (`cosmos_live_test.dart`), manual/opt-in
   per the live-testing policy — restores or deletes everything it writes, never
   in the read-only CI set. Run via `/live-tests cosmos`.
