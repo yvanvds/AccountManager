@@ -51,6 +51,15 @@ this from an installed copy at all.
 The backend coordinates on the same tab (Cosmos, Key Vault, Blob, SignalR) ship
 with working defaults, so they usually need nothing.
 
+**Or type nothing at all (#387).** IT can drop a `connection.json` next to the
+installed executable — `%LOCALAPPDATA%\Programs\AccountManager\connection.json`
+— and every launch reads it, so a fresh install is configured before the operator
+opens it. It uses the same keys as the file below, may name either half or both,
+and the installer must **never** carry it: the installer is a public artifact,
+and a file placed by hand publishes nothing. The app only ever *reads* it —
+**Verbinding bewaren** still writes `%APPDATA%`, so an operator's correction
+survives whatever upgrade or re-deploy next rewrites the install directory.
+
 ## Running the app from source (Windows)
 
 The Azure AD app-registration values are school-specific and are **not** baked
@@ -83,26 +92,42 @@ the loopback flow and the (not yet wired) native WAM broker.
 
 The Azure AD app registration (#384) and the backend coordinates — Cosmos, Key
 Vault, Blob, SignalR (#370) — live in one local file and resolve in the same
-three layers, outermost first:
+four layers, outermost first:
 
 1. this machine's `%APPDATA%\AccountManager\connection.json`;
-2. the `--dart-define` values the build carried;
-3. the compiled defaults — the provisioned-infrastructure endpoints in
+2. a `connection.json` beside the running executable, placed there by IT (#387);
+3. the `--dart-define` values the build carried;
+4. the compiled defaults — the provisioned-infrastructure endpoints in
    `StoreEndpoints`
    ([reconcile_bootstrap.dart](account_manager/lib/src/reconcile/reconcile_bootstrap.dart)),
    and **empty strings** for the four Azure AD values.
 
-The merge is per field, so a file naming only the Cosmos account leaves the rest
-where the build put them, and a file written before #384 — endpoints only, no
-Azure AD keys — still loads exactly as it did.
+The merge is per field at every layer, so a file naming only the Cosmos account
+leaves the rest where the layer under it put them, and a file written before #384
+— endpoints only, no Azure AD keys — still loads exactly as it did.
+
+The seed outranks `--dart-define` because it is the later and more specific
+statement: a define is chosen when the binary is built, the seed when *this* copy
+is deployed. In practice the published build carries no defines at all — they
+would be published with it.
+
+Only layer 1 is ever written. **Verbinding bewaren** writes `%APPDATA%` even when
+the values on screen came from the seed: the seed is IT's statement about a
+fleet, and the install directory it sits in is rewritten by the next upgrade or
+re-deploy, so an operator's correction has to live elsewhere to outlive one. The
+seed is re-read on every launch rather than copied in, so IT can re-point a whole
+fleet by replacing one file — including on machines that have already run.
 
 The file is written from **Instellingen → Verbinding**, which also has a
 *Verbinding testen* button (a read-only round-trip to Cosmos and Key Vault). That
 tab renders and saves even when the settings document cannot be loaded *and* when
 Azure AD is not configured at all — a wrong endpoint must not lock the operator
 out of the screen that fixes the endpoint, and the screen that fixes sign-in
-cannot sit behind sign-in. A malformed or unreadable `connection.json` falls back
-to the defaults with a warning on that tab rather than failing the launch.
+cannot sit behind sign-in. It also names **which** of the two files a value came
+from, and says when a `%APPDATA%` file is shadowing a seed — otherwise "I edited
+connection.json and nothing changed" has no answer. A malformed or unreadable
+`connection.json` in either place falls back to the layer under it with a warning
+on that tab rather than failing the launch.
 
 Saving takes effect on the next launch, which the tab says out loud. Changing the
 **tenant** additionally drops the cached tokens in

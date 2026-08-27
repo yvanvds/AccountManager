@@ -9,14 +9,23 @@ import 'aad_resource.dart';
 /// it. So the compiled defaults below are empty, and a build that carries no
 /// `--dart-define` has [isConfigured] `false`.
 ///
-/// Three layers resolve them, outermost first (#384) — the same order the
+/// Four layers resolve them, outermost first (#384, #387) — the same order the
 /// backend coordinates already used (#370):
 ///
 /// 1. this machine's `%APPDATA%\AccountManager\connection.json`
 ///    (`ConnectionStore`), merged **per field**;
-/// 2. the `--dart-define` values this build carried
+/// 2. a `connection.json` placed next to the installed executable by IT (#387),
+///    merged the same way — read-only, so a save still lands in `%APPDATA%`;
+/// 3. the `--dart-define` values this build carried
 ///    ([AadAppConfig.fromEnvironment]);
-/// 3. the compiled defaults, which for these four are the empty string.
+/// 4. the compiled defaults, which for these four are the empty string.
+///
+/// The seed outranks `--dart-define` deliberately. A define is baked in at build
+/// time by whoever produced the binary; the seed is placed at deployment time by
+/// whoever installed *this* copy, and the later, more specific statement should
+/// win. In practice the published build carries no defines at all — they would
+/// be published with it — so the only builds that carry them are local ones,
+/// where nobody puts a seed next to `build\windows\...\Release\` by accident.
 ///
 /// The file layer is what makes an *installed* build configurable at all. #371
 /// turned "you can pass `--dart-define`" from an inconvenience into a

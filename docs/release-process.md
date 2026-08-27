@@ -126,6 +126,48 @@ That writes `%APPDATA%\AccountManager\connection.json`, which every later launch
 reads. The backend coordinates in the section below it ship with working
 defaults and normally need nothing.
 
+### Skipping the typing: a seed beside the executable (#387)
+
+For a fleet, hand the four values over once instead of per machine. Drop a
+`connection.json` into the **install directory** —
+`%LOCALAPPDATA%\Programs\AccountManager\connection.json` — and every launch reads
+it, so the operator opens an install that is already configured:
+
+```json
+{
+  "aadClientId": "…",
+  "aadTenantId": "…",
+  "aadDomain": "school.onmicrosoft.com",
+  "schoolPrefix": "GBS"
+}
+```
+
+Same keys as the `%APPDATA%` file, and any subset of them: name only the Azure AD
+half, only the endpoints, or both. Deploy it with whatever already reaches the
+machines — Intune, a login script, a technician with a USB stick.
+
+Four rules it follows, and each is load-bearing:
+
+- **The installer must never carry it.** The published installer is a public
+  artifact; baking the school's tenant and client id into it publishes them
+  exactly as committing them to this repository would. A file placed by hand
+  next to an installed copy publishes nothing. See *Deliberately not done*.
+- **`%APPDATA%` wins, per field.** An operator who corrects one value in
+  Instellingen keeps that correction; everything they did not touch still comes
+  from the seed.
+- **Nothing ever writes it.** **Verbinding bewaren** always writes `%APPDATA%`,
+  so a correction outlives whatever upgrade or re-deploy next rewrites the
+  install directory. The seed is read fresh on every launch and never copied
+  inward, which is what lets you re-point a whole fleet by replacing that one
+  file — including on machines that have already been launched.
+- **A broken one cannot brick a launch.** Malformed JSON there degrades to the
+  layer under it with a warning on the Verbinding tab, exactly as a malformed
+  `%APPDATA%` file does.
+
+**Instellingen → Verbinding** names which of the two files answered, and says
+when a `%APPDATA%` file is shadowing the seed. That line is the first thing to
+read when an edit to the seed appears to do nothing.
+
 Two things worth knowing when supporting this:
 
 - Changing the **tenant** wipes `%APPDATA%\AccountManager\auth\`. Cached tokens
@@ -236,9 +278,9 @@ These cannot be settled from CI and are the remaining acceptance criteria of
 
   What is left of the idea — an *optional* bootstrap file placed next to the
   executable by IT, which the app reads when `%APPDATA%` has none — publishes
-  nothing and would still spare the typing. That is a separate feature with its
-  own resolution-order question, tracked as **#387** rather than smuggled in
-  here. Until it exists, first-run configuration is the four fields above.
+  nothing and still spares the typing. That shipped as **#387**; see *Skipping
+  the typing* above. It changes nothing here: the installer still carries no
+  school-specific value, and the seed is placed by whoever deploys the machines.
 - **Code signing.** No certificate exists. Buying one removes the SmartScreen
   section above and is its own issue.
 - **Delta updates, staged rollouts, forced updates.** A full installer download

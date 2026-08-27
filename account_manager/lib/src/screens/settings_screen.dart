@@ -1231,6 +1231,44 @@ class _SettingsForm extends StatelessWidget {
     ]);
   }
 
+  /// How this tab names the layer that answered for one half of the bootstrap
+  /// (#370 endpoints, #384 Azure AD, #387 the seed beside the executable).
+  ///
+  /// Two files can be called `connection.json` since #387 — this machine's own
+  /// under `%APPDATA%` and a seed IT dropped next to the installed program — so
+  /// "uit connection.json" stopped being a complete sentence: the operator has
+  /// to be told *which* one answered. The shadowed case is said out loud for the
+  /// same reason and is the sharper one: an IT that edits the seed on a machine
+  /// which already has a local file sees nothing change, and this line is the
+  /// only place in the app that can explain why.
+  ///
+  /// [subject] names what the sentence is about, so the fallback case can say
+  /// which values the files are silent on rather than making the operator infer
+  /// it from an empty field.
+  String _sourceNote({
+    required ResolvedConnection? resolved,
+    required ConnectionSource? source,
+    required String reading,
+    required String subject,
+  }) {
+    if (resolved == null || source == null) return reading;
+    final String location = state._connection.store.location;
+    final String seed = resolved.seedLocation;
+    return switch (source) {
+      ConnectionSource.file => 'Huidige bron: uit $location.'
+          '${resolved.hasSeed ? ' Naast het programma staat ook een '
+              '$connectionFileName ($seed); dit bestand heeft voorrang '
+              'daarop.' : ''}',
+      ConnectionSource.seed =>
+        'Huidige bron: uit $seed — de $connectionFileName die naast het '
+            'programma staat. Bewaren schrijft naar $location, dat daarna '
+            'voorrang heeft.',
+      ConnectionSource.defaults => 'Huidige bron: standaardwaarde van deze '
+          'build. $subject staan niet in $location'
+          '${resolved.hasSeed ? ' en niet in $seed' : ''}.',
+    };
+  }
+
   /// The Azure AD app registration this install signs in with (#384).
   ///
   /// Four identifiers, no secret: a public-client app registration needs none,
@@ -1254,15 +1292,12 @@ class _SettingsForm extends StatelessWidget {
         ),
         _Note(
           keyValue: 'settings-aad-source',
-          text: switch (resolved?.aadSource) {
-            null => 'De app-registratie wordt gelezen…',
-            ConnectionSource.file =>
-              'Huidige bron: uit ${state._connection.store.location}.',
-            ConnectionSource.defaults =>
-              'Huidige bron: standaardwaarde van deze build '
-                  '(${state._connection.store.location} vermeldt geen '
-                  'Azure AD-gegevens).',
-          },
+          text: _sourceNote(
+            resolved: resolved,
+            source: resolved?.aadSource,
+            reading: 'De app-registratie wordt gelezen…',
+            subject: 'De Azure AD-gegevens',
+          ),
         ),
         // Said plainly rather than left to be inferred from two empty fields:
         // this is the state an installed build launches in, and the operator
@@ -1330,14 +1365,12 @@ class _SettingsForm extends StatelessWidget {
         ),
         _Note(
           keyValue: 'settings-connection-source',
-          text: switch (resolved?.source) {
-            null => 'De verbindingsgegevens worden gelezen…',
-            ConnectionSource.file =>
-              'Huidige bron: uit ${state._connection.store.location}.',
-            ConnectionSource.defaults =>
-              'Huidige bron: standaardwaarde van deze build '
-                  '(${state._connection.store.location} bestaat nog niet).',
-          },
+          text: _sourceNote(
+            resolved: resolved,
+            source: resolved?.source,
+            reading: 'De verbindingsgegevens worden gelezen…',
+            subject: 'De verbindingsgegevens',
+          ),
         ),
         if (resolved != null && resolved.hasWarning)
           _Note(

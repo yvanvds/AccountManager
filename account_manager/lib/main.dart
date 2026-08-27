@@ -28,10 +28,11 @@ void main() => launchAccountManager();
 /// The real launch, with exactly one seam in it.
 ///
 /// [connection] is where this machine's bootstrap file lives; production passes
-/// nothing and gets `%APPDATA%\AccountManager\connection.json`. An integration
-/// test passes a throwaway store, so driving the *real* entry point can neither
-/// depend on nor touch the operator's own configuration — which matters more
-/// since #384, because that file now decides whether the app signs in at all.
+/// nothing and gets `%APPDATA%\AccountManager\connection.json` over the optional
+/// seed beside the executable (#387). An integration test passes a throwaway
+/// store, so driving the *real* entry point can neither depend on nor touch the
+/// operator's own configuration — which matters more since #384, because that
+/// file now decides whether the app signs in at all.
 Future<void> launchAccountManager({ConnectionStore? connection}) async {
   // Resolving the bootstrap is an async file read, and the values it carries
   // decide what `runApp` is handed, so the binding has to exist before the
@@ -39,7 +40,8 @@ Future<void> launchAccountManager({ConnectionStore? connection}) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Where this machine's backend lives and which Azure AD app registration it
-  // signs in with (#370 endpoints, #384 AAD). Resolved **once**, here, and the
+  // signs in with (#370 endpoints, #384 AAD, #387 the seed IT may have placed
+  // beside the executable). Resolved **once**, here, and the
   // whole launch runs on that one answer: a launch that read the file twice
   // could sign in against one version of it and talk to the backend of another,
   // and the Verbinding tab promises a relaunch rather than a live swap anyway.

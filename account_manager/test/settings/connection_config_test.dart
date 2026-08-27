@@ -361,6 +361,246 @@ void main() {
     });
   });
 
+  group('a seed beside the executable answers a fresh install (#387)', () {
+    /// The two candidate files, in two directories — which is what they are on a
+    /// real install (`%APPDATA%\AccountManager\` and the install directory), and
+    /// what lets a test tell which one a write landed in.
+    (File local, File seed) pair() {
+      final Directory dir = Directory.systemTemp.createTempSync('am-seed-');
+      addTearDown(() {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      });
+      File at(String sub) => File(
+            '${dir.path}${Platform.pathSeparator}$sub'
+            '${Platform.pathSeparator}$connectionFileName',
+          );
+      return (at('appdata'), at('install'));
+    }
+
+    void write(File file, Object json) {
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(json is String ? json : jsonEncode(json));
+    }
+
+    test('with no file of its own, the install resolves from the seed',
+        () async {
+      // The whole point: IT drops one file next to the installed executable and
+      // the operator types nothing at all.
+      final (File local, File seed) = pair();
+      write(seed, <String, dynamic>{
+        ..._fromFile.toJson(),
+        ..._aadFromFile.toJson(),
+      });
+
+      final resolved = await FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.endpoints, _fromFile);
+      expect(resolved.source, ConnectionSource.seed);
+      expect(resolved.aad, _aadFromFile);
+      expect(resolved.aadSource, ConnectionSource.seed);
+      expect(resolved.aad.isConfigured, isTrue);
+      expect(resolved.seedLocation, seed.path);
+      expect(resolved.hasSeed, isTrue);
+      expect(resolved.hasWarning, isFalse);
+      // Read, never written: the install directory belongs to whoever deploys
+      // it, so nothing the app does may depend on writing there.
+      expect(local.existsSync(), isFalse);
+    });
+
+    test('the machine\'s own file wins over the seed, per field', () async {
+      // The correction an operator made in Instellingen has to survive being
+      // laid over a fleet-wide seed — and only for the fields it names, or a
+      // one-line fix would silently drop everything else the seed supplied.
+      final (File local, File seed) = pair();
+      write(seed, <String, dynamic>{
+        ..._fromFile.toJson(),
+        ..._aadFromFile.toJson(),
+      });
+      write(local, <String, dynamic>{
+        StoreEndpoints.cosmosEndpointKey: 'https://eigen.documents.azure.com/',
+      });
+
+      final resolved = await FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.endpoints.cosmosEndpoint,
+          'https://eigen.documents.azure.com/');
+      expect(resolved.source, ConnectionSource.file);
+      // Everything the local file is silent on still comes from the seed, not
+      // from the build underneath it.
+      expect(resolved.endpoints.cosmosDatabase, _fromFile.cosmosDatabase);
+      expect(resolved.endpoints.vaultUri, _fromFile.vaultUri);
+      expect(resolved.aad, _aadFromFile);
+      expect(resolved.aadSource, ConnectionSource.seed);
+      // And the shadowed seed is still reported, so the tab can explain why an
+      // edit to it changed nothing.
+      expect(resolved.seedLocation, seed.path);
+    });
+
+    test('a seed that names only the app registration leaves the rest alone',
+        () async {
+      final (File local, File seed) = pair();
+      write(seed, _aadFromFile.toJson());
+
+      final resolved = await FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.aad, _aadFromFile);
+      expect(resolved.aadSource, ConnectionSource.seed);
+      expect(resolved.endpoints, _build);
+      expect(resolved.source, ConnectionSource.defaults);
+    });
+
+    test('a save writes this machine\'s file and never the seed', () async {
+      // The upgrade story: the install directory is the deployment's, rewritten
+      // by the next upgrade or fleet re-deploy, so a correction written there
+      // would not outlive one. It is not ours to rewrite either — the seed is
+      // IT's statement about a fleet.
+      final (File local, File seed) = pair();
+      write(seed, <String, dynamic>{
+        ..._fromFile.toJson(),
+        ..._aadFromFile.toJson(),
+      });
+      final String before = seed.readAsStringSync();
+      final store = FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      );
+
+      await store.write(
+        endpoints: _fromFile,
+        aad: const AadAppConfig(clientId: 'eigen-client', tenantId: 'eigen-t'),
+      );
+
+      expect(local.existsSync(), isTrue);
+      expect(seed.existsSync(), isTrue);
+      expect(seed.readAsStringSync(), before);
+
+      final resolved = await store.read();
+      expect(resolved.aad.clientId, 'eigen-client');
+      expect(resolved.aadSource, ConnectionSource.file);
+      expect(resolved.source, ConnectionSource.file);
+    });
+
+    test(
+        'a malformed seed degrades with a warning, exactly as a local one does',
+        () async {
+      // A file dropped beside the executable must be no more able to brick a
+      // launch than one in %APPDATA%: the app that cannot start is the one that
+      // cannot be repaired.
+      final (File local, File seed) = pair();
+      write(seed, '{ this is not json');
+
+      final resolved = await FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.endpoints, _build);
+      expect(resolved.source, ConnectionSource.defaults);
+      expect(resolved.aad, _buildAad);
+      expect(resolved.aadSource, ConnectionSource.defaults);
+      expect(resolved.warning, contains(seed.path));
+      expect(resolved.warning, contains('kon niet gelezen worden'));
+    });
+
+    test('a malformed seed does not stop the local file from winning',
+        () async {
+      final (File local, File seed) = pair();
+      write(seed, '{ this is not json');
+      write(local, _fromFile.toJson());
+
+      final resolved = await FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.endpoints, _fromFile);
+      expect(resolved.source, ConnectionSource.file);
+      expect(resolved.warning, contains(seed.path));
+    });
+
+    test('a broken local file falls back to the seed, and says which',
+        () async {
+      // The warning has to name the layer that actually answered. Saying "the
+      // build defaults are used" while the seed's values are on screen would
+      // send the operator looking in the wrong file.
+      final (File local, File seed) = pair();
+      write(seed, <String, dynamic>{
+        ..._fromFile.toJson(),
+        ..._aadFromFile.toJson(),
+      });
+      write(local, '{ this is not json');
+
+      final resolved = await FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.endpoints, _fromFile);
+      expect(resolved.source, ConnectionSource.seed);
+      expect(resolved.aad, _aadFromFile);
+      expect(resolved.aadSource, ConnectionSource.seed);
+      expect(resolved.warning, contains(local.path));
+      expect(resolved.warning, contains('De waarden uit ${seed.path}'));
+    });
+
+    test('a configured seed path that holds no file changes nothing', () async {
+      // Every install has the path; almost none has the file. The absent case
+      // must resolve exactly as it did before this issue, and must not claim a
+      // seed the Verbinding tab would then name.
+      final (File local, File seed) = pair();
+
+      final resolved = await FileConnectionStore(
+        local,
+        seed: seed,
+        fallback: _build,
+        aadFallback: _buildAad,
+      ).read();
+
+      expect(resolved.endpoints, _build);
+      expect(resolved.source, ConnectionSource.defaults);
+      expect(resolved.seedLocation, isEmpty);
+      expect(resolved.hasSeed, isFalse);
+      expect(resolved.hasWarning, isFalse);
+    });
+
+    test('the install directory is where the seed is looked for', () {
+      // The one thing a temp-file test cannot state: which directory production
+      // actually probes. It is the running executable's own, because that is
+      // what the installer creates and what an administrator can write to on the
+      // machine they are setting up.
+      final File seed = executableSeedConnectionFile();
+
+      expect(seed.path, endsWith(connectionFileName));
+      expect(
+        seed.parent.path,
+        File(Platform.resolvedExecutable).parent.path,
+      );
+    });
+  });
+
   group('a broken file degrades instead of killing the launch (#370)', () {
     Future<ResolvedConnection> readWith(String raw) async {
       final File file = connectionFile();

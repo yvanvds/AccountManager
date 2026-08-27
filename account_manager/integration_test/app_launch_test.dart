@@ -14086,6 +14086,227 @@ void main() {
   });
 
   testWidgets(
+      'a launch with a seed beside the executable resolves from it, names it '
+      'in Instellingen, and saves over it into %APPDATA% (#387)',
+      (WidgetTester tester) async {
+    // The whole point of the issue, driven through the app's own entry point:
+    // an install that has never been configured on this machine, with a
+    // connection.json IT dropped into the install directory. Nothing is typed
+    // and the coordinates are right.
+    //
+    // Only a full run states it. A unit test proves the layering over two temp
+    // files and a widget test proves the source line, but neither can show that
+    // `main()` resolves the seed *before* runApp, that the resolution survives
+    // the real shell and the real rail, or that a save lands in the other file
+    // on a real filesystem while the seed IT placed is left byte-for-byte alone.
+    // That last one is the upgrade story: the seed is IT's file in a directory
+    // the next upgrade or re-deploy rewrites, so a correction written there
+    // would not outlive one.
+    useTallWindow(tester);
+
+    // Two throwaway directories standing in for `%APPDATA%\AccountManager\` and
+    // the install directory, so the run cannot touch either real one.
+    final Directory dir = Directory.systemTemp.createTempSync('am-seed-e2e-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    File at(String sub) => File(
+          '${dir.path}${Platform.pathSeparator}$sub'
+          '${Platform.pathSeparator}$connectionFileName',
+        );
+    final File local = at('appdata');
+    final File seed = at('install');
+
+    // What IT drops beside the program. Endpoints only, deliberately: an AAD
+    // block here would make the real entry point build a real broker and try to
+    // sign in, which on a test machine means a browser window. The Azure AD half
+    // of the seed is covered in the next case, in the real shell with a fake
+    // broker.
+    const StoreEndpoints seeded = StoreEndpoints(
+      cosmosEndpoint: 'https://gezaaid.documents.azure.com:443/',
+      cosmosDatabase: 'gezaaid-db',
+      vaultUri: 'https://gezaaid-kv.vault.azure.net/',
+      blobEndpoint: 'https://gezaaid.blob.core.windows.net',
+      blobContainer: 'gezaaid-snapshots',
+      signalrEndpoint: '',
+      signalrHub: 'gezaaid-hub',
+    );
+    seed.parent.createSync(recursive: true);
+    seed.writeAsStringSync(jsonEncode(seeded.toJson()));
+    final String seedBefore = seed.readAsStringSync();
+
+    // The real entry point, with the one seam it has: this machine's store.
+    await app.launchAccountManager(
+      connection: FileConnectionStore(local, seed: seed),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppShell), findsOneWidget);
+    expect(local.existsSync(), isFalse, reason: 'nothing has been saved yet');
+
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    // The coordinates on screen are the seed's, not the build's.
+    final Finder cosmos =
+        find.byKey(const ValueKey('settings-connection-cosmos-endpoint'));
+    await tester.ensureVisible(cosmos);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(cosmos).controller!.text,
+      seeded.cosmosEndpoint,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(
+            const ValueKey('settings-connection-cosmos-database'),
+          ))
+          .controller!
+          .text,
+      seeded.cosmosDatabase,
+    );
+
+    // …and the tab says which of the two files answered, and where a save would
+    // go instead. Without that, "I edited connection.json and nothing changed"
+    // has no answer on any screen.
+    final String source = tester
+        .widget<Text>(find.byKey(const ValueKey('settings-connection-source')))
+        .data!;
+    expect(source, contains(seed.path));
+    expect(source, contains(local.path));
+
+    // The seed says nothing about Azure AD, so that half still reads as the
+    // build's own (empty) default — the two halves report separately.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-aad-source')))
+          .data,
+      contains('standaardwaarde'),
+    );
+
+    // Correct one coordinate and save: this operator's machine now differs from
+    // the fleet.
+    await tester.enterText(cosmos, 'https://hersteld.documents.azure.com:443/');
+    await tester.pump();
+    final Finder save = find.byKey(const ValueKey('settings-connection-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    // The bytes landed in %APPDATA%, and the seed is untouched.
+    expect(local.existsSync(), isTrue);
+    expect(seed.readAsStringSync(), seedBefore);
+    final decoded =
+        jsonDecode(local.readAsStringSync()) as Map<String, dynamic>;
+    expect(
+      decoded[StoreEndpoints.cosmosEndpointKey],
+      'https://hersteld.documents.azure.com:443/',
+    );
+    // The whole answer, so what the seed supplied is preserved rather than
+    // collapsing back to the build's defaults on the fields nobody touched.
+    expect(decoded[StoreEndpoints.cosmosDatabaseKey], seeded.cosmosDatabase);
+    expect(decoded[StoreEndpoints.vaultUriKey], seeded.vaultUri);
+
+    // The next launch reads the correction over the seed — the resolution order
+    // doing its job on the same disk the save just wrote to.
+    final ResolvedConnection next =
+        await FileConnectionStore(local, seed: seed).read();
+    expect(next.source, ConnectionSource.file);
+    expect(next.endpoints.cosmosEndpoint,
+        'https://hersteld.documents.azure.com:443/');
+    expect(next.endpoints.cosmosDatabase, seeded.cosmosDatabase);
+    expect(next.seedLocation, seed.path);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a seeded app registration means a fresh install has nothing to type '
+      '(#387)', (WidgetTester tester) async {
+    // The other half of the issue, and the reason it was filed at all: since
+    // #384 an unconfigured install cannot sign in until somebody types four
+    // values, and #387 is what lets IT answer them once for a whole fleet.
+    //
+    // Driven in the real shell — real rail, real tab frame, real font, real
+    // file on disk — rather than through `main()`, for one deliberate reason: a
+    // configured app registration makes the real entry point build a real broker
+    // and attempt an acquisition, which on a machine with no cached token means
+    // opening a browser. The claim under test is what the operator sees and what
+    // the *next* launch would resolve, and both are reachable without that.
+    useTallWindow(tester);
+
+    final Directory dir = Directory.systemTemp.createTempSync('am-seed-aad-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    File at(String sub) => File(
+          '${dir.path}${Platform.pathSeparator}$sub'
+          '${Platform.pathSeparator}$connectionFileName',
+        );
+    final File local = at('appdata');
+    final File seed = at('install');
+
+    const AadAppConfig seededAad = AadAppConfig(
+      clientId: 'gezaaide-client-id',
+      tenantId: 'gezaaide-tenant-id',
+      azureDomain: 'arcadia.onmicrosoft.com',
+      schoolPrefix: 'GBS',
+    );
+    seed.parent.createSync(recursive: true);
+    seed.writeAsStringSync(jsonEncode(seededAad.toJson()));
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      connection:
+          ConnectionServices(store: FileConnectionStore(local, seed: seed)),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    // Four fields, filled in by a file nobody on this machine wrote.
+    String field(String key) =>
+        tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
+    final Finder clientId =
+        find.byKey(const ValueKey('settings-aad-client-id'));
+    await tester.ensureVisible(clientId);
+    await tester.pumpAndSettle();
+    expect(field('settings-aad-client-id'), seededAad.clientId);
+    expect(field('settings-aad-tenant-id'), seededAad.tenantId);
+    expect(field('settings-aad-domain'), seededAad.azureDomain);
+    expect(field('settings-aad-school-prefix'), seededAad.schoolPrefix);
+
+    // …and the tab says so, naming the file beside the program rather than the
+    // one a save would write.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-aad-source')))
+          .data,
+      contains(seed.path),
+    );
+
+    // Nothing left to do: the "you cannot sign in yet" line is absent, and no
+    // %APPDATA% file was created to make it so.
+    expect(find.byKey(const ValueKey('settings-aad-incomplete')), findsNothing);
+    expect(local.existsSync(), isFalse);
+
+    // Which is the claim, stated the way the next launch would: `main()` reads
+    // this and hands `config.graph` to the shell instead of gating on "niet
+    // geconfigureerd".
+    final ResolvedConnection resolved =
+        await FileConnectionStore(local, seed: seed).read();
+    expect(resolved.aad, seededAad);
+    expect(resolved.aad.isConfigured, isTrue);
+    expect(resolved.aadSource, ConnectionSource.seed);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the running build reads the version pubspec.yaml declared (#371)',
       (WidgetTester tester) async {
     // The one claim in this issue that only a real engine can settle. The

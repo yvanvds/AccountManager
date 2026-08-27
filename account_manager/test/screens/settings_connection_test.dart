@@ -587,6 +587,112 @@ void main() {
       expect(_text(tester, 'settings-aad-tenant-id'), _storedAad.tenantId);
     });
 
+    group('a seed beside the program is named as such (#387)', () {
+      testWidgets(
+          'a fresh install shows the seeded values and says which file they '
+          'came from', (WidgetTester tester) async {
+        // The user-visible half of the issue: nothing has been typed on this
+        // machine, and both sections are filled in from a file IT placed beside
+        // the program. The source line has to name *that* file — "uit
+        // connection.json" stopped being a complete sentence the moment two
+        // files could be called that.
+        _useTallWindow(tester);
+        final store = _SeededStore();
+
+        await tester.pumpWidget(_wrap(SettingsScreen(
+          bootstrap: SettingsHarness().bootstrap,
+          connection: ConnectionServices(store: store),
+        )));
+        await tester.pumpAndSettle();
+        await _openTab(tester, 'settings-tab-verbinding');
+
+        expect(
+          _text(tester, 'settings-connection-cosmos-endpoint'),
+          _stored.cosmosEndpoint,
+        );
+        expect(_text(tester, 'settings-aad-client-id'), _storedAad.clientId);
+
+        // Both halves name the seed, and both say a save goes somewhere else.
+        for (final String note in <String>[
+          _note(tester, 'settings-connection-source'),
+          _note(tester, 'settings-aad-source'),
+        ]) {
+          expect(note, contains(_SeededStore.seedPath));
+          expect(note, contains(_SeededStore.localPath));
+          expect(note, contains('naast het programma'));
+        }
+
+        // Configured from the seed alone, so the "you cannot sign in yet" line
+        // is absent — the install needs no typing at all, which is the claim.
+        expect(find.byKey(const ValueKey('settings-aad-incomplete')),
+            findsNothing);
+      });
+
+      testWidgets(
+          'a save goes to this machine\'s file, which the tab then names as '
+          'the source over the seed', (WidgetTester tester) async {
+        _useTallWindow(tester);
+        final store = _SeededStore();
+
+        await tester.pumpWidget(_wrap(SettingsScreen(
+          bootstrap: SettingsHarness().bootstrap,
+          connection: ConnectionServices(store: store),
+        )));
+        await tester.pumpAndSettle();
+        await _openTab(tester, 'settings-tab-verbinding');
+
+        await _type(tester, 'settings-connection-cosmos-database', 'eigen-db');
+        await tester
+            .tap(find.byKey(const ValueKey('settings-connection-save')));
+        await tester.pumpAndSettle();
+
+        // The correction is this machine's, and the message says where it went:
+        // the seed is IT's, and the install directory it sits in is replaced
+        // wholesale on the next upgrade.
+        expect(store.wroteEndpoints?.cosmosDatabase, 'eigen-db');
+        expect(
+          _note(tester, 'settings-connection-message'),
+          contains(_SeededStore.localPath),
+        );
+
+        // …and the tab now names the file that answers, while still saying the
+        // seed is there and losing — the only place "I edited connection.json
+        // and nothing changed" can be answered.
+        final String note = _note(tester, 'settings-connection-source');
+        expect(note, contains(_SeededStore.localPath));
+        expect(note, contains(_SeededStore.seedPath));
+        expect(note, contains('voorrang'));
+      });
+
+      testWidgets('a malformed seed warns on the tab instead of blanking it',
+          (WidgetTester tester) async {
+        // A file dropped beside the executable must be no more able to take the
+        // tab down than one in %APPDATA%: the install that cannot render this
+        // screen is the one that cannot be repaired.
+        _useTallWindow(tester);
+        final store = _SeededStore.broken();
+
+        await tester.pumpWidget(_wrap(SettingsScreen(
+          bootstrap: SettingsHarness().bootstrap,
+          connection: ConnectionServices(store: store),
+        )));
+        await tester.pumpAndSettle();
+        await _openTab(tester, 'settings-tab-verbinding');
+
+        expect(
+          _note(tester, 'settings-connection-warning'),
+          contains(_SeededStore.seedPath),
+        );
+        // The fields still hold the build's own coordinates, so the tab is
+        // usable rather than empty.
+        expect(
+          _text(tester, 'settings-connection-cosmos-endpoint'),
+          StoreEndpoints.fromEnvironment().cosmosEndpoint,
+        );
+        expect(tester.takeException(), isNull);
+      });
+    });
+
     group('the screen opens with Azure AD unconfigured', () {
       testWidgets('the tab frame renders, Verbinding is in front, and it saves',
           (WidgetTester tester) async {
@@ -682,6 +788,80 @@ String _note(WidgetTester tester, String key) =>
 Future<void> _type(WidgetTester tester, String key, String value) async {
   await tester.enterText(find.byKey(ValueKey(key)), value);
   await tester.pump();
+}
+
+/// The two-file resolution of #387, modelled: a read-only seed beside the
+/// program answers until a save puts this machine's own `%APPDATA%` file over
+/// it, and the seed's path stays reportable either way.
+///
+/// A fake rather than a real `FileConnectionStore` over two temp files, for a
+/// mechanical reason: a widget test runs in fake async, where a real
+/// `File.readAsString` never completes and `pumpAndSettle` times out before the
+/// screen has any values. The real two-file layering is proved against real
+/// files in `test/settings/connection_config_test.dart` and end to end in
+/// `integration_test/app_launch_test.dart`; what this fake pins is the part only
+/// the screen can get wrong — naming *which* of the two files answered.
+class _SeededStore implements ConnectionStore {
+  _SeededStore() : warning = '';
+
+  /// The same store with an unreadable seed: nothing to resolve from, a warning
+  /// to render, and the build's own values underneath.
+  _SeededStore.broken()
+      : warning = '$seedPath kon niet gelezen worden (FormatException). De '
+            'standaardwaarden van deze build worden gebruikt.';
+
+  /// Where a save goes — `%APPDATA%`, always.
+  static const String localPath =
+      r'C:\Users\test\AppData\Roaming\AccountManager'
+      r'\connection.json';
+
+  /// Where IT put the seed: the install directory.
+  static const String seedPath =
+      r'C:\Users\test\AppData\Local\Programs\AccountManager\connection.json';
+
+  final String warning;
+
+  StoreEndpoints? wroteEndpoints;
+  AadAppConfig? wroteAad;
+
+  bool get _broken => warning.isNotEmpty;
+
+  @override
+  String get location => localPath;
+
+  @override
+  Future<ResolvedConnection> read() async {
+    final StoreEndpoints? saved = wroteEndpoints;
+    final AadAppConfig? savedAad = wroteAad;
+    final StoreEndpoints seeded =
+        _broken ? StoreEndpoints.fromEnvironment() : _stored;
+    final AadAppConfig seededAad =
+        _broken ? AadAppConfig.fromEnvironment() : _storedAad;
+    ConnectionSource sourceOf(bool saved) => saved
+        ? ConnectionSource.file
+        : _broken
+            ? ConnectionSource.defaults
+            : ConnectionSource.seed;
+    return ResolvedConnection(
+      endpoints: saved ?? seeded,
+      source: sourceOf(saved != null),
+      aad: savedAad ?? seededAad,
+      aadSource: sourceOf(savedAad != null),
+      // Reported whether it won or not: a seed that is being shadowed is exactly
+      // the case the operator cannot otherwise explain.
+      seedLocation: seedPath,
+      warning: warning,
+    );
+  }
+
+  @override
+  Future<void> write({
+    required StoreEndpoints endpoints,
+    required AadAppConfig aad,
+  }) async {
+    wroteEndpoints = endpoints;
+    wroteAad = aad;
+  }
 }
 
 /// A store whose file is there but unreadable — the [ResolvedConnection.warning]

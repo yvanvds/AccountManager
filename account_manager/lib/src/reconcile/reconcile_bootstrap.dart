@@ -16,8 +16,9 @@ import 'reconcile_controller.dart';
 /// provisioned infrastructure (docs/port-plan.md, Phase B) — not secrets and
 /// not per-school config.
 ///
-/// Three layers resolve them, outermost first (#370): the machine's own
-/// `connection.json` ([ConnectionStore]), then the `--dart-define` values this
+/// Four layers resolve them, outermost first (#370, #387): the machine's own
+/// `%APPDATA%` `connection.json` ([ConnectionStore]), then a `connection.json`
+/// placed next to the executable by IT, then the `--dart-define` values this
 /// build carried, then the shipped defaults in [StoreEndpoints.fromEnvironment].
 /// A build with no file behaves exactly as it did before the file existed, and
 /// a public build — where `--dart-define` is no longer available to whoever runs

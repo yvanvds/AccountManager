@@ -265,6 +265,19 @@ ports the three existing seams, retiring the SQL/ODBC layer:
   screen that supplies the sign-in configuration may not sit behind the sign-in.
   Saving takes effect on the next launch, and a changed tenant drops the cached
   tokens, which now have the wrong audience. Identifiers only; no secret.
+- **A seed IT places (#387).** A fourth layer under `%APPDATA%` and above
+  `--dart-define`: a `connection.json` beside the installed executable, so a
+  fleet is configured once instead of per machine and a fresh install needs no
+  typing. Read-only — `write` always goes to `%APPDATA%`, because the install
+  directory belongs to the deployment, rewritten by the next upgrade or fleet
+  re-deploy, and an operator's correction has to outlive that (and the seed is
+  IT's statement, not one machine's) — and re-read on every launch rather than
+  copied inward, so
+  replacing that one file still re-points machines that have already run. Not the
+  installer's job: the installer is a public artifact, and baking the school's
+  tenant and client id into it would publish them. The Verbinding tab names which
+  of the two files answered, and says when the `%APPDATA%` one is shadowing the
+  seed.
 - **Live test.** Write-capable round-trip (`cosmos_live_test.dart`), manual/opt-in
   per the live-testing policy — restores or deletes everything it writes, never
   in the read-only CI set. Run via `/live-tests cosmos`.
