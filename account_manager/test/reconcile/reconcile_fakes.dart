@@ -1563,6 +1563,12 @@ az.AzureUser azUser({
 ///
 /// The defaults line up with [wisaStaff] and [ssStaffAccount], so a record built
 /// from all three is fully in sync and raises no action of its own.
+///
+/// [companyName] is null by default because that is what a staff account should
+/// carry — the field is the *student* half of INV-22. A fixture about the
+/// account that carries **both** stamps (#386) sets it to the school prefix,
+/// which nothing in the tenant forbids: `companyName` says which school an
+/// account belongs to, never what its holder is (#358).
 az.AzureUser azStaffUser({
   String id = 'az-staff',
   String upn = 'anna.smit@school.example',
@@ -1571,6 +1577,7 @@ az.AzureUser azStaffUser({
   String givenName = 'Anna',
   String surname = 'Smit',
   String department = 'SSM,GBS',
+  String? companyName,
 }) =>
     az.AzureUser(
       id: id,
@@ -1580,6 +1587,7 @@ az.AzureUser azStaffUser({
       givenName: givenName,
       surname: surname,
       department: department,
+      companyName: companyName,
     );
 
 core.Group ssGroup(
@@ -1953,6 +1961,31 @@ ReconcileHarness duplicateAzureAccountHarness({
           lastSignIn: DateTime.utc(2026, 8, 20, 12),
         ),
       ]),
+    );
+
+/// A reconcile harness over the #386 shape: **one Office 365 account carrying
+/// both halves of INV-22's stamp.**
+///
+/// Anna Smit is the class titular — WISA staff, a Smartschool teacher account,
+/// an Office 365 account — and everything about her is in sync. The one extra
+/// field is the whole fixture: her Azure account also carries
+/// `companyName: GBS`, the stamp a *pupil* carries. Nothing in the tenant forbids
+/// that (`companyName` says which school, never what the holder is, #358), and
+/// the two linker passes read different fields of the same account.
+///
+/// So she used to arrive twice: as the [core.LinkedStaff] the staff pass built
+/// from her WISA row, *and* as an Azure-only [core.LinkedAccount] the student
+/// pass kept by INV-22's student half — a record with no WISA row and no
+/// Smartschool account, which is exactly the shape `RemoveStudentFromAzure`
+/// fires on. The app then offered to delete a teacher's Office 365 account.
+///
+/// Jane Doe is the ordinary pupil beside her — the default fixture student, so
+/// she carries the usual stale-display-name repair and has a row of her own the
+/// manufactured record has to be told apart from.
+ReconcileHarness doubleStampedTeacherHarness() => ReconcileHarness(
+      wisa: wisaSnap(staff: [wisaStaff()]),
+      smartschool: ssSnap(accounts: [ssAccount(), ssStaffAccount()]),
+      azure: azSnap(users: [azUser(), azStaffUser(companyName: 'GBS')]),
     );
 
 /// A reconcile harness over [count] WISA-departed, Smartschool-only active
@@ -3131,6 +3164,74 @@ ReconcileHarness azureClassMembershipHarness({
           // Sam is in Jane's group; Jane is in nobody's.
           azClassGroup('1A', memberIds: const ['az2']),
           azClassGroup('1B'),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the class group a **departed** student is still sitting in
+/// (#385). One class, `1A`, whose Office 365 group `GBS-1A` holds three members:
+///
+/// - **Jane**, still in 1A — she belongs there, and the roster agrees;
+/// - **Tom**, gone from WISA altogether. Nothing is left of him but the Office
+///   365 account, which per the no-alumni rule makes his linked record an
+///   incomplete, Azure-only one flagged for deletion — and `companyName` is what
+///   still says he was one of ours (INV-22). He was in 1A last year and nothing
+///   ever took him out of the group;
+/// - **Anna Smit**, the class titular. Complete in all three systems and stamped
+///   the way staff are — the prefix in the comma-separated `department`, never in
+///   the student `companyName` — so she is out of every removal's reach.
+///
+/// WISA and Smartschool agree about the class itself, so the Office 365 roster is
+/// the only work anywhere in the fixture: the class row proposes exactly one
+/// removal, Tom's own card names the group he is still in, and Anna is named by
+/// neither.
+ReconcileHarness departedStudentClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '1A')],
+        staff: [wisaStaff()],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane',
+              accountId: '1',
+              mail: 'jane.doe@student.school.example'),
+          ssStaffAccount(),
+        ],
+        memberships: [member('jane', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+            id: 'az1',
+            upn: 'jane.doe@student.school.example',
+            employeeId: '1',
+            displayName: 'Jane Doe',
+            department: '1A',
+          ),
+          // No WISA row and no Smartschool account: an Azure-only leaver. The
+          // `department` still names the class he sat in, which is exactly how
+          // stale that stamp gets once nobody maintains it.
+          azUser(
+            id: 'az-tom',
+            upn: 'tom.sels@student.school.example',
+            employeeId: '9',
+            displayName: 'Tom Sels',
+            department: '1A',
+          ),
+          azStaffUser(id: 'az-anna'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1', 'az-tom', 'az-anna']),
         ],
       ),
       ourSchoolIds: const {1},

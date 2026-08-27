@@ -248,15 +248,14 @@ void main() {
       );
     });
 
-    test('the callback is not consulted for a sibling-school student', () {
-      // A groupOnly student's class is not ours to place (#134/#222), so the
-      // resolver is never asked about them.
+    test('a departed student with no Azure account is never asked about', () {
+      // Nothing that could be a member of anything, so there is nothing for the
+      // resolver to answer (#385).
       var calls = 0;
       studentActionsFor(
         linked(
           wisa: wisaStudent(),
           smartschool: ssAccount(),
-          azure: azureUser(),
           wisaPresence: WisaPresence.groupOnly,
         ),
         config(),
@@ -266,6 +265,61 @@ void main() {
         },
       );
       expect(calls, 0);
+    });
+
+    test('a departed student who still has an Azure account gets one (#385)',
+        () {
+      // A sibling-school student's class is not ours to place (#134/#222) — and
+      // their placement no longer claims it is: it carries no target class, only
+      // the group of ours they are still sitting in. That membership is real,
+      // the class-level `SyncAzureClassGroupMembers` now proposes to undo it,
+      // and this is the same fact read on the account.
+      final actions = studentActionsFor(
+        linked(
+          wisa: wisaStudent(),
+          smartschool: ssAccount(),
+          azure: azureUser(),
+          wisaPresence: WisaPresence.groupOnly,
+        ),
+        config(),
+        azurePlacementFor: (_) => placement(
+          className: '',
+          groupName: null,
+          groupExists: false,
+          isMember: false,
+          strayGroupNames: const ['SSM-3A'],
+        ),
+      );
+
+      final membership = actions.whereType<AzureClassGroupMembership>().single;
+      expect(membership.canApply, isFalse,
+          reason: 'the class row still performs the one write');
+      expect(
+        membership.describeChanges().summary,
+        contains('Staat nog in de Office 365-klasgroep SSM-3A'),
+      );
+    });
+
+    test('a departed student in no class group of ours reports nothing', () {
+      final actions = studentActionsFor(
+        linked(
+          wisa: wisaStudent(),
+          smartschool: ssAccount(),
+          azure: azureUser(),
+          wisaPresence: WisaPresence.groupOnly,
+        ),
+        config(),
+        azurePlacementFor: (_) => placement(
+          className: '',
+          groupName: null,
+          groupExists: false,
+          isMember: false,
+        ),
+      );
+      expect(
+        actions.map((a) => a.runtimeType),
+        isNot(contains(AzureClassGroupMembership)),
+      );
     });
   });
 

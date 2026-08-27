@@ -73,13 +73,30 @@ Future<void> _addWisaRule(
 }
 
 void main() {
-  testWidgets('shows the not-configured panel when AAD is absent',
-      (WidgetTester tester) async {
+  testWidgets(
+      'with AAD absent the document tabs stand down but the screen still opens '
+      '(#384)', (WidgetTester tester) async {
+    // It used to return a bare panel here, which made the one screen that can
+    // supply the Azure AD app registration unreachable on exactly the installs
+    // that have none. The panel is now what the *document-backed* tabs show,
+    // inside a frame whose last tab is where the config is typed.
+    _useTallWindow(tester);
     await tester.pumpWidget(_wrap(const SettingsScreen(bootstrap: null)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Niet geconfigureerd'), findsOneWidget);
-    expect(find.byKey(const ValueKey('settings-save')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-tabs')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings-aad-client-id')),
+      findsOneWidget,
+    );
+    // Nothing to save into the document, so the document's own Opslaan is
+    // present and disabled rather than absent.
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('settings-save')))
+          .onPressed,
+      isNull,
+    );
   });
 
   testWidgets('populates the form from the stored document',

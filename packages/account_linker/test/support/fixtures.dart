@@ -376,6 +376,11 @@ List<String> structuralSignature(LinkedSnapshot snapshot) {
         // first account listed is the one the join adopted.
         DuplicateAzureEmployeeId(:final employeeId, :final accounts) =>
           'dupempid:$employeeId:${accounts.map((x) => x.id).join(',')}',
+        // INV-27 (#386). Which record the disputed account was left on is
+        // already visible in the acc:/stf: lines above, so the warning only has
+        // to name the account and the reading that won.
+        AzureAccountClaimedTwice(:final account, :final resolution) =>
+          'azclaim:${account.id}:${resolution.name}',
       };
 
   return [

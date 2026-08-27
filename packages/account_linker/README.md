@@ -53,6 +53,17 @@ raise a removal — are split per INV-22: a student carries `companyName ==
 schoolPrefix`; a staff member carries a `department` that **contains** the
 prefix.
 
+The two halves are **not** mutually exclusive in the tenant, and one account can
+satisfy both — `companyName` says which *school* an account belongs to, never
+what its holder is (#358). So the two passes could each keep the same Azure user:
+a teacher stamped with the student `companyName` became a `LinkedStaff` *and* an
+Azure-only `LinkedAccount`, and the app then proposed deleting their Office 365
+account. **One Azure object id belongs to at most one linked record** (INV-27,
+#386): the disputed account goes to the stronger claim — a record anchored by a
+WISA row or a Smartschool account beats one that exists only because of the stamp
+under dispute, and between two unanchored records staff wins — and an
+`AzureAccountClaimedTwice` warning names it either way.
+
 Both tests live in `account_core` (`studentBelongsToSchool` /
 `staffBelongsToSchool`, and their union `belongsToSchool`) rather than here
 (#279). The Azure connector's client-side reads must apply the identical rule:

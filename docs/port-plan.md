@@ -253,6 +253,31 @@ ports the three existing seams, retiring the SQL/ODBC layer:
   it. A malformed file degrades to the defaults with a visible warning instead of
   failing the launch. Endpoint URIs only — every secret stays in Key Vault behind
   `SecretProvider`, and tokens stay in the AAD broker cache.
+- **Which app registration signs in (#384).** `AadAppConfig` — client id, tenant
+  id, Azure domain, school prefix — rides in the same file, resolved through the
+  same three layers and the same per-field merge, with its own source label
+  because a file written before #384 names the endpoints and none of these four.
+  Same argument one layer earlier: signing in is what reaches Cosmos, so the
+  sign-in config cannot live in the settings document either. The compiled
+  defaults are **empty** — these identifiers are kept out of this public
+  repository — so an installed build starts unconfigured by design, and
+  Instellingen → Verbinding → Azure AD renders with `isConfigured` false: the
+  screen that supplies the sign-in configuration may not sit behind the sign-in.
+  Saving takes effect on the next launch, and a changed tenant drops the cached
+  tokens, which now have the wrong audience. Identifiers only; no secret.
+- **A seed IT places (#387).** A fourth layer under `%APPDATA%` and above
+  `--dart-define`: a `connection.json` beside the installed executable, so a
+  fleet is configured once instead of per machine and a fresh install needs no
+  typing. Read-only — `write` always goes to `%APPDATA%`, because the install
+  directory belongs to the deployment, rewritten by the next upgrade or fleet
+  re-deploy, and an operator's correction has to outlive that (and the seed is
+  IT's statement, not one machine's) — and re-read on every launch rather than
+  copied inward, so
+  replacing that one file still re-points machines that have already run. Not the
+  installer's job: the installer is a public artifact, and baking the school's
+  tenant and client id into it would publish them. The Verbinding tab names which
+  of the two files answered, and says when the `%APPDATA%` one is shadowing the
+  seed.
 - **Live test.** Write-capable round-trip (`cosmos_live_test.dart`), manual/opt-in
   per the live-testing policy — restores or deletes everything it writes, never
   in the read-only CI set. Run via `/live-tests cosmos`.

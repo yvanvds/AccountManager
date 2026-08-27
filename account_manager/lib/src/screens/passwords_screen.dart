@@ -143,9 +143,10 @@ class _PasswordsScreenState extends State<PasswordsScreen> {
       return const _MessagePanel(
         eyebrow: 'Arcadia · wachtwoorden',
         title: 'Niet geconfigureerd',
-        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
-            'connectoren en de gedeelde wachtwoordwachtrij zijn onbereikbaar. '
-            'Geef de AAD --dart-define-waarden mee en start opnieuw op.',
+        message: 'Azure AD is niet geconfigureerd, dus de connectoren en de '
+            'gedeelde wachtwoordwachtrij zijn onbereikbaar. Vul de '
+            'app-registratie in onder Instellingen → Verbinding → Azure AD, '
+            'bewaar, en start de app opnieuw op.',
       );
     }
     final error = _error;

@@ -60,6 +60,14 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 ///   kept as an Azure-only orphan, which reads as a departed student and draws a
 ///   proposal to delete an account that may be the one holding the mailbox.
 ///   Resolution stays the operator's; nothing here merges or deletes.
+/// - **INV-27:** one Azure object id belongs to **at most one** linked record
+///   (#386). The two passes walk the same Azure user list and INV-22's halves
+///   ask different questions of one account, which nothing in the tenant makes
+///   mutually exclusive: a teacher stamped with the student `companyName` was
+///   kept as a [LinkedStaff] *and* as an Azure-only [LinkedAccount], and the
+///   second reading drew a proposal to delete their Office 365 account. See
+///   [_resolveAzureClaims], which arbitrates by claim strength and raises an
+///   [AzureAccountClaimedTwice] warning either way.
 /// - **INV-24:** two records that resolve to the same [LinkedAccountId] raise a
 ///   [DuplicateLinkedId] warning (#319). The check is not written here: it lives
 ///   in [LinkedSnapshot.fromRecords], which this function returns through, so it
@@ -118,7 +126,7 @@ LinkedSnapshot link(
   // populations' duplicate-mail warnings accumulate student-then-staff exactly
   // as before. Group linking carries no identity, so it stays separate.
   final warnings = <LinkWarning>[];
-  final studentRecords = _buildStudentRecords(
+  final records = _buildRecords(
     wisaSnapshot,
     smartschoolSnapshot,
     azureSnapshot,
@@ -126,13 +134,8 @@ LinkedSnapshot link(
     ourSchoolIds: effectiveOurSchoolIds,
     warnings: warnings,
   );
-  final staffRecords = _buildStaffRecords(
-    wisaSnapshot,
-    smartschoolSnapshot,
-    azureSnapshot,
-    schoolPrefix: schoolPrefix,
-    warnings: warnings,
-  );
+  final studentRecords = records.students;
+  final staffRecords = records.staff;
   // INV-26 (#360): report the `employeeId` collisions themselves, once for the
   // whole pull rather than once per population — the ambiguity is a property of
   // the Azure snapshot, and both populations join on the same field. Raised
@@ -235,9 +238,9 @@ Set<String> naturalKeysFor(
   required String schoolPrefix,
   Set<int>? ourSchoolIds,
 }) {
-  // The duplicate-mail warnings are a byproduct of building; discarded here.
+  // The warnings are a byproduct of building; discarded here.
   final warnings = <LinkWarning>[];
-  final studentRecords = _buildStudentRecords(
+  final records = _buildRecords(
     wisaSnapshot,
     smartschoolSnapshot,
     azureSnapshot,
@@ -245,23 +248,167 @@ Set<String> naturalKeysFor(
     ourSchoolIds: ourSchoolIds ?? const <int>{},
     warnings: warnings,
   );
-  final staffRecords = _buildStaffRecords(
+  // Students first, then staff — the order [link] resolves in, which is the
+  // order the claims have to be made in for the two to agree.
+  final claimedKeys = <String>{};
+  for (final rec in records.students) {
+    _naturalKey(rec, claimedKeys);
+  }
+  for (final rec in records.staff) {
+    _naturalStaffKey(rec, claimedKeys);
+  }
+  return claimedKeys;
+}
+
+/// The two record populations of one pass, already arbitrated against each
+/// other (INV-27) — what both [link] and [naturalKeysFor] build from.
+///
+/// The pair travels together because the arbitration is a fact about the pair:
+/// a record either entry point sees must be one the other sees too, or the key
+/// set and the resolve calls drift apart the moment a record is dropped.
+class _Records {
+  final List<_Record> students;
+  final List<_StaffRecord> staff;
+
+  _Records(this.students, this.staff);
+}
+
+/// Runs both record-building passes over the same three snapshots and settles
+/// the Azure accounts they disagree about (INV-27, #386).
+///
+/// The single place the two populations are built, so [link] and
+/// [naturalKeysFor] cannot diverge — including on which records exist at all,
+/// which the arbitration now decides.
+_Records _buildRecords(
+  wapi.WisaSnapshot wisaSnapshot,
+  ss.SmartschoolSnapshot smartschoolSnapshot,
+  az.AzureSnapshot azureSnapshot, {
+  required String schoolPrefix,
+  required Set<int> ourSchoolIds,
+  required List<LinkWarning> warnings,
+}) {
+  final students = _buildStudentRecords(
+    wisaSnapshot,
+    smartschoolSnapshot,
+    azureSnapshot,
+    schoolPrefix: schoolPrefix,
+    ourSchoolIds: ourSchoolIds,
+    warnings: warnings,
+  );
+  final staff = _buildStaffRecords(
     wisaSnapshot,
     smartschoolSnapshot,
     azureSnapshot,
     schoolPrefix: schoolPrefix,
     warnings: warnings,
   );
-  // Students first, then staff — the order [link] resolves in, which is the
-  // order the claims have to be made in for the two to agree.
-  final claimedKeys = <String>{};
-  for (final rec in studentRecords) {
-    _naturalKey(rec, claimedKeys);
+  _resolveAzureClaims(students, staff, warnings);
+  return _Records(students, staff);
+}
+
+/// Enforces INV-27 (#386): **one Azure object id belongs to at most one linked
+/// record.**
+///
+/// [_buildStudentRecords] and [_buildStaffRecords] walk `azureSnapshot.users`
+/// independently and neither knows what the other kept, so one account can end
+/// up on a record in both populations. INV-22 is where that actually happens:
+/// its two halves read different fields of one account — `companyName` for a
+/// student, `department` for a staff member — and the tenant does not make them
+/// exclusive. `companyName` says which *school* an account belongs to, never
+/// what its holder is (#358), which is why `SSM-dynamic-lln` needs a `jobTitle`
+/// beside it. A teacher carrying both stamps was therefore kept as a
+/// [LinkedStaff] *and* as an Azure-only [LinkedAccount] — and that second record
+/// satisfies `RemoveStudentFromAzure` in full (no WISA student row, no
+/// Smartschool account, our `companyName`), so the app proposed deleting a
+/// teacher's Office 365 account.
+///
+/// Arbitrated by **claim strength**, not by population:
+///
+/// - a record with a WISA row or a Smartschool account behind it is *anchored* —
+///   something outside Azure says this person exists;
+/// - a record holding nothing but the Azure account exists only because of the
+///   stamp being disputed, so it is the one that yields;
+/// - between two unanchored records **staff wins**. Deleting a teacher's account
+///   is unrecoverable; leaving a departed pupil's account standing until somebody
+///   fixes the stamp is not. This is the same precedence `AzureClassGroupResolver`
+///   applies to the class-group removal net (#385).
+///
+/// An unanchored record can only ever hold the one disputed account — the orphan
+/// legs are the only ones that create a record from a bare Azure user, and an
+/// orphan is indexed by nothing, so no later pass can attach a second account or
+/// an INV-26 twin to it. Dropping it therefore loses exactly the claim being
+/// arbitrated and nothing else.
+///
+/// When *both* claimants are anchored nothing is dropped: neither record was
+/// manufactured, and stripping either would trade this bug for its mirror — a
+/// student told to create an account they already have, or a staff record told
+/// to delete one. That case is reported and left to the operator, which is also
+/// why the warning is raised in **every** case: an account two populations claim
+/// is a stamp somebody has to correct in Entra, and the linker's reading of it is
+/// a guess either way.
+///
+/// Warnings are raised in student-record order, so the output stays a
+/// deterministic function of snapshot order (INV-20).
+void _resolveAzureClaims(
+  List<_Record> students,
+  List<_StaffRecord> staff,
+  List<LinkWarning> warnings,
+) {
+  if (students.isEmpty || staff.isEmpty) return;
+
+  // Every Azure object id a staff record claims, the adopted account and its
+  // INV-26 twins alike: an ambiguous staff identity is still staff (#385). Only
+  // the *adopted* one identifies a record that can yield, though — a twin sits
+  // on a record whose own account is somebody else's business.
+  final staffClaimed = <String>{};
+  final staffHolder = <String, _StaffRecord>{};
+  for (final rec in staff) {
+    final adopted = _norm(rec.azure?.id);
+    if (adopted != null) {
+      staffClaimed.add(adopted);
+      staffHolder.putIfAbsent(adopted, () => rec);
+    }
+    for (final twin in rec.azureDuplicates) {
+      final id = _norm(twin.id);
+      if (id != null) staffClaimed.add(id);
+    }
   }
-  for (final rec in staffRecords) {
-    _naturalStaffKey(rec, claimedKeys);
+  if (staffClaimed.isEmpty) return;
+
+  final droppedStudents = <_Record>{};
+  final droppedStaff = <_StaffRecord>{};
+  for (final rec in students) {
+    final user = rec.azure;
+    final id = _norm(user?.id);
+    if (id == null || !staffClaimed.contains(id)) continue;
+
+    final claimant = staffHolder[id];
+    final studentIsAnchored = rec.wisa != null || rec.smartschool != null;
+    final staffIsDroppable = claimant != null &&
+        claimant.wisa == null &&
+        claimant.smartschool == null;
+
+    final AzureClaimResolution resolution;
+    if (!studentIsAnchored) {
+      droppedStudents.add(rec);
+      resolution = AzureClaimResolution.keptAsStaff;
+    } else if (staffIsDroppable) {
+      droppedStaff.add(claimant);
+      resolution = AzureClaimResolution.keptAsStudent;
+    } else {
+      resolution = AzureClaimResolution.unresolved;
+    }
+    warnings.add(
+      AzureAccountClaimedTwice(account: user!, resolution: resolution),
+    );
   }
-  return claimedKeys;
+
+  if (droppedStudents.isNotEmpty) {
+    students.removeWhere(droppedStudents.contains);
+  }
+  if (droppedStaff.isNotEmpty) {
+    staff.removeWhere(droppedStaff.contains);
+  }
 }
 
 /// Builds one student [_Record] per linked person from the three snapshots,

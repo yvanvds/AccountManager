@@ -207,14 +207,18 @@ void main() {
   testWidgets(
       'the app launches straight onto Synchronisatie, with the rail in work '
       'order and no Start placeholder (#366)', (WidgetTester tester) async {
-    // The real main(): with no --dart-define config, AAD is not configured, so
-    // the sign-in gate reveals the shell directly.
+    // The real launch path, with one substitution: an empty connection store in
+    // place of this machine's `%APPDATA%\AccountManager\connection.json`. Since
+    // #384 that file carries the Azure AD app registration, so a run against the
+    // operator's real one would either sign in for real or not, depending on
+    // whose machine the suite is on. With nothing in it AAD is unconfigured, as
+    // it is on a fresh install, and the sign-in gate reveals the shell directly.
     //
     // Only a full launch can state where the app *lands*. A widget test pumps
     // whichever screen it names; the first frame the operator actually gets —
     // and the first click they no longer have to spend leaving Start — is a
-    // property of the real app booting through its own main().
-    app.main();
+    // property of the real app booting through its own entry point.
+    await app.launchAccountManager(connection: InMemoryConnectionStore());
     await tester.pumpAndSettle();
 
     // The real navigation shell, showing the screen the session begins on
@@ -304,10 +308,25 @@ void main() {
     expect(find.byType(PasswordsScreen), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
 
+    // …except Instellingen, which is the one that must *not* stand down (#384).
+    // It opens on Verbinding, where the app registration is typed in, because a
+    // screen that supplies the sign-in configuration cannot sit behind the
+    // sign-in.
     await tester.tap(railTab('Instellingen'));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsScreen), findsOneWidget);
-    expect(find.text('Niet geconfigureerd'), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-tabs')), findsOneWidget);
+    expect(
+      tester
+          .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
+          .controller!
+          .index,
+      4,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-aad-client-id')),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -5123,6 +5142,103 @@ void main() {
   });
 
   testWidgets(
+      'a student who left our school is taken out of their old Office 365 '
+      'class group, and the titular is not, end-to-end (#385)',
+      (WidgetTester tester) async {
+    // The reported bug, in the real app. `GBS-1A` holds three accounts: Jane,
+    // who is still in 1A; Tom, who is gone from WISA altogether and whose
+    // Azure-only record is flagged for deletion; and Anna, the class titular.
+    // The removal list used to be guarded by "is this one of our students",
+    // which a leaver can never be — so Tom sat in the group for ever while
+    // every class-to-class mover was cleaned up.
+    //
+    // End-to-end because the claim spans three surfaces a unit test sees one at
+    // a time: the class card in Klasgroepen (composed from the stored candidate
+    // document plus the live dispatch), Tom's own row in Acties (a second
+    // projection of the same dispatch, which must not disagree with the class
+    // about him), and the Graph transport underneath — which is the only place
+    // "and Anna was not touched" is a fact about a write rather than a plan.
+    useTallWindow(tester);
+    final harness = departedStudentClassGroupHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await syncThenOpenKlasgroepen(tester);
+    expect(harness.controller.error, isNull);
+
+    // The class row proposes the one removal — and nothing to add, because the
+    // roster it already has is right.
+    expect(
+      find.textContaining(
+          'Werk het ledenbestand van GBS-1A bij (0 toevoegen, 1 verwijderen)'),
+      findsWidgets,
+    );
+
+    // Tom's own card says the same thing, in the reading an operator who opens
+    // one student gets. It is informational: the class row performs the write.
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    // An Azure-only record has no WISA or Smartschool name to be labelled by,
+    // so the list knows the leaver by their UPN — which is itself all that is
+    // left of them.
+    final String tomId = accountId(harness, 'tom.sels@student.school.example');
+    await selectAccount(tester, tomId);
+    expect(
+      find.textContaining('Staat nog in de Office 365-klasgroep GBS-1A'),
+      findsOneWidget,
+    );
+
+    // Nobody is proposing anything about Anna, anywhere.
+    expect(find.textContaining('GBS-1A').evaluate().isNotEmpty, isTrue);
+    final applyable = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .where((a) => a.canApply)
+        .map((a) => a.kind)
+        .toList();
+    expect(applyable, contains('SyncAzureClassGroupMembers'));
+
+    // Apply the class's roster sync and watch the wire: exactly one membership
+    // write, and it is Tom's. The titular's membership is not a thing the app
+    // has an opinion about, so the bulk-capable action must not have one either.
+    await openKlasgroepen(tester);
+    final Finder entry = find.byKey(const ValueKey('entry-group-1A'));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    final Finder apply = find.byKey(const ValueKey('entry-apply-1A'));
+    await tester.ensureVisible(apply);
+    await tester.tap(apply);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(harness.graph.batchedWrites, hasLength(1));
+    expect(harness.graph.batchedWrites.single,
+        startsWith('DELETE /groups/az-GBS-1A/members/az-tom'));
+    expect(
+      harness.graph.batchedWrites.any((w) => w.contains('az-anna')),
+      isFalse,
+      reason: 'the class titular survives the write the rollover runs on every '
+          'class at once',
+    );
+    expect(
+      harness.graph.batchedWrites.any((w) => w.contains('az1')),
+      isFalse,
+      reason: 'and so does the student who genuinely belongs there',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'a class group Graph will not manage is diagnosed, not proposed for a '
       'write that always fails, end-to-end (#331)',
       (WidgetTester tester) async {
@@ -7738,6 +7854,98 @@ void main() {
     final String student = accountId(harness, 'Jane Doe');
     await selectAccount(tester, student);
     expect(find.text('Verwijder Azure account'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a teacher whose Office 365 account also carries the student '
+      'companyName is one staff row, never a deletion proposal, end-to-end '
+      '(#386)', (WidgetTester tester) async {
+    // The reported bug, in the real app. Anna Smit is the titular: WISA staff,
+    // a Smartschool teacher account, an Office 365 account — and that account
+    // carries `companyName: GBS` beside the `department` that names us. The two
+    // linker passes read different fields of it, so she arrived as a LinkedStaff
+    // *and* as an Azure-only LinkedAccount, and the second reading is precisely
+    // the shape `RemoveStudentFromAzure` fires on.
+    //
+    // End-to-end because the failure was a card an operator would have clicked:
+    // a person appearing twice in the Acties inventory, once under Leerlingen
+    // with "Verwijder Azure account" on it. Whether the app can be talked into
+    // deleting a colleague's account is a property of the whole pass — link,
+    // materialize, dispatch, and the two tabs the result is browsed in — not of
+    // any one of them.
+    useTallWindow(tester);
+    final harness = doubleStampedTeacherHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Nothing anywhere proposes deleting an Office 365 account — not the
+    // student family, not the staff family. This is the invariant the issue is
+    // about, so it is asserted on the pending set as a whole rather than on the
+    // one card it used to show up on.
+    final allKinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(allKinds, isNot(contains('RemoveStudentFromAzure')),
+        reason: 'a staff-stamped account must never reach the student delete');
+    expect(allKinds, isNot(contains('RemoveStaffFromAzure')));
+
+    // Two people, two rows — the titular is not also a pupil.
+    expect(harness.controller.linkedAccounts, hasLength(2));
+    expect(
+      harness.controller.linkedAccounts
+          .where((a) => !a.isStaff)
+          .map((a) => a.label),
+      ['Jane Doe'],
+    );
+
+    // Acties, with the work-list filter off so the lists show everybody the
+    // pass linked — the titular is then absent from Leerlingen because no such
+    // record exists, not because a filter is hiding it.
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+    final Finder onlyWithActions =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(onlyWithActions);
+    await tester.tap(onlyWithActions);
+    await tester.pumpAndSettle();
+
+    // Leerlingen: the pupil has a row, the titular has none. Her old row was
+    // labelled by her UPN — an Azure-only record has no WISA or Smartschool name
+    // to be known by, which is itself how little was left of the "student" the
+    // app had invented.
+    final String student = accountId(harness, 'Jane Doe');
+    expect(find.byKey(ValueKey('account-row-$student')), findsOneWidget);
+    expect(find.text('anna.smit@school.example'), findsNothing);
+
+    // She is on Personeel instead, once, and selecting her offers no delete.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final String staff = accountId(harness, 'Anna Smit');
+    expect(find.byKey(ValueKey('account-row-$staff')), findsOneWidget);
+    await selectAccount(tester, staff);
+    expect(find.text('Verwijder Azure account'), findsNothing);
+
+    // And the pass says what it did about the stamps, because Entra is the only
+    // place they can actually be fixed.
+    expect(
+      harness.log.entries.map((e) => e.message).where((m) =>
+          m.contains('anna.smit@school.example') &&
+          m.contains('zowel door een leerling als door een personeelslid')),
+      hasLength(1),
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -13746,6 +13954,354 @@ void main() {
         await FileConnectionStore(connectionFile).read();
     expect(next.source, ConnectionSource.file);
     expect(next.endpoints.cosmosEndpoint, fixed);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'an install that cannot sign in at all reaches Instellingen and writes a '
+      'working Azure AD app registration to disk (#384)',
+      (WidgetTester tester) async {
+    // The failure v1.0.0 shipped with, driven end to end in the real app. The
+    // four AAD values came from `--dart-define` with no default, so an
+    // *installed* build — which never meets a command line (#371) — had all four
+    // empty, `isConfigured` false, and gated itself into "niet geconfigureerd"
+    // on every screen including the only one that could have fixed it.
+    //
+    // Only a full run proves the way out. A widget test binds one screen; it
+    // cannot show that the sign-in gate lets an unconfigured launch through at
+    // all, that the rail still reaches Instellingen with every other screen
+    // stood down, that the tab frame survives a null bootstrap inside the real
+    // shell, or that the bytes land in a real file on a real filesystem. This is
+    // the real thing throughout: real gate, real shell, real navigation, real
+    // FileConnectionStore over a real file.
+    useTallWindow(tester);
+
+    // A throwaway connection.json, so the run cannot touch the operator's own
+    // %APPDATA%.
+    final Directory dir = Directory.systemTemp.createTempSync('am-aad-e2e-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    final File file = File(
+      '${dir.path}${Platform.pathSeparator}$connectionFileName',
+    );
+
+    // Exactly what `main()` builds on a fresh install: nothing is configured, so
+    // `graph`, `reconcileBootstrap` and `settingsBootstrap` are all null — and
+    // the connection seams are wired anyway, because they are the way out.
+    var forgotten = 0;
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: null,
+      connection: ConnectionServices(
+        store: FileConnectionStore(file),
+        forgetTokens: () async => forgotten++,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The gate did not block on an acquisition it has no client id to make, and
+    // the landing screen says what is wrong and offers to take the operator
+    // there rather than naming a command-line flag they cannot pass.
+    expect(find.byType(AppShell), findsOneWidget);
+    expect(find.text('Niet geconfigureerd'), findsOneWidget);
+    expect(find.textContaining('--dart-define'), findsNothing);
+    final Finder toSettings =
+        find.byKey(const ValueKey('reconcile-open-settings'));
+    expect(toSettings, findsOneWidget);
+    await tester.tap(toSettings);
+    await tester.pumpAndSettle();
+
+    // …and it lands on the tab that fixes it, without the operator having to
+    // know which one that is.
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    expect(
+      tester
+          .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
+          .controller!
+          .index,
+      4,
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-aad-incomplete')))
+          .data,
+      contains('Aanmelden is nog niet mogelijk'),
+    );
+    expect(file.existsSync(), isFalse);
+
+    // Type the app registration in, in the real window and the real font.
+    Future<void> type(String key, String value) async {
+      final Finder field = find.byKey(ValueKey(key));
+      await tester.ensureVisible(field);
+      await tester.pumpAndSettle();
+      await tester.enterText(field, value);
+      await tester.pump();
+    }
+
+    await type('settings-aad-client-id', 'da407efb-e2e-test-client');
+    await type('settings-aad-tenant-id', 'arcadia-tenant-id');
+    await type('settings-aad-domain', 'arcadia.onmicrosoft.com');
+    await type('settings-aad-school-prefix', 'GBS');
+
+    final Finder save = find.byKey(const ValueKey('settings-connection-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    // The bytes are on disk, under the documented keys, beside the endpoints —
+    // one file, one save, a complete answer.
+    expect(file.existsSync(), isTrue);
+    final decoded = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    expect(decoded[AadAppConfig.clientIdKey], 'da407efb-e2e-test-client');
+    expect(decoded[AadAppConfig.tenantIdKey], 'arcadia-tenant-id');
+    expect(decoded[AadAppConfig.azureDomainKey], 'arcadia.onmicrosoft.com');
+    expect(decoded[AadAppConfig.schoolPrefixKey], 'GBS');
+    expect(
+      decoded[StoreEndpoints.cosmosEndpointKey],
+      StoreEndpoints.fromEnvironment().cosmosEndpoint,
+    );
+
+    // Nothing was cached to invalidate on a first install, so the tokens were
+    // left alone — the drop is for a tenant that actually moved.
+    expect(forgotten, 0);
+
+    // The session is honest about still running on the client id it started
+    // with…
+    expect(
+      find.byKey(const ValueKey('settings-connection-relaunch')),
+      findsOneWidget,
+    );
+
+    // …and the next launch reads a configured app registration back off the
+    // same disk, which is the whole claim: no rebuild, no command line.
+    final ResolvedConnection next = await FileConnectionStore(file).read();
+    expect(next.aadSource, ConnectionSource.file);
+    expect(next.aad.isConfigured, isTrue);
+    expect(next.aad.clientId, 'da407efb-e2e-test-client');
+    expect(next.aad.tenantId, 'arcadia-tenant-id');
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a launch with a seed beside the executable resolves from it, names it '
+      'in Instellingen, and saves over it into %APPDATA% (#387)',
+      (WidgetTester tester) async {
+    // The whole point of the issue, driven through the app's own entry point:
+    // an install that has never been configured on this machine, with a
+    // connection.json IT dropped into the install directory. Nothing is typed
+    // and the coordinates are right.
+    //
+    // Only a full run states it. A unit test proves the layering over two temp
+    // files and a widget test proves the source line, but neither can show that
+    // `main()` resolves the seed *before* runApp, that the resolution survives
+    // the real shell and the real rail, or that a save lands in the other file
+    // on a real filesystem while the seed IT placed is left byte-for-byte alone.
+    // That last one is the upgrade story: the seed is IT's file in a directory
+    // the next upgrade or re-deploy rewrites, so a correction written there
+    // would not outlive one.
+    useTallWindow(tester);
+
+    // Two throwaway directories standing in for `%APPDATA%\AccountManager\` and
+    // the install directory, so the run cannot touch either real one.
+    final Directory dir = Directory.systemTemp.createTempSync('am-seed-e2e-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    File at(String sub) => File(
+          '${dir.path}${Platform.pathSeparator}$sub'
+          '${Platform.pathSeparator}$connectionFileName',
+        );
+    final File local = at('appdata');
+    final File seed = at('install');
+
+    // What IT drops beside the program. Endpoints only, deliberately: an AAD
+    // block here would make the real entry point build a real broker and try to
+    // sign in, which on a test machine means a browser window. The Azure AD half
+    // of the seed is covered in the next case, in the real shell with a fake
+    // broker.
+    const StoreEndpoints seeded = StoreEndpoints(
+      cosmosEndpoint: 'https://gezaaid.documents.azure.com:443/',
+      cosmosDatabase: 'gezaaid-db',
+      vaultUri: 'https://gezaaid-kv.vault.azure.net/',
+      blobEndpoint: 'https://gezaaid.blob.core.windows.net',
+      blobContainer: 'gezaaid-snapshots',
+      signalrEndpoint: '',
+      signalrHub: 'gezaaid-hub',
+    );
+    seed.parent.createSync(recursive: true);
+    seed.writeAsStringSync(jsonEncode(seeded.toJson()));
+    final String seedBefore = seed.readAsStringSync();
+
+    // The real entry point, with the one seam it has: this machine's store.
+    await app.launchAccountManager(
+      connection: FileConnectionStore(local, seed: seed),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppShell), findsOneWidget);
+    expect(local.existsSync(), isFalse, reason: 'nothing has been saved yet');
+
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    // The coordinates on screen are the seed's, not the build's.
+    final Finder cosmos =
+        find.byKey(const ValueKey('settings-connection-cosmos-endpoint'));
+    await tester.ensureVisible(cosmos);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(cosmos).controller!.text,
+      seeded.cosmosEndpoint,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(
+            const ValueKey('settings-connection-cosmos-database'),
+          ))
+          .controller!
+          .text,
+      seeded.cosmosDatabase,
+    );
+
+    // …and the tab says which of the two files answered, and where a save would
+    // go instead. Without that, "I edited connection.json and nothing changed"
+    // has no answer on any screen.
+    final String source = tester
+        .widget<Text>(find.byKey(const ValueKey('settings-connection-source')))
+        .data!;
+    expect(source, contains(seed.path));
+    expect(source, contains(local.path));
+
+    // The seed says nothing about Azure AD, so that half still reads as the
+    // build's own (empty) default — the two halves report separately.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-aad-source')))
+          .data,
+      contains('standaardwaarde'),
+    );
+
+    // Correct one coordinate and save: this operator's machine now differs from
+    // the fleet.
+    await tester.enterText(cosmos, 'https://hersteld.documents.azure.com:443/');
+    await tester.pump();
+    final Finder save = find.byKey(const ValueKey('settings-connection-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    // The bytes landed in %APPDATA%, and the seed is untouched.
+    expect(local.existsSync(), isTrue);
+    expect(seed.readAsStringSync(), seedBefore);
+    final decoded =
+        jsonDecode(local.readAsStringSync()) as Map<String, dynamic>;
+    expect(
+      decoded[StoreEndpoints.cosmosEndpointKey],
+      'https://hersteld.documents.azure.com:443/',
+    );
+    // The whole answer, so what the seed supplied is preserved rather than
+    // collapsing back to the build's defaults on the fields nobody touched.
+    expect(decoded[StoreEndpoints.cosmosDatabaseKey], seeded.cosmosDatabase);
+    expect(decoded[StoreEndpoints.vaultUriKey], seeded.vaultUri);
+
+    // The next launch reads the correction over the seed — the resolution order
+    // doing its job on the same disk the save just wrote to.
+    final ResolvedConnection next =
+        await FileConnectionStore(local, seed: seed).read();
+    expect(next.source, ConnectionSource.file);
+    expect(next.endpoints.cosmosEndpoint,
+        'https://hersteld.documents.azure.com:443/');
+    expect(next.endpoints.cosmosDatabase, seeded.cosmosDatabase);
+    expect(next.seedLocation, seed.path);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a seeded app registration means a fresh install has nothing to type '
+      '(#387)', (WidgetTester tester) async {
+    // The other half of the issue, and the reason it was filed at all: since
+    // #384 an unconfigured install cannot sign in until somebody types four
+    // values, and #387 is what lets IT answer them once for a whole fleet.
+    //
+    // Driven in the real shell — real rail, real tab frame, real font, real
+    // file on disk — rather than through `main()`, for one deliberate reason: a
+    // configured app registration makes the real entry point build a real broker
+    // and attempt an acquisition, which on a machine with no cached token means
+    // opening a browser. The claim under test is what the operator sees and what
+    // the *next* launch would resolve, and both are reachable without that.
+    useTallWindow(tester);
+
+    final Directory dir = Directory.systemTemp.createTempSync('am-seed-aad-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    File at(String sub) => File(
+          '${dir.path}${Platform.pathSeparator}$sub'
+          '${Platform.pathSeparator}$connectionFileName',
+        );
+    final File local = at('appdata');
+    final File seed = at('install');
+
+    const AadAppConfig seededAad = AadAppConfig(
+      clientId: 'gezaaide-client-id',
+      tenantId: 'gezaaide-tenant-id',
+      azureDomain: 'arcadia.onmicrosoft.com',
+      schoolPrefix: 'GBS',
+    );
+    seed.parent.createSync(recursive: true);
+    seed.writeAsStringSync(jsonEncode(seededAad.toJson()));
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      connection:
+          ConnectionServices(store: FileConnectionStore(local, seed: seed)),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    // Four fields, filled in by a file nobody on this machine wrote.
+    String field(String key) =>
+        tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
+    final Finder clientId =
+        find.byKey(const ValueKey('settings-aad-client-id'));
+    await tester.ensureVisible(clientId);
+    await tester.pumpAndSettle();
+    expect(field('settings-aad-client-id'), seededAad.clientId);
+    expect(field('settings-aad-tenant-id'), seededAad.tenantId);
+    expect(field('settings-aad-domain'), seededAad.azureDomain);
+    expect(field('settings-aad-school-prefix'), seededAad.schoolPrefix);
+
+    // …and the tab says so, naming the file beside the program rather than the
+    // one a save would write.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-aad-source')))
+          .data,
+      contains(seed.path),
+    );
+
+    // Nothing left to do: the "you cannot sign in yet" line is absent, and no
+    // %APPDATA% file was created to make it so.
+    expect(find.byKey(const ValueKey('settings-aad-incomplete')), findsNothing);
+    expect(local.existsSync(), isFalse);
+
+    // Which is the claim, stated the way the next launch would: `main()` reads
+    // this and hands `config.graph` to the shell instead of gating on "niet
+    // geconfigureerd".
+    final ResolvedConnection resolved =
+        await FileConnectionStore(local, seed: seed).read();
+    expect(resolved.aad, seededAad);
+    expect(resolved.aad.isConfigured, isTrue);
+    expect(resolved.aadSource, ConnectionSource.seed);
 
     expect(tester.takeException(), isNull);
   });

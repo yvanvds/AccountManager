@@ -87,10 +87,10 @@ Per-user, and that is the load-bearing decision rather than a preference:
   instead of stacking a second copy beside it. **Never change that GUID.**
 - `CloseApplications=yes`, so the restart manager deals with a running copy.
 - **Never touches `%APPDATA%\AccountManager\`.** That holds the DPAPI-encrypted
-  token cache and the `connection.json` bootstrap (#370). Nothing in the script
-  lists it under `[Files]` or `[UninstallDelete]`; the only code that can remove
-  it is the explicit prompt at uninstall, which defaults to *No* and is skipped
-  entirely in a silent uninstall.
+  token cache and the `connection.json` bootstrap (#370 endpoints, #384 Azure
+  AD). Nothing in the script lists it under `[Files]` or `[UninstallDelete]`; the
+  only code that can remove it is the explicit prompt at uninstall, which
+  defaults to *No* and is skipped entirely in a silent uninstall.
 
 Build one by hand:
 
@@ -104,6 +104,78 @@ cd ..
 
 `AppVersion` defaults to `0.0.0`, so a bare `ISCC installer\AccountManager.iss`
 compiles as a syntax check.
+
+## What a new operator does on first launch
+
+**An installed copy cannot sign in until it is told which app registration to use
+(#384).** That is deliberate and cannot be shipped away: the school's tenant id,
+client id and Azure domain are not in this repository, which is public, so no
+published build can carry them.
+
+So the first launch of a fresh install is *expected* to land on **"Niet
+geconfigureerd"**, with a **Naar Instellingen** button. Hand the operator four
+values and one instruction:
+
+1. **Instellingen → Verbinding → Azure AD**
+2. Fill in client id, tenant id, Azure domain and school prefix.
+3. **Verbinding bewaren**.
+4. **Restart the app.** The tab says so; a running session keeps the app
+   registration it started with.
+
+That writes `%APPDATA%\AccountManager\connection.json`, which every later launch
+reads. The backend coordinates in the section below it ship with working
+defaults and normally need nothing.
+
+### Skipping the typing: a seed beside the executable (#387)
+
+For a fleet, hand the four values over once instead of per machine. Drop a
+`connection.json` into the **install directory** —
+`%LOCALAPPDATA%\Programs\AccountManager\connection.json` — and every launch reads
+it, so the operator opens an install that is already configured:
+
+```json
+{
+  "aadClientId": "…",
+  "aadTenantId": "…",
+  "aadDomain": "school.onmicrosoft.com",
+  "schoolPrefix": "GBS"
+}
+```
+
+Same keys as the `%APPDATA%` file, and any subset of them: name only the Azure AD
+half, only the endpoints, or both. Deploy it with whatever already reaches the
+machines — Intune, a login script, a technician with a USB stick.
+
+Four rules it follows, and each is load-bearing:
+
+- **The installer must never carry it.** The published installer is a public
+  artifact; baking the school's tenant and client id into it publishes them
+  exactly as committing them to this repository would. A file placed by hand
+  next to an installed copy publishes nothing. See *Deliberately not done*.
+- **`%APPDATA%` wins, per field.** An operator who corrects one value in
+  Instellingen keeps that correction; everything they did not touch still comes
+  from the seed.
+- **Nothing ever writes it.** **Verbinding bewaren** always writes `%APPDATA%`,
+  so a correction outlives whatever upgrade or re-deploy next rewrites the
+  install directory. The seed is read fresh on every launch and never copied
+  inward, which is what lets you re-point a whole fleet by replacing that one
+  file — including on machines that have already been launched.
+- **A broken one cannot brick a launch.** Malformed JSON there degrades to the
+  layer under it with a warning on the Verbinding tab, exactly as a malformed
+  `%APPDATA%` file does.
+
+**Instellingen → Verbinding** names which of the two files answered, and says
+when a `%APPDATA%` file is shadowing the seed. That line is the first thing to
+read when an edit to the seed appears to do nothing.
+
+Two things worth knowing when supporting this:
+
+- Changing the **tenant** wipes `%APPDATA%\AccountManager\auth\`. Cached tokens
+  were issued by the old tenant's STS, so they can only be rejected afterwards;
+  the operator signs in again once.
+- The tab renders and saves with Azure AD unconfigured *and* with Cosmos
+  unreachable, both at once. If it ever does not, that is the bug — the screen
+  that fixes sign-in must never sit behind sign-in.
 
 ## What the app does
 
@@ -189,12 +261,26 @@ These cannot be settled from CI and are the remaining acceptance criteria of
 
 ## Deliberately not done
 
-- **Seeding `connection.json` from the installer.** Raised as an open question
-  in #371; the answer is no. The compiled `StoreEndpoints` defaults already
-  point a fresh install at the right backend, so seeding would buy nothing on a
-  first install — and on an *upgrade* it would overwrite the correction an
-  operator made in **Instellingen → Verbinding**, which is the one file that
-  exists precisely because the compiled defaults can be wrong.
+- **Seeding `connection.json` from the installer.** Raised as an open question in
+  #371 and re-opened by #384, which put the Azure AD app registration in the same
+  file — a seeded file would make a fresh install work with no typing at all,
+  which is genuinely attractive. The answer is still **no**, for a reason that
+  did not apply before: **the installer is a public artifact.** Baking the
+  school's tenant id and client id into it publishes them exactly as committing
+  them to this repository would, and the whole point of keeping them out of the
+  repo is that they are not published. A CI secret does not change that — it only
+  moves where the published bytes come from.
+
+  The older argument still holds for the endpoint half: the compiled
+  `StoreEndpoints` defaults already point a fresh install at the right backend,
+  and on an *upgrade* a seeded file would overwrite the correction an operator
+  made in **Instellingen → Verbinding**.
+
+  What is left of the idea — an *optional* bootstrap file placed next to the
+  executable by IT, which the app reads when `%APPDATA%` has none — publishes
+  nothing and still spares the typing. That shipped as **#387**; see *Skipping
+  the typing* above. It changes nothing here: the installer still carries no
+  school-specific value, and the seed is placed by whoever deploys the machines.
 - **Code signing.** No certificate exists. Buying one removes the SmartScreen
   section above and is its own issue.
 - **Delta updates, staged rollouts, forced updates.** A full installer download

@@ -27,13 +27,28 @@ import 'student_action_config.dart';
 /// lifecycle accounts never need it.
 ///
 /// [azurePlacementFor] wires the **Office 365 class-group** view of the same
-/// student (#245), the per-account half of #228. Like [placementFor] it is only
-/// called for `account.isInOurWisa` records — the target group is named after
-/// their WISA class — and it feeds a single action, [AzureClassGroupMembership],
-/// in the modify branch beside [MoveToSmartschoolClassGroup]: the two answer the
-/// same question ("is this student in the right class group?") for the two
-/// systems that have one, so they belong in the same branch. When omitted, the
-/// dispatch is exactly as it shipped before #245, because a [LinkedAccount]
+/// student (#245), the per-account half of #228. It feeds a single action,
+/// [AzureClassGroupMembership], and it is consulted for exactly two populations:
+///
+/// - a student present in **our** WISA, as it has been since #245 — the target
+///   group is named after their WISA class, so there has to be one. The action
+///   lands in the modify branch beside [MoveToSmartschoolClassGroup]: the two
+///   answer the same question ("is this student in the right class group?") for
+///   the two systems that have one, so they belong in the same branch;
+/// - a student who has **left** us and still has an Office 365 account (#385).
+///   That account keeps its memberships until an operator decides otherwise, so
+///   until then they are sitting in last year's class group — the very
+///   membership the class-level `SyncAzureClassGroupMembers` now proposes to
+///   undo. They have no class of ours to be a target, so all their placement can
+///   report is the stray, and it reports the same one the class row does: the
+///   two views are built by one resolver precisely so they cannot disagree about
+///   a student, and fixing only the class plan is what would have made them.
+///   Their reading lands in the **lifecycle** branch, beside the departures.
+///
+/// So the branch rule is untouched: a record present in our WISA but incomplete
+/// still gets no class-group reading, because its class placement is the modify
+/// branch's business and it is not in it. When [azurePlacementFor] is omitted,
+/// the dispatch is exactly as it shipped before #245, because a [LinkedAccount]
 /// carries neither the group's membership nor the roster it should equal.
 ///
 /// Each candidate is constructed bound to [account] and kept only when its
@@ -58,6 +73,19 @@ List<StudentAction> studentActionsFor(
       ? placementFor(account)
       : null;
   final azurePlacement = (azurePlacementFor != null && account.isInOurWisa)
+      ? azurePlacementFor(account)
+      : null;
+
+  // The same view for the one population the modify branch cannot reach (#385):
+  // a student who has left the schools we manage and whose Office 365 account is
+  // still a member of a class group of ours. Kept as a second name rather than
+  // widening [azurePlacement], so the modify branch's condition — and every
+  // record that already flows through it — stays exactly what #245 shipped.
+  // Without an Azure account there is nothing that could be a member of
+  // anything, so nothing is asked.
+  final departurePlacement = (azurePlacementFor != null &&
+          account.hasLeftOurSchool &&
+          account.azure != null)
       ? azurePlacementFor(account)
       : null;
 
@@ -104,6 +132,14 @@ List<StudentAction> studentActionsFor(
           UnregisterStudentFromSmartschool(account, config),
           DeleteStudentFromSmartschool(account, config),
           RemoveStudentFromAzure(account, config),
+          // The per-account reading of the stray class-group membership a
+          // departed student leaves behind (#385) — informational, as it is in
+          // the modify branch, so it competes with none of the departures above
+          // and the single write still lives on the class row. It stands down by
+          // itself for a leaver who is in no class group of ours: with no target
+          // class there is nothing else its placement could report.
+          if (departurePlacement != null)
+            AzureClassGroupMembership(account, config, departurePlacement),
         ];
 
   return [

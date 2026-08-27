@@ -4,6 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
+import '../auth/aad_app_config.dart';
 import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 import '../settings/connection_config.dart';
 import '../settings/settings_bootstrap.dart';
@@ -125,6 +126,15 @@ class _SettingsScreenState extends State<SettingsScreen>
   final _signalrEndpoint = TextEditingController();
   final _signalrHub = TextEditingController();
 
+  // The Azure AD app registration (#384) — the same local file, the same tab.
+  // Not the settings document and not `_azClientId`/`_azTenantId` below: those
+  // are the *Azure connector's* profile inside the Cosmos document, which is
+  // read with a token these four are what mints.
+  final _aadClientId = TextEditingController();
+  final _aadTenantId = TextEditingController();
+  final _aadDomain = TextEditingController();
+  final _aadSchoolPrefix = TextEditingController();
+
   /// The last resolution read from the store — the values on screen and, more
   /// importantly, where they came from and any warning the file earned.
   ResolvedConnection? _resolved;
@@ -133,6 +143,11 @@ class _SettingsScreenState extends State<SettingsScreen>
   /// resolves. A save that differs from it is the one that needs a relaunch to
   /// take effect; a save that matches it changes nothing that is running.
   StoreEndpoints? _connectionAtOpen;
+
+  /// The same for the sign-in half (#384). A changed tenant additionally makes
+  /// every cached token the wrong audience, which is why it is tracked rather
+  /// than folded into [_connectionAtOpen].
+  AadAppConfig? _aadAtOpen;
 
   bool _connectionBusy = false;
   bool _connectionNeedsRelaunch = false;
@@ -238,9 +253,16 @@ class _SettingsScreenState extends State<SettingsScreen>
     super.initState();
     _tabs = TabController(length: _settingsTabCount, vsync: this);
     // Two independent loads. The connection file is local and cannot fail the
-    // way the Cosmos document can, so its section is on screen either way.
+    // way the Cosmos document can, so its tab is on screen either way.
     _loadConnection();
-    _load();
+    // Nothing to load without a sign-in to load it with, and no retry that could
+    // ever change that — so go straight to the tab that can (#384). A first
+    // launch on a fresh install is *expected* to land here.
+    if (widget.bootstrap == null) {
+      _revealConnection();
+    } else {
+      _load();
+    }
   }
 
   @override
@@ -254,6 +276,10 @@ class _SettingsScreenState extends State<SettingsScreen>
       _blobContainer,
       _signalrEndpoint,
       _signalrHub,
+      _aadClientId,
+      _aadTenantId,
+      _aadDomain,
+      _aadSchoolPrefix,
       _schoolPrefix,
       _staffWifiSsid,
       _staffWifiCode,
@@ -326,8 +352,10 @@ class _SettingsScreenState extends State<SettingsScreen>
     setState(() {
       _resolved = resolved;
       _connectionAtOpen ??= resolved.endpoints;
+      _aadAtOpen ??= resolved.aad;
     });
     _populateConnection(resolved.endpoints);
+    _populateAad(resolved.aad);
   }
 
   void _populateConnection(StoreEndpoints e) {
@@ -340,6 +368,13 @@ class _SettingsScreenState extends State<SettingsScreen>
     _signalrHub.text = e.signalrHub;
   }
 
+  void _populateAad(AadAppConfig a) {
+    _aadClientId.text = a.clientId;
+    _aadTenantId.text = a.tenantId;
+    _aadDomain.text = a.azureDomain;
+    _aadSchoolPrefix.text = a.schoolPrefix;
+  }
+
   StoreEndpoints _collectConnection() => StoreEndpoints(
         cosmosEndpoint: _cosmosEndpoint.text.trim(),
         cosmosDatabase: _cosmosDatabase.text.trim(),
@@ -350,34 +385,69 @@ class _SettingsScreenState extends State<SettingsScreen>
         signalrHub: _signalrHub.text.trim(),
       );
 
-  /// Writes the typed coordinates to this machine's connection file.
+  AadAppConfig _collectAad() => AadAppConfig(
+        clientId: _aadClientId.text.trim(),
+        tenantId: _aadTenantId.text.trim(),
+        azureDomain: _aadDomain.text.trim(),
+        schoolPrefix: _aadSchoolPrefix.text.trim(),
+      );
+
+  /// Writes the typed coordinates **and** the typed Azure AD app registration to
+  /// this machine's connection file (#370 endpoints, #384 AAD).
+  ///
+  /// One button for both halves because they are one file, and because on a
+  /// fresh install they are one job: an operator who has just typed a client id
+  /// to get signed in should not have to discover that a second, differently
+  /// named save is what commits it.
   ///
   /// Separate from the document's **Opslaan** on purpose: the two write to
   /// different places (a local file vs the shared Cosmos document) and only one
-  /// of them still works when the store is unreachable.
+  /// of them still works when the store is unreachable — or when there is no
+  /// sign-in to reach it with at all.
   ///
   /// The running stack is *not* re-bootstrapped. It is memoized and already
   /// handed out — its connectors, its controller and the password queue are held
-  /// by four other screens — so quietly swapping the Cosmos client underneath
-  /// them would be the dishonest half of the choice the issue leaves open. The
-  /// section says a relaunch is needed instead, and only when the saved values
-  /// actually differ from what this session started on.
+  /// by four other screens, and the broker built from the old client id is
+  /// already wired into the session — so quietly swapping either underneath them
+  /// would be the dishonest half of the choice the issue leaves open. The tab
+  /// says a relaunch is needed instead, and only when the saved values actually
+  /// differ from what this session started on.
+  ///
+  /// A changed **tenant** additionally drops the cached tokens: they were minted
+  /// by the previous tenant's STS for the previous tenant's resources, so
+  /// keeping them would make the next launch fail a silent acquisition it could
+  /// never have won.
   Future<void> _saveConnection() async {
     final StoreEndpoints next = _collectConnection();
+    final AadAppConfig nextAad = _collectAad();
+    // Only a tenant that was actually *set* and has now moved. A first install
+    // going from no tenant to a tenant has nothing cached to invalidate, and
+    // saying "these belonged to the previous tenant" about a previous tenant
+    // that never existed would be its own small lie.
+    final AadAppConfig? before = _aadAtOpen;
+    final bool tenantChanged = before != null &&
+        before.tenantId.isNotEmpty &&
+        nextAad.tenantId != before.tenantId;
     setState(() {
       _connectionBusy = true;
       _connectionMessage = '';
       _probed = null;
     });
     try {
-      await _connection.store.write(next);
+      await _connection.store.write(endpoints: next, aad: nextAad);
+      final Future<void> Function()? forget = _connection.forgetTokens;
+      if (tenantChanged && forget != null) await forget();
       final ResolvedConnection resolved = await _connection.store.read();
       if (!mounted) return;
       setState(() {
         _resolved = resolved;
-        if (next != _connectionAtOpen) _connectionNeedsRelaunch = true;
+        if (next != _connectionAtOpen || nextAad != _aadAtOpen) {
+          _connectionNeedsRelaunch = true;
+        }
         _connectionMessage =
-            'Verbinding bewaard in ${_connection.store.location}.';
+            'Verbinding bewaard in ${_connection.store.location}.'
+            '${tenantChanged ? ' De opgeslagen aanmeldingen zijn gewist: ze '
+                'horen bij de vorige tenant.' : ''}';
       });
     } on Object catch (e) {
       if (mounted) {
@@ -414,20 +484,28 @@ class _SettingsScreenState extends State<SettingsScreen>
     }
   }
 
-  /// Fills the fields with what this build ships — the escape hatch for an
-  /// install that saved coordinates nobody can reach any more. It only fills
-  /// them in; **Verbinding bewaren** is still what commits.
+  /// Fills the **endpoint** fields with what this build ships — the escape hatch
+  /// for an install that saved coordinates nobody can reach any more. It only
+  /// fills them in; **Verbinding bewaren** is still what commits.
+  ///
+  /// It deliberately leaves the Azure AD fields alone. Their compiled defaults
+  /// are empty by design (#384: the school's tenant and client id are kept out
+  /// of this public repository), so "restore the defaults" would mean erasing
+  /// the sign-in config the operator just typed — the one thing on this tab that
+  /// cannot be recovered from the build.
   void _fillConnectionDefaults() {
     setState(() {
-      _connectionMessage = 'Standaardwaarden ingevuld. Bewaar om ze te '
+      _connectionMessage = 'Standaardwaarden voor de opslag ingevuld. De '
+          'Azure AD-gegevens zijn ongemoeid gelaten. Bewaar om ze te '
           'gebruiken.';
       _probed = null;
     });
     _populateConnection(StoreEndpoints.fromEnvironment());
   }
 
-  /// Brings the Verbinding tab forward the first time the settings document
-  /// cannot be loaded (#370).
+  /// Brings the Verbinding tab forward when the four document-backed tabs have
+  /// nothing to show — the settings document could not be loaded (#370), or
+  /// Azure AD is not configured so there is no session to load it with (#384).
   ///
   /// The index is set rather than animated so the tab is simply *there*, and
   /// once only: a second failed retry must not drag the operator off whichever
@@ -880,30 +958,45 @@ class _SettingsScreenState extends State<SettingsScreen>
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Whether Azure AD is configured for this launch. `null` bootstrap is exactly
+  /// that claim: `main()` wires the settings seams only when the resolved
+  /// [AadAppConfig] has a client and a tenant, because without them there is no
+  /// token to read the settings document with.
+  bool get _aadConfigured => widget.bootstrap != null;
+
   @override
   Widget build(BuildContext context) {
-    if (widget.bootstrap == null) {
-      return const _MessagePanel(
-        eyebrow: 'Arcadia · instellingen',
-        title: 'Niet geconfigureerd',
-        message: 'Azure AD is niet geconfigureerd voor deze build, dus de '
-            'instellingenopslag is onbereikbaar. Geef de AAD '
-            '--dart-define-waarden mee en start opnieuw op.',
-      );
-    }
-    // No early return for a failed or pending load any more (#370): the frame,
-    // the header and the Verbinding tab render regardless, and only the four
-    // document-backed tabs stand in with a panel until the document arrives.
+    // No early return for a failed or pending load (#370), and none for an
+    // unconfigured Azure AD either (#384): the frame, the header and the
+    // Verbinding tab render regardless, and only the four document-backed tabs
+    // stand in with a panel until the document arrives.
+    //
+    // The second half is the whole point of #384. The screen that supplies the
+    // sign-in configuration cannot sit behind the sign-in — an installed v1.0.0
+    // did exactly that and had no way out of it.
     return _SettingsForm(state: this);
   }
 
-  /// What the four document-backed tabs show while [_loaded] is `null` — the
-  /// load in flight, or the failure that stopped it.
+  /// What the four document-backed tabs show while [_loaded] is `null` — no
+  /// sign-in to load with, the load in flight, or the failure that stopped it.
   ///
   /// The retry lives here rather than in the header because this *is* the state
   /// it belongs to; the header's Herladen is wired to the same [_load] so either
   /// press does the same thing.
   Widget documentPanel() {
+    if (!_aadConfigured) {
+      // Deliberately no retry: there is nothing to retry *with* until the app is
+      // relaunched against a saved app registration, and a button that cannot
+      // work is worse than a sentence saying where to go.
+      return const _MessagePanel(
+        eyebrow: 'Arcadia · instellingen',
+        title: 'Niet geconfigureerd',
+        message: 'Azure AD is niet geconfigureerd, dus er is geen aanmelding '
+            'om de gedeelde instellingen mee op te halen.\n\nVul de '
+            'app-registratie in onder het tabblad Verbinding, bewaar, en start '
+            'de app opnieuw op.',
+      );
+    }
     final Object? error = _error;
     if (error == null) {
       return const _MessagePanel(
@@ -994,8 +1087,11 @@ class _SettingsForm extends StatelessWidget {
                         // The same button is the retry while the document is
                         // missing: `_reload` needs the seams `_load`
                         // bootstraps, so a failed bootstrap has to go through
-                        // `_load` or nothing happens at all.
-                        onPressed: state._busy
+                        // `_load` or nothing happens at all. With no Azure AD
+                        // configured there is nothing to bootstrap *from*
+                        // (#384), so it is disabled rather than a button that
+                        // silently does nothing.
+                        onPressed: state._busy || !state._aadConfigured
                             ? null
                             : (hasDocument ? state._reload : state._load),
                         icon: const Icon(Icons.refresh),
@@ -1112,21 +1208,133 @@ class _SettingsForm extends StatelessWidget {
     ]);
   }
 
-  /// The per-machine backend coordinates (#370).
+  /// The per-machine bootstrap: the Azure AD app registration (#384) and the
+  /// backend coordinates (#370).
   ///
   /// A tab rather than a section under Algemeen, and the last one, because it is
   /// the only body here that does not read the settings document: everything
-  /// else on this screen is unreachable exactly when this is needed. The second
-  /// section is the running version and its update check (#371), which slots in
-  /// here for the same reason: it is deployment identity, not school
-  /// configuration, and it has to be readable on an install whose settings
-  /// document will not load — "which version is this operator on?" is the first
-  /// question a support conversation asks.
+  /// else on this screen is unreachable exactly when this is needed. The version
+  /// and its update check (#371) slot in for the same reason: it is deployment
+  /// identity, not school configuration, and it has to be readable on an install
+  /// whose settings document will not load — "which version is this operator
+  /// on?" is the first question a support conversation asks.
+  ///
+  /// Azure AD comes **first** on the tab. It is the outermost of the three: with
+  /// no app registration there is no token, with no token there is no Cosmos,
+  /// and with no Cosmos there are no settings. A fresh install works down the
+  /// tab in exactly that order.
   Widget _connectionTab() {
     return _tab('settings-tab-verbinding-body', <Widget>[
+      _aadSection(),
       _connectionSection(),
       _versionSection(),
     ]);
+  }
+
+  /// How this tab names the layer that answered for one half of the bootstrap
+  /// (#370 endpoints, #384 Azure AD, #387 the seed beside the executable).
+  ///
+  /// Two files can be called `connection.json` since #387 — this machine's own
+  /// under `%APPDATA%` and a seed IT dropped next to the installed program — so
+  /// "uit connection.json" stopped being a complete sentence: the operator has
+  /// to be told *which* one answered. The shadowed case is said out loud for the
+  /// same reason and is the sharper one: an IT that edits the seed on a machine
+  /// which already has a local file sees nothing change, and this line is the
+  /// only place in the app that can explain why.
+  ///
+  /// [subject] names what the sentence is about, so the fallback case can say
+  /// which values the files are silent on rather than making the operator infer
+  /// it from an empty field.
+  String _sourceNote({
+    required ResolvedConnection? resolved,
+    required ConnectionSource? source,
+    required String reading,
+    required String subject,
+  }) {
+    if (resolved == null || source == null) return reading;
+    final String location = state._connection.store.location;
+    final String seed = resolved.seedLocation;
+    return switch (source) {
+      ConnectionSource.file => 'Huidige bron: uit $location.'
+          '${resolved.hasSeed ? ' Naast het programma staat ook een '
+              '$connectionFileName ($seed); dit bestand heeft voorrang '
+              'daarop.' : ''}',
+      ConnectionSource.seed =>
+        'Huidige bron: uit $seed — de $connectionFileName die naast het '
+            'programma staat. Bewaren schrijft naar $location, dat daarna '
+            'voorrang heeft.',
+      ConnectionSource.defaults => 'Huidige bron: standaardwaarde van deze '
+          'build. $subject staan niet in $location'
+          '${resolved.hasSeed ? ' en niet in $seed' : ''}.',
+    };
+  }
+
+  /// The Azure AD app registration this install signs in with (#384).
+  ///
+  /// Four identifiers, no secret: a public-client app registration needs none,
+  /// and the tokens it mints live in the DPAPI-encrypted broker cache. That is
+  /// why they can sit in the same plain-JSON file as the endpoints, and why the
+  /// section can render before anybody has signed in.
+  Widget _aadSection() {
+    final ResolvedConnection? resolved = state._resolved;
+    final bool configured = resolved?.aad.isConfigured ?? false;
+
+    return _Section(
+      title: 'Azure AD',
+      children: <Widget>[
+        _Note(
+          keyValue: 'settings-aad-note',
+          text: 'De app-registratie waarmee deze installatie zich aanmeldt. '
+              'Deze waarden staan lokaal op deze machine, in hetzelfde bestand '
+              'als de verbindingsgegevens hieronder — niet in het gedeelde '
+              'instellingendocument, want dat document staat achter deze '
+              'aanmelding. Het zijn identificatoren, geen geheimen.',
+        ),
+        _Note(
+          keyValue: 'settings-aad-source',
+          text: _sourceNote(
+            resolved: resolved,
+            source: resolved?.aadSource,
+            reading: 'De app-registratie wordt gelezen…',
+            subject: 'De Azure AD-gegevens',
+          ),
+        ),
+        // Said plainly rather than left to be inferred from two empty fields:
+        // this is the state an installed build launches in, and the operator
+        // needs to know that filling these in is the whole job.
+        if (resolved != null && !configured)
+          _Note(
+            keyValue: 'settings-aad-incomplete',
+            text: 'Aanmelden is nog niet mogelijk: vul minstens de client-id '
+                'en de tenant-id in, bewaar, en start de app opnieuw op.',
+          ),
+        _Field(
+          keyValue: 'settings-aad-client-id',
+          label: 'Client-id (app-registratie)',
+          controller: state._aadClientId,
+        ),
+        _Field(
+          keyValue: 'settings-aad-tenant-id',
+          label: 'Tenant-id',
+          controller: state._aadTenantId,
+        ),
+        _Field(
+          keyValue: 'settings-aad-domain',
+          label: 'Azure-domein (bv. school.onmicrosoft.com)',
+          controller: state._aadDomain,
+        ),
+        _Field(
+          keyValue: 'settings-aad-school-prefix',
+          label: 'Schoolprefix (terugval; de instellingen winnen)',
+          controller: state._aadSchoolPrefix,
+        ),
+        _Note(
+          keyValue: 'settings-aad-save-hint',
+          text: 'Bewaren gebeurt met "Verbinding bewaren" hieronder: beide '
+              'delen staan in één bestand.',
+        ),
+      ],
+    );
   }
 
   /// The running build's version, and the check for a newer one (#371).
@@ -1157,14 +1365,12 @@ class _SettingsForm extends StatelessWidget {
         ),
         _Note(
           keyValue: 'settings-connection-source',
-          text: switch (resolved?.source) {
-            null => 'De verbindingsgegevens worden gelezen…',
-            ConnectionSource.file =>
-              'Huidige bron: uit ${state._connection.store.location}.',
-            ConnectionSource.defaults =>
-              'Huidige bron: standaardwaarde van deze build '
-                  '(${state._connection.store.location} bestaat nog niet).',
-          },
+          text: _sourceNote(
+            resolved: resolved,
+            source: resolved?.source,
+            reading: 'De verbindingsgegevens worden gelezen…',
+            subject: 'De verbindingsgegevens',
+          ),
         ),
         if (resolved != null && resolved.hasWarning)
           _Note(
@@ -1211,6 +1417,10 @@ class _SettingsForm extends StatelessWidget {
           runSpacing: PlinkSpacing.s2,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
+            // Writes both halves of the file — the coordinates above and the
+            // Azure AD app registration at the top of the tab (#384). One
+            // button because it is one file, and because on a fresh install
+            // filling both in is one job.
             FilledButton.icon(
               key: const ValueKey('settings-connection-save'),
               onPressed: busy ? null : state._saveConnection,
@@ -1250,8 +1460,9 @@ class _SettingsForm extends StatelessWidget {
         if (state._connectionNeedsRelaunch)
           _Note(
             keyValue: 'settings-connection-relaunch',
-            text: 'Herstart de app om deze verbinding te gebruiken. De huidige '
-                'sessie praat nog met de opslag waarmee ze opgestart is.',
+            text: 'Herstart de app om deze gegevens te gebruiken. De huidige '
+                'sessie praat nog met de opslag waarmee ze opgestart is, en is '
+                'nog aangemeld met de app-registratie waarmee ze opgestart is.',
           ),
         if (probed != null) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s3),

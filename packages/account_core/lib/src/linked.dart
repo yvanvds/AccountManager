@@ -393,6 +393,60 @@ class DuplicateAzureEmployeeId extends LinkWarning {
   });
 }
 
+/// What the linker did about an [AzureAccountClaimedTwice] collision (#386).
+///
+/// The rule is claim *strength*, not population: a record with a WISA row or a
+/// Smartschool account behind it outranks one that exists only because an Azure
+/// user carried a school stamp. Between two records that both exist only for
+/// that reason, staff wins — deleting a teacher's Office 365 account is
+/// unrecoverable, leaving a departed pupil's account standing one more pass is
+/// not.
+enum AzureClaimResolution {
+  /// The Azure-only **student** record was dropped; the staff record keeps the
+  /// account. The reported case of #386: a teacher stamped with the student
+  /// `companyName`.
+  keptAsStaff,
+
+  /// The Azure-only **staff** record was dropped; the student record keeps the
+  /// account — the mirror case, a pupil whose `department` names the school.
+  keptAsStudent,
+
+  /// Nothing was dropped: both claimants carry a WISA/Smartschool anchor of
+  /// their own, so neither is a record the linker manufactured and dropping
+  /// either would lose something real. Reported and left to the operator.
+  unresolved,
+}
+
+/// INV-27: one Azure object id reached **two** linked records — a
+/// [LinkedAccount] and a [LinkedStaff] (#386).
+///
+/// The linker runs its student and its staff pass over the same Azure user
+/// list, and INV-22's two halves ask different questions of one account:
+/// `companyName` names the school for a *student*, `department` for a *staff*
+/// member. Nothing in the tenant makes the two mutually exclusive —
+/// `companyName` says which school an account belongs to, never what its holder
+/// is (#358) — so a teacher whose account carries both stamps used to become a
+/// [LinkedStaff] *and* an Azure-only [LinkedAccount], and the second reading
+/// drew `RemoveStudentFromAzure`: a proposal to delete the Office 365 account of
+/// somebody the same snapshot lists as staff.
+///
+/// So the collision is resolved (see [AzureClaimResolution]) and reported rather
+/// than left to whichever consumer looks first. It stays a warning even when the
+/// linker could resolve it: an account both populations claim is a stamp somebody
+/// has to fix in Entra, and the app's own reading of it is a guess either way.
+class AzureAccountClaimedTwice extends LinkWarning {
+  /// The Office 365 account both populations claimed.
+  final AzureUser account;
+
+  /// Which record was left holding [account].
+  final AzureClaimResolution resolution;
+
+  const AzureAccountClaimedTwice({
+    required this.account,
+    required this.resolution,
+  });
+}
+
 /// #225: a WISA class whose name already exists in Smartschool as a group the
 /// class link did not adopt — because the group is not flagged as an official
 /// class, or because its name differs from the WISA one by more than the match

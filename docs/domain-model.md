@@ -340,6 +340,12 @@ The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `Mark
 
   The two dates are what the entitlement fields cannot say. `createdDateTime` is the audit's own discriminator (the twins were made by different runs, months apart) and rides along in the pull's `$select`; the last sign-in is the only fact here reporting on the *student* rather than on the directory, and in at least one audited pair it names the **unlicensed** twin — so that student has no Office at all, which the licensing fields alone would have read as the opposite. It is read per colliding account rather than on the pull (`UserManager.withSignInActivity`), because `signInActivity` needs `AuditLog.Read.All` and because a collection read that selects it silently drops its `$filter` and enumerates the tenant. Until that permission is consented the fact simply reads as unknown; nothing here guesses.
 
+- **INV-27 [D]:** **One Azure object id belongs to at most one linked record** (#386). The student and the staff pass walk the same `azureSnapshot.users`, and INV-22's two halves read *different fields* of one account — `companyName` for a student, `department` for a staff member — which nothing in the tenant makes mutually exclusive: `companyName` says which school an account belongs to, never what its holder is (#358). A teacher whose account carried both stamps therefore became a `LinkedStaff` **and** an Azure-only `LinkedAccount`, and that second record satisfies `RemoveStudentFromAzure` in full (no WISA row, no Smartschool account, our `companyName`) — the app proposed deleting a teacher's Office 365 account.
+
+  The collision is arbitrated by **claim strength**, in `link()`'s `_resolveAzureClaims`. A record with a WISA row or a Smartschool account behind it is *anchored*; a record holding nothing but the disputed Azure account exists only because of the stamp under dispute, so it is the one dropped. Between two unanchored records **staff wins** — deleting a teacher's account is unrecoverable, leaving a departed pupil's account standing one more pass is not, which is the same precedence the class-group removal net applies (#385). An unanchored record can only ever hold that one account (the orphan legs are indexed by nothing, so no later pass attaches a second account or an INV-26 twin to one), so dropping it loses exactly the disputed claim. When *both* claimants are anchored nothing is dropped: stripping either would trade this bug for its mirror — a student told to create an account they already have, or a staff record told to delete one.
+
+  Either way an `AzureAccountClaimedTwice` warning names the account and what was decided, because the stamps are the real fault and only Entra can fix them. The guard `AzureClassGroupResolver` added for the class-group removal (#385) is kept as defence in depth: a `LinkedSnapshot` may be read back from the shared store rather than freshly linked, and every removal under it is a delete against Graph.
+
 ### Membership
 
 - **INV-30 [D]:** `Membership` is many-to-many; one person can hold multiple memberships in the same system.
@@ -365,7 +371,7 @@ The legacy school-marking rules `MarkAsVirtual` (WorkDate, schoolCode) and `Mark
 ### 6.2 `link(wisa, smartschool, azure) → LinkedSnapshot`
 
 - **Pre:** Three snapshots (any may be empty).
-- **Post:** `LinkedSnapshot` satisfying INV-20..24. Pure, deterministic.
+- **Post:** `LinkedSnapshot` satisfying INV-20..27. Pure, deterministic.
 - The algorithm is structurally the same as legacy [`LinkedAccounts.DoRelink`](../legacy-wpf/AccountManager/State/Linked/LinkedAccounts.cs) but extracted from WPF state and fixed for case-insensitive matching and duplicate-mail.
 
 ### 6.3 `evaluate(LinkedSnapshot) → List<Action>`

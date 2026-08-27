@@ -69,10 +69,24 @@ class AzureClassGroupPlan {
   /// against) or when membership already matches.
   final List<String> membersToAdd;
 
-  /// Azure object ids to remove: current members that are **students of ours**
-  /// no longer in this class. Deliberately never anybody else — staff and
-  /// titular membership of class groups are out of scope, so a member this app
-  /// cannot account for as one of its own students is left alone.
+  /// Azure object ids to remove: current members this app can name as one of
+  /// its **own students**, present or past, who does not belong in this class.
+  /// Two populations, and both are named rather than inferred:
+  ///
+  /// - a student of ours whose WISA class is no longer this one — the
+  ///   class-to-class mover;
+  /// - a student who *was* ours and has left the schools we manage (#385),
+  ///   which per the no-alumni rule is an ordinary linked record that has lost
+  ///   its WISA row (or kept only a sibling group school's). Before #385 this
+  ///   half was missing and a leaver stayed in last year's group for ever: the
+  ///   removal net was built from students currently in our WISA, a set a
+  ///   departed student cannot be in.
+  ///
+  /// Deliberately never anybody else — staff and titular membership of class
+  /// groups are out of scope, so a member this app cannot account for as one of
+  /// its own students is left alone. This is a positive test against two known
+  /// sets, never `current - roster`: the difference is what keeps every teacher
+  /// in every class group when [SyncAzureClassGroupMembers] is applied to all.
   final List<String> membersToRemove;
 
   /// Whether membership differs from the roster in either direction.

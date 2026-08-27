@@ -1230,10 +1230,12 @@ class CreateAzureClassGroup extends GroupAction {
 /// [LinkedGroup.azure], so no extra Graph read is needed to know a class is out
 /// of sync.
 ///
-/// **Removals are limited to our own students.** Staff and titular membership of
-/// class groups are out of scope, so a member this app cannot account for as one
-/// of its students is never touched — see
-/// [AzureClassGroupPlan.membersToRemove].
+/// **Removals are limited to our own students** — present *and* past (#385). A
+/// student who left the schools we manage is still one this app can name, so
+/// their leftover membership of last year's class group is removed; anything
+/// else in the group is not. Staff and titular membership of class groups are
+/// out of scope, so a member this app cannot account for as one of its students
+/// is never touched — see [AzureClassGroupPlan.membersToRemove].
 ///
 /// **It never proposes on a group Graph will not manage** (#331). A group
 /// mastered by Exchange Online — a mail-enabled security group, or a
@@ -1266,7 +1268,11 @@ class SyncAzureClassGroupMembers extends GroupAction {
   /// holds, it is idempotent (a class already in sync does not
   /// [evaluate] true, and re-running writes the same membership), and its
   /// removals are limited to students this app can account for, so a bulk pass
-  /// can never strip staff or titular members it does not own.
+  /// can never strip staff or titular members it does not own. Widening that
+  /// third count to reach departed students (#385) did not weaken it: the net
+  /// grew by a second *named* set of linked records, not into "everything the
+  /// roster does not contain", so a member matching neither set survives the
+  /// rollover exactly as before.
   ///
   /// The counterpart per-account view, `AzureClassGroupMembership`, stays
   /// informational precisely so this class-level write is the single place the
