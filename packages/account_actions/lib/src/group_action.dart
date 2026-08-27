@@ -1230,12 +1230,18 @@ class CreateAzureClassGroup extends GroupAction {
 /// [LinkedGroup.azure], so no extra Graph read is needed to know a class is out
 /// of sync.
 ///
-/// **Removals are limited to our own students** — present *and* past (#385). A
-/// student who left the schools we manage is still one this app can name, so
-/// their leftover membership of last year's class group is removed; anything
-/// else in the group is not. Staff and titular membership of class groups are
-/// out of scope, so a member this app cannot account for as one of its students
-/// is never touched — see [AzureClassGroupPlan.membersToRemove].
+/// **The class roster decides membership outright** (#389): every current
+/// member WISA does not put in this class is removed, whatever is stamped on the
+/// account. That reaches the cases a narrower rule structurally could not — a
+/// sibling group school's pupil, or an account with no school stamp at all —
+/// because those are never in the prefix-scoped Azure read and so could never be
+/// *named*. See [AzureClassGroupPlan.membersToRemove].
+///
+/// Teachers are kept out of this by **which groups get a plan at all**, not by
+/// filtering members: class groups hold students only by policy, a teacher who
+/// needs access is an *owner* rather than a member, and a plan is built only for
+/// a group whose `<PREFIX>-<KLAS>` name is a real WISA class — never for the
+/// subject groups (`SSM-1C-Wiskunde-2526`) that do hold staff.
 ///
 /// **It never proposes on a group Graph will not manage** (#331). A group
 /// mastered by Exchange Online — a mail-enabled security group, or a
@@ -1267,12 +1273,13 @@ class SyncAzureClassGroupMembers extends GroupAction {
   /// counts — the diff is computed per class from the roster the app already
   /// holds, it is idempotent (a class already in sync does not
   /// [evaluate] true, and re-running writes the same membership), and its
-  /// removals are limited to students this app can account for, so a bulk pass
-  /// can never strip staff or titular members it does not own. Widening that
-  /// third count to reach departed students (#385) did not weaken it: the net
-  /// grew by a second *named* set of linked records, not into "everything the
-  /// roster does not contain", so a member matching neither set survives the
-  /// rollover exactly as before.
+  /// the groups it can reach are only those whose `<PREFIX>-<KLAS>` name is a
+  /// real WISA class, so a bulk pass never opens a subject or staff group at
+  /// all. That last count is what carries the safety since #389 turned removals
+  /// into the plain roster comparison: the protection is which groups are
+  /// planned for, not which members are spared inside them. A class whose
+  /// students have no Azure accounts yet withholds its removals rather than
+  /// proposing to empty the group — see [AzureClassGroupPlan.membersToRemove].
   ///
   /// The counterpart per-account view, `AzureClassGroupMembership`, stays
   /// informational precisely so this class-level write is the single place the

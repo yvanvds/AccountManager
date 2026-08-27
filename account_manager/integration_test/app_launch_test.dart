@@ -5142,22 +5142,27 @@ void main() {
   });
 
   testWidgets(
-      'a student who left our school is taken out of their old Office 365 '
-      'class group, and the titular is not, end-to-end (#385)',
-      (WidgetTester tester) async {
-    // The reported bug, in the real app. `GBS-1A` holds three accounts: Jane,
-    // who is still in 1A; Tom, who is gone from WISA altogether and whose
-    // Azure-only record is flagged for deletion; and Anna, the class titular.
-    // The removal list used to be guarded by "is this one of our students",
-    // which a leaver can never be — so Tom sat in the group for ever while
-    // every class-to-class mover was cleaned up.
+      'an Office 365 class group is brought back to exactly its WISA class, '
+      'end-to-end (#385, #389)', (WidgetTester tester) async {
+    // `GBS-1A` holds four accounts and WISA puts exactly one of them in 1A:
+    // Jane. The other three are the three ways a stray gets in — Tom, gone from
+    // WISA altogether and flagged for deletion (#385); Anna, the class titular;
+    // and `az-sda`, a sibling group school's pupil who is in no snapshot at all
+    // because the Azure read is scoped to our own prefix (#389).
+    //
+    // #385 could only reach Tom: its net was built from linked records, and
+    // `az-sda` has none. #389 made the roster itself the rule, so all three go.
+    // Anna goes with them by design — a teacher who is a *member* of a class
+    // group is a mistake, and one who needs access is made an owner, which this
+    // app never reads.
     //
     // End-to-end because the claim spans three surfaces a unit test sees one at
     // a time: the class card in Klasgroepen (composed from the stored candidate
     // document plus the live dispatch), Tom's own row in Acties (a second
     // projection of the same dispatch, which must not disagree with the class
     // about him), and the Graph transport underneath — which is the only place
-    // "and Anna was not touched" is a fact about a write rather than a plan.
+    // "and `az-sda` was actually deleted" is a fact about a write rather than a
+    // plan.
     useTallWindow(tester);
     final harness = departedStudentClassGroupHarness();
     await tester.pumpWidget(AccountManagerApp(
@@ -5169,11 +5174,11 @@ void main() {
     await syncThenOpenKlasgroepen(tester);
     expect(harness.controller.error, isNull);
 
-    // The class row proposes the one removal — and nothing to add, because the
-    // roster it already has is right.
+    // The class row proposes all three removals — and nothing to add, because
+    // the one member the roster does name is already there.
     expect(
       find.textContaining(
-          'Werk het ledenbestand van GBS-1A bij (0 toevoegen, 1 verwijderen)'),
+          'Werk het ledenbestand van GBS-1A bij (0 toevoegen, 3 verwijderen)'),
       findsWidgets,
     );
 
@@ -5196,7 +5201,6 @@ void main() {
       findsOneWidget,
     );
 
-    // Nobody is proposing anything about Anna, anywhere.
     expect(find.textContaining('GBS-1A').evaluate().isNotEmpty, isTrue);
     final applyable = harness.controller.pendingEntries
         .expand((e) => e.choices)
@@ -5206,9 +5210,8 @@ void main() {
         .toList();
     expect(applyable, contains('SyncAzureClassGroupMembers'));
 
-    // Apply the class's roster sync and watch the wire: exactly one membership
-    // write, and it is Tom's. The titular's membership is not a thing the app
-    // has an opinion about, so the bulk-capable action must not have one either.
+    // Apply the class's roster sync and watch the wire: three membership
+    // writes, and the one account WISA puts in 1A is not among them.
     await openKlasgroepen(tester);
     final Finder entry = find.byKey(const ValueKey('entry-group-1A'));
     await tester.ensureVisible(entry);
@@ -5221,19 +5224,21 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
-    expect(harness.graph.batchedWrites, hasLength(1));
-    expect(harness.graph.batchedWrites.single,
-        startsWith('DELETE /groups/az-GBS-1A/members/az-tom'));
+    expect(harness.graph.batchedWrites, hasLength(3));
+    for (final id in const ['az-tom', 'az-anna', 'az-sda']) {
+      expect(
+        harness.graph.batchedWrites
+            .any((w) => w.startsWith('DELETE /groups/az-GBS-1A/members/$id')),
+        isTrue,
+        reason: '$id is not in the WISA class, so it is not in the group',
+      );
+    }
     expect(
-      harness.graph.batchedWrites.any((w) => w.contains('az-anna')),
+      harness.graph.batchedWrites
+          .any((w) => w.startsWith('DELETE /groups/az-GBS-1A/members/az1')),
       isFalse,
-      reason: 'the class titular survives the write the rollover runs on every '
-          'class at once',
-    );
-    expect(
-      harness.graph.batchedWrites.any((w) => w.contains('az1')),
-      isFalse,
-      reason: 'and so does the student who genuinely belongs there',
+      reason: 'the one student who genuinely belongs there is untouched by the '
+          'write the rollover runs on every class at once',
     );
     expect(tester.takeException(), isNull);
   });

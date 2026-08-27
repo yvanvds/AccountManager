@@ -368,23 +368,29 @@ void main() {
       expect(syncs['2B']!.membersToAdd, ['az-1']);
     });
 
-    test('a member this app cannot account for is never removed', () {
-      // The class titular, a shared mailbox, a guest — all out of scope, and
-      // all indistinguishable from each other here: not one of our students.
+    test('a member the roster does not name is removed, accounted for or not',
+        () {
+      // `az-stranger` has no Azure user record at all, only an id sitting in
+      // `memberIds` — which is exactly the live shape #389 was reported for: a
+      // sibling group school's pupil is outside the prefix-scoped Azure read,
+      // so no linked record for them exists to recognise them by.
+      //
+      // Pre-#389 this test asserted the opposite. The protection it encoded now
+      // lives in *which groups get a plan at all* — see the subject-group test
+      // in the #389 group — rather than in sparing members inside one.
       final linked = _recompute(
         classGroups: [_wClass('2A')],
         students: [_student(wisaId: 'w1', classGroup: '2A')],
         azureUsers: [_azUser('az-1', employeeId: 'w1')],
         azureGroups: [
-          _classGroup('2A', memberIds: const ['az-1', 'az-teacher']),
+          _classGroup('2A', memberIds: const ['az-1', 'az-stranger']),
         ],
       );
 
-      expect(
-        _actionsOfType<actions.SyncAzureClassGroupMembers>(linked),
-        isEmpty,
-        reason: 'membership already matches the roster; the teacher stays',
-      );
+      final sync =
+          _actionsOfType<actions.SyncAzureClassGroupMembers>(linked).single;
+      expect(sync.plan.membersToRemove, ['az-stranger']);
+      expect(sync.plan.membersToAdd, isEmpty);
     });
 
     test("membership is the union of a sub-grouped class's rosters", () {
@@ -728,12 +734,22 @@ void main() {
         ],
       );
 
-      expect(memberships(linked), isEmpty);
       expect(
-        _actionsOfType<actions.SyncAzureClassGroupMembers>(linked),
+        memberships(linked),
         isEmpty,
-        reason: 'and the class row proposes nothing either — the titular is '
-            'not a roster difference',
+        reason: 'the titular is a LinkedStaff, so there is no student record '
+            'for a per-account row to hang on — that much is unchanged by #389',
+      );
+      expect(
+        _actionsOfType<actions.SyncAzureClassGroupMembers>(linked)
+            .single
+            .plan
+            .membersToRemove,
+        ['az-teacher'],
+        reason: 'but the class row does propose now: a member the class roster '
+            'does not name is a stray, and a teacher who is a *member* of a '
+            'class group is the mistake #389 exists to correct — access for a '
+            'teacher is an owner, which this app never reads',
       );
     });
   });
@@ -850,18 +866,26 @@ void main() {
           _actionsOfType<actions.SyncAzureClassGroupMembers>(linked).single;
       expect(sync.canApplyToAll, isTrue,
           reason: 'the September rollover applies this to every class at once, '
-              'so the guarantee has to hold under the bulk flag itself');
-      expect(sync.plan.membersToRemove, ['az-gone']);
+              'so whatever the rule is, it has to hold under the bulk flag');
+      expect(
+        sync.plan.membersToRemove,
+        ['az-titular', 'az-gone'],
+        reason: '#389: the roster decides. The titular goes too — a teacher '
+            'who is a member of a class group is a mistake to correct, and one '
+            'who needs access is made an owner instead',
+      );
     });
 
-    test(
-        'a teacher whose account also carries the student stamp is still never '
-        'removed', () {
-      // The collision the guard exists for: `companyName` says which school an
-      // account belongs to, never what its holder is (#358). A teacher stamped
-      // with it answers to a LinkedStaff record *and* looks, to the linker's
-      // student pass, exactly like an Azure-only former pupil. Staff is the
-      // reading that decides.
+    test('a teacher carrying both stamps is removed like any other stray', () {
+      // Pre-#389 this pinned the staff guard: `companyName` says which school an
+      // account belongs to, never what its holder is (#358), so a teacher
+      // stamped with it answered to a LinkedStaff record *and* looked, to the
+      // student pass, like an Azure-only former pupil — and staff won.
+      //
+      // Under the roster rule the two readings no longer lead anywhere
+      // different: whichever it is, it is not in 2A's roster, so it goes. The
+      // arbitration itself still matters and is still tested — in the linker,
+      // where it stops `RemoveStudentFromAzure` deleting the account (#386).
       final linked = _recompute(
         classGroups: [_wClass('2A')],
         staff: [_wStaff()],
@@ -882,7 +906,10 @@ void main() {
         ],
       );
 
-      expect(_plansByClass(linked)['2A']!.membersToRemove, ['az-gone']);
+      expect(
+        _plansByClass(linked)['2A']!.membersToRemove,
+        ['az-titular', 'az-gone'],
+      );
     });
 
     test(
@@ -917,9 +944,14 @@ void main() {
       );
 
       final plans = _plansByClass(linked);
-      expect(plans['2A']!.membersToRemove, ['az-mover', 'az-gone'],
-          reason: 'the mover behaves exactly as it did before #385, and the '
-              'leaver joins it — the titular and the stranger do not');
+      expect(
+        plans['2A']!.membersToRemove,
+        ['az-mover', 'az-gone', 'az-titular', 'az-stranger'],
+        reason: '#389: everyone the 2A roster does not name, in member order. '
+            'The mover and the leaver behave as they did; the titular and the '
+            'stranger — which no predicate over linked records could reach — '
+            'now go too',
+      );
       expect(plans['2A']!.membersToAdd, isEmpty);
       expect(plans['2B']!.membersToAdd, ['az-mover']);
       expect(plans['2B']!.membersToRemove, isEmpty);
@@ -973,6 +1005,135 @@ void main() {
       expect(membershipsByAzureId(linked), isEmpty);
       expect(
           _actionsOfType<actions.SyncAzureClassGroupMembers>(linked), isEmpty);
+    });
+  });
+
+  group('the roster decides membership (#389)', () {
+    test("a sibling group school's pupil is removed", () {
+      // The reported case, in miniature. `az-sda` carries another school's
+      // `companyName`, so the prefix-scoped Azure read never returns it and no
+      // linked record for it exists — it reaches the resolver only as an id in
+      // `memberIds`. Every pre-#389 predicate was a test over linked records,
+      // which is why none of them could ever have named this account.
+      final linked = _recompute(
+        classGroups: [_wClass('1E')],
+        students: [_student(wisaId: 'w1', classGroup: '1E')],
+        azureUsers: [_azUser('az-1', employeeId: 'w1')],
+        azureGroups: [
+          _classGroup('1E', memberIds: const ['az-1', 'az-sda', 'az-ssj']),
+        ],
+      );
+
+      expect(
+        _plansByClass(linked)['1E']!.membersToRemove,
+        ['az-sda', 'az-ssj'],
+      );
+    });
+
+    test('a member with no school stamp at all is removed', () {
+      // The long tail the live audit turned up alongside the sibling schools:
+      // members carrying no `companyName`, which no stamp-based rule can judge
+      // and the roster comparison does not need to.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          const az.AzureUser(id: 'az-blank', upn: 'blank@school.example'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-blank']),
+        ],
+      );
+
+      expect(_plansByClass(linked)['2A']!.membersToRemove, ['az-blank']);
+    });
+
+    test('a group that only starts like a class never receives a plan', () {
+      // THE load-bearing guarantee since #389. The teachers that really do sit
+      // in class-shaped groups are in the *subject* groups —
+      // `GBS-1C-Wiskunde-2526` and a hundred like it in the live tenant — and
+      // what keeps the roster rule away from them is that their display name is
+      // not `<PREFIX>-<KLAS>` for any WISA class, so no plan is ever built.
+      //
+      // If this ever fails, a bulk `SyncAzureClassGroupMembers` empties the
+      // school's subject groups of their teachers.
+      // 1C carries a stray of its own, so it *does* raise a plan — otherwise
+      // this would pass whether or not the subject group is reachable.
+      final linked = _recompute(
+        classGroups: [_wClass('1C')],
+        staff: [_wStaff()],
+        students: [_student(wisaId: 'w1', classGroup: '1C')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azStaff('az-teacher', employeeId: 's1'),
+        ],
+        azureGroups: [
+          _classGroup('1C', memberIds: const ['az-1', 'az-stray']),
+          _classGroup(
+            '1C-Wiskunde-2526',
+            memberIds: const ['az-1', 'az-teacher'],
+          ),
+        ],
+      );
+
+      final plans = _plansByClass(linked);
+      expect(
+        plans.keys,
+        ['1C'],
+        reason: 'the subject group is not a class, so it is never planned for',
+      );
+      expect(plans['1C']!.membersToRemove, ['az-stray']);
+      expect(
+        plans.values.expand((p) => p.membersToRemove),
+        isNot(contains('az-teacher')),
+        reason: 'the teacher sits only in the subject group, which no plan '
+            'reaches — this is what replaced the per-member staff guard',
+      );
+    });
+
+    test('a class whose students have no Azure accounts yet removes nobody',
+        () {
+      // The mirror of the failed-member-read guard (#356). An empty roster here
+      // means "these accounts do not exist yet", not "this class is empty", and
+      // reading it as the latter would propose emptying the group wholesale.
+      // `AddStudentToAzure` is the work in this state.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [
+          _student(wisaId: 'w1', classGroup: '2A'),
+          _student(wisaId: 'w2', classGroup: '2A'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-old-1', 'az-old-2']),
+        ],
+      );
+
+      expect(
+        _actionsOfType<actions.SyncAzureClassGroupMembers>(linked),
+        isEmpty,
+        reason: 'no membership work at all this pass. Without the guard the '
+            'roster reads as empty and both leftover members are proposed for '
+            'removal, which is a proposal to empty the group',
+      );
+      expect(_plansByClass(linked), isEmpty);
+    });
+
+    test('an emptied class still has its group cleared', () {
+      // The guard above is conditioned on the class *holding students in WISA*.
+      // A class that genuinely has none is a different situation, and its
+      // leftover members are strays like any other.
+      final linked = _recompute(
+        classGroups: [_wClass('2A'), _wClass('2B')],
+        students: [_student(wisaId: 'w1', classGroup: '2B')],
+        azureUsers: [_azUser('az-1', employeeId: 'w1')],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1']),
+          _classGroup('2B', memberIds: const ['az-1']),
+        ],
+      );
+
+      expect(_plansByClass(linked)['2A']!.membersToRemove, ['az-1']);
     });
   });
 }

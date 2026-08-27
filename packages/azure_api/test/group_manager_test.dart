@@ -262,6 +262,45 @@ void main() {
           reason: 'an adopted group must be roster-diffable on the same pass');
     });
 
+    test('a group roster is read from /members and never /owners (#389)',
+        () async {
+      // Load bearing since #389, which made class-group membership the plain
+      // roster comparison: a teacher who needs access to a class group is made
+      // an **owner**, and that is only a safe answer because owners live in a
+      // different Graph collection from members and this app never reads it. If
+      // /owners ever fed `memberIds`, the roster rule would propose removing
+      // every teacher granted access that way.
+      final transport = FakeGraphTransport((req) {
+        if (req.url.path.contains('/members')) {
+          return jsonOk({
+            'value': [
+              {'id': 'student-1'},
+            ],
+          });
+        }
+        if (req.url.path.contains('/owners')) {
+          return jsonOk({
+            'value': [
+              {'id': 'teacher-1'},
+            ],
+          });
+        }
+        return jsonOk({
+          'value': [renamed('GBS-5WW1')],
+        });
+      });
+      final groups = GroupManager(clientWith(transport));
+
+      final found = await groups.loadByMailNicknames(['GBS-5WW1']);
+
+      expect(found.single.memberIds, ['student-1']);
+      expect(
+        transport.requests.where((r) => r.url.path.contains('/owners')),
+        isEmpty,
+        reason: 'the owners collection is never even asked for',
+      );
+    });
+
     test('withMembers: false skips the member reads entirely', () async {
       final transport = FakeGraphTransport(
         (_) => jsonOk({

@@ -36,61 +36,55 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 ///   groups (#205) and how the placement resolver tallies `containsStudents`
 ///   (#222).
 ///
-/// Removals are computed narrowly on purpose: a member is only ever proposed
-/// for removal when this app can name it as one of its **own students** — a
-/// student of ours no longer in this class, or a student who *was* ours and has
-/// since left the school (#385). Staff, titulars, and anything else in the
-/// group are left alone: a member matching neither population is never touched,
-/// and a class group that has been shared with a teacher must not quietly lose
-/// them.
+/// Removals **are** the roster comparison (#389): a member of a class group who
+/// is not on that class's WISA roster is proposed for removal, whatever is
+/// stamped on the account and whether or not this app holds a linked record for
+/// it.
 ///
-/// The second population is what #385 added, and it is a *named* one rather
-/// than "everything the roster does not contain". Before it existed the removal
-/// net was [_ourStudentAzureIds] alone, which a departed student can never be in
-/// — the set is built from `isInOurWisa` records — so `membersToRemove` caught
-/// exactly the class-to-class movers and a leaver sat in last year's group for
-/// ever. Widening it to `current - roster` instead would have stripped every
-/// teacher and titular from every class group on the first bulk pass of
-/// `SyncAzureClassGroupMembers` (`canApplyToAll: true`, the September
-/// rollover's headline action), which is precisely what the narrow rule exists
-/// to prevent. See [_isFormerStudentOfOurs] for where the line is drawn.
+/// That replaced a deliberately narrow rule, and why it had to is worth
+/// keeping. The old net named only accounts the app could positively account
+/// for as its own students, present or past (#385), so it could only ever hold
+/// ids of accounts *in the snapshot*. The Azure user read is `$filter`-scoped to
+/// our own prefix, widened only by the targeted `employeeId` lookups for
+/// students we expect (#224) — so a sibling group school's pupil sitting in one
+/// of our class groups was never pulled, never linked, and therefore
+/// untouchable: their id existed only as a raw string in `memberIds`. A
+/// read-only audit of the live tenant found one to three of them in nearly
+/// every class group, plus a long tail of members carrying no `companyName` at
+/// all. No amount of tightening the predicate reaches an account that was never
+/// read.
+///
+/// The narrow rule existed to protect teachers and titulars sharing a class
+/// group. That protection moved rather than vanished:
+///
+/// - these groups hold **students only** by policy — a teacher who is a member
+///   is a mistake to correct, not a configuration to preserve;
+/// - the app never learns who a class's titular is, so it was guarding a
+///   population it cannot name;
+/// - a teacher who *should* have access is made an **owner**. Graph keeps
+///   owners and members in separate collections and `GroupManager` reads
+///   `groups/{id}/members`, never `/owners`, so an owner is invisible to this
+///   rule by construction.
+///
+/// What carries the safety now is **group identification**: a plan is built only
+/// for a [LinkedGroup] that carries a WISA class and whose `<PREFIX>-<KLAS>`
+/// name survives as a `mailNickname`. A subject group that merely starts like a
+/// class — `SSM-1C-Wiskunde-2526` against class `1C` — is a different display
+/// name and never receives a plan, which is what keeps the teachers who really
+/// do sit in those groups out of reach. That invariant is load bearing now, and
+/// [planFor] is tested for it.
 class AzureClassGroupResolver {
   AzureClassGroupResolver({
     required LinkedSnapshot linked,
     required this.schoolPrefix,
     required this.studentDomain,
   }) {
-    // 0. Every Azure account a **staff** record claims (#385) — the population
-    //    the removal net must never reach, indexed before pass 1 asks about it.
-    //
-    //    The linker runs its student and its staff pass over the same Azure
-    //    user list, so one account can answer to a record in both: a teacher
-    //    stamped with the student `companyName` is kept as a staff orphan by
-    //    INV-22's staff half *and* looks, to the student pass, exactly like an
-    //    Azure-only former pupil. When the two readings disagree the staff one
-    //    decides. Duplicates count too (INV-26): an ambiguous staff identity is
-    //    still staff, whichever of its accounts is sitting in the group.
-    for (final member in linked.staff) {
-      for (final candidate in member.azureCandidates) {
-        final id = candidate.id.trim();
-        if (id.isNotEmpty) _staffAzureIds.add(id);
-      }
-    }
-
-    // 1. Roster per bare class name, as Azure object ids, plus the two sets a
-    //    membership removal may name — the Azure ids of our students, and those
-    //    of students who *were* ours (#385) — and which classes hold students
-    //    at all.
+    // 1. Roster per bare class name, as Azure object ids, and which classes
+    //    hold students at all. This is the whole basis of the membership diff
+    //    now (#389): what a class group should contain is what WISA says the
+    //    class contains, and everything else in the group is a stray.
     for (final account in linked.accounts) {
-      if (!account.isInOurWisa) {
-        final azureId = account.azure?.id.trim();
-        if (azureId != null &&
-            azureId.isNotEmpty &&
-            _isFormerStudentOfOurs(account, azureId)) {
-          _formerStudentAzureIds.add(azureId);
-        }
-        continue;
-      }
+      if (!account.isInOurWisa) continue;
       final wisa = account.wisa;
       if (wisa is! wapi.WisaStudent) continue;
       final className = normalizeGroupName(wisa.classGroup);
@@ -98,7 +92,6 @@ class AzureClassGroupResolver {
       _classesWithStudents.add(className);
       final azureId = account.azure?.id.trim();
       if (azureId == null || azureId.isEmpty) continue;
-      _ourStudentAzureIds.add(azureId);
       (_rosterByClass[className] ??= <String>{}).add(azureId);
     }
 
@@ -156,25 +149,6 @@ class AzureClassGroupResolver {
 
   /// Normalized bare class name -> the Azure object ids of its students.
   final Map<String, Set<String>> _rosterByClass = {};
-
-  /// Every Azure object id belonging to a student of ours — one of the two sets
-  /// a membership removal may name (see [_formerStudentAzureIds]).
-  final Set<String> _ourStudentAzureIds = {};
-
-  /// Every Azure object id belonging to a student who **was** ours and is no
-  /// longer in a WISA school we manage (#385) — the other set a membership
-  /// removal may name.
-  ///
-  /// Per the project's no-alumni rule these are not a state of their own: they
-  /// are ordinary [LinkedAccount] records that have simply lost their WISA row
-  /// (gone from the group entirely) or kept only a sibling school's
-  /// ([WisaPresence.groupOnly]). Either way they are not in any class of ours,
-  /// so every class group they still sit in is a stray membership.
-  final Set<String> _formerStudentAzureIds = {};
-
-  /// Every Azure object id a [LinkedStaff] record claims — the ids the removal
-  /// net may never name, whatever else is stamped on the account.
-  final Set<String> _staffAzureIds = {};
 
   /// Normalized bare class names that hold at least one student of ours,
   /// whether or not that student already has an Azure account.
@@ -235,71 +209,30 @@ class AzureClassGroupResolver {
               for (final id in roster)
                 if (!currentSet.contains(id)) id,
             ],
-      membersToRemove: <String>[
-        for (final id in current)
-          if (!roster.contains(id) && _mayRemove(id)) id,
-      ],
+      // Everything in the group that the class roster does not name (#389).
+      //
+      // Withheld in one case: the class has students in WISA but not one of
+      // them resolved to an Azure account, so `roster` is empty for a reason
+      // that says nothing about the group's membership — the accounts have not
+      // been created or linked yet. Comparing against that roster would read
+      // "this class has nobody" and propose emptying the group wholesale, which
+      // is the mirror of the failed-member-read guard in `GroupManager` (#356).
+      // `AddStudentToAzure` is the work in that state, and once it has run the
+      // roster is real and the diff resumes.
+      membersToRemove: roster.isEmpty && containsStudentsOf(className)
+          ? const <String>[]
+          : <String>[
+              for (final id in current)
+                if (!roster.contains(id)) id,
+            ],
     );
   }
 
-  /// Whether a current member of a class group is one this app may take out of
-  /// it — an account it can name as one of its own students, present or past
-  /// (#385).
-  ///
-  /// Both sets are *positive* memberships built from linked records, never the
-  /// complement of a roster, which is the whole reason a teacher, a titular, a
-  /// shared mailbox or a guest survives a bulk `SyncAzureClassGroupMembers`:
-  /// they are in neither set, so they match nothing here and are left alone.
-  bool _mayRemove(String memberId) =>
-      _ourStudentAzureIds.contains(memberId) ||
-      _formerStudentAzureIds.contains(memberId);
-
-  /// Whether [account] — a student record no longer in a WISA school we manage
-  /// — is a **former student of ours** whose Office 365 account this app
-  /// recognises, and may therefore take out of a class group (#385).
-  ///
-  /// [azureId] is that account's Azure object id, already trimmed and non-empty.
-  ///
-  /// Three ways to be recognised, in order of how much they prove:
-  ///
-  /// - **A WISA row.** The student is still somewhere in the group, just not in
-  ///   a school of ours ([WisaPresence.groupOnly]). WISA lists them as a pupil,
-  ///   so no teacher can arrive this way.
-  /// - **A Smartschool account.** The linker partitions teacher/director-role
-  ///   accounts into [LinkedStaff] *before* a [LinkedAccount] is minted, so a
-  ///   Smartschool side on a student record is itself the proof.
-  /// - **INV-22's student half.** Left with nothing but an Azure account, this
-  ///   is the incomplete, Azure-only record the no-alumni rule describes — the
-  ///   one the action engine already offers `RemoveStudentFromAzure` on. The
-  ///   same predicate the linker kept it by is what recognises it here, so
-  ///   "kept as a former student of ours" and "removable from a class group"
-  ///   cannot drift apart. Students carry the school in `companyName`; staff
-  ///   carry it in `department` (see `UserManager.filterFor`), which is why this
-  ///   half is asked about `companyName` alone.
-  ///
-  /// And one way to be disqualified outright, checked first and overriding all
-  /// three: the id belongs to a staff record. Removing a departed *pupil* from
-  /// last year's class is the point of #385; the staff/titular guarantee is not
-  /// negotiable, so where the two readings of one account collide, staff wins.
-  ///
-  /// That collision was a linker bug in its own right — one Azure object id
-  /// should not reach two linked records — and #386 fixed it at the source:
-  /// `link()` now arbitrates the disputed account (INV-27) and raises an
-  /// `AzureAccountClaimedTwice` warning, so a freshly linked snapshot can no
-  /// longer put a staff-claimed id on a [LinkedAccount] at all.
-  ///
-  /// The guard stays anyway, as defence in depth. A [LinkedSnapshot] does not
-  /// have to be one this build just produced — the State layer also renders one
-  /// read back from the shared store — and every removal below it is a *delete*
-  /// against Graph. The staff/titular guarantee is not something to make
-  /// conditional on where the snapshot came from.
-  bool _isFormerStudentOfOurs(LinkedAccount account, String azureId) {
-    if (_staffAzureIds.contains(azureId)) return false;
-    if (account.wisa != null || account.smartschool != null) return true;
-    final azure = account.azure;
-    return azure is az.AzureUser &&
-        studentBelongsToSchool(azure.companyName, schoolPrefix);
-  }
+  /// Whether the class holds students in WISA, whatever state their Azure
+  /// accounts are in. Read by [planFor] to tell "this class is empty" apart
+  /// from "this class's students have no Azure accounts yet".
+  bool containsStudentsOf(String className) =>
+      _classesWithStudents.contains(className);
 
   /// The Office 365 class-group placement of one student (#245) — the
   /// per-account view of the membership [planFor] reports per class.
