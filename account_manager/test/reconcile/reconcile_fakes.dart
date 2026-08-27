@@ -3136,6 +3136,74 @@ ReconcileHarness azureClassMembershipHarness({
       ourSchoolIds: const {1},
     );
 
+/// A harness for the class group a **departed** student is still sitting in
+/// (#385). One class, `1A`, whose Office 365 group `GBS-1A` holds three members:
+///
+/// - **Jane**, still in 1A — she belongs there, and the roster agrees;
+/// - **Tom**, gone from WISA altogether. Nothing is left of him but the Office
+///   365 account, which per the no-alumni rule makes his linked record an
+///   incomplete, Azure-only one flagged for deletion — and `companyName` is what
+///   still says he was one of ours (INV-22). He was in 1A last year and nothing
+///   ever took him out of the group;
+/// - **Anna Smit**, the class titular. Complete in all three systems and stamped
+///   the way staff are — the prefix in the comma-separated `department`, never in
+///   the student `companyName` — so she is out of every removal's reach.
+///
+/// WISA and Smartschool agree about the class itself, so the Office 365 roster is
+/// the only work anywhere in the fixture: the class row proposes exactly one
+/// removal, Tom's own card names the group he is still in, and Anna is named by
+/// neither.
+ReconcileHarness departedStudentClassGroupHarness() => ReconcileHarness(
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '1A')],
+        staff: [wisaStaff()],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('1A', description: 'Eerste jaar A')],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane',
+              accountId: '1',
+              mail: 'jane.doe@student.school.example'),
+          ssStaffAccount(),
+        ],
+        memberships: [member('jane', '1A')],
+      ),
+      azure: azSnap(
+        users: [
+          azUser(
+            id: 'az1',
+            upn: 'jane.doe@student.school.example',
+            employeeId: '1',
+            displayName: 'Jane Doe',
+            department: '1A',
+          ),
+          // No WISA row and no Smartschool account: an Azure-only leaver. The
+          // `department` still names the class he sat in, which is exactly how
+          // stale that stamp gets once nobody maintains it.
+          azUser(
+            id: 'az-tom',
+            upn: 'tom.sels@student.school.example',
+            employeeId: '9',
+            displayName: 'Tom Sels',
+            department: '1A',
+          ),
+          azStaffUser(id: 'az-anna'),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1', 'az-tom', 'az-anna']),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the virtual-school class-group exclusion (#209). Two managed
 /// schools: our own school 1, and school 99 — the "Virtuele school" — which the
 /// operator marks **both** beheerd and virtueel, exactly as the real config

@@ -61,11 +61,38 @@ wapi.WisaClassGroup _wClass(
       schoolId: schoolId,
     );
 
+/// An Office 365 account this app owns as one of its **students**: INV-22's
+/// student half is the `companyName` stamp, so an account carrying it and
+/// nothing else is a former pupil of ours, not an unknown (#385).
 az.AzureUser _azUser(String id, {required String employeeId}) => az.AzureUser(
       id: id,
       upn: '$id@$_domain',
       employeeId: employeeId,
       companyName: _prefix,
+    );
+
+/// An Office 365 account this app owns as one of its **staff**: the school
+/// prefix sits in `department`, the comma-separated list other software
+/// maintains, and `companyName` is somebody else's business (INV-22's staff
+/// half). The linker keeps it as a [core.LinkedStaff], which is what puts it
+/// out of every class-group removal's reach (#385).
+az.AzureUser _azStaff(String id, {String? employeeId}) => az.AzureUser(
+      id: id,
+      upn: '$id@school.example',
+      employeeId: employeeId,
+      department: _prefix,
+    );
+
+wapi.WisaSchool _school(int id) =>
+    wapi.WisaSchool(id: id, name: 'School $id', code: '');
+
+wapi.WisaStaff _wStaff({String code = 'SMIT', String wisaId = 's1'}) =>
+    wapi.WisaStaff(
+      code: core.WisaStaffCode(code),
+      wisaId: core.WisaId(wisaId),
+      firstName: 'Anna',
+      lastName: 'Smit',
+      schoolIds: const {1},
     );
 
 az.AzureGroup _classGroup(String className,
@@ -133,19 +160,26 @@ class _SeqResolver implements core.PersonIdResolver {
 
 LinkedState _recompute({
   List<wapi.WisaStudent> students = const [],
+  List<wapi.WisaStaff> staff = const [],
   List<wapi.WisaClassGroup> classGroups = const [],
+  List<wapi.WisaSchool> schools = const [],
   List<az.AzureUser> azureUsers = const [],
   List<az.AzureGroup> azureGroups = const [],
   List<core.Group> ssGroups = const [],
   List<ss.SmartschoolAccount> ssAccounts = const [],
+  // Which WISA schools we manage (#133). Left unset by default so every
+  // WISA-present student reads as ours, exactly as the pre-#134 fixtures
+  // assume; a test about a student who moved to a *sibling* group school
+  // (WisaPresence.groupOnly) has to name it.
+  Set<int>? ourSchoolIds,
 }) =>
     LinkedState.recompute(
       wisa: wapi.WisaSnapshot(
         fetchedAt: _d,
         students: students,
-        staff: const [],
+        staff: staff,
         classGroups: classGroups,
-        schools: const [],
+        schools: schools,
       ),
       smartschool: ss.SmartschoolSnapshot(
         fetchedAt: _d,
@@ -168,10 +202,18 @@ LinkedState _recompute({
         schoolPrefix: _prefix,
         azureDomain: 'school.example',
       ),
+      ourSchoolIds: ourSchoolIds,
     );
 
 List<T> _actionsOfType<T>(LinkedState linked) =>
     linked.groupActions.whereType<T>().toList();
+
+/// The class-level roster plans of a linked view, keyed by bare class name.
+Map<String, actions.AzureClassGroupPlan> _plansByClass(LinkedState linked) => {
+      for (final s
+          in _actionsOfType<actions.SyncAzureClassGroupMembers>(linked))
+        s.plan.className: s.plan,
+    };
 
 void main() {
   group('creating the class group (#228)', () {
@@ -668,14 +710,18 @@ void main() {
 
     test('a member this app cannot account for gets no per-account report', () {
       // The class titular sitting in GBS-2A is not one of our students, so
-      // neither the class plan nor the per-account view names them.
+      // neither the class plan nor the per-account view names them. Their
+      // account is stamped the way a staff account is — the prefix in
+      // `department`, never in the student `companyName` (INV-22) — which is
+      // what makes them a member this app cannot account for as a pupil rather
+      // than an unstamped stranger.
       final linked = _recompute(
         classGroups: [_wClass('2A')],
         students: [_student(wisaId: 'w1', classGroup: '2A')],
         ssAccounts: [_ssAccount('jane', accountId: 'w1')],
         azureUsers: [
           _azUser('az-1', employeeId: 'w1'),
-          _azUser('az-teacher', employeeId: 'staff'),
+          _azStaff('az-teacher', employeeId: 'staff'),
         ],
         azureGroups: [
           _classGroup('2A', memberIds: const ['az-1', 'az-teacher']),
@@ -683,6 +729,250 @@ void main() {
       );
 
       expect(memberships(linked), isEmpty);
+      expect(
+        _actionsOfType<actions.SyncAzureClassGroupMembers>(linked),
+        isEmpty,
+        reason: 'and the class row proposes nothing either — the titular is '
+            'not a roster difference',
+      );
+    });
+  });
+
+  group('a student who left our school (#385)', () {
+    /// The per-student class-group actions of a linked view, keyed by the Azure
+    /// object id of the account they target — the id the class-level plan
+    /// speaks in, so the two views can be compared directly.
+    Map<String, actions.AzureClassGroupMembership> membershipsByAzureId(
+      LinkedState linked,
+    ) =>
+        {
+          for (final a in linked.studentActions
+              .whereType<actions.AzureClassGroupMembership>())
+            a.target.azure!.id: a,
+        };
+
+    test('a leaver is removed from the class group they still sit in', () {
+      // The bug: `w2` is gone from WISA altogether, so their record is the
+      // incomplete, Azure-only one flagged for deletion — and the removal net
+      // used to be built from students *currently* in our WISA, a set they can
+      // never be in. They sat in GBS-2A for ever.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-gone', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-gone']),
+        ],
+      );
+
+      final plan = _plansByClass(linked)['2A'];
+      expect(plan, isNotNull, reason: 'the class has a roster difference now');
+      expect(plan!.membersToRemove, ['az-gone']);
+      expect(plan.membersToAdd, isEmpty);
+    });
+
+    test('a student who moved to a sibling group school is removed too', () {
+      // WisaPresence.groupOnly: still somewhere in the scholengroep, no longer
+      // ours. Their Office 365 account is deliberately kept (#134) — which is
+      // exactly why their membership of *our* class group has to go.
+      final linked = _recompute(
+        schools: [_school(1), _school(2)],
+        classGroups: [_wClass('2A')],
+        students: [
+          _student(wisaId: 'w1', classGroup: '2A'),
+          _student(wisaId: 'w2', classGroup: '3B', schoolId: 2),
+        ],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-moved', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-moved']),
+        ],
+        ourSchoolIds: const {1},
+      );
+
+      expect(_plansByClass(linked)['2A']!.membersToRemove, ['az-moved']);
+    });
+
+    test("a sibling school's class never becomes a target group (INV-25)", () {
+      // The other half of the same record: `3B` is the class the *other* school
+      // holds them in, and it is presence and nothing else. Deriving a target
+      // from it would send this app looking for GBS-3B in our own tenant.
+      final linked = _recompute(
+        schools: [_school(1), _school(2)],
+        classGroups: [_wClass('2A'), _wClass('3B')],
+        students: [
+          _student(wisaId: 'w1', classGroup: '2A'),
+          _student(wisaId: 'w2', classGroup: '3B', schoolId: 2),
+        ],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-moved', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-moved']),
+          _classGroup('3B'),
+        ],
+        ourSchoolIds: const {1},
+      );
+
+      final placement = membershipsByAzureId(linked)['az-moved']!.placement;
+      expect(placement.className, isEmpty);
+      expect(placement.groupName, isNull);
+      expect(placement.missingFromOwnGroup, isFalse,
+          reason: 'they are not missing from a group that is not theirs');
+      expect(placement.strayGroupNames, ['GBS-2A']);
+      expect(_plansByClass(linked).containsKey('3B'), isFalse,
+          reason: 'and our own 3B proposes nothing — a sibling school\'s pupil '
+              'never lands on its roster');
+    });
+
+    test('a teacher in the class group is never removed, bulk included', () {
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        staff: [_wStaff()],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azStaff('az-titular', employeeId: 's1'),
+          _azUser('az-gone', employeeId: 'w9'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-titular', 'az-gone']),
+        ],
+      );
+
+      final sync =
+          _actionsOfType<actions.SyncAzureClassGroupMembers>(linked).single;
+      expect(sync.canApplyToAll, isTrue,
+          reason: 'the September rollover applies this to every class at once, '
+              'so the guarantee has to hold under the bulk flag itself');
+      expect(sync.plan.membersToRemove, ['az-gone']);
+    });
+
+    test(
+        'a teacher whose account also carries the student stamp is still never '
+        'removed', () {
+      // The collision the guard exists for: `companyName` says which school an
+      // account belongs to, never what its holder is (#358). A teacher stamped
+      // with it answers to a LinkedStaff record *and* looks, to the linker's
+      // student pass, exactly like an Azure-only former pupil. Staff is the
+      // reading that decides.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        staff: [_wStaff()],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          const az.AzureUser(
+            id: 'az-titular',
+            upn: 'anna.smit@school.example',
+            employeeId: 's1',
+            companyName: _prefix,
+            department: _prefix,
+          ),
+          _azUser('az-gone', employeeId: 'w9'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-titular', 'az-gone']),
+        ],
+      );
+
+      expect(_plansByClass(linked)['2A']!.membersToRemove, ['az-gone']);
+    });
+
+    test(
+        'a bulk pass over a mixed group removes the mover and the leaver and '
+        'nothing else', () {
+      // Everything a September class group really holds, in one pass: a student
+      // who stayed, one who moved to 2B, one who left the school, the titular,
+      // and a member with no record of any kind — a guest, a shared mailbox.
+      final linked = _recompute(
+        classGroups: [_wClass('2A'), _wClass('2B')],
+        staff: [_wStaff()],
+        students: [
+          _student(wisaId: 'w1', classGroup: '2A'),
+          _student(wisaId: 'w2', classGroup: '2B'),
+        ],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-mover', employeeId: 'w2'),
+          _azUser('az-gone', employeeId: 'w9'),
+          _azStaff('az-titular', employeeId: 's1'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const [
+            'az-1',
+            'az-mover',
+            'az-gone',
+            'az-titular',
+            'az-stranger',
+          ]),
+          _classGroup('2B'),
+        ],
+      );
+
+      final plans = _plansByClass(linked);
+      expect(plans['2A']!.membersToRemove, ['az-mover', 'az-gone'],
+          reason: 'the mover behaves exactly as it did before #385, and the '
+              'leaver joins it — the titular and the stranger do not');
+      expect(plans['2A']!.membersToAdd, isEmpty);
+      expect(plans['2B']!.membersToAdd, ['az-mover']);
+      expect(plans['2B']!.membersToRemove, isEmpty);
+    });
+
+    test(
+        "the leaver's own card names the group the class row removes them "
+        'from', () {
+      // The two views are built by one resolver so they cannot disagree about a
+      // student; fixing only the class plan is what would have made them.
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-gone', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1', 'az-gone']),
+        ],
+      );
+
+      final byAzureId = membershipsByAzureId(linked);
+      expect(byAzureId.keys, ['az-gone'],
+          reason: 'nobody else has a class-group problem to report');
+      final action = byAzureId['az-gone']!;
+      expect(action.placement.strayGroupNames, ['GBS-2A']);
+      expect(action.canApply, isFalse,
+          reason: 'the class-level sync still performs the one write');
+      expect(
+        action.describeChanges().summary,
+        contains('Staat nog in de Office 365-klasgroep GBS-2A'),
+      );
+      expect(_plansByClass(linked)['2A']!.membersToRemove, ['az-gone'],
+          reason: 'the same student, the same group, read the other way');
+    });
+
+    test('a leaver who is in no class group of ours reports nothing', () {
+      final linked = _recompute(
+        classGroups: [_wClass('2A')],
+        students: [_student(wisaId: 'w1', classGroup: '2A')],
+        azureUsers: [
+          _azUser('az-1', employeeId: 'w1'),
+          _azUser('az-gone', employeeId: 'w2'),
+        ],
+        azureGroups: [
+          _classGroup('2A', memberIds: const ['az-1']),
+        ],
+      );
+
+      expect(membershipsByAzureId(linked), isEmpty);
+      expect(
+          _actionsOfType<actions.SyncAzureClassGroupMembers>(linked), isEmpty);
     });
   });
 }
