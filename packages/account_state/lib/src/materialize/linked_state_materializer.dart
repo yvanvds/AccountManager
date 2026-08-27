@@ -654,6 +654,20 @@ Map<String, List<String>> _warningsByUid(List<core.LinkWarning> warnings) {
         // itself still carries the ambiguity, on
         // `LinkedAccount.azureDuplicates`.
         break;
+      case core.AzureAccountClaimedTwice():
+        // Names an *Office 365 account* both populations claimed (INV-27,
+        // #386), and the record it was taken away from no longer exists — the
+        // linker dropped it — so there is nothing left to hang a per-uid string
+        // on, and the record that kept the account is the one reading of it
+        // that is *not* in doubt. The `decisions_merge` hazard above applies
+        // here too: a warning string on a `MaterializedAccount` is read
+        // type-blind as a live duplicate-*mail* collision.
+        //
+        // Surfaced snapshot-wide instead, like the two collisions above: the
+        // sync log names every account two populations claimed and what the
+        // linker did about it, which is where the operator reads that a stamp
+        // in Entra needs fixing.
+        break;
     }
   }
   return byUid;

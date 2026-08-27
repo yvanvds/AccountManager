@@ -3483,6 +3483,7 @@ class ReconcileController extends ChangeNotifier {
     _logSkippedNamesakes(s.warnings);
     _logIdCollisions(s.warnings);
     _logAzureIdentityCollisions(s.warnings);
+    _logAzureClaimCollisions(s.warnings);
   }
 
   Future<void> _relink() async {
@@ -3587,6 +3588,42 @@ class ReconcileController extends ChangeNotifier {
         'WISA-id "${w.employeeId}". Los dit op in Entra; de app kiest niet. '
         'Accounts: ${w.accounts.map(_describeAzureAccount).join(' | ')}.',
       );
+    }
+  }
+
+  /// Names every Office 365 account that both the student and the staff pass
+  /// claimed (INV-27, #386).
+  ///
+  /// The stamps are the cause and Entra is the only place to fix them: an
+  /// account carrying the student `companyName` *and* a `department` naming us
+  /// reads as a pupil to one half of INV-22 and as a colleague to the other.
+  /// The linker no longer lets that become two records — which is what used to
+  /// put "Verwijder Azure account" on a teacher — but the choice it makes is
+  /// still a guess, so it is logged rather than absorbed.
+  ///
+  /// An **error** when nothing could be decided, because both claimants are real
+  /// records and the app will keep offering both readings' actions until
+  /// somebody intervenes; a message otherwise, where the reading it settled on
+  /// is the safe one.
+  void _logAzureClaimCollisions(List<core.LinkWarning> warnings) {
+    for (final w in warnings) {
+      if (w is! core.AzureAccountClaimedTwice) continue;
+      final kept = switch (w.resolution) {
+        core.AzureClaimResolution.keptAsStaff =>
+          'de app behandelt het als personeel',
+        core.AzureClaimResolution.keptAsStudent =>
+          'de app behandelt het als leerling',
+        core.AzureClaimResolution.unresolved =>
+          'de app kan niet kiezen: beide records blijven bestaan',
+      };
+      final line = 'Office 365-account "${w.account.upn}" wordt zowel door een '
+          'leerling als door een personeelslid geclaimd — controleer '
+          'companyName en department in Entra. Voorlopig: $kept.';
+      if (w.resolution == core.AzureClaimResolution.unresolved) {
+        log.addError(core.Origin.azure, line);
+      } else {
+        log.addMessage(core.Origin.azure, line);
+      }
     }
   }
 

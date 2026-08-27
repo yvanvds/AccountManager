@@ -282,12 +282,17 @@ class AzureClassGroupResolver {
   /// last year's class is the point of #385; the staff/titular guarantee is not
   /// negotiable, so where the two readings of one account collide, staff wins.
   ///
-  /// That collision is a linker bug in its own right — one Azure object id
-  /// should not reach two linked records — and it is filed as #386, which also
-  /// covers the *other* thing the double record does: draw a proposal to delete
-  /// the teacher's Office 365 account. This guard is deliberately local to the
-  /// class-group removal and fixes neither; it only makes sure the widened net
-  /// cannot inherit the fault.
+  /// That collision was a linker bug in its own right — one Azure object id
+  /// should not reach two linked records — and #386 fixed it at the source:
+  /// `link()` now arbitrates the disputed account (INV-27) and raises an
+  /// `AzureAccountClaimedTwice` warning, so a freshly linked snapshot can no
+  /// longer put a staff-claimed id on a [LinkedAccount] at all.
+  ///
+  /// The guard stays anyway, as defence in depth. A [LinkedSnapshot] does not
+  /// have to be one this build just produced — the State layer also renders one
+  /// read back from the shared store — and every removal below it is a *delete*
+  /// against Graph. The staff/titular guarantee is not something to make
+  /// conditional on where the snapshot came from.
   bool _isFormerStudentOfOurs(LinkedAccount account, String azureId) {
     if (_staffAzureIds.contains(azureId)) return false;
     if (account.wisa != null || account.smartschool != null) return true;

@@ -122,6 +122,36 @@ void main() {
       expect(keys, containsAll(<String>['wisa:1', 'mail:jane@school.example']));
     });
 
+    test('an account both populations claim enumerates one key, not two (#386)',
+        () {
+      // INV-27 drops the record the losing pass manufactured, and the seam has
+      // to see the same population `link` does: a key enumerated for a record
+      // that no longer exists would be minted and persisted for nobody, and a
+      // record `link` kept but the enumerator dropped would hit an unprepared
+      // key mid-pass. Both are the same drift, in opposite directions.
+      final teacher = azSnap([
+        azureUser(
+          id: 'az-titular',
+          upn: 'titularis@school.example',
+          employeeId: '100',
+          companyName: 'SMA',
+          department: 'SMA-team',
+        ),
+      ]);
+      final staffOnly =
+          wisaSnap(const [], staff: [wisaStaff('DOE', wisaId: '100')]);
+      final recorder = _RecordingResolver();
+      link(staffOnly, ssSnap(const []), teacher, recorder, schoolPrefix: 'SMA');
+
+      final keys = naturalKeysFor(staffOnly, ssSnap(const []), teacher,
+          schoolPrefix: 'SMA');
+
+      expect(keys, equals(recorder.resolved.toSet()));
+      expect(keys, <String>{'staff:wisa:100'});
+      expect(keys.any((k) => k.startsWith('upn:')), isFalse,
+          reason: 'the dropped student orphan contributes no key');
+    });
+
     test('is a pure function of the snapshots — no group keys, stable', () {
       // Groups carry no PersonId; the enumerated set is unchanged whether or not
       // the resolver would be called, and repeated calls agree.

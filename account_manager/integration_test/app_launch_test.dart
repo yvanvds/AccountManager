@@ -7839,6 +7839,98 @@ void main() {
   });
 
   testWidgets(
+      'a teacher whose Office 365 account also carries the student '
+      'companyName is one staff row, never a deletion proposal, end-to-end '
+      '(#386)', (WidgetTester tester) async {
+    // The reported bug, in the real app. Anna Smit is the titular: WISA staff,
+    // a Smartschool teacher account, an Office 365 account — and that account
+    // carries `companyName: GBS` beside the `department` that names us. The two
+    // linker passes read different fields of it, so she arrived as a LinkedStaff
+    // *and* as an Azure-only LinkedAccount, and the second reading is precisely
+    // the shape `RemoveStudentFromAzure` fires on.
+    //
+    // End-to-end because the failure was a card an operator would have clicked:
+    // a person appearing twice in the Acties inventory, once under Leerlingen
+    // with "Verwijder Azure account" on it. Whether the app can be talked into
+    // deleting a colleague's account is a property of the whole pass — link,
+    // materialize, dispatch, and the two tabs the result is browsed in — not of
+    // any one of them.
+    useTallWindow(tester);
+    final harness = doubleStampedTeacherHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+    expect(harness.controller.error, isNull);
+
+    // Nothing anywhere proposes deleting an Office 365 account — not the
+    // student family, not the staff family. This is the invariant the issue is
+    // about, so it is asserted on the pending set as a whole rather than on the
+    // one card it used to show up on.
+    final allKinds = harness.controller.pendingEntries
+        .expand((e) => e.choices)
+        .expand((c) => c.alternatives)
+        .map((a) => a.kind)
+        .toList();
+    expect(allKinds, isNot(contains('RemoveStudentFromAzure')),
+        reason: 'a staff-stamped account must never reach the student delete');
+    expect(allKinds, isNot(contains('RemoveStaffFromAzure')));
+
+    // Two people, two rows — the titular is not also a pupil.
+    expect(harness.controller.linkedAccounts, hasLength(2));
+    expect(
+      harness.controller.linkedAccounts
+          .where((a) => !a.isStaff)
+          .map((a) => a.label),
+      ['Jane Doe'],
+    );
+
+    // Acties, with the work-list filter off so the lists show everybody the
+    // pass linked — the titular is then absent from Leerlingen because no such
+    // record exists, not because a filter is hiding it.
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+    final Finder onlyWithActions =
+        find.byKey(const ValueKey('actions-only-with-actions'));
+    await tester.ensureVisible(onlyWithActions);
+    await tester.tap(onlyWithActions);
+    await tester.pumpAndSettle();
+
+    // Leerlingen: the pupil has a row, the titular has none. Her old row was
+    // labelled by her UPN — an Azure-only record has no WISA or Smartschool name
+    // to be known by, which is itself how little was left of the "student" the
+    // app had invented.
+    final String student = accountId(harness, 'Jane Doe');
+    expect(find.byKey(ValueKey('account-row-$student')), findsOneWidget);
+    expect(find.text('anna.smit@school.example'), findsNothing);
+
+    // She is on Personeel instead, once, and selecting her offers no delete.
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+    final String staff = accountId(harness, 'Anna Smit');
+    expect(find.byKey(ValueKey('account-row-$staff')), findsOneWidget);
+    await selectAccount(tester, staff);
+    expect(find.text('Verwijder Azure account'), findsNothing);
+
+    // And the pass says what it did about the stamps, because Entra is the only
+    // place they can actually be fixed.
+    expect(
+      harness.log.entries.map((e) => e.message).where((m) =>
+          m.contains('anna.smit@school.example') &&
+          m.contains('zowel door een leerling als door een personeelslid')),
+      hasLength(1),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the duplicate tile dates each account and says which one is being '
       'signed into (#363)', (WidgetTester tester) async {
     // The two facts #360 asked for and could not have, because neither field

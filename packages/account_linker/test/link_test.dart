@@ -2232,4 +2232,231 @@ void main() {
       expect(snapshot.accounts.single.azureDuplicates, isEmpty);
     });
   });
+
+  group('INV-27 — one Azure account, at most one linked record (#386)', () {
+    /// The reported shape: a teacher whose Office 365 account carries **both**
+    /// halves of INV-22's stamp — the student `companyName` and a `department`
+    /// naming us. Nothing in the tenant forbids it (`companyName` says which
+    /// school, never what the holder is, #358), and the two passes used to keep
+    /// the account twice.
+    az.AzureUser bothStamped({
+      String id = 'az-titular',
+      String upn = 'titularis@s.be',
+      String? employeeId = '42',
+    }) =>
+        azureUser(
+          id: id,
+          upn: upn,
+          employeeId: employeeId,
+          companyName: _prefix,
+          department: _prefix,
+        );
+
+    test('a teacher stamped with the student companyName links once, as staff',
+        () {
+      final snapshot = link(
+        wisaSnap(const [], staff: [wisaStaff('SMIT', wisaId: '42')]),
+        ssSnap(const []),
+        azSnap([bothStamped()]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      // The staff record is the anchored one — a WISA staff row says this
+      // person exists outside Azure — so it keeps the account…
+      expect(snapshot.staff, hasLength(1));
+      expect(snapshot.staff.single.azure?.id, 'az-titular');
+      expect(snapshot.staff.single.wisa?.code.value, 'SMIT');
+      // …and the record the student pass manufactured out of the same account
+      // is gone. It is the record `RemoveStudentFromAzure` fired on.
+      expect(snapshot.accounts, isEmpty,
+          reason: 'a teacher must never also be an Azure-only student record');
+
+      final warning =
+          snapshot.warnings.whereType<AzureAccountClaimedTwice>().single;
+      expect(warning.account.id, 'az-titular');
+      expect(warning.resolution, AzureClaimResolution.keptAsStaff);
+    });
+
+    test(
+        'no linked record anywhere holds one Azure object id twice, whichever '
+        'systems the teacher is in', () {
+      // The invariant itself, over every combination of the anchors a staff
+      // record can have. Whatever else changes, the disputed account may not be
+      // reachable from a LinkedAccount *and* a LinkedStaff — that is the state
+      // that puts a delete proposal on a colleague.
+      final cases =
+          <String, (List<wapi.WisaStaff>, List<ss.SmartschoolAccount>)>{
+        'WISA only': ([wisaStaff('SMIT', wisaId: '42')], const []),
+        'Smartschool only': (
+          const [],
+          [
+            ssStaffAccount(
+                uid: 'smit', accountId: 'SMIT', mail: 'titularis@s.be')
+          ]
+        ),
+        'both': (
+          [wisaStaff('SMIT', wisaId: '42')],
+          [
+            ssStaffAccount(
+                uid: 'smit', accountId: 'SMIT', mail: 'titularis@s.be')
+          ]
+        ),
+        // Nothing but the stamps: an account both INV-22 halves keep as an
+        // orphan. Staff wins — a delete on a possible colleague is the one
+        // mistake that cannot be undone.
+        'neither': (const [], const []),
+      };
+
+      for (final entry in cases.entries) {
+        final snapshot = link(
+          wisaSnap(const [], staff: entry.value.$1),
+          ssSnap(entry.value.$2),
+          azSnap([bothStamped()]),
+          SeqResolver(),
+          schoolPrefix: _prefix,
+        );
+
+        final holders = <String>[
+          for (final a in snapshot.accounts)
+            if (a.azureCandidates.any((u) => u.id == 'az-titular')) 'account',
+          for (final s in snapshot.staff)
+            if (s.azureCandidates.any((u) => u.id == 'az-titular')) 'staff',
+        ];
+        expect(holders, ['staff'], reason: 'anchors: ${entry.key}');
+        expect(
+          snapshot.warnings
+              .whereType<AzureAccountClaimedTwice>()
+              .single
+              .resolution,
+          AzureClaimResolution.keptAsStaff,
+          reason: 'anchors: ${entry.key}',
+        );
+      }
+    });
+
+    test(
+        'the mirror case: a pupil stamped with our department keeps their '
+        'account, and the staff orphan goes', () {
+      // The same fault the other way round — the one that would have proposed
+      // `RemoveStaffFromAzure` on a pupil's account. The student record is the
+      // anchored one here, so it is the manufactured *staff* orphan that yields.
+      final snapshot = link(
+        wisaSnap([wisaStudent('W7')]),
+        ssSnap([ssAccount(uid: 'jane', accountId: 'W7', mail: 'jane@s.be')]),
+        azSnap([
+          azureUser(
+            id: 'az-jane',
+            upn: 'jane@s.be',
+            employeeId: 'W7',
+            companyName: _prefix,
+            department: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts.single.azure?.id, 'az-jane');
+      expect(snapshot.staff, isEmpty);
+      expect(
+        snapshot.warnings
+            .whereType<AzureAccountClaimedTwice>()
+            .single
+            .resolution,
+        AzureClaimResolution.keptAsStudent,
+      );
+    });
+
+    test('two anchored records keep the account and the collision is reported',
+        () {
+      // Neither claimant was manufactured: a WISA student row anchors one, a
+      // Smartschool teacher account the other. Dropping either would trade this
+      // bug for its mirror, so nothing is dropped and the operator is told.
+      final snapshot = link(
+        wisaSnap([wisaStudent('W9')]),
+        ssSnap([
+          ssAccount(uid: 'pupil', accountId: 'W9', mail: 'shared@s.be'),
+          ssStaffAccount(uid: 'teach', accountId: 'TEACH', mail: 'shared@s.be'),
+        ]),
+        azSnap([
+          azureUser(
+            id: 'az-shared',
+            upn: 'shared@s.be',
+            employeeId: 'W9',
+            companyName: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts.single.azure?.id, 'az-shared');
+      expect(snapshot.staff.single.azure?.id, 'az-shared');
+      final warning =
+          snapshot.warnings.whereType<AzureAccountClaimedTwice>().single;
+      expect(warning.resolution, AzureClaimResolution.unresolved);
+    });
+
+    test('an ambiguous staff identity still counts as a claim (INV-26)', () {
+      // The twin of a staff account is staff too, whichever of the pair happens
+      // to carry the student stamp — the same rule the class-group removal net
+      // applies (#385). The twin is the *adopted* slot's rival, so the account
+      // the student pass would have orphaned is the one on `azureDuplicates`.
+      final snapshot = link(
+        wisaSnap(const [], staff: [wisaStaff('SMIT', wisaId: '42')]),
+        ssSnap(const []),
+        azSnap([
+          azureUser(
+            id: 'az-live',
+            upn: 'smit@s.be',
+            employeeId: '42',
+            department: _prefix,
+          ),
+          bothStamped(id: 'az-twin', upn: 's.mit@s.be'),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts, isEmpty);
+      final s = snapshot.staff.single;
+      expect(s.azure?.id, 'az-live');
+      expect(s.azureDuplicates.map((u) => u.id), ['az-twin']);
+      expect(
+        snapshot.warnings
+            .whereType<AzureAccountClaimedTwice>()
+            .single
+            .resolution,
+        AzureClaimResolution.keptAsStaff,
+      );
+    });
+
+    test('an ordinary departed student is still kept, and reports nothing', () {
+      // The guard must not swallow INV-22's own point: an Azure-only account
+      // carrying the student stamp and *nothing* a staff record claims is the
+      // incomplete record the engine flags for deletion. No alumni state, no
+      // second reading — just the orphan, exactly as before.
+      final snapshot = link(
+        wisaSnap(const [], staff: [wisaStaff('SMIT', wisaId: '42')]),
+        ssSnap(const []),
+        azSnap([
+          azureUser(id: 'az-gone', upn: 'gone@s.be', companyName: _prefix),
+          azureUser(
+            id: 'az-smit',
+            upn: 'smit@s.be',
+            employeeId: '42',
+            department: _prefix,
+          ),
+        ]),
+        SeqResolver(),
+        schoolPrefix: _prefix,
+      );
+
+      expect(snapshot.accounts.single.azure?.id, 'az-gone');
+      expect(snapshot.accounts.single.hasLeftGroup, isTrue);
+      expect(snapshot.staff.single.azure?.id, 'az-smit');
+      expect(snapshot.warnings, isEmpty);
+    });
+  });
 }
