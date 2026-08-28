@@ -3231,7 +3231,14 @@ ReconcileHarness departedStudentClassGroupHarness() => ReconcileHarness(
           azStaffUser(id: 'az-anna'),
         ],
         groups: [
-          azClassGroup('1A', memberIds: const ['az1', 'az-tom', 'az-anna']),
+          // `az-sda` is in the group but in no snapshot: a sibling group
+          // school's pupil (#389). Their account carries another school's
+          // `companyName`, so the prefix-scoped Azure read never returns it and
+          // the linker mints no record for it — live, this is an id and nothing
+          // else, which is why no rule written over linked records could reach
+          // it. Represented here exactly as the connector sees it.
+          azClassGroup('1A',
+              memberIds: const ['az1', 'az-tom', 'az-anna', 'az-sda']),
         ],
       ),
       ourSchoolIds: const {1},

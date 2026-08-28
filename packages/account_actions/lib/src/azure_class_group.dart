@@ -69,24 +69,28 @@ class AzureClassGroupPlan {
   /// against) or when membership already matches.
   final List<String> membersToAdd;
 
-  /// Azure object ids to remove: current members this app can name as one of
-  /// its **own students**, present or past, who does not belong in this class.
-  /// Two populations, and both are named rather than inferred:
+  /// Azure object ids to remove: **every current member the class roster does
+  /// not name** (#389). A class group holds the students of that class, so
+  /// anything else in it is a stray — the class-to-class mover, the student who
+  /// has left the schools we manage, the sibling group school's pupil who was
+  /// never ours at all, and the account carrying no school stamp to judge it by.
   ///
-  /// - a student of ours whose WISA class is no longer this one — the
-  ///   class-to-class mover;
-  /// - a student who *was* ours and has left the schools we manage (#385),
-  ///   which per the no-alumni rule is an ordinary linked record that has lost
-  ///   its WISA row (or kept only a sibling group school's). Before #385 this
-  ///   half was missing and a leaver stayed in last year's group for ever: the
-  ///   removal net was built from students currently in our WISA, a set a
-  ///   departed student cannot be in.
+  /// This is plainly `current - roster`, and it deliberately replaced a narrow
+  /// rule that named only accounts the app could account for as its own
+  /// students, present or past (#385). That rule could only ever hold ids of
+  /// accounts *in the Azure snapshot*, which is `$filter`-scoped to our own
+  /// prefix (#224) — so a sibling school's pupil sitting in one of our class
+  /// groups was never read, never linked, and could not be named however the
+  /// predicate was written. A live audit found them in nearly every class group.
   ///
-  /// Deliberately never anybody else — staff and titular membership of class
-  /// groups are out of scope, so a member this app cannot account for as one of
-  /// its own students is left alone. This is a positive test against two known
-  /// sets, never `current - roster`: the difference is what keeps every teacher
-  /// in every class group when [SyncAzureClassGroupMembers] is applied to all.
+  /// The narrow rule's purpose was to keep teachers and titulars out of the net
+  /// when [SyncAzureClassGroupMembers] is applied to all. That is now carried by
+  /// **group identification** instead: these groups hold students only by
+  /// policy, a teacher who needs access is made an *owner* (which Graph keeps in
+  /// a different collection from members, and which this app never reads), and a
+  /// plan is only ever built for a group whose `<PREFIX>-<KLAS>` name matches a
+  /// real WISA class — so the subject groups that genuinely do hold teachers are
+  /// out of reach.
   final List<String> membersToRemove;
 
   /// Whether membership differs from the roster in either direction.
