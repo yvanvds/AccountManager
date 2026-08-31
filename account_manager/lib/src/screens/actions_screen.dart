@@ -1253,7 +1253,10 @@ class _CohortReviewBanner extends StatelessWidget {
       // Scoped to this one decision across the cohort (#292): summing every
       // decision on every card would quote writes this pass will not make.
       scope: controller.applyScopeForDecisions(cohort.decisions),
-      apply: () => controller.applyDecisions(cohort.decisions),
+      apply: (DateTime? deletionDate) => controller.applyDecisions(
+        cohort.decisions,
+        deletionDate: deletionDate,
+      ),
     );
     if (ran) onDisarm();
   }
@@ -1754,7 +1757,10 @@ class _RetireStaffBlock extends StatelessWidget {
         controller: controller,
         title: '$name uit dienst?',
         scope: controller.retirementScope(staff),
-        apply: () => controller.retireStaff(staff),
+        apply: (DateTime? deletionDate) => controller.retireStaff(
+          staff,
+          deletionDate: deletionDate,
+        ),
       );
 }
 

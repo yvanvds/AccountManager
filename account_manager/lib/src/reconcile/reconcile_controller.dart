@@ -145,6 +145,7 @@ class PendingActionOption {
     required this.changes,
     required this.canApply,
     this.canApplyToAll = false,
+    this.usesDeletionDate = false,
     this.noticeFor,
     this.unlockedSystems = const {},
   });
@@ -191,6 +192,15 @@ class PendingActionOption {
   /// here has to re-check it.
   final bool canApplyToAll;
 
+  /// Whether this option's write is stamped with the **uitschrijvingsdatum**
+  /// (#394) — `StudentAction.usesDeletionDate` et al., read off the action for
+  /// every family rather than decided from a list of kinds held here.
+  ///
+  /// What makes the apply confirmation ask for a date before it writes. A pass
+  /// whose selected options all answer `false` never sees the prompt, which is
+  /// every pass but a Smartschool uitschrijving or delete.
+  final bool usesDeletionDate;
+
   /// The situation this **informational** option is context for (#329) —
   /// `StudentAction.noticeFor` et al. — or `null` when it is a decision in its
   /// own right.
@@ -227,7 +237,11 @@ class PendingActionOption {
 /// instead of the hard-coded "Smartschool and Azure AD" it used to claim for
 /// every action.
 class ApplyScope {
-  const ApplyScope({required this.systems, required this.chained});
+  const ApplyScope({
+    required this.systems,
+    required this.chained,
+    this.needsDeletionDate = false,
+  });
 
   /// One entry per action the pass would run: the system that action writes to.
   /// A list, not a set — its length is the change count the dialog quotes, and
@@ -239,6 +253,16 @@ class ApplyScope {
   /// write lands in another system (a new student's / staff member's Office 365
   /// create pulls the Smartschool create in behind it).
   final Set<core.Origin> chained;
+
+  /// Whether **any** action this pass would run is stamped with the
+  /// uitschrijvingsdatum (#394) — what makes the confirmation ask for a date
+  /// before it lets the pass start.
+  ///
+  /// One answer for the whole scope, and that is the point: a departure batch is
+  /// many students sharing one date, so a bulk apply asks once and writes one
+  /// date to every account in the run. Asking per student would replace a wrong
+  /// default with a tedious one.
+  final bool needsDeletionDate;
 
   /// Nothing selected — a dialog built from this claims no write at all.
   static const ApplyScope empty =
@@ -1159,6 +1183,10 @@ class ReconcileController extends ChangeNotifier {
       // The school-wide sanction of #293, carried here so #296's per-decision
       // "Toepassen op alle" can read it off the pending list.
       canApplyToAll: (a) => a.canApplyToAll,
+      // The uitschrijvingsdatum flag of #394, read off the action for the same
+      // reason: which resolutions carry an official date is the domain's
+      // statement, not a list of class names the Acties screen keeps.
+      usesDeletionDate: (a) => a.usesDeletionDate,
       // The #329 notice relation, read off the action for every family so no
       // screen has to know which one happens to have notices today.
       noticeFor: (a) => a.noticeFor,
@@ -1193,6 +1221,7 @@ class ReconcileController extends ChangeNotifier {
       // action is applyable today, but nothing here should assume it.
       canApply: (a) => a.canApply,
       canApplyToAll: (a) => a.canApplyToAll,
+      usesDeletionDate: (a) => a.usesDeletionDate,
       noticeFor: (a) => a.noticeFor,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
@@ -1206,6 +1235,7 @@ class ReconcileController extends ChangeNotifier {
       changes: (a) => a.describeChanges(),
       canApply: (a) => a.canApply,
       canApplyToAll: (a) => a.canApplyToAll,
+      usesDeletionDate: (a) => a.usesDeletionDate,
       noticeFor: (a) => a.noticeFor,
       unlockedSystems: (a) => a.unlockedSystems,
     ));
@@ -1449,6 +1479,7 @@ class ReconcileController extends ChangeNotifier {
     required actions.ChangeSet Function(T) changes,
     required bool Function(T) canApply,
     required bool Function(T) canApplyToAll,
+    required bool Function(T) usesDeletionDate,
     required String? Function(T) noticeFor,
     required Set<core.Origin> Function(T) unlockedSystems,
   }) {
@@ -1483,6 +1514,7 @@ class ReconcileController extends ChangeNotifier {
                   changes: changes(a),
                   canApply: canApply(a),
                   canApplyToAll: canApplyToAll(a),
+                  usesDeletionDate: usesDeletionDate(a),
                   noticeFor: noticeFor(a),
                   unlockedSystems: unlockedSystems(a),
                 ),
@@ -2338,7 +2370,14 @@ class ReconcileController extends ChangeNotifier {
     final chained = <core.Origin>{
       for (final o in selected) ...o.unlockedSystems,
     }..removeAll(systems);
-    return ApplyScope(systems: systems, chained: chained);
+    return ApplyScope(
+      systems: systems,
+      chained: chained,
+      // One dated action in the pass is enough to have to ask (#394): the date
+      // is asked once for the whole run, and the actions that ignore it are
+      // unaffected by carrying it.
+      needsDeletionDate: selected.any((o) => o.usesDeletionDate),
+    );
   }
 
   /// The live actions to run for [decisions]: each one's selected option, in
@@ -2911,8 +2950,14 @@ class ReconcileController extends ChangeNotifier {
       dryRunEntries(<PendingAccountEntry>[entry]);
 
   /// Applies one entry's chosen resolution (#110): the per-row apply.
-  Future<void> applyEntry(PendingAccountEntry entry) =>
-      applyEntries(<PendingAccountEntry>[entry]);
+  Future<void> applyEntry(
+    PendingAccountEntry entry, {
+    DateTime? deletionDate,
+  }) =>
+      applyEntries(
+        <PendingAccountEntry>[entry],
+        deletionDate: deletionDate,
+      );
 
   /// Applies **every** chosen resolution on each of [entries] (#110) — the
   /// whole-card pass. Each entry keeps its own chosen alternative, so one
@@ -2933,8 +2978,16 @@ class ReconcileController extends ChangeNotifier {
   /// header counted makes that mismatch structurally impossible: label,
   /// confirmation scope ([applyScope]) and write are one
   /// list.
-  Future<void> applyEntries(Iterable<PendingAccountEntry> entries) =>
-      _run(decisionsOf(entries), dry: false);
+  ///
+  /// [deletionDate] is the uitschrijvingsdatum the operator answered with
+  /// (#394), carried straight into `ApplyOptions` for the whole pass. `null`
+  /// means nothing asked — the pass then behaves exactly as it did before, with
+  /// each dated write falling back to its own default.
+  Future<void> applyEntries(
+    Iterable<PendingAccountEntry> entries, {
+    DateTime? deletionDate,
+  }) =>
+      _run(decisionsOf(entries), dry: false, deletionDate: deletionDate);
 
   /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes.
   Future<void> dryRunEntries(Iterable<PendingAccountEntry> entries) =>
@@ -2960,8 +3013,14 @@ class ReconcileController extends ChangeNotifier {
   ///
   /// That narrowing is [_bulkSanctioned], and it lives here rather than in the
   /// affordances so the invariant survives a new one (#326).
-  Future<void> applyDecisions(Iterable<PendingDecision> decisions) =>
-      _runBulk(decisions, dry: false);
+  ///
+  /// [deletionDate] is one answer for the whole run (#394) — the bulk case the
+  /// remembered uitschrijvingsdatum exists for.
+  Future<void> applyDecisions(
+    Iterable<PendingDecision> decisions, {
+    DateTime? deletionDate,
+  }) =>
+      _runBulk(decisions, dry: false, deletionDate: deletionDate);
 
   /// Dry-runs [decisions] — [applyDecisions] with no writes.
   Future<void> dryRunDecisions(Iterable<PendingDecision> decisions) =>
@@ -3029,6 +3088,11 @@ class ReconcileController extends ChangeNotifier {
       // rather than written as a literal here so the one place the sanction is
       // recorded stays the one place it is read.
       canApplyToAll: command.canApplyToAll,
+      // False: the command itself writes an import rule, which carries no date
+      // (#394). The Smartschool half it *unlocks* may — but a chained follow-up
+      // is named, never counted, exactly as [ApplyScope.chained] treats the
+      // systems it reaches, and a date is asked for the writes this pass plans.
+      usesDeletionDate: command.usesDeletionDate,
       unlockedSystems: command.unlockedSystems,
     );
     final entry = PendingAccountEntry(
@@ -3047,13 +3111,18 @@ class ReconcileController extends ChangeNotifier {
 
   /// Retires [staff] — one record, never a list. There is deliberately no
   /// `retireStaffMembers`.
-  Future<void> retireStaff(core.LinkedStaff staff, {bool dry = false}) async {
+  Future<void> retireStaff(
+    core.LinkedStaff staff, {
+    bool dry = false,
+    DateTime? deletionDate,
+  }) async {
     final decision = retirementFor(staff);
     if (decision == null) return;
     return _run(
       <PendingDecision>[decision],
       dry: dry,
       subject: '${_staffLabel(staff)} uit dienst',
+      deletionDate: deletionDate,
     );
   }
 
@@ -3070,10 +3139,11 @@ class ReconcileController extends ChangeNotifier {
   Future<void> _runBulk(
     Iterable<PendingDecision> decisions, {
     required bool dry,
+    DateTime? deletionDate,
   }) async {
     final sanctioned = _bulkSanctioned(decisions);
     if (sanctioned.isEmpty) return;
-    return _run(sanctioned, dry: dry);
+    return _run(sanctioned, dry: dry, deletionDate: deletionDate);
   }
 
   /// [decisions] narrowed to the ones a **bulk** pass is allowed to write
@@ -3126,6 +3196,7 @@ class ReconcileController extends ChangeNotifier {
     Iterable<PendingDecision> decisions, {
     required bool dry,
     String? subject,
+    DateTime? deletionDate,
   }) async {
     if (busy || _linked == null) return;
     final selected = _selectedActions(decisions);
@@ -3148,8 +3219,18 @@ class ReconcileController extends ChangeNotifier {
     _holdDerived = !dry;
     _begin(ReconcilePhase.applying);
 
-    final options =
-        dry ? actions.ApplyOptions.dry : const actions.ApplyOptions();
+    // The uitschrijvingsdatum the operator answered with, carried for the whole
+    // pass (#394) — one date for a departure batch, which is the case that
+    // motivates asking at all. `null` is the pre-#394 behaviour: every dated
+    // write falls back to its own default.
+    //
+    // Carried on the dry-run branch too. No dry-run affordance asks for a date
+    // — a dry run writes nothing, so there is nothing to date — but a projection
+    // made *with* one has to be a projection of the pass that would follow it,
+    // not of a different one.
+    final options = dry
+        ? actions.ApplyOptions(dryRun: true, deletionDate: deletionDate)
+        : actions.ApplyOptions(deletionDate: deletionDate);
     final results = <ActionOutcomeEntry>[];
     // The WISA import rules this pass earned (#276). Collected across the whole
     // pass and written once at the end rather than per action, so blacklisting

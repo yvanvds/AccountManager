@@ -81,6 +81,21 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
   /// was saved" is not "it was saved for the right year".
   final List<String> savedClassSchoolYears = <String>[];
 
+  /// The `officialDate` every `unregisterStudent` carried, in order (#394) —
+  /// the uitschrijvingsdatum that actually went on the wire, in Smartschool's
+  /// own unpadded `Y-M-D`.
+  ///
+  /// Read off the envelope for the same reason [savedClassSchoolYears] is, and
+  /// it is the whole point of the issue: "an uitschrijving happened" is not
+  /// "it was recorded as of the day the student left". Before #394 every one of
+  /// these was the moment the operator pressed the button.
+  final List<String> unregisteredOn = <String>[];
+
+  /// The same for `delUser` (#394) — the official date a Smartschool delete was
+  /// struck off on. `1-1-1` is the API's own "no date" sentinel, which is what
+  /// an unanswered pass still sends.
+  final List<String> deletedOn = <String>[];
+
   /// When set, a SOAP call whose action this answers with an error **throws**
   /// instead of replying — the wire coming apart (a dropped connection, a
   /// gateway error, XML that does not parse) rather than Smartschool returning
@@ -99,6 +114,8 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
       RegExp(r'<stamboeknummer[^>]*>([^<]*)</stamboeknummer>');
   static final RegExp _schoolYearArg =
       RegExp(r'<schoolYearDate[^>]*>([^<]*)</schoolYearDate>');
+  static final RegExp _officialDateArg =
+      RegExp(r'<officialDate[^>]*>([^<]*)</officialDate>');
 
   @override
   Future<String> send({
@@ -141,6 +158,12 @@ class RecordingSoap implements ss.SmartschoolSoapTransport {
     if (soapAction.endsWith('#saveClass')) {
       savedClassSchoolYears
           .add(_schoolYearArg.firstMatch(envelope)?.group(1) ?? '');
+    }
+    if (soapAction.endsWith('#unregisterStudent')) {
+      unregisteredOn.add(_officialDateArg.firstMatch(envelope)?.group(1) ?? '');
+    }
+    if (soapAction.endsWith('#delUser')) {
+      deletedOn.add(_officialDateArg.firstMatch(envelope)?.group(1) ?? '');
     }
     // Every recorded write succeeds (return code 0).
     return '<?xml version="1.0" encoding="utf-8"?>'

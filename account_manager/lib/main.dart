@@ -20,6 +20,7 @@ import 'src/auth/method_channel_aad_broker.dart';
 import 'src/auth/sign_in_session.dart';
 import 'src/reconcile/reconcile_bootstrap.dart';
 import 'src/settings/connection_config.dart';
+import 'src/settings/local_preferences.dart';
 import 'src/settings/settings_bootstrap.dart';
 import 'src/update/update_bootstrap.dart';
 
@@ -33,7 +34,15 @@ void main() => launchAccountManager();
 /// store, so driving the *real* entry point can neither depend on nor touch the
 /// operator's own configuration — which matters more since #384, because that
 /// file now decides whether the app signs in at all.
-Future<void> launchAccountManager({ConnectionStore? connection}) async {
+///
+/// [preferences] is the same seam for this operator's own working state (#394)
+/// — the remembered uitschrijvingsdatum and whatever joins it — and exists for
+/// exactly the same reason: a headless run must be able to prove a value
+/// survives a restart without writing to the real `%APPDATA%`.
+Future<void> launchAccountManager({
+  ConnectionStore? connection,
+  LocalPreferenceStore? preferences,
+}) async {
   // Resolving the bootstrap is an async file read, and the values it carries
   // decide what `runApp` is handed, so the binding has to exist before the
   // await.
@@ -50,6 +59,14 @@ Future<void> launchAccountManager({ConnectionStore? connection}) async {
   // defaults and says so in Instellingen → Verbinding.
   final store = connection ?? connectionStoreForThisMachine();
   final resolved = await store.read();
+
+  // This operator's remembered working state (#394). Loaded here, before
+  // `runApp`, so a screen can ask what is remembered during a build instead of
+  // awaiting a file read in the middle of one. It never throws — nothing
+  // remembered is a state every fresh install is in.
+  final localPreferences =
+      LocalPreferences(preferences ?? localPreferenceStoreForThisMachine());
+  await localPreferences.load();
 
   // Azure AD app-registration values: this machine's connection.json over the
   // --dart-define values over the (empty) compiled defaults — see AadAppConfig.
@@ -100,6 +117,8 @@ Future<void> launchAccountManager({ConnectionStore? connection}) async {
     AccountManagerApp(
       session: session,
       graph: config.isConfigured ? config.graph : null,
+      // The remembered per-machine answers (#394), handed to the whole tree.
+      preferences: localPreferences,
       // The Verbinding tab's own seams. Wired unconditionally — including on a
       // build where AAD is not configured — because this is the tab that exists
       // to be reachable when nothing else is.

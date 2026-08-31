@@ -905,6 +905,12 @@ void main() {
       await tester.ensureVisible(apply);
       await tester.tap(apply);
       await tester.pumpAndSettle();
+      // A departure is dated (#394), so the uitschrijvingsdatum is asked for
+      // first; the confirmation is behind it and reads the same as ever.
+      expect(
+          find.byKey(const ValueKey('deletion-date-dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+      await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
       await tester.pumpAndSettle();
@@ -1350,6 +1356,9 @@ void main() {
 
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+    await tester.pumpAndSettle();
+    // The delete is dated (#394): the uitschrijvingsdatum comes first.
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();

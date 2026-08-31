@@ -28,6 +28,7 @@ import 'package:account_manager/src/screens/system_indicator.dart';
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart'
     show StoreEndpoints;
 import 'package:account_manager/src/settings/connection_config.dart';
+import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_manager/src/settings/settings_bootstrap.dart'
     show SettingsServices;
 import 'package:account_manager/src/shell/app_shell.dart';
@@ -1907,6 +1908,10 @@ void main() {
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
+    // A Smartschool delete is dated (#394): the uitschrijvingsdatum is asked
+    // for before the confirmation.
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -1917,6 +1922,164 @@ void main() {
     expect(summaries, contains('Verwijder dit account uit Smartschool'));
     expect(summaries, isNot(contains('Schrijf de leerling uit in Smartschool')),
         reason: 'only the chosen resolution ran — never both');
+  });
+
+  testWidgets(
+      'the uitschrijvingsdatum is asked once, reaches Smartschool on the wire, '
+      'and is remembered across a restart (#394)', (WidgetTester tester) async {
+    // The end-to-end claim of #394, and it is deliberately not "a dialog
+    // appeared": the date the operator picked in the real calendar is the date
+    // the real `unregisterStudent` envelope carries, and the next student in the
+    // same departure batch gets it without the calendar being opened again —
+    // including after the app has been restarted.
+    //
+    // Only the real app can make that claim. The remembered value crosses a
+    // file on disk and a whole new widget tree, and the prompt sits between a
+    // details pane and a modal progress dialog in a real navigator.
+    useTallWindow(tester);
+    final Directory dir =
+        Directory.systemTemp.createTempSync('am-uitschrijving');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    final LocalPreferenceStore store = FileLocalPreferenceStore(
+      File('${dir.path}${Platform.pathSeparator}$localPreferencesFileName'),
+    );
+
+    ReconcileHarness departed() => ReconcileHarness(
+          wisa: wisaSnap(students: const []),
+          smartschool: ssSnap(
+            groups: const [],
+            accounts: [
+              ssAccount(
+                uid: 'jane',
+                accountId: '1',
+                mail: 'jane.doe@student.school.example',
+              ),
+              ssAccount(
+                uid: 'tom',
+                accountId: '2',
+                mail: 'tom.jansen@student.school.example',
+                givenName: 'Tom',
+                surname: 'Jansen',
+              ),
+            ],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+        );
+
+    Future<void> launch(ReconcileHarness harness) async {
+      // A fresh `LocalPreferences` over the same file each time — which is what
+      // a restart is.
+      final prefs = LocalPreferences(store);
+      await prefs.load();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+        preferences: prefs,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Synchronisatie'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Acties'));
+      await tester.pumpAndSettle();
+    }
+
+    String idOf(ReconcileHarness harness, String label) => harness
+        .controller.pendingEntries
+        .firstWhere((e) => e.family == 'student' && e.target.contains(label))
+        .targetId;
+
+    Future<void> pressApply(String id) async {
+      await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.pumpAndSettle();
+    }
+
+    // --- Jane: the operator picks the day she actually left. ----------------
+    final first = departed();
+    await launch(first);
+    final String jane = idOf(first, 'Jane');
+    await selectAccount(tester, jane);
+    await pressApply(jane);
+
+    expect(find.byKey(const ValueKey('deletion-date-dialog')), findsOneWidget,
+        reason: 'an uitschrijving asks before it writes');
+    // A fresh install remembers nothing, so the field offers today — the honest
+    // default, now on screen instead of supplied by the clock.
+    final DateTime today = DateTime.now();
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('deletion-date-value')))
+          .data,
+      '${today.year}-${today.month.toString().padLeft(2, '0')}-'
+      '${today.day.toString().padLeft(2, '0')}',
+    );
+
+    // Move it, in the real calendar, to the first of this month.
+    await tester.tap(find.byKey(const ValueKey('deletion-date-pick')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('1'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+    final DateTime left = DateTime(today.year, today.month);
+    final String onScreen =
+        '${left.year}-${left.month.toString().padLeft(2, '0')}-01';
+    final String onWire = '${left.year}-${left.month}-1';
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('deletion-date-value')))
+          .data,
+      onScreen,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+    await tester.pumpAndSettle();
+    // The confirmation quotes it back — the last place a stale date is caught.
+    expect(find.textContaining('De uitschrijvingsdatum is $onScreen.'),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+    expect(first.soap.unregisteredOn, <String>[onWire],
+        reason: 'the wire value is the point of the issue — not today, and not '
+            'merely that a dialog appeared');
+
+    // --- Restart. Tom is the same batch, and never sees a calendar. ---------
+    final second = departed();
+    await launch(second);
+    final String tom = idOf(second, 'Tom');
+    await selectAccount(tester, tom);
+    await pressApply(tom);
+
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('deletion-date-value')))
+          .data,
+      onScreen,
+      reason: 'the answer survived the file and the relaunch',
+    );
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(second.soap.unregisteredOn, <String>[onWire],
+        reason: 'one date for the whole departure batch, typed once');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -1970,6 +2133,9 @@ void main() {
     await tester
         .ensureVisible(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
     await tester.tap(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
+    await tester.pumpAndSettle();
+    // The uitschrijving is dated (#394).
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
