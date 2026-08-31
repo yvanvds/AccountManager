@@ -193,6 +193,8 @@ On launch, **release builds only** (`autoCheck: kReleaseMode` in `main()` — a
    can replace the files. `/RELAUNCH=1` is read by the script's own
    `WantsRelaunch` check and is what starts the new version back up — a plain
    `postinstall` entry is skipped under `/SILENT`.
+4. If the published version **is** the one running and this machine has not seen
+   its notes, a **Wat is er nieuw** dialog shows them, once (#395). See below.
 
 Three things it deliberately does **not** do:
 
@@ -206,6 +208,52 @@ Three things it deliberately does **not** do:
   nothing else. There is no timer and no "always update" setting; the consent is
   per update, because the cost of getting it wrong is a restart in the middle of
   a sync.
+
+## The release notes are read by operators, in the app (#395)
+
+**Write them for the operator, not for the changelog.** Since #395 the body of a
+GitHub release is not just install instructions on a web page nobody visits: it
+is what the **Wat is er nieuw** dialog shows on the first launch after the update
+that carried it. If a release changes a default, moves a section of Instellingen,
+or reworks a screen, the release body is now the place that says so — and it is
+the *only* place, because there is no other channel to the people running this.
+
+What that means when writing one:
+
+- **Lead with what changed for the operator.** The SmartScreen paragraph and the
+  install instructions matter to somebody installing by hand; they are noise to
+  the twenty operators who will be shown this after an automatic update. Put the
+  changes first.
+- **Markdown, lightly.** The dialog renders `#`…`######` headings, `-`/`*`/`1.`
+  lists, `**bold**`, `*italic*`, `` `code` ``, fenced code blocks, `---` rules,
+  `[label](url)` links and bare URLs. Anything else falls through to its own
+  literal text, so a table renders as pipes rather than as a table — avoid them.
+- **Not translated.** The notes are shown exactly as written, in whatever
+  language they were written in. Dutch is what the operators read.
+- **An empty body shows no dialog at all.** A release published with no notes is
+  silent, which is better than an empty box — but it also means an update nobody
+  is told about.
+
+How it decides, which is worth knowing before changing it:
+
+- The marker is `releaseNotesSeenVersion` in
+  `%APPDATA%\AccountManager\preferences.json` — **per machine**, deliberately not
+  the shared Cosmos settings document, or the first operator to close the dialog
+  would close it for every colleague. It is in `%APPDATA%` for the same reason
+  the token cache is: the installer never touches that directory, so the marker
+  survives the very update it exists to recognise.
+- **A fresh install never sees it.** An install with nothing recorded *seeds* the
+  marker with the version it is running and says nothing; the second version that
+  install runs is the first one it announces.
+- **Only the current release's notes**, never the ones skipped in between. An
+  operator jumping 1.0.1 → 1.0.4 gets 1.0.4's notes and the **Lees op GitHub**
+  link, which is where the full history already lives.
+- **No extra fetch.** It reads the `body` of the same `/releases/latest` payload
+  the update check already asked for, so a failed or offline read is silent in
+  exactly the way the check is.
+- **Recoverable.** **Instellingen → Verbinding → Versie** grows a **Wat is er
+  nieuw** button whenever the running version has notes, so a dialog closed too
+  fast is one click away rather than gone.
 
 ## SmartScreen
 

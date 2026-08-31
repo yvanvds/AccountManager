@@ -192,6 +192,28 @@ class LocalPreferences {
 
   static const String _lastDeletionDateKey = 'lastDeletionDate';
 
+  /// The version whose release notes this machine has already been shown
+  /// (#395), as the plain `X.Y.Z` text the tag parser reads back.
+  ///
+  /// Machine-local for the same reason the date above is, and the reason is
+  /// sharper here: "what's new" is a thing one *person* has read. Put this in
+  /// the shared Cosmos settings document and the first operator to close the
+  /// dialog closes it for every colleague who has not seen it yet.
+  ///
+  /// `null` means this install has never recorded one — which the update layer
+  /// treats as a **fresh install to seed**, not as a version to announce. See
+  /// [UpdateController.start].
+  String? get releaseNotesSeenVersion {
+    final Object? raw = _values[_releaseNotesSeenVersionKey];
+    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
+  }
+
+  /// Records [version] as the last release whose notes this machine has seen.
+  Future<void> setReleaseNotesSeenVersion(String version) =>
+      _set(_releaseNotesSeenVersionKey, version.trim());
+
+  static const String _releaseNotesSeenVersionKey = 'releaseNotesSeenVersion';
+
   // --- the bag ---------------------------------------------------------------
 
   /// Sets one key and persists the **whole** bag, so a key this build does not

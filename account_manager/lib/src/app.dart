@@ -31,6 +31,7 @@ class AccountManagerApp extends StatelessWidget {
     this.settingsBootstrap,
     this.connection,
     this.update,
+    this.openReleaseLink,
     LocalPreferences? preferences,
   }) : preferences = preferences ?? LocalPreferences.inMemory();
 
@@ -77,6 +78,11 @@ class AccountManagerApp extends StatelessWidget {
   /// "there is no preference store".
   final LocalPreferences preferences;
 
+  /// Where a link in the **Wat is er nieuw** dialog goes (#395); `null` means
+  /// the operator's default browser, which is what production wants. Injected
+  /// only so a test can follow the link without launching one.
+  final Future<void> Function(Uri url)? openReleaseLink;
+
   ThemeData _themed(ThemeData base) => base.copyWith(
         extensions: const <ThemeExtension<dynamic>>[
           PlinkProductAccent(kProductAccent),
@@ -102,6 +108,12 @@ class AccountManagerApp extends StatelessWidget {
             settingsBootstrap: settingsBootstrap,
             connection: connection,
             update: update,
+            // Also handed down explicitly, not only through the scope above:
+            // the shell builds its update controller in `initState`, where an
+            // inherited lookup is not allowed, and that controller is what
+            // remembers which release's notes this machine has read (#395).
+            preferences: preferences,
+            openReleaseLink: openReleaseLink,
           ),
         ),
       ),

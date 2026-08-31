@@ -67,6 +67,56 @@ void main() {
     });
   });
 
+  group('the release-notes marker (#395)', () {
+    test('a fresh install has recorded nothing', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.releaseNotesSeenVersion, isNull);
+    });
+
+    test('survives a restart, because an update is what triggers the dialog',
+        () async {
+      // The criterion that decides where this lives: the installer replaces
+      // `%LOCALAPPDATA%\Programs\AccountManager` and never touches `%APPDATA%`,
+      // so a marker in this file outlives the very update it exists to
+      // recognise.
+      final first = LocalPreferences(FileLocalPreferenceStore(file));
+      await first.load();
+      await first.setReleaseNotesSeenVersion('1.2.0');
+
+      final second = LocalPreferences(FileLocalPreferenceStore(file));
+      await second.load();
+
+      expect(second.releaseNotesSeenVersion, '1.2.0');
+    });
+
+    test('a blank or non-string value reads as nothing recorded', () async {
+      file.writeAsStringSync('{"releaseNotesSeenVersion": "  "}');
+      final blank = LocalPreferences(FileLocalPreferenceStore(file));
+      await blank.load();
+      expect(blank.releaseNotesSeenVersion, isNull);
+
+      file.writeAsStringSync('{"releaseNotesSeenVersion": 120}');
+      final wrongType = LocalPreferences(FileLocalPreferenceStore(file));
+      await wrongType.load();
+      expect(wrongType.releaseNotesSeenVersion, isNull);
+    });
+
+    test('it lives beside the date rather than replacing it', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLastDeletionDate(DateTime(2026, 3, 14));
+      await prefs.setReleaseNotesSeenVersion('1.2.0');
+
+      final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
+      await reloaded.load();
+
+      expect(reloaded.lastDeletionDate, DateTime(2026, 3, 14));
+      expect(reloaded.releaseNotesSeenVersion, '1.2.0');
+    });
+  });
+
   group('the bag never takes a launch down', () {
     test('a file that is not JSON reads as nothing remembered', () async {
       file.writeAsStringSync('this is not json {{{');

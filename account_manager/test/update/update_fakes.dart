@@ -6,6 +6,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_manager/src/update/app_release.dart';
 import 'package:account_manager/src/update/update_controller.dart';
 import 'package:pub_semver/pub_semver.dart';
@@ -16,6 +17,7 @@ AppRelease fakeRelease(
   String version, {
   String notes = '',
   String? installer,
+  String? pageUrl,
 }) =>
     AppRelease(
       version: Version.parse(version),
@@ -25,6 +27,8 @@ AppRelease fakeRelease(
                 'v$version/$installerAssetPrefix$version$installerAssetSuffix',
       ),
       notes: notes,
+      pageUrl: pageUrl ??
+          'https://github.com/yvanvds/AccountManager/releases/tag/v$version',
     );
 
 /// The whole update backend, scripted.
@@ -126,6 +130,25 @@ class FakeUpdateBackend {
         log: logs.add,
       );
 
-  UpdateController controller({bool autoCheck = false}) =>
-      UpdateController(services(autoCheck: autoCheck));
+  UpdateController controller({
+    bool autoCheck = false,
+    LocalPreferences? preferences,
+  }) =>
+      UpdateController(
+        services(autoCheck: autoCheck),
+        preferences: preferences,
+      );
+}
+
+/// A [LocalPreferences] over an in-memory bag, optionally pre-loaded — which is
+/// how a test tells "a fresh install" apart from "a machine that has already
+/// been shown version X" (#395).
+Future<LocalPreferences> fakePreferences({String? notesSeenVersion}) async {
+  final LocalPreferences preferences = LocalPreferences(
+    InMemoryLocalPreferenceStore(<String, Object?>{
+      if (notesSeenVersion != null) 'releaseNotesSeenVersion': notesSeenVersion,
+    }),
+  );
+  await preferences.load();
+  return preferences;
 }

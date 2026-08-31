@@ -163,4 +163,60 @@ void main() {
     expect(backend.downloads, 1);
     expect(backend.launched, hasLength(1));
   });
+
+  testWidgets(
+      'the notes of the running version are re-openable from here (#395)',
+      (WidgetTester tester) async {
+    // The decision this issue asked for: a dismissed **Wat is er nieuw** is
+    // recoverable, from the section that already answers "which version am I
+    // running?".
+    final backend = FakeUpdateBackend(
+      version: '1.2.0',
+      latest: fakeRelease('1.2.0', notes: '## Nieuw\n\n- De WiFi op de bladen'),
+    );
+    final controller = backend.controller(
+      preferences: await fakePreferences(notesSeenVersion: '1.2.0'),
+    );
+    addTearDown(controller.dispose);
+    await controller.start();
+
+    await _pumpSettings(tester, update: controller);
+    await tester.tap(find.byKey(const ValueKey('settings-version-check')));
+    await tester.pumpAndSettle();
+
+    final Finder open =
+        find.byKey(const ValueKey('settings-version-notes-open'));
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('release-notes-dialog')), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('release-notes-version')))
+          .data,
+      'Versie 1.2.0',
+    );
+    expect(find.textContaining('##'), findsNothing);
+  });
+
+  testWidgets('a version with no notes offers nothing to re-open',
+      (WidgetTester tester) async {
+    final backend = FakeUpdateBackend(
+      version: '1.2.0',
+      latest: fakeRelease('1.2.0'),
+    );
+    final controller = backend.controller();
+    addTearDown(controller.dispose);
+    await controller.start();
+
+    await _pumpSettings(tester, update: controller);
+    await tester.tap(find.byKey(const ValueKey('settings-version-check')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('settings-version-notes-open')),
+      findsNothing,
+    );
+  });
 }

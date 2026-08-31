@@ -14883,6 +14883,129 @@ void main() {
     expect(tester.widget<Text>(status).data, contains('Failed host lookup'));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'the first launch after an update shows the release notes once, survives '
+      'the restart, and stays re-openable in Instellingen (#395)',
+      (WidgetTester tester) async {
+    // Every acceptance criterion of #395 in one real run, and each of them needs
+    // this level. The dialog is pushed onto the *real* navigator from a
+    // post-frame callback over a shell that is already on stage; the Markdown is
+    // laid out in the real Plink faces inside a real `AlertDialog` whose width a
+    // widget test's stand-in font would misreport; and "survives an update" is a
+    // claim about a file on disk read back by a whole new widget tree, which is
+    // exactly what a restart is.
+    useTallWindow(tester);
+
+    final Directory dir = Directory.systemTemp.createTempSync('am-whats-new');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    final File prefsFile = File(
+      '${dir.path}${Platform.pathSeparator}$localPreferencesFileName',
+    );
+    // A machine that has been running 1.0.0 — not a fresh install, which is the
+    // case that must stay silent and is covered at the unit level.
+    prefsFile.writeAsStringSync(jsonEncode(<String, Object?>{
+      'releaseNotesSeenVersion': '1.0.0',
+    }));
+
+    final backend = FakeUpdateBackend(
+      version: '1.1.0',
+      latest: fakeRelease(
+        '1.1.0',
+        notes: '## Wat is er veranderd\n\n'
+            '- Wachtwoordbladen tonen nu de **WiFi**.\n'
+            '- De uitschrijvingsdatum wordt onthouden.\n',
+        pageUrl: 'https://example.test/releases/v1.1.0',
+      ),
+    );
+    final List<Uri> opened = <Uri>[];
+
+    Future<void> launch() async {
+      // A fresh `LocalPreferences` over the same file each time — a restart.
+      final prefs = LocalPreferences(FileLocalPreferenceStore(prefsFile));
+      await prefs.load();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        settingsBootstrap: SettingsHarness().bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        update: backend.services(autoCheck: true),
+        preferences: prefs,
+        openReleaseLink: (Uri url) async => opened.add(url),
+      ));
+      await tester.pumpAndSettle();
+    }
+
+    final Finder dialog = find.byKey(const ValueKey('release-notes-dialog'));
+
+    // --- The launch that follows the update. --------------------------------
+    await launch();
+
+    expect(dialog, findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('release-notes-version')))
+          .data,
+      'Versie 1.1.0',
+      reason: 'the notes are the running version, not the offered one',
+    );
+    // Non-blocking: the whole shell is behind it, and there is no update to
+    // apply, so the #371 offer bar stays away.
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.byKey(const ValueKey('update-offer')), findsNothing);
+
+    // Rendered as Markdown, not echoed as source — the reason the issue asks
+    // for a reader at all.
+    expect(find.textContaining('##', findRichText: true), findsNothing);
+    expect(find.textContaining('- Wachtwoordbladen', findRichText: true),
+        findsNothing);
+    expect(find.textContaining('Wachtwoordbladen', findRichText: true),
+        findsWidgets);
+
+    // The link points at the release's own page.
+    await tester.tap(find.byKey(const ValueKey('release-notes-page')));
+    await tester.pumpAndSettle();
+    expect(opened, <Uri>[Uri.parse('https://example.test/releases/v1.1.0')]);
+
+    await tester.tap(find.byKey(const ValueKey('release-notes-close')));
+    await tester.pumpAndSettle();
+    expect(dialog, findsNothing);
+
+    // Written where an update cannot reach it: `%APPDATA%`, not the install
+    // directory the installer replaces.
+    expect(
+      (jsonDecode(prefsFile.readAsStringSync())
+          as Map<String, dynamic>)['releaseNotesSeenVersion'],
+      '1.1.0',
+    );
+
+    // --- Restart. Same version, so nothing to say. --------------------------
+    await launch();
+    expect(dialog, findsNothing, reason: 'never twice for one version');
+    expect(find.byType(NavigationRail), findsOneWidget);
+
+    // --- But recoverable, where the version already lives. ------------------
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-verbinding');
+    final Finder reopen =
+        find.byKey(const ValueKey('settings-version-notes-open'));
+    await tester.ensureVisible(reopen);
+    await tester.pumpAndSettle();
+    await tester.tap(reopen);
+    await tester.pumpAndSettle();
+
+    expect(dialog, findsOneWidget);
+    expect(find.textContaining('Wachtwoordbladen', findRichText: true),
+        findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('release-notes-close')));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
 }
 
 /// The Flutter app's own `pubspec.yaml`, found by walking up from wherever the
