@@ -105,6 +105,7 @@ MaterializedView materialize(
       inAzure: account.azure != null,
       wisaPresence: account.wisaPresence,
       otherEnrolments: _otherEnrolments(account, schoolLabels),
+      azureCompanyName: _azureCompanyName(account),
       warnings: _warningsFor(account.smartschool, warningsByUid),
       candidates: byAccount[account.id.value] ?? const [],
     ));
@@ -595,6 +596,30 @@ List<String> _departmentSchools(core.LinkedStaff staff) {
   final azure = staff.azure;
   if (azure is! az.AzureUser) return const [];
   return core.departmentSchools(azure.department);
+}
+
+/// The school a **student's** Azure `companyName` names, verbatim (#393) —
+/// `null` for a record with no Office 365 account and for one whose field is
+/// blank or absent.
+///
+/// INV-22's student half, and the exact counterpart of [_departmentSchools]: one
+/// value where staff have a list, read through the concrete [az.AzureUser] for
+/// the same reason — [core.LinkedAccount.azure] is the narrow interface and
+/// carries no `companyName`.
+///
+/// Blank and absent collapse to `null` on purpose. They are the same finding —
+/// this account carries no school stamp, which the Aug 2026 audit found on 140
+/// current class-group members (#389) — and the whole point of stating it is
+/// that a *single* reading of it reaches the pane. Nothing else is done to the
+/// value: `afzwaai-SSJ` and `SSM-DIR` keep their casing and their hyphen,
+/// because a normalised rendering would destroy the very thing an operator reads
+/// them for.
+String? _azureCompanyName(core.LinkedAccount account) {
+  final azure = account.azure;
+  if (azure is! az.AzureUser) return null;
+  final String? name = azure.companyName;
+  if (name == null || name.trim().isEmpty) return null;
+  return name;
 }
 
 /// The grade-year bucket for a WISA class group: its leading run of digits

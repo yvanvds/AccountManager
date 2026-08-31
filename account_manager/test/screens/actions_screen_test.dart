@@ -1848,6 +1848,143 @@ void main() {
     expect(find.textContaining('Scholen'), findsNothing);
   });
 
+  // --- The Azure companyName of a student record (#393) ---------------------
+
+  testWidgets(
+      'a student card names the school its Azure companyName stamps, says so '
+      'when there is none, and says nothing without an account (#393)',
+      (WidgetTester tester) async {
+    _useWideWindow(tester);
+    // The three readings the pane owes an operator, side by side. Jane's account
+    // carries `afzwaai-SSJ` — a real value from the Aug 2026 audit (#389). Tom's
+    // carries no stamp at all, which 140 current class-group members did in that
+    // same audit. Nele has no Office 365 account, so there is no field to quote.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: [
+        wisaStudent(),
+        wisaStudent(wisaId: '2', firstName: 'Tom', name: 'Tomsen'),
+        wisaStudent(wisaId: '3', firstName: 'Nele', name: 'Neels'),
+      ]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssAccount(),
+          ssAccount(
+            uid: 'tom',
+            accountId: '2',
+            mail: 'tom.tomsen@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tomsen',
+          ),
+          ssAccount(
+            uid: 'nele',
+            accountId: '3',
+            mail: 'nele.neels@student.school.example',
+            givenName: 'Nele',
+            surname: 'Neels',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [
+        azUser(companyName: 'afzwaai-SSJ'),
+        azUser(
+          id: 'az2',
+          upn: 'tom.tomsen@student.school.example',
+          employeeId: '2',
+          companyName: null,
+        ),
+      ]),
+    );
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+
+    final jane = _idOf(harness.controller, 'Jane Doe');
+    final tom = _idOf(harness.controller, 'Tom Tomsen');
+    final nele = _idOf(harness.controller, 'Nele Neels');
+
+    await _select(tester, jane);
+    // Verbatim: the lower-case prefix and the hyphen are exactly what tells an
+    // operator this account belongs to another school's afzwaai bucket, and a
+    // tidied-up rendering would destroy it.
+    const String stamped = 'Bedrijfsnaam: afzwaai-SSJ';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$jane-azure')),
+        matching: find.text(stamped),
+      ),
+      findsOneWidget,
+    );
+    // Under Office 365 and nowhere else: not WISA, not Smartschool.
+    expect(find.text(stamped), findsOneWidget);
+    // And not on the collapsed row — the two sets of cells share one widget, so
+    // the split has to hold.
+    expect(
+      find.descendant(
+        of: _cell(jane, Origin.azure),
+        matching: find.textContaining('Bedrijfsnaam'),
+      ),
+      findsNothing,
+    );
+
+    // The empty case is a finding, not an absence: an account exists and nobody
+    // stamped it. A missing line would read as "not loaded".
+    await _select(tester, tom);
+    const String unstamped = 'Geen bedrijfsnaam ingesteld';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$tom-azure')),
+        matching: find.text(unstamped),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(stamped), findsNothing);
+
+    // No Office 365 account, so neither line: the absence is already stated, in
+    // colour, by the red cell the line would hang under.
+    await _select(tester, nele);
+    expect(find.textContaining('Bedrijfsnaam'), findsNothing);
+    expect(find.text(unstamped), findsNothing);
+  });
+
+  testWidgets(
+      'a staff card keeps its department schools and never shows a '
+      'companyName, however its account is stamped (#393)',
+      (WidgetTester tester) async {
+    _useWideWindow(tester);
+    // #386's case: a teacher whose Office 365 account carries the *student*
+    // stamp, which nothing in the tenant forbids — `companyName` says which
+    // school an account belongs to, never what its holder is (#358). The staff
+    // reading of "which school" is `department`, and printing the other one
+    // under Office 365 would invite exactly that misreading.
+    final harness = ReconcileHarness(
+      wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [ssStaffAccount()],
+        memberships: const [],
+      ),
+      azure: azSnap(
+        users: [azStaffUser(department: 'SSM,GBS', companyName: 'GBS')],
+      ),
+    );
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-only-with-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+    await tester.pumpAndSettle();
+
+    await _select(tester, _idOf(harness.controller, 'Anna Smit'));
+    expect(find.text('Scholen: SSM, GBS'), findsOneWidget);
+    expect(find.textContaining('Bedrijfsnaam'), findsNothing);
+    expect(find.text('Geen bedrijfsnaam ingesteld'), findsNothing);
+  });
+
   // --- The list / detail split on a narrow window (#295) -------------------
 
   testWidgets(

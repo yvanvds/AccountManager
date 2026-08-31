@@ -1521,8 +1521,10 @@ az.AzureUser azUser({
   String surname = '',
   // The school stamped on a student account. The harness prefix by default, so
   // the account is in step; a fixture about a *stale* copy of it (#315/#316)
-  // names another school here.
-  String companyName = 'GBS',
+  // names another school here. Nullable since #393: the unstamped account is a
+  // real population (140 of them in the Aug 2026 audit, #389), and the details
+  // pane says so out loud, so a fixture has to be able to build one.
+  String? companyName = 'GBS',
   // The other half of the Office 365 licensing rule (#358). In step by default
   // for the same reason `companyName` is; a fixture about the unlicensed account
   // passes null (the blank field this port's own creates left behind) or

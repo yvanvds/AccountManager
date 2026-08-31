@@ -62,7 +62,8 @@ import 'package:account_state/account_state.dart'
         WisaSchoolProfileLabel,
         WorkDateSetting,
         signalRRecordSeparator,
-        staffPartition;
+        staffPartition,
+        unassignedPartition;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
@@ -13905,6 +13906,173 @@ void main() {
           .map((f) => f.field),
       isNot(contains('department')),
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the Office 365 cell of a student card names the school its companyName '
+      'stamps, says so when nobody stamped it, and a session that never pulled '
+      'reads the same (#393)', (WidgetTester tester) async {
+    // The decision this reading exists for, driven end to end. Jane has no WISA
+    // row *of ours*: her card offers "uitschrijven" or "verwijderen", and #392's
+    // blue WISA cell says she is elsewhere in the group without saying where.
+    // `companyName` is the fact that settles it, and until now the operator had
+    // to open the portal to read a field this app already holds.
+    //
+    // Only a full run shows it works. The value has to survive the linker (whose
+    // `LinkedAccount.azure` is the narrow interface and carries no `companyName`
+    // at all), the materializer, the document, the shared store and a second
+    // session's adoption, and land in the one cell it explains. A widget test
+    // renders the pane over a document handed to it; it cannot show that the
+    // document ever carries this.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+
+    // Operator A pulls. Three students, three readings:
+    //   Jane  — moved to sibling group school 2, account stamped `afzwaai-SSJ`
+    //           (a real value from the Aug 2026 audit, #389);
+    //   Tom   — gone from the group entirely, account carrying no stamp at all
+    //           (140 current class-group members did in that same audit);
+    //   Nele  — an ordinary 3C pupil with no Office 365 account yet.
+    await ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(schoolId: 2),
+          wisaStudent(
+            wisaId: '3',
+            firstName: 'Nele',
+            name: 'Neels',
+            classGroup: '3C',
+          ),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssAccount(),
+          ssAccount(
+            uid: 'tom',
+            accountId: '2',
+            mail: 'tom.tomsen@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tomsen',
+          ),
+          ssAccount(
+            uid: 'nele',
+            accountId: '3',
+            mail: 'nele.neels@student.school.example',
+            givenName: 'Nele',
+            surname: 'Neels',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [
+        azUser(companyName: 'afzwaai-SSJ'),
+        azUser(
+          id: 'az2',
+          upn: 'tom.tomsen@student.school.example',
+          employeeId: '2',
+          companyName: null,
+        ),
+      ]),
+      store: snapshots,
+      linkedStore: linkedStore,
+      syncedBy: 'jan@school.example',
+    ).controller.sync();
+
+    // It is on the stored documents, which is what makes the rest possible: the
+    // transient records it was read off do not outlive the pass. Both students
+    // with no class of ours land in the "Niet toegewezen" bucket together, which
+    // is exactly the population this line is for.
+    final List<MaterializedAccount> stranded = await linkedStore.readClassroom(
+      school: unassignedPartition,
+      classroom: 'Zonder klas',
+    );
+    expect(
+      {for (final a in stranded) a.label: a.azureCompanyName},
+      {'Jane Doe': 'afzwaai-SSJ', 'Tom Tomsen': null},
+      reason: 'the stamp verbatim, and a single unambiguous "no stamp"',
+    );
+    // #392's half of the same sentence, on the same two documents: Jane is
+    // elsewhere in the group and Tom is gone from it — the distinction that
+    // makes "uitschrijven" and "verwijderen" different decisions. This issue
+    // adds the school name that settles which.
+    expect(
+      {for (final a in stranded) a.label: a.wisaPresence},
+      {
+        'Jane Doe': WisaPresence.groupOnly,
+        'Tom Tomsen': WisaPresence.absent,
+      },
+    );
+
+    // Operator B launches the real app onto the shared stores and never pulls.
+    final operatorB = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: operatorB.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+
+    final String jane = accountId(operatorB, 'Jane Doe');
+    final String tom = accountId(operatorB, 'Tom Tomsen');
+    final String nele = accountId(operatorB, 'Nele Neels');
+
+    // Jane: the school named, in the field's own casing and with its hyphen.
+    await selectAccount(tester, jane);
+    const String stamped = 'Bedrijfsnaam: afzwaai-SSJ';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$jane-azure')),
+        matching: find.text(stamped),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(stamped), findsOneWidget,
+        reason: 'the details pane only — an extra line under every collapsed '
+            'card of a roster of thousands is noise, and the two sets of cells '
+            'share one widget');
+
+    // Tom: an account exists and nobody stamped it. Said out loud, because a
+    // missing line reads as "not loaded" rather than "not set" — and blank is a
+    // finding here, not an absence of information.
+    await selectAccount(tester, tom);
+    const String unstamped = 'Geen bedrijfsnaam ingesteld';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$tom-azure')),
+        matching: find.text(unstamped),
+      ),
+      findsOneWidget,
+    );
+
+    // Nele: no Office 365 account, so neither line. The absence is already
+    // stated, in colour, by the red cell the line would hang under.
+    await selectAccount(tester, nele);
+    expect(find.textContaining('Bedrijfsnaam'), findsNothing);
+    expect(find.text(unstamped), findsNothing);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-detail-cell-$nele-azure')))
+          .state,
+      SystemIndicatorState.missing,
+    );
+
+    // Read by an operator who pulled nothing: no connector round-trip anywhere
+    // in this session.
+    expect(operatorB.wisaSyncs, 0);
+    expect(operatorB.ssSyncs, 0);
+    expect(operatorB.azSyncs, 0);
     expect(tester.takeException(), isNull);
   });
 
