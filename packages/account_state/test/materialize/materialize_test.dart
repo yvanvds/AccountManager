@@ -926,6 +926,96 @@ void main() {
       expect(managed.rollups.any((r) => r.school == '2'), isTrue);
     });
 
+    group('the document carries where WISA puts the student (#392)', () {
+      // A leaver gone from the whole group: our Smartschool + Azure accounts,
+      // no WISA row anywhere.
+      LinkedState goneFromGroup() => LinkedState.recompute(
+            wisa: wapi.WisaSnapshot(
+              fetchedAt: _d,
+              students: const [],
+              staff: const [],
+              classGroups: const [],
+              schools: const [],
+            ),
+            smartschool: ss.SmartschoolSnapshot(
+              fetchedAt: _d,
+              groups: const [],
+              accounts: [_ssAccount()],
+              memberships: const [],
+            ),
+            azure: az.AzureSnapshot(
+              fetchedAt: _d,
+              users: [_azUser()],
+              groups: const [],
+            ),
+            resolver: _SeqResolver(),
+            studentConfig: _studentConfig,
+            staffConfig: _staffConfig,
+            ourSchoolIds: const {1},
+          );
+
+      test('a student in a school we manage records nothing extra', () {
+        final account = materialize(
+          linkedInSchool(schoolId: 1, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single;
+
+        expect(account.wisaPresence, core.WisaPresence.ours);
+        // The ordinary document keeps exactly the shape it had, and an absent
+        // key reads as the `ours` default rather than as a recorded value.
+        expect(account.toJson().containsKey('wisaPresence'), isFalse);
+      });
+
+      test('a sibling-school student is groupOnly, though inWisa stays true',
+          () {
+        // The two disagree by design, which is exactly why a bool could never
+        // answer this: the aggregated pull walks every school of the group, so
+        // her WISA row is real — it is just not a row of ours.
+        final account = materialize(
+          linkedInSchool(schoolId: 2, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single;
+
+        expect(account.inWisa, isTrue);
+        expect(account.wisaPresence, core.WisaPresence.groupOnly);
+        expect(account.toJson()['wisaPresence'], 'groupOnly');
+      });
+
+      test('a student gone from the whole group is absent', () {
+        final account =
+            materialize(goneFromGroup(), generation: 1).accounts.single;
+
+        expect(account.inWisa, isFalse);
+        expect(account.wisaPresence, core.WisaPresence.absent);
+      });
+
+      test('it survives the round-trip through a stored document', () {
+        // A passive session reads the store and never links, so the WISA cell's
+        // reading has to come back out of the document exactly as it went in —
+        // the linked record behind it does not survive the session (#214/#255).
+        final account = materialize(
+          linkedInSchool(schoolId: 2, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single;
+        final back = MaterializedAccount.fromJson(account.toJson());
+
+        expect(back.wisaPresence, core.WisaPresence.groupOnly);
+        expect(back.withDecisions(const []).wisaPresence, account.wisaPresence,
+            reason: 'the decisions merge rewrites the doc every sync');
+      });
+
+      test('a document written before this existed reads as ours', () {
+        final json = materialize(
+          linkedInSchool(schoolId: 1, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single.toJson()
+          ..remove('wisaPresence');
+
+        expect(MaterializedAccount.fromJson(json).wisaPresence,
+            core.WisaPresence.ours);
+      });
+    });
+
     test('with no managed set every school is ours, so nobody is re-bucketed',
         () {
       // ourSchoolIds null → ownership is unconfigured (#286), which counts every

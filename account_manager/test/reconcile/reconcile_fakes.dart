@@ -2034,6 +2034,43 @@ ReconcileHarness movedToSiblingHarness() => ReconcileHarness(
       azure: azSnap(users: [azUser()]),
     );
 
+/// The two departures side by side (#392), which is the whole point of telling
+/// them apart on screen: [movedToSiblingHarness]'s Jane — gone from our school
+/// but still in sibling school 2 — beside Tom, who is gone from the aggregated
+/// snapshot altogether. Both keep our Smartschool account and our Office 365
+/// account, so the only thing separating their rows is where WISA puts them:
+/// Jane is [core.WisaPresence.groupOnly] (keep Office 365), Tom is
+/// [core.WisaPresence.absent] (delete it, per the no-alumni rule).
+ReconcileHarness siblingAndGoneHarness() => ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [wisaStudent(schoolId: 2)],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssAccount(),
+          ssAccount(
+            uid: 'tom',
+            accountId: '2',
+            mail: 'tom.tomsen@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tomsen',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [
+        azUser(),
+        azUser(
+          id: 'az2',
+          upn: 'tom.tomsen@student.school.example',
+          employeeId: '2',
+        ),
+      ]),
+    );
+
 /// A harness for the managed-schools-only Actions filter (#178). One student is
 /// enrolled in school 2 and fully present in *our* Smartschool + Azure. The
 /// managed set comes solely from [ourSchoolIds] (the persisted Settings path —

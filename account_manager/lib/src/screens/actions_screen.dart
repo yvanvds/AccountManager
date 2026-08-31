@@ -367,9 +367,15 @@ class _AccountRow {
       };
 
   /// What this row's cell for [system] reads as.
+  ///
+  /// The WISA cell alone is handed the record's [core.WisaPresence] (#392): it
+  /// is the one system whose snapshot spans schools we do not manage, so it is
+  /// the one cell that can say "not here, but still in the group". Smartschool
+  /// and Office 365 pass nothing and read exactly as before.
   SystemIndicatorState stateFor(core.Origin system) => systemIndicatorState(
         present: presentIn(system),
         hasWork: workSystems.contains(system),
+        wisaPresence: system == core.Origin.wisa ? account.wisaPresence : null,
       );
 
   /// What the name search matches against — the display name alone. The class

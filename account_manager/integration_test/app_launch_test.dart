@@ -12,7 +12,8 @@ import 'package:account_actions/account_actions.dart'
         ReleaseStaffFromAzureSchool,
         RemoveStaffFromAzure,
         RemoveStaffFromSmartschool;
-import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
+import 'package:account_core/account_core.dart'
+    show Address, GroupType, Origin, WisaPresence;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -1979,6 +1980,94 @@ void main() {
         harness.controller.applyResults!.map((r) => r.changes.summary);
     expect(summaries, contains('Schrijf de leerling uit in Smartschool'));
     expect(summaries, isNot(contains('Verwijder Azure account')));
+  });
+
+  testWidgets(
+      'the Acties list shows the two departures side by side: blue WISA for a '
+      'student who moved to a sibling group school, red for one gone from the '
+      'group (#392)', (WidgetTester tester) async {
+    // The bug this closes is a scanning bug, so it only exists in the real
+    // list: two rows whose WISA cells used to read alike, for two departures
+    // whose cleanup is opposite. Jane is in sibling school 2 only — remove her
+    // from *our* Smartschool and keep Office 365. Tom is in no WISA school at
+    // all — remove him from both. Nothing else about the two rows differs.
+    useTallWindow(tester);
+    final harness = siblingAndGoneHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+
+    final String jane = accountId(harness, 'Jane Doe');
+    final String tom = accountId(harness, 'Tom Tomsen');
+    expect(find.byKey(ValueKey('account-row-$jane')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$tom')), findsOneWidget);
+
+    SystemIndicatorState cell(String id, Origin system) => tester
+        .widget<SystemIndicatorCell>(
+            find.byKey(ValueKey('account-cell-$id-${system.name}')))
+        .state;
+
+    // The one thing that tells them apart, on screen, without opening either.
+    expect(cell(jane, Origin.wisa), SystemIndicatorState.elsewhere);
+    expect(cell(tom, Origin.wisa), SystemIndicatorState.missing);
+
+    // A WISA-only reading: the other two cells are untouched by #392, and say
+    // for both students exactly what they said before it.
+    expect(cell(jane, Origin.smartschool), cell(tom, Origin.smartschool));
+    expect(cell(jane, Origin.azure), isNot(SystemIndicatorState.missing));
+    expect(cell(tom, Origin.azure), isNot(SystemIndicatorState.missing));
+
+    // And each colour stands for the domain signal it renders — read back off
+    // the materialized documents the passive session would get, not off the
+    // widget that drew them.
+    WisaPresence presenceOf(String id) => harness.controller.linkedAccounts
+        .firstWhere((a) => a.id.value == id)
+        .wisaPresence;
+    expect(presenceOf(jane), WisaPresence.groupOnly);
+    expect(presenceOf(tom), WisaPresence.absent);
+
+    // Jane's blue is a promise about Office 365: still in the group ⇒ the
+    // account is kept, so no removal is raised for her anywhere in the pass
+    // (#134). Tom's red carries no such promise — his Azure removal only comes
+    // once our Smartschool account is gone, which is a later pass.
+    expect(
+      harness.controller.pendingEntries
+          .where((e) => e.targetId == jane)
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((a) => a.kind),
+      isNot(contains('RemoveStudentFromAzure')),
+    );
+
+    // The details pane repeats the row's cells, and must repeat the reading —
+    // on a narrow window it is the only place the operator can read it.
+    await selectAccount(tester, jane);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-detail-cell-$jane-wisa')))
+          .state,
+      SystemIndicatorState.elsewhere,
+    );
+    expect(
+      find.byTooltip(
+          'Niet meer in onze school, wel nog in een school van de groep'),
+      findsWidgets,
+      reason: 'the tooltip is the legend — blue has to say what it means, in '
+          'words, for an operator who cannot read the hue',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

@@ -189,6 +189,64 @@ void main() {
     expect(_row(id), findsOneWidget, reason: 'missing from WISA counts too');
   });
 
+  testWidgets(
+      'a student who moved to a sibling group school reads blue in WISA, '
+      'beside the red of one gone from the group (#392)',
+      (WidgetTester tester) async {
+    _useWideWindow(tester);
+    // Jane is in sibling school 2 only (groupOnly, keep Office 365); Tom is in
+    // no WISA school at all (absent, delete Office 365). Both still hold our
+    // Smartschool and our Office 365 account, so WISA is the only cell that can
+    // tell the two departures apart.
+    final harness = siblingAndGoneHarness();
+    await harness.controller.sync();
+    await tester.pumpWidget(_wrap(ActionsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    final jane = _idOf(harness.controller, 'Jane Doe');
+    final tom = _idOf(harness.controller, 'Tom Tomsen');
+    expect(
+      _cellState(tester, jane, Origin.wisa),
+      SystemIndicatorState.elsewhere,
+    );
+    expect(_cellState(tester, tom, Origin.wisa), SystemIndicatorState.missing);
+
+    // A WISA-only reading: the other two cells say what they always said.
+    expect(
+      _cellState(tester, jane, Origin.smartschool),
+      SystemIndicatorState.needsWork,
+      reason: 'our Smartschool departure is exactly the work blue implies',
+    );
+    expect(
+      _cellState(tester, jane, Origin.azure),
+      isNot(SystemIndicatorState.missing),
+      reason: 'her Office 365 account is kept, and the cell must not deny it',
+    );
+    expect(
+      _cellState(tester, tom, Origin.smartschool),
+      SystemIndicatorState.needsWork,
+    );
+
+    // The details pane repeats the row's three cells, and must repeat this one.
+    await _select(tester, jane);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-detail-cell-$jane-wisa')))
+          .state,
+      SystemIndicatorState.elsewhere,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$jane-wisa')),
+        matching: find.byTooltip(
+            'Niet meer in onze school, wel nog in een school van de groep'),
+      ),
+      findsOneWidget,
+      reason: 'the tooltip is the legend: it is where blue says what it means',
+    );
+  });
+
   testWidgets('the system filter hides the rows that system is happy with',
       (WidgetTester tester) async {
     _useWideWindow(tester);

@@ -349,6 +349,7 @@ class MaterializedAccount {
     required this.inWisa,
     required this.inSmartschool,
     required this.inAzure,
+    this.wisaPresence = core.WisaPresence.ours,
     this.otherEnrolments = const [],
     this.departmentSchools = const [],
     this.warnings = const [],
@@ -386,6 +387,28 @@ class MaterializedAccount {
   final bool inWisa;
   final bool inSmartschool;
   final bool inAzure;
+
+  /// Where the aggregated WISA snapshot puts this person relative to the schools
+  /// we manage (#134/#340) — copied straight off `LinkedAccount.wisaPresence` /
+  /// `LinkedStaff.wisaPresence`.
+  ///
+  /// [inWisa] cannot answer this and never could: the shared credentials walk
+  /// **every** school of the group, so a WISA row proves the person is somewhere
+  /// in the group and nothing more. A student who moved to a sibling school
+  /// therefore has `inWisa: true` and [core.WisaPresence.groupOnly], while one
+  /// gone from the group entirely has `inWisa: false` and
+  /// [core.WisaPresence.absent] — two situations whose cleanup differs (keep
+  /// Office 365 vs. delete it, per the no-alumni rule) and which the WISA cell
+  /// reads apart since #392.
+  ///
+  /// Baked into the document for the same reason [otherEnrolments] is: the
+  /// linked record behind it lives in the transient linked view, so a card that
+  /// could only say it in the session that synced would say it to nobody
+  /// (#214/#255).
+  ///
+  /// Defaults to [core.WisaPresence.ours] — the same default the linked records
+  /// carry — so a document written before this existed reads exactly as it did.
+  final core.WisaPresence wisaPresence;
 
   /// The **other** group schools this person is enrolled in — empty for the
   /// ordinary account, which is every account but a handful (#334).
@@ -453,6 +476,7 @@ class MaterializedAccount {
         inWisa: inWisa,
         inSmartschool: inSmartschool,
         inAzure: inAzure,
+        wisaPresence: wisaPresence,
         otherEnrolments: otherEnrolments,
         departmentSchools: departmentSchools,
         warnings: warnings,
@@ -474,6 +498,11 @@ class MaterializedAccount {
         'inWisa': inWisa,
         'inSmartschool': inSmartschool,
         'inAzure': inAzure,
+        // Written only when it says something, so the ordinary document — every
+        // document but a handful — keeps exactly the shape it had, and an absent
+        // key reads as the `ours` default rather than as a recorded value.
+        if (wisaPresence != core.WisaPresence.ours)
+          'wisaPresence': wisaPresence.toJson(),
         // Written only when there is one, so the ordinary document — every
         // document but a handful — keeps exactly the shape it had.
         if (otherEnrolments.isNotEmpty)
@@ -506,6 +535,9 @@ class MaterializedAccount {
         inWisa: json['inWisa'] as bool? ?? false,
         inSmartschool: json['inSmartschool'] as bool? ?? false,
         inAzure: json['inAzure'] as bool? ?? false,
+        wisaPresence: json['wisaPresence'] == null
+            ? core.WisaPresence.ours
+            : core.WisaPresence.fromJson(json['wisaPresence'] as String),
         otherEnrolments: [
           for (final e in (json['otherEnrolments'] as List? ?? const []))
             OtherEnrolment.fromJson(e as Map<String, dynamic>),
