@@ -12,12 +12,16 @@
 /// system:
 ///
 /// - [SystemIndicatorState.missing] (red) — the record is not there at all;
+/// - [SystemIndicatorState.elsewhere] (blue) — WISA only: not there *for us*,
+///   because the person moved to a sibling group school;
 /// - [SystemIndicatorState.needsWork] (orange) — it is there, and this screen
 ///   has work pending against that system;
 /// - [SystemIndicatorState.inOrder] (green) — it is there and nothing is due.
 ///
 /// Missing wins over pending work: a record that does not exist is the bigger
-/// fact, and the work is usually the creation of it.
+/// fact, and the work is usually the creation of it. Blue wins for the same
+/// reason and in the same way — it is a reading of *not here*, not a fourth
+/// degree of work.
 ///
 /// ## The reconciling principle: colour by work that can be done *on this
 /// screen*
@@ -39,6 +43,23 @@
 ///
 /// Both are the same rule: **a coloured cell means work you can do here.** The
 /// next reader will otherwise see two rules and assume one is a bug.
+///
+/// ## Blue does not break that rule (#392)
+///
+/// [SystemIndicatorState.elsewhere] looks like a counter-example — a coloured
+/// WISA cell that claims no work — and it is not one. Red and blue are both
+/// readings of the *presence* axis, which the rule above never governed: red
+/// already says "nothing to do here, the record is gone", and blue says the
+/// same thing with the reason attached. What the rule forbids is colouring a
+/// cell for work this screen cannot do, and blue asserts no work at all.
+///
+/// The distinction it makes visible is the one the actions already turn on
+/// (#134): a student gone from the whole group is removed from Smartschool
+/// *and* Office 365, while one who merely moved to a sibling group school is
+/// removed from *our* Smartschool and **keeps** Office 365. Both used to read
+/// alike from the list, so choosing between "uitschrijven" and "verwijderen"
+/// meant opening the record. Only WISA can be blue: it is the one system whose
+/// snapshot spans schools we do not manage.
 ///
 /// The concrete case is `AzureClassGroupMembership`, the student family's only
 /// informational member. Office 365 class membership is a property of the
@@ -82,6 +103,14 @@ enum SystemIndicatorState {
   /// The record does not exist in that system — red.
   missing,
 
+  /// **WISA only.** The person is not in a school we manage, but the aggregated
+  /// snapshot still lists them in a sibling group school — blue (#392).
+  ///
+  /// A refinement of [missing], not of [needsWork]: still "not here", with the
+  /// reason attached. Never produced for Smartschool or Office 365, whose
+  /// snapshots cover our own school alone.
+  elsewhere,
+
   /// It exists there, and this screen has applyable work pending against it —
   /// orange.
   needsWork,
@@ -97,10 +126,25 @@ enum SystemIndicatorState {
 /// [workSystemsOfEntry] and [workSystemsOfCandidates], which are the only two
 /// ways this app computes it. An informational candidate is not work this
 /// screen can do, so it never reaches here.
+/// [wisaPresence] is the **WISA cell's** third axis and is `null` everywhere
+/// else (#392). The alternative — a `bool elsewhere` — would let any caller
+/// claim the reading for any system, and the whole point is that only WISA can:
+/// the enum is the domain's own, so a Smartschool or Office 365 cell has
+/// nothing it could honestly pass. A group's cells pass nothing at all, since a
+/// class has no such presence.
+///
+/// It is read *before* [present] because the two disagree by design: a sibling
+/// school's row makes `LinkedAccount.wisa` non-null, so a groupOnly student is
+/// "present" in the aggregated snapshot while being absent from every school we
+/// manage — which is exactly what blue says out loud.
 SystemIndicatorState systemIndicatorState({
   required bool present,
   required bool hasWork,
+  core.WisaPresence? wisaPresence,
 }) {
+  if (wisaPresence == core.WisaPresence.groupOnly) {
+    return SystemIndicatorState.elsewhere;
+  }
   if (!present) return SystemIndicatorState.missing;
   return hasWork
       ? SystemIndicatorState.needsWork
@@ -142,6 +186,11 @@ IconData systemIndicatorIcon(SystemIndicatorState state) => switch (state) {
       SystemIndicatorState.inOrder => Icons.check_circle_outline,
       SystemIndicatorState.needsWork => Icons.pending_outlined,
       SystemIndicatorState.missing => Icons.remove_circle_outline,
+      // An arrow, not a minus: "gone, that way" rather than "gone". The shape
+      // carries the difference on its own, so blue and red are still two
+      // readings on a monochrome screenshot and for a colour-blind operator —
+      // hue is never the only thing that separates them.
+      SystemIndicatorState.elsewhere => Icons.arrow_circle_right_outlined,
     };
 
 /// The colour a state reads as, per theme.
@@ -151,6 +200,14 @@ IconData systemIndicatorIcon(SystemIndicatorState state) => switch (state) {
 /// reserved for the one primary action on a page, and a wall of magenta ticks
 /// would both drown the spark and say "look here" about the rows that need
 /// nothing. Green / orange / red is the vocabulary #291 and #295 settled on.
+///
+/// Blue joins that local vocabulary the same way (#392), and for the same
+/// reason: the design system carries no status ramp to take it from — `tokens/
+/// colors.css` is ink, paper and the one spark — and the app's own
+/// `kProductAccent` is reserved for the product mark and must never become a
+/// second spark. The light half is `#2563EB`, the one blue the design system
+/// names (`bindings/flutter/lib/src/theme/product_accent.dart`); the dark half
+/// is its light-on-dark tint, tuned the way the other three pairs are.
 Color systemIndicatorColor(BuildContext context, SystemIndicatorState state) {
   final bool dark = Theme.of(context).brightness == Brightness.dark;
   return switch (state) {
@@ -160,16 +217,27 @@ Color systemIndicatorColor(BuildContext context, SystemIndicatorState state) {
       dark ? const Color(0xFFE0A458) : const Color(0xFF9A5B00),
     SystemIndicatorState.missing =>
       dark ? const Color(0xFFE57373) : Theme.of(context).colorScheme.error,
+    SystemIndicatorState.elsewhere =>
+      dark ? const Color(0xFF8AB4F8) : const Color(0xFF2563EB),
   };
 }
 
 /// The one-line Dutch reading of a cell, for its tooltip and its semantics.
+///
+/// This is the legend: the cells carry no key beside them, so the tooltip is
+/// where a colour says what it means — and the one place a colour-blind
+/// operator can read blue and red apart in words.
 String systemIndicatorTooltip(core.Origin system, SystemIndicatorState state) =>
     switch (state) {
       SystemIndicatorState.inOrder => '${systemLabel(system)} staat in orde',
       SystemIndicatorState.needsWork =>
         '${systemLabel(system)} heeft werk openstaan',
       SystemIndicatorState.missing => 'Bestaat niet in ${systemLabel(system)}',
+      // Names no system: only WISA is ever blue, and spelling it out would make
+      // the sentence read as a fact about the WISA connector rather than about
+      // where the person now goes to school.
+      SystemIndicatorState.elsewhere =>
+        'Niet meer in onze school, wel nog in een school van de groep',
     };
 
 /// One system cell of a row: the icon in its state's colour, the system's Dutch

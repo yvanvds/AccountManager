@@ -50,6 +50,96 @@ void main() {
     });
   });
 
+  group('the WISA cell reads the three presences apart (#392)', () {
+    test('a student in a school we manage reads exactly as before', () {
+      expect(
+        systemIndicatorState(
+          present: true,
+          hasWork: false,
+          wisaPresence: core.WisaPresence.ours,
+        ),
+        SystemIndicatorState.inOrder,
+      );
+      expect(
+        systemIndicatorState(
+          present: true,
+          hasWork: true,
+          wisaPresence: core.WisaPresence.ours,
+        ),
+        SystemIndicatorState.needsWork,
+      );
+    });
+
+    test('a student who moved to a sibling group school reads elsewhere', () {
+      // The aggregated pull walks every school of the group, so this student's
+      // `LinkedAccount.wisa` is non-null and `present` is true — she is in the
+      // snapshot, just not in a school of ours. Blue is what says that.
+      expect(
+        systemIndicatorState(
+          present: true,
+          hasWork: false,
+          wisaPresence: core.WisaPresence.groupOnly,
+        ),
+        SystemIndicatorState.elsewhere,
+      );
+      expect(
+        systemIndicatorState(
+          present: true,
+          hasWork: true,
+          wisaPresence: core.WisaPresence.groupOnly,
+        ),
+        SystemIndicatorState.elsewhere,
+        reason: 'like missing, "not here for us" is the bigger fact',
+      );
+    });
+
+    test('a student gone from the whole group stays missing', () {
+      expect(
+        systemIndicatorState(
+          present: false,
+          hasWork: false,
+          wisaPresence: core.WisaPresence.absent,
+        ),
+        SystemIndicatorState.missing,
+        reason: 'red is still the reading for a departure that deletes Office '
+            '365 as well',
+      );
+    });
+
+    test('Smartschool and Office 365 pass no presence and are unchanged', () {
+      // The parameter is optional precisely so the other two systems cannot
+      // claim a reading only WISA can make.
+      expect(
+        systemIndicatorState(present: false, hasWork: false),
+        SystemIndicatorState.missing,
+      );
+      expect(
+        systemIndicatorState(present: true, hasWork: true),
+        SystemIndicatorState.needsWork,
+      );
+    });
+
+    test('blue and red differ by more than hue', () {
+      // A colour-blind operator and a monochrome screenshot both have to be
+      // able to tell the two departures apart, so the icon and the tooltip
+      // carry the difference on their own.
+      expect(
+        systemIndicatorIcon(SystemIndicatorState.elsewhere),
+        isNot(systemIndicatorIcon(SystemIndicatorState.missing)),
+      );
+      expect(
+        systemIndicatorTooltip(
+            core.Origin.wisa, SystemIndicatorState.elsewhere),
+        'Niet meer in onze school, wel nog in een school van de groep',
+      );
+      expect(
+        systemIndicatorTooltip(core.Origin.wisa, SystemIndicatorState.missing),
+        isNot(systemIndicatorTooltip(
+            core.Origin.wisa, SystemIndicatorState.elsewhere)),
+      );
+    });
+  });
+
   group('which systems a stored record has work in (#298)', () {
     test('an applyable candidate names its system', () {
       expect(

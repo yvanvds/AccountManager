@@ -12,7 +12,8 @@ import 'package:account_actions/account_actions.dart'
         ReleaseStaffFromAzureSchool,
         RemoveStaffFromAzure,
         RemoveStaffFromSmartschool;
-import 'package:account_core/account_core.dart' show Address, GroupType, Origin;
+import 'package:account_core/account_core.dart'
+    show Address, GroupType, Origin, WisaPresence;
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -27,6 +28,7 @@ import 'package:account_manager/src/screens/system_indicator.dart';
 import 'package:account_manager/src/reconcile/reconcile_bootstrap.dart'
     show StoreEndpoints;
 import 'package:account_manager/src/settings/connection_config.dart';
+import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_manager/src/settings/settings_bootstrap.dart'
     show SettingsServices;
 import 'package:account_manager/src/shell/app_shell.dart';
@@ -61,7 +63,8 @@ import 'package:account_state/account_state.dart'
         WisaSchoolProfileLabel,
         WorkDateSetting,
         signalRRecordSeparator,
-        staffPartition;
+        staffPartition,
+        unassignedPartition;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:smartschool_api/smartschool_api.dart'
@@ -1905,6 +1908,10 @@ void main() {
     await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
     await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
     await tester.pumpAndSettle();
+    // A Smartschool delete is dated (#394): the uitschrijvingsdatum is asked
+    // for before the confirmation.
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -1915,6 +1922,164 @@ void main() {
     expect(summaries, contains('Verwijder dit account uit Smartschool'));
     expect(summaries, isNot(contains('Schrijf de leerling uit in Smartschool')),
         reason: 'only the chosen resolution ran — never both');
+  });
+
+  testWidgets(
+      'the uitschrijvingsdatum is asked once, reaches Smartschool on the wire, '
+      'and is remembered across a restart (#394)', (WidgetTester tester) async {
+    // The end-to-end claim of #394, and it is deliberately not "a dialog
+    // appeared": the date the operator picked in the real calendar is the date
+    // the real `unregisterStudent` envelope carries, and the next student in the
+    // same departure batch gets it without the calendar being opened again —
+    // including after the app has been restarted.
+    //
+    // Only the real app can make that claim. The remembered value crosses a
+    // file on disk and a whole new widget tree, and the prompt sits between a
+    // details pane and a modal progress dialog in a real navigator.
+    useTallWindow(tester);
+    final Directory dir =
+        Directory.systemTemp.createTempSync('am-uitschrijving');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    final LocalPreferenceStore store = FileLocalPreferenceStore(
+      File('${dir.path}${Platform.pathSeparator}$localPreferencesFileName'),
+    );
+
+    ReconcileHarness departed() => ReconcileHarness(
+          wisa: wisaSnap(students: const []),
+          smartschool: ssSnap(
+            groups: const [],
+            accounts: [
+              ssAccount(
+                uid: 'jane',
+                accountId: '1',
+                mail: 'jane.doe@student.school.example',
+              ),
+              ssAccount(
+                uid: 'tom',
+                accountId: '2',
+                mail: 'tom.jansen@student.school.example',
+                givenName: 'Tom',
+                surname: 'Jansen',
+              ),
+            ],
+            memberships: const [],
+          ),
+          azure: azSnap(users: const []),
+        );
+
+    Future<void> launch(ReconcileHarness harness) async {
+      // A fresh `LocalPreferences` over the same file each time — which is what
+      // a restart is.
+      final prefs = LocalPreferences(store);
+      await prefs.load();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+        preferences: prefs,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Synchronisatie'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Acties'));
+      await tester.pumpAndSettle();
+    }
+
+    String idOf(ReconcileHarness harness, String label) => harness
+        .controller.pendingEntries
+        .firstWhere((e) => e.family == 'student' && e.target.contains(label))
+        .targetId;
+
+    Future<void> pressApply(String id) async {
+      await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.pumpAndSettle();
+    }
+
+    // --- Jane: the operator picks the day she actually left. ----------------
+    final first = departed();
+    await launch(first);
+    final String jane = idOf(first, 'Jane');
+    await selectAccount(tester, jane);
+    await pressApply(jane);
+
+    expect(find.byKey(const ValueKey('deletion-date-dialog')), findsOneWidget,
+        reason: 'an uitschrijving asks before it writes');
+    // A fresh install remembers nothing, so the field offers today — the honest
+    // default, now on screen instead of supplied by the clock.
+    final DateTime today = DateTime.now();
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('deletion-date-value')))
+          .data,
+      '${today.year}-${today.month.toString().padLeft(2, '0')}-'
+      '${today.day.toString().padLeft(2, '0')}',
+    );
+
+    // Move it, in the real calendar, to the first of this month.
+    await tester.tap(find.byKey(const ValueKey('deletion-date-pick')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('1'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(DatePickerDialog),
+      matching: find.text('OK'),
+    ));
+    await tester.pumpAndSettle();
+    final DateTime left = DateTime(today.year, today.month);
+    final String onScreen =
+        '${left.year}-${left.month.toString().padLeft(2, '0')}-01';
+    final String onWire = '${left.year}-${left.month}-1';
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('deletion-date-value')))
+          .data,
+      onScreen,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+    await tester.pumpAndSettle();
+    // The confirmation quotes it back — the last place a stale date is caught.
+    expect(find.textContaining('De uitschrijvingsdatum is $onScreen.'),
+        findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+    expect(first.soap.unregisteredOn, <String>[onWire],
+        reason: 'the wire value is the point of the issue — not today, and not '
+            'merely that a dialog appeared');
+
+    // --- Restart. Tom is the same batch, and never sees a calendar. ---------
+    final second = departed();
+    await launch(second);
+    final String tom = idOf(second, 'Tom');
+    await selectAccount(tester, tom);
+    await pressApply(tom);
+
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('deletion-date-value')))
+          .data,
+      onScreen,
+      reason: 'the answer survived the file and the relaunch',
+    );
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(second.soap.unregisteredOn, <String>[onWire],
+        reason: 'one date for the whole departure batch, typed once');
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -1969,6 +2134,9 @@ void main() {
         .ensureVisible(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
     await tester.tap(find.byKey(ValueKey('entry-apply-${entry.targetId}')));
     await tester.pumpAndSettle();
+    // The uitschrijving is dated (#394).
+    await tester.tap(find.byKey(const ValueKey('deletion-date-confirm')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
     await tester.pumpAndSettle();
 
@@ -1979,6 +2147,94 @@ void main() {
         harness.controller.applyResults!.map((r) => r.changes.summary);
     expect(summaries, contains('Schrijf de leerling uit in Smartschool'));
     expect(summaries, isNot(contains('Verwijder Azure account')));
+  });
+
+  testWidgets(
+      'the Acties list shows the two departures side by side: blue WISA for a '
+      'student who moved to a sibling group school, red for one gone from the '
+      'group (#392)', (WidgetTester tester) async {
+    // The bug this closes is a scanning bug, so it only exists in the real
+    // list: two rows whose WISA cells used to read alike, for two departures
+    // whose cleanup is opposite. Jane is in sibling school 2 only — remove her
+    // from *our* Smartschool and keep Office 365. Tom is in no WISA school at
+    // all — remove him from both. Nothing else about the two rows differs.
+    useTallWindow(tester);
+    final harness = siblingAndGoneHarness();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Synchronisatie'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('reconcile-sync')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+
+    final String jane = accountId(harness, 'Jane Doe');
+    final String tom = accountId(harness, 'Tom Tomsen');
+    expect(find.byKey(ValueKey('account-row-$jane')), findsOneWidget);
+    expect(find.byKey(ValueKey('account-row-$tom')), findsOneWidget);
+
+    SystemIndicatorState cell(String id, Origin system) => tester
+        .widget<SystemIndicatorCell>(
+            find.byKey(ValueKey('account-cell-$id-${system.name}')))
+        .state;
+
+    // The one thing that tells them apart, on screen, without opening either.
+    expect(cell(jane, Origin.wisa), SystemIndicatorState.elsewhere);
+    expect(cell(tom, Origin.wisa), SystemIndicatorState.missing);
+
+    // A WISA-only reading: the other two cells are untouched by #392, and say
+    // for both students exactly what they said before it.
+    expect(cell(jane, Origin.smartschool), cell(tom, Origin.smartschool));
+    expect(cell(jane, Origin.azure), isNot(SystemIndicatorState.missing));
+    expect(cell(tom, Origin.azure), isNot(SystemIndicatorState.missing));
+
+    // And each colour stands for the domain signal it renders — read back off
+    // the materialized documents the passive session would get, not off the
+    // widget that drew them.
+    WisaPresence presenceOf(String id) => harness.controller.linkedAccounts
+        .firstWhere((a) => a.id.value == id)
+        .wisaPresence;
+    expect(presenceOf(jane), WisaPresence.groupOnly);
+    expect(presenceOf(tom), WisaPresence.absent);
+
+    // Jane's blue is a promise about Office 365: still in the group ⇒ the
+    // account is kept, so no removal is raised for her anywhere in the pass
+    // (#134). Tom's red carries no such promise — his Azure removal only comes
+    // once our Smartschool account is gone, which is a later pass.
+    expect(
+      harness.controller.pendingEntries
+          .where((e) => e.targetId == jane)
+          .expand((e) => e.choices)
+          .expand((c) => c.alternatives)
+          .map((a) => a.kind),
+      isNot(contains('RemoveStudentFromAzure')),
+    );
+
+    // The details pane repeats the row's cells, and must repeat the reading —
+    // on a narrow window it is the only place the operator can read it.
+    await selectAccount(tester, jane);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-detail-cell-$jane-wisa')))
+          .state,
+      SystemIndicatorState.elsewhere,
+    );
+    expect(
+      find.byTooltip(
+          'Niet meer in onze school, wel nog in een school van de groep'),
+      findsWidgets,
+      reason: 'the tooltip is the legend — blue has to say what it means, in '
+          'words, for an operator who cannot read the hue',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -13820,6 +14076,173 @@ void main() {
   });
 
   testWidgets(
+      'the Office 365 cell of a student card names the school its companyName '
+      'stamps, says so when nobody stamped it, and a session that never pulled '
+      'reads the same (#393)', (WidgetTester tester) async {
+    // The decision this reading exists for, driven end to end. Jane has no WISA
+    // row *of ours*: her card offers "uitschrijven" or "verwijderen", and #392's
+    // blue WISA cell says she is elsewhere in the group without saying where.
+    // `companyName` is the fact that settles it, and until now the operator had
+    // to open the portal to read a field this app already holds.
+    //
+    // Only a full run shows it works. The value has to survive the linker (whose
+    // `LinkedAccount.azure` is the narrow interface and carries no `companyName`
+    // at all), the materializer, the document, the shared store and a second
+    // session's adoption, and land in the one cell it explains. A widget test
+    // renders the pane over a document handed to it; it cannot show that the
+    // document ever carries this.
+    useTallWindow(tester);
+    final snapshots = InMemorySnapshotStore();
+    final linkedStore = InMemoryLinkedStore();
+
+    // Operator A pulls. Three students, three readings:
+    //   Jane  — moved to sibling group school 2, account stamped `afzwaai-SSJ`
+    //           (a real value from the Aug 2026 audit, #389);
+    //   Tom   — gone from the group entirely, account carrying no stamp at all
+    //           (140 current class-group members did in that same audit);
+    //   Nele  — an ordinary 3C pupil with no Office 365 account yet.
+    await ReconcileHarness(
+      ourSchoolIds: const {1},
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(schoolId: 2),
+          wisaStudent(
+            wisaId: '3',
+            firstName: 'Nele',
+            name: 'Neels',
+            classGroup: '3C',
+          ),
+        ],
+        schools: [wisaSchool(1), wisaSchool(2)],
+      ),
+      smartschool: ssSnap(
+        groups: const [],
+        accounts: [
+          ssAccount(),
+          ssAccount(
+            uid: 'tom',
+            accountId: '2',
+            mail: 'tom.tomsen@student.school.example',
+            givenName: 'Tom',
+            surname: 'Tomsen',
+          ),
+          ssAccount(
+            uid: 'nele',
+            accountId: '3',
+            mail: 'nele.neels@student.school.example',
+            givenName: 'Nele',
+            surname: 'Neels',
+          ),
+        ],
+        memberships: const [],
+      ),
+      azure: azSnap(users: [
+        azUser(companyName: 'afzwaai-SSJ'),
+        azUser(
+          id: 'az2',
+          upn: 'tom.tomsen@student.school.example',
+          employeeId: '2',
+          companyName: null,
+        ),
+      ]),
+      store: snapshots,
+      linkedStore: linkedStore,
+      syncedBy: 'jan@school.example',
+    ).controller.sync();
+
+    // It is on the stored documents, which is what makes the rest possible: the
+    // transient records it was read off do not outlive the pass. Both students
+    // with no class of ours land in the "Niet toegewezen" bucket together, which
+    // is exactly the population this line is for.
+    final List<MaterializedAccount> stranded = await linkedStore.readClassroom(
+      school: unassignedPartition,
+      classroom: 'Zonder klas',
+    );
+    expect(
+      {for (final a in stranded) a.label: a.azureCompanyName},
+      {'Jane Doe': 'afzwaai-SSJ', 'Tom Tomsen': null},
+      reason: 'the stamp verbatim, and a single unambiguous "no stamp"',
+    );
+    // #392's half of the same sentence, on the same two documents: Jane is
+    // elsewhere in the group and Tom is gone from it — the distinction that
+    // makes "uitschrijven" and "verwijderen" different decisions. This issue
+    // adds the school name that settles which.
+    expect(
+      {for (final a in stranded) a.label: a.wisaPresence},
+      {
+        'Jane Doe': WisaPresence.groupOnly,
+        'Tom Tomsen': WisaPresence.absent,
+      },
+    );
+
+    // Operator B launches the real app onto the shared stores and never pulls.
+    final operatorB = await ReconcileHarness.resume(
+      store: snapshots,
+      linkedStore: linkedStore,
+    );
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: operatorB.bootstrap,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Acties'));
+    await tester.pumpAndSettle();
+
+    final String jane = accountId(operatorB, 'Jane Doe');
+    final String tom = accountId(operatorB, 'Tom Tomsen');
+    final String nele = accountId(operatorB, 'Nele Neels');
+
+    // Jane: the school named, in the field's own casing and with its hyphen.
+    await selectAccount(tester, jane);
+    const String stamped = 'Bedrijfsnaam: afzwaai-SSJ';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$jane-azure')),
+        matching: find.text(stamped),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(stamped), findsOneWidget,
+        reason: 'the details pane only — an extra line under every collapsed '
+            'card of a roster of thousands is noise, and the two sets of cells '
+            'share one widget');
+
+    // Tom: an account exists and nobody stamped it. Said out loud, because a
+    // missing line reads as "not loaded" rather than "not set" — and blank is a
+    // finding here, not an absence of information.
+    await selectAccount(tester, tom);
+    const String unstamped = 'Geen bedrijfsnaam ingesteld';
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey('account-detail-cell-$tom-azure')),
+        matching: find.text(unstamped),
+      ),
+      findsOneWidget,
+    );
+
+    // Nele: no Office 365 account, so neither line. The absence is already
+    // stated, in colour, by the red cell the line would hang under.
+    await selectAccount(tester, nele);
+    expect(find.textContaining('Bedrijfsnaam'), findsNothing);
+    expect(find.text(unstamped), findsNothing);
+    expect(
+      tester
+          .widget<SystemIndicatorCell>(
+              find.byKey(ValueKey('account-detail-cell-$nele-azure')))
+          .state,
+      SystemIndicatorState.missing,
+    );
+
+    // Read by an operator who pulled nothing: no connector round-trip anywhere
+    // in this session.
+    expect(operatorB.wisaSyncs, 0);
+    expect(operatorB.ssSyncs, 0);
+    expect(operatorB.azSyncs, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'Instellingen opens with an unreachable Cosmos, and the Verbinding tab '
       'writes a corrected connection.json to disk (#370)',
       (WidgetTester tester) async {
@@ -14458,6 +14881,129 @@ void main() {
     await tester.ensureVisible(status);
     await tester.pumpAndSettle();
     expect(tester.widget<Text>(status).data, contains('Failed host lookup'));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'the first launch after an update shows the release notes once, survives '
+      'the restart, and stays re-openable in Instellingen (#395)',
+      (WidgetTester tester) async {
+    // Every acceptance criterion of #395 in one real run, and each of them needs
+    // this level. The dialog is pushed onto the *real* navigator from a
+    // post-frame callback over a shell that is already on stage; the Markdown is
+    // laid out in the real Plink faces inside a real `AlertDialog` whose width a
+    // widget test's stand-in font would misreport; and "survives an update" is a
+    // claim about a file on disk read back by a whole new widget tree, which is
+    // exactly what a restart is.
+    useTallWindow(tester);
+
+    final Directory dir = Directory.systemTemp.createTempSync('am-whats-new');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    final File prefsFile = File(
+      '${dir.path}${Platform.pathSeparator}$localPreferencesFileName',
+    );
+    // A machine that has been running 1.0.0 — not a fresh install, which is the
+    // case that must stay silent and is covered at the unit level.
+    prefsFile.writeAsStringSync(jsonEncode(<String, Object?>{
+      'releaseNotesSeenVersion': '1.0.0',
+    }));
+
+    final backend = FakeUpdateBackend(
+      version: '1.1.0',
+      latest: fakeRelease(
+        '1.1.0',
+        notes: '## Wat is er veranderd\n\n'
+            '- Wachtwoordbladen tonen nu de **WiFi**.\n'
+            '- De uitschrijvingsdatum wordt onthouden.\n',
+        pageUrl: 'https://example.test/releases/v1.1.0',
+      ),
+    );
+    final List<Uri> opened = <Uri>[];
+
+    Future<void> launch() async {
+      // A fresh `LocalPreferences` over the same file each time — a restart.
+      final prefs = LocalPreferences(FileLocalPreferenceStore(prefsFile));
+      await prefs.load();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        settingsBootstrap: SettingsHarness().bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        update: backend.services(autoCheck: true),
+        preferences: prefs,
+        openReleaseLink: (Uri url) async => opened.add(url),
+      ));
+      await tester.pumpAndSettle();
+    }
+
+    final Finder dialog = find.byKey(const ValueKey('release-notes-dialog'));
+
+    // --- The launch that follows the update. --------------------------------
+    await launch();
+
+    expect(dialog, findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('release-notes-version')))
+          .data,
+      'Versie 1.1.0',
+      reason: 'the notes are the running version, not the offered one',
+    );
+    // Non-blocking: the whole shell is behind it, and there is no update to
+    // apply, so the #371 offer bar stays away.
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.byKey(const ValueKey('update-offer')), findsNothing);
+
+    // Rendered as Markdown, not echoed as source — the reason the issue asks
+    // for a reader at all.
+    expect(find.textContaining('##', findRichText: true), findsNothing);
+    expect(find.textContaining('- Wachtwoordbladen', findRichText: true),
+        findsNothing);
+    expect(find.textContaining('Wachtwoordbladen', findRichText: true),
+        findsWidgets);
+
+    // The link points at the release's own page.
+    await tester.tap(find.byKey(const ValueKey('release-notes-page')));
+    await tester.pumpAndSettle();
+    expect(opened, <Uri>[Uri.parse('https://example.test/releases/v1.1.0')]);
+
+    await tester.tap(find.byKey(const ValueKey('release-notes-close')));
+    await tester.pumpAndSettle();
+    expect(dialog, findsNothing);
+
+    // Written where an update cannot reach it: `%APPDATA%`, not the install
+    // directory the installer replaces.
+    expect(
+      (jsonDecode(prefsFile.readAsStringSync())
+          as Map<String, dynamic>)['releaseNotesSeenVersion'],
+      '1.1.0',
+    );
+
+    // --- Restart. Same version, so nothing to say. --------------------------
+    await launch();
+    expect(dialog, findsNothing, reason: 'never twice for one version');
+    expect(find.byType(NavigationRail), findsOneWidget);
+
+    // --- But recoverable, where the version already lives. ------------------
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await openSettingsTab(tester, 'settings-tab-verbinding');
+    final Finder reopen =
+        find.byKey(const ValueKey('settings-version-notes-open'));
+    await tester.ensureVisible(reopen);
+    await tester.pumpAndSettle();
+    await tester.tap(reopen);
+    await tester.pumpAndSettle();
+
+    expect(dialog, findsOneWidget);
+    expect(find.textContaining('Wachtwoordbladen', findRichText: true),
+        findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('release-notes-close')));
+    await tester.pumpAndSettle();
+
     expect(tester.takeException(), isNull);
   });
 }

@@ -30,6 +30,9 @@ import 'package:wisa_api/wisa_api.dart' as wapi show formatWerkdatum;
 
 import '../format/timestamps.dart';
 import '../reconcile/reconcile_controller.dart';
+// The remembered uitschrijvingsdatum (#394): per-operator, per-machine working
+// state, deliberately not the shared settings document.
+import '../settings/local_preferences.dart';
 // The tab names and the seam that selects one (#301) — the pointer each action
 // screen carries at the other has to be able to follow itself. Deliberately the
 // small `shell_navigation.dart` and not `app_shell.dart`, which imports the very
@@ -157,7 +160,11 @@ String _followUpCount(int n) => n == 1 ? '1 vervolgactie' : '$n vervolgacties';
 /// - **A chain that stays inside a system it already named adds nothing** — a
 ///   class group's create and its roster write are both Office 365 (#245), so
 ///   there is no second system to announce.
-String applyConfirmationMessage(ApplyScope scope) {
+/// - **The uitschrijvingsdatum is quoted back** (#394). The operator answered it
+///   a moment ago in its own dialog, but a remembered date can be weeks old and
+///   this is the last screen before the write — so the confirmation is where a
+///   stale one is meant to be caught.
+String applyConfirmationMessage(ApplyScope scope, {DateTime? deletionDate}) {
   final writes = scope.systems.where((s) => s != core.Origin.wisa).toList();
   final rules = scope.systems.length - writes.length;
   final clauses = <String>[
@@ -173,7 +180,10 @@ String applyConfirmationMessage(ApplyScope scope) {
       ? ''
       : ' Een vervolgactie kan ook naar ${_joinSystems(scope.chained)} '
           'schrijven.';
-  return '$what$follow Doe eerst een dry-run om de exacte wijzigingen te '
+  final dated = deletionDate == null
+      ? ''
+      : ' De uitschrijvingsdatum is ${formatOfficialDate(deletionDate)}.';
+  return '$what$follow$dated Doe eerst een dry-run om de exacte wijzigingen te '
       'bekijken.';
 }
 
@@ -215,18 +225,44 @@ String readOnlyCandidateLine(actions.Alternatives<CandidateAction> choice) {
 /// said no" from "the writes are done" (#296): a cancelled confirmation must
 /// leave the screen exactly as the operator left it, while a finished pass has
 /// invalidated everything the affordance was built from.
+///
+/// Since #394 a pass whose actions carry an official date
+/// ([ApplyScope.needsDeletionDate]) asks for that date **before** the
+/// confirmation, and the confirmation then quotes it. [apply] receives the
+/// answer — `null` for every other pass, which is every pass that behaved this
+/// way before.
+///
+/// The order matters: asking first is what lets the confirmation be the last
+/// place a stale remembered date can be caught. Cancelling *either* dialog
+/// applies nothing.
 Future<bool> confirmAndApply(
   BuildContext context, {
   required ReconcileController controller,
   required String title,
   required ApplyScope scope,
-  required Future<void> Function() apply,
+  required Future<void> Function(DateTime? deletionDate) apply,
 }) async {
+  final LocalPreferences? preferences = LocalPreferencesScope.maybeOf(context);
+  DateTime? deletionDate;
+  if (scope.needsDeletionDate) {
+    deletionDate = await askDeletionDate(
+      context,
+      // What the operator answered last, whenever that was — the same batch
+      // spans coffee breaks and app updates, which is why this is persisted and
+      // not merely held for the session. Today on a fresh install.
+      initial: preferences?.lastDeletionDate,
+    );
+    // Cancelled at the date: nothing is written and no confirmation is offered.
+    if (deletionDate == null) return false;
+    if (!context.mounted) return false;
+  }
+
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: Text(applyConfirmationMessage(scope)),
+      content:
+          Text(applyConfirmationMessage(scope, deletionDate: deletionDate)),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
@@ -242,13 +278,169 @@ Future<bool> confirmAndApply(
   );
   if (!(confirmed ?? false)) return false;
   if (!context.mounted) return false;
+  // Remembered only once the operator has actually confirmed with it, so a date
+  // typed and then thought better of at the confirmation does not become the
+  // default for the next student.
+  if (deletionDate != null) {
+    await preferences?.setLastDeletionDate(deletionDate);
+    if (!context.mounted) return false;
+  }
   await runWithProgress(
     context,
     controller: controller,
     dry: false,
-    run: apply,
+    run: () => apply(deletionDate),
   );
   return true;
+}
+
+/// A date rendered the way this app writes dates everywhere the exact day
+/// matters — the werkdatum field's own `yyyy-MM-dd`, which sorts, never depends
+/// on whether the reader parses `03/04` as March or April, and matches what the
+/// Log panel prints when the write goes out.
+String formatOfficialDate(DateTime date) =>
+    '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+    '${date.day.toString().padLeft(2, '0')}';
+
+/// How far ahead of today a date stops looking like a decision and starts
+/// looking like a typo. A departure can legitimately be planned — the last day
+/// of the school year is announced months in advance — so this is generous.
+const Duration kDeletionDateFutureWarning = Duration(days: 400);
+
+/// The same in the other direction. Backdating is the normal case (the operator
+/// is recording a departure that already happened), so only a date old enough
+/// to be from the wrong *school career* is remarked on.
+const Duration kDeletionDatePastWarning = Duration(days: 730);
+
+/// What is odd about [date], or `null` when nothing is (#394).
+///
+/// Deliberately advisory. Both readings are legitimate — a planned end-of-year
+/// departure is in the future, and a correction filed in October for a student
+/// who left in March is in the past — so the app says what it noticed and lets
+/// the operator decide. Blocking would make the app wrong about the one thing
+/// it cannot know, which is what actually happened.
+String? deletionDateWarning(DateTime date, {DateTime? now}) {
+  final DateTime today = now ?? DateTime.now();
+  final DateTime midnight = DateTime(today.year, today.month, today.day);
+  final Duration delta =
+      DateTime(date.year, date.month, date.day).difference(midnight);
+  if (delta > kDeletionDateFutureWarning) {
+    return 'Deze datum ligt meer dan een jaar in de toekomst. Klopt dat?';
+  }
+  if (-delta > kDeletionDatePastWarning) {
+    return 'Deze datum ligt meer dan twee jaar in het verleden. Klopt dat?';
+  }
+  return null;
+}
+
+/// Asks for the **uitschrijvingsdatum** a pass will write (#394), returning it
+/// or `null` when the operator cancelled.
+///
+/// Its own step rather than a field on the confirmation dialog because it is a
+/// different kind of question: the confirmation asks "shall I", this asks "as
+/// of when", and the answer to the second is quoted back inside the first.
+///
+/// [initial] is what the operator last applied with, or `null` on a fresh
+/// install — the field then offers today. Today is the honest default; it is
+/// also the value the app used to supply silently, and the whole difference is
+/// that it is now on screen where a wrong one can be seen.
+Future<DateTime?> askDeletionDate(
+  BuildContext context, {
+  DateTime? initial,
+  DateTime? now,
+}) {
+  final DateTime today = now ?? DateTime.now();
+  return showDialog<DateTime>(
+    context: context,
+    builder: (context) => _DeletionDateDialog(
+      initial: initial ?? DateTime(today.year, today.month, today.day),
+      today: today,
+    ),
+  );
+}
+
+class _DeletionDateDialog extends StatefulWidget {
+  const _DeletionDateDialog({required this.initial, required this.today});
+
+  final DateTime initial;
+  final DateTime today;
+
+  @override
+  State<_DeletionDateDialog> createState() => _DeletionDateDialogState();
+}
+
+class _DeletionDateDialogState extends State<_DeletionDateDialog> {
+  late DateTime _date = widget.initial;
+
+  Future<void> _pick() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      // The same range the werkdatum picker offers, so the two date fields in
+      // this app do not disagree about what a plausible date is.
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _date = picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final String? warning = deletionDateWarning(_date, now: widget.today);
+    return AlertDialog(
+      key: const ValueKey('deletion-date-dialog'),
+      title: const Text('Uitschrijvingsdatum'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Smartschool legt deze datum vast als de dag waarop de leerling '
+            'de school verlaten heeft. Kies de echte datum, niet vandaag.',
+          ),
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            children: <Widget>[
+              Text(
+                formatOfficialDate(_date),
+                key: const ValueKey('deletion-date-value'),
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(width: PlinkSpacing.s3),
+              OutlinedButton(
+                key: const ValueKey('deletion-date-pick'),
+                onPressed: _pick,
+                child: const Text('Kies datum'),
+              ),
+            ],
+          ),
+          if (warning != null) ...<Widget>[
+            const SizedBox(height: PlinkSpacing.s3),
+            Text(
+              warning,
+              key: const ValueKey('deletion-date-warning'),
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          key: const ValueKey('deletion-date-cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuleer'),
+        ),
+        FilledButton(
+          key: const ValueKey('deletion-date-confirm'),
+          onPressed: () => Navigator.of(context).pop(_date),
+          child: const Text('Doorgaan'),
+        ),
+      ],
+    );
+  }
 }
 
 /// Runs one dry-run/apply pass behind a **modal** progress dialog (#243).
@@ -873,7 +1065,11 @@ class SituationHeader extends StatelessWidget {
                         // below runs — the ones this header counted
                         // (#234/#252), and only those (#292/#326).
                         scope: controller.applyScopeForDecisions(writable),
-                        apply: () => controller.applyDecisions(writable),
+                        apply: (DateTime? deletionDate) =>
+                            controller.applyDecisions(
+                          writable,
+                          deletionDate: deletionDate,
+                        ),
                       ),
               child: Text('Alles toepassen (${writable.length})'),
             ),
@@ -1067,7 +1263,10 @@ List<Widget> entryDetail(
                       title: 'Toepassen voor ${entry.target}?',
                       scope:
                           controller.applyScope(<PendingAccountEntry>[entry]),
-                      apply: () => controller.applyEntry(entry),
+                      apply: (DateTime? deletionDate) => controller.applyEntry(
+                        entry,
+                        deletionDate: deletionDate,
+                      ),
                     ),
             child: const Text('Toepassen'),
           ),

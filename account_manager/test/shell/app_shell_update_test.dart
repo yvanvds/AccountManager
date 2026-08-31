@@ -14,6 +14,7 @@ Widget _wrap(Widget child) => MaterialApp(home: child);
 Finder get _bar => find.byKey(const ValueKey('update-offer'));
 Finder get _apply => find.byKey(const ValueKey('update-offer-apply'));
 Finder get _dismiss => find.byKey(const ValueKey('update-offer-dismiss'));
+Finder get _dialog => find.byKey(const ValueKey('release-notes-dialog'));
 
 void main() {
   testWidgets('a build with no update mechanism shows no bar at all',
@@ -124,5 +125,114 @@ void main() {
 
     await tester.pumpAndSettle();
     expect(_bar, findsOneWidget);
+  });
+
+  /// **Wat is er nieuw** (#395) — the one thing the check may put on screen by
+  /// itself, and therefore the one that has to be provably absent everywhere
+  /// else.
+  group('the release-notes dialog', () {
+    testWidgets('appears once after an update and never blocks the shell',
+        (WidgetTester tester) async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest:
+            fakeRelease('1.1.0', notes: '## Nieuw\n\n- De WiFi op de bladen'),
+      );
+      final prefs = await fakePreferences(notesSeenVersion: '1.0.0');
+      await tester.pumpWidget(_wrap(AppShell(
+        update: backend.services(autoCheck: true),
+        preferences: prefs,
+      )));
+      await tester.pumpAndSettle();
+
+      expect(_dialog, findsOneWidget);
+      // The shell is behind it, whole: this is a dialog to close, not a gate.
+      expect(find.byType(NavigationRail), findsOneWidget);
+      expect(_bar, findsNothing, reason: 'there is nothing to update to');
+      expect(find.textContaining('##'), findsNothing,
+          reason: 'the Markdown is rendered, not echoed');
+
+      await tester.tap(find.byKey(const ValueKey('release-notes-close')));
+      await tester.pumpAndSettle();
+
+      expect(_dialog, findsNothing);
+      expect(prefs.releaseNotesSeenVersion, '1.1.0');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('does not come back on the next launch of the same version',
+        (WidgetTester tester) async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest: fakeRelease('1.1.0', notes: 'iets nieuws'),
+      );
+      final prefs = await fakePreferences(notesSeenVersion: '1.0.0');
+
+      Future<void> launch() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(_wrap(AppShell(
+          update: backend.services(autoCheck: true),
+          preferences: prefs,
+        )));
+        await tester.pumpAndSettle();
+      }
+
+      await launch();
+      expect(_dialog, findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('release-notes-close')));
+      await tester.pumpAndSettle();
+
+      await launch();
+      expect(_dialog, findsNothing);
+    });
+
+    testWidgets('a fresh install never sees it', (WidgetTester tester) async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest: fakeRelease('1.1.0', notes: 'iets nieuws'),
+      );
+      final prefs = await fakePreferences();
+      await tester.pumpWidget(_wrap(AppShell(
+        update: backend.services(autoCheck: true),
+        preferences: prefs,
+      )));
+      await tester.pumpAndSettle();
+
+      expect(_dialog, findsNothing);
+      expect(prefs.releaseNotesSeenVersion, '1.1.0');
+    });
+
+    testWidgets('an empty release body shows nothing at all',
+        (WidgetTester tester) async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest: fakeRelease('1.1.0'),
+      );
+      await tester.pumpWidget(_wrap(AppShell(
+        update: backend.services(autoCheck: true),
+        preferences: await fakePreferences(notesSeenVersion: '1.0.0'),
+      )));
+      await tester.pumpAndSettle();
+
+      expect(_dialog, findsNothing);
+      expect(find.byType(Dialog), findsNothing);
+    });
+
+    testWidgets('an offline launch shows nothing at all',
+        (WidgetTester tester) async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        feedError: StateError('Failed host lookup: api.github.com'),
+      );
+      await tester.pumpWidget(_wrap(AppShell(
+        update: backend.services(autoCheck: true),
+        preferences: await fakePreferences(notesSeenVersion: '1.0.0'),
+      )));
+      await tester.pumpAndSettle();
+
+      expect(_dialog, findsNothing);
+      expect(find.byType(NavigationRail), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

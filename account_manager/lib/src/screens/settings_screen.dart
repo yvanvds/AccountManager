@@ -10,6 +10,7 @@ import '../settings/connection_config.dart';
 import '../settings/settings_bootstrap.dart';
 import '../settings/wisa_rule_labels.dart';
 import '../update/app_release.dart' show AppRelease;
+import '../update/release_notes.dart' show ReleaseNotesDialog;
 import '../update/update_controller.dart';
 
 /// The Settings view (#106): edit the full [AppSettings] config document and
@@ -1720,6 +1721,9 @@ class _VersionSection extends StatelessWidget {
     final UpdateController? update = controller;
     final String installed = update?.installedVersion ?? '';
     final AppRelease? offered = update?.availableRelease;
+    // The notes of the version now *running* (#395) — a different thing from
+    // `offered`, which is the version not running yet.
+    final AppRelease? running = update?.releaseNotes;
     final bool busy = update?.busy ?? false;
 
     return _Section(
@@ -1757,6 +1761,18 @@ class _VersionSection extends StatelessWidget {
                 icon: const Icon(Icons.refresh),
                 label: const Text('Controleren op updates'),
               ),
+              // What makes the dismissed dialog recoverable (#395), and the
+              // reason it belongs here rather than anywhere else: this section
+              // already answers "which version am I running?", and "what
+              // changed in it?" is the same question one step further. Present
+              // only when there is a body to show, so it can never open empty.
+              if (running != null)
+                TextButton.icon(
+                  key: const ValueKey('settings-version-notes-open'),
+                  onPressed: () => ReleaseNotesDialog.show(context, running),
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  label: const Text('Wat is er nieuw'),
+                ),
               // Present only when there is genuinely something to apply. This is
               // the consent gate: no code path reaches `apply()` except this
               // button and the shell's **Bijwerken**.

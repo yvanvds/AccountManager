@@ -124,6 +124,27 @@ sealed class StudentAction {
   /// never do.
   bool get canApplyToAll => false;
 
+  /// Whether this action's write is stamped with [ApplyOptions.deletionDate] —
+  /// the **uitschrijvingsdatum** (#394).
+  ///
+  /// Uitschrijving and deletion are official acts in Smartschool: the date goes
+  /// on the record and has to be the real one, not the moment the operator
+  /// happened to press the button. So the UI has to ask before it writes, and
+  /// this is what tells it that this particular resolution is one of the ones
+  /// worth asking about.
+  ///
+  /// **A property of the action, never a list of kinds held in the UI** — the
+  /// same rule [canApplyToAll] states, for the same reason: a list in a screen
+  /// drifts from what the actions actually consume, and an action added later
+  /// inherits whatever the list's default happened to be. Declared here, a new
+  /// action is silent about dates until someone decides otherwise, which is
+  /// exactly how every action behaved before this member existed.
+  ///
+  /// True only where [apply] genuinely reads `options.deletionDate`. It is not
+  /// "this action is destructive": [RemoveStudentFromAzure] deletes an Office
+  /// 365 account and carries no date at all, because Graph records none.
+  bool get usesDeletionDate => false;
+
   /// The action types this one **unlocks** on the same target (#230).
   ///
   /// Provisioning a brand-new student is a chain, not a single action: the
@@ -638,6 +659,13 @@ class UnregisterStudentFromSmartschool extends StudentAction {
   @override
   bool get isDefaultAlternative => true;
 
+  /// The uitschrijving *is* the date (#394): Smartschool records the day the
+  /// student left and evaluates the school year against it, so writing "now"
+  /// for a departure that happened in March is a wrong entry in an official
+  /// register, not a rounding error.
+  @override
+  bool get usesDeletionDate => true;
+
   @override
   ChangeSet describeChanges() => const ChangeSet(
         system: Origin.smartschool,
@@ -699,6 +727,13 @@ class DeleteStudentFromSmartschool extends StudentAction {
   /// is the destructive alternative, so it is not the default.
   @override
   String? get alternativeGroup => smartschoolDepartureAlternative;
+
+  /// The delete carries the same official date as its conservative twin (#394),
+  /// and getting it wrong here is the more consequential of the two: the account
+  /// is gone afterwards, so the date it was struck off on is the only record of
+  /// when the student actually left.
+  @override
+  bool get usesDeletionDate => true;
 
   @override
   ChangeSet describeChanges() => ChangeSet(

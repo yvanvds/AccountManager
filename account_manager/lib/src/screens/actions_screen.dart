@@ -367,9 +367,15 @@ class _AccountRow {
       };
 
   /// What this row's cell for [system] reads as.
+  ///
+  /// The WISA cell alone is handed the record's [core.WisaPresence] (#392): it
+  /// is the one system whose snapshot spans schools we do not manage, so it is
+  /// the one cell that can say "not here, but still in the group". Smartschool
+  /// and Office 365 pass nothing and read exactly as before.
   SystemIndicatorState stateFor(core.Origin system) => systemIndicatorState(
         present: presentIn(system),
         hasWork: workSystems.contains(system),
+        wisaPresence: system == core.Origin.wisa ? account.wisaPresence : null,
       );
 
   /// What the name search matches against — the display name alone. The class
@@ -1247,7 +1253,10 @@ class _CohortReviewBanner extends StatelessWidget {
       // Scoped to this one decision across the cohort (#292): summing every
       // decision on every card would quote writes this pass will not make.
       scope: controller.applyScopeForDecisions(cohort.decisions),
-      apply: () => controller.applyDecisions(cohort.decisions),
+      apply: (DateTime? deletionDate) => controller.applyDecisions(
+        cohort.decisions,
+        deletionDate: deletionDate,
+      ),
     );
     if (ran) onDisarm();
   }
@@ -1406,7 +1415,7 @@ class _SystemRow extends StatelessWidget {
   const _SystemRow({
     required this.row,
     this.keyPrefix = 'account-cell',
-    this.showAzureSchools = false,
+    this.showAzureDetail = false,
   });
 
   final _AccountRow row;
@@ -1416,8 +1425,9 @@ class _SystemRow extends StatelessWidget {
   /// exactly when a row is selected, which is every interesting case.
   final String keyPrefix;
 
-  /// Whether the Office 365 cell also names the schools that account's Azure
-  /// `department` lists (#352) — the details pane only.
+  /// Whether the Office 365 cell also says which school that account belongs to
+  /// — the schools its Azure `department` lists for a staff member (#352), the
+  /// `companyName` it carries for a student (#393). The details pane only.
   ///
   /// The same split #334 made for the sibling-enrolment line, and for the same
   /// reason: this is context for reading *one* card at the moment of a
@@ -1426,7 +1436,7 @@ class _SystemRow extends StatelessWidget {
   /// line under every card's third cell is noise. Because the two sets of cells
   /// share this widget, the gate has to be here — a `detail` handed to the cell
   /// unconditionally would appear in both.
-  final bool showAzureSchools;
+  final bool showAzureDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -1434,16 +1444,14 @@ class _SystemRow extends StatelessWidget {
     // exactly as a Klasgroepen row's cells are (`class-cell-<klas>-<systeem>`),
     // so a test can ask one row what it says about one system rather than
     // counting icons across three.
-    final List<String> schools = row.account.departmentSchools;
-    final String? azureSchools = showAzureSchools && schools.isNotEmpty
-        ? _departmentSchoolsLine(schools)
-        : null;
+    final String? azureDetail =
+        showAzureDetail ? _azureSchoolLine(row.account) : null;
     Widget cell(core.Origin system) => Expanded(
           child: SystemIndicatorCell(
             key: ValueKey('$keyPrefix-${row.id}-${system.name}'),
             system: system,
             state: row.stateFor(system),
-            detail: system == core.Origin.azure ? azureSchools : null,
+            detail: system == core.Origin.azure ? azureDetail : null,
           ),
         );
 
@@ -1489,6 +1497,44 @@ class _SystemRow extends StatelessWidget {
 String _departmentSchoolsLine(List<String> schools) =>
     'Scholen: ${schools.join(', ')}';
 
+/// What the Office 365 cell of the **details pane** says about which school an
+/// account belongs to — the one question both halves of INV-22 answer, asked of
+/// whichever field answers it for this kind of person.
+///
+/// Staff: the schools `department` lists (#352). Student: the `companyName`
+/// stamp (#393). The two are not interchangeable and must not be shown
+/// together. `companyName` says which school an account belongs to, never what
+/// its holder *is* (#358) — a teacher's account may carry a student stamp and
+/// nothing in the tenant forbids it, which is the whole of #386 — so printing a
+/// staff member's `companyName` under "Office 365" would invite exactly the
+/// misreading that collision came from. And `department` on a *student* carries
+/// the class, not a school (#359): it is a field this app writes to match the
+/// WISA class the card already prints two lines above, so quoting it back would
+/// be the app showing the operator its own output as evidence.
+///
+/// `null` — no line at all — when there is no Office 365 account to have a
+/// stamp. That absence is already stated, in colour, by the red cell this line
+/// would hang under.
+///
+/// The student half deliberately does **not** fall silent on a blank field. A
+/// missing line reads as "not loaded"; the operator needs "there is no
+/// bedrijfsnaam here", which is a finding in its own right — 140 current
+/// class-group members carried none in the Aug 2026 audit (#389), every one of
+/// them a judgement call made blind. Staff keep the older, quieter rule: their
+/// blank `department` is the ordinary state of a record this app does not write
+/// (#237), not an anomaly worth a line.
+String? _azureSchoolLine(MaterializedAccount account) {
+  if (account.isStaff) {
+    final List<String> schools = account.departmentSchools;
+    return schools.isEmpty ? null : _departmentSchoolsLine(schools);
+  }
+  if (!account.inAzure) return null;
+  final String? name = account.azureCompanyName;
+  // Verbatim: `afzwaai-SSJ` and `SSM-DIR` are real values, and their casing and
+  // punctuation are the part an operator reads them for.
+  return name == null ? 'Geen bedrijfsnaam ingesteld' : 'Bedrijfsnaam: $name';
+}
+
 String _otherEnrolmentLine(OtherEnrolment e) {
   final String klas = e.classroom.trim();
   final String where = klas.isEmpty ? 'zonder klas' : 'klas $klas';
@@ -1499,11 +1545,12 @@ String _otherEnrolmentLine(OtherEnrolment e) {
 /// about it, and every decision it raises.
 ///
 /// Since #334 it also states the other group schools the person is enrolled in,
-/// directly under the class facts they qualify, and since #352 the schools a
-/// staff member's Azure `department` lists, under the Office 365 cell. Only
-/// here, and not on the collapsed list row: the row is one dense line per
-/// account across a roster of thousands, and both are context for reading *one*
-/// card, not a way to scan.
+/// directly under the class facts they qualify, and under the Office 365 cell
+/// the school that account belongs to — `department` for staff (#352),
+/// `companyName` for a student (#393), per [_azureSchoolLine]. Only here, and
+/// not on the collapsed list row: the row is one dense line per account across a
+/// roster of thousands, and all of it is context for reading *one* card, not a
+/// way to scan.
 ///
 /// The decisions are [entryDetail] verbatim — one block per decision, each led
 /// by its own heading and its system, then the radios or the field diff, then
@@ -1557,7 +1604,7 @@ class _AccountDetail extends StatelessWidget {
         _SystemRow(
           row: row,
           keyPrefix: 'account-detail-cell',
-          showAzureSchools: true,
+          showAzureDetail: true,
         ),
         for (final w in row.account.warnings) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s2),
@@ -1710,7 +1757,10 @@ class _RetireStaffBlock extends StatelessWidget {
         controller: controller,
         title: '$name uit dienst?',
         scope: controller.retirementScope(staff),
-        apply: () => controller.retireStaff(staff),
+        apply: (DateTime? deletionDate) => controller.retireStaff(
+          staff,
+          deletionDate: deletionDate,
+        ),
       );
 }
 

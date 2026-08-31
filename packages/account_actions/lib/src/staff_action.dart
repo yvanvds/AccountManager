@@ -96,6 +96,15 @@ sealed class StaffAction {
   /// grant yet.
   bool get canApplyToAll => false;
 
+  /// Whether this action's write is stamped with [ApplyOptions.deletionDate]
+  /// (#394) — see [StudentAction.usesDeletionDate] for why the flag lives on the
+  /// action rather than in the screen.
+  ///
+  /// One staff action carries it: [RemoveStaffFromSmartschool], whose `deleteUser`
+  /// takes the official date. The staff *departure* is otherwise a
+  /// [DeactivateStaffInSmartschool], which writes a status and no date at all.
+  bool get usesDeletionDate => false;
+
   /// The action types this one **unlocks** on the same target (#240) — the staff
   /// family's half of the chaining [StudentAction.unlocks] introduced for
   /// students (#230) and extended to class groups in #245, deliberately the same
@@ -616,6 +625,15 @@ class AddStaffToSmartschool extends StaffAction {
       // Legacy stamps the removal with the moment of the write
       // (`GroupManager.RemoveUserFromGroup`); the date carries no meaning for a
       // non-official group, but the API requires one.
+      //
+      // Deliberately **not** `options.deletionDate` (#394). That date is the
+      // uitschrijvingsdatum — the day a person officially left — and this is a
+      // membership end inside a provisioning chain: the account is being
+      // *created*, and it is leaving the platform's own default group on the way
+      // in. Feeding one into the other would let a remembered departure date
+      // from an end-of-year batch stamp a new colleague's account creation, and
+      // there is no reading of that date under which "now" is the wrong answer
+      // here. So `now` stays, and the two dates stay separate.
       final ok = await _requireSmartschool(connectors)
           .removeUserFromGroup(built.uid, name, DateTime.now());
       if (ok) return resolved;
@@ -796,6 +814,12 @@ class RemoveStaffFromSmartschool extends StaffAction {
   /// either.
   @override
   bool get canApplyToAll => false;
+
+  /// The staff counterpart of the student delete (#394): `deleteUser` records an
+  /// official date, and the operator's answer belongs on it rather than the
+  /// moment they pressed the button.
+  @override
+  bool get usesDeletionDate => true;
 
   /// Same chain as the conservative half: the Office 365 side of the departure
   /// follows the Smartschool side (#349).

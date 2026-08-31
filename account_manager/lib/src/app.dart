@@ -6,6 +6,7 @@ import 'auth/sign_in_gate.dart';
 import 'auth/sign_in_session.dart';
 import 'reconcile/reconcile_bootstrap.dart';
 import 'settings/connection_config.dart';
+import 'settings/local_preferences.dart';
 import 'settings/settings_bootstrap.dart';
 import 'shell/app_shell.dart';
 import 'update/update_controller.dart';
@@ -22,7 +23,7 @@ const Color kProductAccent = Color(0xFF17796B);
 /// per-product accent. The UI itself is the [AppShell] — a navigation frame
 /// that grows a destination per view as the Phase C slices land.
 class AccountManagerApp extends StatelessWidget {
-  const AccountManagerApp({
+  AccountManagerApp({
     super.key,
     required this.session,
     required this.graph,
@@ -30,7 +31,9 @@ class AccountManagerApp extends StatelessWidget {
     this.settingsBootstrap,
     this.connection,
     this.update,
-  });
+    this.openReleaseLink,
+    LocalPreferences? preferences,
+  }) : preferences = preferences ?? LocalPreferences.inMemory();
 
   /// The operator's Azure AD session, used by the sign-in gate and, later, by
   /// the connectors that carry its tokens.
@@ -66,6 +69,20 @@ class AccountManagerApp extends StatelessWidget {
   /// say.
   final UpdateServices? update;
 
+  /// This operator's remembered working state on this machine (#394) — the last
+  /// uitschrijvingsdatum, and whatever joins it — already loaded by `main()`.
+  ///
+  /// Defaults to a session-only bag rather than to `null`, so a test (or a build
+  /// with nowhere to write) still gets the remembering *behaviour* within its
+  /// run and only loses it at exit. Nothing downstream then has to special-case
+  /// "there is no preference store".
+  final LocalPreferences preferences;
+
+  /// Where a link in the **Wat is er nieuw** dialog goes (#395); `null` means
+  /// the operator's default browser, which is what production wants. Injected
+  /// only so a test can follow the link without launching one.
+  final Future<void> Function(Uri url)? openReleaseLink;
+
   ThemeData _themed(ThemeData base) => base.copyWith(
         extensions: const <ThemeExtension<dynamic>>[
           PlinkProductAccent(kProductAccent),
@@ -79,14 +96,25 @@ class AccountManagerApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: _themed(PlinkTheme.paper),
       darkTheme: _themed(PlinkTheme.ink),
-      home: SignInGate(
-        session: session,
-        graph: graph,
-        child: AppShell(
-          reconcileBootstrap: reconcileBootstrap,
-          settingsBootstrap: settingsBootstrap,
-          connection: connection,
-          update: update,
+      // Above the sign-in gate, so the remembered answers are in scope for
+      // everything the shell builds without being threaded through it (#394).
+      home: LocalPreferencesScope(
+        preferences: preferences,
+        child: SignInGate(
+          session: session,
+          graph: graph,
+          child: AppShell(
+            reconcileBootstrap: reconcileBootstrap,
+            settingsBootstrap: settingsBootstrap,
+            connection: connection,
+            update: update,
+            // Also handed down explicitly, not only through the scope above:
+            // the shell builds its update controller in `initState`, where an
+            // inherited lookup is not allowed, and that controller is what
+            // remembers which release's notes this machine has read (#395).
+            preferences: preferences,
+            openReleaseLink: openReleaseLink,
+          ),
         ),
       ),
     );

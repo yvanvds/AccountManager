@@ -86,6 +86,18 @@ sealed class GroupAction {
   /// cannot have it at all.
   bool get canApplyToAll => false;
 
+  /// Whether this action's write is stamped with [ApplyOptions.deletionDate]
+  /// (#394) — see [StudentAction.usesDeletionDate].
+  ///
+  /// **No group action carries one, and the member exists so that stays a
+  /// statement rather than an omission.** A class is not a person: deleting a
+  /// Smartschool class ends a container, and Smartschool records no official
+  /// departure date for it the way it does for a pupil's uitschrijving. The
+  /// declaration lives here anyway so the UI can ask *any* pending action the
+  /// same question instead of knowing which families happen to have dated
+  /// writes today.
+  bool get usesDeletionDate => false;
+
   /// The key shared by mutually-exclusive alternatives resolving the same
   /// situation (#110). `null` (the default) means the action stands on its own.
   /// The group family has two: [classImportAlternative] for a class Smartschool

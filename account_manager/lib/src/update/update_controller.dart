@@ -23,6 +23,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:pub_semver/pub_semver.dart';
 
+import '../settings/local_preferences.dart';
 import 'app_release.dart';
 
 /// Where the update check has got to — what the Versie section and the shell's
@@ -109,14 +110,32 @@ class UpdateServices {
 
 /// The update check's state, and the two operations that move it.
 class UpdateController extends ChangeNotifier {
-  UpdateController(this.services);
+  UpdateController(this.services, {LocalPreferences? preferences})
+      : preferences = preferences ?? LocalPreferences.inMemory();
 
   final UpdateServices services;
+
+  /// This machine's own remembered state (#394), which is where the "notes last
+  /// seen for version X" marker lives (#395).
+  ///
+  /// **Machine-local, deliberately.** The shared Cosmos settings document is the
+  /// wrong side of that line: put the marker there and the first operator to
+  /// close the dialog closes it for every colleague. It also has to survive the
+  /// update that produced it, which `%APPDATA%\AccountManager\preferences.json`
+  /// does — the installer never touches that directory (see
+  /// `docs/release-process.md`).
+  ///
+  /// Defaults to a session-only bag, so a controller built without one still
+  /// works and simply forgets at exit.
+  final LocalPreferences preferences;
 
   UpdatePhase _phase = UpdatePhase.idle;
   String? _installedVersion;
   Version? _parsedInstalledVersion;
   AppRelease? _available;
+  AppRelease? _latest;
+  Version? _notesSeen;
+  bool _whatsNewPending = false;
   String _message = '';
   double _progress = 0;
   bool _dismissed = false;
@@ -157,6 +176,37 @@ class UpdateController extends ChangeNotifier {
   /// Whether an operation is in flight, so the buttons can disable themselves.
   bool get busy => _busy;
 
+  /// The release notes **of the version now running** (#395), or `null` when
+  /// there are none to read.
+  ///
+  /// `null` covers every honest reason at once: no check has answered yet, the
+  /// check failed or was offline, the published latest is a *different* version
+  /// from the one running (the operator is behind, and the news to give them is
+  /// the update itself), or the release was published with an empty body. Each
+  /// of those renders the same — no dialog, no button — because in each of them
+  /// there is genuinely nothing to show.
+  ///
+  /// Only ever the current release's notes, never an accumulation of the ones
+  /// skipped in between. An operator jumping 1.0.1 → 1.0.4 gets 1.0.4's notes
+  /// and the GitHub link, which is where the full history already lives; a
+  /// dialog that concatenated three releases would be the one nobody reads.
+  AppRelease? get releaseNotes {
+    final AppRelease? latest = _latest;
+    final Version? current = _parsedInstalledVersion;
+    if (latest == null || current == null) return null;
+    if (latest.version != current) return null;
+    return latest.notes.trim().isEmpty ? null : latest;
+  }
+
+  /// Whether the shell should be showing **Wat is er nieuw** right now (#395).
+  ///
+  /// True for exactly one launch: the first one after an update to a version
+  /// whose notes this machine has not seen. [acknowledgeReleaseNotes] is what
+  /// takes it down, and it writes the marker before it does — so a crash between
+  /// the dialog opening and the operator closing it costs one repeat, never a
+  /// dialog that keeps coming back.
+  bool get whatsNewPending => _whatsNewPending;
+
   void _log(String text) => (services.log ?? debugPrint)(text);
 
   void _set(VoidCallback mutate) {
@@ -172,8 +222,74 @@ class UpdateController extends ChangeNotifier {
   /// screen while this is in flight.
   Future<void> start() async {
     await _readVersion();
+    await _seedReleaseNotesBaseline();
     if (!services.autoCheck) return;
     await check();
+  }
+
+  /// Establishes what this machine has already been told about (#395), and — on
+  /// an install that has never recorded anything — seeds it with the running
+  /// version.
+  ///
+  /// The seeding is the acceptance criterion "a fresh install never shows it",
+  /// and it has to be done this way round. Treating "nothing stored" as "show
+  /// it" would greet someone installing v1.0.4 for the first time with a list of
+  /// changes to an app they have never seen; there is nothing new to them,
+  /// because all of it is. So the first launch records where it starts and says
+  /// nothing, and the *second* version this install runs is the first one it
+  /// announces.
+  ///
+  /// Never throws. A preference file that cannot be read or written costs the
+  /// dialog, not the launch.
+  Future<void> _seedReleaseNotesBaseline() async {
+    final Version? current = _parsedInstalledVersion;
+    if (current == null) return;
+    try {
+      final String? stored = preferences.releaseNotesSeenVersion;
+      if (stored == null) {
+        _notesSeen = current;
+        await preferences.setReleaseNotesSeenVersion(current.toString());
+        return;
+      }
+      _notesSeen = parseReleaseTag(stored);
+    } on Object catch (e) {
+      _log('Update: kon de gelezen-releasenotitie niet bijhouden: $e');
+    }
+  }
+
+  /// Decides whether [latest] is news for this machine, given the running
+  /// [current] version.
+  ///
+  /// Four ways to be silent, and the issue names each: the feed answered with a
+  /// version that is not the one running (an operator who is *behind* gets the
+  /// update offer, not a retrospective); the release carries no body; this
+  /// machine has already seen this version's notes; or nothing was ever recorded
+  /// because the version could not be read.
+  void _considerReleaseNotes(AppRelease? latest, Version current) {
+    if (latest == null || latest.version != current) return;
+    if (latest.notes.trim().isEmpty) return;
+    final Version? seen = _notesSeen;
+    if (seen == null || seen >= current) return;
+    _set(() => _whatsNewPending = true);
+    _log('Update: releasenotities van $current zijn nieuw op deze machine.');
+  }
+
+  /// Marks this version's notes as read on this machine, and takes the dialog
+  /// down (#395).
+  ///
+  /// Called when the operator closes **Wat is er nieuw**. Writing the marker is
+  /// what makes "never twice for one version" true across restarts; clearing the
+  /// flag is what makes it true within one session.
+  Future<void> acknowledgeReleaseNotes() async {
+    final Version? current = _parsedInstalledVersion;
+    _set(() => _whatsNewPending = false);
+    if (current == null) return;
+    _notesSeen = current;
+    try {
+      await preferences.setReleaseNotesSeenVersion(current.toString());
+    } on Object catch (e) {
+      _log('Update: kon niet bewaren dat $current gelezen is: $e');
+    }
   }
 
   Future<void> _readVersion() async {
@@ -221,6 +337,11 @@ class UpdateController extends ChangeNotifier {
     });
     try {
       final AppRelease? latest = await services.feed();
+      // Kept whatever the comparison says: when it *is* the running version,
+      // its body is the "what's new" for the build the operator is in (#395),
+      // which is the common case immediately after an update.
+      _latest = latest;
+      _considerReleaseNotes(latest, current);
       if (latest == null) {
         _set(() {
           _phase = UpdatePhase.upToDate;

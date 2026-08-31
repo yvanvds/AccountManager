@@ -117,12 +117,18 @@ az.AzureUser _azStaffUser({String department = 'GBS'}) => az.AzureUser(
       department: department,
     );
 
-az.AzureUser _azUser({String id = 'az1', String? employeeId = '1'}) =>
+az.AzureUser _azUser({
+  String id = 'az1',
+  String? employeeId = '1',
+  // INV-22's student half: the school stamp. Ours by default, so the account is
+  // in step; a fixture about the unstamped account (#393) passes null or blank.
+  String? companyName = 'GBS',
+}) =>
     az.AzureUser(
       id: id,
       upn: 'jane@school.example',
       employeeId: employeeId,
-      companyName: 'GBS',
+      companyName: companyName,
     );
 
 core.Group _ssGroup(
@@ -191,7 +197,11 @@ LinkedState _idCollisionLinked() => LinkedState.recompute(
 /// A fully-linked student whose WISA class (3C) differs from her Smartschool
 /// membership (2B), so the dispatch yields exactly one pending action
 /// (`MoveToSmartschoolClassGroup`) — the shared fixture scenario.
-LinkedState _movePendingLinked() => LinkedState.recompute(
+LinkedState _movePendingLinked({
+  String? azureCompanyName = 'GBS',
+  bool withAzure = true,
+}) =>
+    LinkedState.recompute(
       wisa: wapi.WisaSnapshot(
         fetchedAt: _d,
         students: [_wStudent(classGroup: '3C')],
@@ -207,8 +217,11 @@ LinkedState _movePendingLinked() => LinkedState.recompute(
           ss.SmartschoolMembership(uid: 'jane', groupId: core.GroupId('2B_ss')),
         ],
       ),
-      azure:
-          az.AzureSnapshot(fetchedAt: _d, users: [_azUser()], groups: const []),
+      azure: az.AzureSnapshot(
+        fetchedAt: _d,
+        users: [if (withAzure) _azUser(companyName: azureCompanyName)],
+        groups: const [],
+      ),
       resolver: _SeqResolver(),
       studentConfig: _studentConfig,
       staffConfig: _staffConfig,
@@ -926,6 +939,96 @@ void main() {
       expect(managed.rollups.any((r) => r.school == '2'), isTrue);
     });
 
+    group('the document carries where WISA puts the student (#392)', () {
+      // A leaver gone from the whole group: our Smartschool + Azure accounts,
+      // no WISA row anywhere.
+      LinkedState goneFromGroup() => LinkedState.recompute(
+            wisa: wapi.WisaSnapshot(
+              fetchedAt: _d,
+              students: const [],
+              staff: const [],
+              classGroups: const [],
+              schools: const [],
+            ),
+            smartschool: ss.SmartschoolSnapshot(
+              fetchedAt: _d,
+              groups: const [],
+              accounts: [_ssAccount()],
+              memberships: const [],
+            ),
+            azure: az.AzureSnapshot(
+              fetchedAt: _d,
+              users: [_azUser()],
+              groups: const [],
+            ),
+            resolver: _SeqResolver(),
+            studentConfig: _studentConfig,
+            staffConfig: _staffConfig,
+            ourSchoolIds: const {1},
+          );
+
+      test('a student in a school we manage records nothing extra', () {
+        final account = materialize(
+          linkedInSchool(schoolId: 1, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single;
+
+        expect(account.wisaPresence, core.WisaPresence.ours);
+        // The ordinary document keeps exactly the shape it had, and an absent
+        // key reads as the `ours` default rather than as a recorded value.
+        expect(account.toJson().containsKey('wisaPresence'), isFalse);
+      });
+
+      test('a sibling-school student is groupOnly, though inWisa stays true',
+          () {
+        // The two disagree by design, which is exactly why a bool could never
+        // answer this: the aggregated pull walks every school of the group, so
+        // her WISA row is real — it is just not a row of ours.
+        final account = materialize(
+          linkedInSchool(schoolId: 2, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single;
+
+        expect(account.inWisa, isTrue);
+        expect(account.wisaPresence, core.WisaPresence.groupOnly);
+        expect(account.toJson()['wisaPresence'], 'groupOnly');
+      });
+
+      test('a student gone from the whole group is absent', () {
+        final account =
+            materialize(goneFromGroup(), generation: 1).accounts.single;
+
+        expect(account.inWisa, isFalse);
+        expect(account.wisaPresence, core.WisaPresence.absent);
+      });
+
+      test('it survives the round-trip through a stored document', () {
+        // A passive session reads the store and never links, so the WISA cell's
+        // reading has to come back out of the document exactly as it went in —
+        // the linked record behind it does not survive the session (#214/#255).
+        final account = materialize(
+          linkedInSchool(schoolId: 2, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single;
+        final back = MaterializedAccount.fromJson(account.toJson());
+
+        expect(back.wisaPresence, core.WisaPresence.groupOnly);
+        expect(back.withDecisions(const []).wisaPresence, account.wisaPresence,
+            reason: 'the decisions merge rewrites the doc every sync');
+      });
+
+      test('a document written before this existed reads as ours', () {
+        final json = materialize(
+          linkedInSchool(schoolId: 1, ourSchoolIds: {1}),
+          generation: 1,
+        ).accounts.single.toJson()
+          ..remove('wisaPresence');
+
+        expect(MaterializedAccount.fromJson(json).wisaPresence,
+            core.WisaPresence.ours);
+      });
+    });
+
     test('with no managed set every school is ours, so nobody is re-bucketed',
         () {
       // ourSchoolIds null → ownership is unconfigured (#286), which counts every
@@ -1209,6 +1312,85 @@ void main() {
         expect(back.departmentSchools, ['OTHER', 'GBS']);
         expect(back.withDecisions(const []).departmentSchools,
             account.departmentSchools,
+            reason: 'the decisions merge rewrites the doc every sync');
+      });
+    });
+
+    group('the Azure companyName rides on the document (#393)', () {
+      test('the field verbatim — no trim, no case-folding, no cleanup', () {
+        // `afzwaai-SSJ` and `SSM-DIR` are real values from the Aug 2026 audit
+        // (#389). Their casing and their hyphen are the part an operator reads
+        // them for, so this is a quotation and nothing else.
+        for (final String stamp in ['afzwaai-SSJ', 'SSM-DIR', 'SDA']) {
+          final account = materialize(
+            _movePendingLinked(azureCompanyName: stamp),
+            generation: 1,
+          ).accounts.single;
+
+          expect(account.azureCompanyName, stamp);
+          expect(account.toJson()['azureCompanyName'], stamp);
+        }
+      });
+
+      test('a student with no Office 365 account carries none, and stores none',
+          () {
+        final account = materialize(
+          _movePendingLinked(withAzure: false),
+          generation: 1,
+        ).accounts.single;
+
+        expect(account.inAzure, isFalse);
+        expect(account.azureCompanyName, isNull);
+        expect(account.toJson().containsKey('azureCompanyName'), isFalse);
+      });
+
+      test('a blank companyName reads exactly as an absent one', () {
+        // Deliberate: they are the same finding — this account carries no school
+        // stamp — and the pane has to have a single reading of it to state. The
+        // account is there, which is what tells "no stamp" apart from "no
+        // account" downstream.
+        for (final String? blank in <String?>[null, '', '   ']) {
+          final account = materialize(
+            _movePendingLinked(azureCompanyName: blank),
+            generation: 1,
+          ).accounts.single;
+
+          expect(account.inAzure, isTrue);
+          expect(account.azureCompanyName, isNull);
+          expect(account.toJson().containsKey('azureCompanyName'), isFalse,
+              reason: 'an absent key is the one spelling of "not set", so a '
+                  'document written before #393 is not reported as a blank');
+        }
+      });
+
+      test('a staff member is untouched: their school is department (INV-22)',
+          () {
+        // `companyName` says which school an account belongs to, never what its
+        // holder is (#358), so a staff account may carry one — #386 is exactly
+        // that case. It is still not the staff reading of "which school", and
+        // the staff document says nothing about it.
+        final account = materialize(
+          staffLinked(azureDepartment: 'GBS'),
+          generation: 1,
+        ).accounts.single;
+
+        expect(account.isStaff, isTrue);
+        expect(account.azureCompanyName, isNull);
+        expect(account.toJson().containsKey('azureCompanyName'), isFalse);
+      });
+
+      test('it survives the round-trip through a stored document', () {
+        // The reason it is baked in at all: `LinkedAccount.azure` is the narrow
+        // interface, which carries no `companyName`, and a passive session never
+        // links — so the value has to come back out of the document.
+        final account = materialize(
+          _movePendingLinked(azureCompanyName: 'afzwaai-SSJ'),
+          generation: 1,
+        ).accounts.single;
+        final back = MaterializedAccount.fromJson(account.toJson());
+
+        expect(back.azureCompanyName, 'afzwaai-SSJ');
+        expect(back.withDecisions(const []).azureCompanyName, 'afzwaai-SSJ',
             reason: 'the decisions merge rewrites the doc every sync');
       });
     });

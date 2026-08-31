@@ -12,7 +12,10 @@ import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
 import '../screens/settings_screen.dart';
 import '../settings/connection_config.dart';
+import '../settings/local_preferences.dart';
 import '../settings/settings_bootstrap.dart';
+import '../update/app_release.dart' show AppRelease;
+import '../update/release_notes.dart';
 import '../update/update_controller.dart';
 import 'shell_navigation.dart';
 
@@ -55,6 +58,8 @@ class AppShell extends StatefulWidget {
     this.settingsBootstrap,
     this.connection,
     this.update,
+    this.preferences,
+    this.openReleaseLink,
   });
 
   /// Assembles the reconcile stack on first use, or `null` when Azure AD is
@@ -78,6 +83,22 @@ class AppShell extends StatefulWidget {
   /// it (the offer bar above the rail, and the Versie section in Instellingen)
   /// are both below this point in the tree.
   final UpdateServices? update;
+
+  /// This machine's remembered state (#394), which the update check needs for
+  /// the "notes last seen for version X" marker (#395).
+  ///
+  /// Passed down explicitly rather than read out of [LocalPreferencesScope]:
+  /// the controller is built in [State.initState], where an inherited lookup is
+  /// not allowed, and the marker has to be in hand before the check answers.
+  /// `null` gives the controller a session-only bag — a widget test pumping the
+  /// shell then remembers within its run and forgets at the end, which is what
+  /// it should do.
+  final LocalPreferences? preferences;
+
+  /// Where a link in the **Wat is er nieuw** dialog goes; `null` means the
+  /// operator's default browser. A seam so a test can follow the link without
+  /// starting a process.
+  final Future<void> Function(Uri url)? openReleaseLink;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -170,16 +191,65 @@ class _AppShellState extends State<AppShell> {
     // offline check is a log line and nothing else.
     final UpdateServices? services = widget.update;
     if (services != null) {
-      final UpdateController controller = UpdateController(services);
+      final UpdateController controller = UpdateController(
+        services,
+        preferences: widget.preferences,
+      );
       _update = controller;
+      // The **Wat is er nieuw** dialog (#395) is the one thing the check may
+      // put on screen by itself, so it hangs off the same listener rather than
+      // off a `build`: a dialog opened from a build runs during a frame the
+      // navigator is already laying out.
+      controller.addListener(_maybeShowReleaseNotes);
       unawaited(controller.start());
     }
   }
 
   @override
   void dispose() {
+    _update?.removeListener(_maybeShowReleaseNotes);
     _update?.dispose();
     super.dispose();
+  }
+
+  /// Whether **Wat is er nieuw** is already on stage, so a second controller
+  /// notification (the check's own `busy` flip lands one) cannot stack a second
+  /// copy of it.
+  bool _showingReleaseNotes = false;
+
+  /// Shows the release notes of the version now running, once (#395).
+  ///
+  /// A dialog is the right shape here and a bar is not, which is the opposite of
+  /// the call #371 made for the update *offer* — and for the opposite reason.
+  /// An offer asks for a decision the operator may not want to make now, so it
+  /// waits in a strip of chrome. This asks for nothing: it is the answer to
+  /// "what changed?", it is read once, and a bar the operator has to notice and
+  /// dismiss would be the worse interruption of the two. It is still never a
+  /// gate — the barrier dismisses it, `Sluiten` dismisses it, and nothing in the
+  /// app is waiting on either.
+  void _maybeShowReleaseNotes() {
+    final UpdateController? update = _update;
+    if (update == null || _showingReleaseNotes) return;
+    if (!update.whatsNewPending) return;
+    final AppRelease? release = update.releaseNotes;
+    if (release == null) return;
+
+    _showingReleaseNotes = true;
+    // Off the notification, onto the next frame: this runs inside
+    // `notifyListeners`, and pushing a route from there re-enters the navigator
+    // mid-build.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await ReleaseNotesDialog.show(
+        context,
+        release,
+        onOpenLink: widget.openReleaseLink,
+      );
+      _showingReleaseNotes = false;
+      // Written when the operator closes it, not when it opens: a session that
+      // never got that far has not been told anything yet.
+      await update.acknowledgeReleaseNotes();
+    });
   }
 
   /// Takes hold of the (memoized) reconcile stack so the rail can count what

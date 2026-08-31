@@ -318,3 +318,5 @@ packages/azure_api/captures/
 # machine-specific — keep out of the repo).
 aad.local.json
 **/aad.local.json
+# Widget Preview related
+.widget_preview/

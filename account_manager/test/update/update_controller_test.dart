@@ -236,6 +236,164 @@ void main() {
       expect(controller.phase, UpdatePhase.available);
     });
   });
+
+  /// The "what's new" decision (#395), stated as the issue's acceptance
+  /// criteria: after an update the first launch has news, the second does not,
+  /// a fresh install never does, an empty body is not news, and a failed read
+  /// is silent.
+  group('release notes', () {
+    test('the first launch after an update has news', () async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest:
+            fakeRelease('1.1.0', notes: '- Wachtwoordbladen tonen de WiFi.'),
+      );
+      final prefs = await fakePreferences(notesSeenVersion: '1.0.0');
+      final controller =
+          backend.controller(autoCheck: true, preferences: prefs);
+
+      await controller.start();
+
+      expect(controller.whatsNewPending, isTrue);
+      expect(controller.releaseNotes!.version.toString(), '1.1.0');
+      // And the offer bar stays out of it — this is not an update to apply.
+      expect(controller.isOffering, isFalse);
+      expect(controller.phase, UpdatePhase.upToDate);
+    });
+
+    test('closing it writes the marker, so the next launch is silent',
+        () async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest: fakeRelease('1.1.0', notes: 'iets nieuws'),
+      );
+      final prefs = await fakePreferences(notesSeenVersion: '1.0.0');
+      final first = backend.controller(autoCheck: true, preferences: prefs);
+      await first.start();
+      expect(first.whatsNewPending, isTrue);
+
+      await first.acknowledgeReleaseNotes();
+      expect(first.whatsNewPending, isFalse);
+      expect(prefs.releaseNotesSeenVersion, '1.1.0');
+
+      // A restart, over the same bag.
+      final second = backend.controller(autoCheck: true, preferences: prefs);
+      await second.start();
+      expect(second.whatsNewPending, isFalse,
+          reason: 'never twice for one version');
+      // Still readable on demand, which is what the Instellingen button opens.
+      expect(second.releaseNotes, isNotNull);
+    });
+
+    test('a fresh install is seeded, not greeted', () async {
+      // Nothing stored is not "show it": someone installing 1.1.0 for the first
+      // time has everything, so there is nothing new to them.
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest: fakeRelease('1.1.0', notes: 'iets nieuws'),
+      );
+      final prefs = await fakePreferences();
+      final controller =
+          backend.controller(autoCheck: true, preferences: prefs);
+
+      await controller.start();
+
+      expect(controller.whatsNewPending, isFalse);
+      expect(prefs.releaseNotesSeenVersion, '1.1.0',
+          reason: 'the baseline is recorded so the *next* version is news');
+    });
+
+    test('a release with an empty body is not news', () async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        latest: fakeRelease('1.1.0', notes: '   \n  '),
+      );
+      final controller = backend.controller(
+        autoCheck: true,
+        preferences: await fakePreferences(notesSeenVersion: '1.0.0'),
+      );
+
+      await controller.start();
+
+      expect(controller.whatsNewPending, isFalse);
+      expect(controller.releaseNotes, isNull,
+          reason: 'an empty dialog is worse than no dialog');
+    });
+
+    test('an offline launch says nothing about notes either', () async {
+      final backend = FakeUpdateBackend(
+        version: '1.1.0',
+        feedError: const SocketExceptionStub('Failed host lookup'),
+      );
+      final controller = backend.controller(
+        autoCheck: true,
+        preferences: await fakePreferences(notesSeenVersion: '1.0.0'),
+      );
+
+      await controller.start();
+
+      expect(controller.whatsNewPending, isFalse);
+      expect(controller.releaseNotes, isNull);
+      expect(controller.phase, UpdatePhase.failed);
+    });
+
+    test('an operator who is behind gets the offer, not a retrospective',
+        () async {
+      // The published latest is *not* the running version, so its body is not
+      // "what's new in what you are running" — it is what you would get.
+      final backend = FakeUpdateBackend(
+        version: '1.0.0',
+        latest: fakeRelease('1.1.0', notes: 'iets nieuws'),
+      );
+      final controller = backend.controller(
+        autoCheck: true,
+        preferences: await fakePreferences(notesSeenVersion: '0.9.0'),
+      );
+
+      await controller.start();
+
+      expect(controller.whatsNewPending, isFalse);
+      expect(controller.releaseNotes, isNull);
+      expect(controller.isOffering, isTrue);
+    });
+
+    test('skipping several versions shows only the current release', () async {
+      // 1.0.0 → 1.3.0 in one jump: the dialog is 1.3.0's notes and the link
+      // covers the rest, rather than three releases concatenated.
+      final backend = FakeUpdateBackend(
+        version: '1.3.0',
+        latest: fakeRelease('1.3.0', notes: 'Wat 1.3.0 bracht.'),
+      );
+      final prefs = await fakePreferences(notesSeenVersion: '1.0.0');
+      final controller =
+          backend.controller(autoCheck: true, preferences: prefs);
+
+      await controller.start();
+
+      expect(controller.whatsNewPending, isTrue);
+      expect(controller.releaseNotes!.notes, 'Wat 1.3.0 bracht.');
+      expect(backend.feedCalls, 1,
+          reason: 'no extra fetch for the ones between');
+      await controller.acknowledgeReleaseNotes();
+      expect(prefs.releaseNotesSeenVersion, '1.3.0');
+    });
+
+    test('a build whose own version cannot be read seeds nothing', () async {
+      final backend = FakeUpdateBackend(
+        version: null,
+        latest: fakeRelease('1.1.0', notes: 'iets'),
+      );
+      final prefs = await fakePreferences();
+      final controller =
+          backend.controller(autoCheck: true, preferences: prefs);
+
+      await controller.start();
+
+      expect(controller.whatsNewPending, isFalse);
+      expect(prefs.releaseNotesSeenVersion, isNull,
+          reason: 'nothing is recorded against a version we cannot name');
+    });
+  });
 }
 
 /// Starts an apply without waiting for it, because the real installer launch
