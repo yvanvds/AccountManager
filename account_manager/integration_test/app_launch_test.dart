@@ -67,6 +67,8 @@ import 'package:account_state/account_state.dart'
         unassignedPartition;
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
+import 'package:late_arrivals/late_arrivals.dart'
+    show LateArrivalReason, composeMotivation, defaultLateArrivalReasons;
 import 'package:smartschool_api/smartschool_api.dart'
     show
         DiscardSmartschoolGroup,
@@ -15003,6 +15005,168 @@ void main() {
         findsWidgets);
     await tester.tap(find.byKey(const ValueKey('release-notes-close')));
     await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Instellingen maintains the shared late-arrival reason list, and the '
+      'edit reaches the other desk and a running session without a restart '
+      '(#405)', (WidgetTester tester) async {
+    // Every acceptance criterion of #405 in one real run, and each half needs
+    // this level. The editor is a section inside the real scrolling Algemeen
+    // tab, in the real Plink faces, with a real dialog pushed onto the real
+    // navigator — a widget test renders the section, not the page it has to
+    // share a column and a scroll context with. And "shared, not per-machine"
+    // is a claim about a *second* app instance reading the same document, which
+    // only a full launch can make.
+    useTallWindow(tester);
+
+    // One shared settings document — Cosmos in production — with the two desks
+    // bootstrapping their own sessions over it. `live` is what an already-open
+    // scan tab (#407) reads its buttons from, so publishing into it is what
+    // "takes effect without a restart" means.
+    final InMemorySettingsStore shared = InMemorySettingsStore();
+    final InMemorySecretProvider vault = InMemorySecretProvider(const {});
+    final LiveSettings live = LiveSettings();
+    final List<List<String>> published = <List<String>>[];
+    final StreamSubscription<AppSettings> watching = live.changes.listen(
+      (AppSettings s) => published.add(<String>[
+        for (final LateArrivalReason r in s.lateArrivalReasons) r.label,
+      ]),
+    );
+    addTearDown(watching.cancel);
+
+    Future<void> openDesk({LiveSettings? holder}) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        settingsBootstrap: () async => SettingsServices(
+          store: shared,
+          secrets: vault,
+          liveSettings: holder,
+        ),
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Instellingen'));
+      await tester.pumpAndSettle();
+    }
+
+    /// The reason labels the editor lists, top to bottom — the order the desk's
+    /// button row will render them in (#407).
+    List<String> listedReasons() {
+      final List<String> out = <String>[];
+      for (var i = 0;; i++) {
+        final Finder row = find.byKey(ValueKey('settings-reason-$i'));
+        if (row.evaluate().isEmpty) return out;
+        out.add(tester.widget<Text>(row).data!);
+      }
+    }
+
+    Future<void> scrollToReasons() async {
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('settings-reasons-note')));
+      await tester.pumpAndSettle();
+    }
+
+    // --- Desk one, on an install nobody has configured. ----------------------
+    await openDesk(holder: live);
+    // Algemeen is the tab the app opens on, and the section is on it.
+    expect(find.text('Te laat — redenen'), findsOneWidget);
+    await scrollToReasons();
+
+    // The shipped list is already there, so the desk works before anybody
+    // configures anything.
+    expect(
+      listedReasons(),
+      defaultLateArrivalReasons.map((LateArrivalReason r) => r.label).toList(),
+    );
+    // The "zonder geldige reden" entries are marked in place — visually
+    // distinguishable, but in the same single list, which is the shape the
+    // desk's flat button row has to have.
+    expect(find.text('ZONDER GELDIGE REDEN'), findsNWidgets(2));
+
+    // --- Add one that does not count as a valid reason. ----------------------
+    final Finder add = find.byKey(const ValueKey('settings-reason-add'));
+    await tester.ensureVisible(add);
+    await tester.pumpAndSettle();
+    await tester.tap(add);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('settings-reason-label')),
+      'Te lang gepraat',
+    );
+    await tester.pump();
+    // One switch on the reason itself — never a second click at the desk.
+    await tester.tap(find.byKey(const ValueKey('settings-reason-valid')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-reason-confirm')));
+    await tester.pumpAndSettle();
+
+    await scrollToReasons();
+    expect(listedReasons().last, 'Te lang gepraat');
+    expect(find.text('ZONDER GELDIGE REDEN'), findsNWidgets(3));
+
+    // --- Reorder: put the reason this school hears most at the front. --------
+    // "Verkeer" is second in the shipped list; one press up makes it first.
+    await tester.tap(find.byKey(const ValueKey('settings-reason-1-up')));
+    await tester.pumpAndSettle();
+    await scrollToReasons();
+    expect(listedReasons().first, 'Verkeer');
+
+    // --- Remove one the school does not use. ---------------------------------
+    final int doctor = listedReasons().indexOf('Doktersbezoek');
+    await tester.tap(find.byKey(ValueKey('settings-reason-$doctor-remove')));
+    await tester.pumpAndSettle();
+    await scrollToReasons();
+    expect(listedReasons(), isNot(contains('Doktersbezoek')));
+
+    final List<String> intended = listedReasons();
+    await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+    await tester.tap(find.byKey(const ValueKey('settings-save')));
+    await tester.pumpAndSettle();
+
+    // It landed in the shared document, in the operator's order.
+    final AppSettings saved = await shared.load();
+    expect(
+      <String>[
+        for (final LateArrivalReason r in saved.lateArrivalReasons) r.label,
+      ],
+      intended,
+    );
+    // …carrying the flag with the reason, which is what #404's presence write
+    // reads and what the fixed motivation format quotes (#402).
+    final LateArrivalReason added = saved.lateArrivalReasons
+        .firstWhere((LateArrivalReason r) => r.label == 'Te lang gepraat');
+    expect(added.isValid, isFalse);
+    expect(added.withoutValidReason, isTrue);
+    expect(
+      composeMotivation(DateTime(2026, 9, 7, 8, 14), added.label),
+      '08:14 – Te lang gepraat',
+    );
+
+    // No restart: the save was published into the holder a running scan tab
+    // reads its buttons from, so an open tab picks the edit up live.
+    expect(published, isNotEmpty);
+    expect(published.last, intended);
+    expect(
+      <String>[
+        for (final LateArrivalReason r in live.current.lateArrivalReasons)
+          r.label,
+      ],
+      intended,
+    );
+
+    // --- Desk two: a different machine, the same list. -----------------------
+    // The whole reason this lives in shared state. If each desk kept its own,
+    // Smartschool would end up holding "bus", "de bus" and "vertraging bus" as
+    // three different reasons and the data would be worthless afterwards.
+    await openDesk();
+    await scrollToReasons();
+    expect(listedReasons(), intended);
+    expect(find.text('Doktersbezoek'), findsNothing);
 
     expect(tester.takeException(), isNull);
   });

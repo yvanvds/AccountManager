@@ -12,6 +12,13 @@
 ///   the ticket prints, so a student who walked off with a ticket can never be
 ///   lost to a crash while the Smartschool write is still queued.
 ///
+/// One slice for what the operator is choosing *between* while they do it:
+///
+/// - the **reason list** (#405) — a label plus a "counts as a valid reason"
+///   flag, ordered, editable, and shared across every desk. The model lives
+///   here; the shared document that holds it is `AppSettings`, and the editor
+///   is in Instellingen.
+///
 /// And one slice for what happens when the machine itself is gone:
 ///
 /// - the **mirror** (#403) copies every journalled record and every status
@@ -49,6 +56,12 @@ export 'src/mirror/late_arrival_mirror_store.dart'
     show InMemoryLateArrivalMirrorStore, LateArrivalMirrorStore;
 export 'src/mirror/mirrored_registration.dart'
     show MirroredRegistration, normalizeDeskId;
+export 'src/reasons/late_arrival_reason.dart'
+    show
+        LateArrivalReason,
+        decodeLateArrivalReasons,
+        defaultLateArrivalReasons,
+        normalizeLateArrivalReasons;
 export 'src/scan_code.dart' show normalizeScanCode;
 export 'src/scan_resolver.dart' show ScanResolver;
 export 'src/scan_result.dart'

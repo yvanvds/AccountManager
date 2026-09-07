@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:account_state/account_state.dart';
+import 'package:late_arrivals/late_arrivals.dart';
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:test/test.dart';
 import 'package:wisa_api/wisa_api.dart';
@@ -52,6 +53,10 @@ AppSettings _sampleSettings() => AppSettings(
         WisaSchoolProfile(schoolId: 1, ours: true, prefix: 'SMA'),
         WisaSchoolProfile(schoolId: 2),
       ],
+      lateArrivalReasons: const [
+        LateArrivalReason('Treinvertraging'),
+        LateArrivalReason('Verslapen', isValid: false),
+      ],
     );
 
 void expectSameSettings(AppSettings a, AppSettings b) {
@@ -68,6 +73,7 @@ void expectSameSettings(AppSettings a, AppSettings b) {
   expect(a.wisaSchools, equals(b.wisaSchools));
   expect(a.staffWifi, equals(b.staffWifi));
   expect(a.studentWifi, equals(b.studentWifi));
+  expect(a.lateArrivalReasons, equals(b.lateArrivalReasons));
 }
 
 List<Map<String, dynamic>> encodeRules<T>(
@@ -119,6 +125,48 @@ void main() {
         AppSettings.fromJson(settings.toJson()).studentWifi.isConfigured,
         isFalse,
       );
+    });
+
+    test('a document predating the reason list adopts the defaults (#405)', () {
+      // The late-arrival desk has to be able to register a student before
+      // anybody has opened Instellingen — including on an install upgrading
+      // from a build whose document never carried the list.
+      final settings =
+          AppSettings.fromJson(<String, dynamic>{'debugMode': true});
+      expect(settings.lateArrivalReasons, defaultLateArrivalReasons);
+    });
+
+    test('an emptied reason list re-adopts the defaults (#405)', () {
+      // Deliberately unlike the WiFi networks and the Smartschool roots above,
+      // where present-but-empty is a choice that is honoured. A desk with no
+      // buttons cannot register the student in front of it, so "no reasons" is
+      // not a configuration to preserve.
+      final settings = AppSettings.fromJson(<String, dynamic>{
+        'lateArrivalReasons': <dynamic>[],
+      });
+      expect(settings.lateArrivalReasons, defaultLateArrivalReasons);
+      expect(
+        AppSettings.fromJson(settings.toJson()).lateArrivalReasons,
+        defaultLateArrivalReasons,
+      );
+    });
+
+    test('the reason list is normalized on the way out as well (#405)', () {
+      // The document is written by several operators from several desks: a
+      // duplicate or untrimmed spelling that slipped past one build's editor
+      // must not become what every other desk inherits.
+      final settings = const AppSettings().copyWith(
+        lateArrivalReasons: const <LateArrivalReason>[
+          LateArrivalReason('  Bus '),
+          LateArrivalReason('BUS', isValid: false),
+          LateArrivalReason('  '),
+          LateArrivalReason('Verkeer'),
+        ],
+      );
+      expect(settings.toJson()['lateArrivalReasons'], <Map<String, Object?>>[
+        <String, Object?>{'label': 'Bus', 'valid': true},
+        <String, Object?>{'label': 'Verkeer', 'valid': true},
+      ]);
     });
 
     test('an explicitly emptied root list is honoured (#351)', () {

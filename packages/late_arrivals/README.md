@@ -91,6 +91,39 @@ what was chosen after somebody renames or removes the entry.
 `preferences.json` and the token cache. `InMemoryJournalStore` is what tests bind
 and what a build with nowhere to write falls back to.
 
+### The reason list ([#405][405])
+
+What the operator is choosing *between* while the student stands there: an
+ordered list of reasons, each a label plus a flag saying whether it counts as a
+valid one.
+
+```dart
+for (final reason in settings.lateArrivalReasons) {
+  // One flat row of buttons, in this order. The invalid ones are marked in
+  // place, never split into a second step.
+}
+
+// On a press:
+final motivation = composeMotivation(now, reason.label);   // "08:14 – Verkeer"
+final flag = reason.withoutValidReason;                    // what #404 writes
+```
+
+- **The flag belongs to the reason, not to a second click.** Oversleeping is not
+  a delayed bus, but asking the operator to say so separately would slow down
+  exactly the moment that has to be fast.
+- **The list is shared, not per-machine.** It lives in `AppSettings`, the
+  document every desk reads, and is edited under *Instellingen → Algemeen*. If
+  each desk kept its own, Smartschool would end up holding "bus", "de bus" and
+  "vertraging bus" as three different reasons and the data would be worthless
+  afterwards. Because the Settings screen publishes every save into
+  `LiveSettings`, an edit reaches an open scan tab without a restart.
+- **A default list ships** (`defaultLateArrivalReasons`), so the desk works
+  before anybody has configured anything — and an emptied list re-adopts it,
+  since a desk with no buttons cannot register the student in front of it.
+- **Order is the operator's.** `normalizeLateArrivalReasons` trims, drops blanks
+  and collapses duplicate spellings case-insensitively (first wins), but never
+  reorders or groups the invalid entries away.
+
 ### The Cosmos mirror ([#403][403])
 
 The journal survives the app dying. It does nothing at all for the *laptop*

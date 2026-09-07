@@ -1,3 +1,4 @@
+import 'package:late_arrivals/late_arrivals.dart';
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
@@ -58,6 +59,7 @@ class AppSettings {
     this.wisaSchools = const [],
     this.staffWifi = defaultStaffWifi,
     this.studentWifi = defaultStudentWifi,
+    this.lateArrivalReasons = defaultLateArrivalReasons,
   }) : _smartschool = smartschool;
 
   /// The school prefix used by the linker to scope Azure users to this school
@@ -133,6 +135,25 @@ class AppSettings {
   /// [staffWifi] counterpart, defaulting to [defaultStudentWifi].
   final WifiNetwork studentWifi;
 
+  /// The late-arrival reasons the reception desk's button row offers, in the
+  /// order it offers them (#405).
+  ///
+  /// **Shared, not per-machine**, and that is why this lives in the settings
+  /// document rather than in the app's local preferences: if two reception
+  /// desks each kept their own list, Smartschool would end up with "bus", "de
+  /// bus", "bus te laat" and "vertraging bus" side by side and the data would
+  /// be worthless afterwards. One list, one spelling, every desk.
+  ///
+  /// Each entry carries its own "counts as a valid reason" flag, which is what
+  /// drives `withoutValidReason` on the Presence write (#404) — never a second
+  /// click at the desk.
+  ///
+  /// [defaultLateArrivalReasons] until an operator says otherwise, and — unlike
+  /// [smartschoolRoots] — an *emptied* list re-adopts them rather than being
+  /// honoured: see [decodeLateArrivalReasons] for why a desk with no buttons is
+  /// not a configuration anybody wants.
+  final List<LateArrivalReason> lateArrivalReasons;
+
   /// Per-WISA-school ownership entries, keyed by school id. Empty means no
   /// school has been marked managed yet — the group-membership plumbing #113
   /// slice 2 reads, but no action fires here.
@@ -174,6 +195,7 @@ class AppSettings {
     List<WisaSchoolProfile>? wisaSchools,
     WifiNetwork? staffWifi,
     WifiNetwork? studentWifi,
+    List<LateArrivalReason>? lateArrivalReasons,
   }) {
     return AppSettings(
       schoolPrefix: schoolPrefix ?? this.schoolPrefix,
@@ -188,6 +210,7 @@ class AppSettings {
       wisaSchools: wisaSchools ?? this.wisaSchools,
       staffWifi: staffWifi ?? this.staffWifi,
       studentWifi: studentWifi ?? this.studentWifi,
+      lateArrivalReasons: lateArrivalReasons ?? this.lateArrivalReasons,
     );
   }
 
@@ -212,6 +235,14 @@ class AppSettings {
       'wisaSchools': wisaSchools.map((p) => p.toJson()).toList(),
       'staffWifi': staffWifi.toJson(),
       'studentWifi': studentWifi.toJson(),
+      // Normalized on the way out as well as on the way in (#405): this
+      // document is written by several operators from several desks, and a
+      // duplicate or an untrimmed label that slipped past one build's editor
+      // must not become the spelling every other desk inherits.
+      'lateArrivalReasons': <Map<String, Object?>>[
+        for (final reason in normalizeLateArrivalReasons(lateArrivalReasons))
+          reason.toJson(),
+      ],
     };
   }
 
@@ -303,6 +334,10 @@ class AppSettings {
       studentWifi: studentWifi == null
           ? defaultStudentWifi
           : WifiNetwork.fromJson(studentWifi),
+      // Absent *or* unusable ⇒ the shipped list (#405). Unlike the two above
+      // there is no "the operator turned it off" reading to honour: an empty
+      // reason list leaves the desk unable to register anybody.
+      lateArrivalReasons: decodeLateArrivalReasons(json['lateArrivalReasons']),
       wisaSchools: adoptRetiredVirtualMarks(
         <WisaSchoolProfile>[
           for (final p in wisaSchools)
