@@ -60,8 +60,9 @@ void main() {
       expect(client.ensuredContainers[syncStateContainer], '/id');
     });
 
-    test('the bootstrap set is the linked-store set plus the snapshot set',
-        () async {
+    test(
+        'the bootstrap set is the linked-store set plus the snapshot and '
+        'late-arrival sets', () async {
       final client = FakeCosmosClient();
 
       await ensureContainers(client, specs: bootstrapContainers);
@@ -73,7 +74,20 @@ void main() {
         decisionsContainer: '/pk',
         syncStateContainer: '/id',
         snapshotsContainer: '/id',
+        lateArrivalsContainer: '/pk',
       });
+    });
+
+    test(
+        'the bootstrap set provisions the late-arrival mirror container, so a '
+        'desk never meets a first-write 404 mid-scan (#403)', () async {
+      final client = FakeCosmosClient();
+
+      await ensureContainers(client, specs: bootstrapContainers);
+
+      // Partitioned by the school day, which is the `pk` every mirrored
+      // registration carries and the partition the startup reconciliation reads.
+      expect(client.ensuredContainers[lateArrivalsContainer], '/pk');
     });
   });
 }

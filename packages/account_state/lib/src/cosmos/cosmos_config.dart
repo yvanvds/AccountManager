@@ -135,6 +135,26 @@ const String syncStateContainer = 'syncState';
 /// The id (and partition-key value) of the singleton sync-state document.
 const String syncStateDocumentId = 'syncState';
 
+/// The late-arrival mirror container (#403): one document per registration
+/// (`{ id, pk (school day), desk, seq, status, record }`), partitioned by `/pk`
+/// so a day's registrations across every reception desk are a single-partition
+/// query — the one read the startup reconciliation makes.
+///
+/// The day is the partition rather than the school for two reasons: a
+/// registration carries no school (the desk resolves a scan to a Smartschool
+/// user and a class group, never to a WISA school id), and the read this
+/// container exists to serve is always "what is outstanding *today*". Following
+/// the `/pk` convention of [linkedAccountsContainer] and friends, so the
+/// container behaves like every other epic-#112 container.
+///
+/// The document id carries the desk (`<day>|<desk>|<seq>`) because the journal's
+/// own record id is unique only on the machine that wrote it — a stand-in
+/// operator's fresh journal mints exactly the same ids. Two desks registering
+/// the same student is two documents on purpose: claims and locking are out of
+/// scope, and a presence save updates the half-day cell rather than duplicating
+/// it.
+const String lateArrivalsContainer = 'lateArrivals';
+
 /// The id (and partition-key value) of the sync/drift **lease** document (#108),
 /// a second singleton in the [syncStateContainer]. Its presence marks the lease
 /// held; it carries `owner` / `heartbeatAt` / `expiresAt` plus a Cosmos `ttl` so

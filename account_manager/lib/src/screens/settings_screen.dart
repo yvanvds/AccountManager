@@ -1,12 +1,15 @@
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
+import 'package:late_arrivals/late_arrivals.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
 import '../auth/aad_app_config.dart';
+import '../late_arrivals/late_arrival_printer.dart';
 import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 import '../settings/connection_config.dart';
+import '../settings/local_preferences.dart';
 import '../settings/settings_bootstrap.dart';
 import '../settings/wisa_rule_labels.dart';
 import '../update/app_release.dart' show AppRelease;
@@ -71,6 +74,7 @@ class SettingsScreen extends StatefulWidget {
     required this.bootstrap,
     this.connection,
     this.update,
+    this.ticketTransport,
   });
 
   /// Assembles (or returns the already-assembled) settings seams, or `null` when
@@ -91,6 +95,14 @@ class SettingsScreen extends StatefulWidget {
   /// `null` renders the Versie section with the version unknown and no check
   /// button, which is what a build with no update mechanism honestly is.
   final UpdateController? update;
+
+  /// How **Testticket afdrukken** reaches the printer (#406).
+  ///
+  /// `null` is the real [TcpTicketTransport] — one socket to port 9100. A
+  /// widget test binds a fake instead, because a `testWidgets` body runs in
+  /// fake async and a real socket's callbacks would never arrive there. The
+  /// full-app run drives the real one.
+  final TicketTransport? ticketTransport;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -182,6 +194,36 @@ class _SettingsScreenState extends State<SettingsScreen>
   final _studentWifiSsid = TextEditingController();
   final _studentWifiCode = TextEditingController();
 
+  // The shared late-arrival reason list (#405): a mutable working copy the
+  // editor reorders and edits in place, committed by `_collect` on save — the
+  // same treatment the two rule lists and the WISA school grid get.
+  //
+  // Seeded with the shipped defaults rather than empty, because that is what an
+  // unconfigured document *means* here: the desk has to be able to register a
+  // student before anyone has opened this section.
+  List<LateArrivalReason> _lateArrivalReasons = defaultLateArrivalReasons;
+
+  // The ticket printer at *this* desk (#406). Unlike everything else on the
+  // Algemeen tab this is machine-local: it lives in `preferences.json`, not in
+  // the shared settings document, because two reception desks have two printers
+  // on two addresses and a shared one would send desk two's tickets to desk one.
+  // See `LocalPreferences.lateArrivalPrinterHost`.
+  final _printerHost = TextEditingController();
+
+  /// The preferences of this launch, or `null` in a bare widget test with no
+  /// [LocalPreferencesScope] — the field then edits a session-only bag, exactly
+  /// as the deletion-date prompt behaves without one.
+  LocalPreferences? _preferences;
+
+  /// Guards the one-time read of the stored host into [_printerHost], so a
+  /// dependency change cannot overwrite what the operator is typing.
+  bool _printerHostLoaded = false;
+
+  /// The outcome of the last **Testticket afdrukken**, or `null` when none has
+  /// been tried this session.
+  LateArrivalPrintStatus? _printerStatus;
+  bool _printerTesting = false;
+
   // WISA profile.
   final _wisaServer = TextEditingController();
   final _wisaPort = TextEditingController();
@@ -267,8 +309,22 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The ticket printer's address is machine-local (#406), so it comes from
+    // the preference bag rather than from the settings document — which is why
+    // it is read here and not in `_populate`. Once only: a dependency change
+    // must not overwrite an address the operator is halfway through typing.
+    _preferences = LocalPreferencesScope.maybeOf(context);
+    if (_printerHostLoaded) return;
+    _printerHostLoaded = true;
+    _printerHost.text = _preferences?.lateArrivalPrinterHost ?? '';
+  }
+
+  @override
   void dispose() {
     _tabs.dispose();
+    _printerHost.dispose();
     for (final c in <TextEditingController>[
       _cosmosEndpoint,
       _cosmosDatabase,
@@ -552,6 +608,8 @@ class _SettingsScreenState extends State<SettingsScreen>
     _studentWifiSsid.text = s.studentWifi.ssid;
     _studentWifiCode.text = s.studentWifi.code;
 
+    _lateArrivalReasons = List<LateArrivalReason>.of(s.lateArrivalReasons);
+
     _wisaServer.text = s.wisa.server;
     _wisaPort.text = s.wisa.port;
     _wisaDatabase.text = s.wisa.database;
@@ -602,6 +660,122 @@ class _SettingsScreenState extends State<SettingsScreen>
   void _toggleSchoolVirtual(int index, bool virtual) {
     toggle(() =>
         _wisaSchools[index] = _wisaSchools[index].copyWith(virtual: virtual));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Late-arrival reasons (#405)
+  // ---------------------------------------------------------------------------
+
+  /// Every reason label already in the working list, folded the way
+  /// [LateArrivalReason.key] folds them, except the entry at [exceptIndex].
+  ///
+  /// Handed to the prompt so it can refuse a duplicate *while the operator is
+  /// typing* rather than letting `normalizeLateArrivalReasons` drop it silently
+  /// on save — which would look exactly like an edit that did not stick.
+  Set<String> _reasonKeys({int? exceptIndex}) => <String>{
+        for (var i = 0; i < _lateArrivalReasons.length; i++)
+          if (i != exceptIndex) _lateArrivalReasons[i].key,
+      };
+
+  /// Prompts for a label and a valid/invalid flag, and appends the reason.
+  /// Cancelling leaves the list untouched.
+  Future<void> _addLateArrivalReason() async {
+    final reason = await _promptLateArrivalReason(taken: _reasonKeys());
+    if (reason == null || !mounted) return;
+    toggle(() {
+      _lateArrivalReasons = <LateArrivalReason>[..._lateArrivalReasons, reason];
+    });
+  }
+
+  /// Re-prompts for the reason at [index], label and flag both.
+  ///
+  /// The flag is editable here rather than fixed at creation: a school that
+  /// decides "Verkeer" no longer excuses an arrival is making one decision
+  /// about one entry, and having to delete and retype it — losing its position
+  /// in the row — would be the wrong shape for that.
+  Future<void> _editLateArrivalReason(int index) async {
+    final reason = await _promptLateArrivalReason(
+      initial: _lateArrivalReasons[index],
+      taken: _reasonKeys(exceptIndex: index),
+    );
+    if (reason == null || !mounted) return;
+    toggle(() {
+      _lateArrivalReasons = List<LateArrivalReason>.of(_lateArrivalReasons)
+        ..[index] = reason;
+    });
+  }
+
+  /// Drops the reason at [index].
+  ///
+  /// Guarded on the last one: a document with no reasons re-adopts the shipped
+  /// list on the next load ([decodeLateArrivalReasons]), so removing it would
+  /// not stick — and a saved-then-reloaded list that quietly grew five entries
+  /// back is worse than a disabled button that says why.
+  void _removeLateArrivalReason(int index) {
+    if (_lateArrivalReasons.length <= 1) return;
+    toggle(() {
+      _lateArrivalReasons = List<LateArrivalReason>.of(_lateArrivalReasons)
+        ..removeAt(index);
+    });
+  }
+
+  /// Moves the reason at [index] one place towards the front (or the back, with
+  /// [delta] `1`) — the ordering the scan tab's button row renders in (#407),
+  /// so the reasons a desk reaches for most can be put where the hand goes.
+  void _moveLateArrivalReason(int index, int delta) {
+    final int target = index + delta;
+    if (target < 0 || target >= _lateArrivalReasons.length) return;
+    toggle(() {
+      final next = List<LateArrivalReason>.of(_lateArrivalReasons);
+      final LateArrivalReason moved = next.removeAt(index);
+      next.insert(target, moved);
+      _lateArrivalReasons = next;
+    });
+  }
+
+  /// Asks for one reason's label and its valid/invalid flag. Returns the
+  /// reason, or `null` when the operator cancels.
+  Future<LateArrivalReason?> _promptLateArrivalReason({
+    LateArrivalReason? initial,
+    Set<String> taken = const <String>{},
+  }) {
+    return showDialog<LateArrivalReason>(
+      context: context,
+      builder: (_) => _ReasonDialog(initial: initial, taken: taken),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Ticketprinter (#406)
+  // ---------------------------------------------------------------------------
+
+  /// Prints a sample ticket on the address currently in the field.
+  ///
+  /// The only way to find out whether an IP typed into a text box is the right
+  /// one, short of making a student be late. It deliberately uses the address
+  /// **as typed** rather than the saved one, so the operator can try a value
+  /// before committing it, and it goes through the same composition, the same
+  /// socket and the same error reporting as a real ticket — a test print down a
+  /// different path would prove nothing about the real one.
+  Future<void> _testPrintTicket() async {
+    final LateArrivalPrinter printer = LateArrivalPrinter(
+      host: _printerHost.text,
+      logo: defaultTicketLogo,
+      transport: widget.ticketTransport ?? const TcpTicketTransport(),
+    );
+    setState(() {
+      _printerTesting = true;
+      _printerStatus = null;
+    });
+    printer.printTestTicket();
+    await printer.settled;
+    final LateArrivalPrintStatus outcome = printer.status.value;
+    printer.dispose();
+    if (!mounted) return;
+    setState(() {
+      _printerTesting = false;
+      _printerStatus = outcome;
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -859,6 +1033,11 @@ class _SettingsScreenState extends State<SettingsScreen>
         ssid: _studentWifiSsid.text.trim(),
         code: _studentWifiCode.text.trim(),
       ),
+      // Normalized on the way out (#405). The editor already refuses a blank or
+      // duplicate label, so this is belt and braces — but the list is shared,
+      // and the one thing it must never do is hand another desk two spellings
+      // of the same reason.
+      lateArrivalReasons: normalizeLateArrivalReasons(_lateArrivalReasons),
       wisa: base.wisa.copyWith(
         server: _wisaServer.text.trim(),
         port: _wisaPort.text.trim(),
@@ -894,6 +1073,11 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _save() async {
+    // First, and outside the document's own failure path: the printer address
+    // describes the box on *this* desk, so it is written to `preferences.json`
+    // whether or not the shared document can be reached (#406).
+    await _preferences?.setLateArrivalPrinterHost(_printerHost.text);
+
     final services = _services;
     final base = _loaded;
     if (services == null || base == null) return;
@@ -1206,7 +1390,45 @@ class _SettingsForm extends StatelessWidget {
         ],
       ),
       _wifiSection(),
+      _lateArrivalReasonsSection(),
+      _lateArrivalPrinterSection(),
     ]);
+  }
+
+  /// The ticket printer at this desk (#406).
+  ///
+  /// Beside the reason list rather than on the Verbinding tab, even though it
+  /// is machine-local like everything there. Verbinding is the *bootstrap* —
+  /// the app registration, the Cosmos endpoint, the things that have to be
+  /// reachable when nothing else is — and a printer is not that. An operator
+  /// setting up a reception desk configures the buttons and the printer in one
+  /// sitting, and they should be one scroll apart, with the section saying in
+  /// so many words which of the two is shared and which is not.
+  Widget _lateArrivalPrinterSection() {
+    return _Section(
+      title: 'Te laat — ticketprinter',
+      children: <Widget>[
+        _LateArrivalPrinterEditor(state: state),
+      ],
+    );
+  }
+
+  /// The shared late-arrival reason list (#405).
+  ///
+  /// On **Algemeen** rather than under Smartschool, even though the Presence
+  /// write it feeds is a Smartschool call: the Smartschool tab is the
+  /// *connector's* configuration — where the site is, what the tree is called,
+  /// what gets pruned on the way in — and this is a piece of desk vocabulary
+  /// that happens to travel out over that connector. An operator looking for
+  /// "which buttons does reception get" would not think to look behind the SOAP
+  /// endpoint.
+  Widget _lateArrivalReasonsSection() {
+    return _Section(
+      title: 'Te laat — redenen',
+      children: <Widget>[
+        _LateArrivalReasonsEditor(state: state),
+      ],
+    );
   }
 
   /// The per-machine bootstrap: the Azure AD app registration (#384) and the
@@ -2243,6 +2465,388 @@ enum _SmartschoolRuleKind {
         DiscardSmartschoolGroup() => _SmartschoolRuleKind.discardGroup,
         NoSmartschoolSubgroups() => _SmartschoolRuleKind.noSubgroups,
       };
+}
+
+/// Editor for the shared late-arrival reason list (#405).
+///
+/// The reasons the reception desk's button row offers, in the order it offers
+/// them: add, edit, reorder, remove. Edits live in the screen's working copy
+/// and persist with the rest of the document on **Opslaan**, exactly like the
+/// two rule editors below.
+///
+/// Shared rather than per-machine, which is the point of the whole section. A
+/// desk that kept its own list would spell the same reason its own way, and
+/// Smartschool would end up holding "bus", "de bus" and "vertraging bus" as
+/// three different things. It is stored in the settings document every desk
+/// reads, and — because the Settings screen publishes every saved document into
+/// [LiveSettings] (#238) — a save reaches a scan tab that is already open
+/// without a restart.
+class _LateArrivalReasonsEditor extends StatelessWidget {
+  const _LateArrivalReasonsEditor({required this.state});
+
+  final _SettingsScreenState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final List<LateArrivalReason> reasons = state._lateArrivalReasons;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'De knoppen die de balie krijgt bij een te-laatregistratie, in deze '
+          'volgorde. Deze lijst is gedeeld: elke balie ziet dezelfde redenen, '
+          'zodat dezelfde reden overal hetzelfde geschreven staat. De reden '
+          'komt mee in de motivatie ("08:14 – Verkeer").',
+          key: const ValueKey('settings-reasons-note'),
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        for (var i = 0; i < reasons.length; i++)
+          _ReasonRow(
+            index: i,
+            reason: reasons[i],
+            // The ends of the list say so by being disabled rather than by
+            // silently doing nothing.
+            onMoveUp: i == 0 ? null : () => state._moveLateArrivalReason(i, -1),
+            onMoveDown: i == reasons.length - 1
+                ? null
+                : () => state._moveLateArrivalReason(i, 1),
+            onEdit: () => state._editLateArrivalReason(i),
+            // The last reason cannot be removed: an empty list re-adopts the
+            // shipped defaults on the next load, so the removal would not stick.
+            onRemove: reasons.length <= 1
+                ? null
+                : () => state._removeLateArrivalReason(i),
+          ),
+        const SizedBox(height: PlinkSpacing.s4),
+        OutlinedButton.icon(
+          key: const ValueKey('settings-reason-add'),
+          onPressed: state._addLateArrivalReason,
+          icon: const Icon(Icons.add),
+          label: const Text('Reden toevoegen'),
+        ),
+      ],
+    );
+  }
+}
+
+/// One reason in the list: its label, a marker when it does **not** count as a
+/// valid reason, and the reorder / edit / remove affordances. Keyed
+/// `settings-reason-<index>` so a widget/integration test can drive a specific
+/// row.
+///
+/// The invalid marker is a badge beside the label rather than a separate list
+/// or a second column, mirroring what the desk sees: one flat row of buttons,
+/// with the unexcused ones visually distinguishable but never a second step
+/// (#399). Splitting them here would quietly teach the operator to expect a
+/// split there.
+class _ReasonRow extends StatelessWidget {
+  const _ReasonRow({
+    required this.index,
+    required this.reason,
+    required this.onMoveUp,
+    required this.onMoveDown,
+    required this.onEdit,
+    required this.onRemove,
+  });
+
+  final int index;
+  final LateArrivalReason reason;
+
+  /// Null at the corresponding end of the list, which disables the button.
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
+  final VoidCallback onEdit;
+
+  /// Null when this is the only reason left.
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Wrap(
+              spacing: PlinkSpacing.s2,
+              runSpacing: PlinkSpacing.s1,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                Text(
+                  reason.label,
+                  key: ValueKey('settings-reason-$index'),
+                  style: text.bodyMedium,
+                ),
+                if (!reason.isValid)
+                  PlinkBadge(
+                    'zonder geldige reden',
+                    key: ValueKey('settings-reason-$index-invalid'),
+                    variant: BadgeVariant.spark,
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            key: ValueKey('settings-reason-$index-up'),
+            tooltip: 'Naar boven',
+            icon: const Icon(Icons.arrow_upward),
+            onPressed: onMoveUp,
+          ),
+          IconButton(
+            key: ValueKey('settings-reason-$index-down'),
+            tooltip: 'Naar beneden',
+            icon: const Icon(Icons.arrow_downward),
+            onPressed: onMoveDown,
+          ),
+          IconButton(
+            key: ValueKey('settings-reason-$index-edit'),
+            tooltip: 'Bewerken',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: onEdit,
+          ),
+          IconButton(
+            key: ValueKey('settings-reason-$index-remove'),
+            tooltip: onRemove == null
+                ? 'Er moet minstens één reden overblijven'
+                : 'Verwijderen',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: onRemove,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Prompts for one late-arrival reason: its label and whether it counts as a
+/// valid reason (#405).
+///
+/// Both in one dialog, and the flag is a plain switch on the reason itself —
+/// not a choice the operator makes again at the desk. That is the design the
+/// epic settles on: the distinction is a property of "verslapen" versus "de bus
+/// had vertraging", so it is decided once, here, by whoever maintains the list.
+///
+/// A blank label is refused (it would render an unlabelled button and write a
+/// motivation of nothing but a clock time), and so is one that duplicates an
+/// existing entry — case- and whitespace-insensitively, because that is exactly
+/// the collision the shared list exists to prevent.
+class _ReasonDialog extends StatefulWidget {
+  const _ReasonDialog({required this.initial, required this.taken});
+
+  /// The reason being edited, or null when adding a new one.
+  final LateArrivalReason? initial;
+
+  /// The folded labels already in the list, minus the one being edited.
+  final Set<String> taken;
+
+  @override
+  State<_ReasonDialog> createState() => _ReasonDialogState();
+}
+
+class _ReasonDialogState extends State<_ReasonDialog> {
+  late final TextEditingController _label =
+      TextEditingController(text: widget.initial?.label ?? '');
+  late bool _isValid = widget.initial?.isValid ?? true;
+
+  @override
+  void dispose() {
+    _label.dispose();
+    super.dispose();
+  }
+
+  String get _folded => _label.text.trim().toLowerCase();
+
+  bool get _isBlank => _label.text.trim().isEmpty;
+
+  bool get _isDuplicate => !_isBlank && widget.taken.contains(_folded);
+
+  void _submit() {
+    if (_isBlank || _isDuplicate) return;
+    Navigator.of(context).pop(
+      LateArrivalReason(_label.text.trim(), isValid: _isValid),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return AlertDialog(
+      key: const ValueKey('settings-reason-dialog'),
+      title:
+          Text(widget.initial == null ? 'Reden toevoegen' : 'Reden bewerken'),
+      content: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _label,
+        builder: (_, __, ___) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'De tekst op de knop, en de tekst die in de motivatie komt.',
+              style: text.bodyMedium,
+            ),
+            const SizedBox(height: PlinkSpacing.s3),
+            TextField(
+              key: const ValueKey('settings-reason-label'),
+              controller: _label,
+              autofocus: true,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: 'Reden',
+                hintText: 'bv. Bus of trein te laat',
+                border: const OutlineInputBorder(),
+                errorText:
+                    _isDuplicate ? 'Deze reden staat al in de lijst.' : null,
+              ),
+            ),
+            const SizedBox(height: PlinkSpacing.s2),
+            SwitchListTile(
+              key: const ValueKey('settings-reason-valid'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Telt als geldige reden'),
+              subtitle: Text(
+                _isValid
+                    ? 'De afwezigheid wordt als gewettigd geregistreerd.'
+                    : 'De afwezigheid wordt zonder geldige reden '
+                        'geregistreerd.',
+                style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+              ),
+              value: _isValid,
+              onChanged: (bool v) => setState(() => _isValid = v),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          key: const ValueKey('settings-reason-cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuleren'),
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _label,
+          builder: (_, __, ___) => FilledButton(
+            key: const ValueKey('settings-reason-confirm'),
+            onPressed: _isBlank || _isDuplicate ? null : _submit,
+            child: const Text('Bewaren'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The ticket printer this desk prints late-arrival tickets on (#406).
+///
+/// One address, a test button, and a sentence saying what the address is for.
+/// The port is not offered: raw ESC/POS printing *is* port 9100, and a field
+/// for it would only be a way to get it wrong.
+///
+/// **Machine-local, and it says so.** The reason list one section up is shared
+/// across every desk on purpose; this is the opposite, and the difference has
+/// to be legible or an operator will assume the whole "Te laat" configuration
+/// behaves one way. Two reception desks have two printers; a shared address
+/// would send desk two's tickets to desk one. It is stored in
+/// `preferences.json` beside the remembered uitschrijvingsdatum, and written by
+/// the same **Opslaan** as the rest of the tab.
+///
+/// **Empty is a valid answer.** It means this machine does not print — which is
+/// what an office laptop draining yesterday's queue honestly is — and the scan
+/// flow treats it as "no ticket", never as a fault.
+class _LateArrivalPrinterEditor extends StatelessWidget {
+  const _LateArrivalPrinterEditor({required this.state});
+
+  final _SettingsScreenState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Het adres van de bonprinter aan deze balie. De app stuurt de '
+          'tickets rechtstreeks naar poort $escPosRawPort — er is geen '
+          'Windows-printer of stuurprogramma nodig. Deze instelling geldt '
+          'alleen voor deze computer: elke balie heeft haar eigen printer. '
+          'Laat het veld leeg als hier niet afgedrukt wordt; de registratie '
+          'gaat dan gewoon door, alleen zonder ticket.',
+          key: const ValueKey('settings-printer-note'),
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        _Field(
+          keyValue: 'settings-printer-host',
+          label: 'Printeradres (IP of hostnaam)',
+          controller: state._printerHost,
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: state._printerHost,
+          builder: (_, TextEditingValue value, __) {
+            final bool configured = value.text.trim().isNotEmpty;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                OutlinedButton.icon(
+                  key: const ValueKey('settings-printer-test'),
+                  // Nothing to reach without an address, and no address to
+                  // guess: the button says so by being disabled.
+                  onPressed: !configured || state._printerTesting
+                      ? null
+                      : state._testPrintTicket,
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Testticket afdrukken'),
+                ),
+                _printerStatusLine(context, host: value.text.trim()),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  /// What the last test print did, in one line the operator can act on.
+  ///
+  /// A failure is coloured as an error and names the address that did not
+  /// answer, because "it does not print" is almost always a typo in the IP or a
+  /// printer somebody switched off — and both are things the operator can fix
+  /// standing there.
+  Widget _printerStatusLine(BuildContext context, {required String host}) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final LateArrivalPrintStatus? status = state._printerStatus;
+    final String message;
+    if (state._printerTesting) {
+      message = 'Er wordt een testticket verstuurd…';
+    } else if (status == null) {
+      message = '';
+    } else if (status.isFailure) {
+      message = status.message;
+    } else if (status.state == LateArrivalPrintState.disabled) {
+      message = status.message;
+    } else {
+      message = 'Het testticket is naar $host:$escPosRawPort verstuurd.';
+    }
+    if (message.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+      child: Text(
+        message,
+        key: const ValueKey('settings-printer-status'),
+        style: text.bodyMedium?.copyWith(
+          color: status?.isFailure ?? false
+              ? colors.error
+              : colors.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
 }
 
 /// Editor for the Smartschool import rules (#202).

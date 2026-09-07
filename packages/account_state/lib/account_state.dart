@@ -20,6 +20,11 @@
 ///   the metadata in Cosmos and overflows large payloads to a [BlobStore]
 ///   ([HttpBlobStore] over the same AAD-token discipline). [persistingSyncer]
 ///   and [seedSnapshot] compose that persistence over a [SystemState]'s syncer.
+/// - [CosmosLateArrivalMirrorStore] — the shared copy of the reception desk's
+///   late arrivals (#403): one Cosmos document per registration, partitioned by
+///   school day, so the day's queue survives the loss of the machine that made
+///   it. The retry/coalescing worker above it (`LateArrivalMirror`) lives in
+///   `late_arrivals`; only the container binding is here.
 /// - [SignalPublisher] / [SignalSubscriber] — the realtime change-notification
 ///   seam (#116): a writer publishes a small, data-free [ChangeSignal] and every
 ///   connected operator is nudged to refetch just the changed shard, so the
@@ -111,6 +116,7 @@ export 'src/settings/work_date.dart';
 export 'src/cosmos/cosmos_client.dart';
 export 'src/cosmos/cosmos_config.dart';
 export 'src/cosmos/cosmos_containers.dart';
+export 'src/cosmos/cosmos_late_arrival_mirror_store.dart';
 export 'src/cosmos/cosmos_live_config.dart';
 export 'src/cosmos/cosmos_password_queue_store.dart';
 export 'src/cosmos/cosmos_person_id_resolver.dart';

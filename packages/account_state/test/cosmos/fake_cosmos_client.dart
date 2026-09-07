@@ -87,6 +87,7 @@ class FakeCosmosClient implements CosmosClient {
     String? ifMatch,
   }) async {
     upsertCount++;
+    lastPartitionKey[container] = partitionKey;
     final docs = _container(container);
     final id = document['id'] as String;
     if (ifMatch != null) {
@@ -121,14 +122,34 @@ class FakeCosmosClient implements CosmosClient {
     String? partitionKey,
   }) async {
     queryCount++;
-    // The adapters issue exactly one query shape: keys IN @keys. Interpret it
-    // by the bound parameter rather than parsing SQL.
+    // Two query shapes are issued against this fake, and both are interpreted
+    // by their bound parameter rather than by parsing SQL: the resolver's
+    // `keys IN @keys`, and the late-arrival mirror's single-partition
+    // `c.pk = @pk` (#403).
+    if (parameters.containsKey('@pk')) {
+      final pk = parameters['@pk'];
+      return [
+        for (final doc in _container(container).values)
+          if (doc['pk'] == pk) Map<String, dynamic>.from(doc),
+      ];
+    }
     final keys = (parameters['@keys'] as List?)?.cast<Object?>() ?? const [];
     return [
       for (final doc in _container(container).values)
         if (keys.contains(doc['naturalKey'])) Map<String, dynamic>.from(doc),
     ];
   }
+
+  /// Every document currently stored in [container] — for asserting what an
+  /// adapter actually wrote, without going back through a query shape.
+  List<Map<String, dynamic>> documentsIn(String container) => [
+        for (final doc in _container(container).values)
+          Map<String, dynamic>.from(doc),
+      ];
+
+  /// The partition key the last write to [container] carried, so a test can
+  /// assert the adapter addressed the partition it claims to.
+  final Map<String, String?> lastPartitionKey = {};
 
   @override
   Future<bool> ensureContainer({

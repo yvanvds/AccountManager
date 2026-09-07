@@ -127,7 +127,7 @@ file/in-memory resolver is not preparable and keeps minting lazily, so the sync
 | Resource | Name | Notes |
 |---|---|---|
 | Cosmos DB account | `accountmanager-cosmos-arcadia` (`https://accountmanager-cosmos-arcadia.documents.azure.com/`) | SQL API, **serverless**, AAD-only (`disableLocalAuth`); operator holds *Cosmos DB Built-in Data Contributor*. Replaced the SQL server below (#114). |
-| Cosmos database | `accountmanager` | Containers: `identity` (pk `/pk` single logical partition, unique key `/naturalKey`), `settings` (pk `/id`), `passwordQueue` (pk `/pk`), plus the materialized-view containers `linkedAccounts` (pk `/pk`), `linkedGroups` (pk `/pk`), `rollups` (pk `/pk`), `decisions` (pk `/pk`), `syncState` (pk `/id`, TTL enabled for the lease), and `snapshots` (pk `/id`). Provisioned by the checked-in idempotent script [`tool/provision-cosmos.ps1`](../tool/provision-cosmos.ps1) (control-plane `az cosmosdb sql …`) — data-plane RBAC cannot create containers. Bootstrap runs an idempotent `ensureContainers` preflight (a metadata read, no create on the provisioned account) over the materialized-view set so a never-stood-up container surfaces at startup rather than as a silent item-write 404 (#150). |
+| Cosmos database | `accountmanager` | Containers: `identity` (pk `/pk` single logical partition, unique key `/naturalKey`), `settings` (pk `/id`), `passwordQueue` (pk `/pk`), plus the materialized-view containers `linkedAccounts` (pk `/pk`), `linkedGroups` (pk `/pk`), `rollups` (pk `/pk`), `decisions` (pk `/pk`), `syncState` (pk `/id`, TTL enabled for the lease), `snapshots` (pk `/id`), and `lateArrivals` (pk `/pk` — the school day; one document per late-arrival registration, id `<day>\|<desk>\|<sequence>`, #403). Provisioned by the checked-in idempotent script [`tool/provision-cosmos.ps1`](../tool/provision-cosmos.ps1) (control-plane `az cosmosdb sql …`) — data-plane RBAC cannot create containers. Bootstrap runs an idempotent `ensureContainers` preflight (a metadata read, no create on the provisioned account) over the materialized-view set so a never-stood-up container surfaces at startup rather than as a silent item-write 404 (#150). |
 | Key Vault | `accountmanager-kv` (`https://accountmanager-kv.vault.azure.net/`) | RBAC-authorized; operator holds *Key Vault Secrets Officer*. |
 | ~~SQL server / database~~ | ~~`accountmanager-sql-arcadia`~~ | **Retired (#114).** Deleted; the ODBC/FFI path is gone. |
 
@@ -292,6 +292,32 @@ storage account and its `snapshots` overflow container now by the same
 Port the six WPF pages (Dashboard, Klassen, Accounts, Passwords, Acties,
 Settings, Log panel) onto the `account_state` orchestration surface, reusing the
 Plink design system rather than a bespoke UI.
+
+## Beside the port — late-arrival scanning *(epic #399)*
+
+Not a layer of the WPF port at all: new capability, built on the state the port
+already produces. The reception desk scans a student card, picks a reason, prints
+a ticket, and a "Te laat" presence is drained to Smartschool in the background.
+
+`packages/late_arrivals/` is its pure-Dart home — the same rule as every other
+non-UI slice, so the logic is unit-testable headlessly and the Flutter tab (#407)
+holds only UI.
+
+| slice | issue | status |
+|---|---|---|
+| Verify the identity data (internal user id + presence group id) | #400 | ✅ answered |
+| Scan resolver — scanned WISA id → student + presence target | #401 | ✅ done |
+| Durable local journal | #402 | ⬜ |
+| Cosmos mirror for cross-machine recovery | #403 | ⬜ |
+| Smartschool drain worker | #404 | ⬜ |
+| Shared, editable list of reasons | #405 | ⬜ |
+| Ticket printing over ESC/POS | #406 | ⬜ |
+| Scan tab UI | #407 | ⬜ |
+
+Two facts settled by #400 that the package's code and README both restate,
+because getting either wrong marks the wrong child present: the connector's
+`Group.sourceId` **is** the Presence module's `groupID`, and a class must never
+be matched on `adminNumber` (63 distinct values across 124 official classes).
 
 ## Conventions for new slices
 

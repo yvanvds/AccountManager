@@ -28,7 +28,7 @@
   where the six epic-#112 containers were never stood up on the shared account
   and surfaced only as a 403/404 at reconcile time.
 
-  The nine containers, matching the table in docs/port-plan.md:
+  The ten containers, matching the table in docs/port-plan.md:
 
     Partition key /pk                 Partition key /id
     -----------------                 -----------------
@@ -39,6 +39,7 @@
     linkedGroups
     rollups
     decisions
+    lateArrivals (pk = school day)
 
   The identity container's /naturalKey unique-key policy is the convergence
   mechanism CosmosPersonIdResolver relies on (a second create for the same key
@@ -109,7 +110,7 @@ $ErrorActionPreference = 'Stop'
 # partition (see cosmos_config.dart / identityPartitionKeyValue).
 $identityUniqueKeyPolicy = '{"uniqueKeys":[{"paths":["/naturalKey"]}]}'
 
-# The nine containers docs/port-plan.md documents. `ttl` and `uniqueKeyPolicy`
+# The ten containers docs/port-plan.md documents. `ttl` and `uniqueKeyPolicy`
 # are optional per-container extras; when absent the container is created with
 # just its partition key.
 $containers = @(
@@ -119,6 +120,8 @@ $containers = @(
   @{ Name = 'linkedGroups';   PartitionKey = '/pk' }
   @{ Name = 'rollups';        PartitionKey = '/pk' }
   @{ Name = 'decisions';      PartitionKey = '/pk' }
+  # The reception desk's late arrivals, mirrored per school day (#403).
+  @{ Name = 'lateArrivals';   PartitionKey = '/pk' }
   @{ Name = 'settings';       PartitionKey = '/id' }
   @{ Name = 'snapshots';      PartitionKey = '/id' }
   @{ Name = 'syncState';      PartitionKey = '/id'; Ttl = -1 }

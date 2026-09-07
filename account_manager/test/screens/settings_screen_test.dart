@@ -1,7 +1,12 @@
+import 'dart:io';
+
+import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
+import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:late_arrivals/late_arrivals.dart';
 import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
@@ -1808,4 +1813,433 @@ void main() {
       expect(wisaPullFingerprint(live.current), before);
     });
   });
+
+  group('late-arrival reasons (#405)', () {
+    /// Authors one reason through the editor: **Reden toevoegen**, the label,
+    /// the valid/invalid switch, confirm — what the operator does.
+    Future<void> addReason(
+      WidgetTester tester,
+      String label, {
+      bool isValid = true,
+    }) async {
+      final add = find.byKey(const ValueKey('settings-reason-add'));
+      await tester.ensureVisible(add);
+      await tester.tap(add);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-reason-label')),
+        label,
+      );
+      await tester.pump();
+      if (!isValid) {
+        await tester.tap(find.byKey(const ValueKey('settings-reason-valid')));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.byKey(const ValueKey('settings-reason-confirm')));
+      await tester.pumpAndSettle();
+    }
+
+    /// The labels the editor currently lists, top to bottom.
+    List<String> listed(WidgetTester tester) {
+      final List<String> out = <String>[];
+      for (var i = 0;; i++) {
+        final Finder row = find.byKey(ValueKey('settings-reason-$i'));
+        if (row.evaluate().isEmpty) return out;
+        out.add(tester.widget<Text>(row).data!);
+      }
+    }
+
+    testWidgets('an unconfigured document still offers the shipped list',
+        (WidgetTester tester) async {
+      // The desk has to work before anybody opens this section.
+      _useTallWindow(tester);
+      final harness = SettingsHarness();
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      expect(
+        listed(tester),
+        defaultLateArrivalReasons.map((LateArrivalReason r) => r.label),
+      );
+      // The invalid entries are marked in place, not split into a second list —
+      // the same shape the desk's flat button row will have (#407).
+      expect(find.byKey(const ValueKey('settings-reason-3-invalid')),
+          findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-reason-0-invalid')),
+          findsNothing);
+    });
+
+    testWidgets('add / edit / reorder / remove all reach the saved document',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: const AppSettings(
+          lateArrivalReasons: <LateArrivalReason>[
+            LateArrivalReason('Verkeer'),
+            LateArrivalReason('Doktersbezoek'),
+          ],
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      // Add one that does *not* count as a valid reason.
+      await addReason(tester, 'Verslapen', isValid: false);
+      expect(find.byKey(const ValueKey('settings-reason-2-invalid')),
+          findsOneWidget);
+
+      // Edit the first one's label.
+      await tester.tap(find.byKey(const ValueKey('settings-reason-0-edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-reason-label')),
+        'Druk verkeer',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-reason-confirm')));
+      await tester.pumpAndSettle();
+
+      // Move it down one place — the ordering the button row will render in.
+      await tester.tap(find.byKey(const ValueKey('settings-reason-0-down')));
+      await tester.pumpAndSettle();
+      expect(listed(tester),
+          <String>['Doktersbezoek', 'Druk verkeer', 'Verslapen']);
+
+      // Remove the middle one.
+      await tester.tap(find.byKey(const ValueKey('settings-reason-1-remove')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(
+        (await harness.store.load()).lateArrivalReasons,
+        const <LateArrivalReason>[
+          LateArrivalReason('Doktersbezoek'),
+          LateArrivalReason('Verslapen', isValid: false),
+        ],
+      );
+    });
+
+    testWidgets('the reorder buttons stop at the ends of the list',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: const AppSettings(
+          lateArrivalReasons: <LateArrivalReason>[
+            LateArrivalReason('Verkeer'),
+            LateArrivalReason('Verslapen', isValid: false),
+          ],
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      IconButton button(String key) =>
+          tester.widget<IconButton>(find.byKey(ValueKey(key)));
+      expect(button('settings-reason-0-up').onPressed, isNull);
+      expect(button('settings-reason-0-down').onPressed, isNotNull);
+      expect(button('settings-reason-1-down').onPressed, isNull);
+    });
+
+    testWidgets('the last reason cannot be removed',
+        (WidgetTester tester) async {
+      // An empty list re-adopts the shipped defaults on the next load, so the
+      // removal would silently not stick.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: const AppSettings(
+          lateArrivalReasons: <LateArrivalReason>[LateArrivalReason('Verkeer')],
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<IconButton>(
+                find.byKey(const ValueKey('settings-reason-0-remove')))
+            .onPressed,
+        isNull,
+      );
+    });
+
+    testWidgets('a duplicate spelling is refused while it is typed',
+        (WidgetTester tester) async {
+      // The collision the shared list exists to prevent, caught in the prompt
+      // rather than dropped silently on save — which would look exactly like an
+      // edit that did not stick.
+      _useTallWindow(tester);
+      final harness = SettingsHarness(
+        initial: const AppSettings(
+          lateArrivalReasons: <LateArrivalReason>[LateArrivalReason('Bus')],
+        ),
+      );
+      await tester
+          .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('settings-reason-add')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-reason-label')),
+        '  bus ',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Deze reden staat al in de lijst.'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const ValueKey('settings-reason-confirm')))
+            .onPressed,
+        isNull,
+      );
+    });
+  });
+
+  group('the ticket printer (#406)', () {
+    /// The screen inside a [LocalPreferencesScope], which is where the printer
+    /// address is read from and written to — it is machine-local, not part of
+    /// the shared settings document.
+    Widget wrapWithPreferences(Widget child, LocalPreferences preferences) =>
+        LocalPreferencesScope(
+          preferences: preferences,
+          child: MaterialApp(home: Scaffold(body: child)),
+        );
+
+    testWidgets('offers an empty address on a desk that has never printed',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Te laat — ticketprinter'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(
+                find.byKey(const ValueKey('settings-printer-host')))
+            .controller!
+            .text,
+        '',
+      );
+      // Nothing to reach without an address: the test button says so by being
+      // disabled rather than by failing when pressed.
+      expect(
+        tester
+            .widget<OutlinedButton>(
+                find.byKey(const ValueKey('settings-printer-test')))
+            .onPressed,
+        isNull,
+      );
+      // The note has to make the machine-local rule legible, because the
+      // section directly above it is the opposite.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-note')))
+            .data,
+        allOf(contains('alleen voor deze computer'), contains('9100')),
+      );
+    });
+
+    testWidgets('populates the address this machine remembered',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      await prefs.setLateArrivalPrinterHost('10.0.0.31');
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('10.0.0.31'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+                find.byKey(const ValueKey('settings-printer-test')))
+            .onPressed,
+        isNotNull,
+      );
+    });
+
+    testWidgets('Opslaan writes it to this machine, not to the shared document',
+        (WidgetTester tester) async {
+      // The whole point of the placement decision: two reception desks have two
+      // printers, so this must not travel to the other desk the way the reason
+      // list deliberately does.
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '10.0.0.31',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalPrinterHost, '10.0.0.31');
+      // Nothing about a printer reached the document every desk reads.
+      final AppSettings saved = await harness.store.load();
+      expect(saved.toJson().toString(), isNot(contains('10.0.0.31')));
+    });
+
+    testWidgets('clearing the address switches printing off here',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      await prefs.setLateArrivalPrinterHost('10.0.0.31');
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '   ',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalPrinterHost, isNull);
+    });
+
+    testWidgets('a printer that does not answer is reported in place',
+        (WidgetTester tester) async {
+      // The error surface, without a network: a `testWidgets` body runs in fake
+      // async, so a real socket's callbacks would never arrive. The full-app run
+      // drives the real transport; this drives the wiring around it.
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(
+          bootstrap: harness.bootstrap,
+          ticketTransport: _RefusingTransport(),
+        ),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '10.0.0.31',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
+      await tester.pumpAndSettle();
+
+      final Text status = tester.widget<Text>(
+        find.byKey(const ValueKey('settings-printer-status')),
+      );
+      expect(status.data, contains('10.0.0.31:9100'));
+      expect(status.data, contains('antwoordt niet'));
+      // …and it says so in the error colour, because this is the one line on
+      // the tab the operator has to act on.
+      final ColorScheme colors = Theme.of(
+        tester.element(find.byKey(const ValueKey('settings-printer-status'))),
+      ).colorScheme;
+      expect(status.style?.color, colors.error);
+    });
+
+    testWidgets('a test print that lands sends a real ticket and says so',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final transport = _RecordingTransport();
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(
+          bootstrap: harness.bootstrap,
+          ticketTransport: transport,
+        ),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      // The address as typed, not the saved one: the operator has to be able to
+      // try a value before committing it.
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '10.0.0.31',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalPrinterHost, isNull,
+          reason: 'a test print is not a save');
+      expect(transport.hosts, <String>['10.0.0.31']);
+      expect(transport.ports, <int>[escPosRawPort]);
+      // A real ticket, logo and cut and all — the same bytes a late student
+      // would get.
+      final List<int> bytes = transport.sent.single;
+      expect(bytes.sublist(0, 2), escPosInitialize());
+      expect(bytes.sublist(bytes.length - escPosCut().length), escPosCut());
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-status')))
+            .data,
+        contains('10.0.0.31:$escPosRawPort'),
+      );
+    });
+  });
+}
+
+/// A transport that always refuses, the way a printer that is off does.
+class _RefusingTransport implements TicketTransport {
+  @override
+  Future<void> send({
+    required String host,
+    required int port,
+    required List<int> bytes,
+    required Duration timeout,
+  }) async {
+    throw const SocketException('connection refused');
+  }
+}
+
+/// A transport that accepts everything and remembers it.
+class _RecordingTransport implements TicketTransport {
+  final List<String> hosts = <String>[];
+  final List<int> ports = <int>[];
+  final List<List<int>> sent = <List<int>>[];
+
+  @override
+  Future<void> send({
+    required String host,
+    required int port,
+    required List<int> bytes,
+    required Duration timeout,
+  }) async {
+    hosts.add(host);
+    ports.add(port);
+    sent.add(List<int>.of(bytes));
+  }
 }

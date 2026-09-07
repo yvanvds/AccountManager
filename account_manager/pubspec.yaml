@@ -25,6 +25,11 @@ dependencies:
   wisa_api:
   smartschool_api:
 
+  # The late-arrival layer (#399). Pure Dart and path-less by design: the app
+  # supplies the journal's on-disk location, which is what
+  # `src/late_arrivals/file_journal_store.dart` does.
+  late_arrivals:
+
   # The Graph connector: needed here for the auth seam types the sign-in layer
   # implements (AzureAuthProvider, AzureCredentials, TokenCache).
   azure_api:

@@ -48,6 +48,9 @@ void main() {
       linkedGroupsContainer: '/pk',
       rollupsContainer: '/pk',
       decisionsContainer: '/pk',
+      // The reception desk's mirrored late arrivals (#403), partitioned by the
+      // school day so a day's registrations are one partition read.
+      lateArrivalsContainer: '/pk',
       settingsContainer: '/id',
       snapshotsContainer: '/id',
       syncStateContainer: '/id',
