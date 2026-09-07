@@ -5,6 +5,8 @@ import 'auth/aad_resource.dart';
 import 'auth/sign_in_gate.dart';
 import 'auth/sign_in_session.dart';
 import 'late_arrivals/late_arrival_desk.dart';
+import 'late_arrivals/late_arrival_printer.dart' show TicketTransport;
+import 'late_arrivals/refusal_beep.dart';
 import 'reconcile/reconcile_bootstrap.dart';
 import 'settings/connection_config.dart';
 import 'settings/local_preferences.dart';
@@ -33,10 +35,13 @@ class AccountManagerApp extends StatelessWidget {
     this.connection,
     this.update,
     this.openReleaseLink,
+    this.ticketTransport,
     LocalPreferences? preferences,
     LateArrivalDesk? desk,
+    RefusalBeep? refusalBeep,
   })  : preferences = preferences ?? LocalPreferences.inMemory(),
-        desk = desk ?? LateArrivalDesk.inMemory();
+        desk = desk ?? LateArrivalDesk.inMemory(),
+        refusalBeep = refusalBeep ?? SquareWaveRefusalBeep();
 
   /// The operator's Azure AD session, used by the sign-in gate and, later, by
   /// the connectors that carry its tokens.
@@ -96,6 +101,19 @@ class AccountManagerApp extends StatelessWidget {
   /// only so a test can follow the link without launching one.
   final Future<void> Function(Uri url)? openReleaseLink;
 
+  /// What a refused scan sounds like on the **Te laat** tab (#407).
+  ///
+  /// Defaults to the real square wave rather than to silence, deliberately: the
+  /// refusal tone is the only signal that a scan was *not* taken, and a build
+  /// that forgot to wire it would lose that silently. A test that scans twice
+  /// binds a recorder.
+  final RefusalBeep refusalBeep;
+
+  /// How a late-arrival ticket reaches the printer (#406); `null` is the real
+  /// TCP socket. A seam so a headless run can assert what was printed without a
+  /// device on the network.
+  final TicketTransport? ticketTransport;
+
   ThemeData _themed(ThemeData base) => base.copyWith(
         extensions: const <ThemeExtension<dynamic>>[
           PlinkProductAccent(kProductAccent),
@@ -133,6 +151,8 @@ class AccountManagerApp extends StatelessWidget {
               // remembers which release's notes this machine has read (#395).
               preferences: preferences,
               openReleaseLink: openReleaseLink,
+              refusalBeep: refusalBeep,
+              ticketTransport: ticketTransport,
             ),
           ),
         ),

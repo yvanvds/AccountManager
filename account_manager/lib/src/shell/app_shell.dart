@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../late_arrivals/late_arrival_printer.dart' show TicketTransport;
+import '../late_arrivals/refusal_beep.dart' show RefusalBeep;
 import '../reconcile/reconcile_bootstrap.dart';
 import '../reconcile/reconcile_controller.dart';
 import '../screens/action_tiles.dart';
 import '../screens/actions_screen.dart';
 import '../screens/class_groups_screen.dart';
+import '../screens/late_arrivals_screen.dart';
 import '../screens/passwords_screen.dart';
 import '../screens/reconcile_screen.dart';
 import '../screens/settings_screen.dart';
@@ -60,6 +63,8 @@ class AppShell extends StatefulWidget {
     this.update,
     this.preferences,
     this.openReleaseLink,
+    this.refusalBeep,
+    this.ticketTransport,
   });
 
   /// Assembles the reconcile stack on first use, or `null` when Azure AD is
@@ -99,6 +104,16 @@ class AppShell extends StatefulWidget {
   /// operator's default browser. A seam so a test can follow the link without
   /// starting a process.
   final Future<void> Function(Uri url)? openReleaseLink;
+
+  /// What a refused scan sounds like on the **Te laat** tab (#407). `null` binds
+  /// the real square wave; a test binds a recorder so a suite cannot make the
+  /// build machine buzz.
+  final RefusalBeep? refusalBeep;
+
+  /// How a late-arrival ticket reaches the printer (#406). `null` is the real
+  /// TCP socket; a test binds a recorder so the print can be asserted without a
+  /// device on the network.
+  final TicketTransport? ticketTransport;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -143,6 +158,21 @@ class _AppShellState extends State<AppShell> {
       label: 'Wachtwoorden',
       icon: Icons.password_outlined,
       builder: (_) => PasswordsScreen(bootstrap: widget.reconcileBootstrap),
+    ),
+    // The reception desk (#407). Last before Instellingen, and deliberately not
+    // woven into the four above it: those are one job, done in that order, once
+    // per session. This is a different job at a different moment — a queue of
+    // students at the counter — done by the same people on the same data, which
+    // is why it is a tab here rather than a second application.
+    ShellDestination(
+      tab: ShellTab.teLaat,
+      label: 'Te laat',
+      icon: Icons.qr_code_scanner_outlined,
+      builder: (_) => LateArrivalsScreen(
+        bootstrap: widget.reconcileBootstrap,
+        beep: widget.refusalBeep,
+        ticketTransport: widget.ticketTransport,
+      ),
     ),
     ShellDestination(
       tab: ShellTab.instellingen,
@@ -377,6 +407,10 @@ class _AppShellState extends State<AppShell> {
     // another tab (#301).
     return ShellNavigation(
       go: _go,
+      // Published so a kept-alive screen can tell whether it is the one being
+      // looked at (#407) — the [IndexedStack] below keeps every visited
+      // destination mounted.
+      current: _destinations[_selected].tab,
       child: _scaffold(),
     );
   }

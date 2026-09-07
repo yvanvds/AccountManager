@@ -25,8 +25,11 @@ void main() {
     expect(find.byType(NavigationRail), findsOneWidget);
     expect(find.byType(ReconcileScreen), findsOneWidget);
 
-    // The rail holds exactly the five destinations, in the order the operator
-    // is meant to work: Klasgroepen is upstream of Acties, so it sits above it.
+    // The rail holds exactly the six destinations, in the order the operator is
+    // meant to work: Klasgroepen is upstream of Acties, so it sits above it. Te
+    // laat (#407) sits apart from those four rather than among them — it is a
+    // different job at a different moment (a queue of students at the reception
+    // counter), done by the same people on the same data.
     final NavigationRail rail =
         tester.widget<NavigationRail>(find.byType(NavigationRail));
     expect(
@@ -36,6 +39,7 @@ void main() {
         'Klasgroepen',
         'Acties',
         'Wachtwoorden',
+        'Te laat',
         'Instellingen',
       ],
     );

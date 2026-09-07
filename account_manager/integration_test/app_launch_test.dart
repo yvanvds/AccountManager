@@ -19,7 +19,11 @@ import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
 import 'package:account_manager/src/late_arrivals/file_journal_store.dart';
 import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
+import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart'
+    show TicketTransport;
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
+import 'package:account_manager/src/late_arrivals/refusal_beep.dart'
+    show RefusalBeep;
 import 'package:account_manager/src/screens/action_tiles.dart'
     show PendingBadge;
 import 'package:account_manager/src/screens/actions_screen.dart';
@@ -75,6 +79,7 @@ import 'package:late_arrivals/late_arrivals.dart'
         InMemoryJournalStore,
         LateArrivalJournal,
         LateArrivalReason,
+        LateArrivalRecord,
         LateArrivalStatus,
         LatePresenceWriter,
         ScanRegisterable,
@@ -288,7 +293,7 @@ void main() {
     expect(find.text('ARCADIA · SYNCHRONISATIE'), findsOneWidget);
     expect(find.text('Niet geconfigureerd'), findsOneWidget);
 
-    // The rail holds exactly five destinations, each naming itself in the
+    // The rail holds exactly six destinations, each naming itself in the
     // operator's language (#257) — it is read together with the heading it
     // leads to, and it used to read Home / Reconcile / Actions over Dutch
     // pages.
@@ -301,6 +306,7 @@ void main() {
         'Klasgroepen',
         'Acties',
         'Wachtwoorden',
+        'Te laat',
         'Instellingen',
       ],
     );
@@ -313,7 +319,11 @@ void main() {
     expect(railLabelY('Synchronisatie'), lessThan(railLabelY('Klasgroepen')));
     expect(railLabelY('Klasgroepen'), lessThan(railLabelY('Acties')));
     expect(railLabelY('Acties'), lessThan(railLabelY('Wachtwoorden')));
-    expect(railLabelY('Wachtwoorden'), lessThan(railLabelY('Instellingen')));
+    // Te laat (#407) sits after the four that are one job in one order, and
+    // before Instellingen: a queue of students at the counter is a different
+    // job at a different moment, not a step of the sync.
+    expect(railLabelY('Wachtwoorden'), lessThan(railLabelY('Te laat')));
+    expect(railLabelY('Te laat'), lessThan(railLabelY('Instellingen')));
 
     // With no AAD config each screen renders its "not configured" panel
     // instead of bootstrapping — in Dutch on every one of them (#253/#257),
@@ -15682,7 +15692,218 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'the Te laat tab scans a card, refuses a second scan while the first '
+      'student is unconfirmed, and registers on a reason button — journal on '
+      'disk before ticket on paper (#407)', (WidgetTester tester) async {
+    // The scan flow, end to end, in the real app: the real shell, the real
+    // navigation rail, the real Plink fonts, the real focus manager, and a real
+    // journal file on a real filesystem.
+    //
+    // Every claim on this screen needs that level. "A hidden input holds the
+    // keyboard focus and reclaims it" is a statement about the *engine's* focus
+    // manager inside a shell that keeps every visited destination mounted — a
+    // widget test pumping this screen alone has no other tab to lose the focus
+    // to, and so cannot fail the way the app can. "The registration is on disk
+    // before the ticket prints" is a statement about a file. And the refusal
+    // guard is the one rule that stops one student's reason being written onto
+    // another student's record, which is precisely the bug an operator would
+    // never see happen.
+    //
+    // Nothing here reaches Smartschool, a printer or a sound card: the desk has
+    // no presence writer, the ticket transport is a recorder and the refusal
+    // tone is a counter. The repo's live-testing policy keeps writes out of CI,
+    // and a suite that buzzed the build machine would be its own kind of
+    // failure.
+    useTallWindow(tester);
+
+    final Directory dir = Directory.systemTemp.createTempSync('am-te-laat-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+
+    final harness = ReconcileHarness(
+      // Seeded, not pulled: the desk answers a scan out of the snapshot the
+      // launch already holds, because a student is standing at the counter.
+      ssInitial: lateArrivalSnap(),
+      smartschool: lateArrivalSnap(),
+    );
+    final _CountingRefusalBeep beep = _CountingRefusalBeep();
+    final _RecordingTicketTransport tickets = _RecordingTicketTransport();
+
+    final LateArrivalDesk desk = LateArrivalDesk(
+      journalStore: FileJournalStore(dir),
+      credentials: InMemoryOperatorCredentialStore(),
+      deskId: 'onthaal-e2e',
+    );
+    addTearDown(desk.dispose);
+
+    final LocalPreferences preferences = LocalPreferences(
+      InMemoryLocalPreferenceStore(const <String, Object?>{
+        'lateArrivalPrinterHost': 'bonprinter-balie.invalid',
+      }),
+    );
+    await preferences.load();
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      reconcileBootstrap: harness.bootstrap,
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+      desk: desk,
+      preferences: preferences,
+      refusalBeep: beep,
+      ticketTransport: tickets,
+    ));
+    await tester.pumpAndSettle();
+
+    /// Scans [code] the way the wedge does: the digits, then Enter.
+    Future<void> scan(String code) async {
+      for (final String character in code.split('')) {
+        await tester.sendKeyEvent(
+          _scannerKeys[character]!,
+          character: character,
+        );
+      }
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+    }
+
+    String textOf(String key) =>
+        tester.widget<Text>(find.byKey(ValueKey<String>(key))).data ?? '';
+
+    /// What the **scanner actief** badge says — the badge carries the key, the
+    /// text it renders sits inside it.
+    String indicatorText() =>
+        tester
+            .widget<Text>(find.descendant(
+              of: find.byKey(const ValueKey<String>('late-scanner-indicator')),
+              matching: find.byType(Text),
+            ))
+            .data ??
+        '';
+
+    // --- The tab exists beside the rest of the app. --------------------------
+    expect(railTab('Te laat'), findsOneWidget);
+    await tester.tap(railTab('Te laat'));
+    await tester.pumpAndSettle();
+    expect(
+      indicatorText(),
+      'SCANNER ACTIEF',
+      reason: 'the hidden input takes the keyboard as soon as the tab opens',
+    );
+
+    // --- One scan, resolved locally. -----------------------------------------
+    await scan('123456');
+    expect(textOf('late-scan-name'), 'Jonas Peeters');
+    expect(textOf('late-scan-class'), '3MTa');
+    expect(harness.ssSyncs, 0, reason: 'no pull answers a scan');
+    expect(desk.journal!.records, isEmpty, reason: 'no reason pressed yet');
+
+    // --- The second student scans too early and is refused. ------------------
+    await scan('223344');
+    expect(
+      textOf('late-scan-name'),
+      'Jonas Peeters',
+      reason: 'the refused scan must not replace the student on screen',
+    );
+    expect(beep.played, 1);
+    expect(find.byKey(const ValueKey<String>('late-refusal')), findsOneWidget);
+    expect(desk.journal!.records, isEmpty);
+
+    // --- A reason registers, prints and frees the input. ---------------------
+    await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+    await tester.pumpAndSettle();
+
+    expect(desk.journal!.records, hasLength(1));
+    final LateArrivalRecord written = desk.journal!.records.single;
+    expect(written.displayName, 'Jonas Peeters');
+    expect(written.internalUserId, 12016);
+    expect(written.classGroupId, 77);
+    expect(written.reasonLabel, defaultLateArrivalReasons.first.label);
+
+    // On disk, in the day file this desk owns — the whole point of the journal.
+    final List<File> dayFiles =
+        dir.listSync().whereType<File>().toList(growable: false);
+    expect(dayFiles, hasLength(1));
+    expect(dayFiles.single.readAsStringSync(), contains('Jonas Peeters'));
+
+    // …and only then the ticket.
+    expect(tickets.sent, hasLength(1));
+    expect(
+      String.fromCharCodes(tickets.sent.single),
+      contains('Jonas Peeters'),
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('late-scan-idle')),
+      findsOneWidget,
+      reason: 'the screen is free for the next student',
+    );
+    expect(find.text('1 IN WACHTRIJ'), findsOneWidget);
+
+    // --- The second student rescans, and is taken. ---------------------------
+    await scan('223344');
+    expect(textOf('late-scan-name'), 'Lea Janssens');
+    expect(beep.played, 1);
+
+    // --- The keyboard survives a trip to another tab. ------------------------
+    // The shell keeps this screen mounted, so a scan tab that went on grabbing
+    // the focus would make Instellingen untypeable for the rest of the session
+    // — and one that never took it back would silently swallow every scan after
+    // the operator's first detour.
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Te laat'));
+    await tester.pumpAndSettle();
+    expect(indicatorText(), 'SCANNER ACTIEF');
+    expect(
+      textOf('late-scan-name'),
+      'Lea Janssens',
+      reason: 'the unconfirmed student survives a trip to another tab',
+    );
+
+    expect(tester.takeException(), isNull);
+  });
 }
+
+/// Counts the refused-scan tone instead of sounding it (#407).
+class _CountingRefusalBeep implements RefusalBeep {
+  int played = 0;
+
+  @override
+  void play() => played++;
+}
+
+/// Keeps every ticket that reached "the printer" (#406).
+class _RecordingTicketTransport implements TicketTransport {
+  final List<List<int>> sent = <List<int>>[];
+
+  @override
+  Future<void> send({
+    required String host,
+    required int port,
+    required List<int> bytes,
+    required Duration timeout,
+  }) async =>
+      sent.add(List<int>.of(bytes));
+}
+
+/// The key the scanner presses for each digit of a WISA id.
+const Map<String, LogicalKeyboardKey> _scannerKeys =
+    <String, LogicalKeyboardKey>{
+  '0': LogicalKeyboardKey.digit0,
+  '1': LogicalKeyboardKey.digit1,
+  '2': LogicalKeyboardKey.digit2,
+  '3': LogicalKeyboardKey.digit3,
+  '4': LogicalKeyboardKey.digit4,
+  '5': LogicalKeyboardKey.digit5,
+  '6': LogicalKeyboardKey.digit6,
+  '7': LogicalKeyboardKey.digit7,
+  '8': LogicalKeyboardKey.digit8,
+  '9': LogicalKeyboardKey.digit9,
+};
 
 /// The student the late-arrival cases register, with the two identifiers a
 /// Presence write addresses.

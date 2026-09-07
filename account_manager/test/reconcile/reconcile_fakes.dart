@@ -1483,6 +1483,13 @@ ss.SmartschoolAccount ssAccount({
   // The stamboeknummer Smartschool holds on the account today — the value its
   // last schoolloopbaan row carries (#338).
   int stemId = 0,
+  // The roepnaam, which is the name the reception desk shows (#401/#407).
+  String preferredName = '',
+  // `<platform>_<userId>_0`, which is where the internal user id the Presence
+  // module addresses a student by comes from (#138). Left `null` by default,
+  // exactly as an account with no reference identifier reads — the late-arrival
+  // fixtures set it, and one of them deliberately does not.
+  String? referenceIdentifier,
 }) =>
     ss.SmartschoolAccount(
       uid: uid,
@@ -1495,7 +1502,7 @@ ss.SmartschoolAccount ssAccount({
       surname: surname,
       extraNames: '',
       initials: '',
-      preferredName: '',
+      preferredName: preferredName,
       gender: core.Gender.female,
       birthDate: null,
       birthPlace: '',
@@ -1506,6 +1513,7 @@ ss.SmartschoolAccount ssAccount({
       fax: fax,
       untisId: '',
       status: 'actief',
+      referenceIdentifier: referenceIdentifier,
     );
 
 /// A Smartschool **staff** account — a teacher-role [ssAccount], the shape the
@@ -1623,6 +1631,11 @@ core.Group ssGroup(
   String description = '',
   String? instituteNumber,
   String? untis,
+  // The Presence module's `groupID` for this class (#400) — the same number the
+  // connector harvests as `sourceId`. `null` for a class no member payload has
+  // ever named, which is one of the two things that make a scanned student
+  // known-but-unregisterable (#401).
+  int? sourceId,
 }) =>
     core.Group(
       id: core.GroupId(code ?? name),
@@ -1630,6 +1643,7 @@ core.Group ssGroup(
       description: description,
       type: type,
       official: official,
+      sourceId: sourceId,
       instituteNumber: instituteNumber,
       // Untis defaults to blank — which reads as drift against the class name,
       // so most fixtures get a `ModifySmartschoolData` for free. Pass the name
@@ -1674,6 +1688,52 @@ ss.SmartschoolSnapshot ssSnap({
           [ssGroup('2B', code: '2B_ss'), ssGroup('3C', code: '3C_ss')],
       accounts: accounts ?? [ssAccount()],
       memberships: memberships ?? [member('jane', '2B_ss')],
+    );
+
+/// A Smartschool snapshot shaped for the reception desk's scan tab (#407).
+///
+/// Three students, and the third is the point of the fixture: two sit in `3MTa`,
+/// an official class that carries the Presence module's group id, so a scan of
+/// either resolves to a `ScanRegisterable`. The third sits in `4EW`, which is a
+/// real official class with no `sourceId` — a class no member payload has ever
+/// named — so his scan resolves to a `ScanIncomplete`. The desk has to report
+/// that apart from an unknown code: the operator sees a name and a class on
+/// screen, and a bare refusal would read as a bug rather than as the data repair
+/// it is.
+ss.SmartschoolSnapshot lateArrivalSnap() => ss.SmartschoolSnapshot(
+      fetchedAt: kFixtureDate,
+      groups: <core.Group>[
+        ssGroup('3MTa', code: '3MTa', sourceId: 77),
+        ssGroup('4EW', code: '4EW'),
+      ],
+      accounts: <ss.SmartschoolAccount>[
+        ssAccount(
+          uid: 'jonas.peeters',
+          accountId: '123456',
+          givenName: 'Jonas',
+          surname: 'Peeters',
+          referenceIdentifier: '4069_12016_0',
+        ),
+        ssAccount(
+          uid: 'lea.janssens',
+          accountId: '223344',
+          givenName: 'Lea',
+          surname: 'Janssens',
+          referenceIdentifier: '4069_12017_0',
+        ),
+        ssAccount(
+          uid: 'sam.vos',
+          accountId: '999999',
+          givenName: 'Sam',
+          surname: 'Vos',
+          referenceIdentifier: '4069_12018_0',
+        ),
+      ],
+      memberships: <ss.SmartschoolMembership>[
+        member('jonas.peeters', '3MTa'),
+        member('lea.janssens', '3MTa'),
+        member('sam.vos', '4EW'),
+      ],
     );
 
 /// A Smartschool snapshot shaped for the reworked Passwords screen (#180): a
