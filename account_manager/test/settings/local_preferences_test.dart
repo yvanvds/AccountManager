@@ -117,6 +117,67 @@ void main() {
     });
   });
 
+  group('the ticket printer address (#406)', () {
+    test('an install that has never configured one does not print', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      expect(prefs.lateArrivalPrinterHost, isNull);
+    });
+
+    test('survives a restart of this machine', () async {
+      final first = LocalPreferences(FileLocalPreferenceStore(file));
+      await first.load();
+      await first.setLateArrivalPrinterHost('10.0.0.31');
+
+      final second = LocalPreferences(FileLocalPreferenceStore(file));
+      await second.load();
+      expect(second.lateArrivalPrinterHost, '10.0.0.31');
+    });
+
+    test('is trimmed, so a pasted address still resolves', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLateArrivalPrinterHost('  printer-balie.local \n');
+      expect(prefs.lateArrivalPrinterHost, 'printer-balie.local');
+    });
+
+    test('a blank address switches printing off rather than storing ""',
+        () async {
+      // Empty is a state — "this machine does not print" — not an address of
+      // zero length that a socket would then try to open.
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLateArrivalPrinterHost('10.0.0.31');
+      await prefs.setLateArrivalPrinterHost('   ');
+
+      expect(prefs.lateArrivalPrinterHost, isNull);
+      final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
+      await reloaded.load();
+      expect(reloaded.lateArrivalPrinterHost, isNull);
+    });
+
+    test('a value of the wrong type reads as nothing configured', () async {
+      file.writeAsStringSync('{"lateArrivalPrinterHost": 9100}');
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      expect(prefs.lateArrivalPrinterHost, isNull);
+    });
+
+    test('it lives beside the other remembered values', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLastDeletionDate(DateTime(2026, 3, 14));
+      await prefs.setReleaseNotesSeenVersion('1.2.0');
+      await prefs.setLateArrivalPrinterHost('10.0.0.31');
+
+      final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
+      await reloaded.load();
+      expect(reloaded.lastDeletionDate, DateTime(2026, 3, 14));
+      expect(reloaded.releaseNotesSeenVersion, '1.2.0');
+      expect(reloaded.lateArrivalPrinterHost, '10.0.0.31');
+    });
+  });
+
   group('the bag never takes a launch down', () {
     test('a file that is not JSON reads as nothing remembered', () async {
       file.writeAsStringSync('this is not json {{{');

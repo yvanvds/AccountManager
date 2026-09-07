@@ -68,7 +68,11 @@ import 'package:account_state/account_state.dart'
 import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:late_arrivals/late_arrivals.dart'
-    show LateArrivalReason, composeMotivation, defaultLateArrivalReasons;
+    show
+        LateArrivalReason,
+        composeMotivation,
+        defaultLateArrivalReasons,
+        escPosRawPort;
 import 'package:smartschool_api/smartschool_api.dart'
     show
         DiscardSmartschoolGroup,
@@ -15167,6 +15171,223 @@ void main() {
     await scrollToReasons();
     expect(listedReasons(), intended);
     expect(find.text('Doktersbezoek'), findsNothing);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'Instellingen configures the ticket printer for *this* desk, keeps it '
+      'across a restart, does not send it to the other desk, and says so out '
+      'loud when the printer does not answer (#406)',
+      (WidgetTester tester) async {
+    // Every user-visible half of #406 in one real run, and each half needs this
+    // level. "The address survives a restart" is a claim about a file on disk
+    // read back by a whole new widget tree. "It does not travel to the other
+    // desk" is a claim about a *second* app instance over the same shared
+    // document — the exact inverse of what the reason list one section up does,
+    // and the two sections sit a scroll apart on the same tab, so only a real
+    // page can show that they behave differently. And the failure path drives
+    // the real `TcpTicketTransport` against a real (absent) host: a widget test
+    // runs in fake async, where a socket's callbacks never arrive at all.
+    //
+    // No hardware is involved. The address points at the reserved `.invalid`
+    // TLD (RFC 2606), which is guaranteed never to resolve — a printer that is
+    // definitively not there, on any machine, forever.
+    useTallWindow(tester);
+
+    final Directory dir = Directory.systemTemp.createTempSync('am-printer');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    File prefsFileFor(String desk) => File(
+          '${dir.path}${Platform.pathSeparator}$desk-'
+          '$localPreferencesFileName',
+        );
+
+    // One shared settings document, the way two reception desks really share
+    // one — and two separate preference files, the way they really do not.
+    final InMemorySettingsStore shared = InMemorySettingsStore();
+    final InMemorySecretProvider vault = InMemorySecretProvider(const {});
+
+    Future<LocalPreferences> openDesk(String desk) async {
+      // A fresh `LocalPreferences` over that desk's own file each time — which
+      // is what both a restart and a second machine look like from here.
+      final prefs =
+          LocalPreferences(FileLocalPreferenceStore(prefsFileFor(desk)));
+      await prefs.load();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        settingsBootstrap: () async =>
+            SettingsServices(store: shared, secrets: vault),
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        preferences: prefs,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Instellingen'));
+      await tester.pumpAndSettle();
+      return prefs;
+    }
+
+    final Finder hostField =
+        find.byKey(const ValueKey('settings-printer-host'));
+    Future<void> scrollToPrinter() async {
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('settings-printer-note')));
+      await tester.pumpAndSettle();
+    }
+
+    String hostText() => tester.widget<TextField>(hostField).controller!.text;
+
+    /// Types [value] into the address field the way the operator does.
+    ///
+    /// The tap is not decoration: pressing **Opslaan** takes focus off the
+    /// field, and `enterText` alone would then be delivered to a text
+    /// connection nobody is listening on.
+    Future<void> typeHost(String value) async {
+      await scrollToPrinter();
+      await tester.tap(hostField);
+      await tester.pumpAndSettle();
+      await tester.enterText(hostField, value);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> save() async {
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+    }
+
+    // --- Desk one, on an install nobody has configured. ----------------------
+    await openDesk('balie-1');
+    // Algemeen is the tab the app opens on, and the printer sits with the rest
+    // of the "Te laat" configuration rather than off on the Verbinding tab.
+    expect(find.text('Te laat — ticketprinter'), findsOneWidget);
+    await scrollToPrinter();
+    expect(hostText(), '', reason: 'nothing configured yet');
+
+    // The note has to make the machine-local rule legible, because the section
+    // directly above it — the shared reason list — is the opposite.
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('settings-printer-note')))
+          .data,
+      allOf(
+        contains('alleen voor deze computer'),
+        contains('$escPosRawPort'),
+        contains('geen Windows-printer'),
+      ),
+    );
+    // Nothing to reach without an address: the button says so.
+    expect(
+      tester
+          .widget<OutlinedButton>(
+              find.byKey(const ValueKey('settings-printer-test')))
+          .onPressed,
+      isNull,
+    );
+
+    // --- Configure the printer standing at this desk. ------------------------
+    await typeHost('bonprinter-balie-1.invalid');
+    await save();
+
+    // It landed in *this machine's* preference file…
+    expect(
+      jsonDecode(prefsFileFor('balie-1').readAsStringSync()),
+      containsPair('lateArrivalPrinterHost', 'bonprinter-balie-1.invalid'),
+    );
+    // …and nowhere near the document every desk reads.
+    expect(
+      jsonEncode((await shared.load()).toJson()),
+      isNot(contains('bonprinter')),
+    );
+
+    // --- The printer does not answer. ----------------------------------------
+    // The registration is not involved here — this is the operator checking the
+    // address they just typed — but the sentence they get is the same one a
+    // dead printer produces during a scan, and it has to say that the
+    // registration still stands.
+    await scrollToPrinter();
+    await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
+    final Finder status = find.byKey(const ValueKey('settings-printer-status'));
+    // Real DNS, real socket, real timeout: pump until the answer arrives rather
+    // than assuming a frame count.
+    final DateTime deadline = DateTime.now().add(const Duration(seconds: 30));
+    while (DateTime.now().isBefore(deadline)) {
+      await tester.pump(const Duration(milliseconds: 100));
+      final Iterable<Element> found = status.evaluate();
+      if (found.isNotEmpty &&
+          (tester.widget<Text>(status).data ?? '').contains('antwoordt niet')) {
+        break;
+      }
+    }
+    await tester.pumpAndSettle();
+
+    final Text failure = tester.widget<Text>(status);
+    expect(failure.data, contains('bonprinter-balie-1.invalid:$escPosRawPort'));
+    expect(failure.data, contains('antwoordt niet'));
+    // The half the operator has to believe before carrying on: a dead printer
+    // costs a piece of paper, never a registration.
+    expect(failure.data, contains('registratie is bewaard'));
+    expect(failure.data, contains('Smartschool'));
+    expect(
+      failure.style?.color,
+      Theme.of(tester.element(status)).colorScheme.error,
+      reason: 'this is the one line on the tab that has to be acted on',
+    );
+
+    // --- Restart this desk. --------------------------------------------------
+    await openDesk('balie-1');
+    await scrollToPrinter();
+    expect(hostText(), 'bonprinter-balie-1.invalid');
+    // A configured desk can be tested without retyping anything.
+    expect(
+      tester
+          .widget<OutlinedButton>(
+              find.byKey(const ValueKey('settings-printer-test')))
+          .onPressed,
+      isNotNull,
+    );
+
+    // --- Desk two: a different machine, the same shared document. ------------
+    // The whole point of the placement decision. The reason list one section up
+    // is shared *on purpose*; a printer is a box on a table in one room, and
+    // desk two's tickets must not come out at desk one, where nobody is
+    // standing.
+    await openDesk('balie-2');
+    await scrollToPrinter();
+    expect(hostText(), '');
+    expect(find.text('bonprinter-balie-1.invalid'), findsNothing);
+    // And the shared vocabulary is still shared — the two sections on the same
+    // tab genuinely behave differently.
+    expect(
+      (await shared.load()).lateArrivalReasons.map((r) => r.label),
+      defaultLateArrivalReasons.map((LateArrivalReason r) => r.label),
+    );
+
+    // Desk two configures its own printer, and desk one keeps its own.
+    await typeHost('10.0.0.32');
+    await save();
+
+    expect(
+      jsonDecode(prefsFileFor('balie-2').readAsStringSync()),
+      containsPair('lateArrivalPrinterHost', '10.0.0.32'),
+    );
+    expect(
+      jsonDecode(prefsFileFor('balie-1').readAsStringSync()),
+      containsPair('lateArrivalPrinterHost', 'bonprinter-balie-1.invalid'),
+    );
+
+    // --- Clearing the address switches printing off here. --------------------
+    // "This machine does not print" is a state, not an omission — an office
+    // laptop draining yesterday's queue honestly has no printer.
+    await typeHost('   ');
+    await save();
+
+    await openDesk('balie-2');
+    await scrollToPrinter();
+    expect(hostText(), '');
 
     expect(tester.takeException(), isNull);
   });

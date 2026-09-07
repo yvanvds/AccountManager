@@ -19,6 +19,13 @@
 ///   here; the shared document that holds it is `AppSettings`, and the editor
 ///   is in Instellingen.
 ///
+/// One slice for what the student walks away with:
+///
+/// - the **ticket** (#406) — name, class, the *scan* time and the school logo,
+///   composed into an ESC/POS byte stream by a pure function so the layout can
+///   be asserted without a printer on the network. The socket that carries it
+///   to port 9100 lives in `account_manager`.
+///
 /// And one slice for what happens when the machine itself is gone:
 ///
 /// - the **mirror** (#403) copies every journalled record and every status
@@ -74,3 +81,41 @@ export 'src/scan_result.dart'
         ScanResult,
         ScanUnknown;
 export 'src/scanned_student.dart' show ScannedStudent;
+export 'src/ticket/escpos.dart'
+    show
+        EscPosAlign,
+        encodeCp1252,
+        esc,
+        escPosAlign,
+        escPosCharacterSize,
+        escPosCodePageWpc1252,
+        escPosCut,
+        escPosEmphasis,
+        escPosFeedLines,
+        escPosInitialize,
+        escPosRasterImage,
+        escPosSelectCodePage,
+        gs,
+        lf;
+export 'src/ticket/late_arrival_ticket.dart'
+    show
+        composeLateArrivalTicket,
+        composeTicketForRecord,
+        formatTicketTime,
+        ticketClassMagnification,
+        ticketNameMagnification,
+        ticketTimeMagnification;
+export 'src/ticket/ticket_logo.dart'
+    show
+        TicketLogo,
+        defaultTicketLogo,
+        defaultTicketLogoArt,
+        defaultTicketLogoScale;
+export 'src/ticket/ticket_metrics.dart'
+    show
+        escPosRawPort,
+        ticketCutCommandVariant,
+        ticketCutFeedDots,
+        ticketFeedLinesBeforeCut,
+        ticketPaperWidthMm,
+        ticketPrintWidthDots;

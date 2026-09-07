@@ -214,6 +214,40 @@ class LocalPreferences {
 
   static const String _releaseNotesSeenVersionKey = 'releaseNotesSeenVersion';
 
+  /// The host name or IP of the ticket printer standing at *this* desk (#406),
+  /// or `null` when this machine does not print.
+  ///
+  /// Machine-local rather than in the shared `AppSettings` document, and this
+  /// is the one value in the whole late-arrival slice where that is the right
+  /// answer. The reason list above it is shared precisely so every desk spells
+  /// "bus te laat" the same way — but a printer is a box on a table in one
+  /// room. Two reception desks have two printers on two addresses, and a shared
+  /// setting would send desk two's tickets to desk one, where nobody is
+  /// standing. Worse, an operator picking up a dead desk's queue from her own
+  /// laptop (#403) would inherit an address for a printer she is not sitting
+  /// at.
+  ///
+  /// `null` (or blank) is therefore a *state*, not an omission: it means "this
+  /// machine does not print", which is what an office laptop honestly is —
+  /// `LateArrivalPrinter` reports it as `LateArrivalPrintState.disabled` rather
+  /// than as a fault.
+  String? get lateArrivalPrinterHost {
+    final Object? raw = _values[_lateArrivalPrinterHostKey];
+    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
+  }
+
+  /// Records the printer address for this machine. A blank [host] clears it,
+  /// which switches printing off here rather than storing an empty address.
+  Future<void> setLateArrivalPrinterHost(String host) {
+    final String trimmed = host.trim();
+    return _set(
+      _lateArrivalPrinterHostKey,
+      trimmed.isEmpty ? null : trimmed,
+    );
+  }
+
+  static const String _lateArrivalPrinterHostKey = 'lateArrivalPrinterHost';
+
   // --- the bag ---------------------------------------------------------------
 
   /// Sets one key and persists the **whole** bag, so a key this build does not

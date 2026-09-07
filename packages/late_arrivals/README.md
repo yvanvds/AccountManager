@@ -124,6 +124,41 @@ final flag = reason.withoutValidReason;                    // what #404 writes
   and collapses duplicate spellings case-insensitively (first wins), but never
   reorders or groups the invalid entries away.
 
+### The ticket ([#406][406])
+
+What the student walks away with, as the bytes an Epson TM-m30III turns into
+paper.
+
+```dart
+final bytes = composeTicketForRecord(record, logo: defaultTicketLogo);
+// ...hand to account_manager's LateArrivalPrinter, which opens one socket to
+// port 9100 and is done with it.
+```
+
+- **A pure function, and that is the design.** The printer lives at a reception
+  desk, not on a build agent, so the layout has to be assertable without one.
+  Everything that touches a socket is in `account_manager`; everything that
+  decides what the paper says is here, and the tests read the byte stream back.
+- **Name, class, arrival time, logo — and nothing else.** No reason, no barcode;
+  the epic is explicit. The **time is the point**: it is the teacher's evidence
+  of *when* the student was at the desk, and the one thing Smartschool cannot
+  hold, because its Presence module only knows am/pm half-days. It is therefore
+  the largest thing on the ticket, and it is the *scan* time — taken off the
+  record the journal already flushed, so a slow printer cannot move it.
+- **Raw ESC/POS, never a printer driver.** `escpos.dart` is the vocabulary of
+  one ticket, not a printer library: initialise, code page, align, size,
+  emphasis, raster, feed, cut. The code page is `WPC1252` and text is encoded to
+  match, because on the factory default (PC437) half the Flemish surnames in the
+  school come out as different letters.
+- **The logo is a bitmap this package carries** (`TicketLogo`), authored as
+  ASCII art and scaled — a picture a reviewer can read, in a package that has no
+  I/O to open a PNG with. `defaultTicketLogoArt` is a **placeholder** monogram;
+  replacing it is editing those rows and nothing else.
+- **Everything the hardware might contradict is in one file.**
+  `ticket_metrics.dart` holds the paper width, the print width in dots, the feed
+  before the cut and the cut variant, with a note on what to check first when
+  the printer is finally plugged in.
+
 ### The Cosmos mirror ([#403][403])
 
 The journal survives the app dying. It does nothing at all for the *laptop*
@@ -217,3 +252,4 @@ dart test packages/late_arrivals/test
 [402]: https://github.com/yvanvds/AccountManager/issues/402
 [403]: https://github.com/yvanvds/AccountManager/issues/403
 [405]: https://github.com/yvanvds/AccountManager/issues/405
+[406]: https://github.com/yvanvds/AccountManager/issues/406

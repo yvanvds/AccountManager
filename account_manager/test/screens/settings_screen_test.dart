@@ -1,4 +1,8 @@
+import 'dart:io';
+
+import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
+import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1997,4 +2001,245 @@ void main() {
       );
     });
   });
+
+  group('the ticket printer (#406)', () {
+    /// The screen inside a [LocalPreferencesScope], which is where the printer
+    /// address is read from and written to — it is machine-local, not part of
+    /// the shared settings document.
+    Widget wrapWithPreferences(Widget child, LocalPreferences preferences) =>
+        LocalPreferencesScope(
+          preferences: preferences,
+          child: MaterialApp(home: Scaffold(body: child)),
+        );
+
+    testWidgets('offers an empty address on a desk that has never printed',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Te laat — ticketprinter'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(
+                find.byKey(const ValueKey('settings-printer-host')))
+            .controller!
+            .text,
+        '',
+      );
+      // Nothing to reach without an address: the test button says so by being
+      // disabled rather than by failing when pressed.
+      expect(
+        tester
+            .widget<OutlinedButton>(
+                find.byKey(const ValueKey('settings-printer-test')))
+            .onPressed,
+        isNull,
+      );
+      // The note has to make the machine-local rule legible, because the
+      // section directly above it is the opposite.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-note')))
+            .data,
+        allOf(contains('alleen voor deze computer'), contains('9100')),
+      );
+    });
+
+    testWidgets('populates the address this machine remembered',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      await prefs.setLateArrivalPrinterHost('10.0.0.31');
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('10.0.0.31'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+                find.byKey(const ValueKey('settings-printer-test')))
+            .onPressed,
+        isNotNull,
+      );
+    });
+
+    testWidgets('Opslaan writes it to this machine, not to the shared document',
+        (WidgetTester tester) async {
+      // The whole point of the placement decision: two reception desks have two
+      // printers, so this must not travel to the other desk the way the reason
+      // list deliberately does.
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '10.0.0.31',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalPrinterHost, '10.0.0.31');
+      // Nothing about a printer reached the document every desk reads.
+      final AppSettings saved = await harness.store.load();
+      expect(saved.toJson().toString(), isNot(contains('10.0.0.31')));
+    });
+
+    testWidgets('clearing the address switches printing off here',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      await prefs.setLateArrivalPrinterHost('10.0.0.31');
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '   ',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalPrinterHost, isNull);
+    });
+
+    testWidgets('a printer that does not answer is reported in place',
+        (WidgetTester tester) async {
+      // The error surface, without a network: a `testWidgets` body runs in fake
+      // async, so a real socket's callbacks would never arrive. The full-app run
+      // drives the real transport; this drives the wiring around it.
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(
+          bootstrap: harness.bootstrap,
+          ticketTransport: _RefusingTransport(),
+        ),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '10.0.0.31',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
+      await tester.pumpAndSettle();
+
+      final Text status = tester.widget<Text>(
+        find.byKey(const ValueKey('settings-printer-status')),
+      );
+      expect(status.data, contains('10.0.0.31:9100'));
+      expect(status.data, contains('antwoordt niet'));
+      // …and it says so in the error colour, because this is the one line on
+      // the tab the operator has to act on.
+      final ColorScheme colors = Theme.of(
+        tester.element(find.byKey(const ValueKey('settings-printer-status'))),
+      ).colorScheme;
+      expect(status.style?.color, colors.error);
+    });
+
+    testWidgets('a test print that lands sends a real ticket and says so',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final transport = _RecordingTransport();
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(
+          bootstrap: harness.bootstrap,
+          ticketTransport: transport,
+        ),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+
+      // The address as typed, not the saved one: the operator has to be able to
+      // try a value before committing it.
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '10.0.0.31',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalPrinterHost, isNull,
+          reason: 'a test print is not a save');
+      expect(transport.hosts, <String>['10.0.0.31']);
+      expect(transport.ports, <int>[escPosRawPort]);
+      // A real ticket, logo and cut and all — the same bytes a late student
+      // would get.
+      final List<int> bytes = transport.sent.single;
+      expect(bytes.sublist(0, 2), escPosInitialize());
+      expect(bytes.sublist(bytes.length - escPosCut().length), escPosCut());
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-status')))
+            .data,
+        contains('10.0.0.31:$escPosRawPort'),
+      );
+    });
+  });
+}
+
+/// A transport that always refuses, the way a printer that is off does.
+class _RefusingTransport implements TicketTransport {
+  @override
+  Future<void> send({
+    required String host,
+    required int port,
+    required List<int> bytes,
+    required Duration timeout,
+  }) async {
+    throw const SocketException('connection refused');
+  }
+}
+
+/// A transport that accepts everything and remembers it.
+class _RecordingTransport implements TicketTransport {
+  final List<String> hosts = <String>[];
+  final List<int> ports = <int>[];
+  final List<List<int>> sent = <List<int>>[];
+
+  @override
+  Future<void> send({
+    required String host,
+    required int port,
+    required List<int> bytes,
+    required Duration timeout,
+  }) async {
+    hosts.add(host);
+    ports.add(port);
+    sent.add(List<int>.of(bytes));
+  }
 }

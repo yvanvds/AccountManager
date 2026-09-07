@@ -6,8 +6,10 @@ import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
 import '../auth/aad_app_config.dart';
+import '../late_arrivals/late_arrival_printer.dart';
 import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 import '../settings/connection_config.dart';
+import '../settings/local_preferences.dart';
 import '../settings/settings_bootstrap.dart';
 import '../settings/wisa_rule_labels.dart';
 import '../update/app_release.dart' show AppRelease;
@@ -72,6 +74,7 @@ class SettingsScreen extends StatefulWidget {
     required this.bootstrap,
     this.connection,
     this.update,
+    this.ticketTransport,
   });
 
   /// Assembles (or returns the already-assembled) settings seams, or `null` when
@@ -92,6 +95,14 @@ class SettingsScreen extends StatefulWidget {
   /// `null` renders the Versie section with the version unknown and no check
   /// button, which is what a build with no update mechanism honestly is.
   final UpdateController? update;
+
+  /// How **Testticket afdrukken** reaches the printer (#406).
+  ///
+  /// `null` is the real [TcpTicketTransport] — one socket to port 9100. A
+  /// widget test binds a fake instead, because a `testWidgets` body runs in
+  /// fake async and a real socket's callbacks would never arrive there. The
+  /// full-app run drives the real one.
+  final TicketTransport? ticketTransport;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -192,6 +203,27 @@ class _SettingsScreenState extends State<SettingsScreen>
   // student before anyone has opened this section.
   List<LateArrivalReason> _lateArrivalReasons = defaultLateArrivalReasons;
 
+  // The ticket printer at *this* desk (#406). Unlike everything else on the
+  // Algemeen tab this is machine-local: it lives in `preferences.json`, not in
+  // the shared settings document, because two reception desks have two printers
+  // on two addresses and a shared one would send desk two's tickets to desk one.
+  // See `LocalPreferences.lateArrivalPrinterHost`.
+  final _printerHost = TextEditingController();
+
+  /// The preferences of this launch, or `null` in a bare widget test with no
+  /// [LocalPreferencesScope] — the field then edits a session-only bag, exactly
+  /// as the deletion-date prompt behaves without one.
+  LocalPreferences? _preferences;
+
+  /// Guards the one-time read of the stored host into [_printerHost], so a
+  /// dependency change cannot overwrite what the operator is typing.
+  bool _printerHostLoaded = false;
+
+  /// The outcome of the last **Testticket afdrukken**, or `null` when none has
+  /// been tried this session.
+  LateArrivalPrintStatus? _printerStatus;
+  bool _printerTesting = false;
+
   // WISA profile.
   final _wisaServer = TextEditingController();
   final _wisaPort = TextEditingController();
@@ -277,8 +309,22 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The ticket printer's address is machine-local (#406), so it comes from
+    // the preference bag rather than from the settings document — which is why
+    // it is read here and not in `_populate`. Once only: a dependency change
+    // must not overwrite an address the operator is halfway through typing.
+    _preferences = LocalPreferencesScope.maybeOf(context);
+    if (_printerHostLoaded) return;
+    _printerHostLoaded = true;
+    _printerHost.text = _preferences?.lateArrivalPrinterHost ?? '';
+  }
+
+  @override
   void dispose() {
     _tabs.dispose();
+    _printerHost.dispose();
     for (final c in <TextEditingController>[
       _cosmosEndpoint,
       _cosmosDatabase,
@@ -700,6 +746,39 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   // ---------------------------------------------------------------------------
+  // Ticketprinter (#406)
+  // ---------------------------------------------------------------------------
+
+  /// Prints a sample ticket on the address currently in the field.
+  ///
+  /// The only way to find out whether an IP typed into a text box is the right
+  /// one, short of making a student be late. It deliberately uses the address
+  /// **as typed** rather than the saved one, so the operator can try a value
+  /// before committing it, and it goes through the same composition, the same
+  /// socket and the same error reporting as a real ticket — a test print down a
+  /// different path would prove nothing about the real one.
+  Future<void> _testPrintTicket() async {
+    final LateArrivalPrinter printer = LateArrivalPrinter(
+      host: _printerHost.text,
+      logo: defaultTicketLogo,
+      transport: widget.ticketTransport ?? const TcpTicketTransport(),
+    );
+    setState(() {
+      _printerTesting = true;
+      _printerStatus = null;
+    });
+    printer.printTestTicket();
+    await printer.settled;
+    final LateArrivalPrintStatus outcome = printer.status.value;
+    printer.dispose();
+    if (!mounted) return;
+    setState(() {
+      _printerTesting = false;
+      _printerStatus = outcome;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Smartschool import rules (#202)
   // ---------------------------------------------------------------------------
 
@@ -994,6 +1073,11 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _save() async {
+    // First, and outside the document's own failure path: the printer address
+    // describes the box on *this* desk, so it is written to `preferences.json`
+    // whether or not the shared document can be reached (#406).
+    await _preferences?.setLateArrivalPrinterHost(_printerHost.text);
+
     final services = _services;
     final base = _loaded;
     if (services == null || base == null) return;
@@ -1307,7 +1391,26 @@ class _SettingsForm extends StatelessWidget {
       ),
       _wifiSection(),
       _lateArrivalReasonsSection(),
+      _lateArrivalPrinterSection(),
     ]);
+  }
+
+  /// The ticket printer at this desk (#406).
+  ///
+  /// Beside the reason list rather than on the Verbinding tab, even though it
+  /// is machine-local like everything there. Verbinding is the *bootstrap* —
+  /// the app registration, the Cosmos endpoint, the things that have to be
+  /// reachable when nothing else is — and a printer is not that. An operator
+  /// setting up a reception desk configures the buttons and the printer in one
+  /// sitting, and they should be one scroll apart, with the section saying in
+  /// so many words which of the two is shared and which is not.
+  Widget _lateArrivalPrinterSection() {
+    return _Section(
+      title: 'Te laat — ticketprinter',
+      children: <Widget>[
+        _LateArrivalPrinterEditor(state: state),
+      ],
+    );
   }
 
   /// The shared late-arrival reason list (#405).
@@ -2633,6 +2736,115 @@ class _ReasonDialogState extends State<_ReasonDialog> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The ticket printer this desk prints late-arrival tickets on (#406).
+///
+/// One address, a test button, and a sentence saying what the address is for.
+/// The port is not offered: raw ESC/POS printing *is* port 9100, and a field
+/// for it would only be a way to get it wrong.
+///
+/// **Machine-local, and it says so.** The reason list one section up is shared
+/// across every desk on purpose; this is the opposite, and the difference has
+/// to be legible or an operator will assume the whole "Te laat" configuration
+/// behaves one way. Two reception desks have two printers; a shared address
+/// would send desk two's tickets to desk one. It is stored in
+/// `preferences.json` beside the remembered uitschrijvingsdatum, and written by
+/// the same **Opslaan** as the rest of the tab.
+///
+/// **Empty is a valid answer.** It means this machine does not print — which is
+/// what an office laptop draining yesterday's queue honestly is — and the scan
+/// flow treats it as "no ticket", never as a fault.
+class _LateArrivalPrinterEditor extends StatelessWidget {
+  const _LateArrivalPrinterEditor({required this.state});
+
+  final _SettingsScreenState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Het adres van de bonprinter aan deze balie. De app stuurt de '
+          'tickets rechtstreeks naar poort $escPosRawPort — er is geen '
+          'Windows-printer of stuurprogramma nodig. Deze instelling geldt '
+          'alleen voor deze computer: elke balie heeft haar eigen printer. '
+          'Laat het veld leeg als hier niet afgedrukt wordt; de registratie '
+          'gaat dan gewoon door, alleen zonder ticket.',
+          key: const ValueKey('settings-printer-note'),
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        _Field(
+          keyValue: 'settings-printer-host',
+          label: 'Printeradres (IP of hostnaam)',
+          controller: state._printerHost,
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: state._printerHost,
+          builder: (_, TextEditingValue value, __) {
+            final bool configured = value.text.trim().isNotEmpty;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                OutlinedButton.icon(
+                  key: const ValueKey('settings-printer-test'),
+                  // Nothing to reach without an address, and no address to
+                  // guess: the button says so by being disabled.
+                  onPressed: !configured || state._printerTesting
+                      ? null
+                      : state._testPrintTicket,
+                  icon: const Icon(Icons.print_outlined),
+                  label: const Text('Testticket afdrukken'),
+                ),
+                _printerStatusLine(context, host: value.text.trim()),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  /// What the last test print did, in one line the operator can act on.
+  ///
+  /// A failure is coloured as an error and names the address that did not
+  /// answer, because "it does not print" is almost always a typo in the IP or a
+  /// printer somebody switched off — and both are things the operator can fix
+  /// standing there.
+  Widget _printerStatusLine(BuildContext context, {required String host}) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final LateArrivalPrintStatus? status = state._printerStatus;
+    final String message;
+    if (state._printerTesting) {
+      message = 'Er wordt een testticket verstuurd…';
+    } else if (status == null) {
+      message = '';
+    } else if (status.isFailure) {
+      message = status.message;
+    } else if (status.state == LateArrivalPrintState.disabled) {
+      message = status.message;
+    } else {
+      message = 'Het testticket is naar $host:$escPosRawPort verstuurd.';
+    }
+    if (message.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+      child: Text(
+        message,
+        key: const ValueKey('settings-printer-status'),
+        style: text.bodyMedium?.copyWith(
+          color: status?.isFailure ?? false
+              ? colors.error
+              : colors.onSurfaceVariant,
+        ),
+      ),
     );
   }
 }
