@@ -34,6 +34,25 @@ dependencies:
   # implements (AzureAuthProvider, AzureCredentials, TokenCache).
   azure_api:
 
+  # Smartschool's *internal* Presence module (#404). The public API this repo's
+  # `smartschool_api` package speaks cannot write a presence at all; only the
+  # internal `Presence/Class/savePupilsPresences` endpoint can, and this library
+  # already implements it (repo `yvanvds/dartschool`).
+  #
+  # A git dependency, not a path one, for exactly the reason `plink_design_system`
+  # above is: the library is external to this workspace and lives on a developer
+  # machine, so a `path:` here would resolve locally and fail on every CI runner
+  # and every fresh clone. Pinned to a commit so a push to its `main` cannot
+  # change a build here without a deliberate bump.
+  #
+  # Not the hosted release either: pub.dev is at 0.2.6, and `PresenceService` —
+  # the whole reason this is here — first appears in 0.2.9. Switch to a hosted
+  # version once one carrying it is published.
+  flutter_smartschool:
+    git:
+      url: https://github.com/yvanvds/dartschool.git
+      ref: 0b9faf03598fe9c9dbcab8b88260d49e71715274
+
   # For the interactive loopback fallback's injectable HTTP client (the token
   # endpoint), shared with the OAuthAuthProvider reused from azure_api.
   http: ^1.2.0

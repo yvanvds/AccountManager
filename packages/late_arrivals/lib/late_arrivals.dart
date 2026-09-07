@@ -26,6 +26,16 @@
 ///   be asserted without a printer on the network. The socket that carries it
 ///   to port 9100 lives in `account_manager`.
 ///
+/// One slice for what eventually makes the registration real:
+///
+/// - the **drain** (#404) reads the journal in the background and writes each
+///   registration to Smartschool as a morning presence, in scan order, retrying
+///   a failure and signing in again when the session has expired. It is
+///   deliberately never in the hot path, and it talks to Smartschool through a
+///   [LatePresenceWriter] so its ordering and give-up behaviour can be proven
+///   against a fake — the live write is a write, and the repo's live-testing
+///   policy keeps those out of CI.
+///
 /// And one slice for what happens when the machine itself is gone:
 ///
 /// - the **mirror** (#403) copies every journalled record and every status
@@ -39,6 +49,10 @@
 /// application state, for a path, or for the network.
 library;
 
+export 'src/drain/late_arrival_drain.dart'
+    show LateArrivalDrain, LateArrivalDrainStatus;
+export 'src/drain/presence_writer.dart'
+    show LatePresenceWriter, PresenceRejected, PresenceSessionExpired;
 export 'src/journal/journal_store.dart'
     show
         InMemoryJournalStore,
@@ -51,7 +65,8 @@ export 'src/journal/late_arrival_record.dart'
     show LateArrivalRecord, LateArrivalStatus;
 export 'src/journal/motivation.dart'
     show composeMotivation, motivationSeparator;
-export 'src/journal/record_sink.dart' show LateArrivalRecordSink;
+export 'src/journal/record_sink.dart'
+    show FanOutRecordSink, LateArrivalRecordSink;
 export 'src/journal/school_day.dart' show SchoolDay;
 export 'src/mirror/late_arrival_mirror.dart'
     show
@@ -69,6 +84,7 @@ export 'src/reasons/late_arrival_reason.dart'
         decodeLateArrivalReasons,
         defaultLateArrivalReasons,
         normalizeLateArrivalReasons;
+export 'src/retry/backoff.dart' show RetryBackoff;
 export 'src/scan_code.dart' show normalizeScanCode;
 export 'src/scan_resolver.dart' show ScanResolver;
 export 'src/scan_result.dart'
