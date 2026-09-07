@@ -4,6 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 import 'auth/aad_resource.dart';
 import 'auth/sign_in_gate.dart';
 import 'auth/sign_in_session.dart';
+import 'late_arrivals/late_arrival_desk.dart';
 import 'reconcile/reconcile_bootstrap.dart';
 import 'settings/connection_config.dart';
 import 'settings/local_preferences.dart';
@@ -33,7 +34,9 @@ class AccountManagerApp extends StatelessWidget {
     this.update,
     this.openReleaseLink,
     LocalPreferences? preferences,
-  }) : preferences = preferences ?? LocalPreferences.inMemory();
+    LateArrivalDesk? desk,
+  })  : preferences = preferences ?? LocalPreferences.inMemory(),
+        desk = desk ?? LateArrivalDesk.inMemory();
 
   /// The operator's Azure AD session, used by the sign-in gate and, later, by
   /// the connectors that carry its tokens.
@@ -78,6 +81,16 @@ class AccountManagerApp extends StatelessWidget {
   /// "there is no preference store".
   final LocalPreferences preferences;
 
+  /// The reception desk's late-arrival stack (#409) — the journal, the Cosmos
+  /// mirror and the Smartschool drain, started when the scope below the sign-in
+  /// gate mounts.
+  ///
+  /// Defaults to a session-only desk rather than to `null`, for the same reason
+  /// [preferences] does: a test (or a build with nowhere to write) still gets
+  /// the registering *behaviour* within its run, so nothing downstream has to
+  /// special-case "there is no desk". `main()` binds the real one.
+  final LateArrivalDesk desk;
+
   /// Where a link in the **Wat is er nieuw** dialog goes (#395); `null` means
   /// the operator's default browser, which is what production wants. Injected
   /// only so a test can follow the link without launching one.
@@ -103,17 +116,24 @@ class AccountManagerApp extends StatelessWidget {
         child: SignInGate(
           session: session,
           graph: graph,
-          child: AppShell(
-            reconcileBootstrap: reconcileBootstrap,
-            settingsBootstrap: settingsBootstrap,
-            connection: connection,
-            update: update,
-            // Also handed down explicitly, not only through the scope above:
-            // the shell builds its update controller in `initState`, where an
-            // inherited lookup is not allowed, and that controller is what
-            // remembers which release's notes this machine has read (#395).
-            preferences: preferences,
-            openReleaseLink: openReleaseLink,
+          // Inside the gate on purpose (#409): the desk's startup reconciliation
+          // reads Cosmos with the operator's own token, and starting it above
+          // the gate would race a second interactive sign-in against the one the
+          // gate is already running.
+          child: LateArrivalDeskScope(
+            desk: desk,
+            child: AppShell(
+              reconcileBootstrap: reconcileBootstrap,
+              settingsBootstrap: settingsBootstrap,
+              connection: connection,
+              update: update,
+              // Also handed down explicitly, not only through the scope above:
+              // the shell builds its update controller in `initState`, where an
+              // inherited lookup is not allowed, and that controller is what
+              // remembers which release's notes this machine has read (#395).
+              preferences: preferences,
+              openReleaseLink: openReleaseLink,
+            ),
           ),
         ),
       ),

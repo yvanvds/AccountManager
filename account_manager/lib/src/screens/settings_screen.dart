@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:late_arrivals/late_arrivals.dart';
@@ -6,7 +8,9 @@ import 'package:smartschool_api/smartschool_api.dart';
 import 'package:wisa_api/wisa_api.dart';
 
 import '../auth/aad_app_config.dart';
+import '../late_arrivals/late_arrival_desk.dart';
 import '../late_arrivals/late_arrival_printer.dart';
+import '../late_arrivals/operator_credentials.dart';
 import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 import '../settings/connection_config.dart';
 import '../settings/local_preferences.dart';
@@ -224,6 +228,33 @@ class _SettingsScreenState extends State<SettingsScreen>
   LateArrivalPrintStatus? _printerStatus;
   bool _printerTesting = false;
 
+  // The reception operator's own Smartschool login (#409). Per-machine like the
+  // printer above it, but unlike anything else on this tab it is a *credential*:
+  // the password never leaves this machine, is DPAPI-encrypted at rest, and is
+  // deliberately not in the shared document where a colleague would read it.
+  final _ssOperatorUsername = TextEditingController();
+  final _ssOperatorPassword = TextEditingController(); // write-only secret
+  final _ssOperatorMfa = TextEditingController(); // write-only secret
+
+  /// This launch's late-arrival stack, or `null` in a bare widget test with no
+  /// [LateArrivalDeskScope] — the section then renders inert, exactly as the
+  /// printer field behaves without a [LocalPreferencesScope].
+  LateArrivalDesk? _desk;
+
+  /// Guards the one-time read of the stored login, so a dependency change cannot
+  /// overwrite a username the operator is halfway through typing.
+  bool _operatorLoginLoaded = false;
+
+  /// The login as stored, so a blank password field can keep it (the same
+  /// write-only rule the WISA password and the Smartschool passphrase follow).
+  SmartschoolOperatorLogin? _storedOperatorLogin;
+
+  /// The outcome of the last **Aanmelding testen**, in the operator's words, and
+  /// whether it is something to act on.
+  String _operatorStatus = '';
+  bool _operatorStatusIsError = false;
+  bool _operatorTesting = false;
+
   // WISA profile.
   final _wisaServer = TextEditingController();
   final _wisaPort = TextEditingController();
@@ -316,6 +347,15 @@ class _SettingsScreenState extends State<SettingsScreen>
     // it is read here and not in `_populate`. Once only: a dependency change
     // must not overwrite an address the operator is halfway through typing.
     _preferences = LocalPreferencesScope.maybeOf(context);
+    _desk = LateArrivalDeskScope.maybeOf(context);
+    if (!_operatorLoginLoaded) {
+      _operatorLoginLoaded = true;
+      // The stored login is ciphertext on disk, so reading it is async — and it
+      // is read from the credential store rather than from the desk's own
+      // in-memory copy, so the section is correct even when opened before the
+      // desk has finished starting.
+      unawaited(_loadOperatorLogin());
+    }
     if (_printerHostLoaded) return;
     _printerHostLoaded = true;
     _printerHost.text = _preferences?.lateArrivalPrinterHost ?? '';
@@ -325,6 +365,9 @@ class _SettingsScreenState extends State<SettingsScreen>
   void dispose() {
     _tabs.dispose();
     _printerHost.dispose();
+    _ssOperatorUsername.dispose();
+    _ssOperatorPassword.dispose();
+    _ssOperatorMfa.dispose();
     for (final c in <TextEditingController>[
       _cosmosEndpoint,
       _cosmosDatabase,
@@ -779,6 +822,135 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   // ---------------------------------------------------------------------------
+  // Smartschool-aanmelding van de baliemedewerker (#409)
+  // ---------------------------------------------------------------------------
+
+  /// Reads this machine's stored login into the section.
+  ///
+  /// Only the username reaches the screen. The password and the MFA secret are
+  /// held in [_storedOperatorLogin] so a blank field can keep them on save, and
+  /// are never rendered — the same write-only discipline the vault-backed
+  /// secrets on this screen already follow.
+  Future<void> _loadOperatorLogin() async {
+    final LateArrivalDesk? desk = _desk;
+    if (desk == null) return;
+    final SmartschoolOperatorLogin? stored = await desk.credentials.read();
+    if (!mounted) return;
+    setState(() {
+      _storedOperatorLogin = stored;
+      _ssOperatorUsername.text = stored?.username ?? '';
+    });
+  }
+
+  /// The login as the fields currently describe it: what is typed, over what is
+  /// stored.
+  SmartschoolOperatorLogin get _operatorLoginFromFields =>
+      (_storedOperatorLogin ??
+              const SmartschoolOperatorLogin(username: '', password: ''))
+          .merged(
+        username: _ssOperatorUsername.text,
+        password: _ssOperatorPassword.text,
+        mfa: _ssOperatorMfa.text,
+      );
+
+  /// The Smartschool host to sign in against, taken from the URI **as typed** on
+  /// the Smartschool tab rather than from the saved document — so an operator
+  /// can correct the address and test it in one sitting, exactly as the printer
+  /// test uses the address as typed.
+  String get _operatorSignInHost {
+    final String typed = smartschoolHostFrom(_ssUri.text);
+    return typed.isNotEmpty ? typed : (_desk?.smartschoolHost ?? '');
+  }
+
+  /// Signs in with what is on screen and reports the answer in place.
+  ///
+  /// The whole point of the button: a typo in a password is otherwise
+  /// discovered as a queue that will not drain, hours later, by which time
+  /// several students have walked off with a ticket for a presence nobody wrote.
+  Future<void> _testOperatorSignIn() async {
+    final LateArrivalDesk? desk = _desk;
+    if (desk == null) return;
+    setState(() {
+      _operatorTesting = true;
+      _operatorStatus = '';
+      _operatorStatusIsError = false;
+    });
+    final String? failure = await desk.testSignIn(
+      _operatorLoginFromFields,
+      host: _operatorSignInHost,
+    );
+    if (!mounted) return;
+    setState(() {
+      _operatorTesting = false;
+      _operatorStatusIsError = failure != null;
+      _operatorStatus = failure ??
+          'Aanmelden bij Smartschool als '
+              '${_operatorLoginFromFields.username} is gelukt.';
+    });
+  }
+
+  /// Forgets this machine's login entirely.
+  ///
+  /// The only way back to an unconfigured desk: every other field on this screen
+  /// is cleared by blanking it, but a blank credential field means "keep what is
+  /// stored", so removing one needs its own affordance.
+  Future<void> _clearOperatorLogin() async {
+    final LateArrivalDesk? desk = _desk;
+    if (desk == null) return;
+    await desk.clearLogin();
+    if (!mounted) return;
+    setState(() {
+      _storedOperatorLogin = null;
+      _ssOperatorUsername.clear();
+      _ssOperatorPassword.clear();
+      _ssOperatorMfa.clear();
+      _operatorStatusIsError = false;
+      _operatorStatus = 'De Smartschool-aanmelding van deze computer is '
+          'verwijderd. Registraties worden nog bewaard en afgedrukt, maar niet '
+          'meer naar Smartschool verstuurd.';
+    });
+  }
+
+  /// Persists the login typed into the section, if any, and rewires the drain.
+  ///
+  /// Called from [_save] before the shared document, and outside its failure
+  /// path, for the same reason the printer address is: this is *this machine's*
+  /// configuration, and it must land whether or not Cosmos can be reached.
+  Future<void> _saveOperatorLogin() async {
+    final LateArrivalDesk? desk = _desk;
+    if (desk == null) return;
+    final SmartschoolOperatorLogin next = _operatorLoginFromFields;
+    // Nothing typed and nothing stored: there is no login to save, and writing
+    // an empty one would create a file that only says "no".
+    if (next.isEmpty) return;
+    // Nothing changed: leave the ciphertext on disk alone rather than rewriting
+    // it on every unrelated save.
+    final SmartschoolOperatorLogin? stored = _storedOperatorLogin;
+    if (stored != null &&
+        stored.username == next.username &&
+        stored.password == next.password &&
+        stored.mfa == next.mfa) {
+      return;
+    }
+    try {
+      await desk.saveLogin(next);
+      if (!mounted) return;
+      setState(() {
+        _storedOperatorLogin = next;
+        _ssOperatorPassword.clear();
+        _ssOperatorMfa.clear();
+      });
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _operatorStatusIsError = true;
+        _operatorStatus = 'De aanmelding kon niet bewaard worden op deze '
+            'computer: $e';
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Smartschool import rules (#202)
   // ---------------------------------------------------------------------------
 
@@ -1077,6 +1249,10 @@ class _SettingsScreenState extends State<SettingsScreen>
     // describes the box on *this* desk, so it is written to `preferences.json`
     // whether or not the shared document can be reached (#406).
     await _preferences?.setLateArrivalPrinterHost(_printerHost.text);
+    // The same argument, one step stronger (#409): this operator's Smartschool
+    // login is a credential on this machine, it is what makes the desk drain at
+    // all, and a Cosmos that will not answer must not be able to stop it landing.
+    await _saveOperatorLogin();
 
     final services = _services;
     final base = _loaded;
@@ -1392,7 +1568,31 @@ class _SettingsForm extends StatelessWidget {
       _wifiSection(),
       _lateArrivalReasonsSection(),
       _lateArrivalPrinterSection(),
+      _smartschoolOperatorSection(),
     ]);
+  }
+
+  /// This operator's own Smartschool login, on this machine (#409).
+  ///
+  /// Last of the three "Te laat" sections, and the order is the order a desk is
+  /// set up in: the buttons the operator will press (shared), the printer the
+  /// ticket comes out of (this machine), and then the account the registration
+  /// is filed under (this machine, this person). Each section says which of the
+  /// three it is, because they sit one scroll apart and look alike.
+  ///
+  /// On **Algemeen** rather than on the Smartschool tab, even though it is a
+  /// Smartschool credential: that tab is the *connector's* configuration — the
+  /// SOAP site, the group tree, the shared access code every operator uses — and
+  /// this is the opposite of shared. Putting a personal password among the
+  /// school-wide connector settings is exactly how it would end up being typed
+  /// into the wrong one.
+  Widget _smartschoolOperatorSection() {
+    return _Section(
+      title: 'Te laat — Smartschool-aanmelding',
+      children: <Widget>[
+        _SmartschoolOperatorEditor(state: state),
+      ],
+    );
   }
 
   /// The ticket printer at this desk (#406).
@@ -2841,6 +3041,162 @@ class _LateArrivalPrinterEditor extends StatelessWidget {
         key: const ValueKey('settings-printer-status'),
         style: text.bodyMedium?.copyWith(
           color: status?.isFailure ?? false
+              ? colors.error
+              : colors.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
+/// The reception operator's own Smartschool login on this machine (#409).
+///
+/// Three fields, a test, and a way to forget it again.
+///
+/// **Why a login at all, when the app already has Smartschool credentials.** The
+/// stored Smartschool passphrase is the *public API* access code, and the public
+/// API cannot write a presence at any privilege level. Only the internal Presence
+/// module can, and it needs a real user login — which is why this section exists
+/// rather than reusing what is already on the Smartschool tab.
+///
+/// **Why the operator's own account and not a shared reception one.** A presence
+/// is attributed to whoever wrote it. A morning of registrations filed under a
+/// shared "onthaal" login tells a form teacher nothing about who to ask, and the
+/// rights the module checks would be a superset of the rights the person at the
+/// desk actually has.
+///
+/// **The password is never rendered and never stored in the clear.** The field is
+/// obscured and write-only exactly like the WISA password and the Smartschool
+/// passphrase above it; the difference is where it goes. Those two are the
+/// school's and live in Key Vault, shared. This one is a person's, so it stays on
+/// this machine, encrypted with the same user-scoped DPAPI cipher the Azure token
+/// cache uses — readable only by the Windows account that wrote it.
+class _SmartschoolOperatorEditor extends StatelessWidget {
+  const _SmartschoolOperatorEditor({required this.state});
+
+  final _SettingsScreenState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool configured = state._storedOperatorLogin?.isComplete ?? false;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'De te-laatregistraties worden op de achtergrond naar Smartschool '
+          'geschreven met je eigen Smartschool-account — niet met een gedeeld '
+          'onthaalaccount, want een aanwezigheid staat op naam van wie ze '
+          'ingevoerd heeft. Deze aanmelding geldt alleen voor deze computer en '
+          'voor jou: het wachtwoord wordt versleuteld bewaard met je '
+          'Windows-account en komt nooit in de gedeelde instellingen terecht. '
+          'Vul het MFA-veld alleen in als je account tweestapsverificatie of '
+          'accountverificatie gebruikt (de code uit je authenticator-app, of je '
+          'geboortedatum als jjjj-mm-dd).',
+          key: const ValueKey('settings-smartschool-operator-note'),
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        _Field(
+          keyValue: 'settings-smartschool-operator-username',
+          label: 'Smartschool-gebruikersnaam',
+          controller: state._ssOperatorUsername,
+        ),
+        _SecretField(
+          keyValue: 'settings-smartschool-operator-password',
+          label: 'Smartschool-wachtwoord',
+          controller: state._ssOperatorPassword,
+        ),
+        _SecretField(
+          keyValue: 'settings-smartschool-operator-mfa',
+          label: 'MFA-code of geboortedatum (optioneel)',
+          controller: state._ssOperatorMfa,
+        ),
+        // The state of the desk, not of the form: whether anything is stored at
+        // all. Without this an operator cannot tell a machine that has never
+        // been configured from one whose password field is simply blank because
+        // it is write-only.
+        _Note(
+          keyValue: 'settings-smartschool-operator-state',
+          text: configured
+              ? 'Op deze computer is een aanmelding bewaard voor '
+                  '${state._storedOperatorLogin!.username}.'
+              : 'Op deze computer is nog geen aanmelding bewaard. De '
+                  'registraties worden wel bewaard en afgedrukt, maar ze worden '
+                  'pas naar Smartschool geschreven zodra dit ingevuld is.',
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: state._ssOperatorUsername,
+          builder: (_, TextEditingValue username, __) {
+            return ValueListenableBuilder<TextEditingValue>(
+              valueListenable: state._ssOperatorPassword,
+              builder: (_, TextEditingValue password, __) {
+                // Testable as soon as there is a complete login to test —
+                // whether it was just typed or was read back from disk.
+                final bool testable = username.text.trim().isNotEmpty &&
+                    (password.text.trim().isNotEmpty ||
+                        (state._storedOperatorLogin?.password
+                                .trim()
+                                .isNotEmpty ??
+                            false));
+                return Wrap(
+                  spacing: PlinkSpacing.s3,
+                  runSpacing: PlinkSpacing.s2,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    OutlinedButton.icon(
+                      key: const ValueKey(
+                        'settings-smartschool-operator-test',
+                      ),
+                      onPressed: !testable || state._operatorTesting
+                          ? null
+                          : state._testOperatorSignIn,
+                      icon: const Icon(Icons.login_outlined),
+                      label: const Text('Aanmelding testen'),
+                    ),
+                    if (configured)
+                      TextButton.icon(
+                        key: const ValueKey(
+                          'settings-smartschool-operator-clear',
+                        ),
+                        onPressed: state._operatorTesting
+                            ? null
+                            : state._clearOperatorLogin,
+                        icon: const Icon(Icons.person_remove_outlined),
+                        label: const Text('Aanmelding wissen'),
+                      ),
+                  ],
+                );
+              },
+            );
+          },
+        ),
+        _signInStatusLine(context),
+      ],
+    );
+  }
+
+  /// What the last **Aanmelding testen** (or save, or wipe) did, in one line.
+  ///
+  /// A failure is coloured as an error and keeps Smartschool's own wording: a
+  /// wrong password, a missing second factor and an account without presence
+  /// rights are three different problems with three different answers, and only
+  /// the server can tell them apart.
+  Widget _signInStatusLine(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final String message = state._operatorTesting
+        ? 'Er wordt aangemeld bij Smartschool…'
+        : state._operatorStatus;
+    if (message.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+      child: Text(
+        message,
+        key: const ValueKey('settings-smartschool-operator-status'),
+        style: text.bodyMedium?.copyWith(
+          color: state._operatorStatusIsError && !state._operatorTesting
               ? colors.error
               : colors.onSurfaceVariant,
         ),

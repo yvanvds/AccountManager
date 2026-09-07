@@ -17,6 +17,9 @@ import 'package:account_core/account_core.dart'
 import 'package:account_manager/main.dart' as app;
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
+import 'package:account_manager/src/late_arrivals/file_journal_store.dart';
+import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
+import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/screens/action_tiles.dart'
     show PendingBadge;
 import 'package:account_manager/src/screens/actions_screen.dart';
@@ -69,7 +72,13 @@ import 'package:azure_api/azure_api.dart'
     show AzureCredentials, StaticAuthProvider;
 import 'package:late_arrivals/late_arrivals.dart'
     show
+        InMemoryJournalStore,
+        LateArrivalJournal,
         LateArrivalReason,
+        LateArrivalStatus,
+        LatePresenceWriter,
+        ScanRegisterable,
+        ScannedStudent,
         composeMotivation,
         defaultLateArrivalReasons,
         escPosRawPort;
@@ -227,7 +236,15 @@ void main() {
     // whichever screen it names; the first frame the operator actually gets —
     // and the first click they no longer have to spend leaving Start — is a
     // property of the real app booting through its own entry point.
-    await app.launchAccountManager(connection: InMemoryConnectionStore());
+    // The journal and the credential store are substituted for the same reason
+    // (#409): opening the journal rolls off day files past their retention, and
+    // the credential file is this operator's real Smartschool password. A test
+    // run must touch neither.
+    await app.launchAccountManager(
+      connection: InMemoryConnectionStore(),
+      credentials: InMemoryOperatorCredentialStore(),
+      journal: InMemoryJournalStore(),
+    );
     await tester.pumpAndSettle();
 
     // The real navigation shell, showing the screen the session begins on
@@ -14569,9 +14586,13 @@ void main() {
     seed.writeAsStringSync(jsonEncode(seeded.toJson()));
     final String seedBefore = seed.readAsStringSync();
 
-    // The real entry point, with the one seam it has: this machine's store.
+    // The real entry point, over this machine's store — plus throwaway
+    // late-arrival stores (#409), so the run cannot read this operator's real
+    // Smartschool password or roll off their real journal.
     await app.launchAccountManager(
       connection: FileConnectionStore(local, seed: seed),
+      credentials: InMemoryOperatorCredentialStore(),
+      journal: InMemoryJournalStore(),
     );
     await tester.pumpAndSettle();
 
@@ -15391,6 +15412,310 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'Instellingen collects the operator\'s own Smartschool login, encrypts it '
+      'on this machine with DPAPI, and the desk drains a recovered journal with '
+      'nobody wiring it (#409)', (WidgetTester tester) async {
+    // Everything #409 claims, in one real run, and each half needs this level.
+    //
+    // "The password is encrypted at rest with the same cipher the token cache
+    // uses" is a claim about **real DPAPI** — `crypt32.dll` over `dart:ffi`,
+    // which exists only on Windows and therefore only in this suite. A unit test
+    // can prove the store honours whatever cipher it is handed; only this run
+    // proves the cipher the app actually ships works, and that the plaintext
+    // never reaches the file.
+    //
+    // "A recovered journal resumes draining at start" is a claim about
+    // `main()`-shaped wiring across an app *restart*: a real journal file on a
+    // real filesystem, written by one widget tree and picked up by the next, and
+    // the drain attaching itself only once the shared settings document has been
+    // loaded. There is no widget to pump for that.
+    //
+    // Nothing here touches Smartschool. The presence writer is a fake, and so is
+    // the sign-in probe: writing a presence and signing in are live interactions
+    // with the school's tenant, and the repo's live-testing policy keeps both out
+    // of CI entirely.
+    useTallWindow(tester);
+
+    final Directory dir = Directory.systemTemp.createTempSync('am-ss-login-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+    File credentialFileFor(String desk) => File(
+          '${dir.path}${Platform.pathSeparator}$desk-'
+          '$smartschoolOperatorCredentialFileName',
+        );
+    Directory journalDirFor(String desk) =>
+        Directory('${dir.path}${Platform.pathSeparator}$desk-journaal');
+
+    // The real cipher the app ships — the same pair `main()` hands the store.
+    OperatorCredentialStore credentialsFor(String desk) =>
+        EncryptedFileCredentialStore(
+          credentialFileFor(desk),
+          encrypt: Dpapi.protect,
+          decrypt: Dpapi.unprotect,
+        );
+
+    // One shared settings document naming the school's Smartschool site, the way
+    // every desk really reads it — and the reason the drain cannot attach until
+    // the document has been loaded.
+    const AppSettings base = AppSettings();
+    final InMemorySettingsStore shared = InMemorySettingsStore(
+      base.copyWith(
+        smartschool:
+            base.smartschool.copyWith(uri: 'https://arcadia.smartschool.be'),
+      ),
+    );
+    final InMemorySecretProvider vault = InMemorySecretProvider(const {});
+    final LiveSettings live = LiveSettings();
+
+    final _RecordingPresenceWriter written = _RecordingPresenceWriter();
+    LateArrivalDesk? current;
+
+    /// Launches (or relaunches) one desk over its own credential file and its
+    /// own journal directory — which is what both a restart and a second
+    /// machine look like from here.
+    Future<LateArrivalDesk> openDesk(String desk) async {
+      final LateArrivalDesk built = LateArrivalDesk(
+        journalStore: FileJournalStore(journalDirFor(desk)),
+        credentials: credentialsFor(desk),
+        deskId: desk,
+        settings: live,
+        writerFor: (_, __) => written,
+        signInProbe: (SmartschoolOperatorLogin login, String host) async {
+          if (login.password != 'zeergeheim') {
+            throw StateError('Foutieve gebruikersnaam of wachtwoord.');
+          }
+        },
+      );
+      // Unmount the previous tree before letting go of its desk, so the scope
+      // is not listening to a disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      current?.dispose();
+      current = built;
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+        graph: graph,
+        settingsBootstrap: () async => SettingsServices(
+          store: shared,
+          secrets: vault,
+          liveSettings: live,
+        ),
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: built,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Instellingen'));
+      await tester.pumpAndSettle();
+      return built;
+    }
+
+    Future<void> scrollToLogin() async {
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('settings-smartschool-operator-note')),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> type(String key, String value) async {
+      final Finder field = find.byKey(ValueKey(key));
+      await tester.ensureVisible(field);
+      await tester.pumpAndSettle();
+      // The tap is not decoration: pressing **Opslaan** takes focus off the
+      // field, and `enterText` alone would then go to a dead text connection.
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      await tester.enterText(field, value);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> save() async {
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+    }
+
+    String stateLine() => tester
+        .widget<Text>(
+            find.byKey(const ValueKey('settings-smartschool-operator-state')))
+        .data!;
+
+    // --- Desk one, on an install nobody has configured. ----------------------
+    await openDesk('balie-1');
+    expect(find.text('Te laat — Smartschool-aanmelding'), findsOneWidget);
+    await scrollToLogin();
+    expect(stateLine(), contains('nog geen aanmelding'));
+    // A desk that cannot drain must still register — and it has to say so,
+    // because the operator has a student standing in front of them.
+    expect(stateLine(), contains('bewaard en afgedrukt'));
+    expect(current!.draining, isFalse);
+    expect(
+      current!.warnings.join(' '),
+      contains('geen Smartschool-aanmelding'),
+    );
+
+    // --- A typo is caught before a student is late. --------------------------
+    await type('settings-smartschool-operator-username', 'ann.peeters');
+    await type('settings-smartschool-operator-password', 'fout');
+    final Finder testButton =
+        find.byKey(const ValueKey('settings-smartschool-operator-test'));
+    await tester.ensureVisible(testButton);
+    await tester.tap(testButton);
+    await tester.pumpAndSettle();
+
+    final Finder statusLine =
+        find.byKey(const ValueKey('settings-smartschool-operator-status'));
+    final Text refused = tester.widget<Text>(statusLine);
+    expect(refused.data, contains('Foutieve gebruikersnaam of wachtwoord.'));
+    expect(
+      refused.style?.color,
+      Theme.of(tester.element(statusLine)).colorScheme.error,
+    );
+    // A test is not a save: a wrong password must not have been written.
+    expect(credentialFileFor('balie-1').existsSync(), isFalse);
+
+    // --- The right one, tested and then saved. -------------------------------
+    await type('settings-smartschool-operator-password', 'zeergeheim');
+    await tester.ensureVisible(testButton);
+    await tester.tap(testButton);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(statusLine).data, contains('is gelukt'));
+
+    await save();
+
+    // The bytes on disk are real DPAPI ciphertext: nothing readable in them.
+    final String onDisk = credentialFileFor('balie-1').readAsStringSync();
+    expect(onDisk, isNotEmpty);
+    expect(onDisk, isNot(contains('zeergeheim')));
+    expect(onDisk, isNot(contains('ann.peeters')));
+    // …and Windows hands it back to this same user, on this same machine.
+    final SmartschoolOperatorLogin? readBack =
+        await credentialsFor('balie-1').read();
+    expect(readBack?.username, 'ann.peeters');
+    expect(readBack?.password, 'zeergeheim');
+
+    // Nowhere near the document every operator in the group reads.
+    expect(
+      jsonEncode((await shared.load()).toJson()),
+      allOf(isNot(contains('zeergeheim')), isNot(contains('ann.peeters'))),
+    );
+
+    // The desk started draining without a relaunch, and stopped complaining.
+    expect(current!.draining, isTrue);
+    expect(current!.warnings.join(' '), isNot(contains('aanmelding')));
+
+    // --- A registration this desk journals reaches Smartschool. --------------
+    await current!.journal!.register(
+      scan: const ScanRegisterable(_lateStudent),
+      scannedAt: DateTime(2026, 9, 7, 8, 42),
+      reasonLabel: 'Bus te laat',
+      reasonIsValid: true,
+    );
+    await current!.drain!.settle();
+    expect(written.userIds, <int>[4242]);
+
+    // --- The desk dies with a registration still in the queue. ---------------
+    // Appended straight to this desk's journal *file* by a bare journal, with
+    // no sink and no worker behind it: a line that is durably on disk and that
+    // nothing has ever tried to send. That is precisely the state a killed
+    // process leaves behind, and the only state from which "draining resumes
+    // after a restart" means anything.
+    final LateArrivalJournal crashed = await LateArrivalJournal.open(
+        FileJournalStore(journalDirFor('balie-1')));
+    final record = await crashed.register(
+      scan: const ScanRegisterable(_lateStudent),
+      scannedAt: DateTime(2026, 9, 7, 9, 15),
+      reasonLabel: 'Verslapen',
+      reasonIsValid: false,
+    );
+    expect(record.status, LateArrivalStatus.pending);
+
+    // --- Restart. ------------------------------------------------------------
+    written.userIds.clear();
+    await openDesk('balie-1');
+    await scrollToLogin();
+    // The login came back out of the ciphertext, without the operator retyping.
+    expect(stateLine(), contains('ann.peeters'));
+    expect(
+      tester
+          .widget<TextField>(find
+              .byKey(const ValueKey('settings-smartschool-operator-password')))
+          .controller!
+          .text,
+      '',
+      reason: 'write-only: the stored password is never echoed back',
+    );
+
+    // And the queue the dead run left behind went out by itself.
+    expect(current!.recovery!.pendingCount, 1);
+    await current!.drain!.settle();
+    expect(written.userIds, <int>[4242]);
+    expect(
+      current!.journal!.byId(record.id)!.status,
+      LateArrivalStatus.confirmed,
+    );
+
+    // --- Desk two: another machine, the same shared document. ----------------
+    // A personal credential must not travel the way the shared reason list
+    // deliberately does.
+    await openDesk('balie-2');
+    await scrollToLogin();
+    expect(stateLine(), contains('nog geen aanmelding'));
+    expect(find.text('ann.peeters'), findsNothing);
+    expect(current!.draining, isFalse);
+    // Desk one's file is untouched by desk two opening.
+    expect(credentialFileFor('balie-1').readAsStringSync(), onDisk);
+
+    // --- Wissen puts a desk back to unconfigured. ----------------------------
+    await openDesk('balie-1');
+    await scrollToLogin();
+    final Finder clear =
+        find.byKey(const ValueKey('settings-smartschool-operator-clear'));
+    await tester.ensureVisible(clear);
+    await tester.tap(clear);
+    await tester.pumpAndSettle();
+
+    expect(credentialFileFor('balie-1').existsSync(), isFalse);
+    expect(stateLine(), contains('nog geen aanmelding'));
+    expect(current!.draining, isFalse);
+
+    expect(tester.takeException(), isNull);
+  });
+}
+
+/// The student the late-arrival cases register, with the two identifiers a
+/// Presence write addresses.
+const ScannedStudent _lateStudent = ScannedStudent(
+  scanCode: '123456',
+  wisaId: '123456',
+  smartschoolUid: 'jonas.peeters',
+  displayName: 'Jonas Peeters',
+  className: '3MTa',
+  internalUserId: 4242,
+  classGroupId: 77,
+);
+
+/// Stands in for Smartschool's Presence module.
+///
+/// A fake and not a live call, deliberately and permanently: `setLate` is a
+/// **write** against the school's real tenant, and the repo's live-testing
+/// policy forbids CI writing one. What this run proves is the wiring around it.
+class _RecordingPresenceWriter implements LatePresenceWriter {
+  final List<int> userIds = <int>[];
+
+  @override
+  Future<void> setLate({
+    required int userId,
+    required int classGroupId,
+    required DateTime date,
+    required bool withoutValidReason,
+    required String motivation,
+  }) async =>
+      userIds.add(userId);
+
+  @override
+  Future<void> reauthenticate() async {}
 }
 
 /// The Flutter app's own `pubspec.yaml`, found by walking up from wherever the

@@ -1,6 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
 import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart';
+import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
 import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_state/account_state.dart';
@@ -2210,6 +2213,342 @@ void main() {
       );
     });
   });
+
+  group('the operator\'s own Smartschool login (#409)', () {
+    /// The screen inside a [LateArrivalDeskScope], which is where the login is
+    /// read from and written to — it is a per-machine, per-*person* credential,
+    /// not part of the shared settings document.
+    ///
+    /// Every desk here binds a fake sign-in probe and a fake presence writer.
+    /// Signing in to Smartschool and writing a presence are live interactions
+    /// with the school's tenant, and the repo's live-testing policy keeps both
+    /// out of CI entirely.
+    LateArrivalDesk deskWith({
+      OperatorCredentialStore? credentials,
+      AppSettings settings = const AppSettings(),
+      SmartschoolSignInProbe? probe,
+      LatePresenceWriterFactory? writerFor,
+    }) =>
+        LateArrivalDesk(
+          journalStore: InMemoryJournalStore(),
+          credentials: credentials ?? InMemoryOperatorCredentialStore(),
+          deskId: 'onthaal-pc-1',
+          settings: LiveSettings(settings),
+          signInProbe: probe ?? (_, __) async {},
+          writerFor: writerFor,
+        );
+
+    Widget wrap(Widget child, LateArrivalDesk desk) => LateArrivalDeskScope(
+          desk: desk,
+          child: MaterialApp(home: Scaffold(body: child)),
+        );
+
+    AppSettings withSite(String uri) {
+      const AppSettings base = AppSettings();
+      return base.copyWith(smartschool: base.smartschool.copyWith(uri: uri));
+    }
+
+    Finder username() =>
+        find.byKey(const ValueKey('settings-smartschool-operator-username'));
+    Finder password() =>
+        find.byKey(const ValueKey('settings-smartschool-operator-password'));
+    Finder testButton() =>
+        find.byKey(const ValueKey('settings-smartschool-operator-test'));
+    Finder state() =>
+        find.byKey(const ValueKey('settings-smartschool-operator-state'));
+    Finder status() =>
+        find.byKey(const ValueKey('settings-smartschool-operator-status'));
+
+    testWidgets('an unconfigured desk says so, and says what still works',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final desk = deskWith();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Te laat — Smartschool-aanmelding'), findsOneWidget);
+      expect(tester.widget<TextField>(username()).controller!.text, '');
+      // The half the operator has to believe: a desk that cannot drain still
+      // registers and still prints.
+      expect(
+        tester.widget<Text>(state()).data,
+        allOf(
+          contains('nog geen aanmelding'),
+          contains('bewaard en afgedrukt'),
+        ),
+      );
+      // Nothing to sign in with, so the button says so by being disabled.
+      expect(
+        tester.widget<OutlinedButton>(testButton()).onPressed,
+        isNull,
+      );
+      // …and there is nothing to wipe.
+      expect(
+        find.byKey(const ValueKey('settings-smartschool-operator-clear')),
+        findsNothing,
+      );
+      // The note has to make the "your own account, this machine only" rule
+      // legible — the two sections above it behave differently.
+      expect(
+        tester
+            .widget<Text>(find
+                .byKey(const ValueKey('settings-smartschool-operator-note')))
+            .data,
+        allOf(
+          contains('je eigen Smartschool-account'),
+          contains('alleen voor deze computer'),
+          contains('versleuteld'),
+        ),
+      );
+    });
+
+    testWidgets('a configured desk shows the username and never the password',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+            mfa: 'JBSWY3DPEHPK3PXP',
+          ),
+        ),
+      );
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+          tester.widget<TextField>(username()).controller!.text, 'ann.peeters');
+      expect(tester.widget<Text>(state()).data, contains('ann.peeters'));
+      // Write-only, exactly like the WISA password and the passphrase above.
+      expect(tester.widget<TextField>(password()).controller!.text, '');
+      expect(tester.widget<TextField>(password()).obscureText, isTrue);
+      expect(find.text('zeergeheim'), findsNothing);
+      expect(find.text('JBSWY3DPEHPK3PXP'), findsNothing);
+      // A stored login can be tested without retyping anything.
+      expect(tester.widget<OutlinedButton>(testButton()).onPressed, isNotNull);
+    });
+
+    testWidgets('Opslaan writes it to this machine, not to the shared document',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final credentials = InMemoryOperatorCredentialStore();
+      final desk = deskWith(
+        credentials: credentials,
+        settings: withSite('https://arcadia.smartschool.be'),
+      );
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(username(), 'ann.peeters');
+      await tester.pump();
+      await tester.enterText(password(), 'zeergeheim');
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final stored = await credentials.read();
+      expect(stored?.username, 'ann.peeters');
+      expect(stored?.password, 'zeergeheim');
+      // The one thing that must never happen: a personal password in the
+      // document every operator in the group reads.
+      expect(
+        jsonEncode((await harness.store.load()).toJson()),
+        isNot(contains('zeergeheim')),
+      );
+      // The password field is emptied again, so it is never left on screen.
+      expect(tester.widget<TextField>(password()).controller!.text, '');
+    });
+
+    testWidgets(
+        'a blank password keeps the stored one, so a username typo can '
+        'be corrected', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final credentials = InMemoryOperatorCredentialStore(
+        const SmartschoolOperatorLogin(
+          username: 'ann.peters',
+          password: 'zeergeheim',
+        ),
+      );
+      final desk = deskWith(credentials: credentials);
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(username(), 'ann.peeters');
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final stored = await credentials.read();
+      expect(stored?.username, 'ann.peeters');
+      expect(stored?.password, 'zeergeheim');
+    });
+
+    testWidgets('a sign-in that works is reported in place',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      SmartschoolOperatorLogin? tried;
+      String? against;
+      final desk = deskWith(
+        settings: withSite('https://arcadia.smartschool.be'),
+        probe: (SmartschoolOperatorLogin login, String host) async {
+          tried = login;
+          against = host;
+        },
+      );
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(username(), 'ann.peeters');
+      await tester.pump();
+      await tester.enterText(password(), 'zeergeheim');
+      await tester.pump();
+      await tester.ensureVisible(testButton());
+      await tester.tap(testButton());
+      await tester.pumpAndSettle();
+
+      // The login as typed, against the host from the settings document — and
+      // the *host*, not the SOAP connector's short name.
+      expect(tried?.username, 'ann.peeters');
+      expect(tried?.password, 'zeergeheim');
+      expect(against, 'arcadia.smartschool.be');
+      expect(tester.widget<Text>(status()).data, contains('is gelukt'));
+      // A test is not a save: nothing is stored yet.
+      expect(await desk.credentials.read(), isNull);
+    });
+
+    testWidgets(
+        'a refused sign-in keeps Smartschool\'s own wording, in the '
+        'error colour', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'fout',
+          ),
+        ),
+        settings: withSite('https://arcadia.smartschool.be'),
+        probe: (_, __) async =>
+            throw StateError('Foutieve gebruikersnaam of wachtwoord.'),
+      );
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(testButton());
+      await tester.tap(testButton());
+      await tester.pumpAndSettle();
+
+      final Text line = tester.widget<Text>(status());
+      expect(line.data, contains('Foutieve gebruikersnaam of wachtwoord.'));
+      expect(
+        line.style?.color,
+        Theme.of(tester.element(status())).colorScheme.error,
+        reason: 'a typo caught here is a queue that does not stall later',
+      );
+    });
+
+    testWidgets('wissen forgets the login and says what stops happening',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final credentials = InMemoryOperatorCredentialStore(
+        const SmartschoolOperatorLogin(
+          username: 'ann.peeters',
+          password: 'zeergeheim',
+        ),
+      );
+      final desk = deskWith(credentials: credentials);
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+
+      final Finder clear =
+          find.byKey(const ValueKey('settings-smartschool-operator-clear'));
+      await tester.ensureVisible(clear);
+      await tester.tap(clear);
+      await tester.pumpAndSettle();
+
+      expect(await credentials.read(), isNull);
+      expect(tester.widget<TextField>(username()).controller!.text, '');
+      expect(
+          tester.widget<Text>(state()).data, contains('nog geen aanmelding'));
+      expect(
+        tester.widget<Text>(status()).data,
+        allOf(contains('verwijderd'), contains('bewaard en afgedrukt')),
+      );
+    });
+
+    testWidgets('saving a login starts the drain without a relaunch',
+        (WidgetTester tester) async {
+      // What the whole section is *for*: the desk has to start writing
+      // presences the moment it is configured, not on the next launch.
+      _useTallWindow(tester);
+      final desk = deskWith(
+        settings: withSite('https://arcadia.smartschool.be'),
+        writerFor: (_, __) => _NeverWriter(),
+      );
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+      expect(desk.draining, isFalse);
+      expect(desk.warnings.join(' '), contains('geen Smartschool-aanmelding'));
+
+      await tester.enterText(username(), 'ann.peeters');
+      await tester.pump();
+      await tester.enterText(password(), 'zeergeheim');
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(desk.draining, isTrue);
+      expect(
+        desk.warnings.join(' '),
+        isNot(contains('geen Smartschool-aanmelding')),
+      );
+    });
+  });
+}
+
+/// A presence writer that is never actually reached — the queue in these widget
+/// tests is empty, and what is being proven is that a worker exists at all.
+class _NeverWriter implements LatePresenceWriter {
+  @override
+  Future<void> setLate({
+    required int userId,
+    required int classGroupId,
+    required DateTime date,
+    required bool withoutValidReason,
+    required String motivation,
+  }) async =>
+      throw StateError('nothing should be queued here');
+
+  @override
+  Future<void> reauthenticate() async {}
 }
 
 /// A transport that always refuses, the way a printer that is off does.
