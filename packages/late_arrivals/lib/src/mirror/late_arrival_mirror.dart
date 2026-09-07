@@ -5,33 +5,15 @@ import 'package:account_core/account_core.dart' as core;
 import '../journal/late_arrival_record.dart';
 import '../journal/record_sink.dart';
 import '../journal/school_day.dart';
+import '../retry/backoff.dart';
 import 'late_arrival_mirror_store.dart';
 import 'mirrored_registration.dart';
 
 /// How the mirror backs off between failed attempts.
 ///
-/// Small at first — a single 429 or a dropped Wi-Fi frame is over in a second —
-/// and capped, because the desk is not waiting on any of this and hammering a
-/// throttled account only makes the outage longer.
-final class MirrorBackoff {
-  const MirrorBackoff({
-    this.base = const Duration(seconds: 1),
-    this.max = const Duration(seconds: 30),
-  });
-
-  final Duration base;
-  final Duration max;
-
-  /// The wait before attempt [attempt] + 1, doubling from [base] up to [max].
-  Duration delayFor(int attempt) {
-    if (attempt < 1) return base;
-    // 2^30 µs already exceeds any sane cap; clamping the shift keeps the
-    // multiply from overflowing on a long outage.
-    final int shift = attempt - 1 > 20 ? 20 : attempt - 1;
-    final int micros = base.inMicroseconds * (1 << shift);
-    return micros >= max.inMicroseconds ? max : Duration(microseconds: micros);
-  }
-}
+/// The same curve the Smartschool drain (#404) uses; see [RetryBackoff]. Kept
+/// under its original name so #403's callers read unchanged.
+typedef MirrorBackoff = RetryBackoff;
 
 /// What the mirror is currently managing to do (#403).
 ///

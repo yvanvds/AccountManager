@@ -1,6 +1,12 @@
 import 'dart:io';
 
-import 'package:account_state/account_state.dart' show LiveSettings;
+import 'package:account_state/account_state.dart'
+    show
+        CosmosConfig,
+        CosmosLateArrivalMirrorStore,
+        HttpCosmosClient,
+        HttpCosmosTransport,
+        LiveSettings;
 import 'package:azure_api/azure_api.dart'
     show
         EncryptedTokenCache,
@@ -9,6 +15,7 @@ import 'package:azure_api/azure_api.dart'
         TokenCache;
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
+import 'package:late_arrivals/late_arrivals.dart' show JournalStore;
 
 import 'src/app.dart';
 import 'src/auth/aad_broker.dart';
@@ -18,6 +25,10 @@ import 'src/auth/file_token_cache.dart';
 import 'src/auth/loopback_aad_broker.dart';
 import 'src/auth/method_channel_aad_broker.dart';
 import 'src/auth/sign_in_session.dart';
+import 'src/late_arrivals/file_journal_store.dart';
+import 'src/late_arrivals/late_arrival_desk.dart';
+import 'src/late_arrivals/operator_credentials.dart';
+import 'src/late_arrivals/smartschool_presence_writer.dart';
 import 'src/reconcile/reconcile_bootstrap.dart';
 import 'src/settings/connection_config.dart';
 import 'src/settings/local_preferences.dart';
@@ -39,9 +50,22 @@ void main() => launchAccountManager();
 /// — the remembered uitschrijvingsdatum and whatever joins it — and exists for
 /// exactly the same reason: a headless run must be able to prove a value
 /// survives a restart without writing to the real `%APPDATA%`.
+///
+/// [credentials] is the third of the same kind (#409): where this operator's own
+/// Smartschool login is kept. It matters more than the other two, because the
+/// real one is DPAPI ciphertext tied to the Windows account running the test —
+/// a headless run must be able to drive the whole configure-save-restart loop
+/// without reading, replacing or destroying the operator's actual login.
+///
+/// [journal] is the fourth, and the one with teeth: opening the journal *rolls
+/// off* day files past their retention, so a headless run against the real
+/// `%APPDATA%\AccountManager\late-arrivals\` could delete a reception desk's
+/// history. A test binds a throwaway directory.
 Future<void> launchAccountManager({
   ConnectionStore? connection,
   LocalPreferenceStore? preferences,
+  OperatorCredentialStore? credentials,
+  JournalStore? journal,
 }) async {
   // Resolving the bootstrap is an async file read, and the values it carries
   // decide what `runApp` is handed, so the binding has to exist before the
@@ -113,12 +137,66 @@ Future<void> launchAccountManager({
   // the sign-in config above came from.
   final endpoints = resolved.endpoints;
 
+  // The reception desk (#409). Assembled here and *started* by the scope inside
+  // the sign-in gate, so the journal is opened, the day is reconciled against
+  // the shared copy and a recovered queue resumes draining without anybody
+  // wiring it by hand — and without racing the gate's own sign-in.
+  //
+  // Everything about it degrades rather than fails: no login configured, no
+  // Cosmos, no Smartschool site yet. A desk that cannot drain must still
+  // register and still print.
+  final desk = LateArrivalDesk(
+    journalStore: journal ?? lateArrivalJournalStoreForThisMachine(),
+    credentials: credentials ??
+        smartschoolOperatorCredentialStoreForThisMachine(
+          // The same user-scoped cipher the OAuth token cache uses (#103): the
+          // password can only be read back by the Windows account that wrote it,
+          // on this machine.
+          encrypt: Dpapi.protect,
+          decrypt: Dpapi.unprotect,
+        ),
+    deskId: _thisDeskId(),
+    // The shared copy that lets a colleague pick up a dead machine's queue
+    // (#403). Absent on a build with no Azure AD, which is the same build that
+    // has no token to reach Cosmos with.
+    mirrorStore: config.isConfigured
+        ? CosmosLateArrivalMirrorStore(
+            HttpCosmosClient(
+              config: CosmosConfig(
+                endpoint: endpoints.cosmosEndpoint,
+                database: endpoints.cosmosDatabase,
+              ),
+              transport: HttpCosmosTransport(),
+              tokens: CosmosSessionTokenProvider(session),
+            ),
+          )
+        : null,
+    // Where the Smartschool site comes from. Watched rather than read once: the
+    // settings document lives in Cosmos, so it is not loaded at the moment this
+    // is built (see LateArrivalDesk).
+    settings: liveSettings,
+    writerFor: (login, host) => SmartschoolPresenceWriter.forOperator(
+      username: login.username,
+      password: login.password,
+      mainUrl: host,
+      mfa: login.mfa.isEmpty ? null : login.mfa,
+      cacheDir: _smartschoolSessionCacheDirectory,
+    ),
+    signInProbe: (login, host) => probeSmartschoolOperatorSignInLive(
+      login,
+      host,
+      cacheDir: _smartschoolSessionCacheDirectory,
+    ),
+  );
+
   runApp(
     AccountManagerApp(
       session: session,
       graph: config.isConfigured ? config.graph : null,
       // The remembered per-machine answers (#394), handed to the whole tree.
       preferences: localPreferences,
+      // The late-arrival stack (#409) — started by the scope inside the gate.
+      desk: desk,
       // The Verbinding tab's own seams. Wired unconditionally — including on a
       // build where AAD is not configured — because this is the tab that exists
       // to be reachable when nothing else is.
@@ -210,6 +288,40 @@ TokenCache _persistentTokenCache(String resourceId) {
     encrypt: Dpapi.protect,
     decrypt: Dpapi.unprotect,
   );
+}
+
+/// How this machine names itself in the shared late-arrival mirror (#409).
+///
+/// The hostname, because the id is read by a *person*: a colleague picking up a
+/// dead desk's queue sees "onthaal-pc-2" and knows which room to walk to. A
+/// generated identifier would be unique and useless, and it would also change on
+/// every launch, which would break the mirror's own "this desk's own records"
+/// test at reconcile time.
+///
+/// `localHostname` can throw on a misconfigured machine; a desk that will not
+/// open because it cannot say its own name would be an absurd failure, so it
+/// falls back to a fixed label.
+String _thisDeskId() {
+  try {
+    final String host = Platform.localHostname.trim();
+    if (host.isNotEmpty) return host;
+  } on Object {
+    // Fall through.
+  }
+  return 'onbekende-balie';
+}
+
+/// Where `flutter_smartschool` keeps the operator's Presence session cookies.
+///
+/// Under the app's own `%APPDATA%` root rather than in the library's default
+/// per-user cache, so everything this feature writes on a machine sits in one
+/// place an administrator can find, and `null` off Windows — the library then
+/// picks its own default, which is the right answer on a platform where this app
+/// is not a reception desk anyway.
+String? get _smartschoolSessionCacheDirectory {
+  final appData = Platform.environment['APPDATA'];
+  if (!Platform.isWindows || appData == null || appData.isEmpty) return null;
+  return '$appData\\AccountManager\\late-arrivals\\session';
 }
 
 /// Where [_persistentTokenCache] keeps its ciphertext, named once so the eraser
