@@ -17,8 +17,17 @@ Azure AD / Office 365 for a Belgian secondary-school group.
   - `packages/account_core/` — canonical domain model (entities, enums,
     identity types, password generator, `ILog` sink). No Flutter, no I/O.
     Every other package depends on it.
-  - Planned: `packages/wisa_api/`, `packages/smartschool_api/`,
-    `packages/azure_api/`, `packages/account_linker/`, action engine.
+  - `packages/account_store/` — persistence seams (settings, PersonId
+    resolution, password queue) with file-backed defaults.
+  - `packages/wisa_api/`, `packages/smartschool_api/`, `packages/azure_api/` —
+    the three connectors.
+  - `packages/account_linker/` — the pure cross-system `link()`.
+  - `packages/account_actions/` — the action engine.
+  - `packages/account_state/` — sync / link / apply orchestration and the
+    materialized shared state.
+  - `packages/late_arrivals/` — late-arrival ("te laat") registration at the
+    reception desk: the scan resolver and the value types the rest of that
+    flow shares (epic #399).
 - `account_manager/` — the Flutter app (UI + state). Depends on the
   `packages/*` libraries via `path:` dependencies. Currently empty.
 - `pubspec.yaml` (repo root) — Dart workspace definition listing the

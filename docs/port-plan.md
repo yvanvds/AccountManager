@@ -293,6 +293,32 @@ Port the six WPF pages (Dashboard, Klassen, Accounts, Passwords, Acties,
 Settings, Log panel) onto the `account_state` orchestration surface, reusing the
 Plink design system rather than a bespoke UI.
 
+## Beside the port — late-arrival scanning *(epic #399)*
+
+Not a layer of the WPF port at all: new capability, built on the state the port
+already produces. The reception desk scans a student card, picks a reason, prints
+a ticket, and a "Te laat" presence is drained to Smartschool in the background.
+
+`packages/late_arrivals/` is its pure-Dart home — the same rule as every other
+non-UI slice, so the logic is unit-testable headlessly and the Flutter tab (#407)
+holds only UI.
+
+| slice | issue | status |
+|---|---|---|
+| Verify the identity data (internal user id + presence group id) | #400 | ✅ answered |
+| Scan resolver — scanned WISA id → student + presence target | #401 | ✅ done |
+| Durable local journal | #402 | ⬜ |
+| Cosmos mirror for cross-machine recovery | #403 | ⬜ |
+| Smartschool drain worker | #404 | ⬜ |
+| Shared, editable list of reasons | #405 | ⬜ |
+| Ticket printing over ESC/POS | #406 | ⬜ |
+| Scan tab UI | #407 | ⬜ |
+
+Two facts settled by #400 that the package's code and README both restate,
+because getting either wrong marks the wrong child present: the connector's
+`Group.sourceId` **is** the Presence module's `groupID`, and a class must never
+be matched on `adminNumber` (63 distinct values across 124 official classes).
+
 ## Conventions for new slices
 
 - One issue → one branch → one PR, each leaving the changed code covered by

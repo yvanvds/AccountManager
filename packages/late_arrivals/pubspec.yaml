@@ -1,0 +1,29 @@
+name: late_arrivals
+description: >-
+  Late-arrival (te-laatregistratie) support for the Arcadia Account Manager
+  port. Turns a code scanned at the reception desk into the student the
+  operator sees and the Smartschool Presence target a registration needs,
+  entirely from state already in memory. Pure Dart; no Flutter, no I/O, no
+  network.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/yvanvds/AccountManager
+
+# License: GPL-3.0-or-later. See LICENSE.
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace
+
+dependencies:
+  account_core:
+  # The scan index is built from a `SmartschoolSnapshot`: it is the only place
+  # that carries both `accountId` (the scanned WISA id, by operator convention)
+  # and `referenceIdentifier` → `internalUserId`, which the materialized
+  # per-account documents do not carry at all (#400).
+  smartschool_api:
+
+dev_dependencies:
+  lints: ^5.1.0
+  test: ^1.25.0
