@@ -4,6 +4,7 @@ import '../scan_result.dart';
 import 'journal_store.dart';
 import 'late_arrival_record.dart';
 import 'motivation.dart';
+import 'record_sink.dart';
 import 'school_day.dart';
 
 /// The append-only, per-day log of late-arrival registrations (#402).
@@ -45,7 +46,7 @@ import 'school_day.dart';
 /// Pure Dart: the file lives behind [JournalStore], which `account_manager/`
 /// binds to `%APPDATA%`.
 class LateArrivalJournal {
-  LateArrivalJournal._(this._store, this._recovery, this._records)
+  LateArrivalJournal._(this._store, this._sink, this._recovery, this._records)
       : _sequenceByDay = <SchoolDay, int>{} {
     for (final LateArrivalRecord record in _records) {
       _byId[record.id] = record;
@@ -69,10 +70,17 @@ class LateArrivalJournal {
   /// [now] is the clock the retention window is measured against; it defaults to
   /// the real one. Never throws on a damaged file — see [recovery] for what was
   /// discarded.
+  ///
+  /// [sink] is told about every registration and every status change *after* it
+  /// is on disk — the seam the Cosmos mirror (#403) hangs off. It is optional
+  /// and it is `void`: with no sink the journal behaves exactly as it did
+  /// before one existed, and with one it still does, because a sink can neither
+  /// be awaited nor fail back into the hot path.
   static Future<LateArrivalJournal> open(
     JournalStore store, {
     DateTime? now,
     Duration retention = defaultRetention,
+    LateArrivalRecordSink? sink,
   }) async {
     final SchoolDay today = SchoolDay.of(now ?? DateTime.now());
     final int retentionDays = retention.inDays;
@@ -105,6 +113,7 @@ class LateArrivalJournal {
     records.sort();
     return LateArrivalJournal._(
       store,
+      sink,
       JournalRecovery(
         days: List<SchoolDay>.unmodifiable(kept),
         rolledOff: List<SchoolDay>.unmodifiable(rolledOff),
@@ -121,6 +130,11 @@ class LateArrivalJournal {
   }
 
   final JournalStore _store;
+
+  /// Told about every durable change, after the fact and without being awaited.
+  /// `null` on a machine with no shared store configured.
+  final LateArrivalRecordSink? _sink;
+
   final JournalRecovery _recovery;
 
   /// Every retained record, kept in drain order — by day, then by position
@@ -210,6 +224,8 @@ class LateArrivalJournal {
     _sequenceByDay[day] = sequence;
     _byId[record.id] = record;
     _insert(record);
+    // Last, and never awaited: the record is durable and the ticket may print.
+    _sink?.onRecord(record);
     return record;
   }
 
@@ -266,6 +282,7 @@ class LateArrivalJournal {
     _byId[id] = updated;
     final int index = _records.indexWhere((LateArrivalRecord r) => r.id == id);
     if (index >= 0) _records[index] = updated;
+    _sink?.onRecord(updated);
     return updated;
   }
 

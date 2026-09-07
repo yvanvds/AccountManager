@@ -3,9 +3,11 @@ description: >-
   Late-arrival (te-laatregistratie) support for the Arcadia Account Manager
   port. Turns a code scanned at the reception desk into the student the
   operator sees and the Smartschool Presence target a registration needs,
-  entirely from state already in memory, and journals that registration
-  durably before the ticket prints. Pure Dart; no Flutter, no network, and no
-  path of its own — the journal's files live behind an injected sink.
+  entirely from state already in memory, journals that registration durably
+  before the ticket prints, and mirrors the day's queue to the shared store so
+  it survives the loss of the machine that made it. Pure Dart; no Flutter, no
+  network, and no path of its own — the journal's files and the shared copies
+  both live behind injected seams.
 version: 0.1.0
 publish_to: none
 repository: https://github.com/yvanvds/AccountManager

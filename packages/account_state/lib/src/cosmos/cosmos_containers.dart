@@ -47,9 +47,20 @@ const List<CosmosContainerSpec> snapshotStoreContainers = [
   CosmosContainerSpec(snapshotsContainer, '/id'),
 ];
 
+/// The late-arrival mirror container [CosmosLateArrivalMirrorStore] writes
+/// (#403): one document per registration, partitioned by `/pk` (the school day).
+///
+/// Listed here rather than left to a first write for exactly the reason #150 and
+/// #151 exist: a never-provisioned container surfaces only as a 404 on the first
+/// item write, and the first item write here happens while a student is standing
+/// at the desk.
+const List<CosmosContainerSpec> lateArrivalContainers = [
+  CosmosContainerSpec(lateArrivalsContainer, '/pk'),
+];
+
 /// Every container the reconcile bootstrap preflight ensures: the
-/// materialized-view [linkedStoreContainers] plus the cold-snapshot
-/// [snapshotStoreContainers].
+/// materialized-view [linkedStoreContainers], the cold-snapshot
+/// [snapshotStoreContainers], and the late-arrival [lateArrivalContainers].
 ///
 /// This is the set [ensureContainers] provisions at startup so no store path a
 /// sync exercises — lease renewal and the `generation` write ([syncStateContainer]),
@@ -59,6 +70,7 @@ const List<CosmosContainerSpec> snapshotStoreContainers = [
 const List<CosmosContainerSpec> bootstrapContainers = [
   ...linkedStoreContainers,
   ...snapshotStoreContainers,
+  ...lateArrivalContainers,
 ];
 
 /// Ensures every container in [specs] exists, creating any that are missing.

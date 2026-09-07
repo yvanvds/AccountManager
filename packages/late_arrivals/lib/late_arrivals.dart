@@ -12,9 +12,17 @@
 ///   the ticket prints, so a student who walked off with a ticket can never be
 ///   lost to a crash while the Smartschool write is still queued.
 ///
+/// And one slice for what happens when the machine itself is gone:
+///
+/// - the **mirror** (#403) copies every journalled record and every status
+///   change to the shared store, asynchronously and strictly behind the
+///   journal, and reconciles against it at startup — so a colleague on her own
+///   laptop can see and finish a queue the dead machine never drained.
+///
 /// Pure Dart — no Flutter, no I/O. The snapshot the index is built from is
-/// handed in and the journal's files live behind a [JournalStore]; this package
-/// never reaches for application state or for a path.
+/// handed in, the journal's files live behind a [JournalStore] and the shared
+/// copies behind a [LateArrivalMirrorStore]; this package never reaches for
+/// application state, for a path, or for the network.
 library;
 
 export 'src/journal/journal_store.dart'
@@ -29,7 +37,18 @@ export 'src/journal/late_arrival_record.dart'
     show LateArrivalRecord, LateArrivalStatus;
 export 'src/journal/motivation.dart'
     show composeMotivation, motivationSeparator;
+export 'src/journal/record_sink.dart' show LateArrivalRecordSink;
 export 'src/journal/school_day.dart' show SchoolDay;
+export 'src/mirror/late_arrival_mirror.dart'
+    show
+        LateArrivalMirror,
+        LateArrivalMirrorStatus,
+        LateArrivalReconciliation,
+        MirrorBackoff;
+export 'src/mirror/late_arrival_mirror_store.dart'
+    show InMemoryLateArrivalMirrorStore, LateArrivalMirrorStore;
+export 'src/mirror/mirrored_registration.dart'
+    show MirroredRegistration, normalizeDeskId;
 export 'src/scan_code.dart' show normalizeScanCode;
 export 'src/scan_resolver.dart' show ScanResolver;
 export 'src/scan_result.dart'

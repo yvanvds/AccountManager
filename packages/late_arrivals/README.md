@@ -91,6 +91,46 @@ what was chosen after somebody renames or removes the entry.
 `preferences.json` and the token cache. `InMemoryJournalStore` is what tests bind
 and what a build with nowhere to write falls back to.
 
+### The Cosmos mirror ([#403][403])
+
+The journal survives the app dying. It does nothing at all for the *laptop*
+dying — and the agreed fallback for that is that a colleague picks the morning up
+on her own machine. So every journalled record and every status change is also
+copied to the shared Cosmos account epic [#112][112] already keeps the operator
+state in.
+
+```dart
+final mirror = LateArrivalMirror(store: cosmosMirrorStore, deskId: hostName);
+final journal = await LateArrivalJournal.open(store, sink: mirror);
+
+final recovery = await mirror.reconcile(day: today, local: journal.records);
+for (final entry in recovery.outstanding) {
+  // What the other desk registered and never drained. Show it; pick it up.
+}
+```
+
+- **It sits behind the journal, never in front of it.** The sink method is
+  `void`: the record is already flushed by the time it is called, the ticket
+  prints off the journal's future, and a slow or dead Cosmos changes the desk's
+  timing by nothing.
+- **Failures are retried and never lose the record.** A failed write stays
+  queued and backs off; after a few consecutive failures the worker stands down
+  and reports itself `degraded`, which is what puts a persistent outage in front
+  of the operator instead of in a log file. Nothing is dropped — the next
+  registration, `retryNow()`, or the next `reconcile()` picks the queue up.
+- **The desk is part of the shared key.** The journal's `<day>-<sequence>` id is
+  unique only on the machine that wrote it; a stand-in operator's fresh journal
+  mints the same ids. Documents are `<day>|<desk>|<sequence>`, partitioned by
+  the school day, so a day's registrations across every desk are one
+  single-partition read.
+- **No claims, no locks, on purpose.** Two machines draining the same entry is
+  accepted: a presence save updates the half-day cell rather than duplicating a
+  row, and presences are reviewed afterwards.
+
+`LateArrivalMirrorStore` is the remote seam; `account_state`'s
+`CosmosLateArrivalMirrorStore` binds it to the `lateArrivals` container, and
+`InMemoryLateArrivalMirrorStore` is what tests bind.
+
 ## Where the data comes from
 
 Settled by the investigation in [#400][400]:
@@ -137,8 +177,10 @@ them:
 dart test packages/late_arrivals/test
 ```
 
+[112]: https://github.com/yvanvds/AccountManager/issues/112
 [138]: https://github.com/yvanvds/AccountManager/issues/138
 [400]: https://github.com/yvanvds/AccountManager/issues/400
 [401]: https://github.com/yvanvds/AccountManager/issues/401
 [402]: https://github.com/yvanvds/AccountManager/issues/402
+[403]: https://github.com/yvanvds/AccountManager/issues/403
 [405]: https://github.com/yvanvds/AccountManager/issues/405
