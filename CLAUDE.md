@@ -75,8 +75,9 @@ handful of files:
 
 | File | Holds |
 | --- | --- |
-| `app_launch_test.dart` | The default home. `app shell and log panel`, `sign-in`, `Synchronisatie and the shared state`, `Klasgroepen`, `Acties`, `Acties: leerlingen`, `Acties: personeel`, `Azure and Office 365`, `duplicate accounts and id collisions`, `Wachtwoorden`, `Instellingen`, `app updates`. |
+| `app_launch_test.dart` | The default home. `app shell and log panel`, `sign-in`, `Synchronisatie and the shared state`, `Klasgroepen`, `Acties`, `Acties: leerlingen`, `Acties: personeel`, `Azure and Office 365`, `duplicate accounts and id collisions`, `Wachtwoorden`, `Instellingen`. |
 | `late_arrivals_test.dart` | `Te laat` — late-arrival registration at the reception desk, and the fakes only it needs (ticket printer transport, refusal beep, scanner keystrokes, Presence writer). |
+| `app_update_test.dart` | `app updates` — the release check, the offer bar and the release notes, over the `update_fakes.dart` release/version fakes and the installed-version reader. |
 | `support/e2e_support.dart` | Not a suite. The helpers and fakes more than one of the above needs: `graph`, `useTallWindow`, `railTab`, `openSettingsTab`, `FakeBroker`, `fakeToken`. |
 
 **How to run them.** One `flutter test` invocation per file — never a
