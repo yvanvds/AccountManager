@@ -70,27 +70,49 @@ Azure AD / Office 365 for a Belgian secondary-school group.
 
 ## Where a new end-to-end test goes
 
-Every end-to-end scenario lives in the single file
-`account_manager/integration_test/app_launch_test.dart`. That is deliberate:
-`flutter test integration_test -d windows` starts a fresh app process per test
-*file*, and the Windows embedder cannot bring up a second process in one
-invocation. One file means one launch.
+End-to-end scenarios live under `account_manager/integration_test/`, in a
+handful of files:
 
-Since #419 that file is organised into `group(...)` blocks, one per feature
-area — roughly the app's own screens, in rail order: `app shell and log panel`,
-`sign-in`, `Synchronisatie and the shared state`, `Klasgroepen`, `Acties`,
-`Acties: leerlingen`, `Acties: personeel`, `Azure and Office 365`,
-`duplicate accounts and id collisions`, `Wachtwoorden`, `Instellingen`,
-`app updates`, `Te laat`.
+| File | Holds |
+| --- | --- |
+| `app_launch_test.dart` | The default home. `app shell and log panel`, `sign-in`, `Synchronisatie and the shared state`, `Klasgroepen`, `Acties`, `Acties: leerlingen`, `Acties: personeel`, `Azure and Office 365`, `duplicate accounts and id collisions`, `Wachtwoorden`, `Instellingen`, `app updates`. |
+| `late_arrivals_test.dart` | `Te laat` — late-arrival registration at the reception desk, and the fakes only it needs (ticket printer transport, refusal beep, scanner keystrokes, Presence writer). |
+| `support/e2e_support.dart` | Not a suite. The helpers and fakes more than one of the above needs: `graph`, `useTallWindow`, `railTab`, `openSettingsTab`, `FakeBroker`, `fakeToken`. |
+
+**How to run them.** One `flutter test` invocation per file — never a
+directory-wide one:
+
+```
+flutter test integration_test/app_launch_test.dart -d windows
+```
+
+`flutter test integration_test -d windows` (the whole directory in one command)
+**does not work** and never has: the Windows desktop device can only start the
+app once per invocation, so the second file dies with *"Error waiting for a
+debug connection: The log reader stopped unexpectedly, or never started"*
+before any of its tests run. `--concurrency=1` does not help — it is the
+device, not the scheduler. CI therefore loops one invocation per file
+(`.github/workflows/dart.yml`, job `app-integration`), and the glob picks new
+files up with no edit. Measured cost of an extra file: ~15–20 s of launch
+overhead (#421).
+
+**Working on one area? Run only its file.** That is the point of the split:
+a change to `Te laat` is verified by `late_arrivals_test.dart` alone (~26 s)
+instead of all 181 tests (~5 min).
 
 - **Put a new `testWidgets` inside the group its feature belongs to** — do not
-  append it at the end of the file. The flat-append habit is what grew the file
-  to 16k unnavigable lines in the first place.
+  append it at the end of a file. The flat-append habit is what grew
+  `app_launch_test.dart` to 16k unnavigable lines in the first place.
 - If no group fits, add a new group rather than leaving the test loose. Every
-  `testWidgets` in that file is inside a group; keep it that way.
-- Helpers used by more than one group belong in `main`'s preamble, above the
-  groups. A helper only one group needs can live inside that group.
-- The seven fake classes at the bottom of the file are shared by every group.
+  `testWidgets` in these files is inside a group; keep it that way.
+- **A new file only earns its launch when the area brings fakes of its own.**
+  Otherwise put the group in `app_launch_test.dart`. Splitting for tidiness
+  alone buys nothing and costs everyone ~15 s a run.
+- Helpers used by more than one *file* belong in `support/e2e_support.dart`, so
+  the fakes cannot drift apart. Helpers used by more than one group inside a
+  file belong in that file's `main` preamble; a helper only one group needs can
+  live inside that group.
+- The fake classes at the bottom of each file are shared by every group in it.
   Changing one to suit a new test can disturb an older one — extend rather than
   repurpose.
 
