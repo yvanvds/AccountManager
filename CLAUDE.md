@@ -68,6 +68,32 @@ Azure AD / Office 365 for a Belgian secondary-school group.
   file too, since `flutter test` and `flutter build windows` run from
   `account_manager/`.
 
+## Where a new end-to-end test goes
+
+Every end-to-end scenario lives in the single file
+`account_manager/integration_test/app_launch_test.dart`. That is deliberate:
+`flutter test integration_test -d windows` starts a fresh app process per test
+*file*, and the Windows embedder cannot bring up a second process in one
+invocation. One file means one launch.
+
+Since #419 that file is organised into `group(...)` blocks, one per feature
+area — roughly the app's own screens, in rail order: `app shell and log panel`,
+`sign-in`, `Synchronisatie and the shared state`, `Klasgroepen`, `Acties`,
+`Acties: leerlingen`, `Acties: personeel`, `Azure and Office 365`,
+`duplicate accounts and id collisions`, `Wachtwoorden`, `Instellingen`,
+`app updates`, `Te laat`.
+
+- **Put a new `testWidgets` inside the group its feature belongs to** — do not
+  append it at the end of the file. The flat-append habit is what grew the file
+  to 16k unnavigable lines in the first place.
+- If no group fits, add a new group rather than leaving the test loose. Every
+  `testWidgets` in that file is inside a group; keep it that way.
+- Helpers used by more than one group belong in `main`'s preamble, above the
+  groups. A helper only one group needs can live inside that group.
+- The seven fake classes at the bottom of the file are shared by every group.
+  Changing one to suit a new test can disturb an older one — extend rather than
+  repurpose.
+
 ## Port order
 
 When porting work begins, follow the order below. Each layer is self-contained
