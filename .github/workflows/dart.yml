@@ -221,4 +221,24 @@ jobs:
 
       - name: flutter test (integration, Windows)
         working-directory: account_manager
-        run: flutter test integration_test -d windows
+        shell: bash
+        # One `flutter test` invocation per file, NOT a single directory-wide
+        # run (#421). The Windows desktop device can only start the app once
+        # per invocation: a second file in the same run dies with "Error
+        # waiting for a debug connection: The log reader stopped unexpectedly,
+        # or never started" before any of its tests execute. `--concurrency=1`
+        # does not help — it is the device, not the scheduler. Measured on
+        # Flutter 3.47.1 and 3.44.0 alike; re-check when bumping the SDK.
+        #
+        # The loop globs, so a new integration_test/*_test.dart file is picked
+        # up with no edit here. `support/` holds no `*_test.dart` and is not
+        # matched. Every file runs even after one fails, so a red CI names all
+        # the broken suites rather than only the first.
+        run: |
+          status=0
+          for f in integration_test/*_test.dart; do
+            echo "::group::flutter test $f"
+            flutter test "$f" -d windows || status=1
+            echo "::endgroup::"
+          done
+          exit $status

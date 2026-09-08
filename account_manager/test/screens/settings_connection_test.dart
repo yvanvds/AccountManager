@@ -799,7 +799,7 @@ Future<void> _type(WidgetTester tester, String key, String value) async {
 /// `File.readAsString` never completes and `pumpAndSettle` times out before the
 /// screen has any values. The real two-file layering is proved against real
 /// files in `test/settings/connection_config_test.dart` and end to end in
-/// `integration_test/app_launch_test.dart`; what this fake pins is the part only
+/// `integration_test/settings_test.dart`; what this fake pins is the part only
 /// the screen can get wrong — naming *which* of the two files answered.
 class _SeededStore implements ConnectionStore {
   _SeededStore() : warning = '';
