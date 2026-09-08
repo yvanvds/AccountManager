@@ -42,6 +42,12 @@ class CosmosResponse {
 
   bool get isNotFound => statusCode == 404;
 
+  /// `true` when Cosmos refused the request outright (**403 Forbidden**). On the
+  /// container-create path this never means "the operator is missing a role
+  /// somebody could grant" — the data-plane role can *never* create a container
+  /// — so [CosmosClient.ensureContainer] reads it as "never provisioned" (#414).
+  bool get isForbidden => statusCode == 403;
+
   /// `true` when Cosmos rejected a create for an id or unique-key collision —
   /// the signal `CosmosPersonIdResolver` reads to adopt the winning id.
   bool get isConflict => statusCode == 409;
@@ -132,6 +138,41 @@ class CosmosException implements Exception {
     final codePart = code != null ? ' ($code)' : '';
     return 'CosmosException($statusCode$codePart): $detail';
   }
+}
+
+/// Thrown when a container is genuinely absent *and* the account's identity may
+/// not create it over the data plane — i.e. the container was never provisioned
+/// (#414).
+///
+/// Cosmos answers that create with a **403** whose message talks about an AAD
+/// token that "cannot be authorized in data plane", which reads as a permissions
+/// problem and sends whoever hits it hunting for a role assignment that would
+/// not help: *no* data-plane role can create a container, by design. The
+/// container set is a control-plane job and `tool/provision-cosmos.ps1` is its
+/// source of truth, so the honest report is the missing container and the script
+/// that creates it.
+///
+/// This is what a container added to [bootstrapContainers] but never provisioned
+/// on the shared account looks like — the `lateArrivals` drift that made both
+/// Cosmos-backed halves of the reception desk fail (#403 added the container to
+/// the spec; the script had not been re-run).
+///
+/// [toString] is the one legible sentence; the raw Cosmos error stays available
+/// on [body] / [message] for a log or a details pane, so trimming the operator's
+/// note never loses it.
+class CosmosContainerNotProvisioned extends CosmosException {
+  const CosmosContainerNotProvisioned(
+    this.container,
+    super.statusCode,
+    super.body,
+  );
+
+  /// The container id that does not exist (e.g. `lateArrivals`).
+  final String container;
+
+  @override
+  String toString() => "Cosmos container '$container' is not provisioned on "
+      'this account — run tool/provision-cosmos.ps1 to create it.';
 }
 
 /// Issues a single Cosmos data-plane HTTP request and returns the raw response.

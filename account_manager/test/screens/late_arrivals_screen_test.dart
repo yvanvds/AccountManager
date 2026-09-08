@@ -12,6 +12,8 @@
 /// kind of failure.
 library;
 
+import 'dart:convert';
+
 import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
 import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart';
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
@@ -20,7 +22,11 @@ import 'package:account_manager/src/screens/late_arrivals_screen.dart';
 import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_manager/src/shell/shell_navigation.dart';
 import 'package:account_state/account_state.dart'
-    show AppSettings, LiveSettings;
+    show
+        AppSettings,
+        CosmosContainerNotProvisioned,
+        CosmosException,
+        LiveSettings;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -610,4 +616,92 @@ void main() {
     expect(desk.journal!.records, isEmpty);
     expect(_textOf(tester, _refusal), contains('nog niet geladen'));
   });
+
+  group('the desk notes keep the machine words out of the sentence (#414)', () {
+    testWidgets(
+        'a failed bootstrap is one sentence, with the raw Cosmos error behind '
+        'Details', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(
+          bootstrap: () async => throw _unprovisionedContainer,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // The line the operator reads: no header lengths, no replica URI, no SDK
+      // version — the things that used to run the sentence off the screen.
+      final String note = _textOf(
+        tester,
+        find.byKey(const ValueKey<String>('late-list-error')),
+      );
+      expect(note, contains('De leerlingenlijst kon niet geladen worden.'));
+      expect(note, contains('niet gescand worden'));
+      expect(note, isNot(contains('CosmosException')));
+      expect(note, isNot(contains('x-ms-')));
+      expect(note, isNot(contains('Microsoft.Azure.Documents.Common')));
+
+      // Folded away, not thrown away.
+      final Finder detail =
+          find.byKey(const ValueKey<String>('late-note-detail'));
+      expect(detail, findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey<String>('late-note-details')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<SelectableText>(detail).data,
+        contains('lateArrivals'),
+      );
+      expect(
+        tester.widget<SelectableText>(detail).data,
+        contains('tool/provision-cosmos.ps1'),
+      );
+
+      // And it folds back.
+      await tester.tap(find.byKey(const ValueKey<String>('late-note-details')));
+      await tester.pumpAndSettle();
+      expect(detail, findsNothing);
+    });
+
+    testWidgets('a note with nothing beneath it offers no Details at all',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: const LateArrivalsScreen(bootstrap: null),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('late-no-bootstrap')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('late-note-details')),
+        findsNothing,
+      );
+    });
+  });
 }
+
+/// What an unprovisioned `lateArrivals` container actually threw at the desk:
+/// a legible sentence naming the container and the script that creates it,
+/// carrying Cosmos's own AAD wall of text underneath (#414).
+final CosmosException _unprovisionedContainer = CosmosContainerNotProvisioned(
+  'lateArrivals',
+  403,
+  jsonEncode(<String, String>{
+    'code': 'Forbidden',
+    'message': 'Request blocked by Auth accountmanager-cosmos-arcadia : The '
+        'given request [POST /dbs/accountmanager/colls] cannot be authorized by '
+        'AAD token in data plane. Learn more: https://aka.ms/cosmos-native-rbac. '
+        'ActivityId: 0000, Microsoft.Azure.Documents.Common/2.14.0, '
+        'x-ms-request-charge: 0, x-ms-session-token: 0:-1#42',
+  }),
+);

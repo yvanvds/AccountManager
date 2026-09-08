@@ -66,6 +66,46 @@ typedef LatePresenceWriterFactory = LatePresenceWriter Function(
   String host,
 );
 
+/// One thing the desk has to tell the operator: a sentence, and — when a
+/// machine's own words are the only way to diagnose it — the raw text behind it.
+///
+/// The split exists because the two audiences are not the same person (#414). A
+/// reception desk with a student standing at it needs *"the shared copy could not
+/// be read; this desk carries on with its own list"*; whoever is asked to fix it
+/// afterwards needs the Cosmos error verbatim. Folding the second into the first
+/// used to put a whole [CosmosException] — every request header length, the SDK
+/// version, the replica URI — in the middle of a desk sentence, which served
+/// neither: unreadable at the desk, and buried for the person fixing it.
+///
+/// [toString] is the [message] alone, so a warning reads as its sentence
+/// wherever one is expected.
+@immutable
+class DeskWarning {
+  const DeskWarning(this.message, {this.detail = ''});
+
+  /// What the operator is told, in the operator's words. Always present.
+  final String message;
+
+  /// The raw underlying error, or empty when there is nothing beneath the
+  /// sentence. Rendered behind a "Details" disclosure, never inline.
+  final String detail;
+
+  /// Whether there is raw text worth offering behind a disclosure.
+  bool get hasDetail => detail.trim().isNotEmpty;
+
+  @override
+  String toString() => message;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DeskWarning &&
+      other.message == message &&
+      other.detail == detail;
+
+  @override
+  int get hashCode => Object.hash(message, detail);
+}
+
 /// One launch's late-arrival stack: the journal, the mirror, the drain, and the
 /// reasons any of them is not running.
 class LateArrivalDesk extends ChangeNotifier {
@@ -137,7 +177,7 @@ class LateArrivalDesk extends ChangeNotifier {
   /// the journal is already open. See the library doc.
   final List<LateArrivalRecordSink> _sinks = <LateArrivalRecordSink>[];
 
-  final List<String> _startupWarnings = <String>[];
+  final List<DeskWarning> _startupWarnings = <DeskWarning>[];
 
   LateArrivalJournal? _journal;
   LateArrivalMirror? _mirror;
@@ -196,9 +236,12 @@ class LateArrivalDesk extends ChangeNotifier {
   /// it means something downstream of the journal is not running, which is
   /// exactly the class of failure that is invisible until somebody's absence
   /// turns up in a report weeks later.
-  List<String> get warnings => <String>[
+  ///
+  /// Each is a [DeskWarning]: a sentence, plus the raw error behind it where one
+  /// exists (#414).
+  List<DeskWarning> get warnings => <DeskWarning>[
         ..._startupWarnings,
-        if (_drainWarning.isNotEmpty) _drainWarning,
+        if (_drainWarning.isNotEmpty) DeskWarning(_drainWarning),
       ];
 
   /// Opens the journal, wires the sinks, reconciles the shared copy and starts
@@ -223,10 +266,13 @@ class LateArrivalDesk extends ChangeNotifier {
       // strictly better than a reception desk that will not open, and the
       // warning says so in as many words.
       _startupWarnings.add(
-        'De bewaarde te-laatregistraties op deze computer konden niet gelezen '
-        'worden ($error). Er wordt voor deze sessie in het geheugen '
-        'bijgehouden: registreren en afdrukken werken gewoon, maar sluit de app '
-        'niet af zolang er nog iets niet naar Smartschool verstuurd is.',
+        DeskWarning(
+          'De bewaarde te-laatregistraties op deze computer konden niet gelezen '
+          'worden. Er wordt voor deze sessie in het geheugen bijgehouden: '
+          'registreren en afdrukken werken gewoon, maar sluit de app niet af '
+          'zolang er nog iets niet naar Smartschool verstuurd is.',
+          detail: '$error',
+        ),
       );
       opened = await LateArrivalJournal.open(
         InMemoryJournalStore(),
@@ -240,9 +286,11 @@ class LateArrivalDesk extends ChangeNotifier {
     final LateArrivalMirrorStore? store = mirrorStore;
     if (store == null) {
       _startupWarnings.add(
-        'Er is geen gedeelde opslag ingesteld, dus de registraties van deze '
-        'balie staan alleen op deze computer. Een collega kan de wachtrij niet '
-        'overnemen als deze machine uitvalt.',
+        const DeskWarning(
+          'Er is geen gedeelde opslag ingesteld, dus de registraties van deze '
+          'balie staan alleen op deze computer. Een collega kan de wachtrij '
+          'niet overnemen als deze machine uitvalt.',
+        ),
       );
     } else {
       final LateArrivalMirror mirror = LateArrivalMirror(
@@ -375,9 +423,12 @@ class LateArrivalDesk extends ChangeNotifier {
     _reconciliation = result;
     if (!result.available) {
       _startupWarnings.add(
-        'De gedeelde kopie van de te-laatregistraties kon niet gelezen worden '
-        '(${result.error}). Deze balie werkt gewoon door met haar eigen lijst, '
-        'maar een collega ziet de wachtrij van deze computer niet.',
+        DeskWarning(
+          'De gedeelde kopie van de te-laatregistraties kon niet gelezen '
+          'worden. Deze balie werkt gewoon door met haar eigen lijst, maar een '
+          'collega ziet de wachtrij van deze computer niet.',
+          detail: result.error ?? '',
+        ),
       );
     }
     notifyListeners();

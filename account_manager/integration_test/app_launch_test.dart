@@ -48,6 +48,7 @@ import 'package:account_state/account_state.dart'
         AppSettings,
         AzureConnection,
         ChangeSignal,
+        CosmosContainerNotProvisioned,
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
         InMemorySecretProvider,
@@ -16058,6 +16059,93 @@ void main() {
       reason: 'the unconfirmed student survives a trip to another tab',
     );
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a Cosmos container that was never provisioned reads as one sentence at '
+      'the desk, with the raw error behind Details (#414)',
+      (WidgetTester tester) async {
+    // The failure this closes, in the real app. `lateArrivals` was added to the
+    // container spec (#403) but the provisioning script had not been re-run, so
+    // the desk's bootstrap died on a data-plane container create that no
+    // data-plane role can ever be granted — and the reception screen printed the
+    // whole CosmosException, request headers and replica URI and all, inside a
+    // Dutch sentence.
+    //
+    // Why this needs the real app and not the widget test beside it: the note is
+    // a row inside the scan tab's real column, in the real Plink font, at the
+    // real window size, reached through the real rail. A multi-line error spliced
+    // into that row is exactly the kind of overflow a widget test rendering the
+    // screen alone in Ahem cannot see, and "the sentence is short enough to fit"
+    // is the whole claim.
+    useTallWindow(tester);
+
+    final Directory dir =
+        Directory.systemTemp.createTempSync('am-te-laat-403-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+
+    final LateArrivalDesk desk = LateArrivalDesk(
+      journalStore: FileJournalStore(dir),
+      credentials: InMemoryOperatorCredentialStore(),
+      deskId: 'onthaal-403',
+    );
+    addTearDown(desk.dispose);
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      // What an unprovisioned container actually does to the desk's bootstrap.
+      reconcileBootstrap: () async => throw CosmosContainerNotProvisioned(
+        'lateArrivals',
+        403,
+        jsonEncode(<String, String>{
+          'code': 'Forbidden',
+          'message':
+              'Request blocked by Auth accountmanager-cosmos-arcadia : The '
+                  'given request [POST /dbs/accountmanager/colls] cannot be '
+                  'authorized by AAD token in data plane. Learn more: '
+                  'https://aka.ms/cosmos-native-rbac. ActivityId: 0000, '
+                  'Microsoft.Azure.Documents.Common/2.14.0, '
+                  'x-ms-request-charge: 0, x-ms-session-token: 0:-1#42',
+        }),
+      ),
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+      desk: desk,
+      preferences: LocalPreferences.inMemory(),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Te laat'));
+    await tester.pumpAndSettle();
+
+    final Finder note = find.byKey(const ValueKey<String>('late-list-error'));
+    expect(note, findsOneWidget);
+    final String sentence = tester.widget<Text>(note).data ?? '';
+    expect(sentence, contains('De leerlingenlijst kon niet geladen worden.'));
+    expect(sentence, contains('niet gescand worden'));
+    // None of the machine's words reach the counter.
+    expect(sentence, isNot(contains('CosmosException')));
+    expect(sentence, isNot(contains('x-ms-')));
+    expect(sentence, isNot(contains('Microsoft.Azure.Documents.Common')));
+    expect(sentence, isNot(contains('aka.ms')));
+    // Two lines of real text at a real window size — not a wall of it.
+    expect(sentence.length, lessThan(160));
+
+    // Nothing is hidden that a colleague would need to fix it: it is one tap
+    // away, and it names the container and the script rather than the AAD wall.
+    final Finder detail =
+        find.byKey(const ValueKey<String>('late-note-detail'));
+    expect(detail, findsNothing);
+    await tester.tap(find.byKey(const ValueKey<String>('late-note-details')));
+    await tester.pumpAndSettle();
+    final String raw = tester.widget<SelectableText>(detail).data ?? '';
+    expect(raw, contains("Cosmos container 'lateArrivals' is not provisioned"));
+    expect(raw, contains('tool/provision-cosmos.ps1'));
+
+    // Real fonts, real layout: an error note may never overflow the scan tab.
     expect(tester.takeException(), isNull);
   });
 }
