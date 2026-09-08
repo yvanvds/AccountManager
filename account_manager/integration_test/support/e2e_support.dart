@@ -53,6 +53,22 @@ Future<void> openSettingsTab(WidgetTester tester, String tabKey) async {
   await tester.pumpAndSettle();
 }
 
+/// Selects one account in the flat Acties list, which is what puts its
+/// decisions in the details pane beside it (#295).
+Future<void> selectAccount(WidgetTester tester, String id) async {
+  final Finder row = find.byKey(ValueKey('account-row-$id'));
+  await tester.ensureVisible(row);
+  await tester.tap(row);
+  await tester.pumpAndSettle();
+}
+
+/// Opens the Klasgroepen tab from the navigation rail (#227). The class
+/// inventory is a destination of its own now, not a node inside Acties.
+Future<void> openKlasgroepen(WidgetTester tester) async {
+  await tester.tap(railTab('Klasgroepen'));
+  await tester.pumpAndSettle();
+}
+
 /// A broker scripted per test — a fake WAM broker so no live tenant is touched.
 class FakeBroker implements AadBroker {
   FakeBroker({this.silent, this.interactive});

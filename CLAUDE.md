@@ -75,10 +75,11 @@ handful of files:
 
 | File | Holds |
 | --- | --- |
-| `app_launch_test.dart` | The default home. `app shell and log panel`, `sign-in`, `Synchronisatie and the shared state`, `Klasgroepen`, `Acties`, `Acties: leerlingen`, `Acties: personeel`, `Azure and Office 365`, `duplicate accounts and id collisions`, `Wachtwoorden`, `Instellingen`. |
+| `app_launch_test.dart` | The default home. `app shell and log panel`, `sign-in`, `Synchronisatie and the shared state`, `Klasgroepen`, `Acties`, `Acties: leerlingen`, `Acties: personeel`, `Azure and Office 365`, `duplicate accounts and id collisions`, `Wachtwoorden`. |
 | `late_arrivals_test.dart` | `Te laat` — late-arrival registration at the reception desk, and the fakes only it needs (ticket printer transport, refusal beep, scanner keystrokes, Presence writer). |
 | `app_update_test.dart` | `app updates` — the release check, the offer bar and the release notes, over the `update_fakes.dart` release/version fakes and the installed-version reader. |
-| `support/e2e_support.dart` | Not a suite. The helpers and fakes more than one of the above needs: `graph`, `useTallWindow`, `railTab`, `openSettingsTab`, `FakeBroker`, `fakeToken`. |
+| `settings_test.dart` | `Instellingen` — the settings screen's tabs, the WISA school list, the Smartschool and WISA import rules, the Verbinding tab. Several of these relaunch the app over settings the previous launch wrote to disk. |
+| `support/e2e_support.dart` | Not a suite. The helpers and fakes more than one of the above needs: `graph`, `useTallWindow`, `railTab`, `openSettingsTab`, `selectAccount`, `openKlasgroepen`, `FakeBroker`, `fakeToken`. |
 
 **How to run them.** One `flutter test` invocation per file — never a
 directory-wide one:
@@ -94,12 +95,15 @@ debug connection: The log reader stopped unexpectedly, or never started"*
 before any of its tests run. `--concurrency=1` does not help — it is the
 device, not the scheduler. CI therefore loops one invocation per file
 (`.github/workflows/dart.yml`, job `app-integration`), and the glob picks new
-files up with no edit. Measured cost of an extra file: ~15–20 s of launch
-overhead (#421).
+files up with no edit. Measured cost of an extra file: ~24 s — roughly 20 s of
+`flutter` tool startup and build-freshness check plus ~4 s of app launch. The
+whole sweep went 325 s (one file) → 396 s (four) in #421.
 
-**Working on one area? Run only its file.** That is the point of the split:
-a change to `Te laat` is verified by `late_arrivals_test.dart` alone (~26 s)
-instead of all 181 tests (~5 min).
+**Working on one area? Run only its file.** That is the point of the split,
+and it is where the time goes back: a change to `Te laat` is verified by
+`late_arrivals_test.dart` alone in 26 s, and one to `Instellingen` by
+`settings_test.dart` in 66 s, instead of all 181 tests in ~5 min. CI pays a
+minute more per run; every worker pays much less.
 
 - **Put a new `testWidgets` inside the group its feature belongs to** — do not
   append it at the end of a file. The flat-append habit is what grew
