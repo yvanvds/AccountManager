@@ -119,8 +119,11 @@ abstract interface class CosmosClient {
   /// is attempted. The create path only runs where the container is genuinely
   /// absent (a fresh emulator/dev account, or one whose identity may create it);
   /// where the identity may not create it, the missing container surfaces as a
-  /// [CosmosException] instead of the silent, resurfacing item-write 404 that
-  /// left an operator decision unpersisted (#150).
+  /// [CosmosContainerNotProvisioned] instead of the silent, resurfacing
+  /// item-write 404 that left an operator decision unpersisted (#150) — named
+  /// for what actually happened, because Cosmos's own 403 on that create talks
+  /// about authorization and reads as a role problem that no role can fix
+  /// (#414).
   Future<bool> ensureContainer({
     required String container,
     required String partitionKeyPath,
@@ -341,6 +344,17 @@ class HttpCosmosClient implements CosmosClient {
     );
     // Another operator created it between our read and create — still fine.
     if (resp.isConflict) return false;
+    // A refused create is not a permissions problem to go looking for: the
+    // Cosmos DB Built-in Data Contributor role can never create a container, so
+    // a 403 here says the container was never provisioned, nothing more. Report
+    // that, and the script that fixes it, instead of the raw AAD error (#414).
+    if (resp.isForbidden) {
+      throw CosmosContainerNotProvisioned(
+        container,
+        resp.statusCode,
+        resp.body,
+      );
+    }
     _ensureSuccess(resp);
     return true;
   }

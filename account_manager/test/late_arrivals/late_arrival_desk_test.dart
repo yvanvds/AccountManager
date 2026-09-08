@@ -149,10 +149,12 @@ void main() {
       await desk.start();
 
       expect(desk.ready, isTrue, reason: 'the desk still opens');
-      expect(
-        desk.warnings.join(' '),
-        allOf(contains('in het geheugen'), contains('toegang geweigerd')),
-      );
+      // The sentence the operator reads, and — separately (#414) — the machine's
+      // own words behind it, so the desk line stays a desk line.
+      final DeskWarning note = desk.warnings
+          .firstWhere((DeskWarning w) => w.message.contains('in het geheugen'));
+      expect(note.message, isNot(contains('toegang geweigerd')));
+      expect(note.detail, contains('toegang geweigerd'));
       // And it still registers.
       final record = await register(desk);
       expect(desk.journal!.pending.map((r) => r.id), <String>[record.id]);
@@ -248,6 +250,31 @@ void main() {
       expect(seen?.username, 'ann.peeters');
       expect(seen?.password, 'geheim');
       expect(seenHost, 'arcadia.smartschool.be');
+      desk.dispose();
+    });
+
+    test(
+        'completes the bare subdomain the settings document holds, so the '
+        'drain\'s own sign-in resolves (#412)', () async {
+      // What the Smartschool tab really stores is the school's short name — it
+      // has to, because the SOAP connector wants that. The drain re-authenticates
+      // through this same host value, so handing it "sanctamaria-aarschot"
+      // killed every presence write with `Failed host lookup`.
+      String? seenHost;
+      final writer = _RecordingWriter();
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: LiveSettings(_withSite('sanctamaria-aarschot')),
+        writerFor: (_, String h) {
+          seenHost = h;
+          return writer;
+        },
+      );
+      await desk.start();
+
+      expect(seenHost, 'sanctamaria-aarschot.smartschool.be');
+      expect(desk.smartschoolHost, 'sanctamaria-aarschot.smartschool.be');
+      expect(desk.draining, isTrue);
       desk.dispose();
     });
 
@@ -463,6 +490,32 @@ void main() {
 
       final record = await register(desk);
       expect(desk.journal!.byId(record.id), isNotNull);
+      desk.dispose();
+    });
+
+    test(
+        'the unreadable-mirror warning is one sentence, with the store\'s own '
+        'words kept behind it (#414)', () async {
+      // What this stops: an unprovisioned `lateArrivals` container answers with
+      // a CosmosException whose message runs to request header lengths, the SDK
+      // version and the replica URI. Spliced into the sentence, that is what a
+      // reception desk was being asked to read.
+      final desk = deskWith(mirrorStore: _UnreachableMirrorStore());
+      await desk.start();
+      await _settle();
+
+      final DeskWarning note = desk.warnings
+          .firstWhere((DeskWarning w) => w.message.contains('gedeelde kopie'));
+      expect(note.message, isNot(contains('geen verbinding')));
+      expect(note.message, contains('werkt gewoon door'));
+      expect(note.detail, contains('geen verbinding'));
+      expect(note.hasDetail, isTrue);
+      // A warning with nothing beneath it offers no disclosure at all — the
+      // drain's "this build does not write presences" is nobody's stack trace.
+      expect(
+        desk.warnings.where((DeskWarning w) => !w.hasDetail),
+        isNotEmpty,
+      );
       desk.dispose();
     });
 

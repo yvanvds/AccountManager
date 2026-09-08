@@ -48,6 +48,7 @@ import 'package:account_state/account_state.dart'
         AppSettings,
         AzureConnection,
         ChangeSignal,
+        CosmosContainerNotProvisioned,
         CosmosThrottleGovernor,
         InMemoryLinkedStore,
         InMemorySecretProvider,
@@ -155,11 +156,17 @@ void main() {
       );
 
   /// Switches the Settings view to the tab with [tabKey] (#140: config is split
-  /// across Algemeen / Wisa / Smartschool / Azure tabs).
+  /// across Algemeen / Wisa / Smartschool / Azure / Te laat tabs).
   Future<void> openSettingsTab(WidgetTester tester, String tabKey) async {
     await tester.tap(find.byKey(ValueKey(tabKey)));
     await tester.pumpAndSettle();
   }
+
+  /// Opens Settings' **Te laat** tab, which since #411 is where the reason list,
+  /// the ticket printer and the operator's Smartschool login live (they used to
+  /// sit at the bottom of Algemeen, the tab the screen opens on).
+  Future<void> openLateArrivalSettingsTab(WidgetTester tester) =>
+      openSettingsTab(tester, 'settings-tab-telaat');
 
   /// Authors one Smartschool import rule the way the operator does (#202): the
   /// **Toevoegen** menu, the rule type keyed [kind], then the group-name prompt.
@@ -357,7 +364,7 @@ void main() {
           .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
           .controller!
           .index,
-      4,
+      5,
     );
     expect(
       find.byKey(const ValueKey('settings-aad-client-id')),
@@ -14345,7 +14352,7 @@ void main() {
         .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
         .controller!
         .index;
-    expect(selected, 4);
+    expect(selected, 5);
 
     // With no file yet, the fields show what the build shipped.
     final Finder cosmos =
@@ -14482,7 +14489,7 @@ void main() {
           .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
           .controller!
           .index,
-      4,
+      5,
     );
     expect(
       tester
@@ -15045,13 +15052,75 @@ void main() {
   });
 
   testWidgets(
+      'the late-arrival settings have a tab of their own, between Azure and '
+      'Verbinding, and Algemeen is back to app-wide options (#411)',
+      (WidgetTester tester) async {
+    // A placement claim is only true in the laid-out app: which tabs the real
+    // scrolling TabBar renders and in what left-to-right order, what the real
+    // Algemeen ListView still contains, and whether the three sections really
+    // are one page apart rather than one scroll apart. A widget test renders the
+    // sections; it cannot say where in the app an operator finds them.
+    useTallWindow(tester);
+
+    final InMemorySettingsStore shared = InMemorySettingsStore();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: () async => SettingsServices(
+        store: shared,
+        secrets: InMemorySecretProvider(const {}),
+      ),
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+
+    // The tab the screen opens on is app-wide options again: the school prefix
+    // is there, and none of the three desk sections is.
+    expect(
+        find.byKey(const ValueKey('settings-school-prefix')), findsOneWidget);
+    expect(find.text('Te laat — redenen'), findsNothing);
+    expect(find.text('Te laat — ticketprinter'), findsNothing);
+    expect(find.text('Te laat — Smartschool-aanmelding'), findsNothing);
+
+    // Where it sits in the real, laid-out tab strip: after the three connectors,
+    // before the one tab that does not need the settings document (#370).
+    double tabX(String key) => tester.getTopLeft(find.byKey(ValueKey(key))).dx;
+    expect(tabX('settings-tab-azure'), lessThan(tabX('settings-tab-telaat')));
+    expect(
+        tabX('settings-tab-telaat'), lessThan(tabX('settings-tab-verbinding')));
+
+    // Opening it puts all three there, in the order a desk is set up in:
+    // the shared buttons, this machine's printer, this person's login.
+    await openLateArrivalSettingsTab(tester);
+    double sectionY(String title) => tester.getTopLeft(find.text(title)).dy;
+    expect(sectionY('Te laat — redenen'),
+        lessThan(sectionY('Te laat — ticketprinter')));
+    expect(sectionY('Te laat — ticketprinter'),
+        lessThan(sectionY('Te laat — Smartschool-aanmelding')));
+    // …and the app-wide options are not dragged along with them.
+    expect(find.byKey(const ValueKey('settings-school-prefix')), findsNothing);
+
+    // Verbinding is still reachable behind it — the tab that has to work when
+    // nothing else does did not get pushed off the end.
+    await openSettingsTab(tester, 'settings-tab-verbinding');
+    expect(
+      find.byKey(const ValueKey('settings-connection-cosmos-endpoint')),
+      findsOneWidget,
+    );
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'Instellingen maintains the shared late-arrival reason list, and the '
       'edit reaches the other desk and a running session without a restart '
       '(#405)', (WidgetTester tester) async {
     // Every acceptance criterion of #405 in one real run, and each half needs
-    // this level. The editor is a section inside the real scrolling Algemeen
-    // tab, in the real Plink faces, with a real dialog pushed onto the real
-    // navigator — a widget test renders the section, not the page it has to
+    // this level. The editor is a section inside the real scrolling Te laat
+    // tab (#411), in the real Plink faces, with a real dialog pushed onto the
+    // real navigator — a widget test renders the section, not the page it has to
     // share a column and a scroll context with. And "shared, not per-machine"
     // is a claim about a *second* app instance reading the same document, which
     // only a full launch can make.
@@ -15087,6 +15156,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(railTab('Instellingen'));
       await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
     }
 
     /// The reason labels the editor lists, top to bottom — the order the desk's
@@ -15108,7 +15178,9 @@ void main() {
 
     // --- Desk one, on an install nobody has configured. ----------------------
     await openDesk(holder: live);
-    // Algemeen is the tab the app opens on, and the section is on it.
+    // The desk's configuration has a tab of its own now (#411), and `openDesk`
+    // went to it: the section is there, and not on the Algemeen tab the screen
+    // opens on.
     expect(find.text('Te laat — redenen'), findsOneWidget);
     await scrollToReasons();
 
@@ -15258,6 +15330,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(railTab('Instellingen'));
       await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
       return prefs;
     }
 
@@ -15292,8 +15365,8 @@ void main() {
 
     // --- Desk one, on an install nobody has configured. ----------------------
     await openDesk('balie-1');
-    // Algemeen is the tab the app opens on, and the printer sits with the rest
-    // of the "Te laat" configuration rather than off on the Verbinding tab.
+    // The printer sits with the rest of the "Te laat" configuration on its own
+    // tab (#411) rather than off on the Verbinding tab.
     expect(find.text('Te laat — ticketprinter'), findsOneWidget);
     await scrollToPrinter();
     expect(hostText(), '', reason: 'nothing configured yet');
@@ -15518,6 +15591,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(railTab('Instellingen'));
       await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
       return built;
     }
 
@@ -15694,6 +15768,119 @@ void main() {
   });
 
   testWidgets(
+      'a settings document holding only the school\'s subdomain still signs in '
+      '— the host is completed before Smartschool ever sees it (#412)',
+      (WidgetTester tester) async {
+    // The Smartschool tab asks for the school's *short name*, because that is
+    // what the SOAP connector wants — so `sanctamaria-aarschot` is what the
+    // shared document really holds. The reception desk read that same field for
+    // the Presence login, and **Aanmelding testen** died with
+    // `Failed host lookup: 'sanctamaria-aarschot'`, taking every drained
+    // presence with it.
+    //
+    // This needs the whole app: the value travels from the Smartschool tab's
+    // saved document, through the desk, into both the sign-in the operator
+    // presses on the Te laat tab *and* the writer the drain builds for itself.
+    // A unit test on the completion cannot show that the two places that sign in
+    // are the two places that got it.
+    //
+    // The probe and the presence writer are fakes, permanently: a real
+    // Smartschool sign-in is a live interaction with the school's tenant and the
+    // repo's live-testing policy keeps those out of CI entirely. The probe here
+    // fails the way the real one did, on a host that cannot resolve.
+    useTallWindow(tester);
+
+    final List<String> probedHosts = <String>[];
+    final List<String> writerHosts = <String>[];
+    final _RecordingPresenceWriter written = _RecordingPresenceWriter();
+
+    const AppSettings base = AppSettings();
+    final InMemorySettingsStore shared = InMemorySettingsStore(
+      base.copyWith(
+        smartschool: base.smartschool.copyWith(uri: 'sanctamaria-aarschot'),
+      ),
+    );
+    final LiveSettings live = LiveSettings();
+
+    final LateArrivalDesk desk = LateArrivalDesk(
+      journalStore: InMemoryJournalStore(),
+      credentials: InMemoryOperatorCredentialStore(
+        const SmartschoolOperatorLogin(
+          username: 'ann.peeters',
+          password: 'zeergeheim',
+        ),
+      ),
+      deskId: 'balie-412',
+      settings: live,
+      writerFor: (_, String host) {
+        writerHosts.add(host);
+        return written;
+      },
+      signInProbe: (SmartschoolOperatorLogin login, String host) async {
+        probedHosts.add(host);
+        if (!host.endsWith('.smartschool.be')) {
+          throw StateError("Failed host lookup: '$host'");
+        }
+      },
+    );
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: () async => SettingsServices(
+        store: shared,
+        secrets: InMemorySecretProvider(const {}),
+        liveSettings: live,
+      ),
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+      desk: desk,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await openLateArrivalSettingsTab(tester);
+
+    // The drain attached itself once the document arrived — against the host,
+    // not against the short name it is stored as.
+    expect(desk.draining, isTrue);
+    expect(desk.smartschoolHost, 'sanctamaria-aarschot.smartschool.be');
+    expect(writerHosts, <String>['sanctamaria-aarschot.smartschool.be']);
+
+    // And the button the operator presses before the first student is late.
+    final Finder testButton =
+        find.byKey(const ValueKey('settings-smartschool-operator-test'));
+    await tester.ensureVisible(testButton);
+    await tester.pumpAndSettle();
+    await tester.tap(testButton);
+    await tester.pumpAndSettle();
+
+    expect(probedHosts, <String>['sanctamaria-aarschot.smartschool.be']);
+    expect(
+      tester
+          .widget<Text>(find
+              .byKey(const ValueKey('settings-smartschool-operator-status')))
+          .data,
+      contains('is gelukt'),
+    );
+
+    // A registration made on this desk goes out over that same completed host.
+    await desk.journal!.register(
+      scan: const ScanRegisterable(_lateStudent),
+      scannedAt: DateTime(2026, 9, 7, 8, 42),
+      reasonLabel: 'Bus te laat',
+      reasonIsValid: true,
+    );
+    await desk.drain!.settle();
+    expect(written.userIds, <int>[4242]);
+
+    // Unmount before letting go of the desk, so the scope is not listening to a
+    // disposed notifier.
+    await tester.pumpWidget(const SizedBox.shrink());
+    desk.dispose();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Te laat tab scans a card, refuses a second scan while the first '
       'student is unconfirmed, and registers on a reason button — journal on '
       'disk before ticket on paper (#407)', (WidgetTester tester) async {
@@ -15773,8 +15960,8 @@ void main() {
     String textOf(String key) =>
         tester.widget<Text>(find.byKey(ValueKey<String>(key))).data ?? '';
 
-    /// What the **scanner actief** badge says — the badge carries the key, the
-    /// text it renders sits inside it.
+    /// What the **klaar om te scannen** badge says — the badge carries the key,
+    /// the text it renders sits inside it.
     String indicatorText() =>
         tester
             .widget<Text>(find.descendant(
@@ -15790,8 +15977,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       indicatorText(),
-      'SCANNER ACTIEF',
+      'KLAAR OM TE SCANNEN',
       reason: 'the hidden input takes the keyboard as soon as the tab opens',
+    );
+    // This machine has no barcode scanner attached, and the app could not see
+    // one if it had — so the badge must not claim anything about hardware
+    // (#413); it only ever reports whether the next scan would land.
+    expect(
+      indicatorText(),
+      isNot(contains('SCANNER ')),
+      reason: 'the badge may not assert a scanner it cannot detect',
     );
 
     // --- One scan, resolved locally. -----------------------------------------
@@ -15857,13 +16052,100 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(railTab('Te laat'));
     await tester.pumpAndSettle();
-    expect(indicatorText(), 'SCANNER ACTIEF');
+    expect(indicatorText(), 'KLAAR OM TE SCANNEN');
     expect(
       textOf('late-scan-name'),
       'Lea Janssens',
       reason: 'the unconfirmed student survives a trip to another tab',
     );
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'a Cosmos container that was never provisioned reads as one sentence at '
+      'the desk, with the raw error behind Details (#414)',
+      (WidgetTester tester) async {
+    // The failure this closes, in the real app. `lateArrivals` was added to the
+    // container spec (#403) but the provisioning script had not been re-run, so
+    // the desk's bootstrap died on a data-plane container create that no
+    // data-plane role can ever be granted — and the reception screen printed the
+    // whole CosmosException, request headers and replica URI and all, inside a
+    // Dutch sentence.
+    //
+    // Why this needs the real app and not the widget test beside it: the note is
+    // a row inside the scan tab's real column, in the real Plink font, at the
+    // real window size, reached through the real rail. A multi-line error spliced
+    // into that row is exactly the kind of overflow a widget test rendering the
+    // screen alone in Ahem cannot see, and "the sentence is short enough to fit"
+    // is the whole claim.
+    useTallWindow(tester);
+
+    final Directory dir =
+        Directory.systemTemp.createTempSync('am-te-laat-403-');
+    addTearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+
+    final LateArrivalDesk desk = LateArrivalDesk(
+      journalStore: FileJournalStore(dir),
+      credentials: InMemoryOperatorCredentialStore(),
+      deskId: 'onthaal-403',
+    );
+    addTearDown(desk.dispose);
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      // What an unprovisioned container actually does to the desk's bootstrap.
+      reconcileBootstrap: () async => throw CosmosContainerNotProvisioned(
+        'lateArrivals',
+        403,
+        jsonEncode(<String, String>{
+          'code': 'Forbidden',
+          'message':
+              'Request blocked by Auth accountmanager-cosmos-arcadia : The '
+                  'given request [POST /dbs/accountmanager/colls] cannot be '
+                  'authorized by AAD token in data plane. Learn more: '
+                  'https://aka.ms/cosmos-native-rbac. ActivityId: 0000, '
+                  'Microsoft.Azure.Documents.Common/2.14.0, '
+                  'x-ms-request-charge: 0, x-ms-session-token: 0:-1#42',
+        }),
+      ),
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+      desk: desk,
+      preferences: LocalPreferences.inMemory(),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(railTab('Te laat'));
+    await tester.pumpAndSettle();
+
+    final Finder note = find.byKey(const ValueKey<String>('late-list-error'));
+    expect(note, findsOneWidget);
+    final String sentence = tester.widget<Text>(note).data ?? '';
+    expect(sentence, contains('De leerlingenlijst kon niet geladen worden.'));
+    expect(sentence, contains('niet gescand worden'));
+    // None of the machine's words reach the counter.
+    expect(sentence, isNot(contains('CosmosException')));
+    expect(sentence, isNot(contains('x-ms-')));
+    expect(sentence, isNot(contains('Microsoft.Azure.Documents.Common')));
+    expect(sentence, isNot(contains('aka.ms')));
+    // Two lines of real text at a real window size — not a wall of it.
+    expect(sentence.length, lessThan(160));
+
+    // Nothing is hidden that a colleague would need to fix it: it is one tap
+    // away, and it names the container and the script rather than the AAD wall.
+    final Finder detail =
+        find.byKey(const ValueKey<String>('late-note-detail'));
+    expect(detail, findsNothing);
+    await tester.tap(find.byKey(const ValueKey<String>('late-note-details')));
+    await tester.pumpAndSettle();
+    final String raw = tester.widget<SelectableText>(detail).data ?? '';
+    expect(raw, contains("Cosmos container 'lateArrivals' is not provisioned"));
+    expect(raw, contains('tool/provision-cosmos.ps1'));
+
+    // Real fonts, real layout: an error note may never overflow the scan tab.
     expect(tester.takeException(), isNull);
   });
 }

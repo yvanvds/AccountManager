@@ -67,7 +67,7 @@ import '../update/update_controller.dart';
 ///
 /// **The screen opens even when the settings document does not (#370).** The tab
 /// frame, the header and the **Verbinding** tab render from the first frame, and
-/// only the four document-backed tabs wait on the load. That is the whole point
+/// only the five document-backed tabs wait on the load. That is the whole point
 /// of the Verbinding tab: it edits the local `connection.json` the store's own
 /// coordinates come from, so a wrong Cosmos endpoint must not be able to lock the
 /// operator out of the one screen that can fix it. A failed load brings that tab
@@ -112,9 +112,9 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-/// The index of the **Verbinding** tab — after the four document-backed ones
-/// (#370) — and the resulting tab count.
-const int _connectionTabIndex = 4;
+/// The index of the **Verbinding** tab — after the five document-backed ones
+/// (#370, and **Te laat** since #411) — and the resulting tab count.
+const int _connectionTabIndex = 5;
 const int _settingsTabCount = _connectionTabIndex + 1;
 
 class _SettingsScreenState extends State<SettingsScreen>
@@ -207,8 +207,8 @@ class _SettingsScreenState extends State<SettingsScreen>
   // student before anyone has opened this section.
   List<LateArrivalReason> _lateArrivalReasons = defaultLateArrivalReasons;
 
-  // The ticket printer at *this* desk (#406). Unlike everything else on the
-  // Algemeen tab this is machine-local: it lives in `preferences.json`, not in
+  // The ticket printer at *this* desk (#406). Unlike the reason list above it on
+  // the Te laat tab this is machine-local: it lives in `preferences.json`, not in
   // the shared settings document, because two reception desks have two printers
   // on two addresses and a shared one would send desk two's tickets to desk one.
   // See `LocalPreferences.lateArrivalPrinterHost`.
@@ -603,7 +603,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     _populateConnection(StoreEndpoints.fromEnvironment());
   }
 
-  /// Brings the Verbinding tab forward when the four document-backed tabs have
+  /// Brings the Verbinding tab forward when the five document-backed tabs have
   /// nothing to show — the settings document could not be loaded (#370), or
   /// Azure AD is not configured so there is no session to load it with (#384).
   ///
@@ -1329,7 +1329,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   Widget build(BuildContext context) {
     // No early return for a failed or pending load (#370), and none for an
     // unconfigured Azure AD either (#384): the frame, the header and the
-    // Verbinding tab render regardless, and only the four document-backed tabs
+    // Verbinding tab render regardless, and only the five document-backed tabs
     // stand in with a panel until the document arrives.
     //
     // The second half is the whole point of #384. The screen that supplies the
@@ -1338,7 +1338,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     return _SettingsForm(state: this);
   }
 
-  /// What the four document-backed tabs show while [_loaded] is `null` — no
+  /// What the five document-backed tabs show while [_loaded] is `null` — no
   /// sign-in to load with, the load in flight, or the failure that stopped it.
   ///
   /// The retry lives here rather than in the header because this *is* the state
@@ -1480,6 +1480,9 @@ class _SettingsForm extends StatelessWidget {
                   text: 'Smartschool',
                 ),
                 Tab(key: ValueKey('settings-tab-azure'), text: 'Azure'),
+                // After the three connectors rather than among them (#411):
+                // the reception desk is a job, not a system to talk to.
+                Tab(key: ValueKey('settings-tab-telaat'), text: 'Te laat'),
                 // Last, and the only tab that does not need the document
                 // (#370).
                 Tab(
@@ -1497,6 +1500,7 @@ class _SettingsForm extends StatelessWidget {
                     _wisaTab(),
                     _smartschoolTab(),
                     _azureTab(),
+                    _lateArrivalTab(),
                   ] else
                     for (var i = 0; i < _connectionTabIndex; i++)
                       state.documentPanel(),
@@ -1566,6 +1570,31 @@ class _SettingsForm extends StatelessWidget {
         ],
       ),
       _wifiSection(),
+    ]);
+  }
+
+  /// Everything a reception desk needs, and nothing else (#411).
+  ///
+  /// A tab of its own rather than the tail of **Algemeen**, because the three
+  /// sections below are longer than everything else on that tab put together and
+  /// have nothing to do with the school prefix, the debug switch or the
+  /// werkdatum above them. Someone setting up a desk should not have to scroll
+  /// past the app-wide options to reach the only thing they came for.
+  ///
+  /// The order is the order a desk is set up in: the buttons the operator will
+  /// press (shared), the printer the ticket comes out of (this machine), and
+  /// then the account the registration is filed under (this machine, this
+  /// person). That "shared / this machine / this person" ladder is the one thing
+  /// an operator most has to read off this tab, because the three sections look
+  /// alike and behave nothing alike — so each says in so many words which rung
+  /// it is on, and putting them side by side is what makes the contrast legible
+  /// instead of theoretical.
+  ///
+  /// Document-backed, so it lives inside the `hasDocument` branch and before
+  /// **Verbinding**: the reason list is shared state read out of the settings
+  /// document, exactly like the three connector tabs above it.
+  Widget _lateArrivalTab() {
+    return _tab('settings-tab-telaat-body', <Widget>[
       _lateArrivalReasonsSection(),
       _lateArrivalPrinterSection(),
       _smartschoolOperatorSection(),
@@ -1574,18 +1603,16 @@ class _SettingsForm extends StatelessWidget {
 
   /// This operator's own Smartschool login, on this machine (#409).
   ///
-  /// Last of the three "Te laat" sections, and the order is the order a desk is
-  /// set up in: the buttons the operator will press (shared), the printer the
-  /// ticket comes out of (this machine), and then the account the registration
-  /// is filed under (this machine, this person). Each section says which of the
-  /// three it is, because they sit one scroll apart and look alike.
+  /// The bottom rung of the tab's ladder, and the narrowest: not shared, and not
+  /// even shared with the colleague who sits at this same desk on Thursdays.
   ///
-  /// On **Algemeen** rather than on the Smartschool tab, even though it is a
-  /// Smartschool credential: that tab is the *connector's* configuration — the
-  /// SOAP site, the group tree, the shared access code every operator uses — and
-  /// this is the opposite of shared. Putting a personal password among the
-  /// school-wide connector settings is exactly how it would end up being typed
-  /// into the wrong one.
+  /// Here rather than on the Smartschool tab, even though it is a Smartschool
+  /// credential: that tab is the *connector's* configuration — the SOAP site, the
+  /// group tree, the shared access code every operator uses — and this is the
+  /// opposite of shared. Putting a personal password among the school-wide
+  /// connector settings is exactly how it would end up being typed into the
+  /// wrong one. It belongs beside the printer, which is the other thing about
+  /// this desk that must not travel.
   Widget _smartschoolOperatorSection() {
     return _Section(
       title: 'Te laat — Smartschool-aanmelding',
@@ -1597,13 +1624,15 @@ class _SettingsForm extends StatelessWidget {
 
   /// The ticket printer at this desk (#406).
   ///
-  /// Beside the reason list rather than on the Verbinding tab, even though it
-  /// is machine-local like everything there. Verbinding is the *bootstrap* —
-  /// the app registration, the Cosmos endpoint, the things that have to be
-  /// reachable when nothing else is — and a printer is not that. An operator
-  /// setting up a reception desk configures the buttons and the printer in one
-  /// sitting, and they should be one scroll apart, with the section saying in
-  /// so many words which of the two is shared and which is not.
+  /// The middle rung: this machine, but every operator who sits at it.
+  ///
+  /// Directly under the reason list rather than on the Verbinding tab, even
+  /// though it is machine-local like everything there. Verbinding is the
+  /// *bootstrap* — the app registration, the Cosmos endpoint, the things that
+  /// have to be reachable when nothing else is — and a printer is not that. An
+  /// operator setting up a reception desk configures the buttons and the printer
+  /// in one sitting, so they belong on one tab, one section apart, with each
+  /// saying in so many words which of the two is shared and which is not.
   Widget _lateArrivalPrinterSection() {
     return _Section(
       title: 'Te laat — ticketprinter',
@@ -1615,13 +1644,17 @@ class _SettingsForm extends StatelessWidget {
 
   /// The shared late-arrival reason list (#405).
   ///
-  /// On **Algemeen** rather than under Smartschool, even though the Presence
-  /// write it feeds is a Smartschool call: the Smartschool tab is the
-  /// *connector's* configuration — where the site is, what the tree is called,
-  /// what gets pruned on the way in — and this is a piece of desk vocabulary
-  /// that happens to travel out over that connector. An operator looking for
-  /// "which buttons does reception get" would not think to look behind the SOAP
-  /// endpoint.
+  /// The top rung, and first on the tab: the only one of the three that every
+  /// desk in the school reads, and the one an operator is likeliest to have come
+  /// here to change.
+  ///
+  /// Here rather than under Smartschool, even though the Presence write it feeds
+  /// is a Smartschool call: the Smartschool tab is the *connector's*
+  /// configuration — where the site is, what the tree is called, what gets pruned
+  /// on the way in — and this is a piece of desk vocabulary that happens to
+  /// travel out over that connector. An operator looking for "which buttons does
+  /// reception get" would not think to look behind the SOAP endpoint; they look
+  /// under **Te laat**.
   Widget _lateArrivalReasonsSection() {
     return _Section(
       title: 'Te laat — redenen',

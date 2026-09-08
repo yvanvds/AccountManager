@@ -413,6 +413,72 @@ void main() {
       );
     });
 
+    test(
+        'ensureContainer reports a create 403 as an unprovisioned container, '
+        'not as an authorization problem (#414)', () async {
+      // The `lateArrivals` drift: the container was added to the spec (#403) but
+      // the provisioning script had not been re-run, so every desk saw a 403
+      // about an "AAD token in data plane" and went hunting for a role. No role
+      // can create a container — the container simply was not there.
+      final transport = _FakeTransport([
+        const CosmosResponse(statusCode: 404),
+        CosmosResponse(
+          statusCode: 403,
+          body: jsonEncode({
+            'code': 'Forbidden',
+            'message': 'Request blocked by Auth accountmanager-cosmos-arcadia : '
+                'The given request [POST /dbs/accountmanager/colls] cannot be '
+                'authorized by AAD token in data plane. ActivityId: 1234, '
+                'Microsoft.Azure.Documents.Common/2.14.0',
+          }),
+        ),
+      ]);
+
+      await expectLater(
+        _client(transport).ensureContainer(
+          container: 'lateArrivals',
+          partitionKeyPath: '/pk',
+        ),
+        throwsA(
+          isA<CosmosContainerNotProvisioned>()
+              .having((e) => e.container, 'container', 'lateArrivals')
+              .having((e) => e.statusCode, 'statusCode', 403)
+              .having(
+                (e) => e.toString(),
+                'toString',
+                allOf(
+                  contains(
+                      "Cosmos container 'lateArrivals' is not provisioned"),
+                  contains('tool/provision-cosmos.ps1'),
+                  // The raw AAD noise is what made the desk note unreadable.
+                  isNot(contains('AAD token')),
+                  isNot(contains('Microsoft.Azure.Documents.Common')),
+                ),
+              )
+              // …but it is not thrown away: a log or a details pane can still
+              // reach it.
+              .having((e) => e.message, 'message', contains('AAD token')),
+        ),
+      );
+    });
+
+    test('ensureContainers names the container that is missing (#414)',
+        () async {
+      final transport = _FakeTransport([
+        const CosmosResponse(statusCode: 404),
+        const CosmosResponse(
+          statusCode: 403,
+          body: '{"code":"Forbidden","message":"cannot be authorized"}',
+        ),
+      ]);
+
+      await expectLater(
+        ensureContainers(_client(transport), specs: lateArrivalContainers),
+        throwsA(isA<CosmosContainerNotProvisioned>()
+            .having((e) => e.container, 'container', 'lateArrivals')),
+      );
+    });
+
     test('a non-2xx (other than 404/409) throws CosmosException', () async {
       final transport = _FakeTransport([
         const CosmosResponse(

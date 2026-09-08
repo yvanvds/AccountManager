@@ -127,10 +127,37 @@ $containers = @(
   @{ Name = 'syncState';      PartitionKey = '/id'; Ttl = -1 }
 )
 
+# On Windows `az` is `az.cmd`, a batch shim that forwards its arguments with
+# `%*`. cmd.exe re-parses that line, so an argument PowerShell did NOT have to
+# quote (no spaces) reaches cmd bare and any cmd metacharacter in it breaks the
+# command — a JMESPath filter like `length([?name=='x'])` dies on its
+# parentheses with the cryptic `-o was unexpected at this time.` (#416). The
+# comment this replaces — "args are passed as an array so no shell re-quoting
+# happens" — holds for a real executable, not for a `.cmd` shim.
+#
+# The script therefore passes NO JMESPath expression to az at all: reads ask for
+# `-o json` and are filtered in PowerShell (see Get-AzJson). This guard is the
+# braces to that belt — it fails fast, and in -DryRun it fails *offline*, if any
+# argument ever reacquires a character cmd would chew on. Double quotes are not
+# listed: they survive `%*` intact (the `--unique-key-policy` JSON relies on it).
+$cmdUnsafeArg = '[()&|<>^%]'
+
+function Assert-CmdSafeArgs {
+  param([string[]]$AzArgs)
+  foreach ($a in $AzArgs) {
+    if ($a -match $cmdUnsafeArg) {
+      throw "Refusing to run az: argument '$a' contains a character cmd.exe " +
+            "re-parses when az.cmd forwards it with %* (#416). Ask for " +
+            "-o json and filter in PowerShell instead of in JMESPath."
+    }
+  }
+}
+
 function Invoke-Az {
   # Runs an az command, or — in -DryRun — just prints it and returns without
-  # invoking az. Args are passed as an array so no shell re-quoting happens.
+  # invoking az.
   param([string[]]$AzArgs)
+  Assert-CmdSafeArgs $AzArgs
   Write-Host "  az $($AzArgs -join ' ')"
   if ($DryRun) { return }
   $output = & az @AzArgs
@@ -144,6 +171,7 @@ function Test-AzResource {
   # `az ... exists` prints `true`/`false`. In -DryRun we always report the
   # resource as missing so the plan shows the create it would perform.
   param([string[]]$AzArgs)
+  Assert-CmdSafeArgs $AzArgs
   if ($DryRun) {
     Write-Host "  az $($AzArgs -join ' ')  (dry-run: assume missing)"
     return $false
@@ -155,20 +183,29 @@ function Test-AzResource {
   return "$result".Trim() -eq 'true'
 }
 
-function Get-AzOutput {
-  # Runs an az read that returns an arbitrary scalar (a state string, a resource
-  # id, a count), trimmed. In -DryRun it makes no call and returns '' so the
-  # caller takes its "missing/unset" branch and the create is shown in the plan.
+function Get-AzJson {
+  # Runs an az read, asking for `-o json`, and returns the parsed object so the
+  # caller can filter/inspect it in PowerShell. Nothing here passes `--query`:
+  # every JMESPath expression worth writing (`length([?name=='x'])`,
+  # `length(@)`) carries parentheses that cmd.exe would eat (#416), so the
+  # filtering moved out of az and into the script.
+  #
+  # In -DryRun it makes no call and returns $null so the caller takes its
+  # "missing/unset" branch and the create is shown in the plan.
   param([string[]]$AzArgs)
+  Assert-CmdSafeArgs $AzArgs
+  $withJson = $AzArgs + @('-o', 'json')
   if ($DryRun) {
-    Write-Host "  az $($AzArgs -join ' ')  (dry-run: assume missing/unset)"
-    return ''
+    Write-Host "  az $($withJson -join ' ')  (dry-run: assume missing/unset)"
+    return $null
   }
-  $result = & az @AzArgs
+  $result = & az @withJson
   if ($LASTEXITCODE -ne 0) {
-    throw "az $($AzArgs -join ' ') failed (exit $LASTEXITCODE): $result"
+    throw "az $($withJson -join ' ') failed (exit $LASTEXITCODE): $result"
   }
-  return "$result".Trim()
+  $json = "$($result -join "`n")".Trim()
+  if ($json -eq '') { return $null }
+  return $json | ConvertFrom-Json
 }
 
 Write-Host "Provisioning Cosmos DB '$Database' on account '$AccountName' (rg '$ResourceGroup')"
@@ -242,12 +279,10 @@ foreach ($c in $containers) {
 # 3a. Resource provider — Storage ARM calls fail (SubscriptionNotFound) until
 #     Microsoft.Storage is registered on the subscription.
 Write-Host "Resource provider 'Microsoft.Storage':"
-$rpState = Get-AzOutput @(
+$rpState = (Get-AzJson @(
   'provider', 'show',
-  '--namespace', 'Microsoft.Storage',
-  '--query', 'registrationState',
-  '-o', 'tsv'
-)
+  '--namespace', 'Microsoft.Storage'
+)).registrationState
 if ($rpState -eq 'Registered') {
   Write-Host "  registered — skipping"
 } else {
@@ -259,14 +294,15 @@ Write-Host ""
 
 # 3b. Storage account — AAD-only (shared-key access disabled, mirroring the
 #     Cosmos account's disableLocalAuth), StorageV2, no public blob access.
+#     Presence is decided by listing the group and matching the name in
+#     PowerShell; the JMESPath filter that used to do it never survived az.cmd.
 Write-Host "Storage account '$StorageAccount':"
-$saCount = Get-AzOutput @(
+$saAccounts = Get-AzJson @(
   'storage', 'account', 'list',
-  '--resource-group', $ResourceGroup,
-  '--query', "length([?name=='$StorageAccount'])",
-  '-o', 'tsv'
+  '--resource-group', $ResourceGroup
 )
-if ($saCount -eq '1') {
+$saCount = @($saAccounts | Where-Object { $_.name -eq $StorageAccount }).Count
+if ($saCount -ge 1) {
   Write-Host "  present — skipping"
 } else {
   Write-Host "  missing — creating"
@@ -287,15 +323,13 @@ Write-Host ""
 # 3c. Overflow container — with shared-key access disabled, every container op
 #     must go through AAD (`--auth-mode login`).
 Write-Host "Blob container '$StorageContainer':"
-$containerExists = Get-AzOutput @(
+$containerProbe = Get-AzJson @(
   'storage', 'container', 'exists',
   '--account-name', $StorageAccount,
   '--name', $StorageContainer,
-  '--auth-mode', 'login',
-  '--query', 'exists',
-  '-o', 'tsv'
+  '--auth-mode', 'login'
 )
-if ($containerExists -eq 'true') {
+if ($containerProbe -and $containerProbe.exists) {
   Write-Host "  present — skipping"
 } else {
   Write-Host "  missing — creating"
@@ -314,22 +348,22 @@ Write-Host ""
 #     Cosmos data role is assumed rather than assigned.
 Write-Host "Role 'Storage Blob Data Contributor' on '$StorageAccount':"
 if ($OperatorObjectId) {
-  $scope = Get-AzOutput @(
+  $scope = (Get-AzJson @(
     'storage', 'account', 'show',
     '--name', $StorageAccount,
-    '--resource-group', $ResourceGroup,
-    '--query', 'id',
-    '-o', 'tsv'
-  )
-  $assignments = Get-AzOutput @(
+    '--resource-group', $ResourceGroup
+  )).id
+  # -DryRun resolves no scope; pass a placeholder so the plan still prints.
+  if (-not $scope) { $scope = 'DRY-RUN-UNRESOLVED-SCOPE' }
+  $roleList = Get-AzJson @(
     'role', 'assignment', 'list',
     '--assignee', $OperatorObjectId,
     '--role', 'Storage Blob Data Contributor',
-    '--scope', $scope,
-    '--query', 'length(@)',
-    '-o', 'tsv'
+    '--scope', $scope
   )
-  if ($assignments -ne '' -and $assignments -ne '0') {
+  # $null (a -DryRun read) is "no assignments", not one empty assignment.
+  $assignments = if ($null -eq $roleList) { 0 } else { @($roleList).Count }
+  if ($assignments -gt 0) {
     Write-Host "  already granted to $OperatorObjectId — skipping"
   } else {
     Write-Host "  missing — granting to $OperatorObjectId"

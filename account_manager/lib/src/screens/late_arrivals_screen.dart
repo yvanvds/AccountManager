@@ -15,7 +15,8 @@
 ///   screen can have. So a single hidden [Focus] node owns the keyboard, every
 ///   interactive control on the page is wrapped in [ExcludeFocus] so a reason
 ///   button cannot take it away, a click anywhere on the page hands it back, and
-///   a **scanner actief** indicator says out loud whether it is currently held.
+///   a **klaar om te scannen** indicator says out loud whether it is currently
+///   held.
 ///   (There is no [TextField] behind it: a text field brings a text-input
 ///   connection, an IME, autocorrect and a caret, none of which a barcode burst
 ///   wants, and the raw key stream is both simpler and easier to prove.)
@@ -529,8 +530,14 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     );
   }
 
-  /// Whether the scanner can currently be typed into — the single most useful
-  /// thing on the page when something is wrong.
+  /// Whether a scan would currently land — the single most useful thing on the
+  /// page when something is wrong.
+  ///
+  /// This says nothing about the hardware: a barcode scanner is a keyboard, and
+  /// nothing here can see whether one is plugged in. What it does know is
+  /// whether the hidden input holds the keyboard on the tab in view, which is
+  /// exactly what decides if the next scan arrives — so the badge names that
+  /// and only that (#413).
   Widget _scannerIndicator(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
@@ -539,7 +546,7 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: <Widget>[
         PlinkBadge(
-          active ? 'scanner actief' : 'scanner niet actief',
+          active ? 'klaar om te scannen' : 'scannen gepauzeerd',
           key: const ValueKey<String>('late-scanner-indicator'),
           variant: active ? BadgeVariant.accent : BadgeVariant.outline,
           dot: true,
@@ -780,8 +787,12 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       notes.add(_note(
         context,
         const ValueKey<String>('late-list-error'),
-        'De leerlingenlijst kon niet geladen worden (${_error!}). Er kan '
-        'voorlopig niet gescand worden.',
+        'De leerlingenlijst kon niet geladen worden. Er kan voorlopig niet '
+        'gescand worden.',
+        // The machine's own words, behind a disclosure: a CosmosException reads
+        // as several screens of request headers and replica URIs, which is
+        // unusable at a desk and was drowning the sentence above it (#414).
+        detail: '${_error!}',
         onRetry: _busy ? null : () => unawaited(_bootstrap()),
       ));
     } else if (_busy) {
@@ -818,9 +829,14 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       );
     }
 
-    for (final (int i, String warning)
-        in (_desk?.warnings ?? const <String>[]).indexed) {
-      notes.add(_note(context, ValueKey<String>('late-warning-$i'), warning));
+    for (final (int i, DeskWarning warning)
+        in (_desk?.warnings ?? const <DeskWarning>[]).indexed) {
+      notes.add(_note(
+        context,
+        ValueKey<String>('late-warning-$i'),
+        warning.message,
+        detail: warning.detail,
+      ));
     }
 
     if (notes.isEmpty) return const <Widget>[];
@@ -834,40 +850,18 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     BuildContext context,
     Key key,
     String message, {
+    String detail = '',
     VoidCallback? onRetry,
-  }) {
-    final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: PlinkSpacing.s3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Icon(
-            Icons.info_outline,
-            size: 18,
-            color: colors.onSurfaceVariant,
-          ),
-          const SizedBox(width: PlinkSpacing.s2),
-          Expanded(
-            child: Text(
-              message,
-              key: key,
-              style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
-            ),
-          ),
-          if (onRetry != null) ...<Widget>[
-            const SizedBox(width: PlinkSpacing.s3),
-            TextButton(
-              key: const ValueKey<String>('late-list-retry'),
-              onPressed: onRetry,
-              child: const Text('Opnieuw'),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
+  }) =>
+      _DeskNote(
+        // Keyed on the note's identity so the disclosure does not carry its
+        // open/closed state over to a different note that lands in the same slot.
+        key: ValueKey<Object>(<Object>['note', key]),
+        messageKey: key,
+        message: message,
+        detail: detail,
+        onRetry: onRetry,
+      );
 
   Widget _alert(BuildContext context, Key key, String message) {
     final TextTheme text = Theme.of(context).textTheme;
@@ -890,6 +884,130 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
               style: text.bodyLarge?.copyWith(color: colors.onErrorContainer),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One line of "this is what is wrong with the desk", with the raw error folded
+/// away behind a **Details** disclosure (#414).
+///
+/// The desk used to render the machine's words inline — a whole
+/// `CosmosException`, request header lengths, SDK version, replica URI and all,
+/// in the middle of a Dutch sentence at a reception counter. It is the wrong
+/// text for the wrong reader in the wrong place: nobody at the desk can act on
+/// it, and it pushed the one sentence they *can* act on off the line. So the
+/// sentence stands alone and the raw text is one tap away, selectable, for
+/// whoever is asked to fix it afterwards.
+class _DeskNote extends StatefulWidget {
+  const _DeskNote({
+    super.key,
+    required this.messageKey,
+    required this.message,
+    this.detail = '',
+    this.onRetry,
+  });
+
+  /// The key the tests and the rest of the screen address the sentence by; it
+  /// stays on the message [Text] so trimming the note changed no finder.
+  final Key messageKey;
+  final String message;
+
+  /// The raw underlying error, or empty when there is nothing to disclose (most
+  /// notes — "no login configured" has no machine words beneath it).
+  final String detail;
+
+  final VoidCallback? onRetry;
+
+  @override
+  State<_DeskNote> createState() => _DeskNoteState();
+}
+
+class _DeskNoteState extends State<_DeskNote> {
+  bool _open = false;
+
+  @override
+  void didUpdateWidget(_DeskNote oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A note whose raw text went away (a retry succeeded, a different failure
+    // took its place) must not leave an empty pane hanging open.
+    if (_open && widget.detail != oldWidget.detail) _open = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final bool hasDetail = widget.detail.trim().isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Icon(
+                Icons.info_outline,
+                size: 18,
+                color: colors.onSurfaceVariant,
+              ),
+              const SizedBox(width: PlinkSpacing.s2),
+              Expanded(
+                child: Text(
+                  widget.message,
+                  key: widget.messageKey,
+                  style:
+                      text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+                ),
+              ),
+              if (hasDetail) ...<Widget>[
+                const SizedBox(width: PlinkSpacing.s2),
+                TextButton(
+                  key: const ValueKey<String>('late-note-details'),
+                  onPressed: () => setState(() => _open = !_open),
+                  child: Text(_open ? 'Verberg details' : 'Details'),
+                ),
+              ],
+              if (widget.onRetry != null) ...<Widget>[
+                const SizedBox(width: PlinkSpacing.s3),
+                TextButton(
+                  key: const ValueKey<String>('late-list-retry'),
+                  onPressed: widget.onRetry,
+                  child: const Text('Opnieuw'),
+                ),
+              ],
+            ],
+          ),
+          if (hasDetail && _open)
+            Padding(
+              padding: const EdgeInsets.only(
+                left: 18 + PlinkSpacing.s2,
+                top: PlinkSpacing.s2,
+              ),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(PlinkSpacing.s2),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerHighest,
+                  borderRadius: const BorderRadius.all(
+                    Radius.circular(PlinkRadius.base),
+                  ),
+                ),
+                // Selectable because the whole point of keeping it is that
+                // somebody pastes it into an issue or a chat.
+                child: SelectableText(
+                  widget.detail,
+                  key: const ValueKey<String>('late-note-detail'),
+                  style: text.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

@@ -26,11 +26,17 @@ void _useTallWindow(WidgetTester tester) {
 }
 
 /// Switches the settings view to the tab with [tabKey] (#140: the config is now
-/// split across Algemeen / Wisa / Smartschool / Azure tabs).
+/// split across Algemeen / Wisa / Smartschool / Azure / Te laat tabs).
 Future<void> _openTab(WidgetTester tester, String tabKey) async {
   await tester.tap(find.byKey(ValueKey(tabKey)));
   await tester.pumpAndSettle();
 }
+
+/// Opens the **Te laat** tab, which is where the reason list, the ticket printer
+/// and the operator's Smartschool login live since #411 (they used to sit at the
+/// bottom of Algemeen, the tab the screen opens on).
+Future<void> _openLateArrivalTab(WidgetTester tester) =>
+    _openTab(tester, 'settings-tab-telaat');
 
 /// Authors one Smartschool import rule through the editor (#202): opens the
 /// **Toevoegen** menu, picks the rule type keyed [kind], types [groupName] into
@@ -136,7 +142,7 @@ void main() {
     expect(find.text('school.onmicrosoft.com'), findsOneWidget);
   });
 
-  testWidgets('the settings view exposes the four config tabs',
+  testWidgets('the settings view exposes the five document-backed config tabs',
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness();
@@ -149,9 +155,44 @@ void main() {
       'settings-tab-wisa',
       'settings-tab-smartschool',
       'settings-tab-azure',
+      'settings-tab-telaat',
     ]) {
       expect(find.byKey(ValueKey(key)), findsOneWidget);
     }
+  });
+
+  testWidgets(
+      'the late-arrival settings have a tab of their own, before Verbinding, '
+      'and Algemeen keeps none of them (#411)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final harness = SettingsHarness();
+    await tester
+        .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+    await tester.pumpAndSettle();
+
+    // Algemeen is still the tab the screen opens on, and none of the three
+    // sections is on it any more.
+    expect(find.byKey(const ValueKey('settings-tab-algemeen-body')),
+        findsOneWidget);
+    expect(find.text('Te laat — redenen'), findsNothing);
+    expect(find.text('Te laat — ticketprinter'), findsNothing);
+    expect(find.text('Te laat — Smartschool-aanmelding'), findsNothing);
+
+    // The tab sits between Azure and Verbinding — after the connectors, before
+    // the one tab that does not need the settings document (#370).
+    double tabX(String key) => tester.getTopLeft(find.byKey(ValueKey(key))).dx;
+    expect(tabX('settings-tab-azure'), lessThan(tabX('settings-tab-telaat')));
+    expect(
+        tabX('settings-tab-telaat'), lessThan(tabX('settings-tab-verbinding')));
+
+    // And it carries all three, in the order a desk is set up in: the shared
+    // buttons, then this machine's printer, then this person's login.
+    await _openLateArrivalTab(tester);
+    double sectionY(String title) => tester.getTopLeft(find.text(title)).dy;
+    expect(sectionY('Te laat — redenen'),
+        lessThan(sectionY('Te laat — ticketprinter')));
+    expect(sectionY('Te laat — ticketprinter'),
+        lessThan(sectionY('Te laat — Smartschool-aanmelding')));
   });
 
   testWidgets('edit → save round-trips a profile field to the store',
@@ -1860,6 +1901,7 @@ void main() {
       await tester
           .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       expect(
         listed(tester),
@@ -1887,6 +1929,7 @@ void main() {
       await tester
           .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       // Add one that does *not* count as a valid reason.
       await addReason(tester, 'Verslapen', isValid: false);
@@ -1940,6 +1983,7 @@ void main() {
       await tester
           .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       IconButton button(String key) =>
           tester.widget<IconButton>(find.byKey(ValueKey(key)));
@@ -1961,6 +2005,7 @@ void main() {
       await tester
           .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       expect(
         tester
@@ -1985,6 +2030,7 @@ void main() {
       await tester
           .pumpWidget(_wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.tap(find.byKey(const ValueKey('settings-reason-add')));
       await tester.pumpAndSettle();
@@ -2026,6 +2072,7 @@ void main() {
         prefs,
       ));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       expect(find.text('Te laat — ticketprinter'), findsOneWidget);
       expect(
@@ -2067,6 +2114,7 @@ void main() {
         prefs,
       ));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       expect(find.text('10.0.0.31'), findsOneWidget);
       expect(
@@ -2092,6 +2140,7 @@ void main() {
         prefs,
       ));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.enterText(
         find.byKey(const ValueKey('settings-printer-host')),
@@ -2119,6 +2168,7 @@ void main() {
         prefs,
       ));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.enterText(
         find.byKey(const ValueKey('settings-printer-host')),
@@ -2148,6 +2198,7 @@ void main() {
         prefs,
       ));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.enterText(
         find.byKey(const ValueKey('settings-printer-host')),
@@ -2185,6 +2236,7 @@ void main() {
         prefs,
       ));
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       // The address as typed, not the saved one: the operator has to be able to
       // try a value before committing it.
@@ -2268,6 +2320,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       expect(find.text('Te laat — Smartschool-aanmelding'), findsOneWidget);
       expect(tester.widget<TextField>(username()).controller!.text, '');
@@ -2322,6 +2375,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       expect(
           tester.widget<TextField>(username()).controller!.text, 'ann.peeters');
@@ -2348,6 +2402,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.enterText(username(), 'ann.peeters');
       await tester.pump();
@@ -2386,6 +2441,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.enterText(username(), 'ann.peeters');
       await tester.pump();
@@ -2415,6 +2471,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.enterText(username(), 'ann.peeters');
       await tester.pump();
@@ -2432,6 +2489,41 @@ void main() {
       expect(tester.widget<Text>(status()).data, contains('is gelukt'));
       // A test is not a save: nothing is stored yet.
       expect(await desk.credentials.read(), isNull);
+    });
+
+    testWidgets(
+        'the bare subdomain on the Smartschool tab is completed before the '
+        'sign-in (#412)', (WidgetTester tester) async {
+      // What the Smartschool tab really holds: the school's short name, which
+      // is what the SOAP connector wants. **Aanmelding testen** used to hand
+      // that straight to the Presence login, which died with
+      // `Failed host lookup: 'sanctamaria-aarschot'`.
+      _useTallWindow(tester);
+      String? against;
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        settings: withSite('sanctamaria-aarschot'),
+        probe: (_, String host) async => against = host,
+      );
+      final harness =
+          SettingsHarness(initial: withSite('sanctamaria-aarschot'));
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      await tester.ensureVisible(testButton());
+      await tester.tap(testButton());
+      await tester.pumpAndSettle();
+
+      expect(against, 'sanctamaria-aarschot.smartschool.be');
+      expect(tester.widget<Text>(status()).data, contains('is gelukt'));
     });
 
     testWidgets(
@@ -2454,6 +2546,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       await tester.ensureVisible(testButton());
       await tester.tap(testButton());
@@ -2483,6 +2576,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
 
       final Finder clear =
           find.byKey(const ValueKey('settings-smartschool-operator-clear'));
@@ -2514,6 +2608,7 @@ void main() {
         wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
       );
       await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
       expect(desk.draining, isFalse);
       expect(desk.warnings.join(' '), contains('geen Smartschool-aanmelding'));
 

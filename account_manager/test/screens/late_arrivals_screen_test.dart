@@ -12,14 +12,21 @@
 /// kind of failure.
 library;
 
+import 'dart:convert';
+
 import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
 import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart';
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/late_arrivals/refusal_beep.dart';
 import 'package:account_manager/src/screens/late_arrivals_screen.dart';
 import 'package:account_manager/src/settings/local_preferences.dart';
+import 'package:account_manager/src/shell/shell_navigation.dart';
 import 'package:account_state/account_state.dart'
-    show AppSettings, LiveSettings;
+    show
+        AppSettings,
+        CosmosContainerNotProvisioned,
+        CosmosException,
+        LiveSettings;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -115,13 +122,28 @@ Widget _wrap({
   required LateArrivalDesk desk,
   required Widget child,
   LocalPreferences? preferences,
+  ShellTab? tab,
 }) =>
     MaterialApp(
       home: LocalPreferencesScope(
         // Nothing remembered by default, which is a machine with no ticket
         // printer configured — the honest state for a headless run.
         preferences: preferences ?? LocalPreferences.inMemory(),
-        child: LateArrivalDeskScope(desk: desk, child: Scaffold(body: child)),
+        child: LateArrivalDeskScope(
+          desk: desk,
+          child: Scaffold(
+            body: tab == null
+                ? child
+                // The shell tells the screen which destination is on show; naming
+                // another one is the operator standing in Instellingen with this
+                // tab still mounted behind it, keyboard handed back.
+                : ShellNavigation(
+                    go: (_) {},
+                    current: tab,
+                    child: child,
+                  ),
+          ),
+        ),
       ),
     );
 
@@ -451,8 +473,9 @@ void main() {
   });
 
   testWidgets(
-      'the scanner indicator says whether the keyboard is held, and '
-      'the focus is taken back', (WidgetTester tester) async {
+      'the indicator says whether the keyboard is held — not whether a '
+      'scanner is attached (#413) — and the focus is taken back',
+      (WidgetTester tester) async {
     _useTallWindow(tester);
     final LateArrivalDesk desk = await _openDesk(tester);
 
@@ -464,14 +487,17 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(
-        tester
+    final String badge = tester
             .widget<Text>(find.descendant(
               of: _indicator,
               matching: find.byType(Text),
             ))
-            .data,
-        'SCANNER ACTIEF');
+            .data ??
+        '';
+    expect(badge, 'KLAAR OM TE SCANNEN');
+    // No scanner is plugged into the machine running this test, and nothing in
+    // the app could see one if it were — so the badge may not name the hardware.
+    expect(badge, isNot(contains('SCANNER ')));
 
     // Something else took the keyboard — the single worst thing that can happen
     // to this screen, because a scan is then swallowed with no error at all.
@@ -483,6 +509,38 @@ void main() {
     // …and the screen took it straight back, so the next scan still lands.
     await _scan(tester, '123456');
     expect(_textOf(tester, _name), 'Jonas Peeters');
+  });
+
+  testWidgets(
+      'without the keyboard the badge says scanning is paused, not that a '
+      'scanner went missing (#413)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final LateArrivalDesk desk = await _openDesk(tester);
+
+    await tester.pumpWidget(_wrap(
+      desk: desk,
+      child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      // The operator is typing in Instellingen, so this screen hands the
+      // keyboard back and stops reclaiming it.
+      tab: ShellTab.instellingen,
+    ));
+    await tester.pumpAndSettle();
+
+    final String badge = tester
+            .widget<Text>(find.descendant(
+              of: _indicator,
+              matching: find.byType(Text),
+            ))
+            .data ??
+        '';
+    expect(badge, 'SCANNEN GEPAUZEERD');
+    expect(badge, isNot(contains('SCANNER ')));
+
+    // The half that is actionable stays exactly as it was.
+    expect(
+      _textOf(tester, find.byKey(const ValueKey<String>('late-scanner-hint'))),
+      'Klik op dit scherm om verder te kunnen scannen.',
+    );
   });
 
   testWidgets('the outstanding count is visible and moves with the queue',
@@ -558,4 +616,92 @@ void main() {
     expect(desk.journal!.records, isEmpty);
     expect(_textOf(tester, _refusal), contains('nog niet geladen'));
   });
+
+  group('the desk notes keep the machine words out of the sentence (#414)', () {
+    testWidgets(
+        'a failed bootstrap is one sentence, with the raw Cosmos error behind '
+        'Details', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(
+          bootstrap: () async => throw _unprovisionedContainer,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // The line the operator reads: no header lengths, no replica URI, no SDK
+      // version — the things that used to run the sentence off the screen.
+      final String note = _textOf(
+        tester,
+        find.byKey(const ValueKey<String>('late-list-error')),
+      );
+      expect(note, contains('De leerlingenlijst kon niet geladen worden.'));
+      expect(note, contains('niet gescand worden'));
+      expect(note, isNot(contains('CosmosException')));
+      expect(note, isNot(contains('x-ms-')));
+      expect(note, isNot(contains('Microsoft.Azure.Documents.Common')));
+
+      // Folded away, not thrown away.
+      final Finder detail =
+          find.byKey(const ValueKey<String>('late-note-detail'));
+      expect(detail, findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey<String>('late-note-details')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<SelectableText>(detail).data,
+        contains('lateArrivals'),
+      );
+      expect(
+        tester.widget<SelectableText>(detail).data,
+        contains('tool/provision-cosmos.ps1'),
+      );
+
+      // And it folds back.
+      await tester.tap(find.byKey(const ValueKey<String>('late-note-details')));
+      await tester.pumpAndSettle();
+      expect(detail, findsNothing);
+    });
+
+    testWidgets('a note with nothing beneath it offers no Details at all',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: const LateArrivalsScreen(bootstrap: null),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('late-no-bootstrap')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('late-note-details')),
+        findsNothing,
+      );
+    });
+  });
 }
+
+/// What an unprovisioned `lateArrivals` container actually threw at the desk:
+/// a legible sentence naming the container and the script that creates it,
+/// carrying Cosmos's own AAD wall of text underneath (#414).
+final CosmosException _unprovisionedContainer = CosmosContainerNotProvisioned(
+  'lateArrivals',
+  403,
+  jsonEncode(<String, String>{
+    'code': 'Forbidden',
+    'message': 'Request blocked by Auth accountmanager-cosmos-arcadia : The '
+        'given request [POST /dbs/accountmanager/colls] cannot be authorized by '
+        'AAD token in data plane. Learn more: https://aka.ms/cosmos-native-rbac. '
+        'ActivityId: 0000, Microsoft.Azure.Documents.Common/2.14.0, '
+        'x-ms-request-charge: 0, x-ms-session-token: 0:-1#42',
+  }),
+);

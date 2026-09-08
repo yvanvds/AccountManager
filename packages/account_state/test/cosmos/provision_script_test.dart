@@ -36,6 +36,24 @@ void main() {
     );
   }
 
+  /// Locates `pwsh` on PATH, or null when PowerShell is not installed (the
+  /// script-execution tests below are skipped then rather than failing).
+  String? locatePwsh() {
+    for (final exe in const ['pwsh', 'pwsh.exe']) {
+      try {
+        final probe = Process.runSync(exe, const [
+          '-NoProfile',
+          '-Command',
+          r'$PSVersionTable.PSVersion.Major'
+        ]);
+        if (probe.exitCode == 0) return exe;
+      } on ProcessException {
+        continue;
+      }
+    }
+    return null;
+  }
+
   group('provision-cosmos.ps1', () {
     final script = locateScript().readAsStringSync();
 
@@ -153,5 +171,87 @@ void main() {
       expect(script, contains('Storage Blob Data Contributor'));
       expect(script, contains("'role', 'assignment'"));
     });
+  });
+
+  // On Windows `az` is `az.cmd`, a batch shim that forwards its arguments with
+  // `%*`; cmd.exe re-parses that line, so any argument PowerShell did not have
+  // to quote (no spaces) reaches cmd bare. A JMESPath filter such as
+  // `length([?name=='x'])` died on its parentheses with `-o was unexpected at
+  // this time.`, which aborted the script at step 3b and made the Blob half
+  // unreachable — the reproducibility guarantee the script exists for (#416).
+  group('provision-cosmos.ps1 — az.cmd argument safety (#416)', () {
+    final scriptFile = locateScript();
+    final script = scriptFile.readAsStringSync();
+
+    test('passes no JMESPath --query to az at all', () {
+      // Every filter worth writing carries parentheses, so the filtering moved
+      // out of az and into PowerShell: reads ask for `-o json` and are matched
+      // with Where-Object. This is the assertion that fails on the unpatched
+      // script, which passed `length([?name=='...'])` and `length(@)`.
+      expect(
+        script,
+        isNot(contains("'--query'")),
+        reason: 'a --query expression is re-parsed by az.cmd; ask for '
+            '-o json and filter in PowerShell instead',
+      );
+    });
+
+    test('screens every az argument for cmd metacharacters', () {
+      // The static sweep can only see literals; the arguments that actually
+      // broke were interpolated values. So the script screens each argument at
+      // call time, in all three az helpers.
+      expect(script, contains('function Assert-CmdSafeArgs'));
+      expect(
+        RegExp(r'Assert-CmdSafeArgs \$AzArgs').allMatches(script).length,
+        3,
+        reason: 'Invoke-Az, Test-AzResource and Get-AzJson must all screen '
+            'their arguments before handing them to az.cmd',
+      );
+    });
+
+    final pwsh = locatePwsh();
+
+    test('completes a -DryRun plan offline, without az', () {
+      // -DryRun invokes no az at all, so this runs on any machine (and in CI)
+      // with no Azure CLI and no credentials — while still walking every
+      // argument array the real run would pass through the screen above. The
+      // operator id is supplied so the role-assignment branch is walked too.
+      final result = Process.runSync(pwsh!, [
+        '-NoProfile',
+        '-File',
+        scriptFile.path,
+        '-DryRun',
+        '-OperatorObjectId',
+        '00000000-0000-0000-0000-000000000001',
+      ]);
+      expect(
+        result.exitCode,
+        0,
+        reason: 'dry run failed:\n${result.stdout}\n${result.stderr}',
+      );
+      expect(result.stdout, contains('Done.'));
+      // The whole plan, not just the Cosmos half that used to be reachable.
+      expect(
+          result.stdout, contains("Storage account 'accountmanagerarcadia'"));
+      expect(result.stdout, contains("Blob container 'snapshots'"));
+      expect(result.stdout, contains('role assignment list'));
+    }, skip: pwsh == null ? 'pwsh not installed' : null);
+
+    test('refuses an argument cmd.exe would re-parse', () {
+      // The runtime guard behind the static sweeps above: it fires in -DryRun,
+      // so a future argument carrying a cmd metacharacter is caught offline
+      // rather than as `-o was unexpected at this time.` mid-provisioning.
+      final result = Process.runSync(pwsh!, [
+        '-NoProfile',
+        '-File',
+        scriptFile.path,
+        '-DryRun',
+        '-StorageAccount',
+        'bad(name)',
+      ]);
+      expect(result.exitCode, isNot(0));
+      expect(
+          '${result.stdout}${result.stderr}', contains('Refusing to run az'));
+    }, skip: pwsh == null ? 'pwsh not installed' : null);
   });
 }
