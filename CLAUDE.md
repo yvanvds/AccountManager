@@ -51,6 +51,15 @@ Azure AD / Office 365 for a Belgian secondary-school group.
   unit-tested headlessly and reused from any Dart frontend.
 - `account_manager/` is the Flutter app and depends on the `packages/*`
   libraries.
+- The root `analysis_options.yaml` carries an `analyzer.exclude:` block listing
+  `build/**` and the six platform directories. **Leave it there** (#415).
+  Running `flutter analyze` from the repo root runs the Flutter tool's
+  `AnalysisOptionsMigration` against that file — the workspace root is the
+  Flutter project root — and it rewrites the file unless all seven patterns are
+  present verbatim. Renaming the paths to `account_manager/...` does not satisfy
+  it; the bare patterns come back. Excluding them narrows nothing: those
+  directories hold no analyzed Dart source, and `account_manager/` has its own
+  options file. CI analyzes with `dart analyze`, which never runs the migration.
 
 ## Port order
 

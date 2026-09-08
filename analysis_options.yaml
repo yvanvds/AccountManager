@@ -1,6 +1,26 @@
 include: package:lints/recommended.yaml
 
 analyzer:
+  # Written and re-written by the Flutter tool's AnalysisOptionsMigration
+  # unless all seven patterns are present verbatim (#415). `flutter analyze`
+  # from the repo root runs that migration against THIS file — the workspace
+  # root is the Flutter project root — so committing the block is what makes
+  # the file stable; scoping the paths to `account_manager/...` would not
+  # satisfy the migration and the bare patterns would come back.
+  #
+  # Confirmed to narrow nothing: no android/ ios/ web/ macos/ linux/
+  # directory exists anywhere in the workspace, every build/ directory is
+  # generated output (gitignored, zero .dart files), and account_manager/ has
+  # its own analysis_options.yaml, so this file never governs the app's
+  # windows/ runner sources.
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
   language:
     strict-casts: true
     strict-inference: true
