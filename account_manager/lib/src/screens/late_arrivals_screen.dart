@@ -15,7 +15,8 @@
 ///   screen can have. So a single hidden [Focus] node owns the keyboard, every
 ///   interactive control on the page is wrapped in [ExcludeFocus] so a reason
 ///   button cannot take it away, a click anywhere on the page hands it back, and
-///   a **scanner actief** indicator says out loud whether it is currently held.
+///   a **klaar om te scannen** indicator says out loud whether it is currently
+///   held.
 ///   (There is no [TextField] behind it: a text field brings a text-input
 ///   connection, an IME, autocorrect and a caret, none of which a barcode burst
 ///   wants, and the raw key stream is both simpler and easier to prove.)
@@ -529,8 +530,14 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     );
   }
 
-  /// Whether the scanner can currently be typed into — the single most useful
-  /// thing on the page when something is wrong.
+  /// Whether a scan would currently land — the single most useful thing on the
+  /// page when something is wrong.
+  ///
+  /// This says nothing about the hardware: a barcode scanner is a keyboard, and
+  /// nothing here can see whether one is plugged in. What it does know is
+  /// whether the hidden input holds the keyboard on the tab in view, which is
+  /// exactly what decides if the next scan arrives — so the badge names that
+  /// and only that (#413).
   Widget _scannerIndicator(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
@@ -539,7 +546,7 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: <Widget>[
         PlinkBadge(
-          active ? 'scanner actief' : 'scanner niet actief',
+          active ? 'klaar om te scannen' : 'scannen gepauzeerd',
           key: const ValueKey<String>('late-scanner-indicator'),
           variant: active ? BadgeVariant.accent : BadgeVariant.outline,
           dot: true,

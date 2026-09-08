@@ -18,6 +18,7 @@ import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/late_arrivals/refusal_beep.dart';
 import 'package:account_manager/src/screens/late_arrivals_screen.dart';
 import 'package:account_manager/src/settings/local_preferences.dart';
+import 'package:account_manager/src/shell/shell_navigation.dart';
 import 'package:account_state/account_state.dart'
     show AppSettings, LiveSettings;
 import 'package:flutter/material.dart';
@@ -115,13 +116,28 @@ Widget _wrap({
   required LateArrivalDesk desk,
   required Widget child,
   LocalPreferences? preferences,
+  ShellTab? tab,
 }) =>
     MaterialApp(
       home: LocalPreferencesScope(
         // Nothing remembered by default, which is a machine with no ticket
         // printer configured — the honest state for a headless run.
         preferences: preferences ?? LocalPreferences.inMemory(),
-        child: LateArrivalDeskScope(desk: desk, child: Scaffold(body: child)),
+        child: LateArrivalDeskScope(
+          desk: desk,
+          child: Scaffold(
+            body: tab == null
+                ? child
+                // The shell tells the screen which destination is on show; naming
+                // another one is the operator standing in Instellingen with this
+                // tab still mounted behind it, keyboard handed back.
+                : ShellNavigation(
+                    go: (_) {},
+                    current: tab,
+                    child: child,
+                  ),
+          ),
+        ),
       ),
     );
 
@@ -451,8 +467,9 @@ void main() {
   });
 
   testWidgets(
-      'the scanner indicator says whether the keyboard is held, and '
-      'the focus is taken back', (WidgetTester tester) async {
+      'the indicator says whether the keyboard is held — not whether a '
+      'scanner is attached (#413) — and the focus is taken back',
+      (WidgetTester tester) async {
     _useTallWindow(tester);
     final LateArrivalDesk desk = await _openDesk(tester);
 
@@ -464,14 +481,17 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(
-        tester
+    final String badge = tester
             .widget<Text>(find.descendant(
               of: _indicator,
               matching: find.byType(Text),
             ))
-            .data,
-        'SCANNER ACTIEF');
+            .data ??
+        '';
+    expect(badge, 'KLAAR OM TE SCANNEN');
+    // No scanner is plugged into the machine running this test, and nothing in
+    // the app could see one if it were — so the badge may not name the hardware.
+    expect(badge, isNot(contains('SCANNER ')));
 
     // Something else took the keyboard — the single worst thing that can happen
     // to this screen, because a scan is then swallowed with no error at all.
@@ -483,6 +503,38 @@ void main() {
     // …and the screen took it straight back, so the next scan still lands.
     await _scan(tester, '123456');
     expect(_textOf(tester, _name), 'Jonas Peeters');
+  });
+
+  testWidgets(
+      'without the keyboard the badge says scanning is paused, not that a '
+      'scanner went missing (#413)', (WidgetTester tester) async {
+    _useTallWindow(tester);
+    final LateArrivalDesk desk = await _openDesk(tester);
+
+    await tester.pumpWidget(_wrap(
+      desk: desk,
+      child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      // The operator is typing in Instellingen, so this screen hands the
+      // keyboard back and stops reclaiming it.
+      tab: ShellTab.instellingen,
+    ));
+    await tester.pumpAndSettle();
+
+    final String badge = tester
+            .widget<Text>(find.descendant(
+              of: _indicator,
+              matching: find.byType(Text),
+            ))
+            .data ??
+        '';
+    expect(badge, 'SCANNEN GEPAUZEERD');
+    expect(badge, isNot(contains('SCANNER ')));
+
+    // The half that is actionable stays exactly as it was.
+    expect(
+      _textOf(tester, find.byKey(const ValueKey<String>('late-scanner-hint'))),
+      'Klik op dit scherm om verder te kunnen scannen.',
+    );
   });
 
   testWidgets('the outstanding count is visible and moves with the queue',

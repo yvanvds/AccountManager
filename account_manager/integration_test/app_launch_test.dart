@@ -15959,8 +15959,8 @@ void main() {
     String textOf(String key) =>
         tester.widget<Text>(find.byKey(ValueKey<String>(key))).data ?? '';
 
-    /// What the **scanner actief** badge says — the badge carries the key, the
-    /// text it renders sits inside it.
+    /// What the **klaar om te scannen** badge says — the badge carries the key,
+    /// the text it renders sits inside it.
     String indicatorText() =>
         tester
             .widget<Text>(find.descendant(
@@ -15976,8 +15976,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       indicatorText(),
-      'SCANNER ACTIEF',
+      'KLAAR OM TE SCANNEN',
       reason: 'the hidden input takes the keyboard as soon as the tab opens',
+    );
+    // This machine has no barcode scanner attached, and the app could not see
+    // one if it had — so the badge must not claim anything about hardware
+    // (#413); it only ever reports whether the next scan would land.
+    expect(
+      indicatorText(),
+      isNot(contains('SCANNER ')),
+      reason: 'the badge may not assert a scanner it cannot detect',
     );
 
     // --- One scan, resolved locally. -----------------------------------------
@@ -16043,7 +16051,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(railTab('Te laat'));
     await tester.pumpAndSettle();
-    expect(indicatorText(), 'SCANNER ACTIEF');
+    expect(indicatorText(), 'KLAAR OM TE SCANNEN');
     expect(
       textOf('late-scan-name'),
       'Lea Janssens',
