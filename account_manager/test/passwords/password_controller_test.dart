@@ -16,25 +16,25 @@ import '../reconcile/reconcile_fakes.dart';
 ss.SmartschoolSnapshot _snapshot() => ss.SmartschoolSnapshot(
       fetchedAt: kFixtureDate,
       groups: <core.Group>[
-        core.Group(
-          id: const core.GroupId('leerlingen'),
+        const core.Group(
+          id: core.GroupId('leerlingen'),
           name: 'Leerlingen',
           description: '',
           type: core.GroupType.group,
           official: false,
           origin: core.Origin.smartschool,
         ),
-        core.Group(
-          id: const core.GroupId('3C'),
+        const core.Group(
+          id: core.GroupId('3C'),
           name: '3C',
           description: '',
           type: core.GroupType.classGroup,
           official: true,
           origin: core.Origin.smartschool,
-          parentId: const core.GroupId('leerlingen'),
+          parentId: core.GroupId('leerlingen'),
         ),
-        core.Group(
-          id: const core.GroupId('personeel'),
+        const core.Group(
+          id: core.GroupId('personeel'),
           name: 'Personeel',
           description: '',
           type: core.GroupType.group,

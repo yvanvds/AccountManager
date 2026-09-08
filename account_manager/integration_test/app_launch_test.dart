@@ -9916,9 +9916,9 @@ void main() {
     // student stayed in the leaver bucket until the app was relaunched — with
     // nothing on screen to explain why.
     useTallWindow(tester);
-    final stored = AppSettings(
-      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
-      wisaSchools: const <WisaSchoolProfile>[
+    const stored = AppSettings(
+      wisa: WisaConnection(server: 'wisa.example', port: '9000'),
+      wisaSchools: <WisaSchoolProfile>[
         WisaSchoolProfile(
             schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
         WisaSchoolProfile(schoolId: 2, code: 'S2', name: 'Sint-Pieter'),
@@ -10858,10 +10858,10 @@ void main() {
     // the two bootstraps share one LiveSettings exactly as `main()` wires them,
     // and what has to change is a UPN the operator reads off an Acties tile.
     useTallWindow(tester);
-    final stored = AppSettings(
-      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
-      azure: const AzureConnection(domain: 'oud.example'),
-      wisaSchools: const <WisaSchoolProfile>[
+    const stored = AppSettings(
+      wisa: WisaConnection(server: 'wisa.example', port: '9000'),
+      azure: AzureConnection(domain: 'oud.example'),
+      wisaSchools: <WisaSchoolProfile>[
         WisaSchoolProfile(
             schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
       ],
@@ -10991,10 +10991,10 @@ void main() {
     // over a stack built without the holder, the operator saves in Instellingen
     // and comes back, and the two passes are pressed for real.
     useTallWindow(tester);
-    final stored = AppSettings(
-      wisa: const WisaConnection(server: 'wisa.example', port: '9000'),
-      azure: const AzureConnection(domain: 'oud.example'),
-      wisaSchools: const <WisaSchoolProfile>[
+    const stored = AppSettings(
+      wisa: WisaConnection(server: 'wisa.example', port: '9000'),
+      azure: AzureConnection(domain: 'oud.example'),
+      wisaSchools: <WisaSchoolProfile>[
         WisaSchoolProfile(
             schoolId: 1, code: 'S1', name: 'Sint-Jan', ours: true),
       ],
@@ -16353,7 +16353,8 @@ String _jwt(Map<String, Object?> claims) {
 /// real [SignalRSubscriber] gets past negotiate with no network (#124).
 class _FakeNegotiateTransport implements SignalRTransport {
   @override
-  Future<SignalRResponse> send(SignalRRequest request) async => SignalRResponse(
+  Future<SignalRResponse> send(SignalRRequest request) async =>
+      const SignalRResponse(
         statusCode: 200,
         body: '{"url":"wss://demo.service.signalr.net/client",'
             '"accessToken":"ct"}',

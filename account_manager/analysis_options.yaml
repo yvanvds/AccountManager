@@ -16,7 +16,13 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
-include: package:flutter_lints/flutter.yaml
+# Both rulesets, not one instead of the other (#418): `flutter_lints` for the
+# widget-layer lints, and the workspace file for the strict language modes and
+# shared lints every package under `packages/` is held to. The workspace file
+# comes last so its settings win where the two disagree.
+include:
+  - package:flutter_lints/flutter.yaml
+  - ../analysis_options.yaml
 
 linter:
   # The lint rules applied to this project can be customized in the

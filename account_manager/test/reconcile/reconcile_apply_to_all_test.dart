@@ -165,7 +165,7 @@ void main() {
       // armed from a colleague set to the create.
       final h = newStaffChoiceHarness();
       await h.controller.sync();
-      final key = 'staff|${actions.staffImportAlternative}';
+      const key = 'staff|${actions.staffImportAlternative}';
       expect(h.controller.applyToAllCohortFor(key)!.length, 2);
 
       final second = h.controller.pendingEntries
@@ -189,7 +189,7 @@ void main() {
       // resolution the operator changed their mind about.
       final h = newStaffChoiceHarness();
       await h.controller.sync();
-      final key = 'staff|${actions.staffImportAlternative}';
+      const key = 'staff|${actions.staffImportAlternative}';
       final armed = h.controller.applyToAllCohortFor(key)!;
 
       for (final entry

@@ -58,8 +58,15 @@ Azure AD / Office 365 for a Belgian secondary-school group.
   Flutter project root — and it rewrites the file unless all seven patterns are
   present verbatim. Renaming the paths to `account_manager/...` does not satisfy
   it; the bare patterns come back. Excluding them narrows nothing: those
-  directories hold no analyzed Dart source, and `account_manager/` has its own
-  options file. CI analyzes with `dart analyze`, which never runs the migration.
+  directories hold no analyzed Dart source. CI analyzes with `dart analyze`,
+  which never runs the migration.
+- Every workspace member is held to the root ruleset, `account_manager/`
+  included (#418): the app's own `analysis_options.yaml` includes both
+  `package:flutter_lints/flutter.yaml` and `../analysis_options.yaml`, so it
+  gets the widget lints *and* the strict language modes. Keep both entries, and
+  keep the app file's `analyzer.exclude:` block — the Flutter tool migrates that
+  file too, since `flutter test` and `flutter build windows` run from
+  `account_manager/`.
 
 ## Port order
 
