@@ -115,7 +115,7 @@ Future<void> launchAccountManager({
       tenantId: config.tenantId,
       azureDomain: config.azureDomain,
       schoolPrefix: config.schoolPrefix,
-      authorizer: LoopbackAuthorizer(launchBrowser: _openInBrowser).call,
+      authorizer: const LoopbackAuthorizer(launchBrowser: _openInBrowser).call,
       // Persist the sign-in across restarts (#103): each resource's OAuth
       // credentials are DPAPI-encrypted (user-scoped) on disk, so a returning
       // operator gets a silent acquisition instead of a browser round-trip.

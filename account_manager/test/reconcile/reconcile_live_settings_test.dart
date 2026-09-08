@@ -1173,8 +1173,8 @@ void main() {
       final live = LiveSettings(_settings());
       final harness = ReconcileHarness(liveSettings: live);
 
-      live.publish(AppSettings(
-        wisa: const WisaConnection(server: 'nieuw.example', port: '9000'),
+      live.publish(const AppSettings(
+        wisa: WisaConnection(server: 'nieuw.example', port: '9000'),
       ));
 
       expect(

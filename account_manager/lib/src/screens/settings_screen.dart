@@ -1738,7 +1738,7 @@ class _SettingsForm extends StatelessWidget {
     return _Section(
       title: 'Azure AD',
       children: <Widget>[
-        _Note(
+        const _Note(
           keyValue: 'settings-aad-note',
           text: 'De app-registratie waarmee deze installatie zich aanmeldt. '
               'Deze waarden staan lokaal op deze machine, in hetzelfde bestand '
@@ -1759,7 +1759,7 @@ class _SettingsForm extends StatelessWidget {
         // this is the state an installed build launches in, and the operator
         // needs to know that filling these in is the whole job.
         if (resolved != null && !configured)
-          _Note(
+          const _Note(
             keyValue: 'settings-aad-incomplete',
             text: 'Aanmelden is nog niet mogelijk: vul minstens de client-id '
                 'en de tenant-id in, bewaar, en start de app opnieuw op.',
@@ -1784,7 +1784,7 @@ class _SettingsForm extends StatelessWidget {
           label: 'Schoolprefix (terugval; de instellingen winnen)',
           controller: state._aadSchoolPrefix,
         ),
-        _Note(
+        const _Note(
           keyValue: 'settings-aad-save-hint',
           text: 'Bewaren gebeurt met "Verbinding bewaren" hieronder: beide '
               'delen staan in één bestand.',
@@ -1813,7 +1813,7 @@ class _SettingsForm extends StatelessWidget {
     return _Section(
       title: 'Verbinding',
       children: <Widget>[
-        _Note(
+        const _Note(
           keyValue: 'settings-connection-note',
           text: 'Waar de gedeelde opslag van deze installatie staat. Deze '
               'waarden staan lokaal op deze machine — niet in het gedeelde '
@@ -1914,7 +1914,7 @@ class _SettingsForm extends StatelessWidget {
           ),
         ],
         if (state._connectionNeedsRelaunch)
-          _Note(
+          const _Note(
             keyValue: 'settings-connection-relaunch',
             text: 'Herstart de app om deze gegevens te gebruiken. De huidige '
                 'sessie praat nog met de opslag waarmee ze opgestart is, en is '
@@ -1945,7 +1945,7 @@ class _SettingsForm extends StatelessWidget {
     return _Section(
       title: 'WiFi op de wachtwoordbladen',
       children: <Widget>[
-        _Note(
+        const _Note(
           keyValue: 'settings-wifi-note',
           text:
               'Deze netwerken worden op de afgedrukte wachtwoordbladen gezet. '

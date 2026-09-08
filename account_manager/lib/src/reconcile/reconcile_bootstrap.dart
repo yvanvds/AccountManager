@@ -430,7 +430,7 @@ Future<ReconcileServices> bootstrapReconcile({
   }
   final site = smartschoolSiteFrom(settings.smartschool.uri);
   if (site.isEmpty) {
-    throw ReconcileConfigException(
+    throw const ReconcileConfigException(
       'The Smartschool connection profile has no site/URI configured.',
     );
   }

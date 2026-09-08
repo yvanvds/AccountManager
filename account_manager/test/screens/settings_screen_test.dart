@@ -1018,10 +1018,10 @@ void main() {
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness(
-      initial: AppSettings(
+      initial: const AppSettings(
         wisaRules: <WisaImportRule>[
-          const DontImportClass('OKAN'),
-          const DontImportUserFromWisa('VIRT'),
+          DontImportClass('OKAN'),
+          DontImportUserFromWisa('VIRT'),
         ],
       ),
     );
@@ -1192,9 +1192,9 @@ void main() {
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness(
-      initial: AppSettings(
+      initial: const AppSettings(
         smartschoolRules: <SmartschoolImportRule>[
-          const DiscardSmartschoolGroup('Oude naam'),
+          DiscardSmartschoolGroup('Oude naam'),
         ],
       ),
     );
@@ -1231,10 +1231,10 @@ void main() {
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness(
-      initial: AppSettings(
+      initial: const AppSettings(
         smartschoolRules: <SmartschoolImportRule>[
-          const DiscardSmartschoolGroup('Organisatie'),
-          const NoSmartschoolSubgroups('Klassen'),
+          DiscardSmartschoolGroup('Organisatie'),
+          NoSmartschoolSubgroups('Klassen'),
         ],
       ),
     );
@@ -1413,9 +1413,9 @@ void main() {
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness(
-      initial: AppSettings(
+      initial: const AppSettings(
         wisaRules: <WisaImportRule>[
-          const ReplaceInstitute(original: 'OUD', replacement: 'NIEUW'),
+          ReplaceInstitute(original: 'OUD', replacement: 'NIEUW'),
         ],
       ),
     );
@@ -1450,10 +1450,10 @@ void main() {
       (WidgetTester tester) async {
     _useTallWindow(tester);
     final harness = SettingsHarness(
-      initial: AppSettings(
+      initial: const AppSettings(
         wisaRules: <WisaImportRule>[
-          const DontImportClass('OKAN'),
-          const DontImportUserFromWisa('ABC'),
+          DontImportClass('OKAN'),
+          DontImportUserFromWisa('ABC'),
         ],
       ),
     );
@@ -1704,8 +1704,8 @@ void main() {
       // missing — the true statement, and the one that tells the reader to ask.
       _useTallWindow(tester);
       final harness = SettingsHarness(
-        initial: AppSettings(
-          wisaRules: <WisaImportRule>[const DontImportClass('OKAN')],
+        initial: const AppSettings(
+          wisaRules: <WisaImportRule>[DontImportClass('OKAN')],
         ),
       );
       await tester

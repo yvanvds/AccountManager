@@ -16,8 +16,8 @@ import '../reconcile/reconcile_fakes.dart';
 ss.SmartschoolSnapshot _snap() => ss.SmartschoolSnapshot(
       fetchedAt: kFixtureDate,
       groups: <core.Group>[
-        core.Group(
-          id: const core.GroupId('leerlingen'),
+        const core.Group(
+          id: core.GroupId('leerlingen'),
           name: 'Leerlingen',
           description: '',
           type: core.GroupType.group,
@@ -26,8 +26,8 @@ ss.SmartschoolSnapshot _snap() => ss.SmartschoolSnapshot(
         ),
         ssGroup('3C', code: '3C', type: core.GroupType.classGroup)
             .copyUnderLeerlingen(),
-        core.Group(
-          id: const core.GroupId('personeel'),
+        const core.Group(
+          id: core.GroupId('personeel'),
           name: 'Personeel',
           description: '',
           type: core.GroupType.group,
