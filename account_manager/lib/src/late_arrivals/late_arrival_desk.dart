@@ -407,8 +407,8 @@ class LateArrivalDesk extends ChangeNotifier {
           'Er is op deze computer geen Smartschool-aanmelding ingesteld, dus '
           'er wordt niets naar Smartschool geschreven. Registreren en '
           'afdrukken werken gewoon; de registraties blijven in de wachtrij '
-          'staan. Stel de aanmelding in bij Instellingen → Algemeen → Te laat '
-          '— Smartschool-aanmelding.';
+          'staan. Stel de aanmelding in bij Instellingen → Te laat, onder '
+          '"Te laat — Smartschool-aanmelding".';
       _detachDrain();
       return;
     }

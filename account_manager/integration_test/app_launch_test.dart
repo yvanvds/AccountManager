@@ -155,11 +155,17 @@ void main() {
       );
 
   /// Switches the Settings view to the tab with [tabKey] (#140: config is split
-  /// across Algemeen / Wisa / Smartschool / Azure tabs).
+  /// across Algemeen / Wisa / Smartschool / Azure / Te laat tabs).
   Future<void> openSettingsTab(WidgetTester tester, String tabKey) async {
     await tester.tap(find.byKey(ValueKey(tabKey)));
     await tester.pumpAndSettle();
   }
+
+  /// Opens Settings' **Te laat** tab, which since #411 is where the reason list,
+  /// the ticket printer and the operator's Smartschool login live (they used to
+  /// sit at the bottom of Algemeen, the tab the screen opens on).
+  Future<void> openLateArrivalSettingsTab(WidgetTester tester) =>
+      openSettingsTab(tester, 'settings-tab-telaat');
 
   /// Authors one Smartschool import rule the way the operator does (#202): the
   /// **Toevoegen** menu, the rule type keyed [kind], then the group-name prompt.
@@ -357,7 +363,7 @@ void main() {
           .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
           .controller!
           .index,
-      4,
+      5,
     );
     expect(
       find.byKey(const ValueKey('settings-aad-client-id')),
@@ -14345,7 +14351,7 @@ void main() {
         .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
         .controller!
         .index;
-    expect(selected, 4);
+    expect(selected, 5);
 
     // With no file yet, the fields show what the build shipped.
     final Finder cosmos =
@@ -14482,7 +14488,7 @@ void main() {
           .widget<TabBar>(find.byKey(const ValueKey('settings-tabs')))
           .controller!
           .index,
-      4,
+      5,
     );
     expect(
       tester
@@ -15045,13 +15051,75 @@ void main() {
   });
 
   testWidgets(
+      'the late-arrival settings have a tab of their own, between Azure and '
+      'Verbinding, and Algemeen is back to app-wide options (#411)',
+      (WidgetTester tester) async {
+    // A placement claim is only true in the laid-out app: which tabs the real
+    // scrolling TabBar renders and in what left-to-right order, what the real
+    // Algemeen ListView still contains, and whether the three sections really
+    // are one page apart rather than one scroll apart. A widget test renders the
+    // sections; it cannot say where in the app an operator finds them.
+    useTallWindow(tester);
+
+    final InMemorySettingsStore shared = InMemorySettingsStore();
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: () async => SettingsServices(
+        store: shared,
+        secrets: InMemorySecretProvider(const {}),
+      ),
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+
+    // The tab the screen opens on is app-wide options again: the school prefix
+    // is there, and none of the three desk sections is.
+    expect(
+        find.byKey(const ValueKey('settings-school-prefix')), findsOneWidget);
+    expect(find.text('Te laat — redenen'), findsNothing);
+    expect(find.text('Te laat — ticketprinter'), findsNothing);
+    expect(find.text('Te laat — Smartschool-aanmelding'), findsNothing);
+
+    // Where it sits in the real, laid-out tab strip: after the three connectors,
+    // before the one tab that does not need the settings document (#370).
+    double tabX(String key) => tester.getTopLeft(find.byKey(ValueKey(key))).dx;
+    expect(tabX('settings-tab-azure'), lessThan(tabX('settings-tab-telaat')));
+    expect(
+        tabX('settings-tab-telaat'), lessThan(tabX('settings-tab-verbinding')));
+
+    // Opening it puts all three there, in the order a desk is set up in:
+    // the shared buttons, this machine's printer, this person's login.
+    await openLateArrivalSettingsTab(tester);
+    double sectionY(String title) => tester.getTopLeft(find.text(title)).dy;
+    expect(sectionY('Te laat — redenen'),
+        lessThan(sectionY('Te laat — ticketprinter')));
+    expect(sectionY('Te laat — ticketprinter'),
+        lessThan(sectionY('Te laat — Smartschool-aanmelding')));
+    // …and the app-wide options are not dragged along with them.
+    expect(find.byKey(const ValueKey('settings-school-prefix')), findsNothing);
+
+    // Verbinding is still reachable behind it — the tab that has to work when
+    // nothing else does did not get pushed off the end.
+    await openSettingsTab(tester, 'settings-tab-verbinding');
+    expect(
+      find.byKey(const ValueKey('settings-connection-cosmos-endpoint')),
+      findsOneWidget,
+    );
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'Instellingen maintains the shared late-arrival reason list, and the '
       'edit reaches the other desk and a running session without a restart '
       '(#405)', (WidgetTester tester) async {
     // Every acceptance criterion of #405 in one real run, and each half needs
-    // this level. The editor is a section inside the real scrolling Algemeen
-    // tab, in the real Plink faces, with a real dialog pushed onto the real
-    // navigator — a widget test renders the section, not the page it has to
+    // this level. The editor is a section inside the real scrolling Te laat
+    // tab (#411), in the real Plink faces, with a real dialog pushed onto the
+    // real navigator — a widget test renders the section, not the page it has to
     // share a column and a scroll context with. And "shared, not per-machine"
     // is a claim about a *second* app instance reading the same document, which
     // only a full launch can make.
@@ -15087,6 +15155,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(railTab('Instellingen'));
       await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
     }
 
     /// The reason labels the editor lists, top to bottom — the order the desk's
@@ -15108,7 +15177,9 @@ void main() {
 
     // --- Desk one, on an install nobody has configured. ----------------------
     await openDesk(holder: live);
-    // Algemeen is the tab the app opens on, and the section is on it.
+    // The desk's configuration has a tab of its own now (#411), and `openDesk`
+    // went to it: the section is there, and not on the Algemeen tab the screen
+    // opens on.
     expect(find.text('Te laat — redenen'), findsOneWidget);
     await scrollToReasons();
 
@@ -15258,6 +15329,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(railTab('Instellingen'));
       await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
       return prefs;
     }
 
@@ -15292,8 +15364,8 @@ void main() {
 
     // --- Desk one, on an install nobody has configured. ----------------------
     await openDesk('balie-1');
-    // Algemeen is the tab the app opens on, and the printer sits with the rest
-    // of the "Te laat" configuration rather than off on the Verbinding tab.
+    // The printer sits with the rest of the "Te laat" configuration on its own
+    // tab (#411) rather than off on the Verbinding tab.
     expect(find.text('Te laat — ticketprinter'), findsOneWidget);
     await scrollToPrinter();
     expect(hostText(), '', reason: 'nothing configured yet');
@@ -15518,6 +15590,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(railTab('Instellingen'));
       await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
       return built;
     }
 

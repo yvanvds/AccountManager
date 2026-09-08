@@ -307,7 +307,7 @@ void main() {
       // in front, without the operator having to find it.
       expect(find.byKey(const ValueKey('settings-tabs')), findsOneWidget);
       expect(broken.loads, 1);
-      expect(_selectedTab(tester), 4, reason: 'Verbinding is the last tab');
+      expect(_selectedTab(tester), 5, reason: 'Verbinding is the last tab');
       expect(
         find.byKey(const ValueKey('settings-connection-cosmos-endpoint')),
         findsOneWidget,
@@ -715,7 +715,7 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.byKey(const ValueKey('settings-tabs')), findsOneWidget);
-        expect(_selectedTab(tester), 4, reason: 'Verbinding is the last tab');
+        expect(_selectedTab(tester), 5, reason: 'Verbinding is the last tab');
         expect(
           _note(tester, 'settings-connection-warning'),
           contains('kon niet gelezen worden'),
