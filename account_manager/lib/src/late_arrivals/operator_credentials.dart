@@ -281,6 +281,14 @@ OperatorCredentialStore smartschoolOperatorCredentialStoreForThisMachine({
 /// name, and handing that to the Presence login would sign in against a host
 /// that does not exist.
 ///
+/// **And in practice the document holds exactly that short name** (#412): the
+/// Smartschool settings tab asks for the school's subdomain because that is what
+/// the SOAP connector needs, so what is stored is `arcadia`, not
+/// `arcadia.smartschool.be`. A dot-less label is therefore completed here rather
+/// than handed to the Presence login as-is — signing in against `arcadia` dies
+/// with `Failed host lookup`. A value that already carries a dot is left alone,
+/// so a configuration that spells the address out in full keeps working.
+///
 /// Returns `''` for an unconfigured document, which the desk reports as a
 /// missing site rather than trying to sign in against nothing.
 String smartschoolHostFrom(String uri) {
@@ -289,8 +297,15 @@ String smartschoolHostFrom(String uri) {
   final Uri? parsed =
       Uri.tryParse(trimmed.contains('://') ? trimmed : 'https://$trimmed');
   final String host = parsed?.host ?? '';
-  return host.isNotEmpty ? host : trimmed;
+  final String label = host.isNotEmpty ? host : trimmed;
+  return label.contains('.') ? label : '$label$smartschoolHostSuffix';
 }
+
+/// The domain every Belgian Smartschool platform lives under, and the suffix
+/// [smartschoolHostFrom] completes a bare school subdomain with — the same
+/// suffix `smartschoolSiteFrom` (`reconcile_bootstrap.dart`) strips back off for
+/// the SOAP connector.
+const String smartschoolHostSuffix = '.smartschool.be';
 
 /// Signs in with [login] against [host] and returns once the session stands.
 ///

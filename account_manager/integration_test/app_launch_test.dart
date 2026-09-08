@@ -15767,6 +15767,119 @@ void main() {
   });
 
   testWidgets(
+      'a settings document holding only the school\'s subdomain still signs in '
+      '— the host is completed before Smartschool ever sees it (#412)',
+      (WidgetTester tester) async {
+    // The Smartschool tab asks for the school's *short name*, because that is
+    // what the SOAP connector wants — so `sanctamaria-aarschot` is what the
+    // shared document really holds. The reception desk read that same field for
+    // the Presence login, and **Aanmelding testen** died with
+    // `Failed host lookup: 'sanctamaria-aarschot'`, taking every drained
+    // presence with it.
+    //
+    // This needs the whole app: the value travels from the Smartschool tab's
+    // saved document, through the desk, into both the sign-in the operator
+    // presses on the Te laat tab *and* the writer the drain builds for itself.
+    // A unit test on the completion cannot show that the two places that sign in
+    // are the two places that got it.
+    //
+    // The probe and the presence writer are fakes, permanently: a real
+    // Smartschool sign-in is a live interaction with the school's tenant and the
+    // repo's live-testing policy keeps those out of CI entirely. The probe here
+    // fails the way the real one did, on a host that cannot resolve.
+    useTallWindow(tester);
+
+    final List<String> probedHosts = <String>[];
+    final List<String> writerHosts = <String>[];
+    final _RecordingPresenceWriter written = _RecordingPresenceWriter();
+
+    const AppSettings base = AppSettings();
+    final InMemorySettingsStore shared = InMemorySettingsStore(
+      base.copyWith(
+        smartschool: base.smartschool.copyWith(uri: 'sanctamaria-aarschot'),
+      ),
+    );
+    final LiveSettings live = LiveSettings();
+
+    final LateArrivalDesk desk = LateArrivalDesk(
+      journalStore: InMemoryJournalStore(),
+      credentials: InMemoryOperatorCredentialStore(
+        const SmartschoolOperatorLogin(
+          username: 'ann.peeters',
+          password: 'zeergeheim',
+        ),
+      ),
+      deskId: 'balie-412',
+      settings: live,
+      writerFor: (_, String host) {
+        writerHosts.add(host);
+        return written;
+      },
+      signInProbe: (SmartschoolOperatorLogin login, String host) async {
+        probedHosts.add(host);
+        if (!host.endsWith('.smartschool.be')) {
+          throw StateError("Failed host lookup: '$host'");
+        }
+      },
+    );
+
+    await tester.pumpWidget(AccountManagerApp(
+      session: SignInSession(_FakeBroker(silent: (_) => _token('AT'))),
+      graph: graph,
+      settingsBootstrap: () async => SettingsServices(
+        store: shared,
+        secrets: InMemorySecretProvider(const {}),
+        liveSettings: live,
+      ),
+      connection: ConnectionServices(store: InMemoryConnectionStore()),
+      desk: desk,
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(railTab('Instellingen'));
+    await tester.pumpAndSettle();
+    await openLateArrivalSettingsTab(tester);
+
+    // The drain attached itself once the document arrived — against the host,
+    // not against the short name it is stored as.
+    expect(desk.draining, isTrue);
+    expect(desk.smartschoolHost, 'sanctamaria-aarschot.smartschool.be');
+    expect(writerHosts, <String>['sanctamaria-aarschot.smartschool.be']);
+
+    // And the button the operator presses before the first student is late.
+    final Finder testButton =
+        find.byKey(const ValueKey('settings-smartschool-operator-test'));
+    await tester.ensureVisible(testButton);
+    await tester.pumpAndSettle();
+    await tester.tap(testButton);
+    await tester.pumpAndSettle();
+
+    expect(probedHosts, <String>['sanctamaria-aarschot.smartschool.be']);
+    expect(
+      tester
+          .widget<Text>(find
+              .byKey(const ValueKey('settings-smartschool-operator-status')))
+          .data,
+      contains('is gelukt'),
+    );
+
+    // A registration made on this desk goes out over that same completed host.
+    await desk.journal!.register(
+      scan: const ScanRegisterable(_lateStudent),
+      scannedAt: DateTime(2026, 9, 7, 8, 42),
+      reasonLabel: 'Bus te laat',
+      reasonIsValid: true,
+    );
+    await desk.drain!.settle();
+    expect(written.userIds, <int>[4242]);
+
+    // Unmount before letting go of the desk, so the scope is not listening to a
+    // disposed notifier.
+    await tester.pumpWidget(const SizedBox.shrink());
+    desk.dispose();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
       'the Te laat tab scans a card, refuses a second scan while the first '
       'student is unconfirmed, and registers on a reason button — journal on '
       'disk before ticket on paper (#407)', (WidgetTester tester) async {

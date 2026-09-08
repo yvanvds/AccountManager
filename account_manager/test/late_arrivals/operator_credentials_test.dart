@@ -218,5 +218,42 @@ void main() {
         isNot('arcadia'),
       );
     });
+
+    test('completes the bare subdomain the settings document actually holds',
+        () {
+      // #412: the Smartschool tab asks for the school's *short name* because
+      // that is what the SOAP connector wants, so this is the value really
+      // stored. Handed to the Presence login unchanged it died with
+      // `Failed host lookup: 'sanctamaria-aarschot'`.
+      expect(
+        smartschoolHostFrom('sanctamaria-aarschot'),
+        'sanctamaria-aarschot.smartschool.be',
+      );
+      expect(smartschoolHostFrom('  arcadia  '), 'arcadia.smartschool.be');
+    });
+
+    test('an address that is already complete is left alone', () {
+      // The other half of #412: a configuration that spells the host out keeps
+      // working, whatever shape it was typed in.
+      expect(
+        smartschoolHostFrom('sanctamaria-aarschot.smartschool.be'),
+        'sanctamaria-aarschot.smartschool.be',
+      );
+      expect(
+        smartschoolHostFrom('https://sanctamaria-aarschot.smartschool.be/'),
+        'sanctamaria-aarschot.smartschool.be',
+      );
+      expect(
+        smartschoolHostFrom('sanctamaria-aarschot.smartschool.be/index.php'),
+        'sanctamaria-aarschot.smartschool.be',
+      );
+    });
+
+    test('an unconfigured document is never completed into a real host', () {
+      // The completion must not turn "nothing configured" into
+      // `.smartschool.be`, which the desk would then try to sign in against.
+      expect(smartschoolHostFrom(''), '');
+      expect(smartschoolHostFrom('   '), '');
+    });
   });
 }

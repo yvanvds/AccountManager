@@ -251,6 +251,31 @@ void main() {
       desk.dispose();
     });
 
+    test(
+        'completes the bare subdomain the settings document holds, so the '
+        'drain\'s own sign-in resolves (#412)', () async {
+      // What the Smartschool tab really stores is the school's short name — it
+      // has to, because the SOAP connector wants that. The drain re-authenticates
+      // through this same host value, so handing it "sanctamaria-aarschot"
+      // killed every presence write with `Failed host lookup`.
+      String? seenHost;
+      final writer = _RecordingWriter();
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: LiveSettings(_withSite('sanctamaria-aarschot')),
+        writerFor: (_, String h) {
+          seenHost = h;
+          return writer;
+        },
+      );
+      await desk.start();
+
+      expect(seenHost, 'sanctamaria-aarschot.smartschool.be');
+      expect(desk.smartschoolHost, 'sanctamaria-aarschot.smartschool.be');
+      expect(desk.draining, isTrue);
+      desk.dispose();
+    });
+
     test('a registration reaches Smartschool', () async {
       final writer = _RecordingWriter();
       final desk = deskWith(

@@ -2492,6 +2492,41 @@ void main() {
     });
 
     testWidgets(
+        'the bare subdomain on the Smartschool tab is completed before the '
+        'sign-in (#412)', (WidgetTester tester) async {
+      // What the Smartschool tab really holds: the school's short name, which
+      // is what the SOAP connector wants. **Aanmelding testen** used to hand
+      // that straight to the Presence login, which died with
+      // `Failed host lookup: 'sanctamaria-aarschot'`.
+      _useTallWindow(tester);
+      String? against;
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        settings: withSite('sanctamaria-aarschot'),
+        probe: (_, String host) async => against = host,
+      );
+      final harness =
+          SettingsHarness(initial: withSite('sanctamaria-aarschot'));
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      await tester.ensureVisible(testButton());
+      await tester.tap(testButton());
+      await tester.pumpAndSettle();
+
+      expect(against, 'sanctamaria-aarschot.smartschool.be');
+      expect(tester.widget<Text>(status()).data, contains('is gelukt'));
+    });
+
+    testWidgets(
         'a refused sign-in keeps Smartschool\'s own wording, in the '
         'error colour', (WidgetTester tester) async {
       _useTallWindow(tester);
