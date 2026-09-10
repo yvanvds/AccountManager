@@ -1,15 +1,26 @@
-/// Getting the late-arrival ticket out of the app and onto paper (#406).
+/// Getting the late-arrival ticket out of the app and onto paper (#406, #424).
 ///
 /// The composition is pure and lives in `packages/late_arrivals/`; this is the
-/// half that has to touch the world — one TCP connection to the printer's raw
-/// port, and the status an operator reads when it does not answer.
+/// half that has to touch the world — one IPP request to the printer, and the
+/// status an operator reads when it does not answer.
 ///
-/// **Raw ESC/POS over port 9100, deliberately not a Windows printer driver.**
-/// A driver would mean an installed queue per reception desk, a spooler that
-/// can be paused, and a "printer offline" dialog that steals focus from the
-/// scanner. A socket has none of that: the app opens it, writes the bytes,
-/// closes it, and is finished with the ticket. That is what lets printing be
-/// fire-and-forget.
+/// **One IPP `Print-Job` over HTTPS, deliberately not a Windows printer
+/// driver.** A driver would mean an installed queue per reception desk, a
+/// spooler that can be paused, and a "printer offline" dialog that steals focus
+/// from the scanner. An IPP request has none of that: the app POSTs the bytes,
+/// reads the status, and is finished with the ticket. That is what lets
+/// printing be fire-and-forget.
+///
+/// **Why not raw port 9100 any more (#424).** That is what this started as, on
+/// the reasoning that raw printing needs no protocol at all. The school's
+/// TM-m30III proved the reasoning wrong: it accepts a connection on 9100 and
+/// then silently discards everything written to it — the same ESC/POS bytes
+/// that print perfectly well when wrapped in an IPP `Print-Job`. IPP is the
+/// better target anyway. It needs nothing configured on a device that refuses
+/// to save its own protocol settings, it is encrypted (a ticket carries a
+/// student's name and class, and 9100 put both in clear across the school
+/// network), and it still needs no driver. **The ticket bytes are unchanged**:
+/// IPP carries them opaquely as `application/octet-stream`.
 ///
 /// **The registration never depends on the ticket.** By the time anything here
 /// runs, the record is already flushed to the journal (#402) and mirrored
@@ -21,9 +32,12 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:late_arrivals/late_arrivals.dart';
+
+import 'ipp.dart';
 
 /// How long to wait for the printer to accept a connection before giving up.
 ///
@@ -95,16 +109,55 @@ abstract interface class TicketTransport {
   });
 }
 
-/// The production [TicketTransport]: one short-lived TCP connection per ticket.
+/// The printer answered, and said no.
 ///
-/// A connection per ticket rather than a kept-open socket. A receipt printer at
-/// a reception desk is idle for hours at a time, and a socket held across that
-/// is a socket a switch, a sleep or a power cycle has silently dropped — the
-/// failure would then land on the next student rather than on the ticket that
-/// caused it. Connecting each time costs milliseconds and is honest about
-/// whether the printer is there *now*.
-class TcpTicketTransport implements TicketTransport {
-  const TcpTicketTransport();
+/// Separate from a network failure on purpose: "the printer is unreachable" and
+/// "the printer refused the job" are different things to hunt down, and the log
+/// is the only place the difference survives — the operator's sentence stays
+/// the same either way, because the action is the same (look at the printer).
+class IppPrintRefused implements Exception {
+  const IppPrintRefused(this.status, {this.httpStatus});
+
+  /// The IPP status code from bytes 2–3 of the response, or `null` when the
+  /// body was not an IPP response at all.
+  final int? status;
+
+  /// The HTTP status the POST came back with, when that is the part that went
+  /// wrong. A `426 Upgrade Required` here means somebody pointed the transport
+  /// at plain HTTP.
+  final int? httpStatus;
+
+  @override
+  String toString() {
+    final String ipp = status == null
+        ? 'no IPP status in the response'
+        : 'IPP status 0x${status!.toRadixString(16).padLeft(4, '0')}';
+    return httpStatus == null
+        ? 'IppPrintRefused($ipp)'
+        : 'IppPrintRefused(HTTP $httpStatus, $ipp)';
+  }
+}
+
+/// The production [TicketTransport]: one IPP `Print-Job` over HTTPS per ticket
+/// (#424).
+///
+/// A request per ticket rather than a kept-open connection. A receipt printer
+/// at a reception desk is idle for hours at a time, and a connection held
+/// across that is one a switch, a sleep or a power cycle has silently dropped —
+/// the failure would then land on the next student rather than on the ticket
+/// that caused it. Reconnecting each time costs milliseconds and is honest
+/// about whether the printer is there *now*.
+///
+/// **The self-signed certificate is accepted, and only this printer's.** The
+/// TM-m30III serves a certificate it signed itself; there is no CA to trust and
+/// no way to get one onto a printer in a school corridor. So the client built
+/// here — a fresh [HttpClient] per ticket, never a process-wide
+/// `HttpOverrides` or `badCertificateCallback` on a shared client — accepts a
+/// bad certificate *only* when it came from the host and port this ticket was
+/// addressed to. Every other TLS connection the app makes (Graph, Smartschool,
+/// WISA, Cosmos) goes through its own client and is unaffected.
+class IppTicketTransport implements TicketTransport {
+  const IppTicketTransport();
 
   @override
   Future<void> send({
@@ -113,19 +166,61 @@ class TcpTicketTransport implements TicketTransport {
     required List<int> bytes,
     required Duration timeout,
   }) async {
-    final Socket socket = await Socket.connect(host, port, timeout: timeout);
+    final HttpClient client = HttpClient()
+      ..connectionTimeout = timeout
+      // Scoped to this ticket's printer. `h`/`p` are the host and port the
+      // connection was actually made to, so this cannot be widened by a
+      // redirect or a stray connection on the same client.
+      ..badCertificateCallback =
+          (X509Certificate cert, String h, int p) => h == host && p == port;
     try {
-      socket.add(bytes);
-      await socket.flush().timeout(timeout);
+      final Uri uri = Uri.https('$host:$port', ippPrintPath);
+      final Uint8List body = buildIppPrintJobRequest(
+        printerUri: ippsPrinterUri(host: host, port: port, path: ippPrintPath),
+        requestingUserName: ippRequestingUserName,
+        document: bytes,
+      );
+      final HttpClientRequest request =
+          await client.postUrl(uri).timeout(timeout);
+      request.headers.contentType = ContentType('application', 'ipp');
+      request.contentLength = body.length;
+      request.add(body);
+      final HttpClientResponse response =
+          await request.close().timeout(timeout);
+      final List<int> answer = await _collect(response).timeout(timeout);
+      if (response.statusCode != HttpStatus.ok) {
+        throw IppPrintRefused(
+          ippStatusOf(answer),
+          httpStatus: response.statusCode,
+        );
+      }
+      final int? status = ippStatusOf(answer);
+      // An HTTP 200 is not success: this printer answers 200 to jobs it then
+      // refuses. The two bytes at offset 2–3 are the only real answer.
+      if (!isIppSuccess(status)) throw IppPrintRefused(status);
     } finally {
-      // `destroy`, not `close`: closing waits for the *printer* to hang up, and
-      // an ESC/POS printer has no reason to. The bytes are flushed by here.
-      socket.destroy();
+      client.close(force: true);
     }
+  }
+
+  static Future<List<int>> _collect(HttpClientResponse response) async {
+    final BytesBuilder buffer = BytesBuilder(copy: false);
+    await for (final List<int> chunk in response) {
+      buffer.add(chunk);
+    }
+    return buffer.takeBytes();
   }
 }
 
-/// Prints late-arrival tickets on an ESC/POS printer over raw TCP (#406).
+/// What the printer is told submitted the job.
+///
+/// A desk, not a person. The app signs in as the school's service identity and
+/// the ticket belongs to whoever is standing at the counter, so a user name
+/// here would be a fiction; this at least says which application's queue a
+/// stuck job came from if anybody ever looks at the printer's job list.
+const String ippRequestingUserName = 'arcadia-account-manager';
+
+/// Prints late-arrival tickets on an ESC/POS printer over IPP (#406, #424).
 ///
 /// Fire-and-forget by construction: [printRecord] and [printTicket] return
 /// `void`, hand the bytes to a queue and are done. The scanner is free for the
@@ -139,9 +234,9 @@ class TcpTicketTransport implements TicketTransport {
 class LateArrivalPrinter {
   LateArrivalPrinter({
     required String host,
-    this.transport = const TcpTicketTransport(),
+    this.transport = const IppTicketTransport(),
     this.logo,
-    this.port = escPosRawPort,
+    this.port = ippPrintPort,
     this.timeout = lateArrivalPrinterTimeout,
   }) : host = host.trim() {
     _status = ValueNotifier<LateArrivalPrintStatus>(
@@ -160,8 +255,8 @@ class LateArrivalPrinter {
   /// means this machine does not print.
   final String host;
 
-  /// Always 9100 in practice — it is what "raw" means — but injectable so a
-  /// test can bind an ephemeral loopback port.
+  /// Always [ippPrintPort] in practice — the operator is never asked for it —
+  /// but injectable so a test can bind an ephemeral loopback port.
   final int port;
 
   final TicketTransport transport;

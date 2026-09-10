@@ -38,7 +38,7 @@ import 'package:late_arrivals/late_arrivals.dart'
         ScannedStudent,
         composeMotivation,
         defaultLateArrivalReasons,
-        escPosRawPort;
+        ippPrintPort;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -310,8 +310,9 @@ void main() {
       // document — the exact inverse of what the reason list one section up does,
       // and the two sections sit a scroll apart on the same tab, so only a real
       // page can show that they behave differently. And the failure path drives
-      // the real `TcpTicketTransport` against a real (absent) host: a widget test
-      // runs in fake async, where a socket's callbacks never arrive at all.
+      // the real `IppTicketTransport` (#424) against a real (absent) host: a
+      // widget test runs in fake async, where a socket's callbacks never arrive
+      // at all.
       //
       // No hardware is involved. The address points at the reserved `.invalid`
       // TLD (RFC 2606), which is guaranteed never to resolve — a printer that is
@@ -399,7 +400,12 @@ void main() {
             .data,
         allOf(
           contains('alleen voor deze computer'),
-          contains('$escPosRawPort'),
+          // Since #424 the app prints over IPP on 631, and the note has to say
+          // so: a receptionist reading "poort 9100" would go looking for a raw
+          // print service the printer does not actually run.
+          contains('IPP'),
+          contains('$ippPrintPort'),
+          isNot(contains('9100')),
           contains('geen Windows-printer'),
         ),
       );
@@ -452,7 +458,7 @@ void main() {
 
       final Text failure = tester.widget<Text>(status);
       expect(
-          failure.data, contains('bonprinter-balie-1.invalid:$escPosRawPort'));
+          failure.data, contains('bonprinter-balie-1.invalid:$ippPrintPort'));
       expect(failure.data, contains('antwoordt niet'));
       // The half the operator has to believe before carrying on: a dead printer
       // costs a piece of paper, never a registration.

@@ -2098,7 +2098,13 @@ void main() {
         tester
             .widget<Text>(find.byKey(const ValueKey('settings-printer-note')))
             .data,
-        allOf(contains('alleen voor deze computer'), contains('9100')),
+        allOf(
+          contains('alleen voor deze computer'),
+          // The transport, and the port it implies (#424) — never 9100 again.
+          contains('IPP'),
+          contains('$ippPrintPort'),
+          isNot(contains('9100')),
+        ),
       );
     });
 
@@ -2211,7 +2217,7 @@ void main() {
       final Text status = tester.widget<Text>(
         find.byKey(const ValueKey('settings-printer-status')),
       );
-      expect(status.data, contains('10.0.0.31:9100'));
+      expect(status.data, contains('10.0.0.31:$ippPrintPort'));
       expect(status.data, contains('antwoordt niet'));
       // …and it says so in the error colour, because this is the one line on
       // the tab the operator has to act on.
@@ -2251,7 +2257,7 @@ void main() {
       expect(prefs.lateArrivalPrinterHost, isNull,
           reason: 'a test print is not a save');
       expect(transport.hosts, <String>['10.0.0.31']);
-      expect(transport.ports, <int>[escPosRawPort]);
+      expect(transport.ports, <int>[ippPrintPort]);
       // A real ticket, logo and cut and all — the same bytes a late student
       // would get.
       final List<int> bytes = transport.sent.single;
@@ -2261,7 +2267,7 @@ void main() {
         tester
             .widget<Text>(find.byKey(const ValueKey('settings-printer-status')))
             .data,
-        contains('10.0.0.31:$escPosRawPort'),
+        contains('10.0.0.31:$ippPrintPort'),
       );
     });
   });

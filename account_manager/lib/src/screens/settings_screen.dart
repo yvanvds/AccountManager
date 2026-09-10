@@ -102,8 +102,8 @@ class SettingsScreen extends StatefulWidget {
 
   /// How **Testticket afdrukken** reaches the printer (#406).
   ///
-  /// `null` is the real [TcpTicketTransport] — one socket to port 9100. A
-  /// widget test binds a fake instead, because a `testWidgets` body runs in
+  /// `null` is the real [IppTicketTransport] — one IPP `Print-Job` over HTTPS.
+  /// A widget test binds a fake instead, because a `testWidgets` body runs in
   /// fake async and a real socket's callbacks would never arrive there. The
   /// full-app run drives the real one.
   final TicketTransport? ticketTransport;
@@ -798,13 +798,13 @@ class _SettingsScreenState extends State<SettingsScreen>
   /// one, short of making a student be late. It deliberately uses the address
   /// **as typed** rather than the saved one, so the operator can try a value
   /// before committing it, and it goes through the same composition, the same
-  /// socket and the same error reporting as a real ticket — a test print down a
-  /// different path would prove nothing about the real one.
+  /// transport and the same error reporting as a real ticket — a test print
+  /// down a different path would prove nothing about the real one.
   Future<void> _testPrintTicket() async {
     final LateArrivalPrinter printer = LateArrivalPrinter(
       host: _printerHost.text,
       logo: defaultTicketLogo,
-      transport: widget.ticketTransport ?? const TcpTicketTransport(),
+      transport: widget.ticketTransport ?? const IppTicketTransport(),
     );
     setState(() {
       _printerTesting = true;
@@ -2976,8 +2976,9 @@ class _ReasonDialogState extends State<_ReasonDialog> {
 /// The ticket printer this desk prints late-arrival tickets on (#406).
 ///
 /// One address, a test button, and a sentence saying what the address is for.
-/// The port is not offered: raw ESC/POS printing *is* port 9100, and a field
-/// for it would only be a way to get it wrong.
+/// The port is not offered: the app prints over IPP, which is port
+/// [ippPrintPort] on every printer that speaks it, and a field for it would
+/// only be a way to get it wrong.
 ///
 /// **Machine-local, and it says so.** The reason list one section up is shared
 /// across every desk on purpose; this is the opposite, and the difference has
@@ -3004,8 +3005,9 @@ class _LateArrivalPrinterEditor extends StatelessWidget {
       children: <Widget>[
         Text(
           'Het adres van de bonprinter aan deze balie. De app stuurt de '
-          'tickets rechtstreeks naar poort $escPosRawPort — er is geen '
-          'Windows-printer of stuurprogramma nodig. Deze instelling geldt '
+          'tickets rechtstreeks en versleuteld naar de printer via IPP '
+          '(poort $ippPrintPort) — er is geen Windows-printer of '
+          'stuurprogramma nodig. Deze instelling geldt '
           'alleen voor deze computer: elke balie heeft haar eigen printer. '
           'Laat het veld leeg als hier niet afgedrukt wordt; de registratie '
           'gaat dan gewoon door, alleen zonder ticket.',
@@ -3064,7 +3066,7 @@ class _LateArrivalPrinterEditor extends StatelessWidget {
     } else if (status.state == LateArrivalPrintState.disabled) {
       message = status.message;
     } else {
-      message = 'Het testticket is naar $host:$escPosRawPort verstuurd.';
+      message = 'Het testticket is naar $host:$ippPrintPort verstuurd.';
     }
     if (message.isEmpty) return const SizedBox.shrink();
     return Padding(
