@@ -360,7 +360,12 @@ void main() {
       final InMemorySettingsStore shared = InMemorySettingsStore();
       final InMemorySecretProvider vault = InMemorySecretProvider(const {});
 
+      // The desk the app on screen belongs to, so `save()` knows whose file to
+      // wait on without every call site repeating it.
+      String atDesk = '';
+
       Future<LocalPreferences> openDesk(String desk) async {
+        atDesk = desk;
         // A fresh `LocalPreferences` over that desk's own file each time — which
         // is what both a restart and a second machine look like from here.
         final prefs =
@@ -405,10 +410,53 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      /// This desk's preference file as the app left it on disk, or `null` while
+      /// there is no readable file there yet.
+      ///
+      /// `writeAsString` truncates before it fills, so a half-written file is a
+      /// write still in flight rather than a failure — answer `null` for it too
+      /// and let the caller keep waiting.
+      Map<String, Object?>? storedPrefs(String desk) {
+        final File file = prefsFileFor(desk);
+        if (!file.existsSync()) return null;
+        try {
+          final Object? decoded = jsonDecode(file.readAsStringSync());
+          return decoded is Map<String, Object?> ? decoded : null;
+        } on FormatException {
+          return null;
+        }
+      }
+
+      /// Presses **Opslaan** and waits for the address now in the field to be on
+      /// this desk's disk.
+      ///
+      /// `_SettingsScreenState._save` is `async` and its very first await is the
+      /// `setLateArrivalPrinterHost` write that creates `<desk>-preferences.json`
+      /// — so pumping alone leaves the reads below racing that write, and on the
+      /// first save a lost race is a `FileSystemException` on a file that does
+      /// not exist yet (#426, the same defect as #425 one test down). The file
+      /// itself is the settled signal: poll it until it reports what was typed,
+      /// never a frame count and never a fixed delay.
       Future<void> save() async {
+        // What `LocalPreferences` will store for what is in the field: trimmed,
+        // and `null` for a blank one, because "this machine does not print" is a
+        // state rather than an empty address.
+        final String typed = hostText().trim();
+        final Object? expected = typed.isEmpty ? null : typed;
+
         await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
         await tester.tap(find.byKey(const ValueKey('settings-save')));
         await tester.pumpAndSettle();
+        await pumpUntil(
+          tester,
+          "${expected ?? 'the cleared address'} to reach $atDesk's own "
+          'preference file',
+          () {
+            final Map<String, Object?>? stored = storedPrefs(atDesk);
+            return stored != null &&
+                stored['lateArrivalPrinterHost'] == expected;
+          },
+        );
       }
 
       // --- Desk one, on an install nobody has configured. ----------------------
