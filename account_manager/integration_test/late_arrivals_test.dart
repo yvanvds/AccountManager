@@ -66,6 +66,33 @@ void main() {
   Future<void> openLateArrivalSettingsTab(WidgetTester tester) =>
       openSettingsTab(tester, 'settings-tab-telaat');
 
+  /// Pumps real frames until [ready] holds, and fails after [timeout] rather
+  /// than hanging.
+  ///
+  /// `pumpAndSettle` is *not* a substitute (#425). The integration binding runs
+  /// on the real clock, so it returns as soon as no frame is scheduled — it
+  /// never awaits the `async` work a button press kicked off. Where that work
+  /// ends in a disk write that changes nothing in the tree, there is no frame to
+  /// settle on at all, and a test that reads the file straight after the pump is
+  /// racing the write on whatever timing the machine happens to give it. Wait on
+  /// a signal that the write actually landed instead — never on a frame count,
+  /// and never on a fixed delay.
+  Future<void> pumpUntil(
+    WidgetTester tester,
+    String what,
+    bool Function() ready, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final DateTime deadline = DateTime.now().add(timeout);
+    while (!ready()) {
+      if (!DateTime.now().isBefore(deadline)) {
+        fail('timed out after $timeout waiting for $what');
+      }
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    await tester.pumpAndSettle();
+  }
+
   group('Te laat', () {
     testWidgets(
         'the late-arrival settings have a tab of their own, between Azure and '
@@ -643,10 +670,24 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      /// Presses **Opslaan** and waits for the credential to be on disk.
+      ///
+      /// `_SettingsScreenState._save` is `async` and awaits two disk writes
+      /// before the DPAPI file exists, so pumping alone leaves the read below
+      /// racing the write — which is exactly how this test lost on a cold
+      /// filesystem (#425). The desk's own `draining` flag is the settled signal
+      /// to wait on: `saveLogin` flips it only *after* `credentials.write` has
+      /// completed, so once it is true the ciphertext is whole on disk, the
+      /// store can hand it back, and the drain is attached.
       Future<void> save() async {
         await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
         await tester.tap(find.byKey(const ValueKey('settings-save')));
         await tester.pumpAndSettle();
+        await pumpUntil(
+          tester,
+          "the operator login to be written to this machine's disk",
+          () => current!.draining,
+        );
       }
 
       String stateLine() => tester
@@ -788,6 +829,14 @@ void main() {
       await tester.ensureVisible(clear);
       await tester.tap(clear);
       await tester.pumpAndSettle();
+      // Wissen deletes the file from an `async` handler too, so the same rule
+      // applies as for the save above (#425): wait for the desk to stop
+      // draining, which happens only once `credentials.clear()` has returned.
+      await pumpUntil(
+        tester,
+        'the stored login to be wiped from this machine',
+        () => !current!.draining,
+      );
 
       expect(credentialFileFor('balie-1').existsSync(), isFalse);
       expect(stateLine(), contains('nog geen aanmelding'));
