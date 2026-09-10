@@ -104,7 +104,7 @@ class LateArrivalsScreen extends StatefulWidget {
   /// buzz.
   final RefusalBeep? beep;
 
-  /// How a ticket reaches the printer. `null` is the real TCP socket; a test
+  /// How a ticket reaches the printer. `null` is the real IPP request; a test
   /// binds a recorder so the print can be asserted without a device on the
   /// network.
   final TicketTransport? ticketTransport;
@@ -303,7 +303,7 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     _printer = LateArrivalPrinter(
       host: host,
       logo: defaultTicketLogo,
-      transport: widget.ticketTransport ?? const TcpTicketTransport(),
+      transport: widget.ticketTransport ?? const IppTicketTransport(),
     );
   }
 

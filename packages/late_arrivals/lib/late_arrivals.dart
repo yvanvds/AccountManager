@@ -23,8 +23,8 @@
 ///
 /// - the **ticket** (#406) — name, class, the *scan* time and the school logo,
 ///   composed into an ESC/POS byte stream by a pure function so the layout can
-///   be asserted without a printer on the network. The socket that carries it
-///   to port 9100 lives in `account_manager`.
+///   be asserted without a printer on the network. The IPP request that carries
+///   it to the printer lives in `account_manager`.
 ///
 /// One slice for what eventually makes the registration real:
 ///
@@ -129,7 +129,8 @@ export 'src/ticket/ticket_logo.dart'
         defaultTicketLogoScale;
 export 'src/ticket/ticket_metrics.dart'
     show
-        escPosRawPort,
+        ippPrintPath,
+        ippPrintPort,
         ticketCutCommandVariant,
         ticketCutFeedDots,
         ticketFeedLinesBeforeCut,

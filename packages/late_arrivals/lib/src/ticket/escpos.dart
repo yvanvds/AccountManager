@@ -6,8 +6,11 @@
 /// feed, cut — and every command can be asserted on in isolation.
 ///
 /// The commands are the ones Epson documents for the TM-m30III. Nothing here
-/// negotiates or asks the printer anything: raw ESC/POS over port 9100 is a
-/// one-way byte stream, which is exactly why printing can be fire-and-forget.
+/// negotiates or asks the printer anything: the ticket is a one-way ESC/POS
+/// byte stream, which is exactly why printing can be fire-and-forget. Since
+/// #424 that stream travels inside an IPP `Print-Job` rather than down a raw
+/// socket, but the bytes below are unchanged — IPP carries them opaquely as
+/// `application/octet-stream`.
 library;
 
 import 'dart:typed_data';

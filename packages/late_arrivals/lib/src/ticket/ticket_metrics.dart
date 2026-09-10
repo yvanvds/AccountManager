@@ -20,9 +20,26 @@
 /// 3. `defaultTicketLogoScale` — whether ~15 mm of monogram is "small".
 library;
 
-/// The raw-printing TCP port every ESC/POS network printer listens on. Not
-/// configurable: it is what "raw" means, and a TM-m30III does not move it.
-const int escPosRawPort = 9100;
+/// The port an IPP printer listens on, and the one the ticket goes out over
+/// (#424).
+///
+/// **Not 9100.** The first design sent raw ESC/POS to TCP 9100 on the reasoning
+/// that "raw printing *is* port 9100". The school's TM-m30III disproved it: it
+/// accepts a connection on 9100, swallows the bytes, prints nothing, and does
+/// not even answer a `DLE EOT` real-time status request — while the *same*
+/// bytes, wrapped in an IPP `Print-Job` on 631, come out on paper. The port is
+/// still not something an operator is asked to type; it is simply 631 now, and
+/// the transport is `IppTicketTransport` in `account_manager`.
+///
+/// 631 is IANA `ipp`, and the printer refuses plain HTTP on it
+/// (`426 Upgrade Required`), so the transport is HTTPS-only.
+const int ippPrintPort = 631;
+
+/// The path an IPP printer's print service is published at.
+///
+/// `/ipp/print` is the IPP Everywhere default and what the TM-m30III answers
+/// on; it is also the tail of the `printer-uri` the request carries.
+const String ippPrintPath = '/ipp/print';
 
 /// The paper roll the printer is loaded with.
 const int ticketPaperWidthMm = 80;

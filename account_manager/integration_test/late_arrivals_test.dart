@@ -38,7 +38,7 @@ import 'package:late_arrivals/late_arrivals.dart'
         ScannedStudent,
         composeMotivation,
         defaultLateArrivalReasons,
-        escPosRawPort;
+        ippPrintPort;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -65,6 +65,33 @@ void main() {
   /// sit at the bottom of Algemeen, the tab the screen opens on).
   Future<void> openLateArrivalSettingsTab(WidgetTester tester) =>
       openSettingsTab(tester, 'settings-tab-telaat');
+
+  /// Pumps real frames until [ready] holds, and fails after [timeout] rather
+  /// than hanging.
+  ///
+  /// `pumpAndSettle` is *not* a substitute (#425). The integration binding runs
+  /// on the real clock, so it returns as soon as no frame is scheduled — it
+  /// never awaits the `async` work a button press kicked off. Where that work
+  /// ends in a disk write that changes nothing in the tree, there is no frame to
+  /// settle on at all, and a test that reads the file straight after the pump is
+  /// racing the write on whatever timing the machine happens to give it. Wait on
+  /// a signal that the write actually landed instead — never on a frame count,
+  /// and never on a fixed delay.
+  Future<void> pumpUntil(
+    WidgetTester tester,
+    String what,
+    bool Function() ready, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final DateTime deadline = DateTime.now().add(timeout);
+    while (!ready()) {
+      if (!DateTime.now().isBefore(deadline)) {
+        fail('timed out after $timeout waiting for $what');
+      }
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    await tester.pumpAndSettle();
+  }
 
   group('Te laat', () {
     testWidgets(
@@ -310,8 +337,9 @@ void main() {
       // document — the exact inverse of what the reason list one section up does,
       // and the two sections sit a scroll apart on the same tab, so only a real
       // page can show that they behave differently. And the failure path drives
-      // the real `TcpTicketTransport` against a real (absent) host: a widget test
-      // runs in fake async, where a socket's callbacks never arrive at all.
+      // the real `IppTicketTransport` (#424) against a real (absent) host: a
+      // widget test runs in fake async, where a socket's callbacks never arrive
+      // at all.
       //
       // No hardware is involved. The address points at the reserved `.invalid`
       // TLD (RFC 2606), which is guaranteed never to resolve — a printer that is
@@ -332,7 +360,12 @@ void main() {
       final InMemorySettingsStore shared = InMemorySettingsStore();
       final InMemorySecretProvider vault = InMemorySecretProvider(const {});
 
+      // The desk the app on screen belongs to, so `save()` knows whose file to
+      // wait on without every call site repeating it.
+      String atDesk = '';
+
       Future<LocalPreferences> openDesk(String desk) async {
+        atDesk = desk;
         // A fresh `LocalPreferences` over that desk's own file each time — which
         // is what both a restart and a second machine look like from here.
         final prefs =
@@ -377,10 +410,53 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      /// This desk's preference file as the app left it on disk, or `null` while
+      /// there is no readable file there yet.
+      ///
+      /// `writeAsString` truncates before it fills, so a half-written file is a
+      /// write still in flight rather than a failure — answer `null` for it too
+      /// and let the caller keep waiting.
+      Map<String, Object?>? storedPrefs(String desk) {
+        final File file = prefsFileFor(desk);
+        if (!file.existsSync()) return null;
+        try {
+          final Object? decoded = jsonDecode(file.readAsStringSync());
+          return decoded is Map<String, Object?> ? decoded : null;
+        } on FormatException {
+          return null;
+        }
+      }
+
+      /// Presses **Opslaan** and waits for the address now in the field to be on
+      /// this desk's disk.
+      ///
+      /// `_SettingsScreenState._save` is `async` and its very first await is the
+      /// `setLateArrivalPrinterHost` write that creates `<desk>-preferences.json`
+      /// — so pumping alone leaves the reads below racing that write, and on the
+      /// first save a lost race is a `FileSystemException` on a file that does
+      /// not exist yet (#426, the same defect as #425 one test down). The file
+      /// itself is the settled signal: poll it until it reports what was typed,
+      /// never a frame count and never a fixed delay.
       Future<void> save() async {
+        // What `LocalPreferences` will store for what is in the field: trimmed,
+        // and `null` for a blank one, because "this machine does not print" is a
+        // state rather than an empty address.
+        final String typed = hostText().trim();
+        final Object? expected = typed.isEmpty ? null : typed;
+
         await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
         await tester.tap(find.byKey(const ValueKey('settings-save')));
         await tester.pumpAndSettle();
+        await pumpUntil(
+          tester,
+          "${expected ?? 'the cleared address'} to reach $atDesk's own "
+          'preference file',
+          () {
+            final Map<String, Object?>? stored = storedPrefs(atDesk);
+            return stored != null &&
+                stored['lateArrivalPrinterHost'] == expected;
+          },
+        );
       }
 
       // --- Desk one, on an install nobody has configured. ----------------------
@@ -399,7 +475,12 @@ void main() {
             .data,
         allOf(
           contains('alleen voor deze computer'),
-          contains('$escPosRawPort'),
+          // Since #424 the app prints over IPP on 631, and the note has to say
+          // so: a receptionist reading "poort 9100" would go looking for a raw
+          // print service the printer does not actually run.
+          contains('IPP'),
+          contains('$ippPrintPort'),
+          isNot(contains('9100')),
           contains('geen Windows-printer'),
         ),
       );
@@ -452,7 +533,7 @@ void main() {
 
       final Text failure = tester.widget<Text>(status);
       expect(
-          failure.data, contains('bonprinter-balie-1.invalid:$escPosRawPort'));
+          failure.data, contains('bonprinter-balie-1.invalid:$ippPrintPort'));
       expect(failure.data, contains('antwoordt niet'));
       // The half the operator has to believe before carrying on: a dead printer
       // costs a piece of paper, never a registration.
@@ -637,10 +718,24 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      /// Presses **Opslaan** and waits for the credential to be on disk.
+      ///
+      /// `_SettingsScreenState._save` is `async` and awaits two disk writes
+      /// before the DPAPI file exists, so pumping alone leaves the read below
+      /// racing the write — which is exactly how this test lost on a cold
+      /// filesystem (#425). The desk's own `draining` flag is the settled signal
+      /// to wait on: `saveLogin` flips it only *after* `credentials.write` has
+      /// completed, so once it is true the ciphertext is whole on disk, the
+      /// store can hand it back, and the drain is attached.
       Future<void> save() async {
         await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
         await tester.tap(find.byKey(const ValueKey('settings-save')));
         await tester.pumpAndSettle();
+        await pumpUntil(
+          tester,
+          "the operator login to be written to this machine's disk",
+          () => current!.draining,
+        );
       }
 
       String stateLine() => tester
@@ -782,6 +877,14 @@ void main() {
       await tester.ensureVisible(clear);
       await tester.tap(clear);
       await tester.pumpAndSettle();
+      // Wissen deletes the file from an `async` handler too, so the same rule
+      // applies as for the save above (#425): wait for the desk to stop
+      // draining, which happens only once `credentials.clear()` has returned.
+      await pumpUntil(
+        tester,
+        'the stored login to be wiped from this machine',
+        () => !current!.draining,
+      );
 
       expect(credentialFileFor('balie-1').existsSync(), isFalse);
       expect(stateLine(), contains('nog geen aanmelding'));

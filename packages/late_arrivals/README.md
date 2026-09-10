@@ -131,8 +131,8 @@ paper.
 
 ```dart
 final bytes = composeTicketForRecord(record, logo: defaultTicketLogo);
-// ...hand to account_manager's LateArrivalPrinter, which opens one socket to
-// port 9100 and is done with it.
+// ...hand to account_manager's LateArrivalPrinter, which wraps them in one IPP
+// Print-Job over HTTPS and is done with it.
 ```
 
 - **A pure function, and that is the design.** The printer lives at a reception
