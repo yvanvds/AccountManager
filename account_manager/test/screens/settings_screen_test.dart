@@ -2395,6 +2395,61 @@ void main() {
       expect(tester.widget<OutlinedButton>(testButton()).onPressed, isNotNull);
     });
 
+    testWidgets('the password and the MFA secret can be revealed while typing',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final desk = deskWith();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(
+        wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+      );
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      final Finder mfa =
+          find.byKey(const ValueKey('settings-smartschool-operator-mfa'));
+      final Finder passwordEye = find.byKey(
+        const ValueKey('settings-smartschool-operator-password-reveal'),
+      );
+      final Finder mfaEye = find.byKey(
+        const ValueKey('settings-smartschool-operator-mfa-reveal'),
+      );
+
+      // Obscured until asked otherwise — the same default as before.
+      expect(tester.widget<TextField>(password()).obscureText, isTrue);
+      expect(tester.widget<TextField>(mfa).obscureText, isTrue);
+
+      // The whole point: a typo in a secret is invisible behind the dots, and
+      // a Base32 seed is exactly the kind of string people mistype.
+      await tester.enterText(password(), 'zeergeheim');
+      await tester.enterText(mfa, 'JBSWY3DPEHPK3PXP');
+      await tester.tap(passwordEye);
+      await tester.pump();
+      expect(tester.widget<TextField>(password()).obscureText, isFalse);
+      // Each field toggles on its own.
+      expect(tester.widget<TextField>(mfa).obscureText, isTrue);
+
+      await tester.tap(mfaEye);
+      await tester.pump();
+      expect(tester.widget<TextField>(mfa).obscureText, isFalse);
+
+      // And back again.
+      await tester.tap(passwordEye);
+      await tester.pump();
+      expect(tester.widget<TextField>(password()).obscureText, isTrue);
+
+      // The label and note no longer send staff looking for a birthday: their
+      // accounts have 2FA, and what the unattended sign-in needs is the seed.
+      expect(find.textContaining('geboortedatum'), findsNothing);
+      expect(
+        tester
+            .widget<Text>(find
+                .byKey(const ValueKey('settings-smartschool-operator-note')))
+            .data,
+        contains('geheime sleutel'),
+      );
+    });
+
     testWidgets('Opslaan writes it to this machine, not to the shared document',
         (WidgetTester tester) async {
       _useTallWindow(tester);

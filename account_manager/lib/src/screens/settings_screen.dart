@@ -2307,7 +2307,13 @@ class _Field extends StatelessWidget {
 
 /// A write-only credential field: obscured, never populated from the provider,
 /// with a hint that a blank field keeps the stored value.
-class _SecretField extends StatelessWidget {
+///
+/// The eye button reveals what is being *typed*, not what is stored: the field
+/// starts empty on every visit, so showing it only ever exposes the operator's
+/// own keystrokes — which is exactly what they need to catch a typo in a
+/// password or a one-time code before **Aanmelding testen** tells them it was
+/// wrong. It resets to obscured whenever the field is rebuilt from scratch.
+class _SecretField extends StatefulWidget {
   const _SecretField({
     required this.keyValue,
     required this.label,
@@ -2319,18 +2325,35 @@ class _SecretField extends StatelessWidget {
   final TextEditingController controller;
 
   @override
+  State<_SecretField> createState() => _SecretFieldState();
+}
+
+class _SecretFieldState extends State<_SecretField> {
+  bool _revealed = false;
+
+  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: PlinkSpacing.s3),
       child: TextField(
-        key: ValueKey(keyValue),
-        controller: controller,
-        obscureText: true,
+        key: ValueKey(widget.keyValue),
+        controller: widget.controller,
+        obscureText: !_revealed,
         autofillHints: const <String>[],
         decoration: InputDecoration(
-          labelText: label,
+          labelText: widget.label,
           hintText: 'Laat leeg om de bestaande waarde te behouden',
           border: const OutlineInputBorder(),
+          suffixIcon: IconButton(
+            key: ValueKey('${widget.keyValue}-reveal'),
+            tooltip: _revealed ? 'Verbergen' : 'Tonen',
+            icon: Icon(
+              _revealed
+                  ? Icons.visibility_off_outlined
+                  : Icons.visibility_outlined,
+            ),
+            onPressed: () => setState(() => _revealed = !_revealed),
+          ),
         ),
       ),
     );
@@ -3126,9 +3149,12 @@ class _SmartschoolOperatorEditor extends StatelessWidget {
           'ingevoerd heeft. Deze aanmelding geldt alleen voor deze computer en '
           'voor jou: het wachtwoord wordt versleuteld bewaard met je '
           'Windows-account en komt nooit in de gedeelde instellingen terecht. '
-          'Vul het MFA-veld alleen in als je account tweestapsverificatie of '
-          'accountverificatie gebruikt (de code uit je authenticator-app, of je '
-          'geboortedatum als jjjj-mm-dd).',
+          'Personeelsaccounts gebruiken tweestapsverificatie. Omdat de '
+          'registraties zonder jou erbij geschreven worden, heeft het '
+          'programma niet een code uit je authenticator-app nodig maar de '
+          'geheime sleutel erachter: de tekenreeks die Smartschool toont bij '
+          'het instellen van de authenticator (naast de QR-code, onder '
+          '"handmatig invoeren").',
           key: const ValueKey('settings-smartschool-operator-note'),
           style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
         ),
@@ -3145,7 +3171,7 @@ class _SmartschoolOperatorEditor extends StatelessWidget {
         ),
         _SecretField(
           keyValue: 'settings-smartschool-operator-mfa',
-          label: 'MFA-code of geboortedatum (optioneel)',
+          label: 'Geheime sleutel van je authenticator (MFA)',
           controller: state._ssOperatorMfa,
         ),
         // The state of the desk, not of the form: whether anything is stored at
