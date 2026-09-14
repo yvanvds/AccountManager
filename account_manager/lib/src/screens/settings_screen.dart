@@ -214,6 +214,12 @@ class _SettingsScreenState extends State<SettingsScreen>
   // See `LocalPreferences.lateArrivalPrinterHost`.
   final _printerHost = TextEditingController();
 
+  // The few characters at the top of every ticket this desk prints (#429):
+  // the school's code. Machine-local like the address above it, because a desk
+  // prints for one school and the group has several. See
+  // `LocalPreferences.lateArrivalTicketHeader`.
+  final _ticketHeader = TextEditingController();
+
   /// The preferences of this launch, or `null` in a bare widget test with no
   /// [LocalPreferencesScope] — the field then edits a session-only bag, exactly
   /// as the deletion-date prompt behaves without one.
@@ -359,12 +365,14 @@ class _SettingsScreenState extends State<SettingsScreen>
     if (_printerHostLoaded) return;
     _printerHostLoaded = true;
     _printerHost.text = _preferences?.lateArrivalPrinterHost ?? '';
+    _ticketHeader.text = _preferences?.lateArrivalTicketHeader ?? '';
   }
 
   @override
   void dispose() {
     _tabs.dispose();
     _printerHost.dispose();
+    _ticketHeader.dispose();
     _ssOperatorUsername.dispose();
     _ssOperatorPassword.dispose();
     _ssOperatorMfa.dispose();
@@ -796,14 +804,15 @@ class _SettingsScreenState extends State<SettingsScreen>
   ///
   /// The only way to find out whether an IP typed into a text box is the right
   /// one, short of making a student be late. It deliberately uses the address
-  /// **as typed** rather than the saved one, so the operator can try a value
-  /// before committing it, and it goes through the same composition, the same
-  /// transport and the same error reporting as a real ticket — a test print
-  /// down a different path would prove nothing about the real one.
+  /// and the header **as typed** rather than the saved ones, so the operator
+  /// can try a value before committing it, and it goes through the same
+  /// composition, the same transport and the same error reporting as a real
+  /// ticket — a test print down a different path would prove nothing about the
+  /// real one.
   Future<void> _testPrintTicket() async {
     final LateArrivalPrinter printer = LateArrivalPrinter(
       host: _printerHost.text,
-      logo: defaultTicketLogo,
+      header: _ticketHeader.text,
       transport: widget.ticketTransport ?? const IppTicketTransport(),
     );
     setState(() {
@@ -1247,8 +1256,10 @@ class _SettingsScreenState extends State<SettingsScreen>
   Future<void> _save() async {
     // First, and outside the document's own failure path: the printer address
     // describes the box on *this* desk, so it is written to `preferences.json`
-    // whether or not the shared document can be reached (#406).
+    // whether or not the shared document can be reached (#406). The ticket
+    // header (#429) is this desk's too.
     await _preferences?.setLateArrivalPrinterHost(_printerHost.text);
+    await _preferences?.setLateArrivalTicketHeader(_ticketHeader.text);
     // The same argument, one step stronger (#409): this operator's Smartschool
     // login is a credential on this machine, it is what makes the desk drain at
     // all, and a Cosmos that will not answer must not be able to stop it landing.
@@ -2281,12 +2292,17 @@ class _Field extends StatelessWidget {
     required this.label,
     required this.controller,
     this.keyboardType,
+    this.maxLength,
   });
 
   final String keyValue;
   final String label;
   final TextEditingController controller;
   final TextInputType? keyboardType;
+
+  /// A hard cap on what can be typed, with the counter shown. For the one
+  /// field whose value has to fit a physical width (the ticket header, #429).
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -2296,6 +2312,7 @@ class _Field extends StatelessWidget {
         key: ValueKey(keyValue),
         controller: controller,
         keyboardType: keyboardType,
+        maxLength: maxLength,
         decoration: InputDecoration(
           labelText: label,
           border: const OutlineInputBorder(),
@@ -2996,24 +3013,28 @@ class _ReasonDialogState extends State<_ReasonDialog> {
   }
 }
 
-/// The ticket printer this desk prints late-arrival tickets on (#406).
+/// The ticket printer this desk prints late-arrival tickets on (#406), and
+/// what it prints at the top of them (#429).
 ///
-/// One address, a test button, and a sentence saying what the address is for.
-/// The port is not offered: the app prints over IPP, which is port
-/// [ippPrintPort] on every printer that speaks it, and a field for it would
-/// only be a way to get it wrong.
+/// One address, one header, a test button, and a sentence saying what the
+/// address is for. The port is not offered: the app prints over IPP, which is
+/// port [ippPrintPort] on every printer that speaks it, and a field for it
+/// would only be a way to get it wrong.
 ///
 /// **Machine-local, and it says so.** The reason list one section up is shared
 /// across every desk on purpose; this is the opposite, and the difference has
 /// to be legible or an operator will assume the whole "Te laat" configuration
 /// behaves one way. Two reception desks have two printers; a shared address
-/// would send desk two's tickets to desk one. It is stored in
-/// `preferences.json` beside the remembered uitschrijvingsdatum, and written by
-/// the same **Opslaan** as the rest of the tab.
+/// would send desk two's tickets to desk one. The header is local for the
+/// same reason one step removed: a desk prints for one school, and the group
+/// has several. Both are stored in `preferences.json` beside the remembered
+/// uitschrijvingsdatum, and written by the same **Opslaan** as the rest of the
+/// tab.
 ///
-/// **Empty is a valid answer.** It means this machine does not print — which is
-/// what an office laptop draining yesterday's queue honestly is — and the scan
-/// flow treats it as "no ticket", never as a fault.
+/// **Empty is a valid answer.** An empty address means this machine does not
+/// print — which is what an office laptop draining yesterday's queue honestly
+/// is — and the scan flow treats it as "no ticket", never as a fault. An empty
+/// header means a ticket with no top line, not a placeholder.
 class _LateArrivalPrinterEditor extends StatelessWidget {
   const _LateArrivalPrinterEditor({required this.state});
 
@@ -3042,6 +3063,22 @@ class _LateArrivalPrinterEditor extends StatelessWidget {
           keyValue: 'settings-printer-host',
           label: 'Printeradres (IP of hostnaam)',
           controller: state._printerHost,
+        ),
+        Text(
+          'De tekst bovenaan elk ticket, groot afgedrukt: meestal de code van '
+          'de school, drie of vier tekens. Ook deze instelling geldt alleen '
+          'voor deze computer. Laat het veld leeg voor een ticket zonder kop.',
+          key: const ValueKey('settings-ticket-header-note'),
+          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+        ),
+        const SizedBox(height: PlinkSpacing.s3),
+        _Field(
+          keyValue: 'settings-ticket-header',
+          label: 'Ticketkop',
+          controller: state._ticketHeader,
+          // What fits the paper at the header's size; the composer refuses
+          // more, so the field must not be able to enter more.
+          maxLength: ticketHeaderMaxLength,
         ),
         ValueListenableBuilder<TextEditingValue>(
           valueListenable: state._printerHost,

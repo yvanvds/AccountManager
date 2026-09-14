@@ -107,11 +107,15 @@ Future<LateArrivalDesk> _openDesk(WidgetTester tester) async {
 }
 
 /// This machine's remembered answers, already loaded — the printer address the
-/// screen binds its printer to.
-Future<LocalPreferences> _openPreferences(String host) async {
+/// screen binds its printer to, and the header it prints at the top (#429).
+Future<LocalPreferences> _openPreferences(
+  String host, {
+  String header = '',
+}) async {
   final LocalPreferences preferences = LocalPreferences(
     InMemoryLocalPreferenceStore(<String, Object?>{
       if (host.isNotEmpty) 'lateArrivalPrinterHost': host,
+      if (header.isNotEmpty) 'lateArrivalTicketHeader': header,
     }),
   );
   await preferences.load();
@@ -265,7 +269,7 @@ void main() {
 
     await tester.pumpWidget(_wrap(
       desk: desk,
-      preferences: await _openPreferences('bonprinter.invalid'),
+      preferences: await _openPreferences('bonprinter.invalid', header: 'SMA'),
       child: LateArrivalsScreen(
         bootstrap: _harness().bootstrap,
         ticketTransport: tickets,
@@ -295,6 +299,14 @@ void main() {
     // The ticket went out — and only *after* the line was on disk, which is the
     // ordering the whole journal exists to guarantee.
     expect(tickets.sent, hasLength(1));
+    // …carrying this desk's header (#429), the scan date and the scan time
+    // (#430).
+    expect(tickets.sent.single, containsAllInOrder(encodeCp1252('SMA')));
+    expect(
+      tickets.sent.single,
+      containsAllInOrder(encodeCp1252(formatTicketDate(scannedAt))),
+    );
+    expect(tickets.sent.single, containsAllInOrder(encodeCp1252('08:42')));
 
     // …and the screen is free for the next student.
     expect(_idle, findsOneWidget);

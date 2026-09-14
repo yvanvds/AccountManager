@@ -21,15 +21,16 @@
 ///
 /// One slice for what the student walks away with:
 ///
-/// - the **ticket** (#406) — name, class, the *scan* time and the school logo,
-///   composed into an ESC/POS byte stream by a pure function so the layout can
-///   be asserted without a printer on the network. The IPP request that carries
-///   it to the printer lives in `account_manager`.
+/// - the **ticket** (#406) — a short school header, name, class, the *scan*
+///   date and time, composed into an ESC/POS byte stream by a pure function so
+///   the layout can be asserted without a printer on the network. The IPP
+///   request that carries it to the printer lives in `account_manager`.
 ///
 /// One slice for what eventually makes the registration real:
 ///
 /// - the **drain** (#404) reads the journal in the background and writes each
-///   registration to Smartschool as a morning presence, in scan order, retrying
+///   registration to Smartschool as a presence on the half-day the scan fell
+///   in — morning before noon, afternoon after (#428) — in scan order, retrying
 ///   a failure and signing in again when the session has expired. It is
 ///   deliberately never in the hot path, and it talks to Smartschool through a
 ///   [LatePresenceWriter] so its ordering and give-up behaviour can be proven
@@ -53,6 +54,7 @@ export 'src/drain/late_arrival_drain.dart'
     show LateArrivalDrain, LateArrivalDrainStatus;
 export 'src/drain/presence_writer.dart'
     show LatePresenceWriter, PresenceRejected, PresenceSessionExpired;
+export 'src/journal/half_day.dart' show HalfDay;
 export 'src/journal/journal_store.dart'
     show
         InMemoryJournalStore,
@@ -109,7 +111,6 @@ export 'src/ticket/escpos.dart'
         escPosEmphasis,
         escPosFeedLines,
         escPosInitialize,
-        escPosRasterImage,
         escPosSelectCodePage,
         gs,
         lf;
@@ -117,16 +118,15 @@ export 'src/ticket/late_arrival_ticket.dart'
     show
         composeLateArrivalTicket,
         composeTicketForRecord,
+        formatTicketDate,
         formatTicketTime,
         ticketClassMagnification,
+        ticketDateMagnification,
+        ticketHeaderMagnification,
+        ticketHeaderMaxLength,
         ticketNameMagnification,
-        ticketTimeMagnification;
-export 'src/ticket/ticket_logo.dart'
-    show
-        TicketLogo,
-        defaultTicketLogo,
-        defaultTicketLogoArt,
-        defaultTicketLogoScale;
+        ticketTimeMagnification,
+        ticketWeekdayNames;
 export 'src/ticket/ticket_metrics.dart'
     show
         ippPrintPath,
@@ -134,5 +134,6 @@ export 'src/ticket/ticket_metrics.dart'
         ticketCutCommandVariant,
         ticketCutFeedDots,
         ticketFeedLinesBeforeCut,
+        ticketFontWidthDots,
         ticketPaperWidthMm,
         ticketPrintWidthDots;

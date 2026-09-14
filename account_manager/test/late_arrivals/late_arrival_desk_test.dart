@@ -21,6 +21,7 @@ class _RecordingWriter implements LatePresenceWriter {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
   }) async {

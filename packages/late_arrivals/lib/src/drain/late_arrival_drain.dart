@@ -81,7 +81,8 @@ final class LateArrivalDrainStatus {
 ///
 /// **Order is the contract, not a nicety.** `savePupilsPresences` *updates* the
 /// half-day cell rather than appending to it, so of two scans of the same
-/// student the last one written is the one that stands. The operator's second
+/// student the last one written is the one that stands. Which cell — morning
+/// or afternoon — is the record's own [LateArrivalRecord.halfDay] (#428). The operator's second
 /// scan is the correction, so it has to be written second. The journal hands
 /// records over in scan order and this worker sends them one at a time, in that
 /// order — which is the cheapest way to get the per-student guarantee, since a
@@ -300,6 +301,7 @@ class LateArrivalDrain implements LateArrivalRecordSink {
           userId: record.internalUserId,
           classGroupId: record.classGroupId,
           date: DateTime(record.day.year, record.day.month, record.day.day),
+          part: record.halfDay,
           withoutValidReason: !record.reasonIsValid,
           motivation: record.motivation,
         );

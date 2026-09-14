@@ -2162,6 +2162,77 @@ void main() {
       expect(saved.toJson().toString(), isNot(contains('10.0.0.31')));
     });
 
+    testWidgets('the ticket header is this desk\'s too (#429)',
+        (WidgetTester tester) async {
+      // A desk prints for one school; the code at the top of its tickets must
+      // not travel to the desk at the next school.
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      await prefs.setLateArrivalTicketHeader('SMA');
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      // Populated from what this machine remembered…
+      expect(find.text('SMA'), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(
+                find.byKey(const ValueKey('settings-ticket-header-note')))
+            .data,
+        contains('alleen voor deze computer'),
+      );
+
+      // …capped at what fits the paper…
+      final TextField field = tester.widget<TextField>(
+        find.byKey(const ValueKey('settings-ticket-header')),
+      );
+      expect(field.maxLength, ticketHeaderMaxLength);
+
+      // …and saved back here, not to the shared document.
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-ticket-header')),
+        ' SSM ',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalTicketHeader, 'SSM');
+      final AppSettings saved = await harness.store.load();
+      expect(saved.toJson().toString(), isNot(contains('SSM')));
+    });
+
+    testWidgets('clearing the header prints a ticket without one',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final prefs = LocalPreferences.inMemory();
+      await prefs.load();
+      await prefs.setLateArrivalTicketHeader('SMA');
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrapWithPreferences(
+        SettingsScreen(bootstrap: harness.bootstrap),
+        prefs,
+      ));
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-ticket-header')),
+        '',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      expect(prefs.lateArrivalTicketHeader, isNull);
+    });
+
     testWidgets('clearing the address switches printing off here',
         (WidgetTester tester) async {
       _useTallWindow(tester);
@@ -2244,11 +2315,15 @@ void main() {
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      // The address as typed, not the saved one: the operator has to be able to
-      // try a value before committing it.
+      // The address and the header as typed, not the saved ones: the operator
+      // has to be able to try a value before committing it.
       await tester.enterText(
         find.byKey(const ValueKey('settings-printer-host')),
         '10.0.0.31',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-ticket-header')),
+        'SMA',
       );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
@@ -2256,12 +2331,15 @@ void main() {
 
       expect(prefs.lateArrivalPrinterHost, isNull,
           reason: 'a test print is not a save');
+      expect(prefs.lateArrivalTicketHeader, isNull,
+          reason: 'a test print is not a save');
       expect(transport.hosts, <String>['10.0.0.31']);
       expect(transport.ports, <int>[ippPrintPort]);
-      // A real ticket, logo and cut and all — the same bytes a late student
+      // A real ticket, header and cut and all — the same bytes a late student
       // would get.
       final List<int> bytes = transport.sent.single;
       expect(bytes.sublist(0, 2), escPosInitialize());
+      expect(bytes, containsAllInOrder(encodeCp1252('SMA')));
       expect(bytes.sublist(bytes.length - escPosCut().length), escPosCut());
       expect(
         tester
@@ -2698,6 +2776,7 @@ class _NeverWriter implements LatePresenceWriter {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
   }) async =>

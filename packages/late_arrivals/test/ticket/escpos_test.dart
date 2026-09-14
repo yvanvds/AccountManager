@@ -40,44 +40,6 @@ void main() {
     });
   });
 
-  group('raster image', () {
-    test('carries the width in bytes and the height in dots, little-endian',
-        () {
-      // 300 dots wide -> 38 bytes per row; 260 rows exercises both size bytes.
-      final TicketLogo logo = TicketLogo.fromArt(
-        List<String>.filled(26, '.' * 30),
-        scale: 10,
-      );
-      final List<int> bytes = escPosRasterImage(logo);
-      expect(bytes.sublist(0, 4), <int>[0x1D, 0x76, 0x30, 0x00]);
-      expect(bytes[4], 38); // xL
-      expect(bytes[5], 0); // xH
-      expect(bytes[6], 260 & 0xFF); // yL
-      expect(bytes[7], 260 >> 8); // yH
-      expect(bytes.length, 8 + 38 * 260);
-    });
-
-    test('emits the packed bitmap verbatim, in reading order', () {
-      final TicketLogo logo =
-          TicketLogo.fromArt(<String>['#.......', '.......#']);
-      expect(escPosRasterImage(logo), <int>[
-        0x1D, 0x76, 0x30, 0x00, //
-        1, 0, 2, 0, //
-        0x80, 0x01,
-      ]);
-    });
-
-    test('a logo wider than the paper is refused rather than clipped', () {
-      // The printer drops the overflow silently; on a ticket that looks like a
-      // truncated logo nobody can explain.
-      final TicketLogo tooWide = TicketLogo.fromArt(
-        <String>['#' * (ticketPrintWidthDots + 1)],
-      );
-      expect(tooWide.fitsPaper, isFalse);
-      expect(() => escPosRasterImage(tooWide), throwsArgumentError);
-    });
-  });
-
   group('encodeCp1252', () {
     test('passes ASCII through', () {
       expect(encodeCp1252('1A'), <int>[0x31, 0x41]);

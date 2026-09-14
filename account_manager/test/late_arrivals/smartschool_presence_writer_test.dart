@@ -20,6 +20,7 @@ class FakeSession implements SmartschoolPresenceSession {
   int calls = 0;
   int signIns = 0;
   DateTime? lastDate;
+  ss.DayPart? lastPart;
   bool? lastWithoutValidReason;
   String? lastMotivation;
 
@@ -28,11 +29,13 @@ class FakeSession implements SmartschoolPresenceSession {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required ss.DayPart part,
     required bool withoutValidReason,
     required String motivation,
   }) async {
     calls++;
     lastDate = date;
+    lastPart = part;
     lastWithoutValidReason = withoutValidReason;
     lastMotivation = motivation;
     final Object? error = failure;
@@ -43,10 +46,15 @@ class FakeSession implements SmartschoolPresenceSession {
   Future<void> signIn() async => signIns++;
 }
 
-Future<void> write(SmartschoolPresenceWriter writer) => writer.setLate(
+Future<void> write(
+  SmartschoolPresenceWriter writer, {
+  HalfDay part = HalfDay.morning,
+}) =>
+    writer.setLate(
       userId: 11110,
       classGroupId: 298,
       date: DateTime(2026, 9, 7),
+      part: part,
       withoutValidReason: false,
       motivation: '08:14 – Bus te laat',
     );
@@ -59,8 +67,23 @@ void main() {
 
       expect(session.calls, 1);
       expect(session.lastDate, DateTime(2026, 9, 7));
+      expect(session.lastPart, ss.DayPart.morning);
       expect(session.lastWithoutValidReason, isFalse);
       expect(session.lastMotivation, '08:14 – Bus te laat');
+    });
+
+    test('an afternoon scan is written to the afternoon cell (#428)', () async {
+      final FakeSession session = FakeSession();
+      await write(SmartschoolPresenceWriter(session), part: HalfDay.afternoon);
+      expect(session.lastPart, ss.DayPart.afternoon);
+    });
+
+    test('maps every half-day onto the library\'s own value', () {
+      expect(dayPartOf(HalfDay.morning), ss.DayPart.morning);
+      expect(dayPartOf(HalfDay.afternoon), ss.DayPart.afternoon);
+      // The wire tokens Smartschool actually reads.
+      expect(dayPartOf(HalfDay.morning).wire, 'am');
+      expect(dayPartOf(HalfDay.afternoon).wire, 'pm');
     });
   });
 

@@ -1,3 +1,4 @@
+import 'half_day.dart';
 import 'school_day.dart';
 
 /// How far one late-arrival registration has got towards Smartschool (#402).
@@ -102,6 +103,11 @@ final class LateArrivalRecord implements Comparable<LateArrivalRecord> {
   /// The two differ by the write, and it is the scan the ticket and the
   /// motivation quote.
   final DateTime scannedAt;
+
+  /// The half-day the presence is written against (#428): derived from
+  /// [scannedAt] rather than stored, so a replayed journal line from before
+  /// the afternoon existed still drains to the right cell.
+  HalfDay get halfDay => HalfDay.of(scannedAt);
 
   /// The student's Smartschool username: the always-present student key, and
   /// what ordering is grouped by.

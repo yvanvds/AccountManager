@@ -110,7 +110,7 @@ void main() {
       final printer = LateArrivalPrinter(
         host: '10.0.0.31',
         transport: transport,
-        logo: defaultTicketLogo,
+        header: 'SMA',
       );
       addTearDown(printer.dispose);
 
@@ -125,8 +125,10 @@ void main() {
       expect(ippPrintPort, 631);
       expect(
         transport.sent.single,
-        composeTicketForRecord(record, logo: defaultTicketLogo),
+        composeTicketForRecord(record, header: 'SMA'),
       );
+      // The desk's header reached the paper (#429).
+      expect(transport.sent.single, containsAllInOrder(encodeCp1252('SMA')));
     });
 
     test('carries the scan time, not the time the printer was reached',
@@ -288,9 +290,10 @@ void main() {
       final printer = LateArrivalPrinter(
         host: '10.0.0.31',
         transport: _FakeTransport(),
-        // Wider than the 80 mm roll: the composer refuses it rather than
-        // letting the printer clip it silently.
-        logo: TicketLogo.fromArt(<String>['#' * (ticketPrintWidthDots + 1)]),
+        // Wider than the 80 mm roll — a header hand-edited into
+        // `preferences.json`: the composer refuses it rather than letting the
+        // printer clip it silently.
+        header: 'X' * (ticketHeaderMaxLength + 1),
       );
       addTearDown(printer.dispose);
 
@@ -302,11 +305,12 @@ void main() {
   });
 
   group('printTestTicket', () {
-    test('takes the same path a real ticket does', () async {
+    test('takes the same path a real ticket does, header included', () async {
       final transport = _FakeTransport();
       final printer = LateArrivalPrinter(
         host: '10.0.0.31',
         transport: transport,
+        header: 'SSM',
       );
       addTearDown(printer.dispose);
 
@@ -320,7 +324,7 @@ void main() {
           displayName: 'Testticket',
           className: 'Balie',
           scannedAt: DateTime(2026, 9, 7, 9, 30),
-          logo: null,
+          header: 'SSM',
         ),
       );
     });
@@ -434,7 +438,7 @@ void main() {
       final ticket = LateArrivalPrinter(
         host: InternetAddress.loopbackIPv4.address,
         port: printer.port,
-        logo: defaultTicketLogo,
+        header: 'SMA',
       );
       addTearDown(ticket.dispose);
 
@@ -450,7 +454,7 @@ void main() {
       // The ESC/POS bytes are unchanged by the transport: the request body ends
       // with exactly the ticket the composer produced.
       final Uint8List ticketBytes =
-          composeTicketForRecord(record, logo: defaultTicketLogo);
+          composeTicketForRecord(record, header: 'SMA');
       expect(
         printer.body!.sublist(printer.body!.length - ticketBytes.length),
         ticketBytes,

@@ -11,13 +11,14 @@
 ///
 /// 1. [ticketPaperWidthMm] / [ticketPrintWidthDots] — 80 mm roll, 72 mm print
 ///    area, 203 dpi. A TM-m30III fitted with the 58 mm spacer prints 360 dots
-///    wide instead, and the logo would then have to shrink to match.
+///    wide instead, and the header would then fit fewer characters.
 /// 2. [ticketCutCommandVariant] — the model documents both the one-byte
 ///    `GS V m` cut and the Function B `GS V 66 n` feed-and-cut. The latter is
 ///    used because a bare cut leaves the last printed line inside the cutter;
 ///    if the ticket comes out short, this and [ticketFeedLinesBeforeCut] are
 ///    the two dials.
-/// 3. `defaultTicketLogoScale` — whether ~15 mm of monogram is "small".
+/// 3. [ticketFontWidthDots] — Font A is the power-on default and 12 dots wide;
+///    a printer left on Font B (9 dots) fits more characters, never fewer.
 library;
 
 /// The port an IPP printer listens on, and the one the ticket goes out over
@@ -50,6 +51,14 @@ const int ticketPaperWidthMm = 80;
 /// composed wider — the printer silently drops the overflow rather than
 /// wrapping, which on a ticket looks like a truncated name.
 const int ticketPrintWidthDots = 576;
+
+/// The width of one character cell in Font A at magnification 1, in dots.
+///
+/// `ESC @` puts the printer on Font A, and the ticket never switches font, so
+/// a line at magnification *n* is `length × 12 × n` dots wide. That is the
+/// arithmetic behind `ticketHeaderMaxLength`: the one line an operator types
+/// freely has to be refused before the printer clips it.
+const int ticketFontWidthDots = 12;
 
 /// Blank lines fed after the last printed line and before the cut, so the text
 /// clears the cutter — which sits below the print head.

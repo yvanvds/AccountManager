@@ -10,15 +10,17 @@
 /// proven against a fake. That is only possible if the real client sits behind
 /// an interface.
 ///
-/// The parameters mirror `PresenceService.setLate` one-for-one, minus `part` —
-/// which is always the morning half-day. A student who turns up at 12:15 is not
-/// late, they were absent for the morning, and they are not scanned at all
-/// (#399), so there is deliberately no afternoon path and no noon cutoff.
+/// The parameters mirror `PresenceService.setLate` one-for-one. [HalfDay] is
+/// this package's own name for the library's `DayPart`, so the seam stays free
+/// of `flutter_smartschool` types; the adapter maps it.
 library;
+
+import '../journal/half_day.dart';
 
 /// Writes one late-arrival registration to Smartschool.
 abstract interface class LatePresenceWriter {
-  /// Marks [userId] late for the morning of [date] in class [classGroupId].
+  /// Marks [userId] late for the [part] half-day of [date] in class
+  /// [classGroupId].
   ///
   /// Completes when the server accepted the write. Throws otherwise, and *how*
   /// it throws is the whole contract:
@@ -40,6 +42,7 @@ abstract interface class LatePresenceWriter {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
   });
