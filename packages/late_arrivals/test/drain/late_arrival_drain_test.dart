@@ -221,7 +221,8 @@ void main() {
       await drain.close();
     });
 
-    test('the half-day is the record\'s, so a replayed line keeps it', () async {
+    test('the half-day is the record\'s, so a replayed line keeps it',
+        () async {
       final InMemoryJournalStore store = InMemoryJournalStore();
       final LateArrivalJournal first = await LateArrivalJournal.open(
         store,

@@ -266,8 +266,8 @@ void main() {
         ticketHeaderMaxLength * ticketFontWidthDots * ticketHeaderMagnification,
         lessThanOrEqualTo(ticketPrintWidthDots),
       );
-      expect(() => _ticket(header: 'X' * ticketHeaderMaxLength),
-          returnsNormally);
+      expect(
+          () => _ticket(header: 'X' * ticketHeaderMaxLength), returnsNormally);
     });
 
     test('a header too wide for the paper stops the ticket, loudly', () {
