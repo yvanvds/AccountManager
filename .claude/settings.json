@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(break)"
+      "Bash(break)",
+      "Read(//c/Users/yvan/AppData/Local/Pub/Cache/**)",
+      "Read(//c/Users/yvan/AppData/Local/Pub/Cache/git/**)"
     ]
   }
 }
