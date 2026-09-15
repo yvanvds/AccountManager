@@ -235,7 +235,7 @@ class LateArrivalPrinter {
   LateArrivalPrinter({
     required String host,
     this.transport = const IppTicketTransport(),
-    this.logo,
+    this.header = '',
     this.port = ippPrintPort,
     this.timeout = lateArrivalPrinterTimeout,
   }) : host = host.trim() {
@@ -261,9 +261,10 @@ class LateArrivalPrinter {
 
   final TicketTransport transport;
 
-  /// The mark at the top of the ticket, or `null` for none. See
-  /// [defaultTicketLogo].
-  final TicketLogo? logo;
+  /// The few characters printed large at the top of every ticket (#429) — the
+  /// school's code as this desk has it configured. Empty prints no header
+  /// line. See `LocalPreferences.lateArrivalTicketHeader`.
+  final String header;
 
   final Duration timeout;
 
@@ -311,11 +312,12 @@ class LateArrivalPrinter {
         displayName: displayName,
         className: className,
         scannedAt: scannedAt,
-        logo: logo,
+        header: header,
       );
     } on Object catch (e) {
-      // A logo that does not fit the paper, say. It is still not the student's
-      // problem: report it and let the registration stand.
+      // A header that does not fit the paper, say — one hand-edited into
+      // `preferences.json`. It is still not the student's problem: report it
+      // and let the registration stand.
       _report(LateArrivalPrintStatus(
         LateArrivalPrintState.failed,
         'Het ticket kon niet worden opgemaakt. De registratie is bewaard en '

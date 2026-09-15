@@ -25,22 +25,61 @@ Uint8List _ticket({
   String name = 'Lotte Peeters',
   String className = '3STW',
   DateTime? at,
-  TicketLogo? logo,
+  String header = '',
 }) =>
     composeLateArrivalTicket(
       displayName: name,
       className: className,
       scannedAt: at ?? DateTime(2026, 9, 7, 8, 14),
-      logo: logo,
+      header: header,
     );
 
 void main() {
   group('what the ticket says', () {
-    test('carries the name, the class and the arrival time', () {
+    test('carries the name, the class, the date and the arrival time', () {
       final Uint8List bytes = _ticket();
       expect(bytes, _containsBytes(encodeCp1252('Lotte Peeters')));
       expect(bytes, _containsBytes(encodeCp1252('3STW')));
+      expect(bytes, _containsBytes(encodeCp1252('maandag 07/09/2026')));
       expect(bytes, _containsBytes(encodeCp1252('08:14')));
+    });
+
+    test('prints the date of the scan with its weekday (#430)', () {
+      // A teacher reading "11/09" has to work out what day that was;
+      // "vrijdag" they remember.
+      expect(
+        _ticket(at: DateTime(2026, 9, 11, 8, 14)),
+        _containsBytes(encodeCp1252('vrijdag 11/09/2026')),
+      );
+      expect(formatTicketDate(DateTime(2026, 9, 7)), 'maandag 07/09/2026');
+      expect(formatTicketDate(DateTime(2026, 9, 8)), 'dinsdag 08/09/2026');
+      expect(formatTicketDate(DateTime(2026, 9, 9)), 'woensdag 09/09/2026');
+      expect(formatTicketDate(DateTime(2026, 9, 10)), 'donderdag 10/09/2026');
+      expect(formatTicketDate(DateTime(2026, 9, 11)), 'vrijdag 11/09/2026');
+      expect(formatTicketDate(DateTime(2026, 9, 12)), 'zaterdag 12/09/2026');
+      expect(formatTicketDate(DateTime(2026, 9, 13)), 'zondag 13/09/2026');
+      // Day-first and zero-padded, the way the school writes a date.
+      expect(formatTicketDate(DateTime(2027, 1, 4)), 'maandag 04/01/2027');
+    });
+
+    test('the date line fits the paper on the longest weekday', () {
+      // "donderdag 10/09/2026" is 20 cells; at magnification 2 that is 480 of
+      // the 576 dots. Anything wider would be clipped, not wrapped.
+      final int widest = ticketWeekdayNames
+          .map((String n) => '$n 10/09/2026'.length)
+          .reduce((int a, int b) => a > b ? a : b);
+      expect(
+        widest * ticketFontWidthDots * ticketDateMagnification,
+        lessThanOrEqualTo(ticketPrintWidthDots),
+      );
+    });
+
+    test('the date and the time are printed as two lines, date first', () {
+      final Uint8List bytes = _ticket();
+      final int date = _indexOf(bytes, encodeCp1252('maandag 07/09/2026'));
+      final int time = _indexOf(bytes, encodeCp1252('08:14'));
+      expect(date, greaterThan(0));
+      expect(time, greaterThan(date));
     });
 
     test('prints the scan time, never the print time', () {
@@ -68,7 +107,7 @@ void main() {
       // is a different decision than the epic made.
       final Uint8List bytes = composeTicketForRecord(
         _record(reasonLabel: 'Verslapen'),
-        logo: null,
+        header: '',
       );
       expect(bytes, isNot(_containsBytes(encodeCp1252('Verslapen'))));
       // GS k — the barcode command — appears nowhere.
@@ -80,14 +119,14 @@ void main() {
       // line in the middle of the ticket reads as a fault.
       final Uint8List bytes = _ticket(className: '   ');
       expect(bytes, _containsBytes(encodeCp1252('Lotte Peeters')));
-      // Name, then straight on to the time.
+      // Name, then straight on to the date and time.
       final int name = _indexOf(bytes, encodeCp1252('Lotte Peeters'));
       final int time = _indexOf(bytes, encodeCp1252('08:14'));
       expect(name, greaterThan(0));
       expect(time, greaterThan(name));
-      // Exactly two printed lines, so exactly two line feeds before the
-      // trailing feed-and-cut.
-      expect(bytes.where((int b) => b == lf).length, 2);
+      // Exactly three printed lines — name, date, time — so exactly three
+      // line feeds before the trailing feed-and-cut.
+      expect(bytes.where((int b) => b == lf).length, 3);
     });
 
     test('prints an accented name in the code page it selected', () {
@@ -121,11 +160,15 @@ void main() {
       expect(bytes.sublist(bytes.length - tail.length), tail);
     });
 
-    test('the arrival time is the biggest thing on the paper', () {
-      // Bigger than the name, on purpose: the time is the evidence.
+    test('the arrival time is the biggest thing on the paper after the header',
+        () {
+      // Bigger than the name, on purpose: the time is the evidence. The date
+      // sits under it, one step smaller, so the two read as one fact.
       expect(ticketTimeMagnification, greaterThan(ticketNameMagnification));
+      expect(ticketTimeMagnification, greaterThan(ticketDateMagnification));
       expect(ticketNameMagnification,
           greaterThanOrEqualTo(ticketClassMagnification));
+      expect(ticketHeaderMagnification, greaterThan(ticketTimeMagnification));
 
       final Uint8List bytes = _ticket();
       final int name = _indexOf(bytes, encodeCp1252('Lotte Peeters'));
@@ -173,27 +216,71 @@ void main() {
     });
   });
 
-  group('the logo', () {
-    test('is printed as a raster image ahead of the name', () {
-      final Uint8List bytes = _ticket(logo: defaultTicketLogo);
-      final int raster = _indexOf(bytes, escPosRasterImage(defaultTicketLogo));
+  group('the header (#429)', () {
+    test('is printed first, largest and bold', () {
+      final Uint8List bytes = _ticket(header: 'SMA');
+      final int header = _indexOf(bytes, encodeCp1252('SMA'));
       final int name = _indexOf(bytes, encodeCp1252('Lotte Peeters'));
-      expect(raster, greaterThan(0));
-      expect(raster, lessThan(name));
-    });
-
-    test('is omitted entirely when the school has supplied none', () {
-      // A ticket with no logo, not a ticket with a placeholder nobody chose.
-      final Uint8List bytes = _ticket();
-      expect(bytes, isNot(_containsBytes(<int>[gs, 0x76, 0x30])));
-      expect(bytes, _containsBytes(encodeCp1252('Lotte Peeters')));
-    });
-
-    test('a logo too wide for the paper stops the ticket, loudly', () {
-      final TicketLogo tooWide = TicketLogo.fromArt(
-        <String>['#' * (ticketPrintWidthDots + 8)],
+      expect(header, greaterThan(0));
+      expect(header, lessThan(name));
+      final int size = _indexOf(
+        bytes,
+        escPosCharacterSize(
+          width: ticketHeaderMagnification,
+          height: ticketHeaderMagnification,
+        ),
       );
-      expect(() => _ticket(logo: tooWide), throwsArgumentError);
+      expect(size, allOf(greaterThan(0), lessThan(header)));
+      expect(
+        _indexOf(bytes, escPosEmphasis(on: true)),
+        allOf(greaterThan(size), lessThan(header)),
+      );
+    });
+
+    test('is omitted entirely when the desk has set none', () {
+      // A ticket with no header, not a ticket with a placeholder nobody chose.
+      final Uint8List bytes = _ticket();
+      expect(
+        bytes,
+        isNot(_containsBytes(escPosCharacterSize(
+          width: ticketHeaderMagnification,
+          height: ticketHeaderMagnification,
+        ))),
+      );
+      final int name = _indexOf(bytes, encodeCp1252('Lotte Peeters'));
+      // The first printed thing is the name.
+      expect(_indexOf(bytes, <int>[lf]), greaterThan(name));
+    });
+
+    test('surrounding whitespace is not printed', () {
+      final Uint8List bytes = _ticket(header: '  SMA \n');
+      expect(bytes, _containsBytes(<int>[...encodeCp1252('SMA'), lf]));
+      expect(bytes, isNot(_containsBytes(encodeCp1252(' SMA'))));
+    });
+
+    test('a header the school code needs fits with room to spare', () {
+      // "3 or 4 characters" was the brief; the roll takes nine at this size.
+      expect(ticketHeaderMaxLength, greaterThanOrEqualTo(4));
+      expect(ticketHeaderMaxLength, 9);
+      expect(
+        ticketHeaderMaxLength * ticketFontWidthDots * ticketHeaderMagnification,
+        lessThanOrEqualTo(ticketPrintWidthDots),
+      );
+      expect(
+          () => _ticket(header: 'X' * ticketHeaderMaxLength), returnsNormally);
+    });
+
+    test('a header too wide for the paper stops the ticket, loudly', () {
+      // The printer clips rather than wraps; a clipped school code is a fault
+      // nobody can explain from the paper.
+      expect(
+        () => _ticket(header: 'X' * (ticketHeaderMaxLength + 1)),
+        throwsArgumentError,
+      );
+    });
+
+    test('is encoded in the same code page as the name', () {
+      expect(_ticket(header: 'ÉCO'), _containsBytes(encodeCp1252('ÉCO')));
     });
   });
 
@@ -201,10 +288,12 @@ void main() {
     test('takes the record the journal already flushed (#402)', () {
       final Uint8List bytes = composeTicketForRecord(
         _record(),
-        logo: defaultTicketLogo,
+        header: 'SMA',
       );
+      expect(bytes, _containsBytes(encodeCp1252('SMA')));
       expect(bytes, _containsBytes(encodeCp1252('Lotte Peeters')));
       expect(bytes, _containsBytes(encodeCp1252('3STW')));
+      expect(bytes, _containsBytes(encodeCp1252('maandag 07/09/2026')));
       expect(bytes, _containsBytes(encodeCp1252('08:14')));
       expect(
         bytes,
@@ -213,7 +302,7 @@ void main() {
             displayName: 'Lotte Peeters',
             className: '3STW',
             scannedAt: DateTime(2026, 9, 7, 8, 14),
-            logo: defaultTicketLogo,
+            header: 'SMA',
           ),
         ),
       );
@@ -222,8 +311,8 @@ void main() {
     test('is byte-for-byte stable, so a redeploy cannot silently reflow it',
         () {
       expect(
-        composeTicketForRecord(_record(), logo: null),
-        composeTicketForRecord(_record(), logo: null),
+        composeTicketForRecord(_record(), header: ''),
+        composeTicketForRecord(_record(), header: ''),
       );
     });
   });

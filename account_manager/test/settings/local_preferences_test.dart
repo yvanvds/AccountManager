@@ -169,12 +169,50 @@ void main() {
       await prefs.setLastDeletionDate(DateTime(2026, 3, 14));
       await prefs.setReleaseNotesSeenVersion('1.2.0');
       await prefs.setLateArrivalPrinterHost('10.0.0.31');
+      await prefs.setLateArrivalTicketHeader('SMA');
 
       final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
       await reloaded.load();
       expect(reloaded.lastDeletionDate, DateTime(2026, 3, 14));
       expect(reloaded.releaseNotesSeenVersion, '1.2.0');
       expect(reloaded.lateArrivalPrinterHost, '10.0.0.31');
+      expect(reloaded.lateArrivalTicketHeader, 'SMA');
+    });
+  });
+
+  group('the ticket header (#429)', () {
+    test('an install that has never set one prints no header', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      expect(prefs.lateArrivalTicketHeader, isNull);
+    });
+
+    test('survives a restart of this machine', () async {
+      final first = LocalPreferences(FileLocalPreferenceStore(file));
+      await first.load();
+      await first.setLateArrivalTicketHeader('SMA');
+
+      final second = LocalPreferences(FileLocalPreferenceStore(file));
+      await second.load();
+      expect(second.lateArrivalTicketHeader, 'SMA');
+      expect(file.readAsStringSync(), contains('"lateArrivalTicketHeader"'));
+    });
+
+    test('is trimmed, and a blank one clears it rather than storing ""',
+        () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLateArrivalTicketHeader('  SSM \n');
+      expect(prefs.lateArrivalTicketHeader, 'SSM');
+      await prefs.setLateArrivalTicketHeader('   ');
+      expect(prefs.lateArrivalTicketHeader, isNull);
+    });
+
+    test('a value of the wrong type reads as nothing configured', () async {
+      file.writeAsStringSync('{"lateArrivalTicketHeader": 12}');
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      expect(prefs.lateArrivalTicketHeader, isNull);
     });
   });
 

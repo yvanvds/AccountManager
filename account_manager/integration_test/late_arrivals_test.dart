@@ -28,6 +28,7 @@ import 'package:account_state/account_state.dart'
         LiveSettings;
 import 'package:late_arrivals/late_arrivals.dart'
     show
+        HalfDay,
         InMemoryJournalStore,
         LateArrivalJournal,
         LateArrivalReason,
@@ -1342,6 +1343,7 @@ class _RecordingPresenceWriter implements LatePresenceWriter {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
   }) async =>

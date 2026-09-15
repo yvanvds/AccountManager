@@ -35,11 +35,13 @@ import 'package:late_arrivals/late_arrivals.dart';
 /// live-testing policy requires, since `setLate` is a *write* against a live
 /// school tenant and write-capable verification never runs in CI.
 abstract interface class SmartschoolPresenceSession {
-  /// Writes the morning presence. Throws the library's own exception types.
+  /// Writes the presence for the [part] half-day. Throws the library's own
+  /// exception types.
   Future<void> setLate({
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required ss.DayPart part,
     required bool withoutValidReason,
     required String motivation,
   });
@@ -84,6 +86,7 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required ss.DayPart part,
     required bool withoutValidReason,
     required String motivation,
   }) async {
@@ -92,9 +95,7 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
       userId: userId,
       classGroupId: classGroupId,
       date: date,
-      // Always the morning. A student who turns up at 12:15 is not late, they
-      // were absent for the morning, and they are not scanned at all (#399).
-      part: ss.DayPart.morning,
+      part: part,
       withoutValidReason: withoutValidReason,
       motivation: motivation,
     );
@@ -154,6 +155,7 @@ class SmartschoolPresenceWriter implements LatePresenceWriter {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
   }) async {
@@ -162,6 +164,7 @@ class SmartschoolPresenceWriter implements LatePresenceWriter {
         userId: userId,
         classGroupId: classGroupId,
         date: date,
+        part: dayPartOf(part),
         withoutValidReason: withoutValidReason,
         motivation: motivation,
       );
@@ -173,6 +176,14 @@ class SmartschoolPresenceWriter implements LatePresenceWriter {
   @override
   Future<void> reauthenticate() => session.signIn();
 }
+
+/// The library's name for a half-day (#428). Exhaustive, so a third value on
+/// either side is a compile error here rather than a presence in the wrong
+/// cell.
+ss.DayPart dayPartOf(HalfDay part) => switch (part) {
+      HalfDay.morning => ss.DayPart.morning,
+      HalfDay.afternoon => ss.DayPart.afternoon,
+    };
 
 /// Turns a `flutter_smartschool` failure into the answer the drain acts on.
 ///

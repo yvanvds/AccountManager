@@ -29,6 +29,7 @@ class SentPresence {
     required this.userId,
     required this.classGroupId,
     required this.date,
+    required this.part,
     required this.withoutValidReason,
     required this.motivation,
   });
@@ -36,11 +37,13 @@ class SentPresence {
   final int userId;
   final int classGroupId;
   final DateTime date;
+  final HalfDay part;
   final bool withoutValidReason;
   final String motivation;
 
   @override
-  String toString() => 'SentPresence($userId, $classGroupId, $motivation)';
+  String toString() =>
+      'SentPresence($userId, $classGroupId, ${part.name}, $motivation)';
 }
 
 /// A stand-in for `PresenceService`, scripted per attempt.
@@ -63,6 +66,7 @@ class FakePresenceWriter implements LatePresenceWriter {
     required int userId,
     required int classGroupId,
     required DateTime date,
+    required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
   }) async {
@@ -70,6 +74,7 @@ class FakePresenceWriter implements LatePresenceWriter {
       userId: userId,
       classGroupId: classGroupId,
       date: date,
+      part: part,
       withoutValidReason: withoutValidReason,
       motivation: motivation,
     );
@@ -170,7 +175,7 @@ void main() {
       );
 
   group('draining to Smartschool', () {
-    test('sends the pending journal as morning presences', () async {
+    test('sends a morning scan as a morning presence', () async {
       final LateArrivalJournal journal = await openJournal();
       await register(journal, scanOf('jane.doe'));
       final FakePresenceWriter writer = FakePresenceWriter();
@@ -185,11 +190,54 @@ void main() {
       expect(call.classGroupId, 298);
       // The day, at midnight — never the moment of the write.
       expect(call.date, DateTime(2026, 9, 7));
+      expect(call.part, HalfDay.morning);
       expect(call.motivation, '08:14 – Bus te laat');
       expect(call.withoutValidReason, isFalse);
       expect(journal.pending, isEmpty);
       expect(journal.records.single.status, LateArrivalStatus.confirmed);
       await drain.close();
+    });
+
+    test('sends an afternoon scan as an afternoon presence (#428)', () async {
+      // The desk scans after noon too; the presence has to land on the cell
+      // the student was actually late for.
+      final LateArrivalJournal journal = await openJournal();
+      await register(
+        journal,
+        scanOf('jane.doe'),
+        at: DateTime(2026, 9, 7, 13, 5),
+      );
+      final FakePresenceWriter writer = FakePresenceWriter();
+      final LateArrivalDrain drain = drainOn(journal, writer);
+
+      drain.start();
+      await drain.settle();
+
+      final SentPresence call = writer.accepted.single;
+      expect(call.part, HalfDay.afternoon);
+      // Same day; only the half-day differs.
+      expect(call.date, DateTime(2026, 9, 7));
+      expect(call.motivation, '13:05 – Bus te laat');
+      await drain.close();
+    });
+
+    test('the half-day is the record\'s, so a replayed line keeps it',
+        () async {
+      final InMemoryJournalStore store = InMemoryJournalStore();
+      final LateArrivalJournal first = await LateArrivalJournal.open(
+        store,
+        now: monday,
+      );
+      await register(
+        first,
+        scanOf('jane.doe'),
+        at: DateTime(2026, 9, 7, 14, 40),
+      );
+      final LateArrivalJournal reopened = await LateArrivalJournal.open(
+        store,
+        now: monday,
+      );
+      expect(reopened.records.single.halfDay, HalfDay.afternoon);
     });
 
     test('withoutValidReason follows the flag on the chosen reason', () async {

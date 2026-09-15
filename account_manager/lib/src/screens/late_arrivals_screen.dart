@@ -159,6 +159,7 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
 
   LateArrivalPrinter? _printer;
   String _printerHost = '';
+  String _printerHeader = '';
   bool _printerBound = false;
 
   /// Whether this is the destination the operator is looking at.
@@ -184,8 +185,11 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     // and that a registration was written.
     _desk = LateArrivalDeskScope.maybeOf(context);
     _watchDrain(_desk?.drain);
+    final LocalPreferences? preferences =
+        LocalPreferencesScope.maybeOf(context);
     _bindPrinter(
-      LocalPreferencesScope.maybeOf(context)?.lateArrivalPrinterHost ?? '',
+      host: preferences?.lateArrivalPrinterHost ?? '',
+      header: preferences?.lateArrivalTicketHeader ?? '',
     );
 
     final ShellTab? tab = ShellNavigation.maybeOf(context)?.current;
@@ -293,16 +297,20 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   }
 
   /// Binds the printer standing at *this* desk. Machine-local (#406), so it
-  /// comes out of `preferences.json` and not out of the shared document, and it
-  /// is rebuilt when an operator changes the address in Instellingen.
-  void _bindPrinter(String host) {
-    if (_printerBound && _printerHost == host) return;
+  /// and the ticket header (#429) come out of `preferences.json` and not out of
+  /// the shared document, and it is rebuilt when an operator changes either in
+  /// Instellingen.
+  void _bindPrinter({required String host, required String header}) {
+    if (_printerBound && _printerHost == host && _printerHeader == header) {
+      return;
+    }
     _printerBound = true;
     _printerHost = host;
+    _printerHeader = header;
     _printer?.dispose();
     _printer = LateArrivalPrinter(
       host: host,
-      logo: defaultTicketLogo,
+      header: header,
       transport: widget.ticketTransport ?? const IppTicketTransport(),
     );
   }

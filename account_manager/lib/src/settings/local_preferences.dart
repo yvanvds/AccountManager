@@ -248,6 +248,32 @@ class LocalPreferences {
 
   static const String _lateArrivalPrinterHostKey = 'lateArrivalPrinterHost';
 
+  /// The few characters printed large at the top of every late-arrival ticket
+  /// this desk prints (#429) — the school's code, typically — or `null` for a
+  /// ticket with no header line.
+  ///
+  /// Machine-local for the same reason the printer address is: a desk prints
+  /// for one school, and the group has several. The desk at one school prints
+  /// its code, the desk at the next prints another, and neither wants the
+  /// other's. Stored trimmed; the composer refuses one longer than
+  /// `ticketHeaderMaxLength`, and the settings field cannot enter one.
+  String? get lateArrivalTicketHeader {
+    final Object? raw = _values[_lateArrivalTicketHeaderKey];
+    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
+  }
+
+  /// Records the ticket header for this machine. A blank [header] clears it,
+  /// which prints no header line rather than an empty one.
+  Future<void> setLateArrivalTicketHeader(String header) {
+    final String trimmed = header.trim();
+    return _set(
+      _lateArrivalTicketHeaderKey,
+      trimmed.isEmpty ? null : trimmed,
+    );
+  }
+
+  static const String _lateArrivalTicketHeaderKey = 'lateArrivalTicketHeader';
+
   // --- the bag ---------------------------------------------------------------
 
   /// Sets one key and persists the **whole** bag, so a key this build does not

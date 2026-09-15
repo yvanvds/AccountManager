@@ -15,13 +15,12 @@ library;
 
 import 'dart:typed_data';
 
-import 'ticket_logo.dart';
 import 'ticket_metrics.dart';
 
 /// `ESC` — the escape byte most commands start with.
 const int esc = 0x1B;
 
-/// `GS` — the group-separator byte the raster and cut commands start with.
+/// `GS` — the group-separator byte the size and cut commands start with.
 const int gs = 0x1D;
 
 /// Line feed. Ends every printed line.
@@ -90,30 +89,6 @@ List<int> escPosFeedLines(int lines) {
 List<int> escPosCut({int feedDots = ticketCutFeedDots}) {
   RangeError.checkValueInInterval(feedDots, 0, 255, 'feedDots');
   return <int>[gs, 0x56, ticketCutCommandVariant, feedDots];
-}
-
-/// `GS v 0 m xL xH yL yH d1...dk` — print [logo] as a raster bit image.
-///
-/// Raster mode rather than the older column mode: the data is the bitmap in
-/// reading order, which is what [TicketLogo] already holds, so nothing has to
-/// be transposed at print time.
-List<int> escPosRasterImage(TicketLogo logo) {
-  if (!logo.fitsPaper) {
-    throw ArgumentError.value(
-      logo,
-      'logo',
-      'is wider than the $ticketPrintWidthDots-dot print area; the printer '
-          'would clip it rather than scale it',
-    );
-  }
-  final int xBytes = logo.bytesPerRow;
-  return <int>[
-    gs, 0x76, 0x30,
-    0x00, // m = 0: normal size, no doubling
-    xBytes & 0xFF, (xBytes >> 8) & 0xFF,
-    logo.height & 0xFF, (logo.height >> 8) & 0xFF,
-    ...logo.bits,
-  ];
 }
 
 /// Encodes [text] for a printer switched to [escPosCodePageWpc1252].

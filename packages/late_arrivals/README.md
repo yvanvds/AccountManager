@@ -78,6 +78,11 @@ wrong:
   rather than appending a row, so a student scanned twice must have the later
   scan applied last, or the desk's correction is silently undone. `pending` and
   `recordsOf(uid)` both answer in scan order, in this session and after a reload.
+- **Which half-day is the scan's** ([#428][428]). `HalfDay.of(scannedAt)` —
+  morning before noon on the operator's wall clock, afternoon from noon on — is
+  what the drain writes against, derived from the record rather than stored, so
+  a journal line from before the afternoon existed still drains to the right
+  cell.
 - **The day files roll off.** A fully drained day past the retention window is
   deleted; a day that still owes Smartschool a write is kept however old it is.
 
@@ -130,7 +135,7 @@ What the student walks away with, as the bytes an Epson TM-m30III turns into
 paper.
 
 ```dart
-final bytes = composeTicketForRecord(record, logo: defaultTicketLogo);
+final bytes = composeTicketForRecord(record, header: 'SMA');
 // ...hand to account_manager's LateArrivalPrinter, which wraps them in one IPP
 // Print-Job over HTTPS and is done with it.
 ```
@@ -139,25 +144,28 @@ final bytes = composeTicketForRecord(record, logo: defaultTicketLogo);
   desk, not on a build agent, so the layout has to be assertable without one.
   Everything that touches a socket is in `account_manager`; everything that
   decides what the paper says is here, and the tests read the byte stream back.
-- **Name, class, arrival time, logo — and nothing else.** No reason, no barcode;
-  the epic is explicit. The **time is the point**: it is the teacher's evidence
-  of *when* the student was at the desk, and the one thing Smartschool cannot
-  hold, because its Presence module only knows am/pm half-days. It is therefore
-  the largest thing on the ticket, and it is the *scan* time — taken off the
-  record the journal already flushed, so a slow printer cannot move it.
+- **Header, name, class, date, arrival time — and nothing else.** No reason, no
+  barcode; the epic is explicit. The **time is the point**: it is the teacher's
+  evidence of *when* the student was at the desk, and the one thing Smartschool
+  cannot hold, because its Presence module only knows am/pm half-days. It is
+  therefore the largest thing on the ticket after the header, and it is the
+  *scan* time — taken off the record the journal already flushed, so a slow
+  printer cannot move it. The date above it (`vrijdag 11/09/2026`, [#430][430])
+  is what makes that evidence stand a week later.
+- **The header is a few characters the desk configures** ([#429][429]) — the
+  school's code, printed largest of all. It is a plain string rather than a
+  bitmap: a school code needs no image file, and `ticketHeaderMaxLength` (nine
+  on the 80 mm roll) is derived from the print width so the composer refuses
+  what the printer would clip. Empty prints no header line.
 - **Raw ESC/POS, never a printer driver.** `escpos.dart` is the vocabulary of
   one ticket, not a printer library: initialise, code page, align, size,
-  emphasis, raster, feed, cut. The code page is `WPC1252` and text is encoded to
-  match, because on the factory default (PC437) half the Flemish surnames in the
-  school come out as different letters.
-- **The logo is a bitmap this package carries** (`TicketLogo`), authored as
-  ASCII art and scaled — a picture a reviewer can read, in a package that has no
-  I/O to open a PNG with. `defaultTicketLogoArt` is a **placeholder** monogram;
-  replacing it is editing those rows and nothing else.
+  emphasis, feed, cut. The code page is `WPC1252` and text is encoded to match,
+  because on the factory default (PC437) half the Flemish surnames in the school
+  come out as different letters.
 - **Everything the hardware might contradict is in one file.**
-  `ticket_metrics.dart` holds the paper width, the print width in dots, the feed
-  before the cut and the cut variant, with a note on what to check first when
-  the printer is finally plugged in.
+  `ticket_metrics.dart` holds the paper width, the print width in dots, the
+  character width, the feed before the cut and the cut variant, with a note on
+  what to check first when the printer is finally plugged in.
 
 ### The Cosmos mirror ([#403][403])
 
@@ -253,3 +261,6 @@ dart test packages/late_arrivals/test
 [403]: https://github.com/yvanvds/AccountManager/issues/403
 [405]: https://github.com/yvanvds/AccountManager/issues/405
 [406]: https://github.com/yvanvds/AccountManager/issues/406
+[428]: https://github.com/yvanvds/AccountManager/issues/428
+[429]: https://github.com/yvanvds/AccountManager/issues/429
+[430]: https://github.com/yvanvds/AccountManager/issues/430
