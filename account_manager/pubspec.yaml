@@ -48,10 +48,14 @@ dependencies:
   # Not the hosted release either: pub.dev is at 0.2.6, and `PresenceService` —
   # the whole reason this is here — first appears in 0.2.9. Switch to a hosted
   # version once one carrying it is published.
+  #
+  # 0.2.10 (dartschool#6): follows the 302 Smartschool answers a login POST
+  # with since September 2026; on 0.2.9 every operator sign-in died with
+  # "Login failed" before the 2FA step (#432).
   flutter_smartschool:
     git:
       url: https://github.com/yvanvds/dartschool.git
-      ref: 0b9faf03598fe9c9dbcab8b88260d49e71715274
+      ref: ca0b79813d815b49e4010c1d6727b515cb72c8fc
 
   # For the interactive loopback fallback's injectable HTTP client (the token
   # endpoint), shared with the OAuthAuthProvider reused from azure_api.
