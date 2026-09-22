@@ -344,8 +344,15 @@ class LateArrivalPrinter {
 
   void _enqueue(Uint8List bytes) {
     _report(const LateArrivalPrintStatus(LateArrivalPrintState.printing, ''));
+    // Deliberately **not** guarded on `_disposed` here. A job only reaches this
+    // queue while the printer is alive ([printTicket] refuses once disposed),
+    // so everything in it is a ticket a student was told was coming. Dropping
+    // the ones that had not started yet is what [dispose] says it does not do,
+    // and since #436 it is reachable at the counter: rebinding the selector
+    // replaces this object, and a switch made in the seconds after a
+    // confirmation would have taken that student's ticket with it. Reporting
+    // is what stops — [_report] is the no-op after dispose, not the send.
     _queue = _queue.then((_) async {
-      if (_disposed) return;
       try {
         await transport.send(
           host: host,
@@ -372,7 +379,12 @@ class LateArrivalPrinter {
   }
 
   /// Stops reporting and lets the queue run out. Nothing is cancelled: a
-  /// ticket already on the wire is a ticket the student is waiting for.
+  /// ticket already accepted is a ticket a student was told was coming, whether
+  /// it is on the wire or still waiting behind one that is.
+  ///
+  /// [settled] is what a caller awaits to know the paper is out; disposing does
+  /// not shorten it. What does end here is the status — the operator this
+  /// printer was reporting to is looking at a different one now (#436).
   void dispose() {
     _disposed = true;
     _status.dispose();

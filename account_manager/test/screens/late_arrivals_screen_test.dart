@@ -12,6 +12,7 @@
 /// kind of failure.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
@@ -44,7 +45,14 @@ class _CountingBeep implements RefusalBeep {
 
 /// Keeps every ticket that reached "the printer", and the address it was
 /// addressed to — which is what a desk's printer selection (#436) decides.
+///
+/// [gate], when set, holds every send until it is completed: that is how a
+/// printer switch can be made while a ticket is still queued behind one.
 class _RecordingTransport implements TicketTransport {
+  _RecordingTransport({this.gate});
+
+  final Completer<void>? gate;
+
   final List<List<int>> sent = <List<int>>[];
   final List<String> hosts = <String>[];
 
@@ -55,6 +63,7 @@ class _RecordingTransport implements TicketTransport {
     required List<int> bytes,
     required Duration timeout,
   }) async {
+    if (gate != null) await gate!.future;
     hosts.add(host);
     sent.add(List<int>.of(bytes));
   }
@@ -835,6 +844,50 @@ void main() {
         find.byKey(const ValueKey<String>('late-printer-note')),
         findsNothing,
         reason: 'the complaint goes away with the thing it complained about',
+      );
+    });
+
+    testWidgets(
+        'switching printers seconds after a confirmation does not take that '
+        "student's ticket with it", (WidgetTester tester) async {
+      // The desk-side half of the same rule the printer proves on its own: the
+      // selector replaces the bound `LateArrivalPrinter`, and a ticket already
+      // accepted belongs to a student who was told it was coming. Losing it
+      // would be silent — the registration is on disk saying it printed.
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final Completer<void> gate = Completer<void>();
+      final _RecordingTransport tickets = _RecordingTransport(gate: gate);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        preferences: await _prefsWithPrinter('p-onthaal'),
+        child: LateArrivalsScreen(
+          bootstrap: _harness(live: twoPrinters()).bootstrap,
+          ticketTransport: tickets,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await _scan(tester, '123456');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(desk.journal!.records, hasLength(1));
+      // Queued, and stuck behind the gate — the state an operator who switches
+      // desks in the same breath would catch it in.
+      expect(tickets.sent, isEmpty);
+
+      await _pickPrinter(tester, 'p-toren');
+      expect(_selectedPrinter(tester), 'Toren');
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(tickets.hosts, <String>['bon-onthaal.invalid'],
+          reason: "the ticket goes to the printer it was addressed to");
+      expect(
+        String.fromCharCodes(tickets.sent.single),
+        contains('Jonas Peeters'),
       );
     });
 

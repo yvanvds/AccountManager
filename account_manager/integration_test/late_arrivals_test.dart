@@ -1043,11 +1043,45 @@ void main() {
       }
 
       /// Scans [code] and confirms it with the first reason — one whole
-      /// student, from badge to ticket.
-      Future<void> register(String code) async {
+      /// student, from badge to ticket — and returns only once that student is
+      /// really registered, and printed for when [prints].
+      ///
+      /// **Never `pumpAndSettle` alone** (#425). `_confirm` flushes the journal
+      /// to disk and prints only afterwards, and the integration binding's
+      /// `pumpAndSettle` returns the moment no frame is scheduled — which, in
+      /// the middle of that `await`, is immediately. It is what lost this test
+      /// on the CI runner while passing on a faster disk: the second student's
+      /// ticket had simply not been handed to the transport yet. So each step
+      /// waits on the thing that actually happened.
+      Future<void> register(String code, {required bool prints}) async {
+        final int registered = desk.journal!.records.length;
+        final int printed = tickets.hosts.length;
+
         await scan(code);
+        // The student is on screen before any reason can be pressed — and a
+        // burst the hidden input never received would leave the row disabled,
+        // so this is also where a lost keyboard shows up as itself rather than
+        // as a missing ticket three lines further down.
+        expect(
+          find.byKey(const ValueKey<String>('late-scan-name')),
+          findsOneWidget,
+          reason: 'the scan of $code reached the hidden input',
+        );
+
         await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
         await tester.pumpAndSettle();
+        await pumpUntil(
+          tester,
+          'the registration of $code to be flushed to the journal',
+          () => desk.journal!.records.length > registered,
+        );
+        if (prints) {
+          await pumpUntil(
+            tester,
+            'the ticket for $code to reach its printer',
+            () => tickets.hosts.length > printed,
+          );
+        }
       }
 
       Future<void> pickPrinter(String option) async {
@@ -1089,10 +1123,16 @@ void main() {
       await pickPrinter('p-onthaal');
       expect(selectedPrinter(), 'Onthaal');
       // The keyboard came straight back: the next burst lands without a click,
-      // which is the whole focus criterion.
-      expect(indicatorText(), 'KLAAR OM TE SCANNEN');
+      // which is the whole focus criterion. The reclaim is a post-frame
+      // callback, so wait for it rather than assume the pump above ran it —
+      // a timeout here is still a failure, and a loud one.
+      await pumpUntil(
+        tester,
+        'the keyboard to come back to the scanner after the menu closed',
+        () => indicatorText() == 'KLAAR OM TE SCANNEN',
+      );
 
-      await register('123456');
+      await register('123456', prints: true);
       expect(desk.journal!.records, hasLength(1));
       expect(tickets.hosts, <String>['bon-onthaal.invalid']);
       expect(String.fromCharCodes(tickets.sent.single), contains('SMA'));
@@ -1104,7 +1144,7 @@ void main() {
       // --- The operator moves to the other desk. ------------------------------
       await pickPrinter('p-toren');
       expect(selectedPrinter(), 'Toren');
-      await register('223344');
+      await register('223344', prints: true);
       expect(
           tickets.hosts, <String>['bon-onthaal.invalid', 'bon-toren.invalid']);
       expect(String.fromCharCodes(tickets.sent.last), contains('SMT'));
@@ -1113,8 +1153,11 @@ void main() {
       // --- Geen printer: registered, nothing printed, no fault. ---------------
       await pickPrinter('none');
       expect(selectedPrinter(), 'Geen printer');
-      await register('123456');
+      await register('123456', prints: false);
       expect(desk.journal!.records, hasLength(3));
+      // The registration is on disk, and the journal is flushed *before*
+      // anything is printed — so "nothing was sent" is settled here, not a
+      // guess about timing. The final list below closes it for good.
       expect(tickets.hosts, hasLength(2), reason: 'nothing was sent');
 
       // --- The desk is set up for tomorrow, and restarted. --------------------
@@ -1136,8 +1179,19 @@ void main() {
 
       await launch();
       expect(selectedPrinter(), 'Toren');
-      await register('123456');
-      expect(tickets.hosts.last, 'bon-toren.invalid');
+      await register('123456', prints: true);
+      // Exactly three tickets for four registrations, in this order: the one
+      // made under **Geen printer** never produced one, and no late arrival of
+      // it can sneak in behind the others.
+      expect(desk.journal!.records, hasLength(4));
+      expect(
+        tickets.hosts,
+        <String>[
+          'bon-onthaal.invalid',
+          'bon-toren.invalid',
+          'bon-toren.invalid',
+        ],
+      );
 
       // Unmount before the teardown lets go of the desk, so the scope is not
       // listening to a disposed notifier and the journal is closed first.
